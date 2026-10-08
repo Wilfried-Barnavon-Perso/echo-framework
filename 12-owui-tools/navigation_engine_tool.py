@@ -1,19 +1,17 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.37
+version: 11.38
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 11.38: Lot C - Isolation par sub_sid (ECHO_SUBAGENT_CONTEXT), refonte du Sniper Protocol et utilisation de vision_capture.
+# 11.37: Passage du vision_grid_step par défaut à 100px.
 # 11.36: Modification de la consigne d'action_zoom_in pour exiger la vérification stricte du viseur rouge.
 # 11.35: Intégration du système de ciblage par zoom itératif et gestion de la rétention mémoire (is_zooming).
 # 11.34: Injection Télémétrique Absolue (mouse_position) dans le payload JSON pour fiabiliser le calcul balistique.
 # 11.29: Affinement du maillage spatial (vision_grid_step=48) pour optimiser l'interpolation des LLMs sur les Anti-Bots.
-# 11.28: Refonte du Garbage Collector d'interface (Filtre Universel + Troncature Intelligente 60k).
-# 11.27: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations, functionCallingConfig).
-# 11.26: Fix - Ajout du log explicite de l'exception dans _deploy_navigation_monitor pour faciliter le debug de l'écriture SQLite/Disque.
-# 11.25: Fix - Migration intégrale des captures complètes en JPEG pour réduire l'empreinte mémoire et résoudre la saturation WebSocket 1Mo.
 # 11.14: Descente Cognitive - Injection dynamique de action_analyze_page et action_archive_page dans BROWSER_TOOLS_SCHEMA pour rendre le Sous-Agent autonome, et correction d'un bug de payload sur inspect_page.
 # 11.13: Refonte - Remplacement du distillateur web monolithique par une dichotomie stricte (analyze_web_page via Streaming Sémantique natif ECHO et archive_web_page asynchrone).
 # 11.12: Optim - Ajout de la règle interdisant explicitement l'usage des moteurs de recherche généralistes au niveau du navigateur autonome.
@@ -135,12 +133,21 @@ class Tools:
         :param max_iterations: Nombre max d'itérations. À augmenter pour les tâches longues (ex: 60 questions). Max: 100.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        chat_id = __metadata__.get("chat_id", "default_session")
+        
+        # Récupération de l'identité du sous-agent via contextvars
+        from echo_constants import ECHO_SUBAGENT_CONTEXT
+        sub_context = ECHO_SUBAGENT_CONTEXT.get()
+        base_chat_id = __metadata__.get("chat_id", "default_session")
+        sub_sid = sub_context.get("sub_sid")
+        
+        # Le navigateur s'attache prioritairement à l'ID du sous-agent pour isoler les sessions
+        chat_id = sub_sid if sub_sid else base_chat_id
+        
         uid = __user__.get("id", "anonymous")
         u_valves = __user__.get("valves", self.UserValves())
         use_vision = getattr(u_valves, 'USE_MULTIMODAL_VISION', True)
 
-        await events.status("📡 Agent Navigateur: Prise de contrôle...")
+        await events.status(f"📡 Agent Navigateur [{chat_id[:8]}]: Prise de contrôle...")
         if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, chat_id, uid, u_valves, events):
             return wrap_tool_output(text="❌ Navigateur indisponible.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -169,12 +176,11 @@ class Tools:
             f"<objective>\n{task_objective}\n</objective>\n\n"
             "<rules>\n"
             "1. PERCEPTION GLOBALE : Le Modèle PEUT demander simultanément plusieurs extractions de l'état de la page en un seul tour via `action_inspect_page` pour accélérer sa compréhension.\n"
-            "2. HIÉRARCHIE D'INTERACTION : 1) Si la cible est textuellement connue, OBLIGATION d'utiliser d'abord `action_inspect_page(target='search_dom')` pour scroller et localiser l'index sans saturer la mémoire. 2) Privilégier `action_interact_a11y` (avec `method='role'` ET `name` ou `method='text'`). 3) Repli sur `action_interact_dom` (Index `dom_map`). 4) Face aux Anti-Bots (ex: Cloudflare), application stricte du PROTOCOLE SNIPER :\n"
-            "   - A) HOVER : Approche spatiale via `action_interact_dom(action_type='hover', x=..., y=...)`.\n"
-            "   - B) GRID : Requête d'inspection via `vision_grid=True`.\n"
-            "   - C) ANALYSE (OBLIGATOIRE) : Dès la réception de la grille, une évaluation verbale exhaustive DOIT être formulée dans la réflexion : lecture du champ JSON `mouse_position` (tes coordonnées actuelles) ET calcul explicite du décalage (Delta X/Y) vers le centre géométrique de la cible visible sur l'image.\n"
-            "   - D) ZOOM (OPTIONNEL) : Si la cible est trop dense/petite pour estimer précisément X/Y, appelle `action_zoom_in(x1, y1, x2, y2)`. Le système rognera l'image sur cette zone et calculera le centre exact. Si la cible y est centrée, utilise ces coordonnées avec `action_interact_dom`.\n"
-            "   - E) TIR : Si le curseur est strictement DANS la cible, exécution de `action_interact_dom(action_type='click_current')` (SANS coordonnée). Sinon, itération de l'étape A avec les coordonnées corrigées.\n"
+            "2. HIÉRARCHIE D'INTERACTION : 1) OBLIGATION absolue d'utiliser `action_inspect_page(target='search_dom')` pour localiser la cible en scrollant automatiquement. 2) Utiliser `action_interact_a11y`. 3) Utiliser `action_interact_dom` (Index `dom_map`). 4) Protocole SNIPER (Anti-Bots) :\n"
+            "   - A) HOVER : `action_interact_dom(action_type='hover', x=..., y=...)` pour placer la souris.\n"
+            "   - B) GRID : Requête via `vision_grid=True` pour valider visuellement l'impact.\n"
+            "   - C) TIR : Si le curseur (anneau cyan) est SUR la cible, `action_interact_dom(action_type='click_current')` SANS coordonnée.\n"
+            "   - D) ZOOM : Si la cible est microscopique, `action_zoom_in` avec les coordonnées estimées de la zone.\n"
             "3. ACTIONS GROUPÉES : Le Modèle PEUT grouper plusieurs actions non-mutantes (ex: remplir plusieurs champs). Cependant, il NE DOIT PAS enchaîner une action si la précédente risque de modifier drastiquement la page (soumission, navigation). Une action mutante DOIT être la dernière du lot.\n"
             "4. OVERLAYS & POP-UPS : Si une bannière bloque la navigation (cookies, popup), la priorité absolue du Modèle est d'utiliser `action_interact_dom(action_type='click')` ou `action_interact_a11y` pour s'en débarrasser.\n"
             "5. FORMULAIRES : Remplir les champs avec `action_interact_dom(action_type='type')`. Exécuter `action_browser_control(command='pause')` pour attendre une liste d'autocomplétion. Si la liste apparaît, cliquer dessus. Sinon, valider avec `action_browser_control(command='press_key', value='Enter')`.\n"
@@ -407,7 +413,7 @@ class Tools:
                                         _resp = {"status": "success", "message": "Capture d'écran demandée. Elle est jointe à ce message."}
                                         
                                     if grid:
-                                        last_view = await browser._action("inspect_page", {"target": "vision", "vision_grid": True, "vision_grid_step": browser.vision_grid_step, "zoom_box": zb})
+                                        last_view = await browser.vision_capture(grid=True, zoom_box=zb)
                                     else:
                                         last_view = await browser.highlight()
                                         
@@ -415,7 +421,7 @@ class Tools:
                                     hud_view = await browser.highlight() if grid else last_view
                                     if is_last_tool:
                                         try:
-                                            sc_res = await browser.stop_screencast(hud_view.get("screenshot_b64"))
+                                            sc_res = await browser.stop_screencast()
                                             if sc_res and sc_res.get("webp_b64"):
                                                 hud_view["webp_b64"] = sc_res["webp_b64"]
                                         except: pass
@@ -434,7 +440,7 @@ class Tools:
                                             last_view = await browser.highlight()
                                             
                                         try:
-                                            sc_res = await browser.stop_screencast(last_view.get("screenshot_b64"))
+                                            sc_res = await browser.stop_screencast()
                                             if sc_res and sc_res.get("webp_b64"):
                                                 last_view["webp_b64"] = sc_res["webp_b64"]
                                         except: pass

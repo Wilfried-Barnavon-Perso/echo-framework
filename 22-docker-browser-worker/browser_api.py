@@ -1,88 +1,17 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 9.26 (Spoofing strict Webdriver/PluginArray)
+VERSION : 9.27 (Spoofing strict Webdriver/PluginArray)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-10-01
+DATE MAJ : 2026-10-08
 
-CHANGELOG 9.26 :
-- FIX: Ajout d'un viseur sniper (croix rouge) au centre absolu de la zoom_box pour faciliter le ciblage sans calcul d'interpolation au LLM.
-CHANGELOG 9.25 :
-- FIX: Injection dynamique des étiquettes de grille vision (labels X/Y) à l'intérieur de la zoom_box pour garantir leur visibilité au LLM après le crop.
-CHANGELOG 9.24 :
-- FEATURE: Application native du crop (zoom_box) sur page.screenshot() et récupération du viewport.
-CHANGELOG 9.23 :
-- FEAT: Masquage profond des signatures Headless (webdriver Blink, WebGL SwiftShader, window.chrome, hardwareConcurrency, outerWidth) pour évasion avancée des WAFs (Cloudflare/DataDome).
-CHANGELOG 9.21 :
-- FIX: Restauration de l'usage d'orjson (écrasé par json standard) et suppression de l'erreur AttributeError sur le decode('utf-8').
-CHANGELOG 9.20 :
-- FIX: Migration de la capture `/highlight` de PNG vers JPEG (qualité 60) pour éviter le blocage de 1Mo sur Socket.IO.
-CHANGELOG 9.19 :
-- FEAT: Synchronisation continue de l'URL courante de la page dans le flux screencast pour le HUD.
-CHANGELOG 9.18 :
-- FIX: Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
-CHANGELOG 9.16 :
-- MIGRATION: Renommage de l'entité Agent en Worker pour standardisation globale de l'architecture.
-CHANGELOG 9.15 :
-- FEAT: Levée de la bride `read_text` à 2 millions de caractères (~600k tokens) pour libérer la pleine puissance contextuelle de Gemini 3.x lors des RAG et sondages.
-CHANGELOG 9.14 :
-- FEAT: Remplacement du stockage RAM WebP par un streaming Live Long-Polling (`/screencast/latest`).
-- FEAT: Sérialisation des requêtes concurrentes via `asyncio.Lock` sur `BrowserSession`.
-- FEAT: Implémentation du Watchdog d'Auto-Stop pour la libération dynamique du CDP.
-CHANGELOG 9.13 :
-- OPTIM: Délégation des tâches CPU-bound (Compression WebP Pillow et parsing html2text) vers des threads natifs OS (`asyncio.to_thread`) pour libérer totalement l'Event Loop asynchrone et supporter le multi-chat intensif.
-CHANGELOG 9.12 :
-- OPTIM: Substitution globale de `networkidle` par `load` pour diviser les temps de navigation par 2-3.
-- OPTIM: Déploiement de FastAPI `ORJSONResponse` pour accélérer la sérialisation native des JSON.
-- OPTIM: Désactivation des sous-systèmes Chromium inutiles (sync, extensions, background-timer).
-CHANGELOG 9.11 :
-- OPTIM: Accélération drastique de la souris (Bézier Cubique) via la réduction des étapes (steps) et du sleep.
-- FEAT: Ajout d'un délai humain (visée oculaire) de 150-400ms entre la fin du mouvement et l'action (clic/type) pour un réalisme accru.
-CHANGELOG 9.10 :
-- OPTIM: Bridage du moteur Playwright Chromium à 9 FPS (--limit-fps) pour économiser drastiquement le CPU.
-- OPTIM: Ajustement dynamique de la compression WebP pour matcher le FPS de rendu.
-CHANGELOG 9.9 :
-- FEAT: Implémentation du support screencast natif Playwright pour l'orchestrateur.
-- FEAT: Encodage WebP avec compression de frames en direct + Frame HD finale (Pillow).
-CHANGELOG 9.8 :
-- FIX: Prise en charge du paramètre `name` dans `interact_a11y` pour filtrer les rôles et éviter le clic sur le premier élément du DOM par défaut.
-- FIX: Fallback intelligent (text) si l'élément n'est pas trouvé via Role+Name.
-- FIX: Nettoyage de l'arbre CDP `a11y_tree` (exclusion des noeuds génériques ou StaticText sans valeur).
-CHANGELOG 9.7 :
-- FEAT: Support de l'arbre natif d'accessibilité (a11y_tree) converti en texte.
-- FEAT: La grille de vision accepte un pas configurable (vision_grid_step).
-CHANGELOG 9.6 :
-- REFACTOR: API unifiée autour de 4 blocs (`interact_a11y`, `interact_dom`, `inspect_page`, `browser_control`).
-CHANGELOG 9.5 :
-- FEAT: Stealth Mode - Suppression des Bounding Boxes visuelles pour réduire la pollution de l'image.
-- FEAT: Ralentissement de la courbe Bézier et des saisies clavier pour limiter la détection bot.
-CHANGELOG 9.4 :
-- FEAT: Synergie Multimodale - Remplacement des pastilles par des Bounding Boxes colorées.
-- FEAT: DOM Spatial - Injection des coordonnées [x,y,w,h] et extraction du contexte parent sémantique. Troncature augmentée (200).
-CHANGELOG 9.3 :
-- FEAT: Algorithme de souris Bézier cubique avec Loi de Fitts et Overshoot.
-- FEAT: Extraction DOM allégée (HIGHLIGHT_JS) pour la stratégie Vision-First.
-- FEAT: Saisie clavier humaine avec `press_sequentially`, délai variable et pauses cognitives.
-CHANGELOG 9.2 :
-- Ajout de GET /health pour l'orchestration séquentielle Docker Compose.
-CHANGELOG 9.1 :
-- FIX: Correction d'une erreur de syntaxe à l'import de random (random import -> import random).
-CHANGELOG 9.0 :
-- PERF: Allègement du payload JSON (suppression des coordonnées x/y dans le DOM Map).
-CHANGELOG 8.9 :
-- PERF: Migration to orjson and pybase64 with explicit decoding.
-CHANGELOG 8.8 :
-- PERF: Migration to orjson and pybase64 for high-performance processing.
-CHANGELOG 8.7 :
-- FEAT: Added 'get_attribute' action to safely retrieve absolute URLs (src, href) from DOM elements.
-CHANGELOG 8.6 :
-- FEAT: Base64 encoding for 'read_html' action to prevent JSON corruption.
-CHANGELOG 8.5 :
-- FEAT: Added 'reset' action to fully purge and restart a browser session.
-- PERF: Memory-based screenshots (no disk I/O) for faster HUD updates.
-CHANGELOG 8.4 :
-- FEAT: Added native support for 'index' parameter in click/type/hover.
-- FIX: Improved target selection logic (Index priority over Selector).
+CHANGELOG 9.27 :
+- REFACTOR: JS Constants (no f-strings), Dedicated overlay context.
+- FEAT: Real CDP zoom (clip.scale) with absolute grid.
+- FEAT: Hit tests (elementFromPoint) before clicks.
+- FEAT: Generational DOM index, auto-cleanup.
+- FEAT: LRU session eviction (max 20).
+- FEAT: Human wheel scrolling & strict wait_for_settle.
 ================================================================================
 """
 
@@ -99,9 +28,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import ORJSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from playwright.async_api import async_playwright
-
 import logging.config
-import os
 
 if os.path.exists('/app/logging.json'):
     with open('/app/logging.json', 'rb') as f:
@@ -109,8 +36,6 @@ if os.path.exists('/app/logging.json'):
 else:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("echo-browser")
-
-import time
 
 class RateLimitHealthCheckFilter(logging.Filter):
     def __init__(self, rate_limit_seconds=300):
@@ -140,8 +65,6 @@ class RateLimitHealthCheckFilter(logging.Filter):
 
 logging.getLogger("uvicorn.access").addFilter(RateLimitHealthCheckFilter())
 
-app = FastAPI()
-
 # --- ETAT GLOBAL ---
 IDLE_TIMEOUT_DEFAULT = 3600 # 1 heure de survie par defaut
 MAX_SESSIONS = 20
@@ -152,11 +75,23 @@ SESSIONS_LOCK = asyncio.Lock()
 class GlobalState:
     playwright = None
     browser = None
+    overlay_context = None
 
 state = GlobalState()
 
+# --- CONSTANTES & SCRIPTS JS ---
+MAX_ZOOM_SCALE = 4.0
+ZOOM_TARGET_PX = 1024
+ZOOM_MIN_BOX = 40
+INTERACTIVE_SELECTORS = ('a, button, input, textarea, select, [role="button"], [role="link"], [onclick], label, '
+                         '[role="radio"], [role="checkbox"], [role="switch"], [role="tab"], [role="menuitem"], '
+                         '[tabindex], summary')
+MIN_FRAME_AREA = 2500
+
 HIGHLIGHT_JS = r"""
-(start_index) => {
+(args) => {
+    const start = args.start || 0;
+    const gen = String(args.gen);
     try {
         if (!document.getElementById('echo-cursor')) {
             const cursor = document.createElement('div');
@@ -169,8 +104,9 @@ HIGHLIGHT_JS = r"""
                 window.__echo_mouse_y = Math.round(e.clientY);
             });
         }
-        document.querySelectorAll('.echo-marker').forEach(e => e.remove());
-        const interactiveSelectors = 'a, button, input, textarea, select, [role="button"], [role="link"], [onclick], label, [role="radio"], [role="checkbox"], [role="switch"], [role="tab"], [role="menuitem"], [tabindex], summary';
+        document.querySelectorAll('[data-echo-index]').forEach(e => e.removeAttribute('data-echo-index'));
+        
+        const interactiveSelectors = args.interactive;
         let items = Array.from(document.querySelectorAll(interactiveSelectors));
         let itemsSet = new Set(items);
         
@@ -190,24 +126,22 @@ HIGHLIGHT_JS = r"""
                 }
             }
         });
+        
         let elements = [];
-        let count = start_index || 0;
+        let count = start;
         items.forEach(el => {
             const style = window.getComputedStyle(el);
             if (style.visibility === 'hidden' || style.display === 'none') return;
-            // Conserver les inputs interactifs (checkbox, radio, select) même si opacity=0 (souvent masqués par CSS custom)
             if (style.opacity === '0' && !(el.tagName === 'INPUT' || el.tagName === 'SELECT')) return;
             let rect = el.getBoundingClientRect();
             
-            // Lidar Spatial : Exclure le hors-champ vertical
             if (rect.bottom < 0 || rect.top > window.innerHeight) return;
             
             if (rect.width > 5 && rect.height > 5) {
                 let aria = el.getAttribute('aria-label') || "";
                 let text = (el.innerText || aria || el.alt || "").trim().replace(/\s+/g, ' ').substring(0, 200);
-                let meta = { id: count, tag: el.tagName.toLowerCase() };
+                let meta = { id: gen + ':' + count, tag: el.tagName.toLowerCase() };
                 
-                // Extraction du conteneur parent sémantique
                 let p = el.parentElement;
                 while (p) {
                     let tg = p.tagName.toLowerCase();
@@ -230,33 +164,287 @@ HIGHLIGHT_JS = r"""
                 let isMedia = (el.tagName.toUpperCase() === 'IMG' || el.tagName.toUpperCase() === 'SVG');
                 
                 if (text) meta.text = text;
-                else if (!isPointer && !isMedia && !el.matches(interactiveSelectors)) return; // Ignore empty non-interactive elements
+                else if (!isPointer && !isMedia && !el.matches(interactiveSelectors)) return;
                 
                 ['type', 'placeholder', 'value', 'aria-label', 'aria-expanded', 'disabled', 'checked', 'role', 'href'].forEach(attr => {
-                    let val = el.getAttribute(attr) || el[attr];
+                    let val = (attr === 'value' || attr === 'checked') ? el[attr] : (el.getAttribute(attr) || el[attr]);
                     if (val && val !== '') {
                         if (attr === 'href') val = String(val).substring(0, 40);
                         meta[attr] = val;
                     }
                 });
-                elements.push(meta);
                 
-                // Ne plus créer de marqueur visuel pour rester furtif
-                // L'index est toujours injecté dans le DOM pour le clic précis
-                el.setAttribute('data-echo-index', count);
+                const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+                if (cx >= 0 && cy >= 0 && cx < window.innerWidth && cy < window.innerHeight) {
+                    const hit = document.elementFromPoint(cx, cy);
+                    if (hit && hit !== el && !el.contains(hit) && !hit.contains(el)) meta.occluded = true;
+                }
+                if (el.hasAttribute('data-echo-found')) meta.found = true;
+                
+                elements.push(meta);
+                el.setAttribute('data-echo-index', gen + ':' + count);
                 count++;
             }
         });
-        return { "count": count, "elements": elements }; 
-    } catch (e) { return { "count": start_index || 0, "elements": [], "error": e.toString() }; }
+        document.querySelectorAll('[data-echo-found]').forEach(e => e.removeAttribute('data-echo-found'));
+        return { count: count, elements: elements };
+    } catch (e) { return { count: start, elements: [], error: e.toString() }; }
 }
 """
 
-h2t = html2text.HTML2Text()
-h2t.ignore_links = False
-h2t.ignore_images = True
-h2t.body_width = 0 
+GRID_OVERLAY_JS = r"""
+async (p) => {
+    document.body.style.margin = '0';
+    const img = new Image();
+    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = p.img; });
+    const canvas = document.createElement('canvas');
+    canvas.width = p.w;
+    canvas.height = p.h;
+    document.body.appendChild(canvas);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, p.w, p.h);
+    const [ox, oy] = p.origin;
+    const toX = v => (v - ox) * p.scale;
+    const toY = v => (v - oy) * p.scale;
+    const xEnd = ox + p.w / p.scale;
+    const yEnd = oy + p.h / p.scale;
+    const firstX = Math.ceil(ox / p.step) * p.step;
+    const firstY = Math.ceil(oy / p.step) * p.step;
+    const label = (text, x, y, color) => {
+        ctx.font = 'bold 12px monospace';
+        ctx.textBaseline = 'top';
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = 'black';
+        ctx.strokeText(text, x, y);
+        ctx.fillStyle = color || 'white';
+        ctx.fillText(text, x, y);
+    };
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(0, 255, 255, 0.45)';
+    for (let x = firstX; x <= xEnd; x += p.step) {
+        ctx.beginPath(); ctx.moveTo(toX(x), 0); ctx.lineTo(toX(x), p.h); ctx.stroke();
+    }
+    for (let y = firstY; y <= yEnd; y += p.step) {
+        ctx.beginPath(); ctx.moveTo(0, toY(y)); ctx.lineTo(p.w, toY(y)); ctx.stroke();
+    }
+    const REPEAT = 300;
+    for (let x = firstX; x <= xEnd; x += p.step) {
+        for (let ly = 2; ly < p.h; ly += REPEAT) label('x' + x, toX(x) + 3, ly);
+    }
+    for (let y = firstY; y <= yEnd; y += p.step) {
+        for (let lx = 2 + REPEAT / 2; lx < p.w; lx += REPEAT) label('y' + y, lx, toY(y) + 2);
+    }
+    if (p.center) {
+        const cx = toX(p.center[0]), cy = toY(p.center[1]);
+        ctx.strokeStyle = 'red';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cx - 18, cy); ctx.lineTo(cx - 4, cy); ctx.moveTo(cx + 4, cy); ctx.lineTo(cx + 18, cy);
+        ctx.moveTo(cx, cy - 18); ctx.lineTo(cx, cy - 4); ctx.moveTo(cx, cy + 4); ctx.lineTo(cx, cy + 18);
+        ctx.stroke();
+        label('(' + p.center[0] + ',' + p.center[1] + ')', cx + 8, cy + 8, '#ff5c5c');
+    }
+    if (p.mouse) {
+        const [mx, my] = p.mouse;
+        if (mx >= ox && mx <= xEnd && my >= oy && my <= yEnd) {
+            ctx.strokeStyle = '#00ffff';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(toX(mx), toY(my), 10, 0, 2 * Math.PI); ctx.stroke();
+            label('souris (' + mx + ',' + my + ')', toX(mx) + 12, toY(my) - 18, '#00ffff');
+        }
+    }
+}
+"""
 
+HIGHLIGHT_OVERLAY_JS = r"""
+async (p) => {
+    document.body.style.margin = '0';
+    const img = new Image();
+    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = p.img; });
+    const canvas = document.createElement('canvas');
+    canvas.width = p.w;
+    canvas.height = p.h;
+    document.body.appendChild(canvas);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, p.w, p.h);
+    ctx.font = '11px sans-serif';
+    ctx.textBaseline = 'top';
+    const drawn = [];
+    for (let el of p.elements) {
+        let [x, y, w, h] = el.coords;
+        if (y > p.h || y + h < 0 || x > p.w || x + w < 0) continue;
+        let adjustedY = y;
+        while(drawn.some(pt => Math.abs(pt.x - x) < 25 && Math.abs(pt.y - adjustedY) < 18)) {
+            adjustedY += 18;
+        }
+        drawn.push({x: x, y: adjustedY});
+        const text = String(el.id.split(':')[1]); // Keep only n part for vision
+        const tWidth = ctx.measureText(text).width;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+        ctx.fillRect(x, adjustedY, tWidth + 6, 16);
+        ctx.fillStyle = 'white';
+        ctx.fillText(text, x + 3, adjustedY + 2);
+    }
+}
+"""
+
+SEARCH_DOM_JS = r"""
+(args) => {
+    const q = String(args.query || '').toLowerCase().trim();
+    if (!q) return { found: false, error: 'Requête vide.' };
+    const label = el => String(el.innerText || el.getAttribute('aria-label') || el.getAttribute('alt')
+        || el.getAttribute('placeholder') || el.value || '').toLowerCase();
+    const shown = el => {
+        const r = el.getBoundingClientRect();
+        if (r.width <= 5 || r.height <= 5) return false;
+        const s = getComputedStyle(el);
+        return s.visibility !== 'hidden' && s.display !== 'none';
+    };
+    const pools = [args.interactive, 'p, h1, h2, h3, h4, h5, h6, li', 'td, th, dt, dd, span, div'];
+    for (const sel of pools) {
+        let best = null, bestLen = Infinity;
+        for (const el of document.querySelectorAll(sel)) {
+            const t = label(el);
+            if (t.length < bestLen && t.includes(q) && shown(el)) { best = el; bestLen = t.length; }
+        }
+        if (best) {
+            best.setAttribute('data-echo-found', '1');
+            const r = best.getBoundingClientRect();
+            return { found: true, text: label(best).replace(/\s+/g, ' ').substring(0, 100),
+                     delta_y: Math.round(r.top + r.height / 2 - window.innerHeight / 2) };
+        }
+    }
+    return { found: false };
+}
+"""
+
+FOUND_IN_VIEW_JS = """() => { const el = document.querySelector('[data-echo-found]');
+    if (!el) return false; const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < window.innerHeight; }"""
+
+HIT_TEST_JS = """(el, pts) => { const r = el.getBoundingClientRect();
+    return pts.map(([fx, fy]) => { const t = document.elementFromPoint(r.left + fx * r.width, r.top + fy * r.height);
+        return !!t && (t === el || el.contains(t)); }); }"""
+
+SETTLE_JS = r"""
+([quietMs, timeoutMs]) => new Promise(resolve => {
+    let timer = setTimeout(done, quietMs);
+    const hard = setTimeout(done, timeoutMs);
+    const obs = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(done, quietMs); });
+    function done() { obs.disconnect(); clearTimeout(timer); clearTimeout(hard); resolve(true); }
+    obs.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+})
+"""
+
+# --- HELPERS ---
+def html_to_markdown(html: str) -> str:
+    conv = html2text.HTML2Text()
+    conv.ignore_links = False
+    conv.ignore_images = True
+    conv.body_width = 0
+    return conv.handle(html)
+
+async def jpeg_capped(shoot, start_q: int = 85, floor_q: int = 40, limit: int = 720000) -> bytes:
+    q = start_q
+    data = await shoot(q)
+    while len(data) > limit and q > floor_q:
+        q -= 10
+        data = await shoot(q)
+    return data
+
+async def render_overlay(image_b64: str, width: int, height: int, script: str, params: dict) -> bytes:
+    ghost = await state.overlay_context.new_page()
+    try:
+        await ghost.set_viewport_size({"width": int(width), "height": int(height)})
+        await ghost.evaluate(script, {**params, "img": f"data:image/jpeg;base64,{image_b64}",
+                                      "w": int(width), "h": int(height)})
+        return await jpeg_capped(lambda q: ghost.screenshot(type="jpeg", quality=q))
+    finally:
+        await ghost.close()
+
+def fine_grid_step(scale: float) -> int:
+    for step in (2, 5, 10, 20, 25, 50, 100):
+        if step * scale >= 40: return step
+    return 100
+
+def clamp_zoom_box(zb: dict, vp: dict) -> dict:
+    x1, x2 = sorted((int(zb["x1"]), int(zb["x2"])))
+    y1, y2 = sorted((int(zb["y1"]), int(zb["y2"])))
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(vp["width"], x2), min(vp["height"], y2)
+    if x2 - x1 < ZOOM_MIN_BOX:
+        x1 = max(0, min((x1 + x2) // 2 - ZOOM_MIN_BOX // 2, vp["width"] - ZOOM_MIN_BOX))
+        x2 = x1 + ZOOM_MIN_BOX
+    if y2 - y1 < ZOOM_MIN_BOX:
+        y1 = max(0, min((y1 + y2) // 2 - ZOOM_MIN_BOX // 2, vp["height"] - ZOOM_MIN_BOX))
+        y2 = y1 + ZOOM_MIN_BOX
+    return {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
+
+async def capture_zoom(page, zoom_box: dict) -> tuple:
+    vp = page.viewport_size or {"width": 1280, "height": 800}
+    zb = clamp_zoom_box(zoom_box, vp)
+    w, h = zb["x2"] - zb["x1"], zb["y2"] - zb["y1"]
+    scale = max(1.0, min(MAX_ZOOM_SCALE, ZOOM_TARGET_PX / max(w, h)))
+    page_x, page_y = await page.evaluate("() => [window.visualViewport.pageLeft, window.visualViewport.pageTop]")
+    cdp = await page.context.new_cdp_session(page)
+    try:
+        shot = await cdp.send("Page.captureScreenshot", {
+            "format": "jpeg", "quality": 90,
+            "clip": {"x": zb["x1"] + page_x, "y": zb["y1"] + page_y, "width": w, "height": h, "scale": scale},
+        })
+    finally:
+        await cdp.detach()
+    return base64.b64decode(shot["data"]), zb, scale
+
+async def collect_dom_map(page, gen: int, vp: dict) -> list:
+    elements, next_index = [], 0
+    for frame in page.frames:
+        offset_x = offset_y = 0
+        if frame != page.main_frame:
+            try:
+                box = await (await frame.frame_element()).bounding_box()
+            except Exception:
+                continue
+            if (not box or box["width"] * box["height"] < MIN_FRAME_AREA
+                    or box["x"] >= vp["width"] or box["y"] >= vp["height"]
+                    or box["x"] + box["width"] <= 0 or box["y"] + box["height"] <= 0):
+                continue
+            offset_x, offset_y = box["x"], box["y"]
+        try:
+            data = await asyncio.wait_for(frame.evaluate(HIGHLIGHT_JS, {
+                "start": next_index, "gen": gen, "interactive": INTERACTIVE_SELECTORS}), timeout=2.0)
+        except Exception as e:
+            logger.warning(f"Frame ignored ({frame.url[:80]}): {e}")
+            continue
+        for el in data.get("elements", []):
+            el["coords"][0] += offset_x
+            el["coords"][1] += offset_y
+            if frame != page.main_frame:
+                el["frame_url"] = frame.url
+            elements.append(el)
+        next_index = data.get("count", next_index)
+    return elements
+
+async def first_visible(loc, limit: int = 10):
+    for i in range(min(await loc.count(), limit)):
+        cand = loc.nth(i)
+        try:
+            if await cand.is_visible(): return cand
+        except Exception: continue
+    return loc.first
+
+async def wait_for_settle(page, quiet_ms: int = 400, timeout_ms: int = 3000):
+    try: await page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+    except Exception: pass
+    try: await page.evaluate(SETTLE_JS, [quiet_ms, timeout_ms])
+    except Exception:
+        try: await page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+        except Exception: pass
+
+def pick_lru_victim():
+    idle = [s for s in SESSIONS.values() if not s.action_lock.locked()]
+    return min(idle, key=lambda s: s.last_activity).sid if idle else None
+
+# --- SESSIONS ---
 class BrowserSession:
     def __init__(self, sid, user_id, context, idle_timeout, mode="desktop"):
         self.sid = sid
@@ -264,7 +452,7 @@ class BrowserSession:
         self.context = context
         self.idle_timeout = idle_timeout
         self.mode = mode
-        self.pages = [] # Liste des onglets ouverts
+        self.pages = []
         self.active_page_index = 0
         self.last_activity = time.time()
         self.cdp_client = None
@@ -272,72 +460,61 @@ class BrowserSession:
         self.last_screencast_poll = 0
         self.latest_frame = None
         self.frame_id = 0
+        self.index_gen = 0
+        self.new_tab_opened = False
+
+    def attach_page_tracking(self):
+        def _on_page(new_page):
+            if new_page not in self.pages:
+                self.pages.append(new_page)
+            self.active_page_index = self.pages.index(new_page)
+            self.new_tab_opened = True
+        self.context.on("page", _on_page)
 
     async def get_active_page(self):
-        # Refresh activity on every access
         self.last_activity = time.time()
         if not self.pages:
             p = await self.context.new_page()
-            # Inherit viewport from context (Fix v8.3)
-            self.pages.append(p)
-        
+            if p not in self.pages:
+                self.pages.append(p)
         if self.active_page_index >= len(self.pages):
             self.active_page_index = len(self.pages) - 1
-            
         target = self.pages[self.active_page_index]
         if target.is_closed():
             self.pages.pop(self.active_page_index)
             return await self.get_active_page()
-            
         return target
 
     async def bezier_mouse_move(self, page, target_x, target_y):
-        """Déplacement de souris fluide (Bézier Cubique + Fitts Law + Overshoot)."""
         import math
         try:
             start_x = getattr(self, 'mouse_x', random.randint(100, 800))
             start_y = getattr(self, 'mouse_y', random.randint(100, 600))
-            
             distance = math.hypot(target_x - start_x, target_y - start_y)
             if distance < 5:
                 await page.mouse.move(target_x, target_y)
                 self.mouse_x, self.mouse_y = target_x, target_y
                 return
-
-            # Fitts Law: Temps dynamique "Power User" (Accéléré)
             steps = max(5, min(15, int(distance / 60)))
-            
-            # Overshoot (Micro-correction) pour longues distances (réduit)
             overshoot_x = target_x + random.uniform(-5, 5) if distance > 300 else target_x
             overshoot_y = target_y + random.uniform(-5, 5) if distance > 300 else target_y
-            
-            # Points de contrôle balistiques
             cp1_x = start_x + (overshoot_x - start_x) * 0.3 + random.uniform(-20, 20)
             cp1_y = start_y + (overshoot_y - start_y) * 0.3 + random.uniform(-20, 20)
             cp2_x = start_x + (overshoot_x - start_x) * 0.7 + random.uniform(-20, 20)
             cp2_y = start_y + (overshoot_y - start_y) * 0.7 + random.uniform(-20, 20)
-
-            def ease_out_quad(t):
-                return t * (2 - t)
-
+            def ease_out_quad(t): return t * (2 - t)
             for i in range(1, steps + 1):
                 t = i / steps
                 et = ease_out_quad(t)
                 x = (1-et)**3 * start_x + 3*(1-et)**2 * et * cp1_x + 3*(1-et)*et**2 * cp2_x + et**3 * overshoot_x
                 y = (1-et)**3 * start_y + 3*(1-et)**2 * et * cp1_y + 3*(1-et)*et**2 * cp2_y + et**3 * overshoot_y
-                
-                # Micro-tremblements très faibles
                 x += random.uniform(-1, 1)
                 y += random.uniform(-1, 1)
-                
                 await page.mouse.move(x, y)
                 await asyncio.sleep(random.uniform(0.001, 0.005))
-                
-            # Micro-correction finale rapide
             if distance > 300:
                 await asyncio.sleep(random.uniform(0.05, 0.15))
                 await page.mouse.move(target_x, target_y)
-                
             self.mouse_x = target_x
             self.mouse_y = target_y
         except Exception as e:
@@ -346,22 +523,41 @@ class BrowserSession:
             self.mouse_x = target_x
             self.mouse_y = target_y
 
-    async def move_mouse_to_locator(self, page, locator):
-        """Scroll l'élément, récupère sa bounding box exacte et déclenche le mouvement Bézier."""
+    async def pick_hit_point(self, locator, box: dict) -> tuple:
+        fractions = [(0.5 + random.uniform(-0.15, 0.15), 0.5 + random.uniform(-0.15, 0.15)),
+                     (0.5, 0.5), (0.3, 0.5), (0.7, 0.5), (0.5, 0.3), (0.5, 0.7)]
+        try:
+            hits = await locator.evaluate(HIT_TEST_JS, fractions)
+        except Exception:
+            hits = [False] * len(fractions)
+        for (fx, fy), ok in zip(fractions, hits):
+            if ok: return box["x"] + fx * box["width"], box["y"] + fy * box["height"], True
+        return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, False
+
+    async def move_mouse_to_locator(self, page, locator) -> bool:
         try:
             await locator.scroll_into_view_if_needed(timeout=5000)
             box = await locator.bounding_box()
-            if box:
-                # Calculer un point d'impact aléatoire dans la bounding box
-                offset_x = random.uniform(-box["width"] * 0.3, box["width"] * 0.3)
-                offset_y = random.uniform(-box["height"] * 0.3, box["height"] * 0.3)
-                t_x = box["x"] + box["width"] / 2 + offset_x
-                t_y = box["y"] + box["height"] / 2 + offset_y
-                await self.bezier_mouse_move(page, t_x, t_y)
-            else:
-                await self.bezier_mouse_move(page, random.randint(100, 800), random.randint(100, 600))
+            if not box: return False
+            tx, ty, hit = await self.pick_hit_point(locator, box)
+            await self.bezier_mouse_move(page, tx, ty)
+            return hit
         except Exception as e:
             logger.warning(f"[{self.sid}] Unable to compute bounding box: {e}")
+            return False
+
+    async def human_wheel_scroll(self, page, delta_y: float):
+        vp = page.viewport_size or {"width": 1280, "height": 800}
+        mx, my = getattr(self, "mouse_x", -1), getattr(self, "mouse_y", -1)
+        if not (0 < mx < vp["width"] and 0 < my < vp["height"]):
+            await self.bezier_mouse_move(page, vp["width"] * random.uniform(0.4, 0.6), vp["height"] * random.uniform(0.4, 0.6))
+        steps = max(3, min(12, int(abs(delta_y) / 120)))
+        remaining = float(delta_y)
+        for i in range(steps):
+            chunk = remaining if i == steps - 1 else remaining / (steps - i) * random.uniform(0.8, 1.2)
+            await page.mouse.wheel(0, chunk)
+            remaining -= chunk
+            await asyncio.sleep(random.uniform(0.03, 0.09))
 
     async def close(self):
         try:
@@ -377,19 +573,16 @@ async def lifespan(app: FastAPI):
     state.browser = await state.playwright.chromium.launch(
         headless=True,
         args=[
-            "--no-sandbox", 
-            "--disable-gpu", 
-            "--disable-dev-shm-usage",
-            "--disable-background-timer-throttling",
-            "--disable-extensions",
-            "--disable-sync",
-            f"--limit-fps={RENDERING_FPS}",
-            "--disable-blink-features=AutomationControlled"
+            "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
+            "--disable-background-timer-throttling", "--disable-extensions", "--disable-sync",
+            f"--limit-fps={RENDERING_FPS}", "--disable-blink-features=AutomationControlled"
         ]
     )
+    state.overlay_context = await state.browser.new_context(device_scale_factor=1)
     cleanup_task = asyncio.create_task(session_cleanup_loop())
     yield
     cleanup_task.cancel()
+    await state.overlay_context.close()
     await state.browser.close()
     await state.playwright.stop()
 
@@ -406,12 +599,10 @@ async def session_cleanup_loop():
                 logger.info(f"[{sid}] ⏰ Cleaning idle session")
                 session = SESSIONS.pop(sid)
                 await session.close()
-                
             for sid, s in SESSIONS.items():
                 if s.cdp_client and (now - s.last_screencast_poll > 2.5) and s.last_screencast_poll > 0:
                     logger.info(f"[{sid}] 🛑 Watchdog: Stopping idle screencast")
-                    try:
-                        asyncio.create_task(s.cdp_client.send('Page.stopScreencast'))
+                    try: asyncio.create_task(s.cdp_client.send('Page.stopScreencast'))
                     except: pass
                     s.cdp_client = None
                     s.last_screencast_poll = 0
@@ -420,12 +611,10 @@ async def session_cleanup_loop():
 async def start_session(request: Request):
     data = await request.json()
     user_id = request.headers.get('X-OpenWebUI-User-Id', 'anonymous')
-    sid = data.get("session_id") # C'est le chat_id permanent
+    sid = data.get("session_id")
     idle_timeout = data.get("idle_timeout", IDLE_TIMEOUT_DEFAULT)
     mode = data.get("mode", "mobile")
-
-    if not sid:
-        return {"status": "error", "message": "ERREUR_TECHNIQUE : Identifiant de chat manquant."}
+    if not sid: return {"status": "error", "message": "ERREUR_TECHNIQUE : Identifiant de chat manquant."}
 
     async with SESSIONS_LOCK:
         if sid in SESSIONS:
@@ -438,104 +627,65 @@ async def start_session(request: Request):
                 await old_session.close()
         
         if len(SESSIONS) >= MAX_SESSIONS:
-            return {"status": "error", "message": "ERREUR_CAPACITE : Le worker est sature."}
+            victim = pick_lru_victim()
+            if victim is None:
+                return {"status": "error", "message": "ERREUR_CAPACITE : toutes les sessions exécutent une action."}
+            logger.info(f"[{victim}] ♻️ LRU eviction (capacity {MAX_SESSIONS})")
+            await SESSIONS.pop(victim).close()
         
-        # Configuration Contextuelle (Tablette / Desktop)
         if mode == "mobile":
             ctx_args = {
                 "user_agent": "Mozilla/5.0 (iPad; CPU OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
                 "viewport": {"width": 820, "height": 1180},
-                "device_scale_factor": 2,
-                "is_mobile": True,
-                "has_touch": True
+                "device_scale_factor": 2, "is_mobile": True, "has_touch": True
             }
         else:
             ctx_args = {
                 "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "viewport": {"width": 1280, "height": 800},
-                "device_scale_factor": 1
+                "viewport": {"width": 1280, "height": 800}, "device_scale_factor": 1
             }
 
         context = await state.browser.new_context(**ctx_args)
         
-        # Injection Stealth (Anti-Bot)
         stealth_script = """
-            // Purge atomique du webdriver (Contournement strict de la détection Prototype)
-            try {
-                delete Navigator.prototype.webdriver;
-            } catch(e) {}
-
-            // Instanciation native de navigator.plugins (Spoofing absolu PluginArray)
+            try { delete Navigator.prototype.webdriver; } catch(e) {}
             try {
                 const mockPlugins = Object.create(PluginArray.prototype);
-                
                 const p1 = Object.create(Plugin.prototype);
                 Object.defineProperties(p1, { name: { value: 'Chrome PDF Plugin' }, filename: { value: 'internal-pdf-viewer' }, description: { value: 'Portable Document Format' } });
-                
                 const p2 = Object.create(Plugin.prototype);
                 Object.defineProperties(p2, { name: { value: 'Chrome PDF Viewer' }, filename: { value: 'mhjimiapiapergbkpnjafkikajddhbdk' }, description: { value: '' } });
-                
                 const p3 = Object.create(Plugin.prototype);
                 Object.defineProperties(p3, { name: { value: 'Native Client' }, filename: { value: 'internal-nacl-plugin' }, description: { value: '' } });
-
-                Object.defineProperties(mockPlugins, {
-                    0: { value: p1 },
-                    1: { value: p2 },
-                    2: { value: p3 },
-                    length: { value: 3 }
-                });
-
+                Object.defineProperties(mockPlugins, { 0: { value: p1 }, 1: { value: p2 }, 2: { value: p3 }, length: { value: 3 } });
                 Object.defineProperty(mockPlugins, 'item', { value: function(index) { return this[index]; } });
                 Object.defineProperty(mockPlugins, 'namedItem', { value: function(name) { return [p1, p2, p3].find(p => p.name === name); } });
                 Object.defineProperty(mockPlugins, 'refresh', { value: function() {} });
-
                 Object.defineProperty(navigator, 'plugins', { get: () => mockPlugins });
             } catch (e) {}
-
-            Object.defineProperty(navigator, 'languages', {
-                get: () => ['fr-FR', 'fr', 'en-US', 'en'],
-            });
-
-            // Falsification de window.chrome (Indicateur Headless)
+            Object.defineProperty(navigator, 'languages', { get: () => ['fr-FR', 'fr', 'en-US', 'en'], });
             if (!window.chrome) {
                 window.chrome = {
-                    app: {
-                        isInstalled: false,
-                        InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
-                        RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }
-                    },
+                    app: { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } },
                     runtime: {}
                 };
             }
-
-            // Falsification des permissions (Résolution du conflit Notification)
             const originalQuery = window.navigator.permissions.query;
             window.navigator.permissions.query = new Proxy(originalQuery, {
                 apply: (target, thisArg, args) => {
-                    if (args && args[0] && args[0].name === 'notifications') {
-                        return Promise.resolve({ state: Notification.permission });
-                    }
+                    if (args && args[0] && args[0].name === 'notifications') return Promise.resolve({ state: Notification.permission });
                     return Reflect.apply(target, thisArg, args);
                 }
             });
-
-            // Falsification du rendu WebGL (Masquage de SwiftShader / VM)
             try {
                 const getParameterProxyHandler = {
                     apply: function (target, thisArg, args) {
                         const param = args[0];
-                        // 37445 = UNMASKED_VENDOR_WEBGL
-                        if (param === 37445) {
-                            return 'Google Inc. (NVIDIA)';
-                        }
-                        // 37446 = UNMASKED_RENDERER_WEBGL
-                        if (param === 37446) {
-                            return 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)';
-                        }
+                        if (param === 37445) return 'Google Inc. (NVIDIA)';
+                        if (param === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)';
                         return Reflect.apply(target, thisArg, args);
                     }
                 };
-
                 ['WebGLRenderingContext', 'WebGL2RenderingContext'].forEach((ctx) => {
                     if (window[ctx] && window[ctx].prototype && window[ctx].prototype.getParameter) {
                         const original = window[ctx].prototype.getParameter;
@@ -543,24 +693,18 @@ async def start_session(request: Request):
                     }
                 });
             } catch (e) {}
-
-            // Masquage des dimensions Headless (outerWidth/outerHeight = 0 par défaut)
             if (window.outerWidth === 0 || window.outerHeight === 0) {
                 Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
                 Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
             }
-
-            // Falsification du Hardware (Masquer les limites d'un conteneur Docker)
             Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
             Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-
-            // Cohérence OS/Plateforme (Alignement sur l'User-Agent)
             const isIpad = navigator.userAgent.includes('iPad');
             Object.defineProperty(navigator, 'platform', { get: () => isIpad ? 'MacIntel' : 'Win32' });
         """
         await context.add_init_script(stealth_script)
-        
         session = BrowserSession(sid, user_id, context, idle_timeout, mode)
+        session.attach_page_tracking()
         SESSIONS[sid] = session
         logger.info(f"[{sid}] 🆕 v6 Session created (Mode: {mode})")
         return {"session_id": sid, "status": "success"}
@@ -569,10 +713,8 @@ async def find_element_and_frame(page, selector):
     for frame in page.frames:
         try:
             loc = frame.locator(selector)
-            if await loc.count() > 0:
-                return loc.first
-        except:
-            pass
+            if await loc.count() > 0: return await first_visible(loc)
+        except: pass
     return None
 
 @app.post("/screencast/start")
@@ -580,41 +722,26 @@ async def screencast_start(request: Request):
     data = await request.json()
     sid = data.get("session_id")
     session = SESSIONS.get(sid)
-    if not session:
-        return {"status": "error", "message": "Session introuvable."}
-    
+    if not session: return {"status": "error", "message": "Session introuvable."}
     page = await session.get_active_page()
-    if not page:
-        return {"status": "error", "message": "Aucune page active."}
-        
+    if not page: return {"status": "error", "message": "Aucune page active."}
     try:
         if session.cdp_client:
-            try:
-                await session.cdp_client.send('Page.stopScreencast')
+            try: await session.cdp_client.send('Page.stopScreencast')
             except: pass
             session.cdp_client = None
-            
         session.cdp_client = await page.context.new_cdp_session(page)
-        
         vp = page.viewport_size
         max_w = (vp["width"] // 2) if vp else 640
         max_h = (vp["height"] // 2) if vp else 400
-        
         async def handle_frame(event):
             session.latest_frame = event['data']
             session.frame_id += 1
-            try:
-                await session.cdp_client.send('Page.screencastFrameAck', {'sessionId': event['sessionId']})
-            except:
-                pass
-                
+            try: await session.cdp_client.send('Page.screencastFrameAck', {'sessionId': event['sessionId']})
+            except: pass
         session.cdp_client.on("Page.screencastFrame", handle_frame)
         await session.cdp_client.send('Page.startScreencast', {
-            'format': 'jpeg',
-            'quality': 50,
-            'maxWidth': max_w,
-            'maxHeight': max_h,
-            'everyNthFrame': 1
+            'format': 'jpeg', 'quality': 50, 'maxWidth': max_w, 'maxHeight': max_h, 'everyNthFrame': 1
         })
         return {"status": "success"}
     except Exception as e:
@@ -625,45 +752,30 @@ async def screencast_start(request: Request):
 async def screencast_stop(request: Request):
     data = await request.json()
     sid = data.get("session_id")
-    hd_b64 = data.get("hd_b64")
     session = SESSIONS.get(sid)
-    if not session:
-        return {"status": "error", "message": "Session introuvable."}
-        
+    if not session: return {"status": "error", "message": "Session introuvable."}
     try:
         if session.cdp_client:
-            try:
-                await session.cdp_client.send('Page.stopScreencast')
+            try: await session.cdp_client.send('Page.stopScreencast')
             except: pass
     except Exception as e:
         logger.error(f"[{sid}] Screencast stop error: {e}")
     finally:
         if session.cdp_client:
-            try:
-                await session.cdp_client.detach()
-            except:
-                pass
+            try: await session.cdp_client.detach()
+            except: pass
             session.cdp_client = None
         session.last_screencast_poll = 0
-        
-    return {
-        "status": "success", 
-        "screenshot_b64": hd_b64, 
-        "webp_b64": None
-    }
+    return {"status": "success"}
 
 @app.post("/screencast/latest")
 async def screencast_latest(request: Request):
     data = await request.json()
     sid = data.get("session_id")
     last_frame_id = data.get("last_frame_id", 0)
-    
     session = SESSIONS.get(sid)
-    if not session:
-        return {"status": "error", "message": "Session introuvable."}
-        
+    if not session: return {"status": "error", "message": "Session introuvable."}
     session.last_screencast_poll = time.time()
-    
     if not session.cdp_client:
         page = await session.get_active_page()
         if page:
@@ -672,49 +784,30 @@ async def screencast_latest(request: Request):
                 vp = page.viewport_size
                 max_w = (vp["width"] // 2) if vp else 640
                 max_h = (vp["height"] // 2) if vp else 400
-                
                 async def handle_frame(event):
                     session.latest_frame = event['data']
                     session.frame_id += 1
-                    try:
-                        await session.cdp_client.send('Page.screencastFrameAck', {'sessionId': event['sessionId']})
+                    try: await session.cdp_client.send('Page.screencastFrameAck', {'sessionId': event['sessionId']})
                     except: pass
-                        
                 session.cdp_client.on("Page.screencastFrame", handle_frame)
                 await session.cdp_client.send('Page.startScreencast', {
-                    'format': 'jpeg',
-                    'quality': 50,
-                    'maxWidth': max_w,
-                    'maxHeight': max_h,
-                    'everyNthFrame': 1
+                    'format': 'jpeg', 'quality': 50, 'maxWidth': max_w, 'maxHeight': max_h, 'everyNthFrame': 1
                 })
             except Exception as e:
                 logger.error(f"[{sid}] Auto-Resume error: {e}")
-                
     start_time = time.time()
     while session.frame_id == last_frame_id and time.time() - start_time < 1.0:
         await asyncio.sleep(0.05)
-        
     page = await session.get_active_page()
     current_url = page.url if page else ""
-        
-    return {
-        "status": "success",
-        "frame_id": session.frame_id,
-        "frame_b64": session.latest_frame,
-        "url": current_url
-    }
+    return {"status": "success", "frame_id": session.frame_id, "frame_b64": session.latest_frame, "url": current_url}
 
 @app.post("/action")
 async def browser_action(request: Request):
     data = await request.json()
     sid, action, params = data.get("session_id"), data.get("action"), data.get("params", {})
-    
     session = SESSIONS.get(sid)
-    if not session:
-        return {"status": "error", "error_type": "SESSION_NOT_FOUND", "message": "RESTART_REQUIRED"}
-    
-    # Heartbeat immediat
+    if not session: return {"status": "error", "error_type": "SESSION_NOT_FOUND", "message": "RESTART_REQUIRED"}
     session.last_activity = time.time()
 
     try:
@@ -724,14 +817,10 @@ async def browser_action(request: Request):
 
             if action == "interact_a11y":
                 method, value, a_type = params.get("method"), params.get("value"), params.get("action_type")
-                name = params.get("name")
-                text_to_type = params.get("text_to_type", "")
-            
+                name, text_to_type = params.get("name"), params.get("text_to_type", "")
                 logger.info(f"[{sid}] 🖱️ Semantic Interact (A11y): {method}={value} name={name} ({a_type})")
-            
-                if method == "role":
-                    if name: loc = page.get_by_role(value, name=name)
-                    else: loc = page.get_by_role(value)
+                
+                if method == "role": loc = page.get_by_role(value, name=name) if name else page.get_by_role(value)
                 elif method == "label": loc = page.get_by_label(value)
                 elif method == "text": loc = page.get_by_text(value)
                 else: return {"status": "error", "message": "Method invalide."}
@@ -742,35 +831,40 @@ async def browser_action(request: Request):
                         loc = page.get_by_text(name)
                         if await loc.count() == 0:
                             return {"status": "error", "message": f"ERREUR_DOM : Élément introuvable ({method}={value}, name={name})."}
-                    else:
-                        return {"status": "error", "message": f"ERREUR_DOM : Élément introuvable ({method}={value})."}
-            
-                loc = loc.first
-                await session.move_mouse_to_locator(page, loc)
-            
-                # Délai humain avant interaction (visée oculaire)
+                    else: return {"status": "error", "message": f"ERREUR_DOM : Élément introuvable ({method}={value})."}
+                
+                loc = await first_visible(loc)
+                hit = await session.move_mouse_to_locator(page, loc)
                 await asyncio.sleep(random.uniform(0.15, 0.4))
-            
+                
                 if a_type == "click":
-                    try:
-                        await loc.click(timeout=10000)
-                    except Exception as e:
-                        logger.warning(f"[{sid}] Native semantic click failed, trying force: {e}")
-                        await loc.click(force=True, timeout=5000)
-                    try:
-                        box = await loc.bounding_box()
-                        if box:
-                            await asyncio.sleep(random.uniform(0.05, 0.15))
-                            await session.bezier_mouse_move(page, max(0, box['x'] + box['width']/2 + random.uniform(30, 100) * random.choice([1, -1])), max(0, box['y'] + box['height']/2 + random.uniform(30, 100) * random.choice([1, -1])))
-                    except Exception:
-                        pass
+                    if hit:
+                        await page.mouse.down()
+                        await asyncio.sleep(random.uniform(0.05, 0.12))
+                        await page.mouse.up()
+                    else:
+                        try: await loc.click(timeout=4000)
+                        except Exception as e:
+                            logger.warning(f"[{sid}] Click not actionable, forcing: {e}")
+                            await loc.click(force=True, timeout=5000)
+                        result["warning"] = "Point d'impact non vérifié (élément possiblement masqué) : contrôler l'effet du clic."
+                    result["hit_verified"] = hit
                 elif a_type == "type":
                     await loc.click(timeout=10000)
+                    if params.get("clear_before", True):
+                        await page.keyboard.press("Control+A")
+                        await asyncio.sleep(random.uniform(0.05, 0.15))
+                        await page.keyboard.press("Backspace")
                     for char in text_to_type:
                         await loc.press_sequentially(char)
                         delay_ms = max(30, min(150, int(random.gauss(80, 40))))
                         await asyncio.sleep(delay_ms / 1000.0)
                         if random.random() < 0.10: await asyncio.sleep(random.uniform(0.2, 0.6))
+                elif a_type == "select":
+                    option = text_to_type or ""
+                    try: await loc.select_option(label=option, timeout=5000)
+                    except Exception: await loc.select_option(value=option, timeout=5000)
+                    result["value"] = option
                 elif a_type == "hover":
                     await loc.hover(timeout=10000)
                 elif a_type == "download":
@@ -780,21 +874,16 @@ async def browser_action(request: Request):
                             async with page.expect_download(timeout=120000) as download_info:
                                 await loc.click()
                             download = await download_info.value
-                        
                             dl_dir = os.path.join("/app/downloads", session.user_id, sid, "browser")
                             os.makedirs(dl_dir, exist_ok=True)
-                        
                             filename = download.suggested_filename
                             final_path = os.path.join(dl_dir, f"{file_id}_{filename}")
-                        
                             await download.save_as(final_path)
                             logger.info(f"[{sid}] 📥 Download completed: {final_path}")
                         except Exception as e:
                             logger.error(f"[{sid}] ⚠️ Download error: {e}")
-
-                        asyncio.create_task(handle_download())
-                        return {"status": "downloading", "action": a_type, "message": "Téléchargement initié en tâche de fond."}
-                    
+                    asyncio.create_task(handle_download())
+                    return {"status": "downloading", "action": a_type, "message": "Téléchargement initié en tâche de fond."}
                 elif a_type == "save_target":
                     async def stealth_download():
                         try:
@@ -814,24 +903,18 @@ async def browser_action(request: Request):
                             dest_path = os.path.join(dl_dir, f"{file_id}_{filename}")
                             response = await page.context.request.get(target_url)
                             body = await response.body()
-                            with open(dest_path, "wb") as f:
-                                f.write(body)
+                            with open(dest_path, "wb") as f: f.write(body)
                             logger.info(f"[{sid}] 📥 Stealth Download completed: {dest_path}")
                         except Exception as e:
                             logger.error(f"[{sid}] ⚠️ Stealth Download error: {e}")
-
                     asyncio.create_task(stealth_download())
                     return {"status": "downloading", "action": a_type, "message": "Téléchargement furtif initié en tâche de fond."}
                 
-                try:
-                    await page.wait_for_load_state("domcontentloaded", timeout=5000)
-                except:
-                    pass
+                await wait_for_settle(page, quiet_ms=400, timeout_ms=3000)
                 result["url"] = page.url
 
             elif action == "interact_dom":
                 a_type = params.get("action_type")
-                
                 if a_type == "click_current":
                     logger.info(f"[{sid}] 🖱️ Interact DOM (click_current) on spot")
                     await page.mouse.down()
@@ -839,10 +922,7 @@ async def browser_action(request: Request):
                     await page.mouse.up()
                     return {"status": "success", "action": a_type, "url": page.url, "message": "Pression sur place effectuée."}
 
-                idx = params.get("index")
-                x, y = params.get("x"), params.get("y")
-                text_to_type = params.get("text_to_type", "")
-            
+                idx, x, y, text_to_type = params.get("index"), params.get("x"), params.get("y"), params.get("text_to_type", "")
                 if idx is None and (x is None or y is None): 
                     return {"status": "error", "message": "ERREUR_PARAMETRE : Cible manquante (index ou x/y requis)."}
                 
@@ -850,8 +930,6 @@ async def browser_action(request: Request):
                     css_x, css_y = float(x), float(y)
                     logger.info(f"[{sid}] 🖱️ Interact DOM ({a_type}) Coordinates: Target CSS({css_x}, {css_y})")
                     await session.bezier_mouse_move(page, css_x, css_y)
-                
-                    # Délai humain avant interaction (visée oculaire)
                     await asyncio.sleep(random.uniform(0.15, 0.4))
                 
                     if a_type == "click":
@@ -860,47 +938,49 @@ async def browser_action(request: Request):
                         await page.mouse.up()
                         await asyncio.sleep(random.uniform(0.05, 0.15))
                         await session.bezier_mouse_move(page, max(0, css_x + random.uniform(2, 5) * random.choice([1, -1])), max(0, css_y + random.uniform(2, 5) * random.choice([1, -1])))
-                    elif a_type == "hover":
-                        pass
                     elif a_type == "type":
                         await page.mouse.down()
                         await asyncio.sleep(random.uniform(0.05, 0.12))
                         await page.mouse.up()
+                        if params.get("clear_before", True):
+                            await page.keyboard.press("Control+A")
+                            await asyncio.sleep(random.uniform(0.05, 0.15))
+                            await page.keyboard.press("Backspace")
                         for char in text_to_type:
                             await page.keyboard.press(char)
                             delay_ms = max(30, min(150, int(random.gauss(80, 40))))
                             await asyncio.sleep(delay_ms / 1000.0)
                             if random.random() < 0.10: await asyncio.sleep(random.uniform(0.2, 0.6))
+                    elif a_type == "select":
+                        return {"status": "error", "message": "ERREUR_PARAMETRE : select exige un index ou une cible A11y."}
                 else:
-                    real_selector = f'[data-echo-index="{idx}"]'
+                    real_selector = f'[data-echo-index="{session.index_gen}:{idx}"]'
                     logger.info(f"[{sid}] 🖱️ Interact DOM ({a_type}) Target: {real_selector}")
                     loc = await find_element_and_frame(page, real_selector)
-                
-                    if not loc:
-                        return {"status": "error", "message": "ERREUR_DOM : Élément introuvable dans aucune frame."}
+                    if not loc: return {"status": "error", "message": "ERREUR_DOM : Élément introuvable dans aucune frame."}
                     
-                    await session.move_mouse_to_locator(page, loc)
-                
-                    # Délai humain avant interaction (visée oculaire)
+                    hit = await session.move_mouse_to_locator(page, loc)
                     await asyncio.sleep(random.uniform(0.15, 0.4))
                 
                     if a_type == "click":
-                        try:
+                        if hit:
                             await page.mouse.down()
                             await asyncio.sleep(random.uniform(0.05, 0.12))
                             await page.mouse.up()
-                        except Exception as e:
-                            logger.warning(f"[{sid}] Manual click failed, trying force: {e}")
-                            await loc.click(force=True, timeout=5000)
-                        try:
-                            box = await loc.bounding_box()
-                            if box:
-                                await asyncio.sleep(random.uniform(0.05, 0.15))
-                                await session.bezier_mouse_move(page, max(0, box['x'] + box['width']/2 + random.uniform(2, 5) * random.choice([1, -1])), max(0, box['y'] + box['height']/2 + random.uniform(2, 5) * random.choice([1, -1])))
-                        except Exception:
-                            pass
+                        else:
+                            try: await loc.click(timeout=4000)
+                            except Exception as e:
+                                logger.warning(f"[{sid}] Manual click failed, trying force: {e}")
+                                await loc.click(force=True, timeout=5000)
+                            result["warning"] = "Point d'impact non vérifié (élément possiblement masqué) : contrôler l'effet du clic."
+                        result["hit_verified"] = hit
                     elif a_type == "hover":
                         await loc.hover(timeout=10000)
+                    elif a_type == "select":
+                        option = text_to_type or ""
+                        try: await loc.select_option(label=option, timeout=5000)
+                        except Exception: await loc.select_option(value=option, timeout=5000)
+                        result["value"] = option
                     elif a_type == "download":
                         async def handle_download():
                             try:
@@ -908,18 +988,14 @@ async def browser_action(request: Request):
                                 async with page.expect_download(timeout=120000) as download_info:
                                     await loc.click()
                                 download = await download_info.value
-                            
                                 dl_dir = os.path.join("/app/downloads", session.user_id, sid, "browser")
                                 os.makedirs(dl_dir, exist_ok=True)
-                            
                                 filename = download.suggested_filename
                                 final_path = os.path.join(dl_dir, f"{file_id}_{filename}")
-                            
                                 await download.save_as(final_path)
                                 logger.info(f"[{sid}] 📥 Download completed: {final_path}")
                             except Exception as e:
                                 logger.error(f"[{sid}] ⚠️ Download error: {e}")
-
                         asyncio.create_task(handle_download())
                         return {"status": "downloading", "action": a_type, "message": "Téléchargement initié en tâche de fond."}
                     elif a_type == "save_target":
@@ -941,26 +1017,25 @@ async def browser_action(request: Request):
                                 dest_path = os.path.join(dl_dir, f"{file_id}_{filename}")
                                 response = await page.context.request.get(target_url)
                                 body = await response.body()
-                                with open(dest_path, "wb") as f:
-                                    f.write(body)
+                                with open(dest_path, "wb") as f: f.write(body)
                                 logger.info(f"[{sid}] 📥 Stealth Download completed: {dest_path}")
                             except Exception as e:
                                 logger.error(f"[{sid}] ⚠️ Stealth Download error: {e}")
-
                         asyncio.create_task(stealth_download())
                         return {"status": "downloading", "action": a_type, "message": "Téléchargement furtif initié en tâche de fond."}
                     elif a_type == "type":
                         await loc.click(timeout=10000)
+                        if params.get("clear_before", True):
+                            await page.keyboard.press("Control+A")
+                            await asyncio.sleep(random.uniform(0.05, 0.15))
+                            await page.keyboard.press("Backspace")
                         for char in text_to_type:
                             await loc.press_sequentially(char)
                             delay_ms = max(30, min(150, int(random.gauss(80, 40))))
                             await asyncio.sleep(delay_ms / 1000.0)
                             if random.random() < 0.10: await asyncio.sleep(random.uniform(0.2, 0.6))
                         
-                try:
-                    await page.wait_for_load_state("domcontentloaded", timeout=5000)
-                except:
-                    pass
+                await wait_for_settle(page, quiet_ms=400, timeout_ms=3000)
                 result["url"] = page.url
 
             elif action == "inspect_page":
@@ -970,37 +1045,24 @@ async def browser_action(request: Request):
                 if target == "url":
                     idx = params.get("index")
                     if idx is None: return {"status": "error", "message": "Index manquant pour extraire l'URL."}
-                    val = await page.evaluate(f"(sel) => {{ const el = document.querySelector(sel); return el ? (el.href || el.getAttribute('href')) : null; }}", f'[data-echo-index="{idx}"]')
+                    val = await page.evaluate(f"(sel) => {{ const el = document.querySelector(sel); return el ? (el.href || el.getAttribute('href')) : null; }}", f'[data-echo-index="{session.index_gen}:{idx}"]')
                     result["value"] = val
                     result["url"] = page.url
                 
                 elif target == "search_dom":
-                    query = str(params.get("value", "")).lower().replace("'", "\\'")
-                    script = f"""
-                    () => {{
-                        let elements = document.querySelectorAll('[data-echo-index]');
-                        for (let el of elements) {{
-                            let text = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('alt') || '').toLowerCase();
-                            if (text.includes('{query}')) {{
-                                el.scrollIntoView({{behavior: 'smooth', block: 'center'}});
-                                return {{
-                                    "found": true,
-                                    "index": parseInt(el.getAttribute('data-echo-index')),
-                                    "text": text.substring(0, 100)
-                                }};
-                            }}
-                        }}
-                        return {{"found": false}};
-                    }}
-                    """
-                    res = await page.evaluate(script)
-                    if res.get("found"): await asyncio.sleep(1)
-                    result["search_result"] = res
+                    res = await page.evaluate(SEARCH_DOM_JS, {"query": params.get("value", ""), "interactive": INTERACTIVE_SELECTORS})
+                    if res.get("found") and abs(res.get("delta_y", 0)) > (page.viewport_size or {"height": 800})["height"] * 0.3:
+                        await session.human_wheel_scroll(page, res["delta_y"])
+                        await wait_for_settle(page, quiet_ms=250, timeout_ms=1500)
+                        if not await page.evaluate(FOUND_IN_VIEW_JS):
+                            await page.evaluate("() => document.querySelector('[data-echo-found]')?.scrollIntoView({block: 'center'})")
+                            await asyncio.sleep(0.3)
+                    result["search_result"] = {k: v for k, v in res.items() if k != "delta_y"}
                     result["url"] = page.url
 
                 elif target == "read_text":
                     content = await page.content()
-                    text_content = await asyncio.to_thread(h2t.handle, content)
+                    text_content = await asyncio.to_thread(html_to_markdown, content)
                     result["content"] = text_content[:2000000]
                     result["url"] = page.url
 
@@ -1015,286 +1077,76 @@ async def browser_action(request: Request):
                         tree_data = await client.send("Accessibility.getFullAXTree")
                         nodes = tree_data.get("nodes", [])
                         node_map = {n["nodeId"]: n for n in nodes}
-                    
                         def format_cdp_node(node_id, depth=0):
                             n = node_map.get(node_id)
                             if not n: return []
                             lines = []
                             ignored = n.get("ignored", False)
-                        
                             if not ignored:
                                 role = n.get("role", {}).get("value", "")
                                 name = n.get("name", {}).get("value", "")
                                 value = n.get("value", {}).get("value", "")
-                            
-                                # Filter out noisy and useless internal Chrome CDP nodes
-                                if role == "StaticText" and not name and not value:
-                                    return lines
-                                if role in ["generic", "RootWebArea", "WebArea"] and not name and not value:
-                                    # We don't return lines immediately as they might have children, we just skip appending them
-                                    role = "" # This will prevent it from being appended if name and value are also empty
-                                
+                                if role == "StaticText" and not name and not value: return lines
+                                if role in ["generic", "RootWebArea", "WebArea"] and not name and not value: role = ""
                                 if role or name or value:
                                     line = "  " * depth + f"[{role}] {name}"
                                     if value: line += f" (val: {value})"
                                     lines.append(line)
                                     depth += 1
-                                
                             for cid in n.get("childIds", []):
                                 lines.extend(format_cdp_node(cid, depth))
                             return lines
-                    
                         root_id = nodes[0]["nodeId"] if nodes else None
                         result_lines = format_cdp_node(root_id) if root_id else []
                         result["content"] = "\n".join(result_lines) if result_lines else "Arbre A11y vide ou indisponible."
                     except Exception as e:
                         logger.error(f"[{sid}] CDP A11y Error: {e}")
                         result["content"] = f"Erreur d'extraction A11y : {str(e)}"
+                    finally:
+                        try: await client.detach()
+                        except: pass
                     result["url"] = page.url
 
                 elif target in ["vision", "dom_map"]:
                     vision_grid = params.get("vision_grid", False)
-                    vision_grid_step = params.get("vision_grid_step", 48)
+                    vision_grid_step = int(params.get("vision_grid_step", 100))
+                    zoom_box = params.get("zoom_box")
                     await page.bring_to_front()
-                    await asyncio.sleep(0.5)
-                
-                    # ALGORITHME ADAPTATIF : Qualité maximale OCR garantie sans crash Socket.IO (1Mo)
-                    # 720 000 octets bruts = ~960 Ko en Base64.
-                    quality_step = 95
-                    clean_bytes = await page.screenshot(type="jpeg", quality=quality_step)
-                    while len(clean_bytes) > 720000 and quality_step > 40:
-                        quality_step -= 5
-                        clean_bytes = await page.screenshot(type="jpeg", quality=quality_step)
+                    await wait_for_settle(page, quiet_ms=300, timeout_ms=1500)
+                    vp = page.viewport_size or {"width": 1280, "height": 800}
+                    clean_bytes = await jpeg_capped(lambda q: page.screenshot(type="jpeg", quality=q, scale="css"))
                     clean_b64 = base64.b64encode(clean_bytes).decode('utf-8')
                 
                     all_elements = []
-                    global_index = 0
-                
-                    for frame in page.frames:
-                        offset_x, offset_y = 0, 0
-                        try:
-                            frame_el = await frame.frame_element()
-                            if frame_el:
-                                box = await frame_el.bounding_box()
-                                if box:
-                                    offset_x, offset_y = box['x'], box['y']
-                        except:
-                            pass
-                        
-                        try:
-                            vision_data = await asyncio.wait_for(frame.evaluate(HIGHLIGHT_JS, global_index), timeout=2.0)
-                            elements = vision_data.get("elements", [])
-                            for el in elements:
-                                el['coords'][0] += offset_x
-                                el['coords'][1] += offset_y
-                                el['frame_url'] = frame.url
-                                all_elements.append(el)
-                            global_index = vision_data.get("count", global_index)
-                        except Exception as e:
-                            logger.warning(f"[{sid}] Failed to extract frame: {e}")
+                    if params.get("reindex", True):
+                        session.index_gen += 1
+                        all_elements = await collect_dom_map(page, session.index_gen, vp)
 
-                    try:
-                        mx = int(getattr(session, 'mouse_x', 0))
-                        my = int(getattr(session, 'mouse_y', 0))
-                    except Exception:
-                        mx, my = 0, 0
-
-                    vp = page.viewport_size
+                    mouse = [int(session.mouse_x), int(session.mouse_y)] if hasattr(session, "mouse_x") else None
                     result.update({
-                        "viewport": vp,
-                        "mouse_position": [mx, my],
-                        "metadata": all_elements, 
-                        "count": global_index, 
-                        "url": page.url, 
-                        "tab_index": getattr(session, 'active_page_index', 0), 
-                        "tab_count": len(getattr(session, 'pages', [page]))
+                        "viewport": vp, "mouse_position": mouse, "metadata": all_elements,
+                        "count": len(all_elements), "url": page.url,
+                        "tab_index": session.active_page_index, "tab_count": len(session.pages)
                     })
-                
-                    ghost_page = await session.context.new_page()
-                    zoom_box = params.get("zoom_box")
-                    zb_js = f"const zb = {{x1: {int(zoom_box['x1'])}, y1: {int(zoom_box['y1'])}, x2: {int(zoom_box['x2'])}, y2: {int(zoom_box['y2'])}}};" if zoom_box else "const zb = null;"
-                    
-                    if vision_grid:
-                        draw_script = f"""
-                        () => {{
-                            document.body.style.margin = '0';
-                            document.body.style.overflow = 'hidden';
-                            document.body.style.backgroundColor = '#222';
-                            const img = new Image();
-                            img.style.width = window.innerWidth + 'px';
-                            img.style.height = window.innerHeight + 'px';
-                            img.style.display = 'block';
-                            img.style.position = 'absolute';
-                            img.style.top = '0';
-                            img.style.left = '0';
-                            img.src = 'data:image/png;base64,{clean_b64}';
-                            img.onload = () => {{
-                                const canvas = document.createElement('canvas');
-                                canvas.width = window.innerWidth;
-                                canvas.height = window.innerHeight;
-                                canvas.style.position = 'absolute';
-                                canvas.style.top = '0';
-                                canvas.style.left = '0';
-                                document.body.appendChild(img);
-                                document.body.appendChild(canvas);
-                                const ctx = canvas.getContext('2d');
-                                ctx.font = 'bold 14px monospace';
-                                ctx.textBaseline = 'top';
-                                ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
-                                ctx.fillStyle = 'white';
-                                ctx.lineWidth = 1;
-                                
-                                const drawText = (text, tx, ty) => {{
-                                    ctx.lineWidth = 4;
-                                    ctx.strokeStyle = 'black';
-                                    ctx.strokeText(text, tx, ty);
-                                    ctx.fillText(text, tx, ty);
-                                    ctx.lineWidth = 1;
-                                    ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
-                                }};
-                                }};
-                                {zb_js}
 
-                                if (zb) {{
-                                    const cx = Math.floor((zb.x1 + zb.x2) / 2);
-                                    const cy = Math.floor((zb.y1 + zb.y2) / 2);
-                                    
-                                    // Viseur (Croix)
-                                    ctx.beginPath();
-                                    ctx.moveTo(cx - 20, cy);
-                                    ctx.lineTo(cx + 20, cy);
-                                    ctx.moveTo(cx, cy - 20);
-                                    ctx.lineTo(cx, cy + 20);
-                                    ctx.lineWidth = 3;
-                                    ctx.strokeStyle = 'red';
-                                    ctx.stroke();
-                                    
-                                    // Point d'impact central
-                                    ctx.beginPath();
-                                    ctx.arc(cx, cy, 4, 0, 2 * Math.PI);
-                                    ctx.fillStyle = 'red';
-                                    ctx.fill();
-                                }}
-
-                                for (let x = 0; x < canvas.width; x += {vision_grid_step}) {{
-                                    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
-                                    if (zb && x >= zb.x1 && x <= zb.x2) {{
-                                        drawText(`x:${{x}}`, x + 4, zb.y1 + 4);
-                                    }} else {{
-                                        let start_y = (x % 300);
-                                        for (let y = start_y; y < canvas.height; y += 300) {{
-                                            if (x > 0) drawText(`x:${{x}}`, x + 4, y + 4);
-                                        }}
-                                    }}
-                                }}
-                                for (let y = 0; y < canvas.height; y += {vision_grid_step}) {{
-                                    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
-                                    if (zb && y >= zb.y1 && y <= zb.y2) {{
-                                        drawText(`y:${{y}}`, zb.x1 + 4, y - 14);
-                                    }} else {{
-                                        let start_x = ((y + 150) % 300);
-                                        for (let x = start_x; x < canvas.width; x += 300) {{
-                                            if (y > 0) drawText(`y:${{y}}`, x + 4, y - 14);
-                                        }}
-                                    }}
-                                }}
-                                
-                                const mx = {mx};
-                                const my = {my};
-                                if (mx > 0 || my > 0) {{
-                                    const text = `[X:${{mx}}, Y:${{my}}]`;
-                                    ctx.font = 'bold 16px monospace';
-                                    const tw = ctx.measureText(text).width;
-                                    
-                                    ctx.fillStyle = 'rgba(0,0,0,0.85)';
-                                    ctx.fillRect(mx + 12, my - 24, tw + 16, 28);
-                                    
-                                    ctx.strokeStyle = '#00ffff';
-                                    ctx.lineWidth = 2;
-                                    ctx.strokeRect(mx + 12, my - 24, tw + 16, 28);
-                                    
-                                    ctx.fillStyle = '#00ffff';
-                                    ctx.textBaseline = 'top';
-                                    ctx.fillText(text, mx + 20, my - 18);
-                                }}
-                                window.__echo_draw_done = true;
-                            }};
-                        }}
-                        """
-                    else:
-                        elements_json = json.dumps(all_elements).decode('utf-8')
-                        draw_script = f"""
-                        () => {{
-                            document.body.style.margin = '0';
-                            document.body.style.overflow = 'hidden';
-                            document.body.style.backgroundColor = '#222';
-                            const img = new Image();
-                            img.style.width = window.innerWidth + 'px';
-                            img.style.height = window.innerHeight + 'px';
-                            img.style.display = 'block';
-                            img.style.position = 'absolute';
-                            img.style.top = '0';
-                            img.style.left = '0';
-                            img.src = 'data:image/jpeg;base64,{clean_b64}';
-                            img.onload = () => {{
-                                const canvas = document.createElement('canvas');
-                                canvas.width = window.innerWidth;
-                                canvas.height = window.innerHeight;
-                                canvas.style.position = 'absolute';
-                                canvas.style.top = '0';
-                                canvas.style.left = '0';
-                                document.body.appendChild(img);
-                                document.body.appendChild(canvas);
-                                const ctx = canvas.getContext('2d');
-                                ctx.font = '11px sans-serif';
-                                ctx.textBaseline = 'top';
-                                const elements = {elements_json};
-                                const drawn = [];
-                                for (let el of elements) {{
-                                    let [x, y, w, h] = el.coords;
-                                    if (y > window.innerHeight || y + h < 0 || x > window.innerWidth || x + w < 0) continue;
-                                    let adjustedY = y;
-                                    while(drawn.some(p => Math.abs(p.x - x) < 25 && Math.abs(p.y - adjustedY) < 18)) {{
-                                        adjustedY += 18;
-                                    }}
-                                    drawn.push({{x: x, y: adjustedY}});
-                                    const text = String(el.id);
-                                    const tWidth = ctx.measureText(text).width;
-                                    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
-                                    ctx.fillRect(x, adjustedY, tWidth + 6, 16);
-                                    ctx.fillStyle = 'white';
-                                    ctx.fillText(text, x + 3, adjustedY + 2);
-                                }}
-                                window.__echo_draw_done = true;
-                            }};
-                        }}
-                        """
-                    
-                    await ghost_page.evaluate(draw_script)
-                    for _ in range(10):
-                        done = await ghost_page.evaluate("() => window.__echo_draw_done === true")
-                        if done: break
-                        await asyncio.sleep(0.1)
-                    
-                    # Application du Crop (Zoom)
-                    zoom_box = params.get("zoom_box")
-                    clip_param = None
                     if zoom_box:
-                        w = max(10, int(zoom_box["x2"] - zoom_box["x1"]))
-                        h = max(10, int(zoom_box["y2"] - zoom_box["y1"]))
-                        clip_param = {"x": int(zoom_box["x1"]), "y": int(zoom_box["y1"]), "width": w, "height": h}
-
-                    # Compression adaptative de l'image finale annotée
-                    quality_step = 95
-                    annotated_bytes = await ghost_page.screenshot(type="jpeg", quality=quality_step, clip=clip_param)
-                    while len(annotated_bytes) > 720000 and quality_step > 40:
-                        quality_step -= 5
-                        annotated_bytes = await ghost_page.screenshot(type="jpeg", quality=quality_step, clip=clip_param)
-                    await ghost_page.close()
-                    result["screenshot_b64"] = base64.b64encode(annotated_bytes).decode('utf-8')
-                    result["url"] = page.url
-                    if vision_grid:
+                        zoom_b64, zb, scale = await capture_zoom(page, zoom_box)
+                        step = fine_grid_step(scale)
+                        center = [(zb["x1"] + zb["x2"]) // 2, (zb["y1"] + zb["y2"]) // 2]
+                        annotated = await render_overlay(
+                            base64.b64encode(zoom_b64).decode('utf-8'), round((zb["x2"] - zb["x1"]) * scale), round((zb["y2"] - zb["y1"]) * scale),
+                            GRID_OVERLAY_JS, {"step": step, "origin": [zb["x1"], zb["y1"]], "scale": scale, "mouse": mouse, "center": center})
+                        result["zoom"] = {"box": zb, "scale": round(scale, 2), "center": center, "grid_step": step}
+                    elif vision_grid:
+                        annotated = await render_overlay(clean_b64, vp["width"], vp["height"], GRID_OVERLAY_JS, {
+                            "step": vision_grid_step, "origin": [0, 0], "scale": 1, "mouse": mouse, "center": None})
                         result["vision_grid_info"] = f"Origine (0,0) en haut à gauche. Lignes espacées de {vision_grid_step} pixels."
+                    else:
+                        annotated = await render_overlay(clean_b64, vp["width"], vp["height"], HIGHLIGHT_OVERLAY_JS, {"elements": all_elements})
+                    
+                    result["screenshot_b64"] = base64.b64encode(annotated).decode('utf-8')
+                    if vision_grid or zoom_box:
+                        result["clean_b64"] = clean_b64
 
             elif action == "browser_control":
                 cmd = params.get("command")
@@ -1306,18 +1158,20 @@ async def browser_action(request: Request):
                     await page.goto(val, wait_until="load", timeout=60000)
                     result["title"], result["url"] = await page.title(), page.url
                 elif cmd == "scroll":
-                    if val == "down": await page.evaluate("window.scrollBy(0, window.innerHeight * 0.8)")
-                    elif val == "up": await page.evaluate("window.scrollBy(0, -window.innerHeight * 0.8)")
+                    if val in ("down", "up"):
+                        before = await page.evaluate("() => window.scrollY")
+                        dy = await page.evaluate("() => window.innerHeight * 0.8") * (1 if val == "down" else -1)
+                        await session.human_wheel_scroll(page, dy)
+                        await wait_for_settle(page, quiet_ms=250, timeout_ms=1500)
+                        if await page.evaluate("() => window.scrollY") == before:
+                            await page.evaluate("(d) => window.scrollBy(0, d)", dy)
                     elif val == "top": await page.evaluate("window.scrollTo(0, 0)")
                     elif val == "bottom": await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                    await asyncio.sleep(0.5)
+                    result["at_bottom"] = await page.evaluate("() => window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2")
                     result["url"] = page.url
                 elif cmd == "press_key":
                     await page.keyboard.press(val or "Enter")
-                    try:
-                        await page.wait_for_load_state("domcontentloaded", timeout=5000)
-                    except:
-                        pass
+                    await wait_for_settle(page, quiet_ms=400, timeout_ms=3000)
                     result["url"] = page.url
                 elif cmd == "pause":
                     await asyncio.sleep(float(val or 2))
@@ -1334,7 +1188,7 @@ async def browser_action(request: Request):
                 elif cmd == "tab_new":
                     new_p = await session.context.new_page()
                     await new_p.goto(val or "about:blank", wait_until="load")
-                    session.pages.append(new_p)
+                    if new_p not in session.pages: session.pages.append(new_p)
                     session.active_page_index = len(session.pages) - 1
                     result["message"] = f"Nouvel onglet ouvert (Index: {session.active_page_index})"
                 elif cmd == "tab_switch":
@@ -1351,8 +1205,11 @@ async def browser_action(request: Request):
                         result["message"] = "Onglet fermé."
                     else: return {"status": "error", "message": "Impossible de fermer le dernier onglet."}
 
-            else:
-                return {"status": "error", "message": f"Action '{action}' non supportée."}
+            if session.new_tab_opened:
+                page = await session.get_active_page()
+                await wait_for_settle(page)
+                result["message"] = f"Nouvel onglet ouvert et activé (index {session.active_page_index})."
+                session.new_tab_opened = False
 
             return result
 
@@ -1362,7 +1219,6 @@ async def browser_action(request: Request):
 
 @app.get("/health")
 async def health():
-    """Healthcheck pour Docker Compose (orchestration séquentielle)."""
     return {"status": "ready", "browser": state.browser is not None}
 
 if __name__ == '__main__':

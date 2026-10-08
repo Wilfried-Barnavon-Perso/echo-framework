@@ -1,17 +1,16 @@
 """
 title: ECHO Browser Lib
 author: ECHO Framework
-version: 1.14
+version: 1.15
 description: Composant système interne : ECHO Browser Lib.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.15: Nouveaux types d'action (select, click_current), option clear_before, et zoom réel CDP (absolute_grid).
 # 1.14: Mise à jour description action_zoom_in pour mentionner le VISEUR ROUGE.
 # 1.13: Ajout de action_zoom_in et action_zoom_out pour le ciblage géométrique de précision (Multimodal).
 # 1.11: Précision sur les vérifications humaines pour l'usage des coordonnées X/Y et grille vision.
 # 1.10: Optim - Refonte des descriptions d'outils pour autoriser les appels parallèles (suppression de la notion de niveaux stricts).
-# 1.9: Ajout de l'action_type `download` pour supporter le téléchargement de fichiers via Playwright.
-# 1.7: Ajout du paramètre optionnel `name` dans `action_interact_a11y` pour le ciblage précis des rôles.
 
 import httpx
 import logging
@@ -32,8 +31,9 @@ BROWSER_TOOLS_SCHEMA = [
                 "method": {"type": "string", "enum": ["role", "label", "text"], "description": "La méthode de ciblage (role=ex:button/radio, label=attribut aria-label, text=texte brut visible)."},
                 "value": {"type": "string", "description": "La valeur associée à la méthode de ciblage (ex: 'button', 'Je suis d\\'accord')."},
                 "name": {"type": "string", "description": "(Optionnel) Si method='role', permet de filtrer par le nom du rôle (ex: 'Accepter') pour cibler précisément un bouton ou lien."},
-                "action_type": {"type": "string", "enum": ["click", "type", "hover", "download", "save_target"], "description": "Le type d'interaction (download force un clic et attend le fichier, save_target extrait l'URL du lien/image et la télécharge furtivement)."},
-                "text_to_type": {"type": "string", "description": "(Optionnel) Le texte à insérer si action_type='type'."}
+                "action_type": {"type": "string", "enum": ["click", "type", "select", "hover", "download", "save_target"], "description": "Le type d'interaction (select=sélectionne l'option text_to_type dans une liste, download force un clic et attend le fichier, save_target extrait l'URL du lien/image et la télécharge furtivement)."},
+                "text_to_type": {"type": "string", "description": "(Optionnel) Le texte à insérer si action_type='type', ou l'option à sélectionner si action_type='select'."},
+                "clear_before": {"type": "boolean", "description": "(Optionnel) Efface le champ avant de taper (défaut: true)."}
             },
             "required": ["method", "value", "action_type"]
         }
@@ -44,11 +44,12 @@ BROWSER_TOOLS_SCHEMA = [
         "parameters": {
             "type": "object",
             "properties": {
-                "action_type": {"type": "string", "enum": ["click", "type", "hover", "download", "save_target"], "description": "Le type d'interaction (download force un clic et attend le fichier, save_target extrait l'URL et la télécharge furtivement)."},
+                "action_type": {"type": "string", "enum": ["click", "click_current", "type", "select", "hover", "download", "save_target"], "description": "Le type d'interaction (click_current=pression sur place sans bouger, select=sélectionne l'option, download force un clic et attend le fichier, save_target extrait l'URL et la télécharge furtivement)."},
                 "index": {"type": "integer", "description": "L'ID numérique de l'élément (indiqué entre crochets sur la carte du DOM). À utiliser en priorité absolue."},
                 "x": {"type": "integer", "description": "Coordonnée X en pixels (à n'utiliser QUE si l'index est introuvable ou en cas de vérification humaine, suite à une action_inspect_page avec target='vision')."},
                 "y": {"type": "integer", "description": "Coordonnée Y en pixels (à n'utiliser QUE si l'index est introuvable)."},
-                "text_to_type": {"type": "string", "description": "(Optionnel) Le texte à insérer si action_type='type'."}
+                "text_to_type": {"type": "string", "description": "(Optionnel) Le texte à insérer si action_type='type' ou 'select'."},
+                "clear_before": {"type": "boolean", "description": "(Optionnel) Efface le champ avant de taper (défaut: true)."}
             },
             "required": ["action_type"]
         }
@@ -61,7 +62,7 @@ BROWSER_TOOLS_SCHEMA = [
             "properties": {
                 "target": {"type": "string", "enum": ["a11y_tree", "dom_map", "vision", "read_text", "read_html", "search_dom", "url"], "description": "L'information à extraire."},
                 "index": {"type": "integer", "description": "(Optionnel) L'ID de l'élément si target='url'."},
-                "value": {"type": "string", "description": "(Optionnel) Le texte court à rechercher si target='search_dom'."},
+                "value": {"type": "string", "description": "(Optionnel) Le texte court à rechercher si target='search_dom'. Cherche dans TOUTE la page, y fait défiler et marque l'élément 'found: true' dans la carte DOM."},
                 "vision_grid": {"type": "boolean", "description": "(Optionnel) True pour calquer une grille orthonormée si target='vision' (requis pour résoudre des vérifications humaines)."}
             },
             "required": ["target"]
@@ -81,7 +82,7 @@ BROWSER_TOOLS_SCHEMA = [
     },
     {
         "name": "action_zoom_in",
-        "description": "Rogne (zoom) sur une zone de l'écran. L'image renvoyée contiendra un VISEUR ROUGE en son centre. S'il ne pointe pas sur la cible, rezoomer plus serré.",
+        "description": "Agrandit réellement la zone (×1 à ×4). Les graduations donnent les coordonnées ABSOLUES de la page. Viseur rouge = centre, anneau cyan = souris.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -156,17 +157,22 @@ class EchoBrowserLib:
     async def start_screencast(self) -> dict:
         return await req_to_browser(self.timeout, "/screencast/start", {"session_id": self.session_id}, self.user_id)
 
-    async def stop_screencast(self, hd_b64: str = None) -> dict:
-        return await req_to_browser(self.timeout, "/screencast/stop", {"session_id": self.session_id, "hd_b64": hd_b64}, self.user_id)
+    async def stop_screencast(self) -> dict:
+        return await req_to_browser(self.timeout, "/screencast/stop", {"session_id": self.session_id}, self.user_id)
         
     async def reset_session(self) -> dict:
         return await self._action("browser_control", {"command": "reset"})
 
-    async def action_interact_a11y(self, method: str, value: str, action_type: str, name: str = None, text_to_type: str = None, download_file_id: str = None) -> dict:
-        return await self._action("interact_a11y", {"method": method, "value": value, "name": name, "action_type": action_type, "text_to_type": text_to_type, "download_file_id": download_file_id})
+    async def action_interact_a11y(self, method: str, value: str, action_type: str, name: str = None, text_to_type: str = None, clear_before: bool = True, download_file_id: str = None) -> dict:
+        return await self._action("interact_a11y", {"method": method, "value": value, "name": name, "action_type": action_type, "text_to_type": text_to_type, "clear_before": clear_before, "download_file_id": download_file_id})
 
-    async def action_interact_dom(self, action_type: str, index: int = None, x: int = None, y: int = None, text_to_type: str = "", download_file_id: str = None) -> dict:
-        return await self._action("interact_dom", {"action_type": action_type, "index": index, "x": x, "y": y, "text_to_type": text_to_type, "download_file_id": download_file_id})
+    async def action_interact_dom(self, action_type: str, index: int = None, x: int = None, y: int = None, text_to_type: str = "", clear_before: bool = True, download_file_id: str = None) -> dict:
+        return await self._action("interact_dom", {"action_type": action_type, "index": index, "x": x, "y": y, "text_to_type": text_to_type, "clear_before": clear_before, "download_file_id": download_file_id})
+
+    async def vision_capture(self, grid: bool, zoom_box: dict = None) -> dict:
+        """Capture grille/zoom sans réindexation (la carte DOM du modèle reste valide)."""
+        return await self._action("inspect_page", {"target": "vision", "vision_grid": grid or bool(zoom_box),
+                                                   "zoom_box": zoom_box, "reindex": False})
 
     async def action_inspect_page(self, target: str, index: int = None, value: str = "", vision_grid: bool = False) -> dict:
         if target == "vision":
@@ -178,16 +184,12 @@ class EchoBrowserLib:
         return await self._action("browser_control", {"command": command, "value": str(value) if value is not None else ""})
 
     async def action_zoom_in(self, x1: int, y1: int, x2: int, y2: int) -> dict:
-        cx = int((x1 + x2) / 2)
-        cy = int((y1 + y2) / 2)
         return {
             "status": "success", 
             "_trigger_vision": True, 
             "grid": True, 
             "is_zoom": True, 
-            "zoom_box": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
-            "cx": cx,
-            "cy": cy
+            "zoom_box": {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
         }
 
     async def action_zoom_out(self) -> dict:
