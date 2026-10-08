@@ -616,7 +616,7 @@ ECHO_MAX_CONTEXT_SIZE = 1048576
 CONTEXT_WARNING_THRESHOLD = 0.80  # Alerte jaune
 CONTEXT_TRUNCATE_THRESHOLD = 0.90 # Alerte rouge et Troncature
 PRUNE_CONTENT_THRESHOLD = 60000   # Seuil de tolérance (caractères) pour la troncature des UI brutes (env. 15k tokens)
-DEFAULT_VISION_GRID_STEP = 100     # Pas du maillage (pixels) pour la grille de vision spatiale (Anti-bot/Captcha)
+DEFAULT_VISION_GRID_STEP = 48     # Pas du maillage (pixels) pour la grille de vision spatiale (Anti-bot/Captcha)
 CHARS_PER_TOKEN = 4               # Heuristique standard
 
 # Limite maximale (en secondes) pour le Wait Timer Généraliste

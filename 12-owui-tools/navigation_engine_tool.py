@@ -1,13 +1,13 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.38
+version: 11.39
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 11.39: Rétablissement de la grille de vision spatiale fine à 48px.
 # 11.38: Lot C - Isolation par sub_sid (ECHO_SUBAGENT_CONTEXT), refonte du Sniper Protocol et utilisation de vision_capture.
-# 11.37: Passage du vision_grid_step par défaut à 100px.
 # 11.36: Modification de la consigne d'action_zoom_in pour exiger la vérification stricte du viseur rouge.
 # 11.35: Intégration du système de ciblage par zoom itératif et gestion de la rétention mémoire (is_zooming).
 # 11.34: Injection Télémétrique Absolue (mouse_position) dans le payload JSON pour fiabiliser le calcul balistique.
@@ -115,7 +115,7 @@ class Tools:
         BROWSER_MODE: Literal["mobile", "desktop"] = Field(default="desktop", description="Mode de navigation")
         SHOW_BROWSER_HUD: bool = Field(default=True, description="Afficher le moniteur de navigation (HUD)")
         USE_MULTIMODAL_VISION: bool = Field(default=True, description="Fournir les captures d'écran à l'agent")
-        VISION_GRID_STEP: int = Field(default=100, description="Pas de la grille de vision en pixels (ex: 50, 100).")
+        VISION_GRID_STEP: int = Field(default=48, description="Pas de la grille de vision en pixels (ex: 48, 50, 100).")
         PRUNE_CONTENT_THRESHOLD: int = Field(default=1000, description="Seuil d'élagage (en caractères) des contenus lourds (A11y, HTML) obsolètes.")
 
     def __init__(self):
