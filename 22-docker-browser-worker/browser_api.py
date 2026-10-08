@@ -172,9 +172,10 @@ HIGHLIGHT_JS = r"""
         document.querySelectorAll('.echo-marker').forEach(e => e.remove());
         const interactiveSelectors = 'a, button, input, textarea, select, [role="button"], [role="link"], [onclick], label, [role="radio"], [role="checkbox"], [role="switch"], [role="tab"], [role="menuitem"], [tabindex], summary';
         let items = Array.from(document.querySelectorAll(interactiveSelectors));
+        let itemsSet = new Set(items);
         
         document.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, span, div, i, svg, img').forEach(el => {
-            if (!items.includes(el)) {
+            if (!itemsSet.has(el)) {
                 const style = window.getComputedStyle(el);
                 const isPointer = (style.cursor === 'pointer');
                 const isMedia = (el.tagName === 'IMG' || el.tagName === 'SVG');
@@ -767,9 +768,9 @@ async def browser_action(request: Request):
                     await loc.click(timeout=10000)
                     for char in text_to_type:
                         await loc.press_sequentially(char)
-                        delay_ms = max(50, min(300, int(random.gauss(150, 60))))
+                        delay_ms = max(30, min(150, int(random.gauss(80, 40))))
                         await asyncio.sleep(delay_ms / 1000.0)
-                        if random.random() < 0.10: await asyncio.sleep(random.uniform(0.5, 1.2))
+                        if random.random() < 0.10: await asyncio.sleep(random.uniform(0.2, 0.6))
                 elif a_type == "hover":
                     await loc.hover(timeout=10000)
                 elif a_type == "download":
@@ -822,7 +823,10 @@ async def browser_action(request: Request):
                     asyncio.create_task(stealth_download())
                     return {"status": "downloading", "action": a_type, "message": "Téléchargement furtif initié en tâche de fond."}
                 
-                await page.wait_for_load_state("load", timeout=15000)
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=5000)
+                except:
+                    pass
                 result["url"] = page.url
 
             elif action == "interact_dom":
@@ -864,9 +868,9 @@ async def browser_action(request: Request):
                         await page.mouse.up()
                         for char in text_to_type:
                             await page.keyboard.press(char)
-                            delay_ms = max(50, min(300, int(random.gauss(150, 60))))
+                            delay_ms = max(30, min(150, int(random.gauss(80, 40))))
                             await asyncio.sleep(delay_ms / 1000.0)
-                            if random.random() < 0.10: await asyncio.sleep(random.uniform(0.5, 1.2))
+                            if random.random() < 0.10: await asyncio.sleep(random.uniform(0.2, 0.6))
                 else:
                     real_selector = f'[data-echo-index="{idx}"]'
                     logger.info(f"[{sid}] 🖱️ Interact DOM ({a_type}) Target: {real_selector}")
@@ -949,11 +953,14 @@ async def browser_action(request: Request):
                         await loc.click(timeout=10000)
                         for char in text_to_type:
                             await loc.press_sequentially(char)
-                            delay_ms = max(50, min(300, int(random.gauss(150, 60))))
+                            delay_ms = max(30, min(150, int(random.gauss(80, 40))))
                             await asyncio.sleep(delay_ms / 1000.0)
-                            if random.random() < 0.10: await asyncio.sleep(random.uniform(0.5, 1.2))
+                            if random.random() < 0.10: await asyncio.sleep(random.uniform(0.2, 0.6))
                         
-                await page.wait_for_load_state("load", timeout=15000)
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=5000)
+                except:
+                    pass
                 result["url"] = page.url
 
             elif action == "inspect_page":
@@ -1307,7 +1314,10 @@ async def browser_action(request: Request):
                     result["url"] = page.url
                 elif cmd == "press_key":
                     await page.keyboard.press(val or "Enter")
-                    await page.wait_for_load_state("load", timeout=30000)
+                    try:
+                        await page.wait_for_load_state("domcontentloaded", timeout=5000)
+                    except:
+                        pass
                     result["url"] = page.url
                 elif cmd == "pause":
                     await asyncio.sleep(float(val or 2))

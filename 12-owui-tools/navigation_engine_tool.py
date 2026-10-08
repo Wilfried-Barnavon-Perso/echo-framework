@@ -223,11 +223,11 @@ class Tools:
             """Élagage proactif : Filtre universel avec seuil de tolérance élevé et troncature intelligente pour éviter le Token Bloat."""
             heavy_keys = ["dom_map", "a11y_tree", "content", "html", "search_dom"]
             
-            for msg in history_list:
+            for i, msg in enumerate(history_list):
                 # Mémoire Glissante (T-1) : On préserve inlineData uniquement pour les 2 derniers messages utilisateur
                 if "parts" in msg and not is_zooming:
                     # Tolérance si msg fait partie des 4 derniers éléments de l'historique (2 user, 2 model)
-                    if history_list.index(msg) < len(history_list) - 4:
+                    if i < len(history_list) - 4:
                         msg["parts"] = [p for p in msg["parts"] if "inlineData" not in p]
                     
                 for part in msg.get("parts", []):
@@ -237,10 +237,13 @@ class Tools:
                         resp = fr.get("response", {})
                         if isinstance(resp, dict):
                             for key in heavy_keys:
-                                if key in resp and "[PURGED" not in str(resp[key]) and "[TRUNCATED" not in str(resp[key]):
-                                    if isinstance(resp[key], str) and len(resp[key]) > threshold:
-                                        resp[key] = resp[key][:threshold] + "\n... [TRUNCATED_TO_PREVENT_BLOAT]"
-                                    elif len(str(resp[key])) > threshold:
+                                if key in resp:
+                                    val = resp[key]
+                                    if isinstance(val, str) and ("[PURGED" in val or "[TRUNCATED" in val):
+                                        continue
+                                    if isinstance(val, str) and len(val) > threshold:
+                                        resp[key] = val[:threshold] + "\n... [TRUNCATED_TO_PREVENT_BLOAT]"
+                                    elif not isinstance(val, str) and len(str(val)) > threshold:
                                         resp[key] = "[PURGED_OBSOLETE_UI_STATE]"
                                 
                     # Troncature du DOM initial en texte brut (push_state)
