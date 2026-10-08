@@ -287,7 +287,7 @@ class Tools:
             proxy_task = None
             
         try:
-        
+            last_fn_name = "action"
             while iterations < max_iterations:
                 iterations += 1
                 await events.status(f"🤖 Agent Navigateur: Analyse en cours (Étape {iterations})...", done=False)
