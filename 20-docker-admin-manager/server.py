@@ -2,7 +2,10 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER
-VERSION : 5.129 (Fix UX Maintenance & Timeouts)
+VERSION : 5.130 (Fix Purge Chats Orphelins - UnboundLocalError shutil)
+--- CHANGELOG 5.130 ---
+- Fix (Critique) : Suppression des `import shutil` locaux dans la GC des Drop Zones de `_run_semantic_pruning`. Ces imports rendaient `shutil` local à toute la fonction : en l'absence d'orphelin dans `/app/downloads`, la purge FS levait `UnboundLocalError`, interrompant la purge des chats/fichiers, la synchronisation Qdrant (orphelins, TTL, consolidation) et la synchronisation BDD.
+- Observabilité : L'exception du bloc DB/Espace Personnel est journalisée avec sa trace complète et remontée dans le rapport d'élagage (fin de l'échec silencieux).
 --- CHANGELOG 5.129 ---
 - Fix (Critique) : Propagation des exceptions de la tâche de sauvegarde (tar) vers le séquenceur pour lever les faux positifs (rapport vert malgré échec du disque).
 - Fix (Critique) : Propagation du TimeoutError (60 min) lors du redémarrage Qdrant/OWUI pour afficher "ÉCHEC" dans le rapport de purge.
@@ -219,6 +222,8 @@ import time
 import threading
 import shutil
 import sqlite3
+import html
+import traceback
 import math
 import uuid
 import copy
@@ -693,6 +698,7 @@ def _run_semantic_pruning(silent=False):
         "promoted_clusters": 0
     }
     qdrant_synced = False
+    pruning_error = ""  # Exception du bloc DB/Espace Personnel (remontée dans le rapport)
     
     # Vérification d'existence du fichier de base de données
     if not os.path.exists(WEBUI_DB_PATH):
@@ -781,7 +787,6 @@ def _run_semantic_pruning(silent=False):
                     # 1. Purge Utilisateur Orphelin
                     if uid_dir.name not in valid_ids and len(uid_dir.name) > 30:
                         try:
-                            import shutil
                             sz = _get_tree_size(str(uid_dir))
                             shutil.rmtree(str(uid_dir), ignore_errors=True)
                             stats["drop_users"]["c"] += 1
@@ -796,7 +801,6 @@ def _run_semantic_pruning(silent=False):
                         # 2. Purge Chat Orphelin
                         if cid_dir.name not in db_valid_chats and len(cid_dir.name) > 30:
                             try:
-                                import shutil
                                 sz = _get_tree_size(str(cid_dir))
                                 shutil.rmtree(str(cid_dir), ignore_errors=True)
                                 stats["drop_chats"]["c"] += 1
@@ -811,7 +815,6 @@ def _run_semantic_pruning(silent=False):
                             for wf_dir in n8n_dir.iterdir():
                                 if wf_dir.is_dir() and wf_dir.name not in active_wf_set:
                                     try:
-                                        import shutil
                                         sz = _get_tree_size(str(wf_dir))
                                         shutil.rmtree(str(wf_dir), ignore_errors=True)
                                         stats["drop_n8n"]["c"] += 1
@@ -1000,7 +1003,9 @@ def _run_semantic_pruning(silent=False):
             except Exception as e:
                 print(f"⚠️ [ECHO-GC] Erreur lors de la synchronisation BDD (Fichiers) : {e}")
         except Exception as e:
-            print(f"[ECHO-LIFECYCLE] ❌ Erreur DB/Espace Personnel : {e}")
+            # Trace complète : une erreur ici court-circuite toute la purge FS/Qdrant/BDD
+            pruning_error = f"{type(e).__name__}: {e}"
+            print(f"[ECHO-LIFECYCLE] ❌ Erreur DB/Espace Personnel : {pruning_error}\n{traceback.format_exc()}")
         
     # 3. Vacuum
     for root, _, files in os.walk(ECHO_USERS_ROOT):
@@ -1015,6 +1020,12 @@ def _run_semantic_pruning(silent=False):
     sqlite_ghosts = locals().get('orphans_db', 0)
     stats['sqlite_ghosts'] = sqlite_ghosts
 
+    # Ligne d'erreur échappée (le rapport est rendu en HTML brut via | safe)
+    error_line = (
+        f"<br>⚠️ <b class='text-danger'>Purge interrompue</b> : {html.escape(pruning_error)}"
+        if pruning_error else ""
+    )
+
     final_report = f"""
     <div style='line-height: 1.4;'>
         <b><i class='bi bi-trash text-danger'></i> Rapport d'Élagage</b><br>
@@ -1024,7 +1035,7 @@ def _run_semantic_pruning(silent=False):
         📥 <b>Drop Zones</b> : {stats['drop_users']['c']} Users, {stats['drop_chats']['c']} Chats, {stats['drop_n8n']['c']} N8N <i>(Libéré: {_format_bytes(stats['drop_users']['b'] + stats['drop_chats']['b'] + stats['drop_n8n']['b'])})</i><br>
         🧠 <b>Qdrant</b> : {'Synchronisé (Orphelins & TTL)' if qdrant_synced else 'Ignoré'}<br>
         🧬 <b>Consolidation</b> : {stats['promoted_clusters']} clusters promus (Lvl1->Lvl2)<br>
-        🗃️ <b>SQLite</b> : {stats['sqlite_ghosts']} fantômes, {stats['sqlite_vacuumed']} bases optimisées
+        🗃️ <b>SQLite</b> : {stats['sqlite_ghosts']} fantômes, {stats['sqlite_vacuumed']} bases optimisées{error_line}
     </div>
     """
     config["last_run"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
