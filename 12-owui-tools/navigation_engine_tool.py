@@ -169,7 +169,7 @@ class Tools:
             f"<objective>\n{task_objective}\n</objective>\n\n"
             "<rules>\n"
             "1. PERCEPTION GLOBALE : Le Modèle PEUT demander simultanément plusieurs extractions de l'état de la page en un seul tour via `action_inspect_page` pour accélérer sa compréhension.\n"
-            "2. HIÉRARCHIE D'INTERACTION : 1) Privilégier `action_interact_a11y` (utiliser `method='role'` ET `name` pour cibler précisément un bouton/lien, ou `method='text'` pour du texte). 2) Repli sur `action_interact_dom` (Index `dom_map`). 3) Face aux Anti-Bots (ex: Cloudflare), application stricte du PROTOCOLE SNIPER :\n"
+            "2. HIÉRARCHIE D'INTERACTION : 1) Si la cible est textuellement connue, OBLIGATION d'utiliser d'abord `action_inspect_page(target='search_dom')` pour scroller et localiser l'index sans saturer la mémoire. 2) Privilégier `action_interact_a11y` (avec `method='role'` ET `name` ou `method='text'`). 3) Repli sur `action_interact_dom` (Index `dom_map`). 4) Face aux Anti-Bots (ex: Cloudflare), application stricte du PROTOCOLE SNIPER :\n"
             "   - A) HOVER : Approche spatiale via `action_interact_dom(action_type='hover', x=..., y=...)`.\n"
             "   - B) GRID : Requête d'inspection via `vision_grid=True`.\n"
             "   - C) ANALYSE (OBLIGATOIRE) : Dès la réception de la grille, une évaluation verbale exhaustive DOIT être formulée dans la réflexion : lecture du champ JSON `mouse_position` (tes coordonnées actuelles) ET calcul explicite du décalage (Delta X/Y) vers le centre géométrique de la cible visible sur l'image.\n"
@@ -224,9 +224,11 @@ class Tools:
             heavy_keys = ["dom_map", "a11y_tree", "content", "html", "search_dom"]
             
             for msg in history_list:
-                # Purge de la vision (inlineData) sauf si on est en plein cycle de zoom
+                # Mémoire Glissante (T-1) : On préserve inlineData uniquement pour les 2 derniers messages utilisateur
                 if "parts" in msg and not is_zooming:
-                    msg["parts"] = [p for p in msg["parts"] if "inlineData" not in p]
+                    # Tolérance si msg fait partie des 4 derniers éléments de l'historique (2 user, 2 model)
+                    if history_list.index(msg) < len(history_list) - 4:
+                        msg["parts"] = [p for p in msg["parts"] if "inlineData" not in p]
                     
                 for part in msg.get("parts", []):
                     # Purge ou Troncature dans les retours d'outils
@@ -329,6 +331,11 @@ class Tools:
                     "tool_config": {"functionCallingConfig": {"mode": "AUTO"}}
                 }
 
+                from echo_constants import get_generation_config
+                # Élasticité Cognitive : HIGH pour l'analyse (Vision, DOM, A11y, ou démarrage initial), LOW pour l'exécution motrice (Clic, Scroll)
+                thinking_mode = "high" if last_fn_name in ["action", "action_inspect_page"] else "low"
+                payload["generationConfig"] = get_generation_config(target_model_key, override_thinking=thinking_mode)
+                
                 model = clamp_model(target_model_key, __metadata__, user_id=uid)
                 data, _, err = await EchoGeminiClient.call_cascade(model, payload, uid, __metadata__, events, timeout=120)
 
@@ -525,6 +532,9 @@ class Tools:
                             "role": "user", 
                             "parts": [{"text": f"Reprise de session interne.\nObjectif initial :\n{task_objective}\n\nSynthèse des recherches précédentes :\n{synthesis}\n\nContinuez la mission sans répéter les mêmes actions."}]
                         })
+                        if last_view:
+                            # push_state formate et ajoute automatiquement le DOM (et l'image) dans 'history'
+                            push_state(last_view)
                         state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "user", history[1]["parts"])
                         continue  # Relance la boucle while
                 

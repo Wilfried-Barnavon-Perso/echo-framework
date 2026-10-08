@@ -197,6 +197,10 @@ HIGHLIGHT_JS = r"""
             // Conserver les inputs interactifs (checkbox, radio, select) même si opacity=0 (souvent masqués par CSS custom)
             if (style.opacity === '0' && !(el.tagName === 'INPUT' || el.tagName === 'SELECT')) return;
             let rect = el.getBoundingClientRect();
+            
+            // Lidar Spatial : Exclure le hors-champ vertical
+            if (rect.bottom < 0 || rect.top > window.innerHeight) return;
+            
             if (rect.width > 5 && rect.height > 5) {
                 let aria = el.getAttribute('aria-label') || "";
                 let text = (el.innerText || aria || el.alt || "").trim().replace(/\s+/g, ' ').substring(0, 200);
