@@ -1,9 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 9.27 (Spoofing strict Webdriver/PluginArray)
+VERSION : 9.28 (Spoofing strict Webdriver/PluginArray)
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-10-08
+
+CHANGELOG 9.28 :
+- FIX: Iframe DOM Map Offset bug (Calibration exacte via locator("html").bounding_box() pour gérer les iframes avec scale, bordures et paddings, annulant l'offset visuel).
 
 CHANGELOG 9.27 :
 - REFACTOR: JS Constants (no f-strings), Dedicated overlay context.
@@ -399,25 +402,45 @@ async def collect_dom_map(page, gen: int, vp: dict) -> list:
     elements, next_index = [], 0
     for frame in page.frames:
         offset_x = offset_y = 0
+        scale_x = scale_y = 1.0
+        
         if frame != page.main_frame:
             try:
-                box = await (await frame.frame_element()).bounding_box()
+                # Calibration exacte de l'iframe : on utilise le <html> pour obtenir la matrice de transformation réelle (scales, borders, OOPiF)
+                html_loc = frame.locator("html")
+                html_box = await html_loc.bounding_box()
+                if not html_box: continue
+                
+                html_rect = await html_loc.evaluate("el => { let r = el.getBoundingClientRect(); return {x: r.left, y: r.top, w: r.width, h: r.height}; }")
+                
+                # Calcul de l'échelle (gère les CSS transforms: scale)
+                scale_x = html_box["width"] / html_rect["w"] if html_rect["w"] else 1.0
+                scale_y = html_box["height"] / html_rect["h"] if html_rect["h"] else 1.0
+                
+                # Calcul de l'origine absolue (0,0) de l'iframe sur la page principale (gère les borders et paddings)
+                offset_x = html_box["x"] - html_rect["x"] * scale_x
+                offset_y = html_box["y"] - html_rect["y"] * scale_y
+                
+                if (html_box["x"] >= vp["width"] or html_box["y"] >= vp["height"] or
+                    html_box["x"] + html_box["width"] <= 0 or html_box["y"] + html_box["height"] <= 0):
+                    continue
             except Exception:
                 continue
-            if (not box or box["width"] * box["height"] < MIN_FRAME_AREA
-                    or box["x"] >= vp["width"] or box["y"] >= vp["height"]
-                    or box["x"] + box["width"] <= 0 or box["y"] + box["height"] <= 0):
-                continue
-            offset_x, offset_y = box["x"], box["y"]
+
         try:
             data = await asyncio.wait_for(frame.evaluate(HIGHLIGHT_JS, {
                 "start": next_index, "gen": gen, "interactive": INTERACTIVE_SELECTORS}), timeout=2.0)
         except Exception as e:
             logger.warning(f"Frame ignored ({frame.url[:80]}): {e}")
             continue
+
         for el in data.get("elements", []):
-            el["coords"][0] += offset_x
-            el["coords"][1] += offset_y
+            # Application de la matrice de transformation (Scale + Translation)
+            el["coords"][0] = offset_x + el["coords"][0] * scale_x
+            el["coords"][1] = offset_y + el["coords"][1] * scale_y
+            el["coords"][2] = el["coords"][2] * scale_x
+            el["coords"][3] = el["coords"][3] * scale_y
+            
             if frame != page.main_frame:
                 el["frame_url"] = frame.url
             elements.append(el)
