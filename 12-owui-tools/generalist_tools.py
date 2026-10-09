@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.12
+version: 1.15
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.15: Renommage des actions d'automatisation en *_ui_automation.
+# 1.14: Suppression du préfixe 'action_' sur les outils pour simplifier l'interface LLM.
+# 1.13: Renommage des actions calendrier en *_ui_calendar et correctif de l'argument automation_id.
 # 1.12: Ajout outils délétion (Automation/Calendrier) et correctif __request__ pour FastAPI.
 # 1.11: Centralisation outils Calendrier, Automations et list_folders avec création automatique.
-# 1.10: Migration du blocage Headless de ask_user_input vers ECHO_SUBAGENT_CONTEXT pour contourner le partial d'OWUI.
-# 1.9: Protection Headless de ask_user_input (bloque gracieusement si __event_call__ est indisponible).
-# 1.8: Précision sur la saisie libre pour l'argument options de ask_user_input.
 # 1.0: Outils utilitaires généraux. Inclus un Wait Timer asynchrone avec HUD visuel.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
@@ -229,19 +229,19 @@ class Tools:
             metadata=__metadata__
         )
 
-    async def action_search_calendar_events(self, query: str = "", start: str = None, end: str = None, __request__ = None, __user__: dict = {}) -> str:
+    async def search_ui_calendar_events(self, query: str = "", start: str = None, end: str = None, __request__ = None, __user__: dict = {}) -> str:
         """Le Modèle DOIT consulter l'agenda pour vérifier ses disponibilités et filtrer par dates."""
         return await _owui_search(query=query, start=start, end=end, __request__=__request__, __user__=__user__)
 
-    async def action_create_calendar_event(self, title: str, description: str = "", start: str = "", end: str = "", __request__ = None, __user__: dict = {}) -> str:
+    async def create_ui_calendar_event(self, title: str, description: str = "", start: str = "", end: str = "", __request__ = None, __user__: dict = {}) -> str:
         """Le Modèle DOIT insérer des événements temporels (Bloc-notes visuel) via cette fonction."""
         return await _owui_create_cal(title=title, description=description, start=start, end=end, location="", __request__=__request__, __user__=__user__)
 
-    async def action_delete_calendar_event(self, event_id: str, __request__ = None, __user__: dict = {}) -> str:
+    async def delete_ui_calendar_event(self, event_id: str, __request__ = None, __user__: dict = {}) -> str:
         """Le Modèle DOIT supprimer un évènement du calendrier s'il est devenu obsolète ou erroné."""
         return await _owui_delete_cal(event_id=event_id, __request__=__request__, __user__=__user__)
 
-    async def action_create_automation(self, name: str, prompt: str, rrule: str, target_folder_name: str = "Automations", __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
+    async def create_ui_automation(self, name: str, prompt: str, rrule: str, target_folder_name: str = "Automations", __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """
         CRON Cognitif : Le Modèle DOIT programmer ses propres tâches de fond avec cet outil.
         L'action générera un nouveau chat indépendant à chaque déclenchement.
@@ -268,11 +268,11 @@ class Tools:
             
         return await _owui_create_auto(name=name, prompt=prompt, rrule=rrule, folder_id=folder_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
-    async def action_delete_automation(self, automation_id: str, __request__ = None, __user__: dict = {}) -> str:
+    async def delete_ui_automation(self, automation_id: str, __request__ = None, __user__: dict = {}) -> str:
         """Le Modèle DOIT utiliser cet outil pour supprimer une de ses tâches de fond si elle n'est plus nécessaire."""
-        return await _owui_delete_auto(id=automation_id, __request__=__request__, __user__=__user__)
+        return await _owui_delete_auto(automation_id=automation_id, __request__=__request__, __user__=__user__)
 
-    async def action_list_ui_folders(self, __user__: dict = {}) -> str:
+    async def list_ui_folders(self, __user__: dict = {}) -> str:
         """
         Permet au Modèle de scanner l'arborescence des UI Folders.
         Retourne la liste complète des dossiers de l'Utilisateur pour de l'organisation spatiale.
