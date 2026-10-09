@@ -231,15 +231,15 @@ class Tools:
 
     async def action_search_calendar_events(self, query: str = "", start: str = None, end: str = None, __request__ = None, __user__: dict = {}) -> str:
         """Le Modèle DOIT consulter l'agenda pour vérifier ses disponibilités et filtrer par dates."""
-        return await _owui_search(query, start, end, __request__, __user__)
+        return await _owui_search(query=query, start=start, end=end, __request__=__request__, __user__=__user__)
 
     async def action_create_calendar_event(self, title: str, description: str = "", start: str = "", end: str = "", __request__ = None, __user__: dict = {}) -> str:
         """Le Modèle DOIT insérer des événements temporels (Bloc-notes visuel) via cette fonction."""
-        return await _owui_create_cal(title, description, start, end, "", __request__, __user__)
+        return await _owui_create_cal(title=title, description=description, start=start, end=end, location="", __request__=__request__, __user__=__user__)
 
     async def action_delete_calendar_event(self, event_id: str, __request__ = None, __user__: dict = {}) -> str:
         """Le Modèle DOIT supprimer un évènement du calendrier s'il est devenu obsolète ou erroné."""
-        return await _owui_delete_cal(event_id, __request__, __user__)
+        return await _owui_delete_cal(event_id=event_id, __request__=__request__, __user__=__user__)
 
     async def action_create_automation(self, name: str, prompt: str, rrule: str, target_folder_name: str = "Automations", __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """
@@ -266,11 +266,11 @@ class Tools:
                 log.error(f"ECHO: Failed to create target folder '{target_folder_name}' - {e}")
                 folder_id = None
             
-        return await _owui_create_auto(name, prompt, rrule, folder_id, __request__, __user__, __metadata__)
+        return await _owui_create_auto(name=name, prompt=prompt, rrule=rrule, folder_id=folder_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
     async def action_delete_automation(self, automation_id: str, __request__ = None, __user__: dict = {}) -> str:
         """Le Modèle DOIT utiliser cet outil pour supprimer une de ses tâches de fond si elle n'est plus nécessaire."""
-        return await _owui_delete_auto(automation_id, __request__, __user__)
+        return await _owui_delete_auto(id=automation_id, __request__=__request__, __user__=__user__)
 
     async def action_list_ui_folders(self, __user__: dict = {}) -> str:
         """
