@@ -39,7 +39,7 @@ from echo_constants import (
     ECHO_MAX_CONTEXT_SIZE,
     get_generation_config
 )
-from echo_prompts import SYS_ORCHESTRATOR_APPENDIX
+from echo_prompts import SYS_ORCHESTRATOR_APPENDIX, ECHO_FOUNDATION_KERNEL
 from echo_skills import get_skill_content, parse_skill_metadata
 
 # Identifiant de rôle pour les threads delegate dans cognitive_threads
@@ -123,11 +123,7 @@ class Tools:
 
         if not skill_id and not system_prompt:
             # Fallback : Transfert du system_prompt d'ECHO au sous-agent
-            try:
-                with open("/app/backend/data/system-prompt.md", "r", encoding="utf-8") as f:
-                    system_prompt = f.read()
-            except Exception:
-                system_prompt = "Tu es une extension cognitive experte du framework ECHO."
+            system_prompt = ECHO_FOUNDATION_KERNEL
 
         # 1. Résolution de la persona (Skill optionnel)
         role_name = None

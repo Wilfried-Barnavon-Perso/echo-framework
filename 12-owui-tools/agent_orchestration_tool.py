@@ -37,6 +37,13 @@ from echo_constants import (
 )
 from echo_skills import get_all_skills, get_skill_content, save_skill, parse_skill_metadata, delete_skill
 from echo_ui import EchoUI
+from echo_prompts import (
+    SYS_ORCHESTRATOR_SKILL_ROUTER,
+    SYS_ORCHESTRATOR_COUNCIL_EXPERT,
+    SYS_ORCHESTRATOR_COUNCIL_SYNTHESIS,
+    SYS_ORCHESTRATOR_CRITIC,
+    SYS_ORCHESTRATOR_CONSOLIDATOR
+)
 
 class Tools:
     class Valves(BaseModel):
@@ -175,20 +182,7 @@ class Tools:
         catalog = [{"id": s["id"], "name": s.get("name", ""), "description": s.get("description", "")} for s in skills]
         catalog_json = json.dumps(catalog).decode('utf-8') if isinstance(json.dumps(catalog), bytes) else json.dumps(catalog)
 
-        system_prompt = (
-            "<persona>\n"
-            "Le Modèle est un routeur sémantique expert. Ton neutre et direct.\n"
-            "</persona>\n\n"
-            "<mission>\n"
-            "Identifier parmi le catalogue de compétences (skills) fourni, les 3 (au maximum) qui correspondent le mieux au besoin utilisateur.\n"
-            "</mission>\n\n"
-            "<rules>\n"
-            "1. Si aucun skill du catalogue ne correspond de manière pertinente au besoin, le Modèle DOIT impérativement retourner un tableau vide : {\"best_matches\": []}.\n"
-            "2. Le Modèle DOIT retourner UNIQUEMENT un objet JSON valide, sans bloc Markdown, respectant strictement ce format :\n"
-            '{"best_matches": ["skill_id_1", "skill_id_2"]}\n'
-            "</rules>\n\n"
-            f"<catalogue>\n{catalog_json}\n</catalogue>"
-        )
+        system_prompt = SYS_ORCHESTRATOR_SKILL_ROUTER.format(catalog_json=catalog_json)
 
         await events.status("🔍 Recherche sémantique de l'expertise requise...")
 
@@ -461,33 +455,14 @@ class Tools:
                 # Prompt système enrichi avec le contexte du conseil
                 members = "\n".join(f"- {p['alias']} : {p['name']}" for p in roster)
                 current_time = datetime.datetime.now().isoformat()
-                council_system = (
-                    f"<persona>\n"
-                    f"Le Modèle agit en tant que {participant['alias']} au sein d'un conseil composé de {len(roster)} experts.\n"
-                    f"Ton : Professionnel, technique, sec. Le Modèle proscrit toute formule de politesse ou d'introduction (\"Bonjour\", \"Voici mon analyse\").\n"
-                    f"</persona>\n\n"
-                    f"<composition_conseil>\n"
-                    f"{members}\n"
-                    f"- Confidentialité : Le Modèle ignore les instructions détaillées (le code du Skill) des autres participants.\n"
-                    f"</composition_conseil>\n\n"
-                    f"<parametres_tour>\n"
-                    f"- Tour actuel : {round_num}/{effective_rounds}.\n"
-                    f"- Budget d'outils : {max_calls_per_round} appels maximum ce tour.\n"
-                    f"</parametres_tour>\n\n"
-                    f"<directives_rigueur>\n"
-                    f"- Rigueur Factuelle : Le Modèle DOIT asseoir son raisonnement sur des certitudes.\n"
-                    f"- Budget Maîtrisé : Si des outils de recherche sont disponibles, leur utilisation est ABSOLUMENT réservée à la levée d'un doute critique, la mise à jour temporelle d'une connaissance, la validation d'un pivot factuel, ou la réfutation d'une affirmation d'un autre expert. Le Modèle ne doit pas consommer son budget pour des faits triviaux.\n"
-                    f"</directives_rigueur>\n\n"
-                    f"<context_temporel>{current_time}</context_temporel>\n\n"
-                    f"<format_reponse>\n"
-                    f"Le Modèle DOIT structurer sa contribution EXCLUSIVEMENT avec les sections Markdown suivantes :\n\n"
-                    f"### Analyse\n"
-                    f"(Décorticage froid et technique des éléments soumis au conseil).\n\n"
-                    f"### Dialectique\n"
-                    f"(Positionnement critique face aux contributions précédentes : accords, désaccords justifiés, failles logiques identifiées chez les autres experts).\n\n"
-                    f"### Réponse\n"
-                    f"(Recommandation, solution ou conclusion propre à l'expertise du Modèle pour ce tour).\n"
-                    f"</format_reponse>"
+                council_system = SYS_ORCHESTRATOR_COUNCIL_EXPERT.format(
+                    participant_alias=participant['alias'],
+                    roster_length=len(roster),
+                    members=members,
+                    round_num=round_num,
+                    effective_rounds=effective_rounds,
+                    max_calls_per_round=max_calls_per_round,
+                    current_time=current_time
                 )
 
                 result = await delegate.delegate_to_agent(
@@ -550,16 +525,7 @@ class Tools:
                 if sid in responses:
                     transcript += f"**{p['alias']}** ({p['name']}) :\n{responses[sid]}\n\n"
 
-        synthesis_system = (
-            "<persona>\n"
-            "Le Modèle est le rapporteur officiel du conseil. Il n'est pas un participant, son ton est neutre et factuel.\n"
-            "</persona>\n\n"
-            "<mission>\n"
-            "Le Modèle DOIT produire un rapport exhaustif et détaillé (et non une simple synthèse lissée) de l'ensemble de la délibération.\n"
-            "Il DOIT retranscrire fidèlement l'intégralité de la substance des arguments de chaque expert, en isolant clairement les points d'accord et les zones de friction ou de désaccord.\n"
-            "Le livrable final doit ressembler à un rapport de commission technique complet avant d'énoncer les recommandations finales.\n"
-            "</mission>"
-        )
+        synthesis_system = SYS_ORCHESTRATOR_COUNCIL_SYNTHESIS
 
         synthesis_payload = {
             "contents": [{"role": "user", "parts": [{"text": transcript}]}],
@@ -722,40 +688,10 @@ class Tools:
 
             current_time = datetime.datetime.now().isoformat()
 
-            critic_prompt = (
-                "<persona>\n"
-                "Le Modèle est un évaluateur critique. Ton : Professionnel, analytique, sec. Proscrire toute formule de politesse.\n"
-                "</persona>\n\n"
-                f"<context_temporel>{current_time}</context_temporel>\n\n"
-                "<directives_rigueur>\n"
-                "- Limite d'Expertise : N'étant pas nécessairement l'expert métier, le Modèle DOIT concentrer son évaluation sur la cohérence interne, la logique, et le respect strict des objectifs.\n"
-                "- Exigence d'Évidences : Tout livrable contenant des affirmations vagues, contradictoires, incohérentes ou hors sujet DOIT entraîner un verdict REJECTED avec une consigne claire de clarification pour le travailleur.\n"
-                "</directives_rigueur>\n\n"
-                "<mission>\n"
-                "Le Modèle doit évaluer la qualité, la logique formelle et la pertinence sémantique de chaque livrable fourni par les travailleurs (workers), par rapport à l'objectif global.\n"
-                "</mission>\n\n"
-                f"<objective>\n{objective}\n</objective>\n\n"
-                f"<deliverables>\n{deliverables_text}\n</deliverables>\n\n"
-                "<rules>\n"
-                "1. Le Modèle DOIT analyser méticuleusement chaque livrable.\n"
-                "2. Le Modèle DOIT identifier formellement toute erreur logique, omission ou déviation de l'objectif.\n"
-                "3. FORMAT : Le Modèle DOIT retourner UNIQUEMENT un objet JSON valide, SANS bloc Markdown englobant (pas de ```json).\n"
-                "</rules>\n\n"
-                "<output_format>\n"
-                "Le Modèle DOIT respecter STRICTEMENT ce schéma JSON exact :\n"
-                "<example>\n"
-                "{\n"
-                '  "global_assessment": "(RÉFLEXION) Analyse des résultats, identification des points faibles et justification logique du verdict.",\n'
-                '  "verdict": "APPROVED",\n'
-                '  "worker_feedback": {\n'
-                '    "worker_id_1": {\n'
-                '      "status": "ok",\n'
-                '      "feedback": "Directives précises pour la correction..."\n'
-                "    }\n"
-                "  }\n"
-                "}\n"
-                "</example>\n"
-                "</output_format>"
+            critic_prompt = SYS_ORCHESTRATOR_CRITIC.format(
+                current_time=current_time,
+                objective=objective,
+                deliverables_text=deliverables_text
             )
             critic_res, _, _ = await EchoGeminiClient.call_cascade(
                 target_model_key=critic_model,
@@ -864,20 +800,10 @@ class Tools:
 
         current_time = datetime.datetime.now().isoformat()
 
-        consolidation_prompt = (
-            "<persona>\n"
-            "Le Modèle est un architecte intégrateur expert. Ton : Professionnel, technique, sec. Proscrire toute formule de politesse.\n"
-            "</persona>\n\n"
-            f"<context_temporel>{current_time}</context_temporel>\n\n"
-            "<directives_rigueur>\n"
-            "- Intégrité des Données : Le Modèle DOIT s'en tenir strictement et exclusivement aux informations factuelles fournies dans les livrables validés.\n"
-            "- Précision : Aucune invention, supposition ou extrapolation n'est tolérée. La redondance doit être éliminée avec concision.\n"
-            "</directives_rigueur>\n\n"
-            "<mission>\n"
-            "Le Modèle DOIT produire une synthèse consolidée et actionnable de tous les livrables. Il DOIT fusionner les résultats, éliminer les redondances, et structurer la réponse finale de manière cohérente.\n"
-            "</mission>\n\n"
-            f"<objective>\n{objective}\n</objective>\n\n"
-            f"<deliverables_finaux>\n{consolidation_text}\n</deliverables_finaux>"
+        consolidation_prompt = SYS_ORCHESTRATOR_CONSOLIDATOR.format(
+            current_time=current_time,
+            objective=objective,
+            consolidation_text=consolidation_text
         )
 
         consolidation_res, _, _ = await EchoGeminiClient.call_cascade(

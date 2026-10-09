@@ -34,7 +34,7 @@ from echo_state_manager import EchoStateManager
 from echo_constants import (
     ECHO_API_MAX_RETRIES, get_generation_config, FILE_INGESTION_STATUS
 )
-from echo_prompts import SYS_CODEX_EDIT, USR_CODEX_SUMMARIZE
+from echo_prompts import SYS_CODEX_EDIT, SYS_CODEX_SUMMARIZE
 from echo_codex_git import CodexRepo
 
 # Gestionnaire de verrous pour la concurrence intra-chat
@@ -438,16 +438,16 @@ class Tools:
         lang = CodexRepo.detect_language(filename)
         await events.status(f"🔍 Distillation de {filename} ({result['total_lines']} lignes)...", done=False)
 
-        prompt = USR_CODEX_SUMMARIZE.format(filename=filename, language=lang)
         parts = [{"role": "user", "parts": [{"text": result["content"]}]}]
 
         summary = await EchoGeminiClient.call_distillation(
-            prompt=prompt,
+            prompt="",
             __user__=__user__,
             __metadata__=__metadata__,
             is_json=False,
             parts=parts,
             max_tokens=8192,
+            system_instruction=SYS_CODEX_SUMMARIZE.format(filename=filename, language=lang)
         )
 
         await events.status(f"✅ Synthèse de {filename} terminée.", done=True)

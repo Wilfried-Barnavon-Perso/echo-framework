@@ -48,6 +48,7 @@ from echo_core import (
 from echo_state_manager import EchoStateManager
 from echo_paths import generate_echo_file_id, get_echo_session_path
 from echo_gemini_client import EchoGeminiClient
+from echo_prompts import SYS_NAV_BROWSER
 from echo_ui import EchoUI
 from echo_browser_lib import EchoBrowserLib, BROWSER_TOOLS_SCHEMA, req_to_browser
 from echo_constants import FILE_INGESTION_STATUS, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE, PRUNE_CONTENT_THRESHOLD, DEFAULT_VISION_GRID_STEP
@@ -166,33 +167,7 @@ class Tools:
 
         vision_requested = False
 
-        sys_prompt = (
-            "<persona>\n"
-            "Le Modèle est l'Agent Navigateur Autonome d'ECHO, expert en automatisation web.\n"
-            "</persona>\n\n"
-            "<mission>\n"
-            "Le Modèle doit piloter un navigateur de manière autonome pour accomplir son objectif en interagissant avec l'interface web (clics, formulaires, extraction).\n"
-            "</mission>\n\n"
-            f"<objective>\n{task_objective}\n</objective>\n\n"
-            "<rules>\n"
-            "1. PERCEPTION GLOBALE : Le Modèle PEUT demander simultanément plusieurs extractions de l'état de la page en un seul tour via `action_inspect_page` pour accélérer sa compréhension.\n"
-            "2. HIÉRARCHIE D'INTERACTION : 1) OBLIGATION absolue d'utiliser `action_inspect_page(target='search_dom')` pour localiser la cible en scrollant automatiquement. 2) Utiliser `action_interact_a11y`. 3) Utiliser `action_interact_dom` (Index `dom_map`). 4) Protocole SNIPER (Anti-Bots) :\n"
-            "   - A) HOVER : `action_interact_dom(action_type='hover', x=..., y=...)` pour placer la souris.\n"
-            "   - B) GRID : Requête via `vision_grid=True` pour valider visuellement l'impact.\n"
-            "   - C) TIR : Si le curseur (anneau cyan) est SUR la cible, `action_interact_dom(action_type='click_current')` SANS coordonnée.\n"
-            "   - D) ZOOM : Si la cible est microscopique, `action_zoom_in` avec les coordonnées estimées de la zone.\n"
-            "3. ACTIONS GROUPÉES : Le Modèle PEUT grouper plusieurs actions non-mutantes (ex: remplir plusieurs champs). Cependant, il NE DOIT PAS enchaîner une action si la précédente risque de modifier drastiquement la page (soumission, navigation). Une action mutante DOIT être la dernière du lot.\n"
-            "4. OVERLAYS & POP-UPS : Si une bannière bloque la navigation (cookies, popup), la priorité absolue du Modèle est d'utiliser `action_interact_dom(action_type='click')` ou `action_interact_a11y` pour s'en débarrasser.\n"
-            "5. FORMULAIRES : Remplir les champs avec `action_interact_dom(action_type='type')`. Exécuter `action_browser_control(command='pause')` pour attendre une liste d'autocomplétion. Si la liste apparaît, cliquer dessus. Sinon, valider avec `action_browser_control(command='press_key', value='Enter')`.\n"
-            "6. SCROLL : Si une information est absente du DOM, le Modèle DOIT scroller vers le bas via `action_browser_control(command='scroll', value='down')` avant d'abandonner.\n"
-            "7. ERREURS & REPLI : Si `action_browser_control(command='press_key')` échoue, le Modèle doit chercher et cliquer sur le bouton de soumission. Si une approche échoue, il DOIT changer de stratégie.\n"
-            "8. RESTRICTION DE RECHERCHE : Il est STRICTEMENT INTERDIT d'utiliser le navigateur pour effectuer une recherche sur un moteur de recherche généraliste (Google, Bing, etc.). Le navigateur est réservé à l'interaction sur une URL précise.\n"
-            "9. SYNTHÈSE : La synthèse finale DOIT être une phrase complète. Il est STRICTEMENT INTERDIT de renvoyer uniquement un nombre ou un mot isolé.\n"
-            "10. SATURATION : Si une balise <system_alert> de saturation apparaît, le Modèle DOIT clore ce tour en écrivant un texte libre commençant par [SATURATION_CONTEXTE] suivi d'une synthèse détaillée des textes lus et de ses avancées. Il NE DOIT PAS appeler d'outils ce tour-ci.\n"
-            "11. MÉMOIRE ET PRISE DE NOTES : Le système détruit ou tronque les données brutes massives des pages précédentes pour économiser la mémoire. Avant de changer de page ou d'action, le Modèle DOIT rédiger dans sa réponse texte les informations clés et un court résumé, car son propre texte servira de guide exclusif pour ses prochains tours.\n"
-            "12. GRILLE VISUELLE (VISION GRID) : Si une image avec grille t'est fournie, l'espacement principal est de 48px (alternant Magenta/Cyan). Des crénelures (ticks) sont présentes tous les 12px sur les lignes pour diviser chaque case en 4 (0, 25%, 50%, 75%). Utilise ces crénelures pour déduire tes coordonnées X/Y avec une précision absolue, sans deviner.\n"
-            "</rules>"
-        )
+        sys_prompt = SYS_NAV_BROWSER.format(task_objective=task_objective)
 
         history = [{"role": "user", "parts": [{"text": sys_prompt}]}]
         state.save_thread_step(sid, chat_id, "navigator", 0, "user", history[0]["parts"])

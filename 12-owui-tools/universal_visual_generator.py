@@ -46,7 +46,7 @@ from echo_core import wrap_tool_output
 from echo_gemini_client import EchoGeminiClient
 from echo_ui import EchoUI
 from echo_constants import get_generation_config
-from echo_prompts import SYS_VISUAL_GENERATE
+from echo_prompts import SYS_VISUAL_GENERATE, SYS_VISUAL_REPAIR
 
 
 
@@ -144,10 +144,6 @@ class Tools:
                   "<error>\n"
                   f"{str(e)}\n"
                   "</error>\n\n"
-                  "<instruction>\n"
-                  "Le Modèle DOIT analyser l'erreur ci-dessus et corriger immédiatement ce JSON pour respecter strictement le schéma imposé.\n"
-                  "Le Modèle DOIT renvoyer UNIQUEMENT le bloc de code corrigé.\n"
-                  "</instruction>\n\n"
                   "<invalid_payload>\n"
                   f"{payload}\n"
                   "</invalid_payload>"
@@ -155,7 +151,8 @@ class Tools:
               payload_fixed_data, _, _ = await EchoGeminiClient.call_cascade(
                   target_model_key=niveau_cognitif,
                   payload={
-                      "contents": [{"role": "user", "parts": [{"text": repair_prompt}]}]
+                      "contents": [{"role": "user", "parts": [{"text": repair_prompt}]}],
+                      "systemInstruction": {"parts": [{"text": SYS_VISUAL_REPAIR}]}
                   },
                   user_id=user_id,
                   metadata=__metadata__,

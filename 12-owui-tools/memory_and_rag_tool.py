@@ -117,8 +117,12 @@ class Tools:
         await events.status("🧠 Distillation contextuelle et enregistrement dans la base vectorielle...")
         try:
             # Extraction memory_id + tags via LLM
-            distill_prompt = SYS_RAG_DISTILL.format(fact=fact)
-            distilled = await EchoGeminiClient.call_distillation(distill_prompt, __user__, __metadata__)
+            distilled = await EchoGeminiClient.call_distillation(
+                prompt=f"Fait à distiller : {fact}",
+                __user__=__user__,
+                __metadata__=__metadata__,
+                system_instruction=SYS_RAG_DISTILL
+            )
             memory_id = distilled.get("memory_id", distilled.get("slug", f"note_{uuid.uuid4().hex[:8]}")) if distilled else f"note_{uuid.uuid4().hex[:8]}"
             tags = distilled.get("tags", ["user_pref"]) if distilled else ["user_pref"]
 

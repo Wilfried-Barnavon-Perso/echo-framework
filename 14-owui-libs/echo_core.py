@@ -18,6 +18,7 @@ from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple
 from echo_state_manager import EchoStateManager
 from echo_aec import EchoAEC
+import orjson as std_json
 from echo_paths import get_echo_version
 from echo_constants import CHARS_PER_TOKEN, AEC_REMINDERS
 

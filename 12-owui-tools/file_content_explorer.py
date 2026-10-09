@@ -35,7 +35,7 @@ from echo_constants import (
     ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, ECHO_API_KEY_RETRIES,
     ECHO_API_MAX_RETRIES, get_generation_config
 )
-from echo_prompts import SYS_EXPLORE_SENSORY
+from echo_prompts import SYS_EXPLORE_SENSORY, SYS_EXPLORER_PROBE
 
 class Tools:
     class Valves(BaseModel):
@@ -203,7 +203,8 @@ class Tools:
         try:
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": query}, {"inline_data": {"mime_type": mime, "data": f"___ECHO_STREAM_FILE___{fpath}___"}}]}],
-                "generationConfig": get_generation_config("MODEL_FLASH")
+                "generationConfig": get_generation_config("MODEL_FLASH"),
+                "systemInstruction": {"parts": [{"text": SYS_EXPLORER_PROBE}]}
             }
             cascade_task = asyncio.create_task(EchoGeminiClient.call_cascade(
                 target_model_key="MODEL_FLASH",
@@ -284,7 +285,8 @@ class Tools:
         
         try:
             payload = {
-                "contents": [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": mime, "data": f"___ECHO_STREAM_FILE___{fpath}___"}}]}]
+                "contents": [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": mime, "data": f"___ECHO_STREAM_FILE___{fpath}___"}}]}],
+                "systemInstruction": {"parts": [{"text": SYS_EXPLORER_PROBE}]}
             }
 
             cascade_task = asyncio.create_task(EchoGeminiClient.call_cascade(
