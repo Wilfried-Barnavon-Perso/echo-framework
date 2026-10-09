@@ -226,7 +226,7 @@ async (p) => {
     ctx.lineWidth = 1;
     const colors = ['rgba(255, 0, 255, 0.55)', 'rgba(0, 255, 255, 0.55)']; // Magenta et Cyan
     const textColors = ['#ff00ff', '#00ffff']; // Magenta et Cyan
-    const tickStep = p.step / 4;
+    const tickStep = p.step / 8;
 
     for (let x = firstX; x <= xEnd; x += p.step) {
         let idx = Math.abs(Math.floor(x / p.step));
