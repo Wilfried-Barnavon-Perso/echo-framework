@@ -430,7 +430,7 @@ class Tools:
                         return wrap_tool_output(success_msg, user_id=uid, chat_id=cid, metadata=__metadata__)
                     else:
                         exec_id = res.get("execution_id", "inconnu")
-                        return wrap_tool_output(f"[N8N EXECUTION : ASYNCHRONE DÉMARRÉE]\nL'exécution de la tâche (ID: {exec_id}) a bien été lancée en tâche de fond.\n\n[INFO SYSTEM] Le workflow N8N tourne en arrière-plan. Ses résultats (et ses logs stdout/stderr) seront écrits dans des fichiers qui seront automatiquement ingérés dès la fin du traitement. Vous pouvez passer à la tâche suivante !", user_id=uid, chat_id=cid, metadata=__metadata__)
+                        return wrap_tool_output(f"[N8N EXECUTION : ASYNCHRONE DÉMARRÉE]\nL'exécution de la tâche (ID: {exec_id}) a bien été lancée en tâche de fond.\n\n[INFO SYSTEM] Le workflow N8N tourne en arrière-plan. Ses résultats (et ses logs stdout/stderr) seront écrits dans des fichiers qui seront automatiquement ingérés dès la fin du traitement. Le Modèle PEUT passer à la tâche suivante.", user_id=uid, chat_id=cid, metadata=__metadata__)
                 else:
                     state.update_resource_status(n8n_workflow_id, "ready")
                     return wrap_tool_output(f"Erreur API Worker HTTP {resp.status_code}: {resp.text}", user_id=uid, chat_id=cid, metadata=__metadata__)

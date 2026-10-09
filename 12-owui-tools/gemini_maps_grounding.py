@@ -107,7 +107,7 @@ class Tools:
                 # Cascade épuisée — tous les modèles en erreur
                 return wrap_tool_output(
                     text="❌ Google Maps : aucun modèle disponible (cascade épuisée). "
-                         "Vérifiez vos quotas API.",
+                         "Le Modèle DOIT vérifier les quotas API.",
                     status={"status": "cascade_exhausted"}
                 , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 

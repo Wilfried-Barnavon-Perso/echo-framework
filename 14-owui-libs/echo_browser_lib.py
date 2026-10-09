@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 BROWSER_TOOLS_SCHEMA = [
     {
         "name": "action_interact_a11y",
-        "description": "Interagit avec un élément de l'arbre A11y (via role, text ou label). Tu peux appeler cet outil plusieurs fois dans le même tour pour effectuer des actions groupées.",
+        "description": "Interagit avec un élément de l'arbre A11y (via role, text ou label). Le Modèle PEUT appeler cet outil plusieurs fois dans le même tour pour effectuer des actions groupées.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -40,7 +40,7 @@ BROWSER_TOOLS_SCHEMA = [
     },
     {
         "name": "action_interact_dom",
-        "description": "Interagit via l'index du DOM Map ou les coordonnées Vision X/Y. Tu peux appeler cet outil plusieurs fois dans le même tour pour des actions groupées.",
+        "description": "Interagit via l'index du DOM Map ou les coordonnées Vision X/Y. Le Modèle PEUT appeler cet outil plusieurs fois dans le même tour pour des actions groupées.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -56,7 +56,7 @@ BROWSER_TOOLS_SCHEMA = [
     },
     {
         "name": "action_inspect_page",
-        "description": "Extrait des informations de la page (a11y_tree, dom_map, vision, etc.). Tu peux appeler cet outil plusieurs fois en parallèle avec des 'target' différentes dans le même tour.",
+        "description": "Extrait des informations de la page (a11y_tree, dom_map, vision, etc.). Le Modèle PEUT appeler cet outil plusieurs fois en parallèle avec des 'target' différentes dans le même tour.",
         "parameters": {
             "type": "object",
             "properties": {

@@ -636,7 +636,7 @@ class Tools:
         for w_id, w_config in workers_dict.items():
             w_task = w_config.get("task", "")
             w_role = w_config.get("skill_id")
-            w_sys = w_config.get("system_prompt", f"Tu es un agent chargé de : {w_task}")
+            w_sys = w_config.get("system_prompt", f"Le Modèle est un agent chargé de : {w_task}")
             agent_sid = f"thread_supervisor_{task_id}_{w_id}"
             worker_sids[w_id] = agent_sid
 

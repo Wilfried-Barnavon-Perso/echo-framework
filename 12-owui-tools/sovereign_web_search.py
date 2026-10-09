@@ -199,7 +199,7 @@ class Tools:
         # Injection de la contrainte de moteurs de recherche dans la tâche
         augmented_query = query
         if engines:
-            augmented_query += f"\n\n[INSTRUCTION SYSTÈME : Vous DEVEZ restreindre vos recherches aux moteurs suivants via l'argument 'engines' de vos outils : {engines}]"
+            augmented_query += f"\n\n[INSTRUCTION SYSTÈME : Le Modèle DOIT restreindre ses recherches aux moteurs suivants via l'argument 'engines' des outils : {engines}]"
         
         # Exécution
         result = await delegate.delegate_to_agent(

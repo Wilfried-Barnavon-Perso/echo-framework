@@ -114,7 +114,7 @@ class Tools:
 
             warning_msg = ""
             if output_mode == "text" and not is_text:
-                warning_msg = f"\n\n[ATTENTION SYSTÈME ECHO]\nCe fichier est un binaire ({mime}). Si le texte extrait ci-dessus est illisible, incomplet ou ne correspond pas à vos attentes, NE BOUCLEZ PAS en rappelant l'outil avec d'autres lignes/offsets.\n=> Utilisez output_mode='base64' pour une injection multimodale native (PDF/Images/Media), ou interrogez le RAG via `semantic_probe`."
+                warning_msg = f"\n\n[ATTENTION SYSTÈME ECHO]\nCe fichier est un binaire ({mime}). Si le texte extrait ci-dessus est illisible, incomplet ou ne correspond pas aux attentes, le Modèle a la STRICTE INTERDICTION de boucler en rappelant l'outil avec d'autres lignes/offsets.\n=> Le Modèle DOIT utiliser output_mode='base64' pour une injection multimodale native (PDF/Images/Media), ou interroger le RAG via `semantic_probe`."
 
             if output_mode == "text":
                 lines = []

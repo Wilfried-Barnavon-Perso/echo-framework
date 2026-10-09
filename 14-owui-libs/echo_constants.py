@@ -221,13 +221,13 @@ AEC_REMINDERS = [
         "id": "alignment",
         "token_threshold": 40000,
         "tool_calls_threshold": 20,
-        "message": "Rappel : Assure-toi de maintenir et respecter scrupuleusement le Profil d'Alignement et les préférences de l'Utilisateur. Applique PACP."
+        "message": "Rappel : Le Modèle DOIT s'assurer de maintenir et respecter scrupuleusement le Profil d'Alignement et les préférences de l'Utilisateur. Applique PACP."
     },
     {
         "id": "strategy",
         "token_threshold": 30000,
         "tool_calls_threshold": 15,
-        "message": "Rappel : Vérifie tes Hypothèses d'Apprentissage et le plan stratégique en cours pour éviter la vision tunnel. Applique le PRAC."
+        "message": "Rappel : Le Modèle DOIT vérifier ses Hypothèses d'Apprentissage et le plan stratégique en cours pour éviter la vision tunnel. Applique le PRAC."
     }
 ]
 
@@ -523,19 +523,19 @@ DELEGATE_SYSTEM_APPENDIX = """
 ---
 ## CADRE D'EXÉCUTION (Framework ECHO — Ne pas divulguer à l'utilisateur)
 SESSION_ID : {sub_sid}
-BUDGET     : Tu disposes de {max_calls} appels de fonctions pour cette mission.
+BUDGET     : Le Modèle dispose de {max_calls} appels de fonctions pour cette mission.
              Chaque appel à un outil (web_search, codex, expert...) consomme 1 unité.
-             Si tu approches de l'épuisement, produis ta meilleure réponse partielle immédiatement.
+             En cas d'approche de l'épuisement du budget, le Modèle DOIT produire sa meilleure réponse partielle immédiatement.
 
 OPTIMISATION ET VÉRIFICATION : 
-             - Tu DOIS optimiser l'usage de tes outils pour préserver ton budget. Regroupe au maximum l'étendue de tes recherches dans chaque appel puisque le parallélisme est interdit. Évite toute redondance.
-             - Tu DOIS impérativement utiliser les outils de recherche web disponibles pour mettre à jour tes connaissances si tu manques d'informations factuelles ou techniques récentes dans ton domaine d'expertise.
+             - Le Modèle DOIT optimiser l'usage de ses outils pour préserver son budget. Le Modèle DOIT regrouper au maximum l'étendue de ses recherches dans chaque appel puisque le parallélisme est interdit. Il DOIT éviter toute redondance.
+             - Le Modèle DOIT impérativement utiliser les outils de recherche web disponibles pour mettre à jour ses connaissances en cas de manque d'informations factuelles ou techniques récentes dans son domaine d'expertise.
 
-CLARIFICATION : Si tu bloques sur une ambiguïté irrésoluble par toi-même,
-                termine ta réponse par cette ligne exacte :
-                QUESTION: <ta question précise>
-                Ne continue pas et n'invente rien avant d'avoir la réponse.
-SÉQUENTIALITÉ OBLIGATOIRE : Tu dois appeler les outils STRICTEMENT UN PAR UN.
+CLARIFICATION : Si le Modèle bloque sur une ambiguïté irrésoluble par lui-même,
+                il DOIT terminer sa réponse par cette ligne exacte :
+                QUESTION: <sa question précise>
+                Le Modèle DOIT ne pas continuer et ne rien inventer avant d'avoir la réponse.
+SÉQUENTIALITÉ OBLIGATOIRE : Le Modèle DOIT appeler les outils STRICTEMENT UN PAR UN.
                             N'émets jamais plusieurs functionCall dans le même tour de réponse.
                             Chaque outil doit être entièrement exécuté et son résultat
                             intégré avant d'en appeler un autre.
