@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 1.7
+version: 1.8
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.8: Correction d'un bug majeur (dict copy sur scalaires) dans unbox_tool_output et extraction de payload.
 # 1.7: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations).
 # 1.6: Assignation de resource_type='aec_directive' pour les avertissements outils et purge FIFO étendue.
 # 1.5: Implémentation du FIFO destructif pour purger les aec_event de la base SQLite sans altérer les autres ressources.
@@ -329,6 +330,10 @@ def unbox_tool_output(name: str, content: Any, model_id: str, model_origin: str 
     rich_multiparts = content.get("echo_tool_multiparts", [])
     aec_events = content.get("aec_events")
 
+    # Protection vitale contre les valeurs scalaires renvoyées par des outils/API externes
+    if not isinstance(status_meta, dict):
+        status_meta = {"status": status_meta}
+
     response_dict = status_meta.copy()
     
     # SÉGRÉGATION 100% SAFE POUR L'API : L'AEC est injecté dans une clé XML explicite
@@ -337,6 +342,12 @@ def unbox_tool_output(name: str, content: Any, model_id: str, model_origin: str 
 
     if text_body:
         response_dict["result"] = resolve_placeholders(text_body, model_id, model_origin)
+    else:
+        # Si aucun 'text' explicite n'existe, on s'assure que le Modèle reçoive le payload brut (ex: "id" de l'automation)
+        import json
+        payload = {k: v for k, v in content.items() if k not in ["text", "status", "echo_tool_multiparts", "aec_events"]}
+        if payload:
+            response_dict["result"] = json.dumps(payload, ensure_ascii=False)
 
     func_resp_part = {
         "functionResponse": {

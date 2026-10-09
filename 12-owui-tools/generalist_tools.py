@@ -1,11 +1,12 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.17
+version: 1.18
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.18: Implémentation de safe_owui_call pour les outils natifs OWUI (compliance avec le protocole ECHO).
 # 1.17: Exposition de l'argument location et documentation explicite du format ISO 8601 pour les méthodes calendrier.
 # 1.16: Ajout des contraintes strictes iCalendar RRULE dans la docstring de create_ui_automation.
 # 1.15: Renommage des actions d'automatisation en *_ui_automation.
@@ -39,6 +40,43 @@ from open_webui.models.folders import Folders, FolderForm
 import logging
 
 log = logging.getLogger(__name__)
+
+async def safe_owui_call(func, *args, **kwargs):
+    """Proxy sécurisé pour l'exécution et l'encapsulation ECHO des fonctions natives Open WebUI."""
+    __user__ = kwargs.get("__user__", {})
+    __metadata__ = kwargs.get("__metadata__", {})
+    
+    try:
+        res = await func(*args, **kwargs)
+        status_dict = {"status": "success"}
+        text_output = str(res)
+        
+        if isinstance(res, str):
+            try:
+                parsed = json.loads(res)
+                if isinstance(parsed, dict):
+                    if "error" in parsed:
+                        status_dict = {"status": "error", "message": parsed["error"]}
+                    elif "status" in parsed:
+                        status_dict = {"status": str(parsed["status"])}
+            except Exception:
+                pass
+                
+        return wrap_tool_output(
+            text=text_output, 
+            status=status_dict, 
+            user_id=__user__.get("id"), 
+            chat_id=__metadata__.get("chat_id"), 
+            metadata=__metadata__
+        )
+    except Exception as e:
+        return wrap_tool_output(
+            text=f"Exception interne de l'outil : {str(e)}", 
+            status={"status": "error", "message": str(e)}, 
+            user_id=__user__.get("id"), 
+            chat_id=__metadata__.get("chat_id"), 
+            metadata=__metadata__
+        )
 
 class Tools:
     class Valves(BaseModel):
@@ -229,23 +267,23 @@ class Tools:
             metadata=__metadata__
         )
 
-    async def search_ui_calendar_events(self, query: str = "", start: str = None, end: str = None, __request__ = None, __user__: dict = {}) -> str:
+    async def search_ui_calendar_events(self, query: str = "", start: str = None, end: str = None, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """
         Le Modèle DOIT consulter l'agenda pour vérifier ses disponibilités et filtrer par dates.
         Format attendu pour start/end : Chaîne ISO 8601 (ex: "2026-10-10T10:00:00Z") ou "YYYY-MM-DD HH:MM".
         """
-        return await _owui_search(query=query, start=start, end=end, __request__=__request__, __user__=__user__)
+        return await safe_owui_call(_owui_search, query=query, start=start, end=end, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
-    async def create_ui_calendar_event(self, title: str, description: str = "", start: str = "", end: str = "", location: str = "", __request__ = None, __user__: dict = {}) -> str:
+    async def create_ui_calendar_event(self, title: str, description: str = "", start: str = "", end: str = "", location: str = "", __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """
         Le Modèle DOIT insérer des événements temporels (Bloc-notes visuel) via cette fonction.
         Format attendu pour start/end : Chaîne ISO 8601 (ex: "2026-10-10T10:00:00Z") ou "YYYY-MM-DD HH:MM".
         """
-        return await _owui_create_cal(title=title, description=description, start=start, end=end, location=location, __request__=__request__, __user__=__user__)
+        return await safe_owui_call(_owui_create_cal, title=title, description=description, start=start, end=end, location=location, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
-    async def delete_ui_calendar_event(self, event_id: str, __request__ = None, __user__: dict = {}) -> str:
+    async def delete_ui_calendar_event(self, event_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """Le Modèle DOIT supprimer un évènement du calendrier s'il est devenu obsolète ou erroné."""
-        return await _owui_delete_cal(event_id=event_id, __request__=__request__, __user__=__user__)
+        return await safe_owui_call(_owui_delete_cal, event_id=event_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
     async def create_ui_automation(self, name: str, prompt: str, rrule: str, target_folder_name: str = "Automations", __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """
@@ -280,17 +318,18 @@ class Tools:
                 log.error(f"ECHO: Failed to create target folder '{target_folder_name}' - {e}")
                 folder_id = None
             
-        return await _owui_create_auto(name=name, prompt=prompt, rrule=rrule, folder_id=folder_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
+        return await safe_owui_call(_owui_create_auto, name=name, prompt=prompt, rrule=rrule, folder_id=folder_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
-    async def delete_ui_automation(self, automation_id: str, __request__ = None, __user__: dict = {}) -> str:
+    async def delete_ui_automation(self, automation_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """Le Modèle DOIT utiliser cet outil pour supprimer une de ses tâches de fond si elle n'est plus nécessaire."""
-        return await _owui_delete_auto(automation_id=automation_id, __request__=__request__, __user__=__user__)
+        return await safe_owui_call(_owui_delete_auto, automation_id=automation_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
-    async def list_ui_folders(self, __user__: dict = {}) -> str:
+    async def list_ui_folders(self, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """
         Permet au Modèle de scanner l'arborescence des UI Folders.
         Retourne la liste complète des dossiers de l'Utilisateur pour de l'organisation spatiale.
         """
         user_id = __user__.get("id")
         folders = await Folders.get_folders_by_user_id(user_id) if hasattr(Folders, 'get_folders_by_user_id') else []
-        return json.dumps([{"id": f.id, "name": f.name} for f in folders])
+        res = json.dumps([{"id": f.id, "name": f.name} for f in folders])
+        return wrap_tool_output(text=res, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
