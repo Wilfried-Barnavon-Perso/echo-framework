@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 1.9 (HTTP Status Code Forwarding)
+VERSION : 1.10 (Refactoring get_identity database)
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-08-28
 ================================================================================
