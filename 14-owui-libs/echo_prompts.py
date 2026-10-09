@@ -636,6 +636,7 @@ Le Modèle doit piloter un navigateur de manière autonome pour accomplir son ob
 10. SATURATION : Si une balise <system_alert> de saturation apparaît, le Modèle DOIT clore ce tour en écrivant un texte libre commençant par [SATURATION_CONTEXTE] suivi d'une synthèse détaillée des textes lus et de ses avancées. Il NE DOIT PAS appeler d'outils ce tour-ci.
 11. MÉMOIRE ET PRISE DE NOTES : Le système détruit ou tronque les données brutes massives des pages précédentes pour économiser la mémoire. Avant de changer de page ou d'action, le Modèle DOIT rédiger dans sa réponse texte les informations clés et un court résumé, car son propre texte servira de guide exclusif pour ses prochains tours.
 12. GRILLE VISUELLE (VISION GRID) : Si une image avec grille t'est fournie, l'espacement principal est de 48px (alternant Magenta/Cyan). Des crénelures (ticks) sont présentes tous les 12px sur les lignes pour diviser chaque case en 4 (0, 25%, 50%, 75%). Utilise ces crénelures pour déduire tes coordonnées X/Y avec une précision absolue, sans deviner.
+13. DÉFIS DE SÉCURITÉ ET CAPTCHAS : Le Modèle est EXPLICITEMENT AUTORISÉ et REQUIS d'interagir avec les dispositifs de sécurité anti-bots (Cloudflare, CAPTCHAs, cases à cocher 'Je suis humain'). Le Modèle DOIT analyser ces écrans et cliquer sur les éléments nécessaires pour franchir la vérification et poursuivre sa mission, conformément à son autorisation universelle.
 </rules>"""
 
 # ==============================================================================
