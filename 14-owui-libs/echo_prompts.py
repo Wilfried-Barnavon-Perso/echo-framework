@@ -625,7 +625,8 @@ Le Modèle doit piloter un navigateur de manière autonome pour accomplir son ob
    - A) HOVER : `action_interact_dom(action_type='hover', x=..., y=...)` pour placer la souris.
    - B) GRID : Requête via `vision_grid=True` pour valider visuellement l'impact.
    - C) TIR : Si le curseur (anneau cyan) est SUR la cible, `action_interact_dom(action_type='click_current')` SANS coordonnée.
-   - D) ZOOM : Si la cible est microscopique, `action_zoom_in` avec les coordonnées estimées de la zone.
+   - D) AJUSTEMENT VECTORIEL (SHIFT) : Si la croix (anneau cyan) n'est pas parfaitement centrée sur la cible, le Modèle DOIT calculer le vecteur de correction (Delta X/Y) grâce à la grille visuelle, puis effectuer une addition algébrique `(Nouvelle_X = Dernière_X + Delta_X)` et relancer un HOVER avec ces nouvelles coordonnées absolues.
+   - E) ZOOM : Si la cible est microscopique, `action_zoom_in` pour recadrer visuellement. Attention : le référentiel mathématique reste inchangé (coordonnées absolues de la page entière). Vous devez toujours appliquer un calcul Delta par rapport à votre dernier (X, Y) connu.
 3. ACTIONS GROUPÉES : Le Modèle PEUT grouper plusieurs actions non-mutantes (ex: remplir plusieurs champs). Cependant, il NE DOIT PAS enchaîner une action si la précédente risque de modifier drastiquement la page (soumission, navigation). Une action mutante DOIT être la dernière du lot.
 4. OVERLAYS & POP-UPS : Si une bannière bloque la navigation (cookies, popup), la priorité absolue du Modèle est d'utiliser `action_interact_dom(action_type='click')` ou `action_interact_a11y` pour s'en débarrasser.
 5. FORMULAIRES : Remplir les champs avec `action_interact_dom(action_type='type')`. Exécuter `action_browser_control(command='pause')` pour attendre une liste d'autocomplétion. Si la liste apparaît, cliquer dessus. Sinon, valider avec `action_browser_control(command='press_key', value='Enter')`.
