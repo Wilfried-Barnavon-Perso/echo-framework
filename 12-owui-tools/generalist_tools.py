@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.15
+version: 1.17
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.17: Exposition de l'argument location et documentation explicite du format ISO 8601 pour les méthodes calendrier.
+# 1.16: Ajout des contraintes strictes iCalendar RRULE dans la docstring de create_ui_automation.
 # 1.15: Renommage des actions d'automatisation en *_ui_automation.
 # 1.14: Suppression du préfixe 'action_' sur les outils pour simplifier l'interface LLM.
 # 1.13: Renommage des actions calendrier en *_ui_calendar et correctif de l'argument automation_id.
-# 1.12: Ajout outils délétion (Automation/Calendrier) et correctif __request__ pour FastAPI.
-# 1.11: Centralisation outils Calendrier, Automations et list_folders avec création automatique.
 # 1.0: Outils utilitaires généraux. Inclus un Wait Timer asynchrone avec HUD visuel.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
@@ -230,12 +230,18 @@ class Tools:
         )
 
     async def search_ui_calendar_events(self, query: str = "", start: str = None, end: str = None, __request__ = None, __user__: dict = {}) -> str:
-        """Le Modèle DOIT consulter l'agenda pour vérifier ses disponibilités et filtrer par dates."""
+        """
+        Le Modèle DOIT consulter l'agenda pour vérifier ses disponibilités et filtrer par dates.
+        Format attendu pour start/end : Chaîne ISO 8601 (ex: "2026-10-10T10:00:00Z") ou "YYYY-MM-DD HH:MM".
+        """
         return await _owui_search(query=query, start=start, end=end, __request__=__request__, __user__=__user__)
 
-    async def create_ui_calendar_event(self, title: str, description: str = "", start: str = "", end: str = "", __request__ = None, __user__: dict = {}) -> str:
-        """Le Modèle DOIT insérer des événements temporels (Bloc-notes visuel) via cette fonction."""
-        return await _owui_create_cal(title=title, description=description, start=start, end=end, location="", __request__=__request__, __user__=__user__)
+    async def create_ui_calendar_event(self, title: str, description: str = "", start: str = "", end: str = "", location: str = "", __request__ = None, __user__: dict = {}) -> str:
+        """
+        Le Modèle DOIT insérer des événements temporels (Bloc-notes visuel) via cette fonction.
+        Format attendu pour start/end : Chaîne ISO 8601 (ex: "2026-10-10T10:00:00Z") ou "YYYY-MM-DD HH:MM".
+        """
+        return await _owui_create_cal(title=title, description=description, start=start, end=end, location=location, __request__=__request__, __user__=__user__)
 
     async def delete_ui_calendar_event(self, event_id: str, __request__ = None, __user__: dict = {}) -> str:
         """Le Modèle DOIT supprimer un évènement du calendrier s'il est devenu obsolète ou erroné."""
@@ -246,6 +252,14 @@ class Tools:
         CRON Cognitif : Le Modèle DOIT programmer ses propres tâches de fond avec cet outil.
         L'action générera un nouveau chat indépendant à chaque déclenchement.
         Le Modèle DOIT préciser le nom du dossier via 'target_folder_name'. S'il n'existe pas, l'outil le créera automatiquement.
+        
+        RÈGLES STRICTES DE SYNTAXE RRULE :
+        L'argument rrule DOIT être une chaîne iCalendar valide. Si 'COUNT' est spécifié, 'DTSTART' est OBLIGATOIRE.
+        Le format DTSTART exige la syntaxe YYYYMMDDTHHMMSS.
+        Exemples valides :
+        - Une seule fois à une date précise : "DTSTART:20261015T140000\nRRULE:FREQ=DAILY;COUNT=1"
+        - Tous les jours à 9h : "DTSTART:20261001T090000\nRRULE:FREQ=DAILY"
+        - Toutes les heures : "RRULE:FREQ=HOURLY;INTERVAL=1"
         """
         user_id = __user__.get("id")
         if not user_id:
