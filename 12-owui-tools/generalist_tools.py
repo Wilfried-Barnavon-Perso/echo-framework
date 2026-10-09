@@ -1,17 +1,17 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.18
+version: 1.19
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.19: Filtrage strict des kwargs via inspect.signature dans safe_owui_call pour compatibilité OWUI API.
 # 1.18: Implémentation de safe_owui_call pour les outils natifs OWUI (compliance avec le protocole ECHO).
 # 1.17: Exposition de l'argument location et documentation explicite du format ISO 8601 pour les méthodes calendrier.
 # 1.16: Ajout des contraintes strictes iCalendar RRULE dans la docstring de create_ui_automation.
 # 1.15: Renommage des actions d'automatisation en *_ui_automation.
 # 1.14: Suppression du préfixe 'action_' sur les outils pour simplifier l'interface LLM.
-# 1.13: Renommage des actions calendrier en *_ui_calendar et correctif de l'argument automation_id.
 # 1.0: Outils utilitaires généraux. Inclus un Wait Timer asynchrone avec HUD visuel.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
@@ -19,6 +19,7 @@ description: Composant système interne : ECHO Generalist Tools.
 import asyncio
 import sys
 import json
+import inspect
 from pydantic import BaseModel, Field
 from typing import Any
 
@@ -46,8 +47,11 @@ async def safe_owui_call(func, *args, **kwargs):
     __user__ = kwargs.get("__user__", {})
     __metadata__ = kwargs.get("__metadata__", {})
     
+    sig = inspect.signature(func)
+    filtered_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+    
     try:
-        res = await func(*args, **kwargs)
+        res = await func(*args, **filtered_kwargs)
         status_dict = {"status": "success"}
         text_output = str(res)
         
