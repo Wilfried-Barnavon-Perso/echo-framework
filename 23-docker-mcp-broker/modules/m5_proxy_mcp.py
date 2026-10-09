@@ -8,6 +8,23 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.client.session import ClientSession
 
+from core.database import get_identity
+from core.security import user_id_var
+
+async def _inject_identity(service_config: dict, target_dict: dict, is_header=False):
+    """Intercepte le user_id ASGI, extrait le Token de la DB et l'injecte dans l'env ou les headers."""
+    identity_service = service_config.get("identity_service")
+    if identity_service:
+        user_id = user_id_var.get()
+        if user_id:
+            secret = await get_identity(user_id, identity_service)
+            if secret:
+                if is_header:
+                    target_dict["Authorization"] = f"Bearer {secret}"
+                else:
+                    env_key = service_config.get("identity_env_key", "OAUTH2_TOKEN")
+                    target_dict[env_key] = secret
+
 # Cache des sessions actives : cache_key -> (stack, session)
 _SESSIONS = {}
 _SESSIONS_LOCK = asyncio.Lock()
@@ -40,7 +57,10 @@ async def _get_or_create_session(service_config: dict) -> ClientSession:
                 else:
                     args = args_raw
 
-                env = service_config.get("env", None)
+                env = service_config.get("env", {})
+                if env is None:
+                    env = {}
+                await _inject_identity(service_config, env, is_header=False)
 
                 server_params = StdioServerParameters(command=command, args=args, env=env)
                 stdio_transport = await stack.enter_async_context(stdio_client(server_params))
@@ -61,6 +81,8 @@ async def _get_or_create_session(service_config: dict) -> ClientSession:
                         headers = {}
                 else:
                     headers = headers_raw
+
+                await _inject_identity(service_config, headers, is_header=True)
 
                 headers_lower = {k.lower(): v for k, v in headers.items()}
                 if "user-agent" not in headers_lower:

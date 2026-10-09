@@ -1,15 +1,16 @@
 """
 title: ECHO Remote MCP Tool
 author: ECHO
-version: 1.9
+version: 1.10
 description: Outil natif permettant d'interroger et d'exécuter des requêtes sur un serveur MCP (distant SSE ou local Stdio) enregistré dans l'Identity Vault via l'ECHO MCP Broker.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.10: Ajout de la documentation Out-of-Band pour OAuth2.
+# 1.9: Rendu impersonnel de l'authentification et des prompts.
 # 1.8: Amélioration : Rendu impersonnel du prompt d'Action Requise pour l'authentification et incitation à utiliser ask_user_input.
 # 1.7: (Non documenté précédemment)
 # 1.3: Faille critique (Data Leak/Stale Data) résolue : suppression du cache en mémoire pour les appels d'outils.
-# 1.2: Ajout du routage réseau et du relais HTTPX via l'ECHO MCP Broker.
 from echo_state_manager import EchoStateManager
 from echo_core import wrap_tool_output
 from echo_events import EchoEvents
@@ -58,6 +59,10 @@ class Tools:
         DIRECTIVE ABSOLUE : Avant de tenter de configurer ou d'appeler un nouveau serveur MCP distant, 
         le Modèle DOIT obligatoirement chercher la documentation officielle du fournisseur afin de 
         trouver le format exact de l'URL (ex: endpoint /sse) et les modalités d'authentification.
+        Si le serveur MCP (ex: Google Calendar, Microsoft Outlook) exige une authentification OAuth2, 
+        la démarche est strictement Out-of-Band : le Modèle DOIT chercher sur Internet comment 
+        générer le token via un navigateur (ex: Google OAuth2 Playground) puis le sauvegarder 
+        dans l'ECHO Identity Vault AVANT d'invoquer ce serveur.
         """
         if not __user__:
             return wrap_tool_output(text="Erreur : Contexte manquant.", status={"status": "error"})

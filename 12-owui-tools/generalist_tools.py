@@ -1,17 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.10
+version: 1.11
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.11: Centralisation outils Calendrier, Automations et list_folders avec création automatique.
 # 1.10: Migration du blocage Headless de ask_user_input vers ECHO_SUBAGENT_CONTEXT pour contourner le partial d'OWUI.
 # 1.9: Protection Headless de ask_user_input (bloque gracieusement si __event_call__ est indisponible).
 # 1.8: Précision sur la saisie libre pour l'argument options de ask_user_input.
 # 1.6: Précision dans la docstring de ask_user_input (les options génèrent des listes/boutons cliquables).
-# 1.5: Mise à jour de la docstring de wait_timer (précision boucle agentique).
-# 1.4: Refonte du Lazy-Loading JS des modales ECHO (get_custom_modals_js) pour ask_user_input (Anti-Spaghetti).
 # 1.0: Outils utilitaires généraux. Inclus un Wait Timer asynchrone avec HUD visuel.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
@@ -28,6 +27,16 @@ from echo_core import wrap_tool_output
 from echo_events import EchoEvents
 from echo_constants import ECHO_MAX_WAIT_TIMER
 from echo_ui import EchoUI
+
+from open_webui.tools.builtin import (
+    search_calendar_events as _owui_search,
+    create_calendar_event as _owui_create_cal,
+    create_automation as _owui_create_auto
+)
+from open_webui.models.folders import Folders, FolderForm
+import logging
+
+log = logging.getLogger(__name__)
 
 class Tools:
     class Valves(BaseModel):
@@ -217,3 +226,47 @@ class Tools:
             chat_id=__metadata__.get("chat_id"),
             metadata=__metadata__
         )
+
+    async def action_search_calendar_events(self, query: str = "", start: str = None, end: str = None, __user__: dict = {}) -> str:
+        """Le Modèle DOIT consulter l'agenda pour vérifier ses disponibilités et filtrer par dates."""
+        return await _owui_search(query, start, end, __user__)
+
+    async def action_create_calendar_event(self, title: str, description: str = "", start: str = "", end: str = "", __user__: dict = {}) -> str:
+        """Le Modèle DOIT insérer des événements temporels (Bloc-notes visuel) via cette fonction."""
+        return await _owui_create_cal(title, description, start, end, "", __user__)
+
+    async def action_create_automation(self, name: str, prompt: str, rrule: str, target_folder_name: str = "Automations", __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
+        """
+        CRON Cognitif : Le Modèle DOIT programmer ses propres tâches de fond avec cet outil.
+        L'action générera un nouveau chat indépendant à chaque déclenchement.
+        Le Modèle DOIT préciser le nom du dossier via 'target_folder_name'. S'il n'existe pas, l'outil le créera automatiquement.
+        """
+        user_id = __user__.get("id")
+        if not user_id:
+            return json.dumps({"error": "User context missing"})
+            
+        folders = await Folders.get_folders_by_user_id(user_id) if hasattr(Folders, 'get_folders_by_user_id') else []
+        folder_id = None
+        for f in folders:
+            if f.name == target_folder_name:
+                folder_id = f.id
+                break
+                
+        if not folder_id:
+            try:
+                new_folder = await Folders.insert_new_folder(user_id, FolderForm(name=target_folder_name))
+                folder_id = new_folder.id
+            except Exception as e:
+                log.error(f"ECHO: Failed to create target folder '{target_folder_name}' - {e}")
+                folder_id = None
+            
+        return await _owui_create_auto(name, prompt, rrule, folder_id, __request__, __user__, __metadata__)
+
+    async def action_list_folders(self, __user__: dict = {}) -> str:
+        """
+        Permet au Modèle de scanner l'arborescence.
+        Retourne la liste complète des dossiers de l'Utilisateur pour de l'organisation spatiale.
+        """
+        user_id = __user__.get("id")
+        folders = await Folders.get_folders_by_user_id(user_id) if hasattr(Folders, 'get_folders_by_user_id') else []
+        return json.dumps([{"id": f.id, "name": f.name} for f in folders])
