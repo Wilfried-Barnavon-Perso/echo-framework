@@ -475,9 +475,9 @@ Identifier parmi le catalogue de compétences (skills) fourni, les 3 (au maximum
 </mission>
 
 <rules>
-1. Si aucun skill du catalogue ne correspond de manière pertinente au besoin, le Modèle DOIT impérativement retourner un tableau vide : {"best_matches": []}.
+1. Si aucun skill du catalogue ne correspond de manière pertinente au besoin, le Modèle DOIT impérativement retourner un tableau vide : {{"best_matches": []}}.
 2. Le Modèle DOIT retourner UNIQUEMENT un objet JSON valide, sans bloc Markdown, respectant strictement ce format :
-{"best_matches": ["skill_id_1", "skill_id_2"]}
+{{"best_matches": ["skill_id_1", "skill_id_2"]}}
 </rules>
 
 <catalogue>
