@@ -91,6 +91,7 @@ class Action:
         
         # Injection du schéma générique N8N
         schemas["n8n_workflows"] = {
+            "category": "orchestration",
             "name": "N8N Orchestration",
             "fields": [
                 {"id": "credentials", "label": "N8N Secret", "type": "text", "help": "Valeur du secret."}

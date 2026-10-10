@@ -1,5 +1,5 @@
 """
-title: ECHO Remote MCP Tool
+title: ECHO Broker MCP Tool
 author: ECHO
 version: 1.10
 description: Outil natif permettant d'interroger et d'exécuter des requêtes sur un serveur MCP (distant SSE ou local Stdio) enregistré dans l'Identity Vault via l'ECHO MCP Broker.
@@ -52,7 +52,7 @@ class Tools:
             return None
         return await asyncio.to_thread(_fetch)
 
-    async def list_remote_mcp_tools(self, server_alias: str, __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None, __event_call__: Any = None) -> dict:
+    async def list_broker_mcp_tools(self, server_alias: str, __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None, __event_call__: Any = None) -> dict:
         """
         Le Model Context Protocol (MCP) est l'interface principale du Modèle pour interagir avec le monde réel (Bases de données, APIs, Outils externes). Utilisez cet outil pour découvrir dynamiquement les capacités offertes par un serveur distant.
         
@@ -112,7 +112,7 @@ class Tools:
                     pass
             return wrap_tool_output(text=json.dumps(error_dict), status={"status": "error"}, user_id=__user__["id"], chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
 
-    async def call_remote_mcp_tool(self, server_alias: str, tool_name: str, arguments: dict = None, __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None, __event_call__: Any = None) -> dict:
+    async def call_broker_mcp_tool(self, server_alias: str, tool_name: str, arguments: dict = None, __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None, __event_call__: Any = None) -> dict:
         """
         Exécute une fonction précise sur un serveur MCP distant ou local via le Broker.
         """

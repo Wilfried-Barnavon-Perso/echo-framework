@@ -13,7 +13,7 @@ description: Outil permettant à l'Agent de gérer le Identity Vault (ajout/supp
 # 1.0: Outil initial.
 import sys
 import json
-from typing import Optional, Any, List, Dict
+from typing import Optional, Any, List, Dict, Literal
 from pydantic import BaseModel, Field
 
 sys.path.append("/app/backend/echo_libs")
@@ -41,25 +41,58 @@ class Tools:
             conn.commit()
         return state
 
-    async def list_available_services(self, __user__: dict = None) -> str:
+    async def list_identities_services(self, category_filter: Literal["all", "mcp_native", "mcp_resident", "mcp_ephemeral", "mcp_remote", "orchestration", "uncategorized"] = "all", __user__: dict = None) -> str:
         """
-        Permet au modèle de lister de manière exhaustive les noms de services actuellement configurés dans le coffre-fort.
-        DIRECTIVE : Le Modèle doit utiliser cet outil puis 'list_identities' pour vérifier si un serveur MCP local ou distant approprié est déjà à sa disposition et relatif à la tâche en cours.
+        Interroge l'API pour extraire le catalogue des services configurables de l'Identity Vault, classés par catégorie.
+        
+        Args:
+            category_filter: Filtre sémantique permettant de restreindre la recherche. Valeur 'all' par défaut.
         """
         if not __user__: return "Erreur: Auth requise."
+        
+        import httpx
+        schemas = {}
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get("http://echo-mcp-broker:8000/schemas", timeout=2.0)
+                if resp.status_code == 200:
+                    schemas = resp.json()
+        except Exception:
+            pass
+            
+        taxonomie = (
+            "CATÉGORIES D'ARCHITECTURE ECHO :\n"
+            "- mcp_native : Modules internes intégrés au Broker MCP (Zéro latence).\n"
+            "- mcp_resident : Serveurs locaux préinstallés garantissant stabilité et résilience.\n"
+            "- mcp_ephemeral : Serveurs exécutés à la volée (via uvx/npx) pour le prototypage.\n"
+            "- mcp_remote : Connexions distantes (HTTP/SSE) vers des composants externes.\n"
+            "- orchestration : Interfaces d'automatisation (ex: N8N).\n"
+            "- uncategorized : Entrées historiques ou personnalisées ne relevant d'aucune taxonomie stricte.\n\n"
+            f"SERVICES CONFIGURABLES DANS LE REGISTRE DE L'IDENTITY VAULT (Filtre: {category_filter}) :\n"
+        )
+        for svc_id, data in schemas.items():
+            cat = data.get("category", "uncategorized")
+            if category_filter == "all" or cat == category_filter:
+                name = data.get("name", svc_id)
+                taxonomie += f"- [{cat}] {svc_id} : {name}\n"
+            
         state = self._init_vault(__user__["id"])
         with state._get_connection() as conn:
             cursor = conn.execute("SELECT DISTINCT service FROM identity_vault WHERE user_id = ?", (__user__["id"],))
             rows = cursor.fetchall()
             
+        taxonomie += "\nCOMPTES ACTUELLEMENT INSTANCIÉS EN BASE :\n"
         if not rows:
-            return "Aucun service configuré."
-        
-        return f"Services disponibles : {', '.join([r[0] for r in rows])}"
+            taxonomie += "Aucun compte existant."
+        else:
+            taxonomie += ", ".join([r[0] for r in rows])
+            
+        return taxonomie
 
     async def list_identities(self, service: str, __user__: dict = None) -> str:
         """
-        Permet au modèle de récupérer les comptes tiers rattachés à un service spécifique. L'argument 'service' est strictement obligatoire.
+        Interroge l'Identity Vault pour restituer les comptes tiers associés à un service spécifique.
+        L'argument 'service' est strictement requis. Invoquer 'list_identities_services' en cas d'ambiguïté.
         """
         if not __user__: return "Erreur: Utilisateur inconnu."
         if not service: return "Erreur: L'argument 'service' est strictement requis. Invoquez 'list_available_services' en cas de doute."
@@ -86,12 +119,11 @@ class Tools:
 
     async def manage_identity(self, action: str, service: str, account_id: str, credentials_json: str = "", __user__: dict = None, __event_emitter__: Any = None, __event_call__: Any = None) -> str:
         """
-        Ajoute, modifie ou supprime une identité/serveur distant dans le Vault. Action = 'add', 'update' ou 'delete'.
+        Ajoute, modifie ou purge une identité applicative ou un serveur au sein de l'Identity Vault. Action autorisée : 'add', 'update' ou 'delete'.
         
         RÈGLES POUR 'credentials_json' :
-        - Pour tous les services : Le JSON DOIT impérativement inclure une clé "description" expliquant clairement la finalité du compte ou serveur (ex: "Serveur MCP donnant accès à l'Open Data français").
-        - Spécifique à 'remote_mcp' : Le JSON DOIT contenir la clé "url". Il DOIT également contenir la clé "transport" valant soit "sse" soit "streamable_http" (à déduire via recherche documentaire). La clé "headers" est optionnelle.
-        Exemple : {"description": "...", "url": "https://api.com/mcp", "transport": "streamable_http", "headers": {"Authorization": "Bearer XXX"}}
+        - Pour tous les services : Le JSON DOIT impérativement inclure une clé "description" explicitant la finalité.
+        - Spécifique à 'mcp_remote' : Le JSON DOIT contenir les clés "url" et "transport" ("sse" ou "streamable_http").
         """
         if not __user__: return "Erreur: Contexte OWUI manquant."
         from echo_constants import ECHO_SUBAGENT_CONTEXT

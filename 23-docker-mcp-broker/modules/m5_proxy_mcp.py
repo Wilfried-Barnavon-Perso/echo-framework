@@ -42,31 +42,41 @@ async def _get_or_create_session(service_config: dict) -> ClientSession:
         stack = AsyncExitStack()
         try:
             mcp_type = service_config.get("type")
+            from server import SERVICE_SCHEMAS
+            import os
+            schema_def = SERVICE_SCHEMAS.get(mcp_type, {})
+            category = schema_def.get("category")
 
-            if mcp_type == "stdio_mcp":
-                command = service_config.get("command")
-                if not command:
-                    raise ValueError("Commande manquante pour stdio_mcp.")
-
-                args_raw = service_config.get("args", "[]")
-                if isinstance(args_raw, str):
-                    try:
-                        args = json.loads(args_raw)
-                    except Exception:
-                        args = []
+            if category in ("mcp_resident", "mcp_ephemeral") or mcp_type == "stdio_mcp":
+                if category == "mcp_resident":
+                    command = schema_def.get("command")
+                    args = []
+                    env = os.environ.copy()
+                    env.update({str(k): str(v) for k, v in service_config.items() if k != "type"})
                 else:
-                    args = args_raw
+                    command = service_config.get("command")
+                    if not command:
+                        raise ValueError("Commande manquante pour exécution Stdio.")
 
-                env = service_config.get("env", {})
-                if env is None:
-                    env = {}
-                await _inject_identity(service_config, env, is_header=False)
+                    args_raw = service_config.get("args", "[]")
+                    if isinstance(args_raw, str):
+                        try:
+                            args = json.loads(args_raw)
+                        except Exception:
+                            args = []
+                    else:
+                        args = args_raw
+
+                    env = service_config.get("env", {})
+                    if env is None:
+                        env = {}
+                    await _inject_identity(service_config, env, is_header=False)
 
                 server_params = StdioServerParameters(command=command, args=args, env=env)
                 stdio_transport = await stack.enter_async_context(stdio_client(server_params))
                 read_stream, write_stream = stdio_transport
 
-            elif mcp_type == "remote_mcp":
+            elif category == "mcp_remote" or mcp_type == "remote_mcp":
                 url = service_config.get("url")
                 if not url:
                     raise ValueError("URL manquante pour remote_mcp.")

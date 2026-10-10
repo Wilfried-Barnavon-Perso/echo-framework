@@ -1,9 +1,9 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 1.10 (Refactoring get_identity database)
+VERSION : 1.11 (Architecture Data-Driven pour le catalogue de services MCP)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-08-28
+DATE MAJ : 2026-10-10
 ================================================================================
 """
 from starlette.requests import Request
@@ -52,6 +52,7 @@ app.add_route("/ping", healthcheck_ping)
 # Définition dynamique des schémas d'authentification des services MCP
 SERVICE_SCHEMAS = {
     "corporate": {
+        "category": "mcp_native",
         "name": "Corporate (Sirene/Pappers)",
         "fields": [
             {"id": "sirene_key", "label": "Clé API Sirene", "type": "password", "help": "Token Bearer obtenu sur l'INSEE."},
@@ -60,12 +61,32 @@ SERVICE_SCHEMAS = {
         ]
     },
     "academic": {
+        "category": "mcp_native",
         "name": "Academic",
         "fields": [
             {"id": "api_key", "label": "Clé API (Optionnelle)", "type": "password"}
         ]
     },
+    "google_workspace": {
+        "category": "mcp_resident",
+        "name": "Google Workspace MCP (Résident)",
+        "command": "workspace-mcp",
+        "fields": [
+            {"id": "GOOGLE_OAUTH_CLIENT_ID", "label": "Client ID", "type": "text", "help": "ID Client OAuth2 Google"},
+            {"id": "GOOGLE_OAUTH_CLIENT_SECRET", "label": "Client Secret", "type": "password", "help": "Secret Client OAuth2 Google"}
+        ]
+    },
+    "microsoft_365": {
+        "category": "mcp_resident",
+        "name": "Microsoft 365 MCP (Résident)",
+        "command": "microsoft-mcp",
+        "fields": [
+            {"id": "MICROSOFT_MCP_CLIENT_ID", "label": "App ID Azure", "type": "text", "help": "ID de l'application enregistrée sur Azure"},
+            {"id": "MICROSOFT_MCP_TENANT_ID", "label": "Tenant ID", "type": "text", "help": "ID du Tenant (consumers, common, etc.)"}
+        ]
+    },
     "remote_mcp": {
+        "category": "mcp_remote",
         "name": "Serveurs MCP Distants (HTTP/SSE)",
         "fields": [
             {"id": "url", "label": "URL du Serveur", "type": "text", "help": "ex: https://locataire-averti.com/mcp/sse"},
@@ -75,6 +96,7 @@ SERVICE_SCHEMAS = {
         ]
     },
     "stdio_mcp": {
+        "category": "mcp_ephemeral",
         "name": "Serveurs MCP Locaux (Stdio)",
         "fields": [
             {"id": "command", "label": "Commande", "type": "text", "help": "ex: npx ou uvx"},
