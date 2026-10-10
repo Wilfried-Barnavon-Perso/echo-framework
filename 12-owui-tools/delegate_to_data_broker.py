@@ -47,9 +47,9 @@ class Tools:
 
         # Outils autorisés pour le Data Broker (noms dans _TOOLS_CACHE unifié)
         allowed = [
-            "list_identities", "manage_identity",
+            "list_identities_services", "list_identities", "manage_identity",
             "list_internal_mcp_tools", "call_internal_mcp_tool",
-            "list_remote_mcp_tools", "call_remote_mcp_tool",
+            "list_broker_mcp_tools", "call_broker_mcp_tool",
             "search_web", "search_instant_answer",
         ]
 
