@@ -1,11 +1,12 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.22
+version: 1.23
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.23: Renommage de search_ui_automations en list_ui_automations pour correspondre à l'appel LLM.
 # 1.22: Correction de la formulation de la docstring pour create_ui_calendar_event.
 # 1.21: Précision "de l'Interface Utilisateur" dans les docstrings des outils UI.
 # 1.20: Ajout de l'outil search_ui_automations pour rendre autonome la gestion des CRONs.
@@ -332,7 +333,7 @@ class Tools:
         """Le Modèle DOIT utiliser cet outil pour supprimer une de ses tâches de fond de l'Interface Utilisateur si elle n'est plus nécessaire."""
         return await safe_owui_call(_owui_delete_auto, automation_id=automation_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
-    async def search_ui_automations(self, query: str = "", limit: int = 30, __user__: dict = {}, __metadata__: dict = {}) -> str:
+    async def list_ui_automations(self, query: str = "", limit: int = 30, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """
         Permet au Modèle de lister et rechercher ses tâches de fond automatisées (CRON) de l'Interface Utilisateur.
         Retourne l'ID, le nom, la périodicité (rrule) et le statut. Indispensable avant d'utiliser delete_ui_automation.
