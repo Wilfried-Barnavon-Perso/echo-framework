@@ -1,11 +1,14 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.19
+version: 1.22
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.22: Correction de la formulation de la docstring pour create_ui_calendar_event.
+# 1.21: Précision "de l'Interface Utilisateur" dans les docstrings des outils UI.
+# 1.20: Ajout de l'outil search_ui_automations pour rendre autonome la gestion des CRONs.
 # 1.19: Filtrage strict des kwargs via inspect.signature dans safe_owui_call pour compatibilité OWUI API.
 # 1.18: Implémentation de safe_owui_call pour les outils natifs OWUI (compliance avec le protocole ECHO).
 # 1.17: Exposition de l'argument location et documentation explicite du format ISO 8601 pour les méthodes calendrier.
@@ -38,6 +41,7 @@ from open_webui.tools.builtin import (
     delete_automation as _owui_delete_auto
 )
 from open_webui.models.folders import Folders, FolderForm
+from open_webui.models.automations import Automations
 import logging
 
 log = logging.getLogger(__name__)
@@ -273,25 +277,25 @@ class Tools:
 
     async def search_ui_calendar_events(self, query: str = "", start: str = None, end: str = None, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """
-        Le Modèle DOIT consulter l'agenda pour vérifier ses disponibilités et filtrer par dates.
+        Le Modèle DOIT consulter l'agenda de l'Interface Utilisateur pour vérifier ses disponibilités et filtrer par dates.
         Format attendu pour start/end : Chaîne ISO 8601 (ex: "2026-10-10T10:00:00Z") ou "YYYY-MM-DD HH:MM".
         """
         return await safe_owui_call(_owui_search, query=query, start=start, end=end, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
     async def create_ui_calendar_event(self, title: str, description: str = "", start: str = "", end: str = "", location: str = "", __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """
-        Le Modèle DOIT insérer des événements temporels (Bloc-notes visuel) via cette fonction.
+        Le Modèle DOIT créer un évènement dans le calendrier de l'Interface Utilisateur via cette fonction.
         Format attendu pour start/end : Chaîne ISO 8601 (ex: "2026-10-10T10:00:00Z") ou "YYYY-MM-DD HH:MM".
         """
         return await safe_owui_call(_owui_create_cal, title=title, description=description, start=start, end=end, location=location, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
     async def delete_ui_calendar_event(self, event_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """Le Modèle DOIT supprimer un évènement du calendrier s'il est devenu obsolète ou erroné."""
+        """Le Modèle DOIT supprimer un évènement du calendrier de l'Interface Utilisateur s'il est devenu obsolète ou erroné."""
         return await safe_owui_call(_owui_delete_cal, event_id=event_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
     async def create_ui_automation(self, name: str, prompt: str, rrule: str, target_folder_name: str = "Automations", __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """
-        CRON Cognitif : Le Modèle DOIT programmer ses propres tâches de fond avec cet outil.
+        CRON Cognitif : Le Modèle DOIT programmer ses propres tâches de fond de l'Interface Utilisateur avec cet outil.
         L'action générera un nouveau chat indépendant à chaque déclenchement.
         Le Modèle DOIT préciser le nom du dossier via 'target_folder_name'. S'il n'existe pas, l'outil le créera automatiquement.
         
@@ -325,12 +329,37 @@ class Tools:
         return await safe_owui_call(_owui_create_auto, name=name, prompt=prompt, rrule=rrule, folder_id=folder_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
     async def delete_ui_automation(self, automation_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """Le Modèle DOIT utiliser cet outil pour supprimer une de ses tâches de fond si elle n'est plus nécessaire."""
+        """Le Modèle DOIT utiliser cet outil pour supprimer une de ses tâches de fond de l'Interface Utilisateur si elle n'est plus nécessaire."""
         return await safe_owui_call(_owui_delete_auto, automation_id=automation_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
+
+    async def search_ui_automations(self, query: str = "", limit: int = 30, __user__: dict = {}, __metadata__: dict = {}) -> str:
+        """
+        Permet au Modèle de lister et rechercher ses tâches de fond automatisées (CRON) de l'Interface Utilisateur.
+        Retourne l'ID, le nom, la périodicité (rrule) et le statut. Indispensable avant d'utiliser delete_ui_automation.
+        """
+        user_id = __user__.get("id")
+        if not user_id:
+            return wrap_tool_output(text=json.dumps({"error": "User context missing"}), status={"status": "error"})
+            
+        try:
+            result = await Automations.search_automations(user_id=user_id, query=query, limit=limit)
+            items = []
+            for item in result.items:
+                items.append({
+                    "id": item.id,
+                    "name": item.name,
+                    "rrule": item.data.get("rrule", "") if item.data else "",
+                    "is_active": item.is_active,
+                    "next_run_at": item.next_run_at
+                })
+            res_json = json.dumps(items)
+            return wrap_tool_output(text=res_json, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
+        except Exception as e:
+            return wrap_tool_output(text=json.dumps({"error": str(e)}), status={"status": "error"}, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
 
     async def list_ui_folders(self, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """
-        Permet au Modèle de scanner l'arborescence des UI Folders.
+        Permet au Modèle de scanner l'arborescence des UI Folders de l'Interface Utilisateur.
         Retourne la liste complète des dossiers de l'Utilisateur pour de l'organisation spatiale.
         """
         user_id = __user__.get("id")
