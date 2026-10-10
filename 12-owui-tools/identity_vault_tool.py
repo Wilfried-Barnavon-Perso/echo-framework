@@ -95,7 +95,7 @@ class Tools:
         L'argument 'service' est strictement requis. Invoquer 'list_identities_services' en cas d'ambiguïté.
         """
         if not __user__: return "Erreur: Utilisateur inconnu."
-        if not service: return "Erreur: L'argument 'service' est strictement requis. Invoquez 'list_available_services' en cas de doute."
+        if not service: return "Erreur: L'argument 'service' est strictement requis. Invoquez 'list_identities_services' en cas de doute."
         state = self._init_vault(__user__["id"])
         with state._get_connection() as conn:
             cursor = conn.execute("SELECT service, account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ?", (__user__["id"], service))

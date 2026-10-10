@@ -61,7 +61,7 @@
         <ul>
           <li><strong>Authentification Middleware :</strong> Interception silencieuse de <code>x-openwebui-user-id</code> garantissant l'isolation des tenants.</li>
           <li><strong>Forwarding d'Erreurs Transparent :</strong> Les erreurs applicatives ou WAF externes (403, 502) ne sont pas masquées, elles sont formatées en JSON et remontées <em>directement</em> au LLM pour déclencher son auto-heal (cascade cognitive).</li>
-          <li><strong>Identity Vault :</strong> L'outil <code>identity_vault_tool.py</code> gère les secrets. Le modèle a interdiction d'utiliser des secrets en dur et doit utiliser la macro <code>__ECHO_SECRET_...</code>. Il DOIT invoquer <code>list_available_services</code> avant <code>list_identities</code>. L'interface (<code>echo_identity_vault_action.py</code>) synchronise dynamiquement ces secrets vers SQLite pour N8N et MCP de façon étanche.</li>
+          <li><strong>Identity Vault :</strong> L'outil <code>identity_vault_tool.py</code> gère les secrets. Le modèle a interdiction d'utiliser des secrets en dur et doit utiliser la macro <code>__ECHO_SECRET_...</code>. Il DOIT invoquer <code>list_identities_services</code> avant <code>list_identities</code>. L'interface (<code>echo_identity_vault_action.py</code>) synchronise dynamiquement ces secrets vers SQLite pour N8N et MCP de façon étanche.</li>
         </ul>
 
 
@@ -76,10 +76,10 @@
           <li><strong>Workflows :</strong> prepare_n8n_workflow, modify_n8n_workflow, run_n8n_oneshot_workflow, deploy_n8n_daemon.</li>
           <li><strong>Hub & Documentation :</strong> search_n8n_hub, download_n8n_hub_template, query_n8n_documentation.</li>
         </ul>
-        <h3 style="color:#93c5fd; margin-top: 2rem;">MCP & API (internal_mcp_tool.py, remote_mcp_tool.py, api_client.py)</h3>
+        <h3 style="color:#93c5fd; margin-top: 2rem;">MCP & API (internal_mcp_tool.py, broker_mcp_tool.py, api_client.py)</h3>
         <ul>
           <li><strong>list / call_internal_mcp_tool :</strong> Interaction avec le serveur MCP interne d'ECHO.</li>
-          <li><strong>list / call_remote_mcp_tool :</strong> Exécution sur un serveur MCP distant enregistré dans le Vault.</li>
+          <li><strong>list / call_broker_mcp_tool :</strong> Exécution sur un serveur MCP (distant ou résident) via le MCP Broker de l'Identity Vault.</li>
           <li><strong>call_api :</strong> Requête HTTP universelle.</li>
         </ul>
       </div>

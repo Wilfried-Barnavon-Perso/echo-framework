@@ -20,7 +20,7 @@ Dossiers contenant la logique métier des outils exposés par le Broker.
 - **`modules/m3_corporate.py`** (Corporate Sirene/Bodacc) : Intégration active (via `httpx`) avec les API d'entreprise de l'Etat pour la récupération légale d'entités (abandon des mocks JSON).
 - **`modules/m4_academic.py`** (Academic) : Connecteurs réels asynchrones (`httpx`) vers arXiv ou d'autres bases documentaires pour la recherche scientifique structurée.
 - **`modules/m2_jobs_omnisearch.py`** (Omnisearch Jobs) : Mécanismes d'interrogation multi-sources (ex: APEC HTML parsing).
-- **Remote Proxy (`m5_proxy_mcp.py`)** : [NOUVEAU] Orchestrateur de requêtes MCP distantes. Il gère la transmission JSON, applique un **Error Forwarding natif** (remontant les exceptions transparentes vers le LLM) et sert de Backend pour l'outil `remote_mcp_tool.py`. Il supporte dynamiquement les transports `sse` et `streamable_http`.
+- **Remote Proxy (`m5_proxy_mcp.py`)** : [NOUVEAU] Orchestrateur de requêtes MCP distantes. Il gère la transmission JSON, applique un **Error Forwarding natif** (remontant les exceptions transparentes vers le LLM) et sert de Backend pour l'outil `broker_mcp_tool.py`. Il supporte dynamiquement les transports `sse` et `streamable_http`.
 
 ## 3. Dépendances Logiques
 - Le MCP Broker est déclaré nativement dans l'interface Open WebUI, qui agit comme un **MCP Client**.

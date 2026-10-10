@@ -672,7 +672,7 @@ class Tools:
             "modify_n8n_workflow", "delete_n8n_workflow", "query_n8n_documentation",
             "create_n8n_template", "modify_n8n_template", "delete_n8n_template",
             "search_n8n_hub", "download_n8n_hub_template",
-            "ask_user_input", "manage_identity", "list_identities", "list_available_services", 
+            "ask_user_input", "manage_identity", "list_identities", "list_identities_services", 
             "async_wait_timer", "query_registry",
             "code_executor", "create_codex_file", "read_codex_file", "update_codex_file", "search_codex"
         ]
