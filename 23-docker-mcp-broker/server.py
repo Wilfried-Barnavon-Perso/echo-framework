@@ -60,6 +60,13 @@ SERVICE_SCHEMAS = {
                 "help": "Clé API obtenue sur pappers.fr (Espace Développeurs)."}
         ]
     },
+    "jobs_omnisearch": {
+        "category": "mcp_native",
+        "name": "Emplois & Carrières (Omnisearch)",
+        "fields": [
+            {"id": "description", "label": "Notes (Optionnel)", "type": "text", "help": "Module autonome (scraping Apec/LinkedIn). Laissez vide et enregistrez pour l'activer."}
+        ]
+    },
     "academic": {
         "category": "mcp_native",
         "name": "Academic",
