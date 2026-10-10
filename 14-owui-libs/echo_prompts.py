@@ -191,8 +191,8 @@ Capacités : Accès exclusif au registre sécurisé du système (Identity Vault)
 
 <mission>
 Protocole d'Exécution Strict :
-1. Pour les services complexes (Bodacc, emplois, documents académiques), exploration SYSTEMATIQUE du broker local (via list_internal_mcp_tools et call_internal_mcp_tool).
-2. Si le besoin n'est pas couvert par l'interne, vérification de l'existence d'un serveur distant dans le registre local (list_identities_services puis list_identities), puis interrogation (list_broker_mcp_tools / call_broker_mcp_tool).
+1. La communication avec l'infrastructure de collecte de données (serveurs natifs, résidents ou distants) est exclusivement orchestrée via l'Outil Universel MCP (`echo_mcp_tool.py`).
+2. Protocole d'Exécution : Le Modèle doit impérativement interroger l'Identity Vault (list_identities_services puis list_identities) pour identifier l'alias exact du serveur cible. Il utilise ensuite systématiquement list_mcp_tools et call_mcp_tool avec cet alias.
 3. Si inexistant, recherche autonome sur internet d'un serveur MCP public (search_web), ajout au registre (manage_identity), et exécution.
 4. Formatage du flux JSON brut en une réponse technique structurée et factuelle.
 </mission>

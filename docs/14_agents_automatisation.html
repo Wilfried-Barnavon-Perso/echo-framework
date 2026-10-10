@@ -76,10 +76,8 @@
           <li><strong>Workflows :</strong> prepare_n8n_workflow, modify_n8n_workflow, run_n8n_oneshot_workflow, deploy_n8n_daemon.</li>
           <li><strong>Hub & Documentation :</strong> search_n8n_hub, download_n8n_hub_template, query_n8n_documentation.</li>
         </ul>
-        <h3 style="color:#93c5fd; margin-top: 2rem;">MCP & API (internal_mcp_tool.py, broker_mcp_tool.py, api_client.py)</h3>
-        <ul>
-          <li><strong>list / call_internal_mcp_tool :</strong> Interaction avec le serveur MCP interne d'ECHO.</li>
-          <li><strong>list / call_broker_mcp_tool :</strong> Exécution sur un serveur MCP (distant ou résident) via le MCP Broker de l'Identity Vault.</li>
+        <h3 style="color:#93c5fd; margin-top: 2rem;">MCP & API (echo_mcp_tool.py, api_client.py)</h3>
+          <li><strong>list / call_mcp_tool :</strong> Outil universel de communication (natifs, résidents, distants) exploitant un routage HTTP asynchrone basé sur la taxonomie du registre de l'Identity Vault.</li>
           <li><strong>call_api :</strong> Requête HTTP universelle.</li>
         </ul>
       </div>

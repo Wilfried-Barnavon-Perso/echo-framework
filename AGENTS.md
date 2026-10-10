@@ -69,7 +69,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement au format XML nat
 - **Sovereign Web Search :** Recherche souveraine via SearXNG et DuckDuckGo, avec capacité de délégation à un agent de recherche profonde multi-tours.
 - **Agent Engine & Délégation :** Moteur d'exécution d'un agent unique (`delegate_to_agent`) et **Data Broker** (`delegate_to_data_broker.py`) pour déléguer la récupération complexe de données à un agent spécialisé.
 - **Outils Généralistes :** `generalist_tools.py` intègre un `async_wait_timer` programmable et des capacités de saisie utilisateur interactive (remplaçant les scripts épars).
-- **Communication Inter-Services (MCP Natif) :** Outils d'orchestration proxy `broker_mcp_tool.py` (exécution de tâches sur un MCP distant avec schéma dynamique) et `internal_mcp_tool.py` (tâches internes isolées).
+- **Communication Inter-Services (MCP Natif) :** Outil universel `echo_mcp_tool.py` exploitant un routage HTTP asynchrone (Data-Driven Routing) basé sur la taxonomie dynamique du registre (`mcp_native`, `mcp_resident`, `mcp_remote`, etc.), unifiant ainsi l'accès à tous les serveurs sans distinction d'interface pour le Modèle.
 - **Identity Vault (`identity_vault_tool.py`) :** Gère le registre sécurisé des secrets. Le Modèle DOIT impérativement invoquer `list_identities_services` pour découvrir le nom de l'environnement (ex: `n8n_workflows`) avant d'interroger `list_identities` (qui exige un paramètre `service` précis).
 - **Explorateur de l'Espace Personnel :** Lecture brute (RAW), base64, et sondage sémantique des fichiers locaux.
 - **Registre Unifié :** Consultation du `FILE_INGESTION_STATUS`.
