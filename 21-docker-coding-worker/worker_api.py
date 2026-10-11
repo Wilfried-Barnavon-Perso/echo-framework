@@ -1,10 +1,17 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 3.4 (Fix orjson ECHO Monitor)
+VERSION : 3.7 (Hotfix NameError & Flake8)
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-10-05
+DATE MAJ : 2026-10-07
 
+CHANGELOG 3.7 :
+- Hotfix NameError : Déplacement de la purge ECHO Monitor et création du fichier payload avant bwrap.
+- Fix Flake8 : Suppression du préfixe f-string inutile.
+CHANGELOG 3.6 :
+- Baisse de la troncature Anti-OOM (via paramètre dynamique max_output_length ou 131Ko) pour protéger le contexte LLM.
+CHANGELOG 3.5 :
+- Implémentation du Passe-Plat multiplexé (Frontend vers Sandbox) avec double purge de sécurité du fichier .echo_ui_payload.json
 CHANGELOG 3.4 :
 - Fix NameError critique : remplacement de json.loads par orjson.loads pour le Monitor Payload.
 CHANGELOG 3.3 :
@@ -69,7 +76,16 @@ logging.getLogger("werkzeug").addFilter(RateLimitHealthCheckFilter())
 
 app = Flask(__name__)
 
-def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, files_dir, global_files_dir, deps_dir, timeout_sec):
+_active_sandboxes = {}
+
+def _get_sandbox_dir(user_id, chat_id):
+    if user_id != 'system' and chat_id:
+        safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
+        safe_cid = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_")
+        return f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/codex/sandbox"
+    return None
+
+def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, files_dir, global_files_dir, deps_dir, timeout_sec, ui_payload, max_output_length):
     try:
         if not sandbox_dir:
             result_queue.put({'status': 'critical_error', 'error': 'Espace d\'exécution non défini.'})
@@ -150,6 +166,30 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
                 subprocess.run(npm_cmd, capture_output=True, text=True)
 
         # =========================================================================
+        # 1. PURGE PRE-RUN ECHO Monitor & PAYLOAD
+        # =========================================================================
+        monitor_file = None
+        ui_payload_file = None
+        ui_payload_filename = None
+        if sandbox_dir:
+            monitor_file = os.path.join(sandbox_dir, ".echo_monitor.jsonl")
+            if os.path.exists(monitor_file):
+                try:
+                    os.remove(monitor_file)
+                except Exception:
+                    pass
+
+            # Pre-Run UI Payload Injection sécurisée
+            if ui_payload:
+                ui_payload_filename = ".echo_ui_payload.json"
+                ui_payload_file = os.path.join(sandbox_dir, ui_payload_filename)
+                try:
+                    with open(ui_payload_file, 'w', encoding='utf-8') as f:
+                        f.write(orjson.dumps(ui_payload).decode('utf-8'))
+                except Exception:
+                    pass
+
+        # =========================================================================
         # ISOLATION ABSOLUE BUBBLEWRAP
         # =========================================================================
         bwrap_cmd = [
@@ -191,6 +231,9 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
             bwrap_cmd.extend(["--bind-try", deps_dir, "/.deps"])
 
         # Injecter le runtime approprié
+        if ui_payload_filename:
+            bwrap_cmd.extend(["--setenv", "ECHO_UI_PAYLOAD_FILE", ui_payload_filename])
+            
         if is_python:
             python_paths = ["/echo_libs_sandbox"]
             if deps_dir:
@@ -203,15 +246,6 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
                 node_paths.insert(0, "/.deps/node/node_modules")
             bwrap_cmd.extend(["--setenv", "NODE_PATH", ":".join(node_paths)])
             bwrap_cmd.extend(["node", f"/sandbox/{file_path}"])
-        # 1. PURGE PRE-RUN ECHO Monitor
-        monitor_file = None
-        if sandbox_dir:
-            monitor_file = os.path.join(sandbox_dir, ".echo_monitor.jsonl")
-            if os.path.exists(monitor_file):
-                try:
-                    os.remove(monitor_file)
-                except Exception:
-                    pass
 
         try:
             proc = subprocess.run(
@@ -221,13 +255,14 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
                 timeout=timeout_sec
             )
             
-            # Troncature Anti-OOM (Max 1 Mo)
-            result['output'] = proc.stdout[:1024 * 1024]
-            if len(proc.stdout) > 1024 * 1024:
-                result['output'] += "\n[Avertissement ECHO : Sortie tronquée à 1 Mo]"
+            # Troncature Anti-OOM (Dynamique)
+            result['output'] = proc.stdout[:max_output_length]
+            if len(proc.stdout) > max_output_length:
+                limit_kb = max_output_length // 1024
+                result['output'] += f"\n[Avertissement ECHO : Sortie console tronquée à {limit_kb}Ko. Privilégier echo_monitor.display() pour les payloads massifs]."
                 
             if proc.stderr:
-                result['error'] = proc.stderr[:1024 * 1024]
+                result['error'] = proc.stderr[:max_output_length]
                 result['status'] = 'error'
             elif proc.returncode != 0:
                 result['error'] = result.get('error', '') + f"\nProcess exited with code {proc.returncode}"
@@ -236,7 +271,8 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
         except subprocess.TimeoutExpired as e:
             result['status'] = 'error'
             result['error'] = f"Timeout ({e.timeout}s) dépassé."
-            if e.stdout: result['output'] = e.stdout.decode()[:1024 * 1024]
+            if e.stdout:
+                result['output'] = e.stdout.decode()[:max_output_length]
             
         # 2. LECTURE & PURGE POST-RUN ECHO Monitor
         if monitor_file and os.path.exists(monitor_file):
@@ -252,6 +288,13 @@ def run_isolated_process(file_path, dependencies, result_queue, sandbox_dir, fil
             except Exception as e:
                 logger.error(f"Erreur lecture monitor payload: {e}")
                 
+        # Purge POST-RUN UI Payload
+        if ui_payload_file and os.path.exists(ui_payload_file):
+            try:
+                os.remove(ui_payload_file)
+            except Exception:
+                pass
+                
         result_queue.put(result)
     except Exception as e:
         result_queue.put({'status': 'critical_error', 'error': f"Worker System Error: {str(e)}"})
@@ -261,7 +304,9 @@ def execute_code():
     data = request.json
     file_path = data.get('file_path', '')
     dependencies = data.get('dependencies', [])
+    ui_payload = data.get('ui_payload', None)
     timeout = data.get('timeout', 30)
+    max_output_length = data.get('max_output_length', 131072)
     
     user_id = data.get('user_id', 'system')
     chat_id = data.get('chat_id')
@@ -282,8 +327,12 @@ def execute_code():
 
     # Création d'un processus OS distinct
     q_result = multiprocessing.Queue()
-    p = multiprocessing.Process(target=run_isolated_process, args=(file_path, dependencies, q_result, sandbox_dir, files_dir, global_files_dir, deps_dir, timeout))
+    p = multiprocessing.Process(target=run_isolated_process, args=(file_path, dependencies, q_result, sandbox_dir, files_dir, global_files_dir, deps_dir, timeout, ui_payload, max_output_length))
     p.start()
+    
+    run_id = data.get('run_id')
+    sandbox_key = f"{user_id}:{chat_id}:{run_id}"
+    _active_sandboxes[sandbox_key] = {"process": p, "queue": q_result}
     
     try:
         # On lit la queue avec un timeout. Si le buffer Base64 dépasse 64ko, 
@@ -296,6 +345,9 @@ def execute_code():
             p.join()
         logger.warning(f"⏰ Timeout | User: {user_id}")
         return jsonify({'status': 'error', 'error': f'Timeout ({timeout}s).'})
+    finally:
+        if sandbox_key in _active_sandboxes:
+            del _active_sandboxes[sandbox_key]
     
     if res is not None:
         status = res.get('status', 'unknown')
@@ -304,6 +356,92 @@ def execute_code():
     else:
         logger.error(f"💥 Silent Crash | User: {user_id}")
         return jsonify({'status': 'error', 'error': 'Crash silencieux du processus.'})
+
+@app.route('/kill', methods=['POST'])
+def kill_sandbox():
+    data = request.json
+    uid = data.get('user_id', 'system')
+    cid = data.get('chat_id')
+    run_id = data.get('run_id')
+    
+    if run_id:
+        key = f"{uid}:{cid}:{run_id}"
+        keys_to_kill = [key] if key in _active_sandboxes else []
+    else:
+        prefix = f"{uid}:{cid}:"
+        keys_to_kill = [k for k in _active_sandboxes.keys() if k.startswith(prefix)]
+        
+    killed_pids = []
+    for k in keys_to_kill:
+        p_data = _active_sandboxes[k]
+        p = p_data["process"]
+        q = p_data["queue"]
+        if p.is_alive():
+            p.terminate()
+            p.join()
+        q.put({"status": "killed", "error": "Execution aborted by UI or User."})
+        killed_pids.append(p.pid)
+        del _active_sandboxes[k]
+        
+    if killed_pids:
+        return jsonify({"status": "killed", "pids": killed_pids})
+    return jsonify({"status": "not_found"})
+
+@app.route('/poll_monitor', methods=['GET'])
+def poll_monitor():
+    user_id = request.args.get('user_id', 'system')
+    chat_id = request.args.get('chat_id')
+    try:
+        offset = int(request.args.get('offset', 0))
+    except ValueError:
+        offset = 0
+    sandbox_dir = _get_sandbox_dir(user_id, chat_id)
+    if not sandbox_dir:
+        return jsonify({"payloads": [], "offset": offset})
+        
+    monitor_file = os.path.join(sandbox_dir, ".echo_monitor.jsonl")
+    if not os.path.exists(monitor_file):
+        return jsonify({"payloads": [], "offset": offset})
+        
+    payloads = []
+    try:
+        with open(monitor_file, 'rb') as f:
+            f.seek(offset)
+            content = f.read()
+            
+        last_newline = content.rfind(b'\n')
+        if last_newline != -1:
+            valid_content = content[:last_newline + 1]
+            new_offset = offset + len(valid_content)
+            
+            lines = valid_content.decode('utf-8').strip().split('\n')
+            for line in lines:
+                if line.strip():
+                    try:
+                        payloads.append(orjson.loads(line))
+                    except Exception:
+                        pass
+            offset = new_offset
+    except Exception:
+        pass
+    return jsonify({"payloads": payloads, "offset": offset})
+
+@app.route('/update_payload', methods=['POST'])
+def update_payload():
+    data = request.json
+    ui_payload = data.get('ui_payload')
+    sandbox_dir = _get_sandbox_dir(data.get('user_id', 'system'), data.get('chat_id'))
+    if sandbox_dir and ui_payload is not None:
+        import uuid
+        tmp = os.path.join(sandbox_dir, f".echo_ui.tmp.{uuid.uuid4().hex}")
+        tgt = os.path.join(sandbox_dir, ".echo_ui_payload.json")
+        try:
+            with open(tmp, 'w', encoding='utf-8') as f:
+                f.write(orjson.dumps(ui_payload).decode('utf-8'))
+            os.replace(tmp, tgt)
+        except Exception:
+            return jsonify({"status": "error"}), 500
+    return jsonify({"status": "ok"})
 
 @app.route('/health')
 def health():

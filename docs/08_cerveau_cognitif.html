@@ -48,8 +48,8 @@
         <h3 style="color:#93c5fd; margin-top: 2rem;">2. Le Pipe Engine (pipe_engine.py)</h3>
         <p>Le Cortex principal gère l'orchestration finale. Il applique la Suture Bit-Perfect (reconstruction de l'état via l'Invariant Hash SQLite). Il instancie le <strong>Protocole de Triage Dynamique (PTD)</strong> pour router la requête vers le moteur approprié (LITE, FLASH, ou PRO) défini par le <code>ECHO_MODELS_REGISTRY</code>. Il gère l'<strong>Élasticité Cognitive</strong> : l'inertie en LITE et FLASH est proscrite, imposant au modèle une évaluation asynchrone constante de la difficulté pour s'adapter à la volée (Fast-Track pour le simple réflexe, escalade pour les tâches complexes). Il gère également le flux HTTP/2 SSE avec Google via Stealth Headers (WAF Bypass).</p>
 
-        <h3 style="color:#93c5fd; margin-top: 2rem;">3. Le Kernel Statique (system-prompt.md)</h3>
-        <p>Le comportement cognitif strict est régi par des principes encodés en dur :</p>
+        <h3 style="color:#93c5fd; margin-top: 2rem;">3. Le Kernel Statique & Prompts (echo_prompts.py)</h3>
+        <p>Le comportement cognitif strict est régi par des principes encodés en dur dans la librairie centralisée <code>echo_prompts.py</code>, qui héberge le <strong>Noyau Cognitif Fondamental (ECHO_FOUNDATION_KERNEL)</strong> ainsi que les personas spécifiques (Orchestrateur, Consultant, Navigateur Web). Les principes suivants y sont appliqués :</p>
         <ul>
           <li><strong>PARE (Principe d'Agentivité et de Raisonnement) :</strong> Obligation de réflexion interne exhaustive et planifiée avant action (Thought Signatures natives).</li>
           <li><strong>PRAF (Principe de Rigueur Analytique) :</strong> Interdiction de confabulation ; vérification Web obligatoire pour les hypothèses réelles.</li>
@@ -74,7 +74,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.216.7 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.221.24 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

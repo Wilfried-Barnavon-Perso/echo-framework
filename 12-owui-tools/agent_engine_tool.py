@@ -1,11 +1,12 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.23
+version: 1.24
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.24: Injection des sub_tools_names dans ECHO_SUBAGENT_CONTEXT pour permettre le filtrage dynamique par les outils internes (ex: Tool Consultant).
 # 1.23: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations, functionCallingConfig).
 # 1.22: Transformation de calls_used en calls_remaining pour l'orchestrateur parent.
 # 1.21: Coupure stricte de l'interface utilisateur (__event_call__: None) pour forcer le mode Headless des sous-agents.
@@ -39,7 +40,7 @@ from echo_constants import (
     ECHO_MAX_CONTEXT_SIZE,
     get_generation_config
 )
-from echo_prompts import SYS_ORCHESTRATOR_APPENDIX
+from echo_prompts import SYS_ORCHESTRATOR_APPENDIX, ECHO_FOUNDATION_KERNEL
 from echo_skills import get_skill_content, parse_skill_metadata
 
 # Identifiant de rôle pour les threads delegate dans cognitive_threads
@@ -123,11 +124,7 @@ class Tools:
 
         if not skill_id and not system_prompt:
             # Fallback : Transfert du system_prompt d'ECHO au sous-agent
-            try:
-                with open("/app/backend/data/system-prompt.md", "r", encoding="utf-8") as f:
-                    system_prompt = f.read()
-            except Exception:
-                system_prompt = "Tu es une extension cognitive experte du framework ECHO."
+            system_prompt = ECHO_FOUNDATION_KERNEL
 
         # 1. Résolution de la persona (Skill optionnel)
         role_name = None
@@ -738,7 +735,11 @@ async def _run_agent_loop(
 
                     # Injection asynchrone de l'identité du sous-agent (contournement du proxy OWUI)
                     from echo_constants import ECHO_SUBAGENT_CONTEXT
-                    token = ECHO_SUBAGENT_CONTEXT.set({"is_subagent": True, "sub_sid": sid})
+                    token = ECHO_SUBAGENT_CONTEXT.set({
+                        "is_subagent": True, 
+                        "sub_sid": sid,
+                        "sub_tools_names": list(sub_tools.keys())
+                    })
                     try:
                         result = await callable_fn(**fn_args, **accepted_infra)
                     finally:

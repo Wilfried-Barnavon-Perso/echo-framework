@@ -380,7 +380,7 @@ class Tools:
         if current_status != 'proposed':
             await events.status("Action refusée : Le plan est verrouillé.", done=True)
             return wrap_tool_output(
-                text=f"Action refusée : Un plan au statut '{current_status}' est verrouillé stratégiquement. Vous ne pouvez modifier qu'un plan au statut 'proposed'.",
+                text=f"Action refusée : Un plan au statut '{current_status}' est verrouillé stratégiquement. Le Modèle ne PEUT modifier qu'un plan au statut 'proposed'.",
                 user_id=user_id, chat_id=chat_id, metadata=__metadata__
             )
 
@@ -388,7 +388,7 @@ class Tools:
         if new_status == 'executing':
             await events.status("ERREUR : Tentative de démarrage illicite bloquée.", done=True)
             return wrap_tool_output(
-                text="ACTION INTERDITE : Le passage au statut 'executing' est verrouillé pour des raisons de sécurité. Vous n'avez pas le droit d'utiliser `update_plan` pour cela. Vous DEVEZ obligatoirement invoquer l'outil `process_plan` pour démarrer l'exécution d'un plan.",
+                text="ACTION INTERDITE : Le passage au statut 'executing' est verrouillé pour des raisons de sécurité. Le Modèle n'a pas l'autorisation d'utiliser `update_plan` pour cela. Le Modèle DOIT obligatoirement invoquer l'outil `process_plan` pour démarrer l'exécution d'un plan.",
                 user_id=user_id, chat_id=chat_id, metadata=__metadata__
             )
 
@@ -425,7 +425,7 @@ class Tools:
         Outil TACTIQUE EXCLUSIF pour pointer l'état d'avancement des tâches (tasks_XXX.md).
         Permet de modifier le statut des tâches sans bloquer le flux d'exécution. Ne DOIT PAS être utilisé pour changer la stratégie globale.
         
-        Codification stricte des statuts à respecter dans vos instructions :
+        Codification stricte des statuts à respecter dans les instructions :
         - [ ] : Tâche en attente (Non commencée)
         - [/] : Tâche en cours d'exécution
         - [x] : Tâche terminée avec succès

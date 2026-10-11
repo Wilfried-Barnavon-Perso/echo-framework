@@ -1,19 +1,17 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.36
+version: 11.39
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 11.39: Rétablissement de la grille de vision spatiale fine à 48px.
+# 11.38: Lot C - Isolation par sub_sid (ECHO_SUBAGENT_CONTEXT), refonte du Sniper Protocol et utilisation de vision_capture.
 # 11.36: Modification de la consigne d'action_zoom_in pour exiger la vérification stricte du viseur rouge.
 # 11.35: Intégration du système de ciblage par zoom itératif et gestion de la rétention mémoire (is_zooming).
 # 11.34: Injection Télémétrique Absolue (mouse_position) dans le payload JSON pour fiabiliser le calcul balistique.
 # 11.29: Affinement du maillage spatial (vision_grid_step=48) pour optimiser l'interpolation des LLMs sur les Anti-Bots.
-# 11.28: Refonte du Garbage Collector d'interface (Filtre Universel + Troncature Intelligente 60k).
-# 11.27: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations, functionCallingConfig).
-# 11.26: Fix - Ajout du log explicite de l'exception dans _deploy_navigation_monitor pour faciliter le debug de l'écriture SQLite/Disque.
-# 11.25: Fix - Migration intégrale des captures complètes en JPEG pour réduire l'empreinte mémoire et résoudre la saturation WebSocket 1Mo.
 # 11.14: Descente Cognitive - Injection dynamique de action_analyze_page et action_archive_page dans BROWSER_TOOLS_SCHEMA pour rendre le Sous-Agent autonome, et correction d'un bug de payload sur inspect_page.
 # 11.13: Refonte - Remplacement du distillateur web monolithique par une dichotomie stricte (analyze_web_page via Streaming Sémantique natif ECHO et archive_web_page asynchrone).
 # 11.12: Optim - Ajout de la règle interdisant explicitement l'usage des moteurs de recherche généralistes au niveau du navigateur autonome.
@@ -50,6 +48,7 @@ from echo_core import (
 from echo_state_manager import EchoStateManager
 from echo_paths import generate_echo_file_id, get_echo_session_path
 from echo_gemini_client import EchoGeminiClient
+from echo_prompts import SYS_NAV_BROWSER
 from echo_ui import EchoUI
 from echo_browser_lib import EchoBrowserLib, BROWSER_TOOLS_SCHEMA, req_to_browser
 from echo_constants import FILE_INGESTION_STATUS, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE, PRUNE_CONTENT_THRESHOLD, DEFAULT_VISION_GRID_STEP
@@ -117,7 +116,7 @@ class Tools:
         BROWSER_MODE: Literal["mobile", "desktop"] = Field(default="desktop", description="Mode de navigation")
         SHOW_BROWSER_HUD: bool = Field(default=True, description="Afficher le moniteur de navigation (HUD)")
         USE_MULTIMODAL_VISION: bool = Field(default=True, description="Fournir les captures d'écran à l'agent")
-        VISION_GRID_STEP: int = Field(default=100, description="Pas de la grille de vision en pixels (ex: 50, 100).")
+        VISION_GRID_STEP: int = Field(default=48, description="Pas de la grille de vision en pixels. La grille sera bicolore (Magenta/Cyan) avec des crénelures au quart du pas.")
         PRUNE_CONTENT_THRESHOLD: int = Field(default=1000, description="Seuil d'élagage (en caractères) des contenus lourds (A11y, HTML) obsolètes.")
 
     def __init__(self):
@@ -135,12 +134,21 @@ class Tools:
         :param max_iterations: Nombre max d'itérations. À augmenter pour les tâches longues (ex: 60 questions). Max: 100.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        chat_id = __metadata__.get("chat_id", "default_session")
+        
+        # Récupération de l'identité du sous-agent via contextvars
+        from echo_constants import ECHO_SUBAGENT_CONTEXT
+        sub_context = ECHO_SUBAGENT_CONTEXT.get()
+        base_chat_id = __metadata__.get("chat_id", "default_session")
+        sub_sid = sub_context.get("sub_sid")
+        
+        # Le navigateur s'attache prioritairement à l'ID du sous-agent pour isoler les sessions
+        chat_id = sub_sid if sub_sid else base_chat_id
+        
         uid = __user__.get("id", "anonymous")
         u_valves = __user__.get("valves", self.UserValves())
         use_vision = getattr(u_valves, 'USE_MULTIMODAL_VISION', True)
 
-        await events.status("📡 Agent Navigateur: Prise de contrôle...")
+        await events.status(f"📡 Agent Navigateur [{chat_id[:8]}]: Prise de contrôle...")
         if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, chat_id, uid, u_valves, events):
             return wrap_tool_output(text="❌ Navigateur indisponible.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -159,33 +167,7 @@ class Tools:
 
         vision_requested = False
 
-        sys_prompt = (
-            "<persona>\n"
-            "Le Modèle est l'Agent Navigateur Autonome d'ECHO, expert en automatisation web.\n"
-            "</persona>\n\n"
-            "<mission>\n"
-            "Le Modèle doit piloter un navigateur de manière autonome pour accomplir son objectif en interagissant avec l'interface web (clics, formulaires, extraction).\n"
-            "</mission>\n\n"
-            f"<objective>\n{task_objective}\n</objective>\n\n"
-            "<rules>\n"
-            "1. PERCEPTION GLOBALE : Le Modèle PEUT demander simultanément plusieurs extractions de l'état de la page en un seul tour via `action_inspect_page` pour accélérer sa compréhension.\n"
-            "2. HIÉRARCHIE D'INTERACTION : 1) Privilégier `action_interact_a11y` (utiliser `method='role'` ET `name` pour cibler précisément un bouton/lien, ou `method='text'` pour du texte). 2) Repli sur `action_interact_dom` (Index `dom_map`). 3) Face aux Anti-Bots (ex: Cloudflare), application stricte du PROTOCOLE SNIPER :\n"
-            "   - A) HOVER : Approche spatiale via `action_interact_dom(action_type='hover', x=..., y=...)`.\n"
-            "   - B) GRID : Requête d'inspection via `vision_grid=True`.\n"
-            "   - C) ANALYSE (OBLIGATOIRE) : Dès la réception de la grille, une évaluation verbale exhaustive DOIT être formulée dans la réflexion : lecture du champ JSON `mouse_position` (tes coordonnées actuelles) ET calcul explicite du décalage (Delta X/Y) vers le centre géométrique de la cible visible sur l'image.\n"
-            "   - D) ZOOM (OPTIONNEL) : Si la cible est trop dense/petite pour estimer précisément X/Y, appelle `action_zoom_in(x1, y1, x2, y2)`. Le système rognera l'image sur cette zone et calculera le centre exact. Si la cible y est centrée, utilise ces coordonnées avec `action_interact_dom`.\n"
-            "   - E) TIR : Si le curseur est strictement DANS la cible, exécution de `action_interact_dom(action_type='click_current')` (SANS coordonnée). Sinon, itération de l'étape A avec les coordonnées corrigées.\n"
-            "3. ACTIONS GROUPÉES : Le Modèle PEUT grouper plusieurs actions non-mutantes (ex: remplir plusieurs champs). Cependant, il NE DOIT PAS enchaîner une action si la précédente risque de modifier drastiquement la page (soumission, navigation). Une action mutante DOIT être la dernière du lot.\n"
-            "4. OVERLAYS & POP-UPS : Si une bannière bloque la navigation (cookies, popup), la priorité absolue du Modèle est d'utiliser `action_interact_dom(action_type='click')` ou `action_interact_a11y` pour s'en débarrasser.\n"
-            "5. FORMULAIRES : Remplir les champs avec `action_interact_dom(action_type='type')`. Exécuter `action_browser_control(command='pause')` pour attendre une liste d'autocomplétion. Si la liste apparaît, cliquer dessus. Sinon, valider avec `action_browser_control(command='press_key', value='Enter')`.\n"
-            "6. SCROLL : Si une information est absente du DOM, le Modèle DOIT scroller vers le bas via `action_browser_control(command='scroll', value='down')` avant d'abandonner.\n"
-            "7. ERREURS & REPLI : Si `action_browser_control(command='press_key')` échoue, le Modèle doit chercher et cliquer sur le bouton de soumission. Si une approche échoue, il DOIT changer de stratégie.\n"
-            "8. RESTRICTION DE RECHERCHE : Il est STRICTEMENT INTERDIT d'utiliser le navigateur pour effectuer une recherche sur un moteur de recherche généraliste (Google, Bing, etc.). Le navigateur est réservé à l'interaction sur une URL précise.\n"
-            "9. SYNTHÈSE : La synthèse finale DOIT être une phrase complète. Il est STRICTEMENT INTERDIT de renvoyer uniquement un nombre ou un mot isolé.\n"
-            "10. SATURATION : Si une balise <system_alert> de saturation apparaît, le Modèle DOIT clore ce tour en écrivant un texte libre commençant par [SATURATION_CONTEXTE] suivi d'une synthèse détaillée des textes lus et de ses avancées. Il NE DOIT PAS appeler d'outils ce tour-ci.\n"
-            "11. MÉMOIRE ET PRISE DE NOTES : Le système détruit ou tronque les données brutes massives des pages précédentes pour économiser la mémoire. Avant de changer de page ou d'action, le Modèle DOIT rédiger dans sa réponse texte les informations clés et un court résumé, car son propre texte servira de guide exclusif pour ses prochains tours.\n"
-            "</rules>"
-        )
+        sys_prompt = SYS_NAV_BROWSER.format(task_objective=task_objective)
 
         history = [{"role": "user", "parts": [{"text": sys_prompt}]}]
         state.save_thread_step(sid, chat_id, "navigator", 0, "user", history[0]["parts"])
@@ -223,10 +205,12 @@ class Tools:
             """Élagage proactif : Filtre universel avec seuil de tolérance élevé et troncature intelligente pour éviter le Token Bloat."""
             heavy_keys = ["dom_map", "a11y_tree", "content", "html", "search_dom"]
             
-            for msg in history_list:
-                # Purge de la vision (inlineData) sauf si on est en plein cycle de zoom
+            for i, msg in enumerate(history_list):
+                # Mémoire Glissante (T-1) : On préserve inlineData uniquement pour les 2 derniers messages utilisateur
                 if "parts" in msg and not is_zooming:
-                    msg["parts"] = [p for p in msg["parts"] if "inlineData" not in p]
+                    # Tolérance si msg fait partie des 4 derniers éléments de l'historique (2 user, 2 model)
+                    if i < len(history_list) - 4:
+                        msg["parts"] = [p for p in msg["parts"] if "inlineData" not in p]
                     
                 for part in msg.get("parts", []):
                     # Purge ou Troncature dans les retours d'outils
@@ -235,10 +219,13 @@ class Tools:
                         resp = fr.get("response", {})
                         if isinstance(resp, dict):
                             for key in heavy_keys:
-                                if key in resp and "[PURGED" not in str(resp[key]) and "[TRUNCATED" not in str(resp[key]):
-                                    if isinstance(resp[key], str) and len(resp[key]) > threshold:
-                                        resp[key] = resp[key][:threshold] + "\n... [TRUNCATED_TO_PREVENT_BLOAT]"
-                                    elif len(str(resp[key])) > threshold:
+                                if key in resp:
+                                    val = resp[key]
+                                    if isinstance(val, str) and ("[PURGED" in val or "[TRUNCATED" in val):
+                                        continue
+                                    if isinstance(val, str) and len(val) > threshold:
+                                        resp[key] = val[:threshold] + "\n... [TRUNCATED_TO_PREVENT_BLOAT]"
+                                    elif not isinstance(val, str) and len(str(val)) > threshold:
                                         resp[key] = "[PURGED_OBSOLETE_UI_STATE]"
                                 
                     # Troncature du DOM initial en texte brut (push_state)
@@ -285,7 +272,7 @@ class Tools:
             proxy_task = None
             
         try:
-        
+            last_fn_name = "action"
             while iterations < max_iterations:
                 iterations += 1
                 await events.status(f"🤖 Agent Navigateur: Analyse en cours (Étape {iterations})...", done=False)
@@ -329,6 +316,11 @@ class Tools:
                     "tool_config": {"functionCallingConfig": {"mode": "AUTO"}}
                 }
 
+                from echo_constants import get_generation_config
+                # Élasticité Cognitive : HIGH pour l'analyse (Vision, DOM, A11y, ou démarrage initial), LOW pour l'exécution motrice (Clic, Scroll)
+                thinking_mode = "high" if last_fn_name in ["action", "action_inspect_page"] else "low"
+                payload["generationConfig"] = get_generation_config(target_model_key, override_thinking=thinking_mode)
+                
                 model = clamp_model(target_model_key, __metadata__, user_id=uid)
                 data, _, err = await EchoGeminiClient.call_cascade(model, payload, uid, __metadata__, events, timeout=120)
 
@@ -397,7 +389,7 @@ class Tools:
                                         _resp = {"status": "success", "message": "Capture d'écran demandée. Elle est jointe à ce message."}
                                         
                                     if grid:
-                                        last_view = await browser._action("inspect_page", {"target": "vision", "vision_grid": True, "vision_grid_step": browser.vision_grid_step, "zoom_box": zb})
+                                        last_view = await browser.vision_capture(grid=True, zoom_box=zb)
                                     else:
                                         last_view = await browser.highlight()
                                         
@@ -405,7 +397,7 @@ class Tools:
                                     hud_view = await browser.highlight() if grid else last_view
                                     if is_last_tool:
                                         try:
-                                            sc_res = await browser.stop_screencast(hud_view.get("screenshot_b64"))
+                                            sc_res = await browser.stop_screencast()
                                             if sc_res and sc_res.get("webp_b64"):
                                                 hud_view["webp_b64"] = sc_res["webp_b64"]
                                         except: pass
@@ -424,7 +416,7 @@ class Tools:
                                             last_view = await browser.highlight()
                                             
                                         try:
-                                            sc_res = await browser.stop_screencast(last_view.get("screenshot_b64"))
+                                            sc_res = await browser.stop_screencast()
                                             if sc_res and sc_res.get("webp_b64"):
                                                 last_view["webp_b64"] = sc_res["webp_b64"]
                                         except: pass
@@ -525,6 +517,9 @@ class Tools:
                             "role": "user", 
                             "parts": [{"text": f"Reprise de session interne.\nObjectif initial :\n{task_objective}\n\nSynthèse des recherches précédentes :\n{synthesis}\n\nContinuez la mission sans répéter les mêmes actions."}]
                         })
+                        if last_view:
+                            # push_state formate et ajoute automatiquement le DOM (et l'image) dans 'history'
+                            push_state(last_view)
                         state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "user", history[1]["parts"])
                         continue  # Relance la boucle while
                 
@@ -584,7 +579,7 @@ class Tools:
                 {"text": f"<instruction>\nLe Modèle doit analyser ce document Web pour accomplir cette tâche : {query}\nLa réponse doit être factuelle, précise et issue du texte.\n</instruction>"},
                 {"inline_data": {"mime_type": "text/plain", "data": f"___ECHO_STREAM_FILE___{tmp_path}___"}}
             ]}],
-            "generationConfig": get_generation_config("MODEL_FLASH")
+            "generationConfig": get_generation_config("MODEL_FLASH", override_thinking="low")
         }
         
         analyse_model = clamp_model("MODEL_FLASH", __metadata__, user_id=uid)

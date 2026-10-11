@@ -1,7 +1,7 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.74
+version: 192.75
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
@@ -854,7 +854,7 @@ class Pipe:
             cascade_attempt += 1
 
             # --- [NOUVEAU] RÉSOLUTION DYNAMIQUE DES INSTRUCTIONS SYSTÈME ---
-            sys_instr_raw = "\n".join([m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]) or "Tu es ECHO."
+            sys_instr_raw = "\n".join([m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]) or "Le Modèle est ECHO."
             resolved_sys = resolve_placeholders(sys_instr_raw, target_model, orch.model_origin)
             sys_instr = {"parts": [{"text": resolved_sys}]}
 
@@ -896,10 +896,10 @@ class Pipe:
                             "planification, raisonnement multi-étapes).\n"
                             "  \u2192 Le Modèle escalade vers FLASH systématiquement dès que la tâche dépasse "
                             "le simple réflexe. L'inertie en FLASH est proscrite et demande une évaluation silencieuse.\n"
-                            "- **MODEL_PRO** (Expertise) : Pour les tâches de haute complexité où "
-                            "FLASH a échoué ou serait insuffisant. Architectures systèmes complexes, "
-                            "refactoring multi-fichiers, logique formelle.\n"
-                            "  → Le Modèle justifie le besoin de PRO et redescend vers FLASH ou LITE "
+                            "- **MODEL_PRO** (Expertise & Réflexion Profonde) : Dès qu'une tâche nécessite un "
+                            "raisonnement cognitif poussé, une anticipation structurelle ou une logique formelle. "
+                            "Privilégier de manière proactive.\n"
+                            "  → Le Modèle justifie le moindre besoin d'analyse et redescend vers FLASH ou LITE "
                             "une fois la tâche complexe accomplie.\n"
                             "(Note : Le modèle actuel est exclu de l'enum).\n\n"
                             "## Corrélation contextuelle\n"
@@ -1025,7 +1025,7 @@ class Pipe:
                     })
                     context.append({
                         "role": "user",
-                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "model_requested": target_req, "model_used": target_model, "warning": "Déjà sur le modèle", "message": f"ERREUR : Vous êtes déjà sur le modèle {target_req}. Poursuivez votre tâche."}, "id": sys_tc_id}}]
+                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "model_requested": target_req, "model_used": target_model, "warning": "Déjà sur le modèle", "message": f"ERREUR : Le système est déjà sur le modèle {target_req}. Le Modèle DOIT poursuivre sa tâche."}, "id": sys_tc_id}}]
                     })
                     continue
 

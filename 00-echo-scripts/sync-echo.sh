@@ -1,9 +1,11 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 4.9
+# VERSION : 4.11
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
+# CHANGELOG 4.11 : Ajout d'un encart visuel de versioning Git interactif (Avant/Après).
+# CHANGELOG 4.10 : Déploiement déclaratif automatique via boucle regex. Suppression des fantômes.
 # CHANGELOG 4.9 : Nettoyage conditionnel (sed) des caractères CRLF/BOM pour préserver le cache BuildKit.
 # ROLE : 
 # 1. SYNCHRONISATION DU CODE SOURCE (GitHub -> Local Source)
@@ -59,6 +61,17 @@ for arg in "$@"; do
         LOCAL_ONLY="true"
     fi
 done
+
+# --- CAPTURE ETAT ACTUEL (AVANT SYNC) ---
+OLD_VERSION="Aucune (1ère installation)"
+if [ -f "$ECHO_VERSION_FILE" ]; then
+    OLD_VERSION=$(cat "$ECHO_VERSION_FILE" | tr -d '\r\n')
+fi
+
+OLD_DESC="Aucun historique local"
+if [ -d "$SRC_DIR/.git" ]; then
+    OLD_DESC=$(git -C "$SRC_DIR" log -1 --pretty=format:"%s" 2>/dev/null || echo "Historique inaccessible")
+fi
 
 if [ "$LOCAL_ONLY" == "true" ]; then
     echo "🔄 [SYNC] 1/2 Mode LOCAL-ONLY détecté. Synchronisation Git ignorée."
@@ -119,6 +132,30 @@ else
     fi
 fi
 
+# --- CAPTURE NOUVEL ETAT (APRES SYNC) ---
+NEW_VERSION="Inconnue"
+if [ -f "$SRC_DIR/VERSION" ]; then
+    NEW_VERSION=$(cat "$SRC_DIR/VERSION" | tr -d '\r\n')
+fi
+
+NEW_DESC="Aucun historique local"
+if [ -d "$SRC_DIR/.git" ]; then
+    NEW_DESC=$(git -C "$SRC_DIR" log -1 --pretty=format:"%s" 2>/dev/null || echo "Historique inaccessible")
+fi
+
+# --- AFFICHAGE VISUEL DES VERSIONS ---
+echo ""
+echo "############################################################"
+echo "📌 PLAN DE SYNCHRONISATION"
+echo "############################################################"
+echo "🔻 Ancienne version : $OLD_VERSION"
+echo "   > $OLD_DESC"
+echo ""
+echo "🔺 Nouvelle version : $NEW_VERSION"
+echo "   > $NEW_DESC"
+echo "############################################################"
+echo ""
+
 # --- 2. DÉPLOIEMENT FICHIERS ---
 echo "📂 [SYNC] 2/2 Déploiement des fichiers vers $ECHO_ROOT..."
 
@@ -154,27 +191,32 @@ sync_resource() {
 }
 
 # Distribution des Ressources
-sync_resource "$SRC_DIR/00-echo-scripts"       "$ECHO_SCRIPTS"
-sync_resource "$SRC_DIR/01-config"             "$ECHO_CONFIG"
-sync_resource "$SRC_DIR/12-owui-tools"         "$ECHO_ROOT/owui-tools"
-sync_resource "$SRC_DIR/10-owui-pipes"         "$ECHO_ROOT/owui-pipes"
-sync_resource "$SRC_DIR/13-owui-actions"       "$ECHO_ROOT/owui-actions"
-sync_resource "$SRC_DIR/11-owui-filters"       "$ECHO_ROOT/owui-filters"
-sync_resource "$SRC_DIR/14-owui-libs"          "$ECHO_ROOT/owui-libs"
-sync_resource "$SRC_DIR/_assets/images"        "$ECHO_ROOT/echo-images"
 
-# Docker Build Contexts
-sync_resource "$SRC_DIR/19-docker-python-base"       "$ECHO_ROOT/19-docker-python-base"
-sync_resource "$SRC_DIR/23-docker-mcp-broker"       "$ECHO_ROOT/docker-mcp-broker"
-sync_resource "$SRC_DIR/20-docker-admin-manager"    "$ECHO_ROOT/docker-admin-manager"
-sync_resource "$SRC_DIR/21-docker-coding-worker"    "$ECHO_ROOT/docker-coding-worker"
-sync_resource "$SRC_DIR/22-docker-browser-worker"   "$ECHO_ROOT/docker-browser-worker"
-sync_resource "$SRC_DIR/30-docker-embedding-worker" "$ECHO_ROOT/docker-embedding-worker"
-sync_resource "$SRC_DIR/24-docker-echo-auth-manager" "$ECHO_ROOT/docker-echo-auth-manager"
-sync_resource "$SRC_DIR/32-docker-stt-worker"       "$ECHO_ROOT/docker-stt-worker"
-sync_resource "$SRC_DIR/31-docker-tts-worker"       "$ECHO_ROOT/docker-tts-worker"
-sync_resource "$SRC_DIR/25-docker-download-broker"  "$ECHO_ROOT/docker-download-broker"
-sync_resource "$SRC_DIR/26-docker-n8n-worker"       "$ECHO_ROOT/docker-n8n-worker"
+echo "   🧹 Purge préalable des sous-systèmes applicatifs pour éliminer les fantômes..."
+find "$ECHO_ROOT" -maxdepth 1 -type d \( -name "owui-*" -o -name "docker-*" \) -exec rm -rf {} +
+
+echo "   🔄 Synchronisation dynamique des composants (Routage Automatique)..."
+for dir in "$SRC_DIR"/*; do
+    [ -d "$dir" ] || continue
+    base=$(basename "$dir")
+    
+    # Dossiers d'infrastructures
+    if [[ "$base" == "00-echo-scripts" ]]; then
+        sync_resource "$dir" "$ECHO_SCRIPTS"
+    elif [[ "$base" == "01-config" ]]; then
+        sync_resource "$dir" "$ECHO_CONFIG"
+    elif [[ "$base" == "_assets" ]]; then
+        sync_resource "$dir/images" "$ECHO_ROOT/echo-images"
+        
+    # Routage dynamique pour tout dossier 'XX-owui-*' ou 'XX-docker-*'
+    elif [[ "$base" =~ ^[0-9]+-(owui|docker)-.* ]]; then
+        dest_name=$(echo "$base" | sed -E 's/^[0-9]+-//')
+        sync_resource "$dir" "$ECHO_ROOT/$dest_name"
+    # Routage pour docker-python-base s'il n'a plus de numéro (suite au renommage)
+    elif [[ "$base" =~ ^(owui|docker)-.* ]]; then
+        sync_resource "$dir" "$ECHO_ROOT/$base"
+    fi
+done
 
 # Lien symboliques
 echo "   🔗 Création des liens symboliques globaux..."
@@ -195,7 +237,7 @@ fi
 # Nettoyage et Permissions
 echo "   🧹 Nettoyage intelligent des caractères Windows (Maintien du Cache Docker)..."
 # Liste des dossiers à nettoyer (tous les dossiers de prod sous ECHO_ROOT + SRC_DIR pour éviter la recopie)
-PROD_DIRS="$SRC_DIR $ECHO_SCRIPTS $ECHO_CONFIG $ECHO_ROOT/19-docker-python-base $ECHO_ROOT/docker-admin-manager $ECHO_ROOT/docker-coding-worker $ECHO_ROOT/docker-browser-worker $ECHO_ROOT/docker-embedding-worker $ECHO_ROOT/docker-echo-auth-manager $ECHO_ROOT/docker-stt-worker $ECHO_ROOT/docker-tts-worker $ECHO_ROOT/docker-download-broker $ECHO_ROOT/docker-mcp-broker $ECHO_ROOT/docker-n8n-worker"
+PROD_DIRS="$SRC_DIR $ECHO_SCRIPTS $ECHO_CONFIG $ECHO_ROOT/owui-* $ECHO_ROOT/docker-*"
 
 find $PROD_DIRS -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "*.md" -o -name "VERSION" -o -name "Dockerfile" -o -name "requirements.txt" \) -exec bash -c '
 for f; do

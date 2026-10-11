@@ -341,7 +341,8 @@ class EchoGeminiClient:
         is_json: bool = True,
         parts: Optional[List[Dict]] = None,
         max_tokens: int = 65535,  # 65535. Surchargeable : ex. 8192 (RAG), 2048 (brief).
-        target_model: Optional[str] = None
+        target_model: Optional[str] = None,
+        system_instruction: Optional[str] = None
     ) -> Union[Dict, str]:
         """
         Exécute une tâche de distillation (extraction sémantique).
@@ -367,6 +368,10 @@ class EchoGeminiClient:
             "contents": contents,
             "generationConfig": base_gen
         }
+        
+        if system_instruction:
+            payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
+            
         if is_json:
             payload["generationConfig"]["response_mime_type"] = "application/json"
 

@@ -1,11 +1,13 @@
 """
 title: ECHO Identity Vault Tool
 author: ECHO
-version: 1.6
+version: 1.8
 description: Outil permettant à l'Agent de gérer le Identity Vault (ajout/suppression de serveurs distants ou N8N).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.8: Filtrage croisé de configured_services et forçage sémantique du paramètre 'all'.
+# 1.7: Refonte JSON de list_identities_services.
 # 1.6: Remplacement de la vérification __event_call__ par ECHO_SUBAGENT_CONTEXT pour l'interdiction Headless.
 # 1.4: Refonte list_identities (tolérance aux fautes, import json global).
 # 1.2: Suppression totale de la notion d'accès RO/RW (access_level).
@@ -13,7 +15,7 @@ description: Outil permettant à l'Agent de gérer le Identity Vault (ajout/supp
 # 1.0: Outil initial.
 import sys
 import json
-from typing import Optional, Any, List, Dict
+from typing import Optional, Any, List, Dict, Literal
 from pydantic import BaseModel, Field
 
 sys.path.append("/app/backend/echo_libs")
@@ -41,28 +43,73 @@ class Tools:
             conn.commit()
         return state
 
-    async def list_available_services(self, __user__: dict = None) -> str:
+    async def list_identities_services(self, category_filter: Literal["all", "mcp_native", "mcp_resident", "mcp_ephemeral", "mcp_remote", "orchestration", "uncategorized"] = "all", __user__: dict = None) -> str:
         """
-        Permet au modèle de lister de manière exhaustive les noms de services actuellement configurés dans le coffre-fort.
-        DIRECTIVE : Le Modèle doit utiliser cet outil puis 'list_identities' pour vérifier si un serveur MCP local ou distant approprié est déjà à sa disposition et relatif à la tâche en cours.
+        Interroge l'API pour extraire le catalogue des services de l'Identity Vault.
+        
+        Args:
+            category_filter: Filtre sémantique. Sélectionner 'all' pour une découverte exhaustive.
         """
         if not __user__: return "Erreur: Auth requise."
+        
+        import httpx
+        schemas = {}
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get("http://echo-mcp-broker:8000/schemas", timeout=2.0)
+                if resp.status_code == 200:
+                    schemas = resp.json()
+        except Exception:
+            pass
+            
+        available_services_list = []
+        for svc_id, data in schemas.items():
+            cat = data.get("category", "uncategorized")
+            if category_filter == "all" or cat == category_filter:
+                available_services_list.append({
+                    "service": svc_id,
+                    "category": cat,
+                    "name": data.get("name", svc_id)
+                })
+            
         state = self._init_vault(__user__["id"])
         with state._get_connection() as conn:
             cursor = conn.execute("SELECT DISTINCT service FROM identity_vault WHERE user_id = ?", (__user__["id"],))
             rows = cursor.fetchall()
             
-        if not rows:
-            return "Aucun service configuré."
+        configured_services = []
+        if rows:
+            for r in rows:
+                svc = r[0]
+                if category_filter == "all":
+                    configured_services.append(svc)
+                else:
+                    cat = schemas.get(svc, {}).get("category", "uncategorized")
+                    if cat == category_filter:
+                        configured_services.append(svc)
+            
+        result_json = {
+            "categories_services": {
+                "mcp_native": "Services natifs vers des serveurs MCP distants",
+                "mcp_resident": "Services résidents de serveurs MCP préinstallés",
+                "mcp_ephemeral": "Services de serveurs MCP installés à la volée (npx/uvx)",
+                "mcp_remote": "Services MCP via connexions distantes (HTTP/SSE)",
+                "orchestration": "Services et leurs identifiants orchestrés par N8N",
+                "uncategorized": "Autres services et leurs identifiants, non catégorisés"
+            },
+            "services_disponibles_via_mcp_broker": available_services_list,
+            "services_avec_identites_configurees": configured_services
+        }
         
-        return f"Services disponibles : {', '.join([r[0] for r in rows])}"
+        return json.dumps(result_json, ensure_ascii=False, indent=2)
 
     async def list_identities(self, service: str, __user__: dict = None) -> str:
         """
-        Permet au modèle de récupérer les comptes tiers rattachés à un service spécifique. L'argument 'service' est strictement obligatoire.
+        Interroge l'Identity Vault pour restituer les comptes tiers associés à un service spécifique.
+        L'argument 'service' est strictement requis. Invoquer 'list_identities_services' en cas d'ambiguïté.
         """
         if not __user__: return "Erreur: Utilisateur inconnu."
-        if not service: return "Erreur: L'argument 'service' est strictement requis. Invoquez 'list_available_services' en cas de doute."
+        if not service: return "Erreur: L'argument 'service' est strictement requis. Invoquez 'list_identities_services' en cas de doute."
         state = self._init_vault(__user__["id"])
         with state._get_connection() as conn:
             cursor = conn.execute("SELECT service, account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ?", (__user__["id"], service))
@@ -86,12 +133,11 @@ class Tools:
 
     async def manage_identity(self, action: str, service: str, account_id: str, credentials_json: str = "", __user__: dict = None, __event_emitter__: Any = None, __event_call__: Any = None) -> str:
         """
-        Ajoute, modifie ou supprime une identité/serveur distant dans le Vault. Action = 'add', 'update' ou 'delete'.
+        Ajoute, modifie ou purge une identité applicative ou un serveur au sein de l'Identity Vault. Action autorisée : 'add', 'update' ou 'delete'.
         
         RÈGLES POUR 'credentials_json' :
-        - Pour tous les services : Le JSON DOIT impérativement inclure une clé "description" expliquant clairement la finalité du compte ou serveur (ex: "Serveur MCP donnant accès à l'Open Data français").
-        - Spécifique à 'remote_mcp' : Le JSON DOIT contenir la clé "url". Il DOIT également contenir la clé "transport" valant soit "sse" soit "streamable_http" (à déduire via recherche documentaire). La clé "headers" est optionnelle.
-        Exemple : {"description": "...", "url": "https://api.com/mcp", "transport": "streamable_http", "headers": {"Authorization": "Bearer XXX"}}
+        - Pour tous les services : Le JSON DOIT impérativement inclure une clé "description" explicitant la finalité.
+        - Spécifique à 'mcp_remote' : Le JSON DOIT contenir les clés "url" et "transport" ("sse" ou "streamable_http").
         """
         if not __user__: return "Erreur: Contexte OWUI manquant."
         from echo_constants import ECHO_SUBAGENT_CONTEXT

@@ -1,12 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.98
+version: 5.104
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.104: Rollback de la factorisation globale (5.102/5.103) suite à des lenteurs massives et instabilités. Retour à la version 5.101 (état validé avant factorisation du clamping).
+# 5.101: Fix Identity Vault - Injection de EchoUI.get_floating_window_class_js() dans _generate_identity_vault_js (TypeError: window.EchoFloatingWindow is not a constructor hors chargement préalable du Monitor).
+# 5.100: Rollback de la factorisation 5.99 (Codex/WebPlayer) : NameError f-string (HUD_ID/CODEX_ID), IDs DOM orphelins, classe EchoFloatingWindow non injectée. Retour au code 5.98 validé.
 # 5.98: Support du Trigger Asynchrone JS via _echoCodexTarget pour forcer l'ouverture du Codex sur un fichier spécifique.
+# 5.97: Architecture - Factorisation du HUD ECHO Identity Vault via la classe unifiée EchoFloatingWindow. Maintien de l'architecture spécifique pour le Cognitive Monitor et le WebPlayer.
 # 5.97: Architecture - Factorisation du HUD ECHO Identity Vault via la classe unifiée EchoFloatingWindow. Maintien de l'architecture spécifique pour le Cognitive Monitor et le WebPlayer.
 # 5.96: Architecture - Factorisation des fenêtres flottantes via la classe unifiée EchoFloatingWindow. L'ECHO Monitor devient le Sandbox Monitor natif.
 # 5.95: Fix Monitor - Extraction de echoCreateFloatingMonitor dans get_floating_monitor_js() (non injecté auparavant), iframe construite via DOM (srcdoc natif), retrait de allow-same-origin.
@@ -14,7 +18,6 @@ description: Composant système interne : ECHO UI Rendering Engine.
 # 5.93: Implémentation du Pattern Data Island pour le rendu des composants ECHO Sandbox Monitor via iframe sécurisée.
 # 5.88: Codex - Remplacement des icônes d'import/export par des SVG (Upload/Download).
 # 5.86: Fix - Correction d'une erreur de syntaxe f-string dans le JS injecté du Lazy Loading.
-# 5.85: Refonte majeure (Codex) : Implémentation du Lazy Loading avec requêtage asynchrone (load_directory) et purge mémoire dynamique.
 # 5.77: Factorisation de l'arbre (treeMap) pour tous les espaces (main/sandbox) avec tri descendant par date (mtime).
 # 5.76: Rendu asymétrique de l'arborescence Codex (liste plate pour le main, arbre pour la sandbox).
 # 5.75: Support du paramètre timeoutSeconds dans echoCustomConfirm pour annulation automatique avec rétrocompatibilité.
@@ -1369,6 +1372,26 @@ return new Promise(function(resolve) {{
         allow-same-origin est volontairement exclu : une iframe srcdoc hériterait sinon de l'origine
         d'Open WebUI (accès localStorage/token de session depuis le code de la Sandbox)."""
         return EchoUI.get_floating_window_class_js() + """
+      window._echoUIPayloads = window._echoUIPayloads || {};
+      if (!window._echoUIAggregatorBound) {
+          window._echoUIAggregatorBound = true;
+          window.addEventListener('message', (event) => {
+              if (event.data && event.data.echoUIPayload) {
+                  const { window_id, payload } = event.data.echoUIPayload;
+                  window._echoUIPayloads[window_id] = payload;
+              }
+              if (event.data && event.data.echoSignal === 'abort') {
+                  window._echoUIPayloads['_echo_signal'] = 'abort';
+              }
+              if (event.data && event.data.echoPing) {
+                  const wid = event.data.echoPing;
+                  if (!window._echoUIPayloads['_pings']) window._echoUIPayloads['_pings'] = {};
+                  window._echoUIPayloads['_pings'][wid] = Date.now();
+              }
+          });
+      }
+      window._echoGetAggregatedPayload = () => window._echoUIPayloads;
+
       window.echoCreateFloatingMonitor = (window_id, title, htmlContent, width, height) => {
           const hudId = 'echo-sandbox-monitor-hud-' + window_id;
           
@@ -1401,7 +1424,12 @@ return new Promise(function(resolve) {{
               const iframe = document.createElement('iframe');
               iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-popups');
               iframe.style.cssText = 'width:100%; height:100%; border:none; display:block; flex:1;';
-              iframe.srcdoc = htmlContent;
+              const heartbeat = `<script>
+                  setInterval(function(){
+                      window.parent.postMessage({ echoPing: '${window_id}' }, '*');
+                  }, 1000);
+              </script>`;
+              iframe.srcdoc = heartbeat + htmlContent;
               body.appendChild(iframe);
               if (existingResizer) body.appendChild(existingResizer);
           }
@@ -3270,6 +3298,7 @@ return new Promise(function(resolve) {{
             "(function() {\n"
             "  const HUD_ID = 'echo-vault-identity';\n"
             + EchoUI.get_mobile_guard_js('echo-vault-identity') + "\n"
+            + EchoUI.get_floating_window_class_js() + "\n"
             + EchoUI.get_sanitize_html_js() + "\n"
             "  if (document.getElementById(HUD_ID)) document.getElementById(HUD_ID).remove();\n"
             "  let accounts = JSON.parse('" + accounts_json.replace("\\", "\\\\").replace("'", "\\'") + "');\n"
@@ -3357,12 +3386,46 @@ return new Promise(function(resolve) {{
             "  const serviceSelect = document.getElementById('vault-input-service');\n"
             "  const dynamicFieldsContainer = document.getElementById('vault-dynamic-fields');\n"
             "  \n"
+            "  const categories = {};\n"
+            "  const uncategorized = [];\n"
             "  Object.keys(schemas).forEach(key => {\n"
-            "    const opt = document.createElement('option');\n"
-            "    opt.value = key;\n"
-            "    opt.textContent = schemas[key].name || key;\n"
-            "    serviceSelect.appendChild(opt);\n"
+            "    const cat = schemas[key].category;\n"
+            "    if (cat) {\n"
+            "      if (!categories[cat]) categories[cat] = [];\n"
+            "      categories[cat].push({key, name: schemas[key].name || key});\n"
+            "    } else {\n"
+            "      uncategorized.push({key, name: schemas[key].name || key});\n"
+            "    }\n"
             "  });\n"
+            "  const catLabels = {\n"
+            "      'mcp_native': 'Modules Natifs (MCP)',\n"
+            "      'mcp_resident': 'Serveurs Résidents (MCP)',\n"
+            "      'mcp_ephemeral': 'Serveurs Éphémères (MCP)',\n"
+            "      'mcp_remote': 'Serveurs Distants (MCP)',\n"
+            "      'orchestration': 'Orchestration & Workflow'\n"
+            "  };\n"
+            "  Object.keys(categories).forEach(cat => {\n"
+            "    const optgroup = document.createElement('optgroup');\n"
+            "    optgroup.label = catLabels[cat] || cat;\n"
+            "    categories[cat].forEach(item => {\n"
+            "      const opt = document.createElement('option');\n"
+            "      opt.value = item.key;\n"
+            "      opt.textContent = item.name;\n"
+            "      optgroup.appendChild(opt);\n"
+            "    });\n"
+            "    serviceSelect.appendChild(optgroup);\n"
+            "  });\n"
+            "  if (uncategorized.length > 0) {\n"
+            "    const optgroup = document.createElement('optgroup');\n"
+            "    optgroup.label = 'Autres';\n"
+            "    uncategorized.forEach(item => {\n"
+            "      const opt = document.createElement('option');\n"
+            "      opt.value = item.key;\n"
+            "      opt.textContent = item.name;\n"
+            "      optgroup.appendChild(opt);\n"
+            "    });\n"
+            "    serviceSelect.appendChild(optgroup);\n"
+            "  }\n"
             "  \n"
             "  function renderDynamicFields() {\n"
             "    const serviceKey = serviceSelect.value;\n"

@@ -1,6 +1,6 @@
 from functools import wraps
 from mcp.server.context import Context
-from .database import get_credentials
+from .database import get_identity
 import contextvars
 
 # Variable de contexte globale pour stocker l'ID utilisateur de la requête asynchrone courante
@@ -36,7 +36,7 @@ def require_service_access(service: str):
                 raise RuntimeError("User ID not found in context. Authentication via Open WebUI headers is required.")
 
             # 2. Vérifier les droits en base (Accès Unique)
-            vault_data = await get_credentials(user_id, service)
+            vault_data = await get_identity(user_id, service)
             if not vault_data:
                 raise PermissionError(f"No credentials found for service '{service}'.")
 

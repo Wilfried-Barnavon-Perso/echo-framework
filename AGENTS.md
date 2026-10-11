@@ -25,6 +25,7 @@ L'architecture repose sur trois piliers fondamentaux (Auto-Hébergement, Véraci
 
 ### 1.1 Le Kernel Statique
 - **Méta-Principes et Identité :** Définit les conditions d'exécution indépassables du Modèle, son persona (interdiction stricte des tics IA, anglicismes, listes excessives), ses outils, et les Artéfacts Environnementaux Contextuels (AEC) géo-temporels pour assurer la cohésion globale.
+- **Protocole d'Adressage aux Sous-agents (PAS) :** Impose 3 axiomes d'énonciation : Énonciation Impersonnelle (proscription des pronoms Tu/Je/Vous au profit de termes formels comme Le Modèle, L'Utilisateur), Densité Sémantique (Haut SNR, logique procédurale), et Déterminisme/Injonction (remplacement des incertitudes par DOIT, PEUT, ABSOLUMENT INTERDIT). Ces instructions fondamentales sont centralisées dans le **Noyau Cognitif Fondamental (`ECHO_FOUNDATION_KERNEL`)** et injectées algorithmiquement à la racine de tout sous-agent.
 - **Principe de Cognition Interne et Réflexion (PCIR) :** Impose au modèle une réflexion verbale interne exhaustive et critique avant toute interaction ou déclenchement d'outil, pour maximiser le raisonnement.
 - **PGCU (Gestion du Contexte Unifié) :** Fixe l'attention du modèle selon une hiérarchie stricte (Kernel > AEC > Méta-Artéfacts et Mémoires Vectorisées > Requêtes > Outils). Intègre l'évaluation déterministe par itérations (1, 2, 3) pour l'application du PACP (Préférences) et du PRAC (Amélioration).
 - **PTD (Triage Dynamique) :** Cartographie stricte de l'escalade cognitive : LITE (discussion), FLASH (agentivité), PRO (orchestration profonde).
@@ -68,9 +69,9 @@ Le vecteur d'état global (AEC) est injecté systématiquement au format XML nat
 - **Web Intelligence :** Navigation autonome Playwright (`navigation_engine_tool.py`). Boucle OODA, Descente Cognitive via injection de schémas, mode Lidar/Vision hybride, Proactive Context Pruning et streaming sémantique.
 - **Sovereign Web Search :** Recherche souveraine via SearXNG et DuckDuckGo, avec capacité de délégation à un agent de recherche profonde multi-tours.
 - **Agent Engine & Délégation :** Moteur d'exécution d'un agent unique (`delegate_to_agent`) et **Data Broker** (`delegate_to_data_broker.py`) pour déléguer la récupération complexe de données à un agent spécialisé.
-- **Outils Généralistes :** `generalist_tools.py` intègre un `async_wait_timer` programmable et des capacités de saisie utilisateur interactive (remplaçant les scripts épars).
-- **Communication Inter-Services (MCP Natif) :** Outils d'orchestration proxy `remote_mcp_tool.py` (exécution de tâches sur un MCP distant avec schéma dynamique) et `internal_mcp_tool.py` (tâches internes isolées).
-- **Identity Vault (`identity_vault_tool.py`) :** Gère le registre sécurisé des secrets. Le Modèle DOIT impérativement invoquer `list_available_services` pour découvrir le nom de l'environnement (ex: `n8n_workflows`) avant d'interroger `list_identities` (qui exige un paramètre `service` précis).
+- **Outils Généralistes :** `generalist_tools.py` intègre un `async_wait_timer` programmable, des capacités de saisie utilisateur interactive (remplaçant les scripts épars), la gestion des CRONs et automatisations (`create_ui_automation`, `list_ui_automations`), la gestion du calendrier Open WebUI, et `delegate_to_tool_consultant` (Agent Stratège Stateless) permettant de consulter un sous-agent sans persistance de mémoire.
+- **Communication Inter-Services (MCP Natif) :** Outil universel `echo_mcp_tool.py` exploitant un routage HTTP asynchrone (Data-Driven Routing) basé sur la taxonomie dynamique du registre (`mcp_native`, `mcp_resident`, `mcp_remote`, etc.), unifiant ainsi l'accès à tous les serveurs sans distinction d'interface pour le Modèle.
+- **Identity Vault (`identity_vault_tool.py`) :** Gère le registre sécurisé des secrets. Le Modèle DOIT impérativement invoquer `list_identities_services` pour découvrir le nom de l'environnement (ex: `n8n_workflows`) avant d'interroger `list_identities` (qui exige un paramètre `service` précis).
 - **Explorateur de l'Espace Personnel :** Lecture brute (RAW), base64, et sondage sémantique des fichiers locaux.
 - **Registre Unifié :** Consultation du `FILE_INGESTION_STATUS`.
 - **ECHO Codex :** Éditeur multi-langage avec Git intégré. 9 fonctions. Registre SQLite. Distillation Cloud.
@@ -101,7 +102,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement au format XML nat
 L'infrastructure s'est enrichie pour supporter les flux asynchrones Headless N8N pilotés par l'LLM :
 - **Coding Worker :** API Flask pour exécution isolée de code multi-langages (Python, JavaScript/Node).
 - **Browser Worker :** Instance Playwright pilotée par FastAPI asynchrone (bridée à 9 FPS). Intègre une ingénierie de furtivité absolue (WAF Bypass) pour contourner les protections Anti-Bot (Cloudflare, DataDome) via la suppression atomique du prototype `webdriver` en JS et l'instanciation native stricte des `PluginArray`, soutenus par des Proxys JS de haute fidélité (usurpation WebGL, Permissions, et architecture matérielle).
-- **Python Base :** Image Docker mutualisée (`echo-python-base:latest` générée depuis `19-docker-python-base`) dont héritent tous les workers Python du cluster pour optimiser le temps de compilation et réduire la redondance des librairies lourdes (FastAPI, uvicorn, httpx, etc.).
+- **Python Base :** Image Docker mutualisée (`echo-python-base:latest` générée depuis `docker-python-base`) dont héritent tous les workers Python du cluster pour optimiser le temps de compilation et réduire la redondance des librairies lourdes (FastAPI, uvicorn, httpx, etc.).
 - **Embedding Worker :** Offload WebGPU/WASM prioritaire, fallback sur llama.cpp (GGUF CPU) sous Docker.
 - **Download Broker :** Service de collecte asynchrone des téléchargements.
 - **MCP Broker :** Serveur natif Model Context Protocol agissant désormais comme un **Proxy HTTP complet** (`m5_proxy_mcp.py`). Il implémente un système de **Forwarding d'erreurs** (remontée transparente vers le LLM) et un middleware pur ASGI interceptant silencieusement le `x-openwebui-user-id` pour l'authentification. Le client HTTP proxy supporte dynamiquement les transports MCP standards (`sse` et `streamable_http`).
@@ -145,4 +146,4 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 ---
 ---
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.216.7*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.221.24*

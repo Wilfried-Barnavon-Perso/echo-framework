@@ -1,9 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 6.9
+# VERSION : 6.10
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
+# CHANGELOG 6.10 : Implémentation d'une double vérification biométrique/stricte pour la commande destructrice rebuild-echo.
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
 # ==============================================================================
 
@@ -39,8 +40,21 @@ if [ "$0" == "/usr/local/bin/rebuild-echo" ] ; then
     echo "    3. Supprimer toutes les images dockerfile"
     echo "    4. Supprimer les fichiers secrets locaux (Reset Auth)"
     echo ""
-    read -p "Tapez 'CONFIRMER' : " CONFIRM
+    read -p "Tapez 'CONFIRMER' pour initier la procédure de destruction : " CONFIRM
     [ "$CONFIRM" != "CONFIRMER" ] && exit 1
+    
+    echo ""
+    echo "🚨 AVERTISSEMENT CRITIQUE 🚨"
+    echo "Tu es sur le point d'effacer DÉFINITIVEMENT toutes les données persistantes :"
+    echo "- Historiques de conversation et base SQLite Open WebUI"
+    echo "- Workflows et identifiants N8N"
+    echo "- Base de données vectorielle (RAG)"
+    echo "- Fichiers secrets IdP"
+    echo "IL N'Y AURA AUCUN RETOUR EN ARRIÈRE POSSIBLE."
+    echo ""
+    read -p "Tape 'DETRUIRE' pour confirmer l'effacement total : " CONFIRM2
+    [ "$CONFIRM2" != "DETRUIRE" ] && exit 1
+    
     export CONFIRMED_YET="yes"
     docker stop $(docker ps -aq) > /dev/null 2>&1 && echo "Services arrêtés"
     docker rm $(docker ps -aq) > /dev/null 2>&1 && echo "Conteneurs supprimés"

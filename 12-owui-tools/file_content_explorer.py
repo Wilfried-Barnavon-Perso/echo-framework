@@ -35,7 +35,7 @@ from echo_constants import (
     ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, ECHO_API_KEY_RETRIES,
     ECHO_API_MAX_RETRIES, get_generation_config
 )
-from echo_prompts import SYS_EXPLORE_SENSORY
+from echo_prompts import SYS_EXPLORE_SENSORY, SYS_EXPLORER_PROBE
 
 class Tools:
     class Valves(BaseModel):
@@ -114,7 +114,7 @@ class Tools:
 
             warning_msg = ""
             if output_mode == "text" and not is_text:
-                warning_msg = f"\n\n[ATTENTION SYSTÈME ECHO]\nCe fichier est un binaire ({mime}). Si le texte extrait ci-dessus est illisible, incomplet ou ne correspond pas à vos attentes, NE BOUCLEZ PAS en rappelant l'outil avec d'autres lignes/offsets.\n=> Utilisez output_mode='base64' pour une injection multimodale native (PDF/Images/Media), ou interrogez le RAG via `semantic_probe`."
+                warning_msg = f"\n\n[ATTENTION SYSTÈME ECHO]\nCe fichier est un binaire ({mime}). Si le texte extrait ci-dessus est illisible, incomplet ou ne correspond pas aux attentes, le Modèle a la STRICTE INTERDICTION de boucler en rappelant l'outil avec d'autres lignes/offsets.\n=> Le Modèle DOIT utiliser output_mode='base64' pour une injection multimodale native (PDF/Images/Media), ou interroger le RAG via `semantic_probe`."
 
             if output_mode == "text":
                 lines = []
@@ -203,7 +203,8 @@ class Tools:
         try:
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": query}, {"inline_data": {"mime_type": mime, "data": f"___ECHO_STREAM_FILE___{fpath}___"}}]}],
-                "generationConfig": get_generation_config("MODEL_FLASH")
+                "generationConfig": get_generation_config("MODEL_FLASH"),
+                "systemInstruction": {"parts": [{"text": SYS_EXPLORER_PROBE}]}
             }
             cascade_task = asyncio.create_task(EchoGeminiClient.call_cascade(
                 target_model_key="MODEL_FLASH",
@@ -284,7 +285,8 @@ class Tools:
         
         try:
             payload = {
-                "contents": [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": mime, "data": f"___ECHO_STREAM_FILE___{fpath}___"}}]}]
+                "contents": [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": mime, "data": f"___ECHO_STREAM_FILE___{fpath}___"}}]}],
+                "systemInstruction": {"parts": [{"text": SYS_EXPLORER_PROBE}]}
             }
 
             cascade_task = asyncio.create_task(EchoGeminiClient.call_cascade(

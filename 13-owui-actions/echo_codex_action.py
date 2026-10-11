@@ -1,13 +1,15 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 3.13
+version: 3.15
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle d'Historique : Ne garder que les 5 dernieres versions.
 # Historique des versions :
-# 3.13: Prise en charge du paramètre optionnel `current_file` lors de l'événement `switch_workspace` pour permettre le ciblage direct d'un fichier via le trigger LLM `open_codex_ui`.
+# 3.15: Fix du gel de l'UI lors du basculement de workspace via encapsulation asynchrone robuste (try-except global et asyncio.to_thread).
+# 3.14: Prise en charge du paramètre optionnel `current_file` lors de l'événement `switch_workspace` pour permettre le ciblage direct d'un fichier via le trigger LLM `open_codex_ui`.
+# 3.13: Ajout du proxy load_directory pour orchestrer le Lazy Loading avec le moteur Git.
 # 3.12: Ajout du proxy load_directory pour orchestrer le Lazy Loading avec le moteur Git.
 # 3.11: Optimisation absolue du ping heartbeat : suppression de get_repo_stats, ajout asyncio.to_thread pour purger la congestion de l'Event Loop.
 # 3.10: Support des workspaces main/sandbox.
@@ -123,7 +125,7 @@ class Action:
             nonlocal files_json, current_workspace, repo
 
             async def _refresh_tree():
-                updated_files = repo.list_files()
+                updated_files = await asyncio.to_thread(repo.list_files)
                 f_json = json.dumps(updated_files).decode("utf-8")
                 r_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({f_json}, '{current_workspace}');"
                 await events.call_execute(r_code)
@@ -170,33 +172,38 @@ class Action:
 
                     # ---- SWITCH WORKSPACE ----
                     elif action_type == "switch_workspace":
-                        current_workspace = response.get("workspace", "main")
-                        requested_file = response.get("current_file")
-                        repo = CodexRepo(uid, cid, workspace=current_workspace)
-                        current_state = await asyncio.to_thread(repo.get_latest_state)
-                        updated_files = await asyncio.to_thread(repo.list_files)
-                        files_json = json.dumps(updated_files).decode("utf-8")
-                        await _refresh_tree()
-                        
-                        if updated_files:
-                            latest_file = requested_file
-                            if not latest_file:
-                                latest_file_entry = next((f for f in updated_files if f.get("type") != "directory"), None)
-                                latest_file = latest_file_entry["filename"] if latest_file_entry else None
-                            if latest_file:
-                                result = repo.read_file(latest_file)
-                                if result:
-                                    escaped_content = json.dumps(result["content"]).decode("utf-8")
-                                    escaped_name = json.dumps(latest_file).decode("utf-8")
-                                    load_code = (
-                                        f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
-                                        f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
-                                    )
-                                    await events.call_execute(load_code)
-                                    continue
-                        
-                        clear_code = "if(window.echoCodexSetContent) window.echoCodexSetContent('', ''); if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile('');"
-                        await events.call_execute(clear_code)
+                        try:
+                            current_workspace = response.get("workspace", "main")
+                            requested_file = response.get("current_file")
+                            repo = CodexRepo(uid, cid, workspace=current_workspace)
+                            current_state = await asyncio.to_thread(repo.get_latest_state)
+                            updated_files = await asyncio.to_thread(repo.list_files)
+                            files_json = json.dumps(updated_files).decode("utf-8")
+                            await _refresh_tree()
+                            
+                            if updated_files:
+                                latest_file = requested_file
+                                if not latest_file:
+                                    latest_file_entry = next((f for f in updated_files if f.get("type") != "directory"), None)
+                                    latest_file = latest_file_entry["filename"] if latest_file_entry else None
+                                if latest_file:
+                                    result = await asyncio.to_thread(repo.read_file, latest_file)
+                                    if result:
+                                        escaped_content = json.dumps(result["content"]).decode("utf-8")
+                                        escaped_name = json.dumps(latest_file).decode("utf-8")
+                                        load_code = (
+                                            f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
+                                            f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
+                                        )
+                                        await events.call_execute(load_code)
+                                        continue
+                            
+                            clear_code = "if(window.echoCodexSetContent) window.echoCodexSetContent('', ''); if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile('');"
+                            await events.call_execute(clear_code)
+                        except Exception as e:
+                            import logging
+                            logging.getLogger(__name__).error(f"[ECHO Codex] Switch workspace failed: {e}")
+                            await _notify_error(e)
                         continue
 
                     # ---- PING HEARTBEAT (Auto-refresh) ----
@@ -209,7 +216,7 @@ class Action:
                                 updated_files).decode("utf-8")
                             current_file = response.get("current_file", "")
                             if current_file:
-                                result = repo.read_file(current_file)
+                                result = await asyncio.to_thread(repo.read_file, current_file)
                                 if result:
                                     escaped_content = json.dumps(
                                         result["content"]).decode("utf-8")
@@ -235,7 +242,7 @@ class Action:
 
                         msg = f"Edit {filename}"
                         try:
-                            commit_hash = repo.commit_file(filename, content, msg)
+                            commit_hash = await asyncio.to_thread(repo.commit_file, filename, content, msg)
                         except Exception as e:
                             await _notify_error(e)
                             continue
@@ -661,7 +668,7 @@ class Action:
                                 )
                             await events.call_execute(combined)
                             await events.status(f"✏️ Renommé : {old_name} → {new_name} ({commit_hash[:7]})", done=True)
-                        else:
+                    else:
                             notify_code = "if(window.echoCodexNotify) window.echoCodexNotify('error', 'Renommage \u00e9échoué\u00e9');"
                             await events.call_execute(notify_code)
 
@@ -697,7 +704,7 @@ class Action:
 
         payload = {
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-            "generationConfig": get_generation_config("MODEL_FLASH"),
+            "generationConfig": get_generation_config("MODEL_FLASH", override_thinking="medium"),
             "systemInstruction": {
                 "parts": [{"text": SYS_CODEX_EDIT.format(filename=filename, language=lang)}]
             },

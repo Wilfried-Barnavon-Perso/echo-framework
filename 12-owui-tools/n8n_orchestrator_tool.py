@@ -430,7 +430,7 @@ class Tools:
                         return wrap_tool_output(success_msg, user_id=uid, chat_id=cid, metadata=__metadata__)
                     else:
                         exec_id = res.get("execution_id", "inconnu")
-                        return wrap_tool_output(f"[N8N EXECUTION : ASYNCHRONE DÉMARRÉE]\nL'exécution de la tâche (ID: {exec_id}) a bien été lancée en tâche de fond.\n\n[INFO SYSTEM] Le workflow N8N tourne en arrière-plan. Ses résultats (et ses logs stdout/stderr) seront écrits dans des fichiers qui seront automatiquement ingérés dès la fin du traitement. Vous pouvez passer à la tâche suivante !", user_id=uid, chat_id=cid, metadata=__metadata__)
+                        return wrap_tool_output(f"[N8N EXECUTION : ASYNCHRONE DÉMARRÉE]\nL'exécution de la tâche (ID: {exec_id}) a bien été lancée en tâche de fond.\n\n[INFO SYSTEM] Le workflow N8N tourne en arrière-plan. Ses résultats (et ses logs stdout/stderr) seront écrits dans des fichiers qui seront automatiquement ingérés dès la fin du traitement. Le Modèle PEUT passer à la tâche suivante.", user_id=uid, chat_id=cid, metadata=__metadata__)
                 else:
                     state.update_resource_status(n8n_workflow_id, "ready")
                     return wrap_tool_output(f"Erreur API Worker HTTP {resp.status_code}: {resp.text}", user_id=uid, chat_id=cid, metadata=__metadata__)
@@ -672,7 +672,7 @@ class Tools:
             "modify_n8n_workflow", "delete_n8n_workflow", "query_n8n_documentation",
             "create_n8n_template", "modify_n8n_template", "delete_n8n_template",
             "search_n8n_hub", "download_n8n_hub_template",
-            "ask_user_input", "manage_identity", "list_identities", "list_available_services", 
+            "ask_user_input", "manage_identity", "list_identities", "list_identities_services", 
             "async_wait_timer", "query_registry",
             "code_executor", "create_codex_file", "read_codex_file", "update_codex_file", "search_codex"
         ]

@@ -1,12 +1,13 @@
 """
 title: ECHO Universal API Client
 author: Wilfried BARNAVON
-version: 1.8
+version: 1.9
 description: Composant système interne : ECHO Universal API Client.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.4: Switched complex objects to JSON strings to avoid 400 errors with strict Gemini REST schemas.
+# 1.8: Switched complex objects to JSON strings to avoid 400 errors with strict Gemini REST schemas.
+# 1.9: Troncature anti-OOM (131K chars) et prévention via Docstring.
 # 1.6: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
 # 1.7: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
@@ -22,6 +23,7 @@ from typing import Optional, Literal
 sys.path.append("/app/backend/echo_libs")
 from echo_core import wrap_tool_output
 from echo_constants import ECHO_ALLOWED_DOMAINS
+from echo_constants import ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS
 
 class Tools:
     def __init__(self):
@@ -66,6 +68,9 @@ class Tools:
         DIRECTIVE STRICTE : Cet outil NE DOIT JAMAIS être utilisé pour initier ou forcer des 
         appels vers un serveur MCP (sauf pour un test technique réseau préalable de type ping).
         
+        RÈGLE DE TRONCATURE : Saturation LLM prévenue par troncature stricte à 131 Ko (~32K tokens).
+        Délégation au 'code_executor' requise pour le filtrage en Sandbox des volumes supérieurs.
+        
         :param url: URL cible sécurisée.
         :param method: (Optionnel) GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS (Défaut: GET).
         :param headers: (Optionnel) Dictionnaire Headers.
@@ -92,7 +97,10 @@ class Tools:
                 res_json = response.json()
                 text_out = json.dumps(res_json, option=json.OPT_INDENT_2).decode('utf-8')
             except:
-                text_out = response.text[:5000]
+                text_out = response.text
+
+            if len(text_out) > ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS:
+                text_out = text_out[:ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS] + "\n\n... [Avertissement ECHO : Retour tronqué à 131Ko (Anti-OOM). Délégation à 'code_executor' requise pour analyse intégrale.]"
 
             if response.status_code >= 400:
                 text_out = f"❌ Erreur API {response.status_code}\n\n{text_out}"

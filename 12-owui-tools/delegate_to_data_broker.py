@@ -1,7 +1,7 @@
 """
 title: ECHO Delegate to Data Broker
 author: ECHO
-version: 1.2
+version: 1.3
 description: Délégation de collecte de données externes structurées au Data Broker autonome.
 """
 from pydantic import BaseModel, Field
@@ -34,8 +34,8 @@ class Tools:
     ) -> str:
         """
         Permet au modèle de déléguer une recherche d'informations ou une extraction
-        de données externes structurées à l'Agent Data Broker d'ECHO. Cet agent
-        dispose d'un accès exclusif au système MCP et aux APIs externes.
+        complexe de données externes structurées à l'Agent Data Broker d'ECHO. Cet agent
+        décharge le Modèle et est optimisé pour la recherche de données.
         Exige une requête détaillée en langage naturel décrivant l'objectif de la recherche.
         """
         if not __user__:
@@ -47,9 +47,8 @@ class Tools:
 
         # Outils autorisés pour le Data Broker (noms dans _TOOLS_CACHE unifié)
         allowed = [
-            "list_identities", "manage_identity",
-            "list_internal_mcp_tools", "call_internal_mcp_tool",
-            "list_remote_mcp_tools", "call_remote_mcp_tool",
+            "list_identities_services", "list_identities", "manage_identity",
+            "list_mcp_functions", "call_mcp_function",
             "search_web", "search_instant_answer",
         ]
 

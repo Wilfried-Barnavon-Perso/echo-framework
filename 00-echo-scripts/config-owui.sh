@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.65
+# VERSION : 7.66
 # ==============================================================================
 
 # --- INITIALISATION : CORE ECHO GLOBALS ---
@@ -139,6 +139,30 @@ toggle_state() {
     [ "$IS_GLOBAL" != "true" ] && curl -s -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle/global" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
     [ "$IS_ACTIVE" != "true" ] && curl -s -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
 }
+api_purge_all_ghosts() {
+    local endpoint="$1"
+    local desc="$2"
+    
+    echo "   🧹 [PURGE] Éradication des $desc existants en base de données..."
+    local list_json
+    list_json=$(curl -s -X GET "$OWUI_URL/api/v1/$endpoint/" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
+    
+    if [[ "$list_json" == *"detail"* && "$list_json" == *"unauthorized"* ]]; then
+        refresh_token
+        list_json=$(curl -s -X GET "$OWUI_URL/api/v1/$endpoint/" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
+    fi
+    
+    for id in $(echo "$list_json" | jq -r '.[].id // empty'); do
+        if [ -n "$id" ]; then
+            curl -s -X DELETE "$OWUI_URL/api/v1/$endpoint/id/$id/delete" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
+            echo "      🗑️ Purge : $id"
+        fi
+    done
+}
+
+echo "🔥 Démarrage de la reconstruction système vierge..."
+api_purge_all_ghosts "tools" "Outils"
+api_purge_all_ghosts "functions" "Fonctions (Filtres, Actions, Pipes)"
 
 for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:functions:Pipe" "functions:functions:Action"; do
     IFS=":" read -r DIR_NAME API_ENDPOINT DESC <<< "$DIR_TYPE"

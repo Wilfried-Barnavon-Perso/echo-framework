@@ -18,6 +18,7 @@ import asyncio
 import hashlib
 from typing import Tuple, Dict, List, Optional
 from urllib.parse import urlencode
+import orjson as std_json
 import base64
 import httpx
 from echo_state_manager import EchoStateManager
@@ -521,7 +522,11 @@ class AuthService:
 
         if models:
 
-            self.echo_auth.save_api_key("google_available_models", std_json.dumps(models).decode())
+            try:
+                models_str = std_json.dumps(models).decode('utf-8')
+            except AttributeError:
+                models_str = std_json.dumps(models)
+            self.echo_auth.save_api_key("google_available_models", models_str)
 
 
 

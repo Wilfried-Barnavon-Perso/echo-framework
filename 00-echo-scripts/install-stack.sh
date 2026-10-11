@@ -1,9 +1,10 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.32
+# VERSION : 6.33
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
+# CHANGELOG 6.33 : Mise à jour du chemin de build pour l'image parente docker-python-base.
 # CHANGELOG 6.32 : Utilisation des variables d'environnement ECHO_NET_MAIN_PREFIX pour la création dynamique des sous-réseaux IPAM.
 # CHANGELOG 6.31 : Assignation de sous-réseaux statiques pour echo-network (10.20.40.0/24) et echo-sandbox (10.20.50.0/24).
 # CHANGELOG 6.30 : Correction du parsing yq/grep pour cibler le service echo-open-webui.
@@ -286,7 +287,7 @@ mkdir -p "$ECHO_ROOT/models"
 
 # --- 2.5 Pré-construction de l'Image de Base ---
 echo "🏗️ Construction de l'image de base partagée (echo-python-base)..."
-docker build -t echo-python-base:latest "$ECHO_ROOT/19-docker-python-base"
+docker build -t echo-python-base:latest "$ECHO_ROOT/docker-python-base"
 
 # --- 3. LANCEMENT DOCKER COMPOSE ---
 echo "🎼 Démarrage de la Stack via Docker Compose (Projet: $COMPOSE_PROJECT_NAME)..."

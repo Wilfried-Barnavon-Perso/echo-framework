@@ -27,6 +27,7 @@ from echo_ui import EchoUI
 from echo_constants import (
     ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, get_generation_config
 )
+from echo_prompts import SYS_MAPS_GROUNDING
 
 
 class Tools:
@@ -70,7 +71,8 @@ class Tools:
             "contents": [{"role": "user", "parts": [{"text": query}]}],
             # Grounding natif Google Maps — active l'outil googleMaps du modèle Gemini
             "tools": [{"googleMaps": {"enableWidget": True}}],
-            "generationConfig": get_generation_config("MODEL_LITE", override_thinking="minimal")
+            "generationConfig": get_generation_config("MODEL_LITE", override_thinking="minimal"),
+            "systemInstruction": {"parts": [{"text": SYS_MAPS_GROUNDING}]}
         }
 
         # Contextualisation géographique si les coordonnées sont fournies
@@ -105,7 +107,7 @@ class Tools:
                 # Cascade épuisée — tous les modèles en erreur
                 return wrap_tool_output(
                     text="❌ Google Maps : aucun modèle disponible (cascade épuisée). "
-                         "Vérifiez vos quotas API.",
+                         "Le Modèle DOIT vérifier les quotas API.",
                     status={"status": "cascade_exhausted"}
                 , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
