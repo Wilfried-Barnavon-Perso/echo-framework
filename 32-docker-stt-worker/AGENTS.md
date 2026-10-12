@@ -9,12 +9,13 @@ Ce dossier contient le service **STT Worker** (Speech-To-Text). Il s'agit d'un m
 ## 2. Cartographie des Fichiers et Algorithmes
 
 ### `stt_api.py`
-Le cœur du service de transcription (actuellement en v1.3).
+Le cœur du service de transcription (actuellement en v1.7).
 - **API Compatible OpenAI** : Expose un endpoint HTTP (souvent `/v1/audio/transcriptions`) mimant l'API Whisper d'OpenAI. L'interface WebUI s'y connecte nativement sans savoir qu'il s'agit d'un modèle local.
-- **Sémantique de Traitement** : Il charge le modèle de reconnaissance vocale en mémoire (souvent via `faster-whisper` ou `whisper.cpp`), traite les buffers audio asynchrones (WAV/WEBM) et renvoie le texte brut ou segmenté avec horodatage. Intègre désormais une lecture par blocs asynchrone explicite (`while await file.read(1024 * 1024)`) de l'upload pour prévenir toute surcharge mémoire et pallier aux erreurs HTTP 500 provoquées par l'itération asynchrone par défaut.
+- **Sémantique de Traitement** : Il charge le modèle de reconnaissance vocale en mémoire (`faster-whisper`), traite les buffers audio asynchrones et renvoie le texte brut ou segmenté avec horodatage. Intègre une lecture par blocs asynchrone explicite de l'upload. Intègre désormais une **sanitization dynamique** du paramètre `language` (transformant les valeurs vides en `None` strict) et un déport systématique de l'inférence (générateur) vers `run_in_threadpool` pour libérer totalement l'Event Loop de FastAPI.
 
 ### `Dockerfile`
 - Construit une image Docker optimisée pour l'inférence audio. Ce conteneur nécessite l'installation des dépendances systèmes comme `ffmpeg` (pour la conversion des codecs audio à la volée) et des bibliothèques Python de Deep Learning.
+- **Résolution PyAV** : L'image télécharge et installe nativement `faster-whisper` depuis la branche `master` du dépôt GitHub. Ce choix architectural est indispensable pour contourner et résoudre nativement le bug critique (metadata_errors / PyAV crash) inhérent aux packages PyPI.
 - **Volume Externe (Hot-Reload)** : Le fichier principal `stt_api.py` est désormais monté en Read-Only (ro) depuis le volume hôte via `stack-echo.yml`, permettant l'itération instantanée sur le code (Hot-Reload) sans avoir à re-builder l'image lourde de ML.
 
 ## 3. Dépendances Logiques

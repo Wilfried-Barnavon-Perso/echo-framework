@@ -16,7 +16,7 @@ Fichier d'entrée du Broker instanciant le serveur `FastMCP` propulsé par `Uvic
 
 ### `core/` & `modules/`
 Dossiers contenant la logique métier des outils exposés par le Broker.
-- **`core/security.py` & `core/database.py`** : Implémentation du système de sécurité d'accès. `security.py` offre le décorateur `require_service_access` récupérant l'ID via un ContextVar, et `database.py` gère l'accès asynchrone direct (`aiosqlite`) à la base `identity.db` de l'utilisateur pour l'extraction de clés.
+- **`core/security.py`** : Maintient le contexte de sécurité. `security.py` gère l'identification de la requête asynchrone courante (ID utilisateur) via un `ContextVar` injecté par le middleware, servant de support sécurisé au proxy sans connexion directe à une base de données.
 - **`modules/m3_corporate.py`** (Corporate Sirene/Bodacc) : Intégration active (via `httpx`) avec les API d'entreprise de l'Etat pour la récupération légale d'entités (abandon des mocks JSON).
 - **`modules/m4_academic.py`** (Academic) : Connecteurs réels asynchrones (`httpx`) vers arXiv ou d'autres bases documentaires pour la recherche scientifique structurée.
 - **`modules/m2_jobs_omnisearch.py`** (Omnisearch Jobs) : Mécanismes d'interrogation multi-sources (ex: APEC HTML parsing).

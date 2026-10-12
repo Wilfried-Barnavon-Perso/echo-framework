@@ -1,7 +1,7 @@
 """
 title: ECHO Universal MCP Tool
 author: ECHO
-version: 2.3
+version: 2.4
 description: Outil universel permettant au Modèle d'interroger et d'exécuter des requêtes sur l'infrastructure MCP (serveurs natifs, résidents ou distants) via un routage dynamique.
 """
 import sys
@@ -49,6 +49,19 @@ class Tools:
         category = await self._get_category(service)
         
         try:
+            from echo_state_manager import EchoStateManager
+            state = EchoStateManager(user_id=__user__["id"])
+            with state._get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT credentials FROM identity_vault WHERE user_id = ? AND service = ? LIMIT 1",
+                    (__user__["id"], service)
+                )
+                row = cursor.fetchone()
+                credentials = row[0] if row else ""
+        except Exception:
+            credentials = ""
+            
+        try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 if category == "mcp_native":
                     rpc = {"jsonrpc": "2.0", "method": "tools/list", "id": 1}
@@ -59,6 +72,7 @@ class Tools:
                     payload = {
                         "user_id": __user__["id"],
                         "service": service,
+                        "credentials": credentials,
                         "rpc_request": {"jsonrpc": "2.0", "method": "tools/list", "id": 1}
                     }
                     resp = await client.post(self.proxy_url, json=payload)
@@ -84,6 +98,19 @@ class Tools:
         category = await self._get_category(service)
         
         try:
+            from echo_state_manager import EchoStateManager
+            state = EchoStateManager(user_id=__user__["id"])
+            with state._get_connection() as conn:
+                cursor = conn.execute(
+                    "SELECT credentials FROM identity_vault WHERE user_id = ? AND service = ? LIMIT 1",
+                    (__user__["id"], service)
+                )
+                row = cursor.fetchone()
+                credentials = row[0] if row else ""
+        except Exception:
+            credentials = ""
+            
+        try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 if category == "mcp_native":
                     rpc = {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": function_name, "arguments": arguments}, "id": 1}
@@ -94,6 +121,7 @@ class Tools:
                     payload = {
                         "user_id": __user__["id"],
                         "service": service,
+                        "credentials": credentials,
                         "rpc_request": {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": function_name, "arguments": arguments}, "id": 1}
                     }
                     resp = await client.post(self.proxy_url, json=payload)

@@ -66,11 +66,14 @@ class Tools:
         for svc_id, data in schemas.items():
             cat = data.get("category", "uncategorized")
             if category_filter == "all" or cat == category_filter:
-                available_services_list.append({
+                svc_data = {
                     "service": svc_id,
                     "category": cat,
                     "name": data.get("name", svc_id)
-                })
+                }
+                if "auth_failure_instructions" in data:
+                    svc_data["auth_failure_instructions"] = data["auth_failure_instructions"]
+                available_services_list.append(svc_data)
             
         state = self._init_vault(__user__["id"])
         with state._get_connection() as conn:

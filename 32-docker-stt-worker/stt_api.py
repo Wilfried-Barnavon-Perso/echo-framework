@@ -1,9 +1,20 @@
 """
 ================================================================================
 MODULE : ECHO STT WORKER API
-VERSION : 1.3 (Correction Bug Upload 500)
+VERSION : 1.7 (Dépendance Master GitHub)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-09-14
+DATE MAJ : 2026-10-12
+
+CHANGELOG 1.7 :
+- ARCHITECTURE: Remplacement de l'installation PyPI de faster-whisper par la branche master GitHub pour résoudre nativement le crash PyAV (metadata_errors) sans bloquer les versions de dépendances.
+
+CHANGELOG 1.6 :
+- REVERT: Retrait du monkey-patch `av.open`. La compatibilité PyAV est désormais gérée proprement dans le Dockerfile (av<12.0.0).
+
+CHANGELOG 1.4 :
+- FIX: Ajout de logs explicites pour empêcher le masquage des erreurs internes 500.
+- FIX: Sanitization du paramètre `language` (vide -> None) pour prévenir le crash de faster_whisper.
+- OPTIM: Déport de l'inférence (générateur) vers `run_in_threadpool` pour libérer l'Event Loop.
 
 CHANGELOG 1.3 :
 - FIX: Remplacement de l'itération asynchrone (async for file.file) par une lecture while await file.read(1M) native pour résoudre l'erreur 500.
@@ -16,6 +27,7 @@ CHANGELOG 1.1 :
 """
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse
+from fastapi.concurrency import run_in_threadpool
 from faster_whisper import WhisperModel
 import os
 import tempfile
@@ -82,9 +94,14 @@ async def create_transcription(
 
         # Transcribe
         # beam_size=5 is default, gives better accuracy.
-        segments, info = model.transcribe(temp_audio_path, language=language, beam_size=5)
-        
-        text = "".join([segment.text for segment in segments])
+        if not language:
+            language = None
+            
+        def perform_transcription():
+            segments, info = model.transcribe(temp_audio_path, language=language, beam_size=5)
+            return "".join([segment.text for segment in segments])
+            
+        text = await run_in_threadpool(perform_transcription)
         
         # Cleanup
         os.remove(temp_audio_path)
@@ -92,4 +109,5 @@ async def create_transcription(
         return JSONResponse(content={"text": text.strip()})
     
     except Exception as e:
+        logging.exception(f"Erreur critique lors de la transcription STT: {str(e)}")
         return JSONResponse(status_code=500, content={"error": str(e)})

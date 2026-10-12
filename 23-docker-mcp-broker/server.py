@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 1.11 (Architecture Data-Driven pour le catalogue de services MCP)
+VERSION : 1.12 (Architecture Data-Driven pour le catalogue de services MCP)
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-10-10
 ================================================================================
@@ -15,6 +15,10 @@ from modules.m4_academic import register_academic_tools
 from modules.m3_corporate import register_corporate_tools
 from mcp.server import MCPServer
 import uvicorn
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -78,15 +82,19 @@ SERVICE_SCHEMAS = {
         "category": "mcp_resident",
         "name": "Google Workspace MCP (Résident)",
         "command": "workspace-mcp",
+        "auth_failure_instructions": "Le Modèle DOIT guider l'Utilisateur pour configurer Google Workspace UNIQUEMENT si l'auth échoue ou est absente : 1. Créer un projet sur Google Cloud Console, activer les APIs (Calendar, Gmail, Drive, etc.) et créer un identifiant OAuth 'Application Web' avec l'URI de redirection `https://developers.google.com/oauthplayground`. 2. Se rendre sur ce lien Playground et cliquer sur l'engrenage (Paramètres) en haut à droite. 3. Cocher 'Use your own OAuth credentials' et y insérer son Client ID et Client Secret. 4. Dans 'Input your own scopes', coller `openid https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/presentations https://www.googleapis.com/auth/tasks`. 5. Autoriser les APIs, échanger le code contre les tokens, et récupérer le 'Refresh token'. 6. Insérer ces 4 valeurs (Email, ID, Secret, Refresh Token) dans le Vault.",
         "fields": [
+            {"id": "USER_GOOGLE_EMAIL", "label": "Email Google", "type": "text", "help": "Email du compte (ex: john.doe@gmail.com)"},
             {"id": "GOOGLE_OAUTH_CLIENT_ID", "label": "Client ID", "type": "text", "help": "ID Client OAuth2 Google"},
-            {"id": "GOOGLE_OAUTH_CLIENT_SECRET", "label": "Client Secret", "type": "password", "help": "Secret Client OAuth2 Google"}
+            {"id": "GOOGLE_OAUTH_CLIENT_SECRET", "label": "Client Secret", "type": "password", "help": "Secret Client OAuth2 Google"},
+            {"id": "GOOGLE_OAUTH_REFRESH_TOKEN", "label": "Refresh Token", "type": "password", "help": "Généré via OAuth Playground"}
         ]
     },
     "microsoft_365": {
         "category": "mcp_resident",
         "name": "Microsoft 365 MCP (Résident)",
         "command": "microsoft-mcp",
+        "auth_failure_instructions": "Le Modèle DOIT guider l'Utilisateur pour configurer Microsoft 365 UNIQUEMENT si l'auth échoue ou est absente : 1. Demander à l'utilisateur de créer une application sur le portail Azure (Entra ID) avec la plateforme 'Application mobile et de bureau' (Redirect URI natif) et d'ajouter les permissions Microsoft Graph déléguées requises (Mail.ReadWrite, Mail.Send, Calendars.ReadWrite, User.Read, Files.ReadWrite.All). 2. L'utilisateur doit insérer son 'Client ID' (App ID) et 'Tenant ID' (ou 'consumers' pour les comptes personnels) dans l'Identity Vault. 3. Une fois les clés dans le Vault, le Modèle DOIT invoquer l'outil 'authenticate_account' du MCP Microsoft. 4. Le Modèle DOIT fournir à l'Utilisateur l'URL de vérification et le 'User Code' générés, et lui demander d'aller s'authentifier. 5. Une fois que l'Utilisateur confirme avoir saisi le code, le Modèle DOIT invoquer l'outil 'complete_authentication' avec le 'flow_cache' pour finaliser la connexion MSAL.",
         "fields": [
             {"id": "MICROSOFT_MCP_CLIENT_ID", "label": "App ID Azure", "type": "text", "help": "ID de l'application enregistrée sur Azure"},
             {"id": "MICROSOFT_MCP_TENANT_ID", "label": "Tenant ID", "type": "text", "help": "ID du Tenant (consumers, common, etc.)"}
@@ -154,8 +162,7 @@ async def proxy_mcp_route(request: Request):
         result = await proxy_mcp_request(payload)
         return JSONResponse(result)
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Erreur Proxy MCP globale :")
         
         status_code = 500
         message = repr(e) if not str(e).strip() else str(e)

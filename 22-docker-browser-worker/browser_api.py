@@ -1,9 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 9.29 (Spoofing strict Webdriver/PluginArray)
+VERSION : 9.30 (Spoofing strict Webdriver/PluginArray)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-10-08
+DATE MAJ : 2026-10-12
+
+CHANGELOG 9.30 :
+- FIX: Settle asynchrone post-scroll et Lidar Check (recalibrage instantané de Bounding Box) pour annuler les clics ratés lors de Layout Shifts.
 
 CHANGELOG 9.29 :
 - FEAT: Vision Grid Optimisée (Bicolore Magenta/Cyan, crénelures de quarts) pour supprimer le biais d'interpolation IA.
@@ -586,10 +589,18 @@ class BrowserSession:
     async def move_mouse_to_locator(self, page, locator) -> bool:
         try:
             await locator.scroll_into_view_if_needed(timeout=5000)
+            await wait_for_settle(page, quiet_ms=150, timeout_ms=1500)
             box = await locator.bounding_box()
             if not box: return False
             tx, ty, hit = await self.pick_hit_point(locator, box)
             await self.bezier_mouse_move(page, tx, ty)
+            
+            box_final = await locator.bounding_box()
+            if box_final and (abs(box_final["x"] - box["x"]) > 1 or abs(box_final["y"] - box["y"]) > 1):
+                tx, ty, hit = await self.pick_hit_point(locator, box_final)
+                await page.mouse.move(tx, ty)
+                self.mouse_x, self.mouse_y = tx, ty
+                
             return hit
         except Exception as e:
             logger.warning(f"[{self.sid}] Unable to compute bounding box: {e}")

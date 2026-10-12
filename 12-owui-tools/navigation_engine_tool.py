@@ -1,11 +1,12 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.39
+version: 11.40
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 11.40: Fix de la compatibilité API (camelCase) pour l'injection du fichier téléchargé et ajout explicite de systemInstruction pour contrer le stripping des thoughts.
 # 11.39: Rétablissement de la grille de vision spatiale fine à 48px.
 # 11.38: Lot C - Isolation par sub_sid (ECHO_SUBAGENT_CONTEXT), refonte du Sniper Protocol et utilisation de vision_capture.
 # 11.36: Modification de la consigne d'action_zoom_in pour exiger la vérification stricte du viseur rouge.
@@ -577,8 +578,9 @@ class Tools:
         payload = {
             "contents": [{"role": "user", "parts": [
                 {"text": f"<instruction>\nLe Modèle doit analyser ce document Web pour accomplir cette tâche : {query}\nLa réponse doit être factuelle, précise et issue du texte.\n</instruction>"},
-                {"inline_data": {"mime_type": "text/plain", "data": f"___ECHO_STREAM_FILE___{tmp_path}___"}}
+                {"inlineData": {"mimeType": "text/plain", "data": f"___ECHO_STREAM_FILE___{tmp_path}___"}}
             ]}],
+            "systemInstruction": {"parts": [{"text": SYS_NAV_BROWSER}]},
             "generationConfig": get_generation_config("MODEL_FLASH", override_thinking="low")
         }
         

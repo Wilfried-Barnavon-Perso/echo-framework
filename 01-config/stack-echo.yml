@@ -373,7 +373,6 @@ services:
       - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
       - /opt/ECHO/docker-mcp-broker/core:/app/core:ro
       - /opt/ECHO/docker-mcp-broker/modules:/app/modules:ro
-      - echo-webui-data:/app/backend/data
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"

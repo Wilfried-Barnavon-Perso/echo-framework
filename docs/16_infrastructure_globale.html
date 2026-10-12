@@ -49,7 +49,7 @@
         <p>Reverse Proxy ModSecurity protégeant le WebSocket WebGPU et l'API IdP. La configuration globale (<code>DISABLE_DEFAULT_SERVER</code>, <code>AUTO_LETS_ENCRYPT</code>) DOIT utiliser l'ancre YAML <code>x-bw-config</code>. <strong>Règle absolue :</strong> l'injection par labels sur le conteneur <code>open-webui</code> entraîne la perte de la conf WAF au redémarrage (Autoconf) et le crash Let's Encrypt. Rate limit configuré massivement assoupli (Burst 1000, Rate 300r/s) pour les websockets SvelteKit.</p>
 
         <h3 style="color:#93c5fd; margin-top: 2rem;">4. Audio Workers (STT & TTS)</h3>
-        <p><strong>Kokoro TTS :</strong> Pipeline Hybride G2P (sémantique par phrase + langue par mots) encodé via pydub en MP3 128 kbps (StreamingResponse / Chunked Transfer).<br/><strong>Whisper STT :</strong> Architecture Faster-Whisper, mappage multilingue direct.</p>
+        <p><strong>Kokoro TTS :</strong> Pipeline Hybride G2P (sémantique par phrase + langue par mots) encodé via pydub en MP3 128 kbps (StreamingResponse / Chunked Transfer).<br/><strong>Whisper STT :</strong> API asynchrone FastAPI propulsée par <code>faster-whisper</code> (compilé depuis la branche <em>master</em> GitHub pour éviter les bugs PyAV) permettant la transcription audio de haute précision.</p>
 
         <h3 style="color:#93c5fd; margin-top: 2rem;">5. Scripts d'Infrastructure</h3>
         <ul>
@@ -71,7 +71,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.24 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.221.45 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
