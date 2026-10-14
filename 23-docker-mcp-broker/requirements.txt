@@ -1,6 +1,7 @@
-mcp>=2.0.0
+mcp>=2.2.0,<3
+fastmcp>=4.1.0,<5
 uv>=0.4.0
 aiosqlite>=0.20.0
 beautifulsoup4>=4.12.0
-workspace-mcp
-microsoft-mcp @ git+https://github.com/elyxlz/microsoft-mcp.git
+workspace-mcp==2.1.0
+microsoft-mcp @ git+https://github.com/elyxlz/microsoft-mcp.git@e267151b5f89c898a77666ae3734f349c79bb3f2

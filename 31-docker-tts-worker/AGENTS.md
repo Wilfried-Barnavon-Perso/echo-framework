@@ -8,12 +8,12 @@ Ce dossier contient le service **TTS Worker** (Text-To-Speech). C'est un microse
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `tts_api.py`
-Fichier Python hébergeant le service de synthèse vocale.
-- **Moteur Kokoro ONNX Quantisé** : Utilise désormais `kokoro-v1.0.int8.onnx` pour une optimisation drastique de la RAM et du CPU (INT8).
-- **Découpage Syntaxique** : Implémente un algorithme hybride de découpage par propositions (clauses) préservant la ponctuation, divisant la charge CPU par 10 par rapport à l'ancien découpage par mot de Lingua.
-- **Anti-Zombie & Multithreading** : L'inférence est isolée via `asyncio.to_thread` pour empêcher le blocage de l'Event Loop (FastAPI). Intègre une annulation explicite des tâches de génération asynchrones (zombies) lors d'une déconnexion HTTP prématurée.
-- **API Compatible OpenAI** : Le service expose des endpoints HTTP (`/v1/audio/speech`) structurés selon le standard OpenAI, couplé à un streaming binaire asynchrone direct via FFmpeg.
+### `tts_api.py` (v1.5)
+Fichier Python (FastAPI) hébergeant le service de synthèse vocale sur le port **7996**.
+- **Moteur Kokoro ONNX Quantisé** : Utilise `kokoro-v1.0.int8.onnx` (`voices-v1.0.bin`) pour une optimisation drastique de la RAM et du CPU (INT8).
+- **Détection Multilingue (`Lingua`) & G2P Hybride Franglais** : Charge `lingua-language-detector` (`LanguageDetectorBuilder` sur 8 langues : FR, EN, ES, PT, IT, JA, ZH, HI) et applique un découpage par phrases (`split_text_into_sentences`) combiné à un parseur G2P hybride (`hybrid_g2p_parse`) pour phonémiser finement les incises anglaises dans un texte français (et inversement) avant d'invoquer `kokoro.create(..., is_phonemes=True)`.
+- **Anti-Zombie & Multithreading** : L'inférence Kokoro est isolée via `asyncio.to_thread` pour empêcher le blocage de l'Event Loop (FastAPI). Intègre une annulation explicite de la tâche de génération asynchrone (`generate_audio_task`) et l'arrêt du processus `ffmpeg` lors d'une déconnexion HTTP prématurée. Intègre `RateLimitHealthCheckFilter` (1 log / 5 min sur `/health`).
+- **API Compatible OpenAI** : Le service expose l'endpoint HTTP (`/v1/audio/speech`) structuré selon le standard OpenAI, couplé à un streaming MP3 binaire asynchrone direct via un sous-processus `ffmpeg` (`s16le` 24kHz $\rightarrow$ MP3 128k).
 
 ### `Dockerfile`
 - Build d'une image Docker contenant le moteur de synthèse vocale Kokoro ONNX, ainsi que FFmpeg et espeak-ng. L'installation pip est désormais optimisée en limitant le parallélisme de compilation (`CMAKE_BUILD_PARALLEL_LEVEL=2`).

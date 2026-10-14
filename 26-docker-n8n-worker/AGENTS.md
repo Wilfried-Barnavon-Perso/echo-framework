@@ -8,10 +8,12 @@ Ce dossier contient le sous-système **Headless N8N Worker**. Il s'agit d'un con
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `n8n_api.py`
+### `n8n_api.py` (v2.18)
 Le contrôleur Python (FastAPI).
-- **Sémantique** : Il agit comme une couche d'abstraction (middleware) entre l'outil `n8n_orchestrator_tool.py` exécuté par l'agent et l'API interne de n8n.
-- **Rôle Actif** : Il permet à l'agent IA de pousser des workflows JSON (déploiement), de requêter l'état d'une exécution, de récupérer les logs d'erreurs, et de purger les exécutions. N8N peut agir comme client MCP pour les services locaux d'ECHO. Il délègue désormais la gestion des fichiers et téléchargements au *Download Broker* via le point de montage `/home/node/.n8n-files` partagé avec ce dernier.
+- **Sémantique** : Il agit comme une couche d'abstraction (middleware) entre l'outil `n8n_orchestrator_tool.py` exécuté par l'agent et l'API/CLI interne de n8n.
+- **Auto-Configuration du Service Account (`get_or_create_n8n_api_key`)** : S'authentifie sur `/rest/login` (`emailOrLdapLoginId: "system@echo.local"`), interroge dynamiquement les scopes autorisés via `GET /rest/api-keys/scopes` (compatibilité N8N v2.8.4+ Community Edition), génère la clé maîtresse et extrait le secret non masqué via `rawApiKey`.
+- **Rôle Actif & Déploiement en 2 Étapes** : Permet d'exécuter des workflows One-Shot isolés (`N8N_USER_FOLDER` dédié contre `SQLITE_BUSY`) et de déployer des démons permanents (`/deploy`) en deux étapes conformes à N8N v2.34+ (`POST /api/v1/workflows` sans champ `active` mais avec `"settings": {}`, suivi de `POST /api/v1/workflows/{id}/activate`). Écrit systématiquement un `deployment_report.json` dans la drop-zone du Download Broker.
+- **Garbage Collection (`/prune` & `DELETE /workflow/{id}`)** : Stoppe proprement les triggers actifs via l'API REST puis purge la base SQLite native de N8N (y compris les `staticData` orphelines par Whitelist lors de l'élagage nocturne déclenché par l'Admin Manager). Intègre le filtre `RateLimitHealthCheckFilter` (1 log / 5 min sur `/health`).
 
 ### `n8n_architecture.md`
 Le manifeste des règles de conception N8N imposées à l'agent.

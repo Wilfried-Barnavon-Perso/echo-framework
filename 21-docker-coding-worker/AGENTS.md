@@ -8,21 +8,22 @@ Ce dossier contient le code source de l'**API d'Exécution Multi-Langages Sécur
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `worker_api.py`
+### `worker_api.py` (v3.7)
 Fichier monolithique exposant une API Flask très légère.
 - **Sémantique** : Le serveur écoute sur le port **5000** et expose les endpoints HTTP `/execute`, `/kill`, `/poll_monitor` et `/update_payload`.
-- **Exécution Isolée & Temps Réel (Bidi Polling)** : Utilise `subprocess.Popen` + `multiprocessing` pour exécuter le payload de façon non-bloquante. Le système implémente un "Pipe Bidirectionnel" en exploitant la porosité du *Bind Mount* de Bubblewrap sur `/sandbox` : le parent lit `.echo_monitor.jsonl` (Flux Remontant) et met à jour atomiquement `.echo_ui_payload.json` (Flux Descendant) via `os.replace`.
-- **Sécurité (Anti-Zombie & Sandbox)** : Isolation totale via `bwrap`. Intègre le tracking par PID dans le registre `_active_sandboxes` permettant la destruction de processus orphelins (`os.kill`) via la route `/kill`.
+- **Exécution depuis le Codex Sandbox & Pre-execution Linting** : Le script est exécuté depuis un fichier physique préalablement enregistré dans l'espace `sandbox` du Codex, après validation syntaxique immédiate (`py_compile` pour Python, `node -c` pour Node.js). La sortie textuelle est bornée dynamiquement par `max_output_length` (131 Ko par défaut, protection anti-OOM LLM).
+- **Exécution Isolée & Temps Réel (Bidi Polling)** : Utilise `subprocess.Popen` + `multiprocessing` pour exécuter le payload de façon non-bloquante. Le système implémente un "Pipe Bidirectionnel" en exploitant la porosité du *Bind Mount* de Bubblewrap sur `/sandbox` : le parent lit `.echo_monitor.jsonl` (Flux Remontant) et met à jour atomiquement `.echo_ui_payload.json` (Flux Descendant) via `os.replace`, avec double purge de sécurité (Pre-Run / Post-Run).
+- **Sécurité (Anti-Zombie & Sandbox)** : Isolation totale via `bwrap` avec montages sémantiques (`/sandbox`, `/main`, `/files`, `/echo_libs_sandbox`, `/sandbox-agent-readme.txt` et bind-mount physique `.tmp` anti-OOM-DoS). Intègre le tracking par PID dans le registre `_active_sandboxes` permettant la destruction de processus orphelins (`os.kill`) via la route `/kill`.
 
 ### ECHO Sandbox Monitor (`echo_monitor`)
-- **Sémantique** : La librairie native `echo_monitor` permet au modèle de transmettre des interfaces HTML/JS complexes (Data Islands) vers Open WebUI.
+- **Sémantique** : La librairie native `echo_monitor` permet au modèle de transmettre des interfaces HTML/JS complexes vers Open WebUI via UCTP.
 - **Canaux Bidirectionnels Temps-Réel** : L'Agent peut lire dynamiquement (en boucle) les payloads émis par l'UI via `get_ui_payload()` grâce au multiplexage frontal (`postMessage`).
 - **Supervisor Pattern & JS Heartbeat** : L'infrastructure injecte dynamiquement un *Pacemaker JS* dans les interfaces générées. Le composant maître (`code_executor_tool`) superpose une logique de Timeout d'amorçage (Boot) et de mort (Ping). Si l'utilisateur ferme la croix d'une fenêtre, le ping s'arrête, et le Superviseur exécute un Kill brutal de la sandbox (PID) via la route `/kill`, évitant toute fuite CPU sans exiger de logique `abort` côté LLM.
 - **Multiplexage** : Elle exploite le fichier `/sandbox/.echo_monitor.jsonl` en mode "append" (Multiplexage) pour gérer un fenêtrage multiple simultané (paramètre `window_id`).
 
 ### `Dockerfile` & `requirements.txt`
-- **Build** : Image hybride basée sur Python (`python:3.11-slim`) embarquant également Node.js et npm via les dépôts officiels.
-- **Dépendances** : Installe `Flask` pour l'API, ainsi que des librairies d'analyse lourdes fréquemment requêtées par l'agent (`pandas`, `numpy`, `matplotlib`).
+- **Build** : Image hybride basée sur **`FROM python:3.14`** embarquant **Node.js 22.x LTS**, `npm` (packages globaux `axios`, `cheerio`, `js-yaml`, `lodash`, `papaparse`, `mathjs`, `zod`, `dotenv`, `moment`) et `bubblewrap`.
+- **Dépendances** : Installe `Flask` pour l'API (avec `CMAKE_BUILD_PARALLEL_LEVEL=2`), ainsi que des librairies d'analyse lourdes fréquemment requêtées par l'agent (`pandas`, `numpy`, `matplotlib`).
 
 ## 3. Dépendances Logiques
 - Ce Worker est invoqué exclusivement par l'outil LLM `code_executor_tool.py` (situé dans `12-owui-tools`).

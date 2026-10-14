@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.75
+version: 192.79
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 192.74: Refonte du prompt new_cognitive_level pour optimiser l'élasticité (symétrie d'inertie LITE/FLASH).
-# 192.73: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations, functionCallingConfig).
-# 192.72: Ajout d'un statut par défaut 'Traitement en cours' pour rassurer l'utilisateur.
-# 192.71: Désactivation des logs de diagnostic (print) du Fast-Track.
-# 192.70: Injection de logs de diagnostic (print flush=True) dans le Coupe-Circuit (Fast-Track) pour tracker les tâches silencieuses (Follow-ups).
+# 192.79: Augmentation de maxOutputTokens à 8192 dans le Fast-Track pour absorber le thinking sur les prompts volumineux.
+# 192.78: Fiabilisation du Fast-Track (title_generation en JSON, exclusion du system prompt, thinkingLevel low sans temperature et filtrage des parts thought).
+# 192.77: Implémentation du Verrou de Tour (turn_origin_model) protégeant l'origine cognitive lors des continuations d'outils et cascades.
+# 192.76: Prise de conscience du modèle lors de la cascade descendante (injection/drainage AEC) et correction mutation XML.
+# 192.75: Optimisation du cache et des imports modulaires.
 
 
 # ==============================================================================
@@ -160,23 +160,33 @@ class Orchestrator:
 
     def _mutate_context_identity(self, context: List[Dict], new_model: str, old_model: str):
         """
-        Mutation chirurgicale de l'AEC dans le contexte.
-        Patche modèle_actuel et modèle_origine via regex (support JSON/YAML hybride).
-        Met à jour model_origin pour les prochains resolve_placeholders.
+        Mutation chirurgicale de l'AEC XML dans le contexte (<artifact id="AEC_modele">).
+        Patche exclusivement la dernière occurrence (tour courant) afin de préserver 
+        le cache des préfixes de l'API Gemini sur les tours historiques.
+        Met à jour self.model_origin pour les prochains resolve_placeholders.
         """
         new_identity = build_model_identity(new_model)
         old_identity = build_model_identity(old_model)
-        for msg in context:
+
+        found = False
+        for msg in reversed(context):
             for part in msg.get("parts", []):
-                if "text" in part and "<AEC_environnement_contexte>" in part["text"]:
+                if "text" in part and '<artifact id="AEC_modele">' in part["text"]:
                     part["text"] = re.sub(
-                        r'("?modèle_actuel"?\s*:\s*"?)([^"\n]+)("?)',
-                        rf'\g<1>{new_identity}\g<3>', part["text"]
+                        r'(<modele_actuel>)(.*?)(</modele_actuel>)',
+                        rf'\g<1>{new_identity}\g<3>',
+                        part["text"]
                     )
                     part["text"] = re.sub(
-                        r'("?modèle_origine"?\s*:\s*"?)([^"\n]+)("?)',
-                        rf'\g<1>{old_identity}\g<3>', part["text"]
+                        r'(<modele_origine>)(.*?)(</modele_origine>)',
+                        rf'\g<1>{old_identity}\g<3>',
+                        part["text"]
                     )
+                    found = True
+                    break
+            if found:
+                break
+
         self.model_origin = old_model
 
     async def prepare_context(self, body: Dict, chat_id: str, target_model: str, __metadata__: Optional[Dict] = None, events: Optional[EchoEvents] = None) -> List[Dict]:
@@ -184,6 +194,13 @@ class Orchestrator:
         messages = body.get("messages", [])
         meta = {**(__metadata__ or {}), **body.get("metadata", {})}
         model_id = target_model
+
+        # Nettoyage des AEC orphelins postérieurs au dernier tour reçu (gestion des retouches de messages)
+        if messages:
+            t_pivot = max([m.get("updated_at") or 0 for m in messages] + [0])
+            if t_pivot > 0:
+                from echo_aec import EchoAEC
+                EchoAEC.purge_orphaned_events(self.user_data_manager.state_manager, t_pivot)
 
         # --- [NOUVEAU] Rappels Cognitifs Multi-Axes par Charge (Tokens Exacts) ---
         # Évaluation avant la boucle pour intégration native dans la Suture Bit-Perfect.
@@ -555,9 +572,11 @@ class Pipe:
         if safe_metadata.get("task") is not None:
             gemini_contents = []
             for msg in body.get("messages", []):
-                role = "user" if msg.get("role") in ["user", "system"] else "model"
+                if msg.get("role") == "system":
+                    continue
+                role = "user" if msg.get("role") == "user" else "model"
                 parts = ensure_gemini_parts(msg.get("content", ""))
-                
+
                 if gemini_contents and gemini_contents[-1]["role"] == role:
                     # Fusion des rôles consécutifs (Gemini API l'exige)
                     gemini_contents[-1]["parts"].extend([{"text": "\n\n"}] + parts)
@@ -567,23 +586,23 @@ class Pipe:
                         "parts": parts
                     })
 
-            generation_config = {"temperature": 0.2, "maxOutputTokens": 200}
+            generation_config = {
+                "maxOutputTokens": 8192,
+                "thinkingConfig": {"thinkingLevel": "low"},
+            }
             task_id = str(safe_metadata.get("task", ""))
             if "." in task_id:
                 task_id = task_id.split(".")[-1].lower()
-            
-            # Force la sortie JSON pour les Tags et les Follow-ups
-            # Indispensable car Open WebUI crashe (sans erreur via try/except silencieux)
-            # s'il n'arrive pas à parser un JSON natif avec JSONCodec.loads()
-            if task_id in ["tags_generation", "follow_up_generation"]:
+
+            # Force la sortie JSON pour les Titres, Tags et Follow-ups
+            # Indispensable car Open WebUI parse la sortie via JSONCodec.loads()
+            if task_id in ["title_generation", "tags_generation", "follow_up_generation"]:
                 generation_config["responseMimeType"] = "application/json"
 
             payload = {
                 "contents": gemini_contents,
                 "generationConfig": generation_config
             }
-
-            # print(f"[ECHO-FAST-TRACK] Démarrage tâche système (task={task_id})", flush=True)
 
             try:
                 # Appel direct au modèle LITE, by-pass total de l'agent ECHO (sans streaming)
@@ -596,15 +615,17 @@ class Pipe:
                     enable_paid_credits=False
                 )
                 try:
-                    text = res.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                    parts_out = res.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                    raw_text = "".join(
+                        p.get("text", "") for p in parts_out
+                        if isinstance(p, dict) and not p.get("thought")
+                    )
+                    text, _ = split_thought_process(raw_text)
                     if text:
-                        # print(f"[ECHO-FAST-TRACK] Texte généré ({len(text)} chars)", flush=True)
                         yield text
                 except (KeyError, IndexError):
                     pass
-                # print(f"[ECHO-FAST-TRACK] Tâche terminée avec succès (task={task_id})", flush=True)
             except Exception as e:
-                # print(f"[ECHO-FAST-TRACK] Erreur fatale capturée : {str(e)}", flush=True)
                 yield f"ECHO Fast-Track Error: {str(e)}"
             return
 
@@ -797,8 +818,17 @@ class Pipe:
                 tech_str = ai_id or ca_id or ""
             return f"{model_key} [{tech_str}]" if tech_str else model_key
 
-        if model_selection in ["AUTO", "AUTO_PRO"]:
-            # Plafond : AUTO → FLASH max, AUTO_PRO → PRO max
+        incoming_msgs = body.get("messages", [])
+        is_tool_continuation = bool(incoming_msgs and incoming_msgs[-1].get("role") == "tool")
+
+        if is_tool_continuation:
+            # Sous-tour d'outil : Le modèle actif poursuit le traitement de son propre outil.
+            # L'origine du tour utilisateur est préservée via le Verrou de Tour (interdiction d'écraser avec last_model).
+            target_model = last_model or MODEL_LITE
+            saved_turn_origin = orch.user_data_manager.state_manager.get_session_setting("turn_origin_model")
+            origine_model = saved_turn_origin if saved_turn_origin else (last_model or "aucun")
+        elif model_selection in ["AUTO", "AUTO_PRO"]:
+            # Nouveau tour utilisateur : Calcul normal de la cible et fixation du Verrou de Tour
             ceiling = MODEL_PRO if model_selection == "AUTO_PRO" else MODEL_FLASH
             if last_model and last_model != "aucun":
                 # Clamping dynamique via la hiérarchie du SSOT
@@ -811,14 +841,17 @@ class Pipe:
                 else:
                     target_model = last_model
                 origine_model = last_model
-                await events.status(f"🧠  Reprise du contexte ({_get_ui_display(target_model)})...")
+                await events.status(f"🧠  Reprise du contexte ({_get_ui_display(target_model)})...")
             else:
                 target_model = MODEL_LITE
                 origine_model = "aucun"
-                await events.status(f"🧠  Initialisation de session ({_get_ui_display(MODEL_LITE)})...")
+                await events.status(f"🧠  Initialisation de session ({_get_ui_display(MODEL_LITE)})...")
+            # Enregistrement du Verrou de Tour pour les sous-tours d'outils subséquents
+            orch.user_data_manager.state_manager.save_session_setting("turn_origin_model", origine_model)
         else:
             target_model = model_selection
             origine_model = last_model if last_model else "aucun"
+            orch.user_data_manager.state_manager.save_session_setting("turn_origin_model", origine_model)
             await events.status(f"Model Fixé : {_get_ui_display(target_model)}")
 
         # L'origine est passée à l'Orchestrateur pour la résolution des placeholders
@@ -849,9 +882,30 @@ class Pipe:
         current_cumul = body.get("_echo_last_cumul")
         user_msg_id = (__metadata__ or {}).get("_echo_user_msg_id")
         asst_msg_id = kwargs.get("__message_id__")
+        failed_models_this_turn = set()
+        applied_model = target_model
 
         while cascade_attempt < max_cascade_attempts:
             cascade_attempt += 1
+
+            # 1. Synchronisation de l'AEC d'identité si le modèle actif a divergé
+            if target_model != applied_model:
+                orch._mutate_context_identity(context, target_model, applied_model)
+                applied_model = target_model
+
+            # 2. Drainage des directives et événements système en attente
+            from echo_aec import EchoAEC
+            aec_directive_xml, drained_raw = EchoAEC.drain_pending_directives(orch.user_data_manager.state_manager)
+            if aec_directive_xml:
+                directive_part = [{"text": aec_directive_xml}]
+                directive_msg = {"role": "user", "parts": directive_part}
+                context.append(directive_msg)
+
+                # Suture sémantique pour capture bit-perfect dans le Shadow
+                inv_d = orch.user_data_manager.calculate_invariant("user", directive_part)
+                current_cumul = orch.user_data_manager.calculate_cumulative(inv_d, current_cumul)
+                orch.user_data_manager.index_suture(current_cumul, chat_id, inv_d, current_cumul, user_msg_id)
+                cascade_history.append(directive_msg)
 
             # --- [NOUVEAU] RÉSOLUTION DYNAMIQUE DES INSTRUCTIONS SYSTÈME ---
             sys_instr_raw = "\n".join([m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]) or "Le Modèle est ECHO."
@@ -879,6 +933,12 @@ class Pipe:
                 target_identity = get_model_identity(target_model)
                 if target_identity in menu_escalade:
                     menu_escalade.remove(target_identity)
+
+                # Exclusion formelle des modèles ayant échoué lors de ce tour (Anti-boucle)
+                for failed_m in failed_models_this_turn:
+                    failed_id = get_model_identity(failed_m)
+                    if failed_id in menu_escalade:
+                        menu_escalade.remove(failed_id)
 
                 if menu_escalade:
                     escalation_tool = {
@@ -961,9 +1021,21 @@ class Pipe:
                     if cascade_order:
                         prev_model = target_model
                         target_model = cascade_order[0]
+                        failed_models_this_turn.add(prev_model)
+
                         await events.status(f"⚡ {prev_model} indisponible → cascade vers {target_model}")
                         await events.toast(f"⚡ Cascade : {prev_model} → {target_model} (erreur: {str(e)[:80]})", "warning")
-                        orch._mutate_context_identity(context, target_model, prev_model)
+
+                        # Inscription de la directive épurée (drainée au début du tour suivant)
+                        from echo_aec import EchoAEC
+                        err_summary = str(e)[:60]
+                        msg_directive = f"Le modèle {prev_model} est indisponible ({err_summary}). Repli forcé vers {target_model}."
+                        EchoAEC.record_event(
+                            state_manager=orch.user_data_manager.state_manager,
+                            event_name=f"cascade_{prev_model}_to_{target_model}",
+                            summary=msg_directive,
+                            resource_type="aec_directive"
+                        )
                     else:
                         # Plus de modèle inférieur → échec terminal
                         resume_time = datetime.now().astimezone() + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)
@@ -1003,7 +1075,7 @@ class Pipe:
 
                 # Vérification des droits (Valve)
                 if user_valves.MODEL_SELECTION == "AUTO" and new_target == MODEL_PRO:
-                    await events.status(f"⚠️ï¸  Transfert vers MODEL_PRO refusé (Valve AUTO).")
+                    await events.status("⚠️  Transfert vers MODEL_PRO refusé (Valve AUTO).")
                     sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
                     # Signalement de refus au modèle actuel
                     context.append({
@@ -1014,7 +1086,7 @@ class Pipe:
                         "role": "user",
                         "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "model_requested": target_req, "model_used": target_model, "warning": f"{target_req} unavailable (policy)", "message": f"Transfert vers {target_req} refusé. Traitez avec {target_model}."}, "id": sys_tc_id}}]
                     })
-                    continue # On reboucle avec le MÊME target_model
+                    continue  # On reboucle avec le MÊME target_model
 
                 if new_target == target_model:
                     sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
@@ -1038,6 +1110,8 @@ class Pipe:
 
                 # 1. Mutation Chirurgicale de l'identité dans le contexte
                 orch._mutate_context_identity(context, new_target, target_model)
+                # Mise à jour du Verrou de Tour : l'ancien modèle devient l'origine scellée pour la suite du tour
+                orch.user_data_manager.state_manager.save_session_setting("turn_origin_model", target_model)
 
                 # 2. Suture Sémantique (Relais Protocolé avec réinjection signée du texte précédent)
                 sig_to_apply = proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION
@@ -1104,6 +1178,7 @@ class Pipe:
                 context.append(user_msg)
 
                 target_model = new_target
+                applied_model = new_target
                 continue
             else:
                 # [NOUVEAU] INDEXATION FINALE (SUTURE)

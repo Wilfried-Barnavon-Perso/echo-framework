@@ -34,71 +34,53 @@
     </p>
 
     <h2>3. Le Coffre-Fort Sécurisé (Identity Vault)</h2>
+    <img src="images/identity_vault.png" alt="ECHO Identity Vault" class="doc-screenshot">
     <p>
       Pour interagir avec vos applications (votre boîte mail, Slack, vos bases de données), le système a besoin d'identifiants ou de mots de passe. 
     </p>
     <p>
-      L'<strong>Identity Vault</strong> est un coffre-fort crypté. Vous y enregistrez vos clés, et l'IA ne les voit <em>jamais</em> en texte clair. Lorsqu'elle configure une automatisation, elle utilise de faux jetons (des macros) que le coffre-fort va échanger à la dernière milliseconde avant de contacter le service externe. C'est une garantie de sécurité absolue en cas de compromission d'un prompt.
+      L'<strong>Identity Vault</strong> est un coffre-fort chiffré. Vous y enregistrez vos clés, et l'IA ne les voit <em>jamais</em> en texte clair. Lorsqu'elle configure une automatisation, elle utilise des alias (macros) que le coffre-fort remplace au moment précis de contacter le service externe.
     </p>
 
-    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
-      <summary style="font-weight:bold; color:#60a5fa; font-size:1.1rem;">⚙️ Dossier d'Ingénierie & Spécifications</summary>
-      <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
-        
-        <h3 style="color:#93c5fd;">1. Orchestration Multi-Agents (<code>agent_orchestration_tool.py</code>)</h3>
-        <p>Le système implémente l'outil <code>consult_council</code> (Table Ronde Delphi à N experts) et <code>delegate_to_agent</code>. La propagation d'identité (le fait que le sous-agent sache qu'il est un sous-agent et partage le contexte) contourne l'encapsulation stricte d'Open WebUI grâce à l'utilisation native de <code>contextvars</code> via la variable asynchrone <code>ECHO_SUBAGENT_CONTEXT</code>.</p>
-
-        <h3 style="color:#93c5fd; margin-top: 2rem;">2. N8N Worker (Headless)</h3>
-        <p>Sous-système (<code>26-docker-n8n-worker</code>) encapsulant le moteur N8N via API Python (Port 5003). L'infrastructure impose une ségrégation stricte :</p>
+    <details class="tech-spec">
+      <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
+      <div>
+        <h3>1. Orchestration Multi-Agents &amp; Skills (<code>agent_orchestration_tool.py</code> &amp; <code>agent_engine_tool.py</code>)</h3>
         <ul>
-          <li><strong>Sandbox Éphémère :</strong> Testée dynamiquement par le LLM, elle doit OBLIGATOIREMENT démarrer par le nœud <code>Execute Workflow Trigger</code>.</li>
-          <li><strong>Daemon Permanent :</strong> Déploiements (crons/webhooks) tournant en arrière-plan. Ces workflows peuvent agir comme des clients MCP et déclencher asynchronement des "Child Chats" dans ECHO via l'API pour confier une tâche complexe au LLM avec traçabilité complète.</li>
-          <li><strong>Génération de Fichiers :</strong> Tout workflow devant générer un fichier sur le disque DOIT STRICTEMENT configurer son noeud d'écriture vers le chemin <code>__ECHO_DOWNLOAD_DIR__/nom_du_fichier.ext</code>. Le renommage hashé anti-collision et l'ingestion dans la mémoire de la session sont ensuite gérés nativement par ECHO.</li>
+          <li><strong>Table Ronde Delphi &amp; Supervision :</strong> <code>consult_council</code> (N experts parallélisés avec dialectique structurée Analyse/Dialectique/Réponse et synthèse par défaut sur <code>MODEL_PRO</code>) et <code>consult_supervised_workers</code> (boucle critique/correction récursive restituant les budgets de tours restants).</li>
+          <li><strong>Skill Management :</strong> Découverte sémantique et lecture de compétences via <code>search_skill</code> et <code>read_skill</code> avant création par <code>forge_skill</code> (avec modale de confirmation interactive). La suppression <code>delete_user_skill</code> est bloquée en mode Headless grâce à l'inspection de <code>ECHO_SUBAGENT_CONTEXT</code> (qui propage <code>sub_sid</code>, <code>is_subagent</code> et <code>sub_tools_names</code>).</li>
+          <li><strong>Agent Engine :</strong> <code>delegate_to_agent</code>, <code>list_agent_sessions</code> et <code>close_agent_session</code> avec garde anti-récursion (<code>DELEGATE_AGENT_BLACKLIST</code>).</li>
         </ul>
 
-        <h3 style="color:#93c5fd; margin-top: 2rem;">3. MCP Broker & Identity Vault</h3>
-        <p>Le serveur <strong>MCP Broker</strong> (<code>m5_proxy_mcp.py</code>) agit désormais comme un <strong>Proxy HTTP complet et Stateless</strong>. Ses caractéristiques clés :</p>
+        <h3>2. ECHO N8N Orchestrator (<code>n8n_orchestrator_tool.py</code> &amp; <code>n8n_api.py</code>)</h3>
         <ul>
-          <li><strong>Authentification Middleware :</strong> Interception silencieuse de <code>x-openwebui-user-id</code> pour le maintien du contexte de sécurité (sans accès direct à la BDD), garantissant l'isolation des tenants.</li>
-          <li><strong>Forwarding d'Erreurs Transparent :</strong> Les erreurs applicatives ou WAF externes (403, 502) ne sont pas masquées, elles sont formatées en JSON et remontées <em>directement</em> au LLM pour déclencher son auto-heal (cascade cognitive).</li>
-          <li><strong>Identity Vault :</strong> L'outil <code>identity_vault_tool.py</code> gère les secrets. Le modèle a interdiction d'utiliser des secrets en dur et doit utiliser la macro <code>__ECHO_SECRET_...</code>. Il DOIT invoquer <code>list_identities_services</code> avant <code>list_identities</code>. En cas d'échec d'authentification, le Modèle DOIT suivre les <code>auth_failure_instructions</code> fournies. L'interface (<code>echo_identity_vault_action.py</code>) synchronise dynamiquement ces secrets vers SQLite pour N8N et MCP de façon étanche.</li>
+          <li><strong>Architecture Duale :</strong> Distinction stricte entre les workflows <strong>Sandbox éphémères</strong> (démarrant obligatoirement par un <code>Execute Workflow Trigger</code> avec mocking de payload et validation via <code>run_n8n_oneshot_workflow</code>, sortie synchrone bornée à <strong>8 Ko / 8192 octets</strong> anti-OOM) et les <strong>Démons permanents</strong> (<code>deploy_n8n_daemon</code> en 2 étapes REST sur N8N).</li>
+          <li><strong>Conception &amp; Collecte :</strong> Délégation architecturale via <code>delegate_to_n8n_grapher</code>, recherche de templates sur le Hub N8N (<code>search_n8n_hub</code>, <code>download_n8n_hub_template</code>) et écriture disque via la macro <code>__ECHO_DOWNLOAD_DIR__/fichier.ext</code> collectée par le Download Broker.</li>
         </ul>
 
-
-        <h3 style="color:#93c5fd; margin-top: 2rem;">Agent Engine (agent_engine_tool.py)</h3>
+        <h3>3. MCP Broker &amp; Identity Vault (<code>m5_proxy_mcp.py</code>, <code>echo_mcp_tool.py</code>, <code>identity_vault_tool.py</code>)</h3>
+        <p>Le serveur <strong>MCP Broker</strong> (<code>server.py</code>, port 8000) agit comme un <strong>Proxy HTTP complet sans accès à la base de données</strong> :</p>
         <ul>
-          <li><strong>delegate_to_agent :</strong> Délégation experte par agent autonome.</li>
-          <li><strong>list_agent_sessions / close_agent_session :</strong> Gestion du cycle de vie des sessions d'agents.</li>
-        </ul>
-        <h3 style="color:#93c5fd; margin-top: 2rem;">N8N Orchestrator (n8n_orchestrator_tool.py)</h3>
-        <ul>
-          <li><strong>Templates :</strong> create_n8n_template, modify_n8n_template, delete_n8n_template.</li>
-          <li><strong>Workflows :</strong> prepare_n8n_workflow, modify_n8n_workflow, run_n8n_oneshot_workflow, deploy_n8n_daemon.</li>
-          <li><strong>Hub & Documentation :</strong> search_n8n_hub, download_n8n_hub_template, query_n8n_documentation.</li>
-        </ul>
-        <h3 style="color:#93c5fd; margin-top: 2rem;">Outils Généralistes (generalist_tools.py)</h3>
-        <ul>
-          <li><strong>Timers & Automations :</strong> <code>wait_timer</code> programmable et gestion d'automatisations UI.</li>
-          <li><strong>Interactivité & Interface :</strong> Interface dynamique de calendrier (UI Calendar Events) et <code>ask_user_input</code> pour solliciter l'utilisateur.</li>
-          <li><strong>Délégation :</strong> <code>delegate_to_tool_consultant</code> permettant d'interroger un Agent Stratège (Stateless) pour déterminer l'outil optimal sans saturer la mémoire du contexte principal.</li>
+          <li><strong>Routage Data-Driven &amp; Extraction Amont :</strong> L'outil universel <code>echo_mcp_tool.py</code> (<code>list_mcp_functions</code>, <code>call_mcp_function</code>) extrait les credentials de SQLite via <code>EchoStateManager</code> en amont et route la requête selon la taxonomie (<code>mcp_native</code>, <code>mcp_resident</code>, <code>mcp_remote</code>) sur les transports <code>sse</code> et <code>streamable_http</code>.</li>
+          <li><strong>Cache de Sessions &amp; Résilience :</strong> <code>m5_proxy_mcp.py</code> maintient une session par couple <code>(user_id, service)</code> via <code>_SessionHolder</code> (timeouts 60s/15s) et <code>TolerantClientSession</code>. Les erreurs d'authentification (<code>AuthRequiredError</code>) et WAF sont remontées en JSON au LLM.</li>
+          <li><strong>Identity Vault :</strong> Le modèle a l'interdiction d'utiliser des secrets en dur (usage obligatoire de la macro <code>__ECHO_SECRET_...</code>). Il DOIT appeler <code>list_identities_services</code> avant <code>list_identities</code> et suivre les <code>user_required_instructions</code> en cas de secret manquant ou invalide.</li>
         </ul>
 
-        <h3 style="color:#93c5fd; margin-top: 2rem;">MCP & API (echo_mcp_tool.py, api_client.py)</h3>
+        <h3>4. Client HTTP Universel (<code>api_client.py</code>)</h3>
         <ul>
-          <li><strong>list / call_mcp_function :</strong> Outil universel de communication (natifs, résidents, distants) exploitant un routage HTTP asynchrone (Data-Driven Routing) basé sur la taxonomie du registre de l'Identity Vault.</li>
-          <li><strong>call_api :</strong> Requête HTTP universelle.</li>
+          <li><strong><code>call_api</code> :</strong> Exécute les appels REST/GraphQL standards (strictement interdit pour initier des connexions MCP) avec troncature de sécurité à <strong>131 Ko</strong> (<code>ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS</code>).</li>
         </ul>
       </div>
     </details>
 
     <div class="transition-text">
-      <a href="13_memoire_actions.html">&larr; 13. Mémoire & Actions</a>
+      <a href="13_memoire_actions.html">&larr; 13. Mémoire &amp; Actions</a>
       &nbsp;&nbsp;
-      <a href="15_deploiement.html">15. Déploiement & Infra &rarr;</a>
+      <a href="15_deploiement.html">15. Déploiement &amp; Infra &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.45 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

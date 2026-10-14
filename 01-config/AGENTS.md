@@ -14,14 +14,15 @@ Ce dossier est le **Centre Névralgique Statique** de l'architecture. Il contien
 - **Injection** : Il est injecté au démarrage dans l'API Open WebUI pour structurer chaque interaction LLM.
 
 ### `stack-echo.yml`
-**Rôle** : Le manifeste d'orchestration Docker Compose principal.
+**Rôle** : Le manifeste d'orchestration Docker Compose principal (v9.77).
 - **Sémantique** : Définit la topologie du cluster sur 4 Tiers séquentiels (Fondations > Workers > OWUI > Admin).
-- **Réseau & Persistance** : Monte les volumes nommés (`echo-qdrant-data`, `echo-n8n-data`, etc.) et orchestre la communication inter-conteneurs sur le réseau bridgé `echo-network`.
-- **Règles d'Exécution** : Gère les `healthcheck` stricts pour s'assurer que les fondations (Qdrant 1.19+, SearXNG) soient actives avant de lancer les Workers IA et l'ECHO N8N Orchestrator.
+- **Domain-Driven IPAM & Persistance** : Opère sur deux sous-réseaux isolés (`echo-network` via `${ECHO_NET_MAIN_PREFIX}` et `echo-sandbox` via `${ECHO_NET_SANDBOX_PREFIX}`) avec adressage IPv4 statique (`.100-.103` pour les briques Core et `.20-.32` calqués sur les numéros des dossiers Workers). Monte les volumes nommés (`echo-qdrant-data`, `echo-n8n-data`, `echo_libs_sandbox`, etc.) ainsi que `logging.json` (horodatage ISO 8601) sur l'ensemble des workers Python.
+- **Intégration BunkerWeb & Résilience SPA** : Configure sur `echo-open-webui` le Forward Auth (`/api/verify`), la résolution DNS dynamique Nginx (`set $$upstream`), le Smart Proxy Mock sur `/api/version`, l'Auto-Heal SPA par `sub_filter` sur `/auth`, le bounce `/sso-logout` (`Clear-Site-Data: "cache"`), et `USE_MODSECURITY=no` (reposant sur `BAD_BEHAVIOR` pour les codes `405 444` et un Rate Limit `300r/s` burst `1000`).
+- **Règles d'Exécution** : Gère les `healthcheck` stricts pour s'assurer que les fondations (Qdrant `v1.19.1`, SearXNG) soient actives avant de lancer les Workers IA et l'ECHO N8N Orchestrator.
 
 ### `bunkerweb-stack.yml`
-**Rôle** : L'enveloppe de sécurité périmétrique (WAF).
-- **Sémantique** : Ce manifeste secondaire est activé par `enable-bunkerweb.sh` pour proxyfier les requêtes vers l'Open WebUI (port 80/443), gérant le TLS et filtrant les attaques malveillantes via l'Auth Manager. Intègre les variables globales (`x-bw-config`) dont `AUTO_LETS_ENCRYPT` qui ne doivent **jamais** être répétées sous forme de labels sur des conteneurs dynamiques pour éviter l'effacement par Autoconf. Cette ancre héberge également l'exclusion critique `www.example.com_AUTO_LETS_ENCRYPT: "no"` empêchant le crash du planificateur de certificats.
+**Rôle** : L'enveloppe de sécurité périmétrique (WAF BunkerWeb v1.6.15, manifeste v1.34).
+- **Sémantique** : Ce manifeste secondaire est activé par `enable-bunkerweb.sh` pour proxyfier les requêtes vers Open WebUI (`ui.`), l'Admin Manager (`am.`) et l'IdP `echo-auth-manager` (`auth.`, IP `.24`), adossé à MariaDB `11.4` (`--max-allowed-packet=128M`). Intègre dans l'ancre partagée (`x-bw-config`) les directives critiques `MULTISITE: "yes"`, `AUTO_LETS_ENCRYPT`, `GUNICORN_TIMEOUT: "120"` et l'exclusion `www.example.com_AUTO_LETS_ENCRYPT: "no"`, qui ne doivent **jamais** être répétées sous forme de labels sur des conteneurs dynamiques pour éviter l'effacement par Autoconf.
 
 ### `webui-settings.json` & `model-config.json`
 **Rôle** : Fichiers d'amorçage (Seed) pour l'interface de chat.

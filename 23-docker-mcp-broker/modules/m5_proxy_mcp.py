@@ -1,4 +1,4 @@
-# VERSION : 1.12 (Logging des erreurs OAuth2 dynamique et correction PEP8)
+# VERSION : 1.15 (Alignement mcp 2.x : TolerantClientSession, tâche propriétaire de session, sérialisation alias)
 
 import asyncio
 import json
@@ -16,9 +16,271 @@ from core.security import user_id_var
 
 logger = logging.getLogger(__name__)
 
-# Cache des sessions actives : cache_key -> (stack, session, cred_hash)
+
+class AuthRequiredError(Exception):
+    """Levée lorsque des variables d'authentification obligatoires sont manquantes dans le vault."""
+    pass
+
+
+class TolerantClientSession(ClientSession):
+    """ClientSession mcp 2.x tolérante aux schémas de sortie imprécis des serveurs tiers.
+
+    `call_tool` appelle `self.validate_tool_result` (nom public en mcp 2.x). La surcharge
+    journalise l'écart (RuntimeError uniquement) et laisse le résultat atteindre le LLM.
+    """
+
+    async def validate_tool_result(self, name, result):
+        try:
+            await super().validate_tool_result(name, result)
+        except RuntimeError as val_err:
+            logger.warning(f"Validation tolérée du schéma de sortie pour l'outil '{name}' : {val_err}")
+
+
+# Délais (s) : démarrage d'un serveur stdio (npx/uvx peuvent télécharger) et fermeture propre
+MCP_SESSION_START_TIMEOUT = 60
+MCP_SESSION_CLOSE_TIMEOUT = 15
+
+
+def _unwrap(exc: BaseException) -> BaseException:
+    """Déroule les ExceptionGroup à exception unique (TaskGroup AnyIO) jusqu'à l'erreur réelle."""
+    while isinstance(exc, BaseExceptionGroup) and len(exc.exceptions) == 1:
+        exc = exc.exceptions[0]
+    return exc
+
+
+class _SessionHolder:
+    """Possède le cycle de vie d'une session MCP dans UNE tâche asyncio dédiée.
+
+    AnyIO exige que les cancel scopes (stdio_client, ClientSession) soient quittés par la
+    tâche qui les a ouverts. Les requêtes HTTP du broker sont des tâches distinctes : la pile
+    ne peut donc pas être fermée depuis une requête. La tâche propriétaire ouvre, attend le
+    signal d'arrêt, puis ferme dans le même contexte. Les appels d'outils, eux, peuvent être
+    émis depuis n'importe quelle tâche.
+    """
+
+    def __init__(self, opener, cred_hash: str):
+        self._opener = opener
+        self.cred_hash = cred_hash
+        self.session = None
+        self._ready = asyncio.Event()
+        self._stop = asyncio.Event()
+        self._error = None
+        self._task = None
+
+    async def _run(self):
+        try:
+            async with AsyncExitStack() as stack:
+                read_stream, write_stream = await self._opener(stack)
+                session = await stack.enter_async_context(TolerantClientSession(read_stream, write_stream))
+                await session.initialize()
+                self.session = session
+                self._ready.set()
+                await self._stop.wait()
+        except asyncio.CancelledError:
+            raise
+        except BaseException as e:  # noqa: BLE001 - transmis tel quel à la requête appelante
+            self._error = _unwrap(e)
+        finally:
+            self.session = None
+            self._ready.set()  # débloque start() quel que soit le résultat
+
+    async def start(self):
+        self._task = asyncio.create_task(self._run())
+        try:
+            await asyncio.wait_for(self._ready.wait(), timeout=MCP_SESSION_START_TIMEOUT)
+        except asyncio.TimeoutError:
+            # Session jamais prête : pas d'arrêt « propre » à attendre, annulation directe
+            self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
+            raise TimeoutError(f"Démarrage du serveur MCP > {MCP_SESSION_START_TIMEOUT}s")
+        if self._error is not None:
+            raise self._error  # type d'origine conservé (AuthRequiredError, ValueError...)
+
+    async def close(self):
+        self._stop.set()
+        if self._task is None:
+            return
+        try:
+            await asyncio.wait_for(self._task, timeout=MCP_SESSION_CLOSE_TIMEOUT)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Fermeture de session MCP : {e!r}")
+            self._task.cancel()
+
+
+def _dump(result) -> dict:
+    """Sérialise un résultat MCP au format du protocole (camelCase : isError, structuredContent...)."""
+    return result.model_dump(by_alias=True, mode="json", exclude_none=True)
+
+
+# Cache des sessions actives : cache_key -> _SessionHolder
 _SESSIONS = {}
 _SESSIONS_LOCK = asyncio.Lock()
+
+
+async def _open_transport(stack: AsyncExitStack, user_id: str, service: str, credentials_str: str):
+    """Ouvre le transport MCP (stdio résident/éphémère, SSE, streamable HTTP) dans `stack`.
+
+    Retourne (read_stream, write_stream). Corps identique à la v1.14 (déplacé, non modifié).
+    """
+    from server import SERVICE_SCHEMAS
+    schema_def = SERVICE_SCHEMAS.get(service, {})
+    category = schema_def.get("category")
+
+    if not category:
+        raise ValueError(f"Type MCP non supporté ou alias inconnu : {service}")
+
+    credentials = {}
+    if credentials_str:
+        try:
+            credentials = json.loads(credentials_str)
+        except Exception:
+            credentials = {"OAUTH2_TOKEN": credentials_str}
+
+    if category in ("mcp_resident", "mcp_ephemeral"):
+        if category == "mcp_resident":
+            command = schema_def.get("command")
+            if not command:
+                raise ValueError(f"Commande manquante dans le schéma pour {service}")
+
+            # Validation préventive des variables obligatoires déclarées dans le schéma
+            required_fields = [
+                f["id"] for f in schema_def.get("fields", [])
+                if f.get("required") is True
+            ]
+            missing_fields = [
+                fid for fid in required_fields
+                if not credentials.get(fid) and not os.environ.get(fid)
+            ]
+            if missing_fields:
+                instructions = schema_def.get("user_required_instructions", "")
+                raise AuthRequiredError(
+                    f"Variables obligatoires manquantes dans l'Identity Vault pour '{service}' : "
+                    f"{', '.join(missing_fields)}. Directives : {instructions}"
+                )
+
+            args = schema_def.get("args", [])
+            env = os.environ.copy()
+            env.update({str(k): str(v) for k, v in credentials.items()})
+
+            # ---- INJECTION DYNAMIQUE ISOLÉE POUR MICROSOFT 365 (MSAL CACHE) ----
+            if service == "microsoft_365":
+                cache_dir = f"/app/mcp_cache/microsoft_365/{user_id}"
+                os.makedirs(cache_dir, exist_ok=True)
+                env["HOME"] = cache_dir
+
+            # ---- INJECTION DYNAMIQUE ISOLÉE POUR GOOGLE WORKSPACE ----
+            if service == "google_workspace":
+                import tempfile
+                import urllib.parse
+                refresh_token = credentials.get("GOOGLE_OAUTH_REFRESH_TOKEN")
+                user_email = credentials.get("USER_GOOGLE_EMAIL")
+
+                if refresh_token and user_email:
+                    temp_dir_path = stack.enter_context(tempfile.TemporaryDirectory())
+                    safe_email = urllib.parse.quote(user_email, safe="@._-")
+                    token_file = os.path.join(temp_dir_path, f"{safe_email}.json")
+
+                    client_id = credentials.get("GOOGLE_OAUTH_CLIENT_ID", "")
+                    client_secret = credentials.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+
+                    token_data = {
+                        "token": "dummy_if_missing",
+                        "refresh_token": refresh_token,
+                        "token_uri": "https://oauth2.googleapis.com/token",
+                        "client_id": client_id,
+                        "client_secret": client_secret
+                    }
+
+                    try:
+                        async with httpx.AsyncClient() as client:
+                            token_resp = await client.post("https://oauth2.googleapis.com/token", data={
+                                "client_id": client_id,
+                                "client_secret": client_secret,
+                                "refresh_token": refresh_token,
+                                "grant_type": "refresh_token"
+                            }, timeout=10.0)
+                            if token_resp.status_code == 200:
+                                t_data = token_resp.json()
+                                if "access_token" in t_data:
+                                    token_data["token"] = t_data["access_token"]
+                                if "scope" in t_data:
+                                    token_data["scopes"] = t_data["scope"].split(" ")
+                                if "expires_in" in t_data:
+                                    from datetime import datetime, timedelta, timezone
+                                    expiry_dt = datetime.now(timezone.utc) + timedelta(seconds=int(t_data["expires_in"]))
+                                    token_data["expiry"] = expiry_dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+                            else:
+                                try:
+                                    err_data = token_resp.json()
+                                    logger.warning(
+                                        f"Google OAuth refresh failed with status {token_resp.status_code}: {err_data.get('error', 'Unknown')}"
+                                    )
+                                except Exception:
+                                    logger.warning(f"Google OAuth refresh failed with status {token_resp.status_code}")
+                    except Exception as ex:
+                        logger.warning(f"Google OAuth refresh exception: {ex}")
+                        # Fallback to dummy
+
+                    with open(token_file, "w") as f:
+                        json.dump(token_data, f)
+
+                    env["WORKSPACE_MCP_CREDENTIALS_DIR"] = temp_dir_path
+        else:  # mcp_ephemeral
+            command = credentials.get("command")
+            if not command:
+                raise ValueError("Commande manquante pour exécution Stdio (ephemeral).")
+
+            args_raw = credentials.get("args", "[]")
+            if isinstance(args_raw, str):
+                try:
+                    args = json.loads(args_raw)
+                except Exception:
+                    args = []
+            else:
+                args = args_raw
+
+            env = os.environ.copy()
+
+        server_params = StdioServerParameters(command=command, args=args, env=env)
+        stdio_transport = await stack.enter_async_context(stdio_client(server_params))
+        read_stream, write_stream = stdio_transport
+
+    elif category == "mcp_remote":
+        url = credentials.get("url")
+        if not url:
+            raise ValueError("URL manquante pour le serveur distant.")
+
+        transport_type = credentials.get("transport", "sse").lower().strip()
+        headers_raw = credentials.get("headers", "{}")
+        if isinstance(headers_raw, str):
+            try:
+                headers = json.loads(headers_raw)
+            except Exception:
+                headers = {}
+        else:
+            headers = headers_raw
+
+        headers_lower = {k.lower(): v for k, v in headers.items()}
+        if "user-agent" not in headers_lower:
+            headers["User-Agent"] = "antigravity/2.5.5 linux/amd64"
+
+        if transport_type == "streamable_http":
+            http_client = httpx.AsyncClient(
+                headers=headers,
+                timeout=httpx.Timeout(15.0, read=300.0)
+            )
+            await stack.enter_async_context(http_client)
+            mcp_transport = await stack.enter_async_context(streamable_http_client(url, http_client=http_client))
+            read_stream = mcp_transport[0]
+            write_stream = mcp_transport[1]
+        else:
+            mcp_transport = await stack.enter_async_context(sse_client(url, headers=headers, timeout=15.0))
+            read_stream = mcp_transport[0]
+            write_stream = mcp_transport[1]
+    else:
+        raise ValueError(f"Type MCP non supporté : {category}")
+
+    return read_stream, write_stream
 
 
 async def _get_or_create_session(user_id: str, service: str, credentials_str: str) -> ClientSession:
@@ -29,168 +291,21 @@ async def _get_or_create_session(user_id: str, service: str, credentials_str: st
     cred_hash = hashlib.md5((credentials_str or "").encode()).hexdigest()
 
     async with _SESSIONS_LOCK:
-        if cache_key in _SESSIONS:
-            stack, session, cached_hash = _SESSIONS[cache_key]
-            if cached_hash == cred_hash:
-                return session
+        holder = _SESSIONS.get(cache_key)
+        if holder is not None:
+            if holder.cred_hash == cred_hash and holder.session is not None:
+                return holder.session
 
-            # Les identifiants ont changé : fermeture de l'ancienne session
-            try:
-                await stack.aclose()
-            except Exception:
-                pass
-            del _SESSIONS[cache_key]
+            # Identifiants modifiés ou session morte : fermeture par sa tâche propriétaire
+            await holder.close()
+            _SESSIONS.pop(cache_key, None)
 
-        stack = AsyncExitStack()
-        try:
-            from server import SERVICE_SCHEMAS
-            schema_def = SERVICE_SCHEMAS.get(service, {})
-            category = schema_def.get("category")
-
-            if not category:
-                raise ValueError(f"Type MCP non supporté ou alias inconnu : {service}")
-
-            credentials = {}
-            if credentials_str:
-                try:
-                    credentials = json.loads(credentials_str)
-                except Exception:
-                    credentials = {"OAUTH2_TOKEN": credentials_str}
-
-            if category in ("mcp_resident", "mcp_ephemeral"):
-                if category == "mcp_resident":
-                    command = schema_def.get("command")
-                    if not command:
-                        raise ValueError(f"Commande manquante dans le schéma pour {service}")
-                    args = schema_def.get("args", [])
-                    env = os.environ.copy()
-                    env.update({str(k): str(v) for k, v in credentials.items()})
-
-                    # ---- INJECTION DYNAMIQUE ISOLÉE POUR MICROSOFT 365 (MSAL CACHE) ----
-                    if service == "microsoft_365":
-                        cache_dir = f"/app/mcp_cache/microsoft_365/{user_id}"
-                        os.makedirs(cache_dir, exist_ok=True)
-                        env["HOME"] = cache_dir
-
-                    # ---- INJECTION DYNAMIQUE ISOLÉE POUR GOOGLE WORKSPACE ----
-                    if service == "google_workspace":
-                        import tempfile
-                        import urllib.parse
-                        refresh_token = credentials.get("GOOGLE_OAUTH_REFRESH_TOKEN")
-                        user_email = credentials.get("USER_GOOGLE_EMAIL")
-                        
-                        if refresh_token and user_email:
-                            temp_dir_path = stack.enter_context(tempfile.TemporaryDirectory())
-                            safe_email = urllib.parse.quote(user_email, safe="@._-")
-                            token_file = os.path.join(temp_dir_path, f"{safe_email}.json")
-                            
-                            client_id = credentials.get("GOOGLE_OAUTH_CLIENT_ID", "")
-                            client_secret = credentials.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
-                            
-                            token_data = {
-                                "token": "dummy_if_missing",
-                                "refresh_token": refresh_token,
-                                "token_uri": "https://oauth2.googleapis.com/token",
-                                "client_id": client_id,
-                                "client_secret": client_secret
-                            }
-                            
-                            try:
-                                async with httpx.AsyncClient() as client:
-                                    token_resp = await client.post("https://oauth2.googleapis.com/token", data={
-                                        "client_id": client_id,
-                                        "client_secret": client_secret,
-                                        "refresh_token": refresh_token,
-                                        "grant_type": "refresh_token"
-                                    }, timeout=10.0)
-                                    if token_resp.status_code == 200:
-                                        t_data = token_resp.json()
-                                        if "access_token" in t_data:
-                                            token_data["token"] = t_data["access_token"]
-                                        if "scope" in t_data:
-                                            token_data["scopes"] = t_data["scope"].split(" ")
-                                        if "expires_in" in t_data:
-                                            from datetime import datetime, timedelta, timezone
-                                            expiry_dt = datetime.now(timezone.utc) + timedelta(seconds=int(t_data["expires_in"]))
-                                            token_data["expiry"] = expiry_dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-                                    else:
-                                        try:
-                                            err_data = token_resp.json()
-                                            logger.warning(f"Google OAuth refresh failed with status {token_resp.status_code}: {err_data.get('error', 'Unknown')}")
-                                        except Exception:
-                                            logger.warning(f"Google OAuth refresh failed with status {token_resp.status_code}")
-                            except Exception as ex:
-                                logger.warning(f"Google OAuth refresh exception: {ex}")
-                                # Fallback to dummy
-
-                            with open(token_file, "w") as f:
-                                json.dump(token_data, f)
-                            
-                            env["WORKSPACE_MCP_CREDENTIALS_DIR"] = temp_dir_path
-                else:  # mcp_ephemeral
-                    command = credentials.get("command")
-                    if not command:
-                        raise ValueError("Commande manquante pour exécution Stdio (ephemeral).")
-
-                    args_raw = credentials.get("args", "[]")
-                    if isinstance(args_raw, str):
-                        try:
-                            args = json.loads(args_raw)
-                        except Exception:
-                            args = []
-                    else:
-                        args = args_raw
-
-                    env = os.environ.copy()
-
-                server_params = StdioServerParameters(command=command, args=args, env=env)
-                stdio_transport = await stack.enter_async_context(stdio_client(server_params))
-                read_stream, write_stream = stdio_transport
-
-            elif category == "mcp_remote":
-                url = credentials.get("url")
-                if not url:
-                    raise ValueError("URL manquante pour le serveur distant.")
-
-                transport_type = credentials.get("transport", "sse").lower().strip()
-                headers_raw = credentials.get("headers", "{}")
-                if isinstance(headers_raw, str):
-                    try:
-                        headers = json.loads(headers_raw)
-                    except Exception:
-                        headers = {}
-                else:
-                    headers = headers_raw
-
-                headers_lower = {k.lower(): v for k, v in headers.items()}
-                if "user-agent" not in headers_lower:
-                    headers["User-Agent"] = "antigravity/2.5.5 linux/amd64"
-
-                if transport_type == "streamable_http":
-                    http_client = httpx.AsyncClient(
-                        headers=headers,
-                        timeout=httpx.Timeout(15.0, read=300.0)
-                    )
-                    await stack.enter_async_context(http_client)
-                    mcp_transport = await stack.enter_async_context(streamable_http_client(url, http_client=http_client))
-                    read_stream = mcp_transport[0]
-                    write_stream = mcp_transport[1]
-                else:
-                    mcp_transport = await stack.enter_async_context(sse_client(url, headers=headers, timeout=15.0))
-                    read_stream = mcp_transport[0]
-                    write_stream = mcp_transport[1]
-            else:
-                raise ValueError(f"Type MCP non supporté : {category}")
-
-            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
-            await session.initialize()
-
-            _SESSIONS[cache_key] = (stack, session, cred_hash)
-            return session
-
-        except Exception as e:
-            await stack.aclose()
-            raise e
+        holder = _SessionHolder(
+            lambda stack: _open_transport(stack, user_id, service, credentials_str), cred_hash
+        )
+        await holder.start()
+        _SESSIONS[cache_key] = holder
+        return holder.session
 
 
 async def proxy_mcp_request(payload: dict) -> dict:
@@ -221,19 +336,21 @@ async def proxy_mcp_request(payload: dict) -> dict:
 
     try:
         if method == "tools/list":
-            result = await session.list_tools()
-            return result.model_dump()
+            return _dump(await session.list_tools())
         elif method == "tools/call":
             name = params.get("name")
             args = params.get("arguments", {})
-            result = await session.call_tool(name, args)
-            return result.model_dump()
+            return _dump(await session.call_tool(name, args))
         else:
             raise ValueError(f"Méthode non supportée par le proxy : {method}")
-    except Exception as e:
+    except Exception:
         cache_key = f"{user_id}_{service}"
         async with _SESSIONS_LOCK:
-            if cache_key in _SESSIONS:
-                stack, _ = _SESSIONS.pop(cache_key)
-                await stack.aclose()
-        raise e
+            holder = _SESSIONS.get(cache_key)
+            if holder is not None and holder.session is session:
+                _SESSIONS.pop(cache_key, None)
+            else:
+                holder = None
+        if holder is not None:
+            await holder.close()
+        raise

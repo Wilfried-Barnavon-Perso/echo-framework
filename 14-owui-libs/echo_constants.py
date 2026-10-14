@@ -1,27 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.71
+version: 5.74
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.74: Élévation de MODEL_LITE en thinkingLevel medium pour garantir le discernement initial et le traitement des AEC.
+# 5.73: Ajout du modèle Claude Opus 5.5 high (ca_model_id: claude-opus-5-5-high
+# 5.72: Ajout du modèle Gemini 3.1 Pro (ca_model_id: gemini-3.1-pro
 # 5.69: Factorisation du Stealth User-Agent.
 # 5.68: Ajout des constantes ECHO_CODEX_EDIT_TIMEOUT et ECHO_CODEX_MAX_AI_PASSES (UCTP).
-# 5.67: Fix - Documentation de ECHO_SYNC_EXCLUDE_LIST comme bouclier anti-freeze UI pour le Codex.
-# 5.66: Introduction de ECHO_SUBAGENT_CONTEXT (ContextVars) pour propager l'identité asynchrone à travers Open WebUI.
-# 5.65: Retrait de save_session_context et delete_session_context_source de la blacklist.
-# 5.64: Ajout de l'extension .pdf au CODEX_LANG_MAP pour activer l'identification visuelle dans l'UI du Codex.
-# 5.63: Plan Gamma - Remplacement par le dictionnaire ECHO_CODEX_WORKSPACES et ajout de ECHO_SYNC_EXCLUDE_LIST.
-# 5.60: Injection des seuils de Rappel Cognitif (Défibrillateur Attentionnel).
-# 5.58: Augmentation de ECHO_API_MAX_RETRIES à 5 tentatives.
-# 5.57: Ajout de ECHO_GLOBAL_TENANT_PROJECT_ID ("aicode-consumers") pour forcer le routage Code Assist et contourner les 429 persos.
-# 5.53: Création des constantes CONTEXT_LOAD_WARNING_THRESHOLD (40) et CONTEXT_LOAD_CRITICAL_THRESHOLD (60)
-# 5.52: Alignement protocole OAuth2 sur AGY IDE 2.5.5 (audit binaire main.js) :
-#       - ECHO_CLIENT_METADATA : ideType ANTIGRAVITY, ajout ideName/ideVersion/platform
-#       - ECHO_OAUTH_SCOPES : +experimentsandconfigs, -openid, -aicode
-#       - User-Agent : format natif "{app}/{version} {os}/{arch}"
-#       - Documentation dual-client (Desktop=perso, LS=Enterprise GCP TOS)
 
 import os
 import contextvars
@@ -240,10 +229,11 @@ AEC_REMINDERS = [
 # ==============================================================================
 # REGISTRE COGNITIF ECHO (SINGLE SOURCE OF TRUTH)
 # ==============================================================================
+
 ECHO_MODELS_REGISTRY = {
     "MODEL_PRO": {
         "ai_studio_id": "gemini-3.1-pro-preview",
-        "ca_model_id":  "gemini-pro-agent",
+        "ca_model_id":  "claude-opus-5-5-high",
         "hierarchy": 2,
         "generationConfig": {
             "temperature": 1.0,
@@ -271,7 +261,7 @@ ECHO_MODELS_REGISTRY = {
             "temperature": 1.0,
             "topP": 0.9,
             "maxOutputTokens": 65535,
-            "thinkingConfig": {"thinkingLevel": "low"}
+            "thinkingConfig": {"thinkingLevel": "medium"}
         }
     },
     "MODEL_DISTILLATION": {

@@ -20,7 +20,11 @@ Dossiers contenant la logique métier des outils exposés par le Broker.
 - **`modules/m3_corporate.py`** (Corporate Sirene/Bodacc) : Intégration active (via `httpx`) avec les API d'entreprise de l'Etat pour la récupération légale d'entités (abandon des mocks JSON).
 - **`modules/m4_academic.py`** (Academic) : Connecteurs réels asynchrones (`httpx`) vers arXiv ou d'autres bases documentaires pour la recherche scientifique structurée.
 - **`modules/m2_jobs_omnisearch.py`** (Omnisearch Jobs) : Mécanismes d'interrogation multi-sources (ex: APEC HTML parsing).
-- **Remote Proxy (`m5_proxy_mcp.py`)** : [NOUVEAU] Orchestrateur de requêtes MCP distantes. Il gère la transmission JSON, applique un **Error Forwarding natif** (remontant les exceptions transparentes vers le LLM) et sert de Backend pour l'outil `echo_mcp_tool.py`. Il supporte dynamiquement les transports `sse` et `streamable_http`.
+- **Remote Proxy (`m5_proxy_mcp.py`, v1.15)** : [NOUVEAU] Orchestrateur de requêtes MCP distantes ou locales (stdio). Il gère la transmission JSON, applique un **Error Forwarding natif** (remontant les exceptions transparentes vers le LLM) et sert de Backend pour l'outil `echo_mcp_tool.py`. Il supporte dynamiquement les transports `sse` et `streamable_http`. Aligné sur `mcp` 2.x :
+  - **Cache de sessions** : une session MCP par couple (utilisateur, service), détenue par une tâche propriétaire (`_SessionHolder`) qui ouvre et ferme seule la pile AnyIO. Le démarrage est borné par `MCP_SESSION_START_TIMEOUT` (60 s), la fermeture par `MCP_SESSION_CLOSE_TIMEOUT` (15 s).
+  - **`TolerantClientSession`** : surcharge `validate_tool_result` et tolère les erreurs de validation du schéma de sortie (ex : `authenticate_account` de `microsoft-mcp` annoté `dict[str,str]` mais renvoyant un entier). Seule l'exception `RuntimeError` est interceptée.
+  - **Sérialisation** : `_dump()` utilise `model_dump(by_alias=True, mode="json", exclude_none=True)` pour restituer les champs en camelCase (`isError`, `structuredContent`).
+  - **Éviction** : toute erreur transport ou session entraîne la fermeture et le retrait de la session du cache.
 
 ## 3. Dépendances Logiques
 - Le MCP Broker est déclaré nativement dans l'interface Open WebUI, qui agit comme un **MCP Client**.

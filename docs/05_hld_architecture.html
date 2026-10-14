@@ -2,18 +2,23 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="High-Level Design du Framework ECHO v5 : architecture globale, schémas de flux, écorché structurel vectoriel, référentiel conceptuel et schéma SQL des Ombres Riches.">
   <title>ECHO v5 - 5. High-Level Design</title>
   <link rel="stylesheet" href="style.css">
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
     mermaid.initialize({
-      startOnLoad: true,
+      startOnLoad: false,
       theme: 'dark',
       securityLevel: 'loose',
       flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis', padding: 20 },
       sequence: { useMaxWidth: true, showSequenceNumbers: true, actorMargin: 50, messageMargin: 35 }
+    });
+    window.addEventListener('DOMContentLoaded', async () => {
+      for (const el of document.querySelectorAll('.mermaid')) {
+        await mermaid.run({ nodes: [el] });
+      }
     });
   </script>
 </head>
@@ -116,60 +121,57 @@ flowchart TD
         <div style="flex: 1; min-width: 200px; background: #0f172a; border: 1px dashed #64748b; border-radius: 8px; padding: 15px;">
     <div style="color: #94a3b8; font-size: 12px; text-align: center; margin-bottom: 15px; letter-spacing: 1px;">11-owui-filters</div>
     <div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
-    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">user_native_context_filter.py</div>
-    <div style="color: #64748b; font-size: 11px;">Protection des réglages utilisateur</div>
+    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">build_environment_domain.py</div>
+    <div style="color: #64748b; font-size: 11px;">Amorçage domaines (Priorité 0)</div>
 </div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">tcp_keepalive_filter.py</div>
     <div style="color: #64748b; font-size: 11px;">Maintien des connexions longues</div>
 </div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">edge_embed_bridge_filter.py</div>
+    <div style="color: #64748b; font-size: 11px;">Inférence WebGPU dans le navigateur</div>
+</div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">user_native_context_filter.py</div>
+    <div style="color: #64748b; font-size: 11px;">Ancrage réglages utilisateur</div>
+</div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">new_context_filter.py</div>
-    <div style="color: #64748b; font-size: 11px;">Ajout automatique du contexte</div>
+    <div style="color: #64748b; font-size: 11px;">Smart Context, PIS &amp; AEC XML</div>
 </div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">conversation_rag_filter.py</div>
-    <div style="color: #64748b; font-size: 11px;">Mise à jour de la mémoire</div>
-</div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
-    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">edge_embed_bridge_filter.py</div>
-    <div style="color: #64748b; font-size: 11px;">Calcul local dans le navigateur</div>
+    <div style="color: #64748b; font-size: 11px;">Indexation RAG O(1) asynchrone</div>
 </div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">app_drawer_filter.py</div>
-    <div style="color: #64748b; font-size: 11px;">Interface d'actions rapides</div>
+    <div style="color: #64748b; font-size: 11px;">Tiroir d'actions rapides HUD</div>
 </div>
 </div>
         <div style="flex: 1; min-width: 200px; background: #0f172a; border: 1px dashed #3b82f6; border-radius: 8px; padding: 15px;">
     <div style="color: #60a5fa; font-size: 12px; text-align: center; margin-bottom: 15px; letter-spacing: 1px;">14-owui-libs</div>
     <div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_auth.py</div>
-    <div style="color: #64748b; font-size: 11px;">Authentification & Sécurité</div>
+    <div style="color: #64748b; font-size: 11px;">Authentification &amp; Sécurité</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_protocol.py</div>
     <div style="color: #64748b; font-size: 11px;">Traducteur universel API</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_state_manager.py</div>
-    <div style="color: #64748b; font-size: 11px;">Gestion mémoire SQLite</div>
+    <div style="color: #64748b; font-size: 11px;">Gestion mémoire SQLite &amp; KV</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_constants.py</div>
-    <div style="color: #64748b; font-size: 11px;">Constantes système</div>
-</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
-    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_codex_tool.py</div>
-    <div style="color: #64748b; font-size: 11px;">Gestion de l'espace de travail Codex</div>
-</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
-    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_events.py</div>
-    <div style="color: #64748b; font-size: 11px;">Moteur d'événements UI & Protocole UCTP</div>
+    <div style="color: #64748b; font-size: 11px;">Registre SSOT &amp; Constantes</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_aec.py</div>
-    <div style="color: #64748b; font-size: 11px;">Construction du contexte AEC</div>
+    <div style="color: #64748b; font-size: 11px;">Orchestration &amp; Drainage XML AEC</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_browser_lib.py</div>
     <div style="color: #64748b; font-size: 11px;">Pilotage navigateur fantôme</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_codex_git.py</div>
-    <div style="color: #64748b; font-size: 11px;">Gestionnaire de code source</div>
+    <div style="color: #64748b; font-size: 11px;">Moteur Git Dulwich multi-workspaces</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_core.py</div>
-    <div style="color: #64748b; font-size: 11px;">Fonctions utilitaires centrales</div>
+    <div style="color: #64748b; font-size: 11px;">Fonctions cognitives &amp; FIFO</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_events.py</div>
-    <div style="color: #64748b; font-size: 11px;">Moteur d'événements UI</div>
+    <div style="color: #64748b; font-size: 11px;">Moteur d'événements UI &amp; UCTP</div>
 </div>
 </div>
         <div style="flex: 1; min-width: 200px; background: #0f172a; border: 1px dashed #3b82f6; border-radius: 8px; padding: 15px;">
@@ -251,14 +253,14 @@ flowchart TD
     <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Vault Fichiers</div>
     <div style="color: #64748b; font-size: 10px;">/users/{uid}/files/</div><div style="color: #64748b; font-size: 10px;">Fichiers utilisateurs (pérennes)</div>
 </div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
-    <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Worker :7997</div>
-    <div style="color: #64748b; font-size: 10px;">Harrier-OSS-v1-</div><div style="color: #64748b; font-size: 10px;">Vector local</div>
+    <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Embedding :7997</div>
+    <div style="color: #64748b; font-size: 10px;">Harrier-OSS-v1-0.6B</div><div style="color: #64748b; font-size: 10px;">Edge Bridge / GGUF F16</div>
 </div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
     <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Audio Workers</div>
     <div style="color: #64748b; font-size: 10px;">Kokoro TTS :7996</div><div style="color: #64748b; font-size: 10px;">Whisper STT :7995</div>
 </div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
     <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Browser Worker</div>
-    <div style="color: #64748b; font-size: 10px;">Playwright Headless</div><div style="color: #64748b; font-size: 10px;">Port 3000</div>
+    <div style="color: #64748b; font-size: 10px;">Playwright Headless</div><div style="color: #64748b; font-size: 10px;">Port 5002</div>
 </div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
     <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Coding Worker</div>
     <div style="color: #64748b; font-size: 10px;">Sandbox Python/Node</div><div style="color: #64748b; font-size: 10px;">Port 5000</div>
@@ -267,77 +269,55 @@ flowchart TD
     <div style="color: #64748b; font-size: 10px;">Orchestration Headless</div><div style="color: #64748b; font-size: 10px;">Port 5003</div>
 </div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
     <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">MCP Broker</div>
-    <div style="color: #64748b; font-size: 10px;">Proxy HTTP Complet</div><div style="color: #64748b; font-size: 10px;">Port 8000</div>
+    <div style="color: #64748b; font-size: 10px;">Proxy HTTP sans BDD</div><div style="color: #64748b; font-size: 10px;">Port 8000</div>
+</div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
+    <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Auth &amp; Download</div>
+    <div style="color: #64748b; font-size: 10px;">ECHO Auth IdP :8000</div><div style="color: #64748b; font-size: 10px;">Download Broker Daemon</div>
 </div>
     </div>
 </div>
 </div>
 
+    <h2>Concepts Structurants du Pipeline</h2>
 
-    <details class="tech-spec" style="margin-top:1rem;">
-    <summary style="font-weight:bold; color:#60a5fa; font-size:; cursor:pointer;">⚙️ Dossier d'Ingénierie & Spécifications - La Suture</summary>
-    <div style="margin-top: 1rem;">
-    <div class="card">
+    <div class="grid-container">
+      <div class="card">
         <h3>⚔️ La Suture (Cognitive Suture)</h3>
-        <p><strong>Nature :</strong> Algorithme de reconstruction (<code>prepare_context()</code>).</p>
-        <p><strong>Source :</strong> <code>Orchestrator.prepare_context()</code> dans <code>pipe_engine.py</code></p>
+        <p><strong>Nature :</strong> Algorithme de reconstruction (<code>Orchestrator.prepare_context()</code> dans <code>pipe_engine.py</code>).</p>
         <p>
-          Reconstruit l'historique complet à partir des Ombres SQLite. Le <strong>Verrou de Version</strong>
-          (<code>message_id + updated_at</code>) garantit que seule l'Ombre correspondant exactement au
-          message actuel est utilisée. En cas d'absence, le Pipe bascule en <em>Cold Recovery</em>.
+          Reconstruit l'historique complet à partir des Ombres SQLite (<code>message_shadows</code>). Le <strong>Verrou de Version</strong>
+          (<code>message_id + updated_at</code>) et le <strong>Verrou de Tour</strong> (<code>turn_origin_model</code>) garantissent une reprise bit-perfect tout en préservant le cache de préfixes de l'API Gemini. En cas d'édition manuelle d'un message, le Pipe bascule en <em>Cold Recovery</em>.
         </p>
       </div>
-    </div>
-</details>
       <div class="card">
         <h3>📡 L'AEC (Artéfacts Environnementaux et Contextuels)</h3>
-        <p><strong>Nature :</strong> Bloc YAML proprioceptif injecté par le Filtre.</p>
+        <p><strong>Nature :</strong> Vecteurs proprioceptifs XML natifs (<code>EchoAEC</code>).</p>
         <p>
-          À chaque tour de conversation, le Filtre injecte un bloc YAML structurel délimité par la balise 
-          <code>&lt;AEC_environnement_contexte&gt;</code>. Il fournit au modèle sa <em>proprioception</em> : 
-          identité du modèle actif, date et heure, et surtout le <strong>Registre des Fichiers</strong> 
-          de la session. L'AEC inclut aussi des évènements asynchrones <code>&lt;AEC_evenement_systeme&gt;</code>.
-        </p>
-        <p>
-          Il regroupe également la balise <code>&lt;AEC_smart_context&gt;</code>, contenant le résumé distillé 
-          (≤ 300 mots) des fichiers volumineux traités par le Moulage, accompagné du <code>source_id</code> Qdrant.
+          Injectés au format strict <code>&lt;artifact id="AEC_..."&gt;</code> : <code>AEC_directive</code> (priorité 4, PIS au Tour 1, mises à niveau, rappels d'alignement et cascades), <code>AEC_modele</code>, <code>AEC_identite</code>, <code>AEC_temporalite</code>, <code>AEC_localisation</code>, <code>AEC_smart_context</code> et <code>AEC_evenement_systeme</code>. Drainés atomiquement en une seule transaction SQLite via <code>drain_pending_directives()</code>.
         </p>
       </div>
       <div class="card">
-        <h3>🧱 Le Moulage (Semantic Molding)</h3>
-        <p><strong>Nature :</strong> Pipeline de distillation asynchrone de fichiers volumineux.</p>
+        <h3>🧱 Le Moulage (Smart Context RAG)</h3>
+        <p><strong>Nature :</strong> Pipeline d'ingestion Zéro-RAM (<code>echo_ingestion.py</code>).</p>
         <p>
-          Déclenché par le Filtre pour tout fichier dépassant <code>MAX_DIRECT_TEXT_SIZE</code> (256 Ko).
-          L'API de distillation (<code>call_distillation</code>) produit un distillat structuré, vectorisé
-          dans <code>echo_session_rag</code> (Qdrant, Harrier-OSS-v1-). Le modèle principal reçoit un résumé
-          (≤ 300 mots) et le <code>source_id</code> pour interroger les détails.
+          Au-delà de <strong>32 Ko</strong> pour le texte ou <strong>1 Mo</strong> pour le multimédia (et après conversion Markdown des fichiers Office via <code>MarkItDown</code>), le contenu est indexé dans <code>echo_session_rag</code> (Qdrant, <code>microsoft/Harrier-OSS-v1-0.6B</code>) et synthétisé via <code>MODEL_DISTILLATION</code> dans une balise <code>&lt;artifact id="AEC_smart_context"&gt;</code>.
         </p>
       </div>
       <div class="card">
         <h3>📝 Le Draft (Brouillon Sémantique)</h3>
-        <p><strong>Nature :</strong> État mémoire volatile produit par le Filtre.</p>
+        <p><strong>Nature :</strong> État mémoire préparé par le Filtre Inlet.</p>
         <p>
-          Conteneur JSON stocké dans <code>metadata._echo_user_parts_draft</code> : liste de
-          <code>parts</code> Gemini-natifs (textes, <code>inlineData</code>, slugs éphémères, bloc AEC).
-          Le Pipe le fusionne avec le texte brut de l'utilisateur lors de la Suture.
+          Conteneur stocké dans <code>metadata._echo_user_parts_draft</code> assemblant selon l'ordre du PGCU les <code>AEC_smart_context</code>, les directives système ponctuelles, la requête utilisateur multipart (<code>&lt;REQUETE_UTILISATEUR&gt;</code>), les événements système et les pièces jointes directes.
         </p>
       </div>
       <div class="card">
         <h3>⛳ L'Ancre (Thought Signature)</h3>
-        <p><strong>Nature :</strong> Jeton opaque impératif de l'API Gemini 3+.</p>
+        <p><strong>Nature :</strong> Jeton opaque cryptographique de l'API Gemini 3+.</p>
         <p>
-          À la fin de chaque génération, l'API Gemini retourne systématiquement une
-          <code>thoughtSignature</code> - un blob opaque dont la structure est interne
-          à Google. En la réinjectant dans le tour suivant
-          (<code>p["thoughtSignature"] = sig</code>), ECHO permet au modèle de
-          retrouver son état de réflexion sans avoir à relire ses pensées en texte
-          brut. Réduction de la charge contextuelle de 30 à 70 %.
+          Capturé et persisté dans <code>cognitive_signatures</code> (extrait par tri chronologique déterministe <code>ORDER BY updated_at DESC LIMIT 1</code>), il est rattaché exclusivement au premier <code>functionCall</code> lors des appels parallèles, permettant au modèle de retrouver son état de raisonnement sans relire ses pensées brutes.
         </p>
-        <p class="text-muted" style="font-size:;margin-top:">
-          ⚠ À ne pas confondre avec le <strong>KV Cache</strong>, qui est une technique
-          Google d'économie de tokens : les activations clé/valeur du prefill sont
-          mises en cache implicite côté serveur pour éviter de les recalculer. Ces deux
-          mécanismes sont entièrement distincts.
+        <p class="text-muted">
+          ⚠ Distinct du <strong>Context Caching</strong> (cache implicite des activations clé/valeur côté Google).
         </p>
       </div>
     </div>
@@ -345,9 +325,9 @@ flowchart TD
     <h2>Architecture Mémorielle Duale</h2>
 
     <p>
-      ECHO opère deux collections Qdrant physiquement isolées, vectorisées par le modèle local
-      <strong>microsoft/Harrier-OSS-v1-</strong> (dimensions dynamiques, multilingue, 8192 tokens) via l'<em>Embedding Worker</em>
-      (<code>http://echo-embedding-worker:7997</code>). Aucune donnée ne quitte l'infrastructure.
+      ECHO opère deux collections Qdrant physiquement isolées, vectorisées en 1024 dimensions par le modèle
+      <strong>microsoft/Harrier-OSS-v1-0.6B</strong> via l'Edge Embedding Bridge (WebGPU Desktop) ou l'<em>Embedding Worker</em> local
+      (<code>http://echo-embedding:7997/v1</code>). Aucune donnée ne quitte l'infrastructure.
     </p>
 
     <div class="grid-container">
@@ -420,27 +400,27 @@ sequenceDiagram
   U->>OWUI: Prompt + Fichiers (HTTPS)
   OWUI->>F: Interception hook.inlet()
 
-  note over F,DB: PHASE 1 : PRÉPARATION & DRAFT
-  F->>F: Sniffing MIME & Analyse Multimodale
-  F->>DB: get_session_registry(chat_id)
-  F->>F: Moulage fichiers > 256 Ko → echo_session_rag
-  F-->>OWUI: Injection AEC + Draft YAML (metadata)
+  note over F,DB: PHASE 1 : PRÉPARATION & DRAFT (PGCU)
+  F->>F: Sniffing MIME & Conversion Office (MarkItDown)
+  F->>DB: Vérification version (PIS / Upgrade AEC_directive)
+  F->>F: Moulage fichiers (32 Ko texte / 1 Mo média) → echo_session_rag
+  F-->>OWUI: Injection AEC XML natif + Draft (metadata)
 
   OWUI->>P: Routage /api/chat/completions
 
-  note over P,DB: PHASE 2 : SUTURE (BIT-PERFECT)
-  P->>DB: get_message_shadow(msg_id, updated_at)
+  note over P,DB: PHASE 2 : SUTURE (BIT-PERFECT) & VERROU DE TOUR
+  P->>DB: get_message_shadow(msg_id, updated_at) + purge_orphaned_events()
   DB-->>P: Parts JSON originales + Verrou de Version
-  P->>DB: get_thought_signature(message_id)
-  DB-->>P: thoughtSignature (Ancre Gemini 3+ - jeton opaque interne)
-  P->>P: Fusion Draft + Historique → contexte Gemini
+  P->>DB: get_signature_by_id(message_id) + drain_pending_directives()
+  DB-->>P: thoughtSignature + directives XML drainées atomiquement
+  P->>P: Verrou turn_origin_model & mutation chirurgicale dernière occurrence AEC_modele
 
   note over P,G: PHASE 3 : INFÉRENCE & BOUCLE OUTILS
-  P->>G: streamGenerateContent (HTTP/2 SSE)
+  P->>G: streamGenerateContent (HTTP/2 SSE + Circuit Breaker OAuth2)
   loop Appels d'outils
     G-->>P: functionCall (Tool Call Request)
-    P->>T: Exécution isolée (API REST interne)
-    T-->>P: Résultat multipart (texte + médias + nouveaux fichiers)
+    P->>T: Exécution isolée (API REST / Sandbox / MCP / N8N)
+    T-->>P: Résultat multipart (echo_tool_multiparts)
     P->>G: functionResponse (Tool Call Response)
   end
   G-->>P: Génération finale (stream Markdown + thoughtSignature)
@@ -449,7 +429,7 @@ sequenceDiagram
   P->>DB: save_message_shadow(final_parts + updated_at)
   P->>DB: save_signature_by_id(message_id, thoughtSignature)
   P->>DB: save_cognitive_data(cumulative_hash, tool_io)
-  P->>DB: index_suture(cumulative_hash, parent_hash)
+  P->>DB: index_suture(cumulative_hash, parent_hash) + save_session_setting()
 
   P-->>OWUI: Forward SSE Stream
   OWUI-->>U: Rendu HUD & Markdown
@@ -473,204 +453,164 @@ sequenceDiagram
 
     <div class="mermaid-wrapper">
       <div class="mermaid-header">
-        <span>Network &amp; System Topology</span>
+        <span>Network &amp; System Topology (Domain-Driven IPAM)</span>
         <span>[MODE : DOCKER CLUSTER]</span>
       </div>
       <div class="mermaid">
 flowchart TB
-  subgraph WAN ["🌐 ZONE 0 : PUBLIC WAN (Non fiable)"]
-    U(["👤 Utilisateur Client"])
-  end
-
-  subgraph DMZ ["🛡️ ZONE 1 : DMZ (Réseau Edge)"]
-    BW{{"🛡️ BunkerWeb WAF (Optionnel)<br/>[:80/443]"}}
-  end
-
-  subgraph APP ["🖥️ ZONE 2 : APPLICATION & KERNEL TIER"]
-    direction TB
-    AUTH["🔑 echo-auth-manager (SSO IdP)<br/>[:8000 Interne]"]
-    SSH["🚇 ECHO SSH Tunnel (ECHO)<br/>[:8020-8024]"]
-    OWUI["🖥️ Open WebUI<br/>[:3000]"]
-    subgraph Kernel ["🧠 ECHO Kernel (In-Process)"]
-      direction LR
-      F("🌒 Filtre")
-      P("⚙️ Pipe")
-    end
-    OWUI --- Kernel
-  end
-
-  subgraph DATA ["🗄️ ZONE 3 : COUCHE DE PERSISTANCE (Volumes)"]
+  subgraph WAN ["🌐 ZONE 0 & 1 : WAN & EDGE WAF"]
     direction LR
-    SQL[("🗄️ SQLite Shadows<br/>(Volume Local)")]
-    QD[("🧠 Qdrant Engine<br/>[:6333]")]
-    FS[("📂 Vault<br/>(Système de fichiers)")]
-    EMB[("🔢 Embedding Worker<br/>[:7997]")]
+    U(["👤 Client"]) == "HTTPS :443" ==> BW{{"🛡️ BunkerWeb WAF"}}
+    AUTH["🔑 echo-auth-manager (.24 :8000)"]
+    BW -. "Forward Auth /api/verify" .-> AUTH
   end
 
-  subgraph SANDBOX ["🛠️ ZONE 4 : ARSENAL ISOLÉ (Sans accès entrant)"]
+  subgraph APP ["🖥️ ZONE 2 : CORTEX OPEN WEBUI (.100 :3000)"]
     direction LR
-    BA["🌐 echo-browser-worker<br/>[:5002]"]
-    MCP["🔌 echo-mcp-broker<br/>[:8000]"]
-    CW["🚀 echo-coding-worker<br/>[:5000]"]
-    SNG["🔍 SearxNG Proxy<br/>[:8080]"]
-    DL["⬇️ Download Broker<br/>[Daemon]"]
-    AUD["🎙️ Audio Workers<br/>[:7995, :7996]"]
-    DBK["📊 Data Broker Agent"]
+    OWUI["🖥️ Open WebUI"]
+    F("🌒 Filtres Inlet/Outlet")
+    P("⚙️ Pipe Engine")
+    SSH["🚇 SSH PKCE (:8020-8024)"]
+    OWUI --> F --> P
   end
 
-  subgraph MGMT ["⚙️ ZONE 5 : PLAN DE CONTRÔLE"]
-    AM["📊 Admin Manager<br/>(server.py)"]
-    DOCKER("🐋 Docker Daemon<br/>(/var/run/docker.sock)")
+  subgraph DATA ["🗄️ ZONE 3 : PERSISTANCE & VECTORISATION"]
+    direction LR
+    SQL[("🗄️ SQLite WAL<br/>({chat_id}.db & identity.db)")]
+    QD[("🧠 Qdrant<br/>(.103 :6333)")]
+    EMB[("🔢 Embedding Worker<br/>(.30 :7997)")]
+    QD <--> EMB
   end
 
-  subgraph CLOUD ["☁️ ZONE 6 : SORTIE CLOUD"]
-    GEMINI(("🌩️ Google Gemini API<br/>[TCP 443]"))
-    WWW(("🕸️ World Wide Web<br/>[TCP 443]"))
+  subgraph SANDBOX ["🛠️ ZONE 4 : WORKERS ISOLÉS (echo-network & echo-sandbox)"]
+    direction LR
+    CW["🚀 Coding Worker<br/>(.21 :5000 sandbox)"]
+    BA["🌐 Browser Worker<br/>(.22 :5002)"]
+    MCP["🔌 MCP Broker<br/>(.23 :8000)"]
+    DL["⬇️ Download Broker<br/>(.25 Daemon)"]
+    N8N["⚙️ N8N Worker<br/>(.26 :5003)"]
+    AUD["🎙️ TTS (.31 :7996)<br/>& STT (.32 :7995)"]
+    SNG["🔍 SearXNG (.101 :8080)"]
   end
 
-  U == "HTTPS" ==> BW
-  U -. "OAuth2 PKCE" .-> SSH
-  BW -. "Reverse Proxy" .-> OWUI
-  BW -. "Forward Auth" .-> AUTH
-  SSH -. "Validation Callback" .-> AUTH
-  BW -. "Accès Admin" .-> AM
+  subgraph MGMT ["⚙️ ZONE 5 & 6 : ADMIN (.20 :3001) & SORTIE CLOUD"]
+    direction LR
+    AM["📊 Admin Manager"] == "Socket" ==> DOCKER("🐋 Docker Daemon")
+    GEMINI(("🌩️ Gemini / Code Assist<br/>[HTTP/2 SSE]"))
+    WWW(("🌍 Web Public<br/>[HTTPS]"))
+  end
 
-  P == "SQL R/W" ==> SQL
-  P == "HTTP Interne" ==> BA & CW & SNG & DBK
-  P == "HTTP/2 SSE" ==> GEMINI
-
-  F -. "Hash Uploads" .-> SQL
-
-  BA & SNG == "HTTPS Sortant" ==> WWW
-
-  AM == "Orchestration" ==> DOCKER
-  AM -. "Health/Prune" .-> Kernel & SQL & QD
-
-  QD <--> EMB
+  BW ==> OWUI
+  BW -. "Admin" .-> AM
+  U -. "Tunnel PKCE" .-> SSH
+  P ==> SQL & QD
+  P ==> CW & BA & MCP & N8N & SNG
+  P == "HTTP/2" ==> GEMINI
+  BA & N8N --> DL
+  BA & SNG ==> WWW
 
   classDef node fill:#1e293b,stroke:#475569,stroke-width:2px,color:#f8fafc
   classDef db fill:#0f172a,stroke:#f59e0b,stroke-width:2px,color:#f8fafc
   classDef core fill:#172554,stroke:#60a5fa,stroke-width:2px,color:#f8fafc
   classDef tool fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#f8fafc
 
-  class U,BW,OWUI,AUTH,AM,DOCKER node
-  class SQL,QD,FS,EMB db
+  class U,BW,OWUI,AUTH,AM,DOCKER,SSH node
+  class SQL,QD,EMB db
   class F,P core
-  class BA,CW,SNG,AUD,DL,DBK tool
+  class BA,CW,MCP,N8N,SNG,AUD,DL tool
       </div>
     </div>
     <h2>Schéma de Persistance (Ombres Riches)</h2>
 
     <p>
-      ECHO conserve une mémoire inaltérable de chaque conversation. Plutôt que de stocker du texte brut, il enregistre des <strong>Ombres Riches</strong>. Ce sont des empreintes complètes qui contiennent les textes, les images, et l'état interne de la réflexion de l'IA (les pensées). Cela permet au système de reprendre n'importe quelle discussion avec une précision absolue, même après un redémarrage, en garantissant l'intégrité de la conversation via une chaîne cryptographique.
+      ECHO conserve une mémoire inaltérable de chaque conversation sous forme d'<strong>Ombres Riches</strong> en mode SQLite WAL.
+      Ces empreintes contiennent les parts multimodales, le registre unifié des ressources et les signatures cognitives,
+      reliés par une chaîne de hachage de Merkle (<code>suture_index</code>) garantissant la continuité bit-perfect de la session.
     </p>
 
-    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
-      <summary style="font-weight:bold; color:#60a5fa; font-size:;">⚙️ Dossier d'Ingénierie & Spécifications (Librairies Partagées)</summary>
-      <div style="margin-top:; padding-left: 1rem; border-left: 2px solid #3b82f6;">
-        
-        <h3 style="color:#93c5fd;">1. Authentification & Quotas (Service Central)</h3>
-        <p>Le module gère le cycle OAuth2 headless via <strong>Authorization Code + PKCE (RFC 7636)</strong> (tunnel SSH éphémère). Il implémente un rafraîchissement proactif silencieux des tokens (au-delà de 55 minutes). Il extrait également de façon non bloquante les métriques de quota via l'API native pour alimenter la jauge de tokens de l'interface.</p>
-        
-        <h3 style="color:#93c5fd; margin-top: 2rem;">2. Moteur de Protocole (Traducteur Interne)</h3>
-        <p>Module de fonctions pures (sans état, sans appel réseau). Il traduit les requêtes ECHO au format API native :</p>
-        <ul>
-          <li><strong>Traduction de Modèles :</strong> Convertit le nom canonique ECHO vers l'identifiant interne du fournisseur d'IA.</li>
-          <li><strong>Génération de Configuration :</strong> Normalise les paramètres de génération. Plafonne le nombre maximum de tokens et garantit l'activation du flux de pensée pour permettre le streaming des balises XML de réflexion.</li>
-        </ul>
-
-        <h3 style="color:#93c5fd; margin-top: 2rem;">3. Gestionnaire de Compétences (Skill Manager)</h3>
-        <p>Gère la lecture et l'écriture des fichiers de compétences dans l'espace sécurisé de l'utilisateur. Il en extrait les métadonnées et alimente dynamiquement les capacités de l'arsenal agentique.</p>
-
-        <h3 style="color:#93c5fd; margin-top: 2rem;">4. Registre Central (<code>echo_constants.py</code>)</h3>
-        <p>Définit la source de vérité absolue <code>ECHO_MODELS_REGISTRY</code>, unifiant la hiérarchie cognitive, les seuils de tokens (<code>MAX_TOKENS</code>), et la topologie réseau Docker de la grappe (adresses internes).</p>
-
-        <h3 style="color:#93c5fd; margin-top: 2rem;">5. Schéma SQL & Hachage (<code>echo_state_manager.py</code>)</h3>
-        <p>La persistance SQLite est gérée en mode <strong>WAL</strong> (Write-Ahead Logging). Deux bases coexistent par utilisateur : <code>identity.db</code> et <code>{chat_id}.db</code> (ombres, sutures, signatures cognitives).</p>
-        <div class="mermaid-wrapper">
-          <div class="mermaid-header">
-            <span>Entity-Relationship Diagram (ERD)</span>
-            <span>[SCHÉMA SQL - RICH SHADOWS]</span>
-          </div>
-          <div class="mermaid">
+    <div class="mermaid-wrapper">
+      <div class="mermaid-header">
+        <span>Entity-Relationship Diagram (ERD)</span>
+        <span>[SCHÉMA SQL - RICH SHADOWS]</span>
+      </div>
+      <div class="mermaid">
 erDiagram
   MESSAGE_SHADOWS {
-    string message_id PK "UUID du Middleware"
-    integer updated_at "Verrou de Version (timestamp physique)"
-    string parent_id FK "Message précédent"
-    string cumulative_hash FK "ADN de la conversation"
-    json parts "Parts Gemini originales (JSON brut)"
+    string message_id PK "UUID du message"
+    string chat_id "ID de la session"
+    string role "user ou model"
+    json full_parts_json "Parts Gemini originales"
+    integer updated_at "Verrou de Version"
+    integer is_embedded "Flag RAG O(1) (0 ou 1)"
   }
   SUTURE_INDEX {
     string cumulative_hash PK "Hash SHA-256 cumulatif"
-    string message_id FK
+    string chat_id "ID de la session"
     string invariant_hash "Hash du contenu seul"
-    string parent_hash "Hash parent"
-    integer created_at
+    string parent_hash "Hash cumulatif parent"
+    string message_id FK "Message associé"
+    integer timestamp "Horodatage de scellement"
   }
   COGNITIVE_SIGNATURES {
-    string message_id PK "UUID du message"
-    string thought_signature "Ancre Gemini 3+ - jeton opaque interne"
-    integer updated_at
+    string cumulative_hash PK "Lié au tour Merkle"
+    string thought_signature "Ancre Gemini 3+"
+    string message_id "Indexé (idx_sig_msg_id)"
+    string model_id "Modèle générateur"
+    integer updated_at "Tri chronologique DESC"
   }
   TOOL_JOURNAL {
-    string cumulative_hash PK
-    json io_json "Appels et sorties outils (multipart)"
-    integer updated_at
+    string cumulative_hash PK "Lié au tour Merkle"
+    json io_json "Entrées et sorties outils"
+    integer updated_at "Horodatage"
   }
   RICH_PAYLOADS {
     string invariant_hash PK "SHA-256 du contenu"
-    string content_type "MIME Type"
-    blob binary_data "Données Base64 (images, PDFs)"
-    string summary "Résumé Smart Context"
-    string message_id FK
-  }
-  PROCESSED_FILES {
-    string file_id PK
-    string user_id
-    string mime_type
-    string vault_path "Chemin dans l'Espace Personnel"
-    string status "inline | vectorized_sum_up | vault"
-  }
-  THREAD_STEPS {
-    string sub_sid PK "ID Conversation"
-    string chat_id FK
-    string role "USER ou MODEL"
-    string content "Message text"
-  }
-  PLAN_RECORDS {
-    string plan_id PK
-    string status
-    string goal
-  }
-  CODEX_DOCS {
-    string filename PK
-    string language
-    string lines
+    json rich_parts_json "Parts multimodales"
+    string message_id FK "Message porteur"
+    integer created_at "Horodatage"
   }
   ECHO_RESOURCES {
-    string id PK
-    string resource_type
-    string status
+    string id PK "UUID ressource ou AEC"
+    string name "Nom fichier ou directive"
+    string resource_type "codex, plan, media, aec_..."
+    string status "Statut d'ingestion"
+    string item_type "file ou directory"
+    integer updated_at "Horodatage"
+  }
+  ECHO_SETTINGS {
+    string key PK "turn_origin_model, context_stats..."
+    string value "Valeur sérialisée KV"
+    integer updated_at "Horodatage"
   }
 
-  MESSAGE_SHADOWS ||--o| SUTURE_INDEX : "indexé par"
-  SUTURE_INDEX ||--o| COGNITIVE_SIGNATURES : "lie"
+  MESSAGE_SHADOWS ||--o{ SUTURE_INDEX : "indexé par"
+  SUTURE_INDEX ||--o| COGNITIVE_SIGNATURES : "scelle"
   SUTURE_INDEX ||--o{ TOOL_JOURNAL : "journalise"
-  MESSAGE_SHADOWS }|--o{ RICH_PAYLOADS : "référence (Invariant Hash)"
-  TOOL_JOURNAL }|--o{ PROCESSED_FILES : "génère / consulte"
-  MESSAGE_SHADOWS ||--o{ THREAD_STEPS : "délègue"
-  MESSAGE_SHADOWS ||--o{ PLAN_RECORDS : "planifie"
-  MESSAGE_SHADOWS ||--o{ CODEX_DOCS : "modifie"
+  MESSAGE_SHADOWS }|--o{ RICH_PAYLOADS : "enrichit"
   MESSAGE_SHADOWS ||--o{ ECHO_RESOURCES : "référence"
-          </div>
-        </div>
-        <h4>Algorithmes de hachage (Cœur Merkle)</h4>
+      </div>
+    </div>
+    <details class="tech-spec">
+      <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications (Librairies Partagées)</summary>
+      <div>
+        <h3>1. Authentification &amp; Quotas (<code>echo_auth.py</code>, <code>echo_pkce_server.py</code>, <code>echo_ssh_tunnel.py</code>)</h3>
+        <p>Gère le cycle OAuth2 headless via <strong>Authorization Code + PKCE (RFC 7636)</strong> sur tunnel SSH éphémère (ports 8020–8024), le rafraîchissement proactif des tokens à 55 minutes, le fallback sur clés AI Studio et l'extraction non-bloquante des quotas pour la Context Gauge.</p>
+
+        <h3>2. Moteur de Protocole &amp; Fonctions Centrales (<code>echo_protocol.py</code> &amp; <code>echo_core.py</code>)</h3>
+        <ul>
+          <li><strong>Traduction &amp; Normalisation :</strong> Convertit les identifiants abstraits ECHO vers le backend actif (AI Studio ou Code Assist) et normalise les schémas d'outils en <code>camelCase</code> (<code>convert_owui_tools</code>).</li>
+          <li><strong>Déballage Multimodal &amp; FIFO Destructif :</strong> <code>unbox_tool_output</code> et <code>wrap_tool_output</code> extraient les médias <code>echo_tool_multiparts</code> et purgent les événements transitoires <code>aec_event</code> / <code>aec_directive</code> sans toucher aux ressources persistantes.</li>
+        </ul>
+
+        <h3>3. Gestionnaire de Compétences (<code>echo_skills.py</code>)</h3>
+        <p>Extrait les métadonnées sémantiques des fichiers de compétences dans l'espace utilisateur global et alimente dynamiquement les outils <code>search_skill</code>, <code>read_skill</code> et <code>forge_skill</code>.</p>
+
+        <h3>4. Algorithmes de Hachage Merkle (<code>echo_state_manager.py</code>)</h3>
         <p><strong>1. Invariant Hash :</strong> <code>SHA-256(role + content_sorted + tool_io)</code>. Identité pure du tour, indépendante de sa position dans l'historique.</p>
-        <p><strong>2. Cumulative Hash :</strong> <code>SHA-256(invariant_hash + parent_cumulative_hash)</code>. ADN de la conversation. Tout changement dans l'historique invalide les hashes des tours suivants.</p>
+        <p><strong>2. Cumulative Hash :</strong> <code>SHA-256(invariant_hash + parent_cumulative_hash)</code>. ADN de la conversation. Tout changement dans l'historique invalide les hashes suivants.</p>
         <div class="audit-note">
           <h4>✅ Exactitude - Cold Recovery</h4>
-          <p>Le <strong>Verrou de Version</strong> compare le triplet <code>(message_id, updated_at, parent_hash)</code> lors de la Suture. Si un message est détecté comme modifié manuellement dans Open WebUI (Ghost Message), l'Ombre SQLite est invalidée et le Pipe bascule en <strong>Cold Recovery</strong> : il utilise le texte brut, perdant temporairement les appels d'outils, mais préservant la continuité de la conversation.</p>
+          <p>Le <strong>Verrou de Version</strong> compare le couple <code>(message_id, updated_at)</code> lors de la Suture. Si un message est modifié manuellement dans Open WebUI, l'Ombre SQLite correspondante est écartée, les événements postérieurs au <code>t_pivot</code> sont purgés via <code>EchoAEC.purge_orphaned_events()</code>, et le Pipe bascule en <strong>Cold Recovery</strong> tout en préservant la continuité de la session.</p>
         </div>
       </div>
     </details>
@@ -682,7 +622,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.45 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache
+      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

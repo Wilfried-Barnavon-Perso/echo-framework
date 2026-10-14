@@ -14,63 +14,96 @@
     <h1>6. Communication Gemini</h1>
 
     <p>
-      Cette section détaille les protocoles et mécanismes de sécurité permettant à ECHO
-      d'interagir avec l'API de Google Gemini de manière structurée.
+      Cette section présente les mécanismes d'authentification et de résilience réseau permettant à ECHO
+      d'interagir avec les modèles de langage distants sans interruption de service.
     </p>
 
-    <h2>Mécanismes d'Authentification API</h2>
+    <h2>1. Connexion Multi-Sources et Authentification</h2>
+    <p>
+      Pour dialoguer avec les modèles d'intelligence artificielle, ECHO s'appuie sur une hiérarchie de fournisseurs d'accès. Vous pouvez utiliser votre abonnement Google via une connexion sécurisée directe (OAuth2) ou renseigner une à deux clés d'API AI Studio en solution principale ou de secours.
+    </p>
+    <p>
+      Lors de la toute première utilisation sans clé préconfigurée, ECHO affiche directement dans le chat un lien d'autorisation sécurisé à usage unique. Une fois le compte validé dans votre navigateur, vos jetons d'accès sont chiffrés et renouvelés automatiquement en tâche de fond.
+    </p>
 
-    <p>Pour communiquer avec les modèles de Google (Gemini), le Framework s'appuie sur une architecture multi-provider. Cette conception garantit la connectivité via différentes méthodes d'accès, selon le contexte (Local ou Cloud).</p>
-
+    <h2>2. Continuité de Service et Repli Automatique</h2>
+    <p>
+      Les serveurs de modèles de langage peuvent parfois connaître des pics de charge. ECHO intègre un coupe-circuit intelligent qui surveille la disponibilité de chaque point d'accès en temps réel :
+    </p>
     <ul>
-      <li><strong>Résolution Multi-Provider :</strong> L'authentification est priorisée au sein du module <code>EchoAuth.get_ordered_auth_providers()</code>. Le système tente en priorité de s'authentifier par OAuth2, puis bascule sur les clés API statiques si l'OAuth2 n'est pas configuré.</li>
-      <li><strong>Le protocole d'authentification PKCE :</strong> ECHO utilise le flux <strong>Authorization Code + PKCE (RFC 7636)</strong> pour l'authentification OAuth2 headless dans Docker. PKCE (<em>Proof Key for Code Exchange</em>) est une extension du flux OAuth2 empêchant l'interception du code d'autorisation. Il génère une paire de secrets éphémères (<em>code_verifier</em> et <em>code_challenge</em>) à usage unique.</li>
-      <li><strong>Clés API :</strong> En solution de repli (ou par choix utilisateur), de simples clés API AI Studio (commençant par <code>AIza…</code> ou <code>AQ.…</code>) peuvent être définies dans l'interface et utilisées directement.</li>
+      <li><strong>Basculement de serveur :</strong> Si un serveur Google met trop de temps à répondre ou renvoie une erreur de quota, ECHO bascule immédiatement la requête sur un serveur secondaire ou sur votre clé d'API de secours.</li>
+      <li><strong>Cascade cognitive descendante :</strong> Si un modèle de haute capacité (<code>PRO</code>) est temporairement indisponible, le système replie automatiquement la requête sur le modèle inférieur (<code>FLASH</code> puis <code>LITE</code>) tout en avertissant l'IA du changement afin que votre conversation ne s'interrompe jamais.</li>
     </ul>
 
-    <p>
-      En pratique pour l'OAuth2 : lorsqu'aucun fournisseur d'accès n'est configuré et qu'aucune clé API n'est fournie, le Pipe déclenche le flux PKCE automatiquement au premier message. Un tunnel SSH éphémère (<code>asyncssh</code>) est ouvert sur un port dynamique de la plage <code>8020–8024</code>, et le callback OAuth2 est reçu sur un port interne (<code>8025–8034</code>). L'utilisateur reçoit un lien cliquable dans l'interface et n'a qu'à autoriser ECHO sur son compte Google pour récupérer ses identifiants.
-    </p>
+    <details class="tech-spec">
+      <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
+      <div>
+        <h3>1. Priorité des Identités d'Accès (<code>EchoAuth.get_ordered_auth_providers()</code>)</h3>
+        <ol>
+          <li><strong>OAuth2 (API native Code Assist, <code>google_oauth2</code>) :</strong> prioritaire, flux <strong>Authorization Code + PKCE (RFC 7636)</strong> via tunnel SSH éphémère (<code>asyncssh</code> sur les ports exposés <code>8020–8024</code> et callback loopback interne <code>8025–8034</code>). Rafraîchissement proactif à <code>3 300 s</code> (55 min) et routage sur le tenant global <code>aicode-consumers</code>.</li>
+          <li><strong>Clé API primaire (<code>google_api_key</code>) :</strong> Google AI Studio (format <code>AIza…</code> ou <code>AQ.…</code>).</li>
+          <li><strong>Clé API secondaire (<code>google_api_key_secondary</code>) :</strong> fallback de secours AI Studio.</li>
+        </ol>
 
-    <div class="tech-spec">
-      <h4>⚙️ Priorité des identités d'accès</h4>
-      <p>
-        Le registre des fournisseurs d'accès aux modèles est résolu dans cet ordre par
-        <code>EchoAuth.get_ordered_auth_providers()</code> :
-      </p>
-      <ol>
-        <li><strong>OAuth2 (API native)</strong> - prioritaire, accès aux modèles <code>gemini-3.1-pro-preview</code> et <code>gemini-3.5-flash</code>.</li>
-        <li><strong>Clé API primaire</strong> - AI Studio (<code>google_api_key</code>).</li>
-        <li><strong>Clé API secondaire</strong> - fallback de secours (<code>google_api_key_secondary</code>).</li>
-      </ol>
-    </div>
+        <h3>2. Registre Cognitif Unifié Dual-Backend (<code>ECHO_MODELS_REGISTRY</code>)</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Identifiant Abstrait</th>
+              <th>Hiérarchie</th>
+              <th>Backend AI Studio (<code>ai_studio_id</code>)</th>
+              <th>Backend Code Assist (<code>ca_model_id</code>)</th>
+              <th>Thinking Level</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>MODEL_PRO</code></td>
+              <td><code>2</code></td>
+              <td><code>gemini-3.1-pro-preview</code></td>
+              <td><code>claude-opus-5-5-high</code></td>
+              <td><code>high</code></td>
+            </tr>
+            <tr>
+              <td><code>MODEL_FLASH</code></td>
+              <td><code>1</code></td>
+              <td><code>gemini-3.8-flash</code></td>
+              <td><code>gemini-3.8-flash-high</code></td>
+              <td><code>high</code></td>
+            </tr>
+            <tr>
+              <td><code>MODEL_LITE</code></td>
+              <td><code>0</code></td>
+              <td><code>gemini-3.5-flash-lite</code></td>
+              <td><code>gemini-3.1-flash-lite</code></td>
+              <td><code>medium</code></td>
+            </tr>
+            <tr>
+              <td><code>MODEL_DISTILLATION</code></td>
+              <td><code>None</code></td>
+              <td><code>gemini-3.5-flash-lite</code></td>
+              <td><code>gemini-3.1-flash-lite</code></td>
+              <td><code>low</code> (<code>temp=0.0</code>)</td>
+            </tr>
+          </tbody>
+        </table>
 
-    
-    <h3>Fast-Failover Intra-Retry (OAuth2)</h3>
-    <p>Le routage intègre un mécanisme de <em>Fast-Failover</em> exclusif à OAuth2. Lors d'une surcharge (HTTP 429), le système verrouille instantanément l'URL en cause via <code>state_mgr.lock_agy_endpoint</code> et pivote sur une nouvelle URL saine issue du pool <code>AGY_BASE_URLS</code>, annulant la nécessité du backoff exponentiel lent. Les déconnexions inattendues de flux SSE (timeouts) sont par ailleurs gérées sans provoquer de Retry API inutiles.</p>
-
-    <h2>Méthodes Factorisées d'Appel (EchoGeminiClient)</h2>
-
-    <p>
-      Le framework centralise toutes les communications sortantes vers les modèles de langage au sein du module <code>EchoGeminiClient</code>. Ce client HTTP/2 asynchrone orchestre le routage, la résilience et la mise en forme canonique des requêtes.
-    </p>
-
-    <ul>
-      <li><strong>Routage Transparent :</strong> Le client bascule dynamiquement entre l'API publique (AI Studio) et l'API interne (ECHO) selon l'identité d'accès prioritaire, en appliquant les traductions de noms de modèles nécessaires.</li>
-      <li><strong>Failover Hybride et Résilience :</strong> En cas de surcharge (HTTP 429, 500, 503), le client applique un backoff exponentiel avec <em>jitter</em>. Si le seuil d'échecs consécutifs est franchi, il bascule automatiquement sur la source d'accès suivante (par exemple, d'OAuth2 vers la clé de secours). Si le modèle lui-même est inaccessible, une cascade descendante (PRO → FLASH → LITE) est enclenchée.</li>
-      <li><strong>Statut Tri-état :</strong> Chaque appel LLM, qu'il provienne du Pipe ou d'un outil agentique, renvoie un statut standardisé (<code>success</code>, <code>warning</code>, <code>error</code>). Une divergence (clamping de politique ou cascade) est marquée comme <code>warning</code> avec le détail du motif.</li>
-    </ul>
-
-    
+        <h3>3. Client HTTP/2 &amp; Circuit Breaker OAuth2 (<code>EchoGeminiClient</code>)</h3>
+        <ul>
+          <li><strong>Multiplexage HTTP/2 :</strong> Connexion persistante via <code>httpx.AsyncClient(http2=True)</code> (<code>ECHO_HTTP_CLIENT_TIMEOUT = 600s</code>), streaming Base64 Zéro-RAM par blocs de 3 Mo et normalisation stricte en <code>camelCase</code> (<code>inlineData</code>, <code>functionDeclarations</code>, <code>functionCallingConfig</code>).</li>
+          <li><strong>Fast-Failover Intra-Retry :</strong> Lors d'une erreur HTTP <code>401</code>, <code>420</code>, <code>429</code> ou <code>503</code> en OAuth2, le client verrouille immédiatement l'endpoint fautif via <code>state_mgr.lock_agy_endpoint</code> (pendant <code>ECHO_ENDPOINT_LOCK_TIMEOUT_MIN = 2</code> min) et pivote sans délai sur l'URL saine du pool <code>AGY_BASE_URLS</code> (Prod / Daily Canary) avant d'appliquer le backoff exponentiel (<code>ECHO_RETRY_BASE_DELAY = 3.0s</code>, <code>ECHO_RETRY_MULTIPLIER = 1.5</code>, <code>ECHO_API_MAX_RETRIES = 5</code>, <code>ECHO_API_KEY_RETRIES = 2</code>).</li>
+        </ul>
+      </div>
+    </details>
 
     <div class="transition-text">
       <a href="05_hld_architecture.html">&larr; 5. High-Level Design</a>
       &nbsp;&nbsp;
-      <a href="07_hud_ui.html">7. Écosystème HUD & UI &rarr;</a>
+      <a href="07_hud_ui.html">7. Écosystème HUD &amp; UI &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.45 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

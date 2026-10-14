@@ -16,7 +16,7 @@
     <p>
       ECHO est conçu pour transformer une machine standard en un serveur d'intelligence souveraine.
       Le scénario nominal consiste à utiliser un poste Windows 11 Pro comme hôte matériel,
-      exécutant une Machine Virtuelle Ubuntu 26.04 isolée via Hyper-V. La totalité de la pile Docker
+      exécutant une Machine Virtuelle Ubuntu 24.04 isolée via Hyper-V. La totalité de la pile Docker
       ECHO s'exécute dans cette VM, garantissant une étanchéité totale entre les outils quotidiens
       de l'utilisateur et son infrastructure IA personnelle.
     </p>
@@ -180,73 +180,61 @@ sudo bash 00-echo-scripts/install-stack.sh
 
 # Interface disponible sur http://localhost:3000</code></pre>
 
-    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
-      <summary style="font-weight:bold; color:#60a5fa; font-size:1.1rem;">⚙️ Dossier d'Ingénierie & Spécifications</summary>
-      <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
-        
-        <h3 style="color:#93c5fd;">1. Configuration Hyper-V & Provisioning</h3>
+    <details class="tech-spec">
+      <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
+      <div>
+        <h3>1. Configuration Hyper-V &amp; Provisioning (<code>install-hyperv.ps1</code>)</h3>
         <p>
-          Lors du déploiement Windows, le script <code>install-hyperv.ps1</code> crée une archive ZIP pointant par défaut sur la branche <code>dev</code> du projet (hors <code>.git</code>, <code>.venv</code>, <code>node_modules</code>), génère un disque dur virtuel CIDATA de 100 Mo contenant les fichiers <code>user-data</code> et <code>meta-data</code> cloud-init, puis crée la VM Hyper-V de Génération 2 (avec 8 Go de RAM alloués et un VHDX de 70 Go dynamiques, Secure Boot désactivé) et le disque Seed attaché. 
-          Au premier démarrage, l'installateur Ubuntu (Subiquity) détecte le disque CIDATA et exécute les instructions cloud-init : installation de Docker, Docker Compose v2, <code>jq</code>, <code>yq</code>, <code>git</code> et <code>unzip</code>, extraction du ZIP puis lancement de <code>sync-echo.sh</code>.
+          Lors du déploiement Windows, <code>install-hyperv.ps1</code> crée une archive ZIP pointant par défaut sur la branche <code>dev</code> du projet (hors <code>.git</code>, <code>.venv</code>, <code>node_modules</code>), génère un disque CIDATA de 100 Mo contenant <code>user-data</code> et <code>meta-data</code> cloud-init, puis provisionne une VM Hyper-V Génération 2 sous <strong>Ubuntu 24.04</strong> (8 Go de RAM et VHDX dynamique de 70 Go). Au premier démarrage, Subiquity exécute cloud-init, installe Docker Compose v2, <code>jq</code>, <code>yq</code>, <code>git</code> et lance <code>sync-echo.sh</code> puis <code>install-stack.sh</code>.
         </p>
 
-        <h3 style="color:#93c5fd; margin-top: 2rem;">2. Cartographie des Sources (sync-echo.sh)</h3>
+        <h3>2. Cartographie Déclarative des Sources (<code>sync-echo.sh</code>)</h3>
         <table>
           <thead>
             <tr><th>Source (dépôt git)</th><th>Destination sur la VM</th><th>Contenu</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>00-echo-scripts/</code></td><td><code>/opt/ECHO/echo-scripts/</code></td><td>Scripts Bash de contrôle</td></tr>
-            <tr><td><code>01-config/</code></td><td><code>/opt/ECHO/config/</code></td><td>YAML, JSON de configuration</td></tr>
-            <tr><td><code>10-owui-pipes/</code></td><td><code>/opt/ECHO/owui-pipes/</code></td><td>Pipe Engine Python</td></tr>
-            <tr><td><code>11-owui-filters/</code></td><td><code>/opt/ECHO/owui-filters/</code></td><td>Filtres Python</td></tr>
+            <tr><td><code>00-echo-scripts/</code></td><td><code>/opt/ECHO/echo-scripts/</code></td><td>Scripts Bash d'administration et liens <code>/usr/local/bin/</code></td></tr>
+            <tr><td><code>01-config/</code></td><td><code>/opt/ECHO/config/</code></td><td>Manifestes Compose, Kernel statique, JSON, <code>logging.json</code></td></tr>
+            <tr><td><code>docker-python-base/</code></td><td><code>/opt/ECHO/docker-python-base/</code></td><td>Image mutualisée <code>echo-python-base:latest</code></td></tr>
+            <tr><td><code>10-owui-pipes/</code></td><td><code>/opt/ECHO/owui-pipes/</code></td><td>Pipe Engine Python (Cortex)</td></tr>
+            <tr><td><code>11-owui-filters/</code></td><td><code>/opt/ECHO/owui-filters/</code></td><td>Filtres Inlet &amp; Outlet</td></tr>
             <tr><td><code>12-owui-tools/</code></td><td><code>/opt/ECHO/owui-tools/</code></td><td>Outils de l'Arsenal</td></tr>
-            <tr><td><code>13-owui-actions/</code></td><td><code>/opt/ECHO/owui-actions/</code></td><td>Actions HUD</td></tr>
-            <tr><td><code>14-owui-libs/</code></td><td><code>/opt/ECHO/owui-libs/</code> et <code>/app/backend/echo_libs/</code></td><td>Librairies partagées</td></tr>
-            <tr><td><code>20-docker-admin-manager/</code></td><td><code>/opt/ECHO/docker-admin-manager/</code></td><td>Admin Manager</td></tr>
-            <tr><td><code>21-docker-coding-worker/</code></td><td><code>/opt/ECHO/docker-coding-worker/</code></td><td>Sandbox Code (Python/Node)</td></tr>
-            <tr><td><code>22-docker-browser-worker/</code></td><td><code>/opt/ECHO/docker-browser-worker/</code></td><td>Browser Worker Playwright</td></tr>
-            <tr><td><code>30-docker-embedding-worker/</code></td><td><code>/opt/ECHO/docker-embedding-worker/</code></td><td>Inférence Harrier-OSS locale</td></tr>
-            <tr><td><code>24-docker-echo-auth-manager-manager/</code></td><td><code>/opt/ECHO/docker-echo-auth-manager-manager/</code></td><td>ECHO Auth (Serveur SSO & MFA)</td></tr>
-            <tr><td><code>25-docker-download-broker/</code></td><td><code>/opt/ECHO/docker-download-broker/</code></td><td>Download Broker</td></tr>
-            <tr><td><code>32-docker-stt-worker/</code></td><td><code>/opt/ECHO/docker-stt-worker/</code></td><td>Worker STT (Faster-Whisper)</td></tr>
-            <tr><td><code>31-docker-tts-worker/</code></td><td><code>/opt/ECHO/docker-tts-worker/</code></td><td>Worker TTS (Kokoro ONNX)</td></tr>
+            <tr><td><code>13-owui-actions/</code></td><td><code>/opt/ECHO/owui-actions/</code></td><td>Actions interactives HUD</td></tr>
+            <tr><td><code>14-owui-libs/</code></td><td><code>/opt/ECHO/owui-libs/</code> et <code>/app/backend/echo_libs/</code></td><td>Librairies centrales partagées</td></tr>
+            <tr><td><code>20-docker-admin-manager/</code></td><td><code>/opt/ECHO/docker-admin-manager/</code></td><td>Console Admin Manager (Port 3001)</td></tr>
+            <tr><td><code>21-docker-coding-worker/</code></td><td><code>/opt/ECHO/docker-coding-worker/</code></td><td>Sandbox Code Python 3.14 / Node 22 (Port 5000)</td></tr>
+            <tr><td><code>22-docker-browser-worker/</code></td><td><code>/opt/ECHO/docker-browser-worker/</code></td><td>Browser Worker Playwright (Port 5002)</td></tr>
+            <tr><td><code>23-docker-mcp-broker/</code></td><td><code>/opt/ECHO/docker-mcp-broker/</code></td><td>MCP Broker Proxy HTTP (Port 8000)</td></tr>
+            <tr><td><code>24-docker-echo-auth-manager/</code></td><td><code>/opt/ECHO/docker-echo-auth-manager/</code></td><td>ECHO Auth Manager IdP SSO &amp; MFA (Port 8000)</td></tr>
+            <tr><td><code>25-docker-download-broker/</code></td><td><code>/opt/ECHO/docker-download-broker/</code></td><td>Download Broker Daemon</td></tr>
+            <tr><td><code>26-docker-n8n-worker/</code></td><td><code>/opt/ECHO/docker-n8n-worker/</code></td><td>Headless N8N Worker (Port 5003)</td></tr>
+            <tr><td><code>30-docker-embedding-worker/</code></td><td><code>/opt/ECHO/docker-embedding-worker/</code></td><td>Embedding Worker Harrier-OSS (Port 7997)</td></tr>
+            <tr><td><code>31-docker-tts-worker/</code></td><td><code>/opt/ECHO/docker-tts-worker/</code></td><td>Worker TTS Kokoro ONNX INT8 (Port 7996)</td></tr>
+            <tr><td><code>32-docker-stt-worker/</code></td><td><code>/opt/ECHO/docker-stt-worker/</code></td><td>Worker STT Faster-Whisper (Port 7995)</td></tr>
           </tbody>
         </table>
-        <p>Le script effectue également une normalisation des fins de lignes (CRLF → LF) et supprime les BOM UTF-8 pour prévenir la corruption des conteneurs Linux.</p>
+        <p>Le script applique un nettoyage conditionnel <code>sed</code> des caractères CRLF/BOM uniquement sur les fichiers impactés afin de préserver les horodatages (<code>mtime</code>) et le cache Docker BuildKit.</p>
 
-        <h3 style="color:#93c5fd; margin-top: 2rem;">3. Séquençage et Dépendances Docker</h3>
-        <p>Le fichier <code>stack-echo.yml</code> (v9.65) impose un démarrage par Tiers via la condition <code>service_healthy</code> :</p>
+        <h3>3. Séquençage Docker &amp; Autosafety (<code>stack-echo.yml</code> &amp; <code>install-stack.sh</code>)</h3>
         <ul>
-          <li><strong>Tier 1 (Fondations)</strong> : Qdrant, SearXNG, Watchtower.</li>
-          <li><strong>Tier 2 (Workers)</strong> : Embedding, Coding Worker, Browser Worker, MCP Broker, N8N Worker, STT Worker, TTS Worker.</li>
-          <li><strong>Tier 3</strong> : Open WebUI.</li>
-          <li><strong>Tier 4</strong> : Admin Manager.</li>
+          <li><strong>Tier 1 (Fondations) :</strong> Qdrant (<code>v1.19.1</code>, IP <code>.103</code>), SearXNG (<code>.101</code>), Watchtower (<code>.102</code>).</li>
+          <li><strong>Tier 2 (Workers) :</strong> Embedding (<code>.30</code>), Coding Worker (<code>.21</code> sur <code>echo-sandbox</code>), Browser Worker (<code>.22</code>), MCP Broker (<code>.23</code>), Download Broker (<code>.25</code>), N8N Worker (<code>.26</code>), TTS Worker (<code>.31</code>), STT Worker (<code>.32</code>).</li>
+          <li><strong>Tier 3 (Cortex) :</strong> Open WebUI (<code>main-slim</code>, IP <code>.100</code>, cache persistant <code>PIP_CACHE_DIR=/app/backend/data/.cache/pip</code>, <code>dulwich</code>, <code>h2</code>, <code>pybase64</code>).</li>
+          <li><strong>Tier 4 (Gouvernance) :</strong> Admin Manager (<code>.20</code>) et ECHO Auth Manager (<code>.24</code>).</li>
         </ul>
-        <div class="note-box">
-          <h4>⚡ Hot-Reload (Volumes Read-Only)</h4>
-          <p>
-            Pour les workers N8N et STT, les fichiers critiques sont montés dynamiquement en Read-Only (ro) depuis le volume hôte. Ce mécanisme permet l'itération instantanée sur le code (Hot-Reload) sans avoir à re-builder les lourdes images de conteneurs.
-          </p>
-        </div>
-        <div class="note-box">
-          <h4>⚠ Dépendances Python (stack-echo.yml v9.2)</h4>
-          <p>
-            Le service <code>open-webui</code> installe des packages Python au démarrage via la commande <code>/bin/bash -c "pip install mgzip dulwich &amp;&amp; ./start.sh"</code>.
-            <code>dulwich</code> (ajouté en v9.2) est la bibliothèque Git Python pur requise par l'ECHO Codex pour créer et gérer les dépôts Git sans binaire <code>git</code> installé dans le conteneur. L'orchestration intègre également une limitation <code>CMAKE_BUILD_PARALLEL_LEVEL=2</code> contre les OOM Killers.
-          </p>
-        </div>
+        <p><code>install-stack.sh</code> configure l'<strong>Autosafety Docker</strong> (logs max 10 Mo, cron hebdomadaire <code>clean-echo.sh</code>), compile l'image socle <code>echo-python-base:latest</code> avec <code>CMAKE_BUILD_PARALLEL_LEVEL=2</code> et un throttle de 30 jours (<code>.last_base_pull</code>). Les conteneurs labellisés <code>echo.hot-reload=true</code> sont rechargés à chaud par <code>update-echo</code>, tandis que <code>rebuild-echo</code> (<code>upgrade-echo.sh</code>) exige une double saisie de sécurité (<code>CONFIRMER</code> puis <code>DETRUIRE</code>).</p>
       </div>
     </details>
 
     <div class="transition-text">
-      <a href="14_agents_automatisation.html">&larr; 14. Agents & Automatisation</a>
+      <a href="14_agents_automatisation.html">&larr; 14. Agents &amp; Automatisation</a>
       &nbsp;&nbsp;
-      <a href="16_infrastructure_globale.html">16. Périphériques & Infra &rarr;</a>
+      <a href="16_infrastructure_globale.html">16. Périphériques &amp; Infra &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.45 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

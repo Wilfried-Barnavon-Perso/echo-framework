@@ -8,11 +8,11 @@ Ce dossier contient l'application **ECHO Auth Manager**, qui agit comme un **IdP
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `auth_server.py`
-Le cœur du gestionnaire d'identités.
-- **Authentification Multi-Provider** : Implémente la validation des Master Keys, le flux OAuth2 (couplé au serveur PKCE local) et les comptes locaux. La robustesse des sessions est garantie par la **désactivation de l'expiration du JWT interne** d'Open WebUI (`JWT_EXPIRES_IN=-1`), qui s'en remet dorénavant purement à la validité de la session SSO, prévenant ainsi les erreurs 500 SvelteKit lors de rafraîchissements (F5).
-- **Sécurité MFA (TOTP)** : Contient la logique de génération et de vérification des mots de passe à usage unique basés sur le temps (Time-based One-Time Password), imposés comme seconde ligne de défense.
-- **Synchronisation avec BunkerWeb** : Le serveur gère la validation des tokens de session et renvoie les headers d'autorisation appropriés à BunkerWeb pour laisser passer le trafic légitime ou bloquer l'accès. Il bascule dorénavant d'une erreur 403 vers une erreur 401 en cas d'expiration pour garantir une déconnexion transparente côté Open WebUI. Intègre également un délai anti-race condition (`asyncio.sleep`) pour fiabiliser le Single Sign-On (SSO).
+### `auth_server.py` (v1.6)
+Le cœur du gestionnaire d'identités (FastAPI).
+- **Authentification Locale & Hachage Argon2** : Gère les comptes utilisateurs et sessions SSO dans SQLite (`auth.db` en mode WAL, tables `users` et `sessions`) avec hachage de mots de passe et réponses de sécurité via **Argon2** (`passlib.hash.argon2`), gestion de l'expiration des mots de passe temporaires (`temp_pass_expires`), suivi de la date d'enrôlement (`last_enrollment`) et traçabilité de session (`ip_address`, `os`, `browser`, `device`). Dans `stack-echo.yml`, `JWT_EXPIRES_IN` d'Open WebUI est aligné sur `${ECHO_JWT_EXPIRES_IN:-4w}` (4 semaines par défaut) et soutenu par un bounce `/sso-logout` (`Clear-Site-Data: "cache"`).
+- **Sécurité MFA (TOTP)** : Contient la logique de génération (`pyotp`) et de vérification des mots de passe à usage unique basés sur le temps (Time-based One-Time Password), imposés comme seconde ligne de défense.
+- **Synchronisation avec BunkerWeb (`/api/verify`)** : Le serveur valide les cookies de session et renvoie les en-têtes `X-Webui-User` et `X-Webui-Name` à BunkerWeb (Forward Auth) pour laisser passer le trafic légitime ou bloquer l'accès. Il renvoie un code HTTP `401` (au lieu de `403`) en cas d'absence ou d'expiration de session afin de déclencher proprement la redirection vers le portail `/login` ou la déconnexion transparente côté Open WebUI.
 
 ### Dossiers `static/` & `templates/`
 - Contiennent les interfaces de connexion front-end (HTML/CSS/JS) présentées à l'utilisateur lors de son authentification, stylisées selon l'esthétique du projet ECHO. Le formulaire d'enrôlement (`enroll.html`) a été réagencé ergonomiquement pour exiger la **Question de Sécurité** *avant* la saisie du code TOTP.

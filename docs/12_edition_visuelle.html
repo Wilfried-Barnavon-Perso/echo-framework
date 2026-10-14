@@ -40,32 +40,30 @@
       <li><strong>Actions rapides :</strong> Vous disposez de boutons magiques (Raccourcir, Allonger, Optimiser, Commenter) qui commandent directement l'IA pour agir sur le texte que vous avez sélectionné, sans même avoir à lui parler.</li>
     </ul>
 
-    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
-      <summary style="font-weight:bold; color:#60a5fa; font-size:1.1rem;">⚙️ Dossier d'Ingénierie & Spécifications</summary>
-      <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
-        
-        <h3 style="color:#93c5fd;">1. Visual Intelligence (<code>universal_visual_generator.py</code>)</h3>
-        <p>Le générateur s'appuie sur le pattern <strong>Data Island</strong>. Il produit la source sous-jacente (ex: Mermaid, ECharts, Markmap) et force son injection directe dans le DOM via l'Action HUD (<code>window.echoRenderVisual</code>), au lieu de produire un bloc Markdown statique. Le rendu JavaScript natif assure le support de l'interactivité (drag, zoom, pan).</p>
+    <details class="tech-spec">
+      <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
+      <div>
+        <h3>1. Visual Intelligence (<code>universal_visual_generator.py</code> &amp; <code>echo_visuals.py</code>)</h3>
+        <p>Le générateur s'appuie sur le pattern <strong>Data Island</strong>. Il produit la spécification interactive (Mermaid, ECharts, Markmap, D3.js, vis-network, Leaflet) et l'injecte dans le DOM via <code>window.echoRenderVisual</code> avec support natif du zoom, pan et drag.</p>
 
-        <h3 style="color:#93c5fd; margin-top: 2rem;">2. Architecture ECHO Codex</h3>
-        <p>L'éditeur Codex repose sur trois piliers distincts :</p>
+        <h3>2. Architecture ECHO Codex Multi-Workspaces</h3>
+        <p>L'éditeur Codex repose sur trois composants synchronisés :</p>
         <ul>
-          <li><strong>Le Moteur Git (<code>echo_codex_git.py</code>) :</strong> Wrapper autour de <code>dulwich</code>. Chaque fichier modifié déclenche un <em>commit</em> silencieux, assurant l'historique (Time Machine) et permettant les diffs. L'indexation principale des métadonnées se fait dans la table <code>CODEX_DOCS</code> (SQLite).</li>
-          <li><strong>L'Interface HUD (<code>echo_codex_action.py</code>) :</strong> Injection native de <strong>Monaco Editor</strong>. Elle expose l'API <code>window.echoCodex*</code> pour autoriser le pilotage de l'éditeur depuis les réponses asynchrones du modèle.</li>
-          <li><strong>L'Outil LLM (<code>echo_codex_tool.py</code>) :</strong> 10 primitives offertes au LLM (<code>read_codex</code>, <code>edit_codex</code>, <code>commit</code>...). Il intègre l'outil <strong><code>open_codex_ui</code></strong>, un trigger asynchrone permettant à l'IA d'ouvrir ou switcher directement l'interface de l'éditeur Codex sur l'écran de l'utilisateur. <strong>Règle proprioceptive stricte :</strong> Le modèle n'est plus notifié passivement du registre Codex (pour économiser les tokens) et DOIT utiliser l'outil <code>query_registry</code> avant manipulation.</li>
+          <li><strong>Le Moteur Git (<code>echo_codex_git.py</code>) :</strong> Surcouche Python pure autour de <code>dulwich</code> gérant deux espaces de travail distincts (<code>ECHO_CODEX_WORKSPACES</code> : <code>main</code> versionné sous Git et <code>sandbox</code> dédié à l'exécution). Il intègre un contrôle d'état en <strong>O(1) (<code>get_latest_state</code>)</strong>, filtre les répertoires massifs via <code>ECHO_SYNC_EXCLUDE_LIST</code> (<code>node_modules</code>, <code>.venv</code>, etc.) pour prévenir tout gel de l'arborescence UI, et retourne <code>(commit_hash, paths_to_rm)</code> lors d'un <code>delete_file</code> pour purger récursivement SQLite.</li>
+          <li><strong>L'Interface HUD (<code>echo_codex_action.py</code>) :</strong> Injection de <strong>Monaco Editor</strong> propulsée par le protocole <strong>UCTP</strong> (<code>EchoEvents</code>), avec gestion native des dossiers (colonne <code>item_type = file | directory</code> dans <code>echo_resources</code>), lecteur <strong>PDF WYSIWYG</strong> par reconstruction Blob, verrou logiciel anti-Race Condition à la sauvegarde et ping <code>heartbeat</code> déporté via <code>asyncio.to_thread</code>.</li>
+          <li><strong>L'Outil LLM (<code>echo_codex_tool.py</code>) :</strong> Expose les primitives d'édition et de voyage temporel (<code>read_codex</code>, <code>edit_codex</code>, <code>trace_history</code>, <code>restore_codex</code>) ainsi que le trigger <strong><code>open_codex_ui</code></strong> (bloqué au 1er tour) permettant d'ouvrir directement un fichier ciblé (<code>current_file</code>) sur l'écran de l'utilisateur via <code>events.trigger_action()</code>.</li>
         </ul>
-
       </div>
     </details>
 
     <div class="transition-text">
-      <a href="11_recherche_navigation.html">&larr; 11. Recherche & Navigation</a>
+      <a href="11_recherche_navigation.html">&larr; 11. Recherche &amp; Navigation</a>
       &nbsp;&nbsp;
-      <a href="13_memoire_actions.html">13. Mémoire & Actions &rarr;</a>
+      <a href="13_memoire_actions.html">13. Mémoire &amp; Actions &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.45 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

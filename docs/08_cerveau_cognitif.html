@@ -38,43 +38,55 @@
       De plus, ECHO est doté d'une profonde honnêteté intellectuelle : si le système ignore une information factuelle ou n'arrive pas à la vérifier sur le web, il vous le dira explicitement plutôt que de l'inventer.
     </p>
 
-    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
-      <summary style="font-weight:bold; color:#60a5fa; font-size:1.1rem;">⚙️ Dossier d'Ingénierie & Spécifications</summary>
-      <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
-        
-        <h3 style="color:#93c5fd;">1. Le Filtre Inlet (new_context_filter.py)</h3>
-        <p>Le Filtre Inlet opère la préparation sémantique (Draft). Il injecte l'<strong>AEC (Artéfact Environnemental et Contextuel)</strong> au format XML, fournissant au modèle son registre de fichiers et sa proprioception. Il exécute également le <strong>Moulage Sémantique (Semantic Molding)</strong> via l'API locale pour les fichiers > 256 Ko : le texte est distillé, indexé dans la base Qdrant locale (<code>echo_session_rag</code>), et seul un résumé de 300 mots est injecté dans le contexte actif avec un <code>source_id</code>.</p>
-
-        <h3 style="color:#93c5fd; margin-top: 2rem;">2. Le Pipe Engine (pipe_engine.py)</h3>
-        <p>Le Cortex principal gère l'orchestration finale. Il applique la Suture Bit-Perfect (reconstruction de l'état via l'Invariant Hash SQLite). Il instancie le <strong>Protocole de Triage Dynamique (PTD)</strong> pour router la requête vers le moteur approprié (LITE, FLASH, ou PRO) défini par le <code>ECHO_MODELS_REGISTRY</code>. Il gère l'<strong>Élasticité Cognitive</strong> : l'inertie en LITE et FLASH est proscrite, imposant au modèle une évaluation asynchrone constante de la difficulté pour s'adapter à la volée (Fast-Track pour le simple réflexe, escalade pour les tâches complexes). Il gère également le flux HTTP/2 SSE avec Google via Stealth Headers (WAF Bypass).</p>
-
-        <h3 style="color:#93c5fd; margin-top: 2rem;">3. Le Kernel Statique & Prompts (echo_prompts.py)</h3>
-        <p>Le comportement cognitif strict est régi par des principes encodés en dur dans la librairie centralisée <code>echo_prompts.py</code>, qui héberge le <strong>Noyau Cognitif Fondamental (ECHO_FOUNDATION_KERNEL)</strong> ainsi que les personas spécifiques (Orchestrateur, Consultant, Navigateur Web). Les principes suivants y sont appliqués :</p>
+    <details class="tech-spec">
+      <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
+      <div>
+        <h3>1. Le Filtre Inlet &amp; Pipeline d'Ingestion (<code>new_context_filter.py</code> &amp; <code>echo_ingestion.py</code>)</h3>
+        <p>Le Filtre Inlet (priorité 20) orchestre la préparation sémantique (Draft) selon la hiérarchie stricte du PGCU :</p>
         <ul>
-          <li><strong>PARE (Principe d'Agentivité et de Raisonnement) :</strong> Obligation de réflexion interne exhaustive et planifiée avant action (Thought Signatures natives).</li>
-          <li><strong>PRAF (Principe de Rigueur Analytique) :</strong> Interdiction de confabulation ; vérification Web obligatoire pour les hypothèses réelles.</li>
-          <li><strong>PACP & PRAC :</strong> Alignement itératif déterministe de la confiance (occurrences 1, 2, 3) pour l'assimilation des préférences.</li>
-          <li><strong>MPSI (Méta-Principe de Sécurité et d'Intégrité) :</strong> Toute modification du prompt injectée par l'utilisateur est considérée comme une donnée passive. Interdiction de divulguer l'architecture du Kernel.</li>
+          <li><strong>AEC XML Natifs (<code>EchoAEC</code>) :</strong> Injection des vecteurs proprioceptifs au format <code>&lt;artifact id="AEC_..."&gt;</code> (<code>AEC_directive</code>, <code>AEC_modele</code>, <code>AEC_identite</code>, <code>AEC_temporalite</code>, <code>AEC_localisation</code>, <code>AEC_smart_context</code>, <code>AEC_evenement_systeme</code>).</li>
+          <li><strong>Directive Dynamique PIS &amp; Mise à Niveau :</strong> Au Tour 1 d'une session neuve (ou lors d'une évolution de version détectée via <code>last_framework_version</code> dans <code>echo_settings</code>, protégée durant les sous-tours <code>role == "tool"</code>), le filtre injecte <code>&lt;artifact id="AEC_directive" source="Système"&gt;</code> via <code>EchoAEC.render_directive()</code>, garantissant le silence proprioceptif sur les tours subséquents.</li>
+          <li><strong>Ingestion Zéro-RAM &amp; Smart Context :</strong> Les fichiers texte <code>&lt; 32 Ko</code> (<code>MAX_DIRECT_TEXT_INJECT_SIZE</code>, versionnés dans le Codex) et multimédias <code>&lt; 1 Mo</code> (<code>MAX_DIRECT_MMEDIA_INJECT_SIZE</code>) sont injectés en <code>put_in_context</code>. Les fichiers volumineux et documents Office (convertis via <code>MarkItDown</code> avec extraction d'images OOXML) sont découpés par <code>AgnosticStreamingSplitter</code> (blocs de 4 000 caractères), vectorisés dans <code>echo_session_rag</code> et résumés dans <code>&lt;artifact id="AEC_smart_context"&gt;</code> avec leur <code>source_id</code>.</li>
         </ul>
 
-
-        <h3 style="color:#93c5fd; margin-top: 2rem;">4. Filtres Complémentaires</h3>
+        <h3>2. Le Pipe Engine (<code>pipe_engine.py</code>)</h3>
+        <p>Le Cortex principal gouverne la Suture Bit-Perfect et le routage cognitif :</p>
         <ul>
-          <li><strong>app_drawer_filter.py :</strong> Intercepte la requête avant génération pour injecter l'App Drawer (UI).</li>
-          <li><strong>tcp_keepalive_filter.py :</strong> Filtre Inlet empêchant la déconnexion inopinée des sessions websocket longues.</li>
-          <li><strong>user_native_context_filter.py :</strong> Filtre Inlet injectant les réglages utilisateur natifs de la session.</li>
+          <li><strong>Registre Cognitif &amp; Élasticité :</strong> Interroge <code>ECHO_MODELS_REGISTRY</code> (<code>MODEL_LITE</code> élevé en <code>thinkingLevel="medium"</code>, <code>MODEL_FLASH</code> et <code>MODEL_PRO</code> en <code>high</code>). Interdit l'inertie cognitive en LITE et FLASH via <code>new_cognitive_level</code>, tout en excluant du menu d'escalade les modèles ayant échoué durant le tour courant (<code>failed_models_this_turn</code>).</li>
+          <li><strong>Verrou de Tour (<code>turn_origin_model</code>) &amp; Préservation du Cache de Préfixes :</strong> Scelle l'origine cognitive du tour dans <code>echo_settings</code> pour les continuations d'outils et cascades. <code>_mutate_context_identity()</code> patche chirurgicalement la seule dernière occurrence de <code>&lt;artifact id="AEC_modele"&gt;</code> (parcours inversé) afin de ne pas invalider le Context Caching Gemini sur l'historique.</li>
+          <li><strong>Drainage Transactionnel Atomique &amp; Rappels Multi-Axes :</strong> <code>EchoAEC.drain_pending_directives()</code> extrait et purge en une seule transaction SQLite les <code>aec_directive</code> et <code>aec_event</code> avant scellement dans le Shadow. <code>AEC_REMINDERS</code> injecte des rappels d'alignement par paliers de <code>promptTokenCount</code> (<code>kernel</code> 88k, <code>alignment</code> 40k, <code>strategy</code> 30k), et l'Auto-Continue relance automatiquement la génération sur <code>MAX_TOKENS</code>.</li>
+          <li><strong>Fast-Track Système :</strong> Intercepte <code>title_generation</code>, <code>tags_generation</code> et <code>follow_up_generation</code> vers <code>MODEL_LITE</code> en <code>stateless_bypass</code> (exclusion du prompt système, <code>responseMimeType="application/json"</code>, <code>thinkingLevel="low"</code>, <code>maxOutputTokens=200</code> et filtrage des parts <code>thought</code>).</li>
+        </ul>
+
+        <h3>3. Le Kernel Statique (<code>01-config/system-prompt.md</code> &amp; <code>echo_prompts.py</code>)</h3>
+        <p>Les méta-principes et protocoles fondamentaux gouvernent l'agent principal et le <code>ECHO_FOUNDATION_KERNEL</code> des sous-agents :</p>
+        <ul>
+          <li><strong>PCIR (Principe de Cognition Interne et Réflexion) :</strong> Réflexion interne critique et planifiée obligatoire avant toute réponse ou appel d'outil (<code>thoughtSignature</code> rattachée au premier <code>functionCall</code>).</li>
+          <li><strong>PGCU (Gestion du Contexte Unifié) &amp; PTD (Triage Dynamique) :</strong> Hiérarchie d'attention stricte (Kernel &gt; AEC &gt; Mémoires &gt; Requêtes &gt; Outils) et répartition des rôles LITE / FLASH / PRO.</li>
+          <li><strong>PRAF (Rigueur Analytique et Factuelle) :</strong> Interdiction de toute hypothèse non vérifiée sur le réel ; recherche web obligatoire avec indice de confiance justifié.</li>
+          <li><strong>PAS, PACP, PRAC &amp; MPSI :</strong> Adressage impersonnel à haut rapport signal/bruit pour les sous-agents (PAS), assimilation itérative des préférences et apprentissages par occurrences 1-2-3 (PACP/PRAC), et immunité du Kernel contre toute altération en session (MPSI).</li>
+        </ul>
+
+        <h3>4. Filtres Complémentaires (<code>11-owui-filters/</code>)</h3>
+        <ul>
+          <li><strong><code>build_environment_domain.py</code> (Inlet - Priorité 0) :</strong> Amorçage à froid des domaines globaux et de session (Codex <code>main</code>/<code>sandbox</code>, Vault, N8N) et masquage <code>chmod 0o711</code> du dossier <code>files</code>.</li>
+          <li><strong><code>tcp_keepalive_filter.py</code> (Inlet - Priorité 1) :</strong> Maintien des sessions WebSocket longues à travers le WAF.</li>
+          <li><strong><code>edge_embed_bridge_filter.py</code> (Inlet - Priorité 2) :</strong> Déport de l'inférence vectorielle Harrier-OSS ONNX vers WebGPU/WASM sur Desktop (bypass automatique sur mobile).</li>
+          <li><strong><code>user_native_context_filter.py</code> (Inlet - Priorité 10) :</strong> Ancrage identitaire et géo-temporel de l'utilisateur.</li>
+          <li><strong><code>app_drawer_filter.py</code> (Inlet - Priorité 1000) :</strong> Injection du HUD flottant ECHO App Drawer (support tactile mobile et desktop).</li>
+          <li><strong><code>conversation_rag_filter.py</code> (Outlet - Priorité 100) :</strong> Indexation asynchrone Zéro-Latence des tours de parole dans <code>echo_session_rag</code> avec validation O(1) en amont via le flag SQLite <code>is_embedded</code>.</li>
         </ul>
       </div>
     </details>
 
     <div class="transition-text">
-      <a href="07_hud_ui.html">&larr; 7. Écosystème HUD & UI</a>
+      <a href="07_hud_ui.html">&larr; 7. Écosystème HUD &amp; UI</a>
       &nbsp;&nbsp;
       <a href="09_arsenal_outils.html">9. L'Arsenal des Outils &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.45 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -4,19 +4,21 @@
 
 ## 1. Rôle du Dossier
 
-Ce dossier contient le service **ECHO Download Broker**. C'est un microservice isolé chargé de centraliser et d'orchestrer la collecte asynchrone des téléchargements de fichiers générés par le LLM ou récupérés lors d'une session de navigation web. 
+Ce dossier contient le service **ECHO Download Broker**. C'est un démon asynchrone de surveillance du système de fichiers (Drop-Zone) chargé d'ingérer atomiquement dans le Vault Utilisateur et le Registre SQLite les fichiers produits par le **N8N Worker** ou téléchargés par le **Browser Worker** (Playwright).
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `download_broker.py`
-Fichier Python léger exposant un démon asynchrone.
-- **Service de Collecte Asynchrone** : Il intercepte les requêtes de téléchargements et gère les flux réseau vers le stockage local (volume monté) de l'utilisateur. 
-- **Prévention du Blocage** : En déléguant le téléchargement de fichiers potentiellement volumineux à ce courtier dédié (broker), Open WebUI et les autres Workers (comme le Browser Worker) évitent d'être bloqués sur des I/O réseau lentes.
-- **Nettoyage Automatique** : Intègre des routines de nettoyage temporaire pour éviter l'accumulation de fichiers orphelins dans les dossiers de cache.
+### `download_broker.py` (v1.0)
+Démon Python asynchrone exécutant une boucle de scrutation (`asyncio.sleep(3)`).
+- **Garbage Collection des Branches Mortes** : Parcourt `/app/downloads/{uid}/{cid}` et supprime immédiatement (`shutil.rmtree`) tout répertoire de téléchargement dont le dossier de chat correspondant n'existe plus dans le Vault (`/app/backend/data/users/{uid}/chats/{cid}`).
+- **Collecte des Flux N8N (`/n8n/{wf_id}/`) & Browser (`/browser/`)** :
+  - Applique une **Sécurité MTime (`time.time() - st_mtime >= 3.0s`)** et ignore les fichiers `.part` pour garantir que l'écriture du fichier par N8N ou Playwright est totalement achevée.
+  - Déplace atomiquement (`shutil.move`) le fichier vers le Vault Global de l'utilisateur (`/users/{uid}/files/`) avec préfixage UUID anti-collision, et crée un **lien symbolique (`os.symlink`)** dans le dossier `files` du chat.
+  - Enregistre la ressource dans la base SQLite de la session via `EchoStateManager.save_resource()` avec le type `binary`, le MIME détecté par `get_gemini_mime()`, et le statut **`pending_ingestion`** (`FILE_INGESTION_STATUS['PENDING_INGESTION']`).
 
 ### `Dockerfile` & `requirements.txt`
-- Build minimaliste d'une image Python contenant `aiohttp` ou `fastapi` pour la gestion hautement concurrente des téléchargements.
+- Hérite de l'image mutualisée **`FROM echo-python-base:latest`** et monte en lecture seule `/opt/ECHO/owui-libs:/app/backend/echo_libs:ro`.
 
 ## 3. Dépendances Logiques
-- Principalement exploité par l'outil de navigation web (`navigation_engine_tool.py`) et l'orchestrateur de fichiers.
-- S'intègre dans le réseau Docker via le nom de service `echo-download-broker`.
+- Consomme les fichiers déposés dans le volume partagé `echo-download-broker-data` (`/app/downloads`) par `echo-browser-worker` et `echo-n8n-worker`.
+- Alimente le pipeline d'ingestion (`new_context_filter.py` / `echo_ingestion.py`) via le statut `pending_ingestion` dans SQLite.

@@ -99,50 +99,53 @@
     <p>ECHO y répond par une architecture mémorielle à deux niveaux :</p>
     <ul>
       <li>
-        <strong>RAG Organique</strong> (<code>echo_meta_artifacts</code>) : mémoire long terme permanente,
-        survit aux sessions. Outils : <code>update_meta_artifact</code> / <code>search_meta_artifacts</code>.
+        <strong>Mémoire Organique à Long Terme</strong> : mémoire permanente de vos préférences, contraintes et décisions d'architecture, qui survit d'une session à l'autre.
       </li>
       <li>
-        <strong>Mémoire Vectorisée de Session</strong> (<code>echo_session_rag</code>) : mémoire de travail de la session courante,
-        purgée automatiquement en fin de session. Outils : <code>save_session_context</code> / <code>search_sessions_context</code> (consultable également depuis d'autres sessions).
+        <strong>Mémoire Vectorisée de Session</strong> : mémoire de travail dédiée à la discussion en cours (et interrogeable à travers l'historique), permettant de décharger les documents massifs sans saturer l'attention du modèle.
       </li>
     </ul>
-    <div class="note-box">
-      <h4>Corrélation contextuelle et routage cognitif</h4>
-      <p>
-        Au-delà de 50 % de remplissage de la fenêtre contextuelle, le Pipe considère qu'une
-        escalade vers <strong>MODEL_PRO</strong> est justifiée, quelle que soit la complexité
-        apparente de la tâche. En pratique, ce basculement s'effectue via l'outil
-        <code>new_cognitive_level</code> - c'est le modèle actif qui déclare lui-même son
-        insuffisance et déclenche le transfert. Ce n'est pas un switch automatique du Pipe.
-        La Mémoire Vectorisée de Session (<code>save_session_context</code>) est la réponse préventive :
-        décharger l'information hors du contexte avant saturation.
-      </p>
-    </div>
 
     <h3>L'Inférence Distante (Edge Computing)</h3>
     <p>
-      La vectorisation (Embedding) est une opération très gourmande en ressources CPU. L'infrastructure ECHO intègre un paradigme d'<strong>Edge Computing</strong> : le déchargement de l'inférence vectorielle directement vers le navigateur du client via <strong>WebGPU</strong> et <strong>WASM</strong>. 
+      La vectorisation (transformation du texte en mémoire mathématique) est une opération exigeante en calcul. ECHO intègre un paradigme d'<strong>Edge Computing</strong> : sur ordinateur de bureau (Desktop), le calcul vectoriel est déporté vers la carte graphique du navigateur client via <strong>WebGPU</strong> et <strong>WASM</strong>.
     </p>
     <p>
-      Grâce à ce pont (injecté dynamiquement par le Filtre 3), l'Embedding Worker (serveur) délègue le calcul des vecteurs <code>Microsoft/Harrier-OSS</code> au client. Ce n'est qu'en cas de non-réponse du client (timeout asynchrone de 15s) que le serveur reprend la charge en Fallback CPU local. Cela allège drastiquement la consommation énergétique du serveur d'auto-hébergement et accélère la création de la Mémoire Vectorisée de Session.
+      Sur appareil mobile, ou si le poste client ne dispose pas d'accélération compatible, le serveur détecte immédiatement la configuration et bascule sans délai sur son propre moteur d'inférence CPU local. Cela réduit la charge énergétique du serveur d'auto-hébergement tout en garantissant une réactivité constante sur tous les terminaux.
     </p>
 
-    
     <h2>Standards de Développement</h2>
     <h3>Méthodologie Stricte (Top-Down)</h3>
     <p>
-      La conception logicielle doit impérativement partir de l'<strong>Architecture</strong> (vision systémique, HLD), descendre vers l'<strong>Ingénierie</strong> (choix des patterns, contrats d'interface), et seulement en dernier recours faire appel à l'usage d'un <strong>Vibe Coding encadré strictement</strong>. L'IA ne doit jamais coder sans un plan architectural validé.
+      La conception logicielle au sein d'ECHO part systématiquement de l'<strong>Architecture</strong> (vision systémique, HLD), descend vers l'<strong>Ingénierie</strong> (choix des patterns, contrats d'interface), et encadre strictement la génération de code. Aucun développement n'est engagé sans un plan architectural préalablement validé.
     </p>
 
-<div class="transition-text">
+    <details class="tech-spec">
+      <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
+      <div>
+        <h3>1. Collections Vectorielles Qdrant &amp; Escalade</h3>
+        <ul>
+          <li><strong>RAG Organique (<code>echo_meta_artifacts</code>) :</strong> indexé par <code>user_id</code> avec score d'importance pondéré (<code>MEMORY_IMPORTANCE_WEIGHTS</code> de 1-Trivial à 5-Axiome). Manipulé via <code>update_meta_artifact</code>, <code>search_meta_artifacts</code> et <code>delete_meta_artifact_item</code>.</li>
+          <li><strong>Session RAG (<code>echo_session_rag</code>) :</strong> indexé par <code>user_id + chat_id + source_id</code> via <code>save_session_context</code>, <code>search_sessions_context</code> (avec support <code>global_search</code> inter-sessions) et <code>delete_session_context_source</code>.</li>
+          <li><strong>Corrélation contextuelle :</strong> Au-delà des seuils de charge contextuelle (<code>CONTEXT_LOAD_WARNING_THRESHOLD = 40%</code>, <code>CONTEXT_LOAD_CRITICAL_THRESHOLD = 60%</code>), l'outil <code>new_cognitive_level</code> permet au modèle actif de déclencher une escalade cognitive vers <code>MODEL_FLASH</code> ou <code>MODEL_PRO</code>.</li>
+        </ul>
+
+        <h3>2. Pont d'Inférence Edge (<code>edge_embed_bridge_filter.py</code>)</h3>
+        <ul>
+          <li><strong>Exécution Desktop :</strong> Le filtre Inlet (priorité 2) injecte le pont WebSocket (<code>/ws/edge-embed</code>) exécutant <code>onnx-community/harrier-oss-v1-0.6b-ONNX</code> (quantification <code>q4f16</code>, 1024 dimensions) dans le navigateur client avec gestion multi-onglets (UUID <code>client_id</code> et visibilité).</li>
+          <li><strong>Bypass Mobile &amp; Fallback CPU :</strong> L'inspection serveur du <code>User-Agent</code> court-circuite l'injection JS sur mobile. En l'absence de client WebGPU actif ou en cas d'incompatibilité matérielle, <code>echo-embedding</code> (port 7997) bascule instantanément les <code>asyncio.Future</code> sur <code>llama-cpp-python</code> (<code>harrier-oss-v1-0.6b.f16.gguf</code>, CLS Token Pooling et normalisation L2).</li>
+        </ul>
+      </div>
+    </details>
+
+    <div class="transition-text">
       <a href="index.html">&larr; Accueil</a>
       &nbsp;&nbsp;
       <a href="02_manuel_utilisateur.html">2. Manuel Utilisateur &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.45 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

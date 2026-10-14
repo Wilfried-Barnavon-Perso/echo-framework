@@ -18,62 +18,28 @@
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
-    <h1>7. Écosystème HUD & UI</h1>
-<img src="images/esa_hud.png" alt="ESA HUD" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
-
+    <h1>7. Écosystème HUD &amp; UI</h1>
 
     <p>
       ECHO ne se limite pas à générer du texte dans une fenêtre de chat. Il dispose d'un moteur
-      d'interface dynamique capable d'injecter des composants visuels directement dans le DOM d'Open WebUI :
-      jauges, moniteurs, indicateurs de quota et interfaces de replay. Cet écosystème est piloté par
-      <code>echo_ui.py</code>, assisté de <code>echo_visuals.py</code> pour les interfaces
-      riches multi-moteurs.
+      d'interface dynamique capable d'injecter des composants visuels directement dans l'interface d'Open WebUI :
+      jauge de contexte, moniteur interactif, indicateurs de quota, éditeur de code et lecteur de rejeu.
     </p>
 
     <div class="didactic-box">
       <h4>💡 Qu'est-ce que le HUD ?</h4>
       <p>
-        Le <strong>HUD (Heads-Up Display)</strong> n'est pas une interface séparée : c'est une
-        <strong>surcouche d'affichage</strong> injectée dynamiquement par-dessus le DOM d'Open WebUI.
-        Elle permet d'afficher en temps réel des informations techniques (état du contexte, quota d'API,
-        statut d'authentification) directement dans le flux de conversation, sans polluer le texte
-        produit par le modèle.
+        Le <strong>HUD (Heads-Up Display)</strong> n'est pas une application séparée : c'est une
+        <strong>surcouche d'affichage</strong> injectée par-dessus l'interface d'Open WebUI.
+        Elle affiche en temps réel des informations opérationnelles (occupation de la mémoire de travail, quota d'API,
+        progression des sous-agents) sans alourdir le texte produit par le modèle.
       </p>
     </div>
 
-    <details class="tech-spec">
-<summary>Spécifications Techniques Backend ↔ Frontend</summary>
-<div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
-<h2>Architecture de communication Backend ↔ Frontend</h2>
+    <h2>Couche de Communication Sécurisée (UCTP)</h2>
 
     <p>
-      Le système repose sur un pipeline à trois niveaux :
-    </p>
-    <ol>
-      <li>
-        <strong>Backend (<code>echo_ui.EchoUI</code>) :</strong> génère des payloads JavaScript
-        polymorphes encapsulant les données (métriques de contexte, quota, images Base64).
-        Ces payloads sont de simples chaînes de caractères contenant du code JS.
-      </li>
-      <li>
-        <strong>Canal d'Événements (<code>EchoEvents</code>) :</strong> les ponts <code>emit</code>
-        et <code>call</code> d'Open WebUI servent de tunnel pour injecter le code JS dans le DOM global
-        de l'interface. Cette injection est possible uniquement depuis les hooks Pipe et Filter.
-      </li>
-      <li>
-        <strong>Runtime Frontend :</strong> un singleton JavaScript éphémère
-        (ex. <code>window.echoEngine_HUD_{uuid}</code>) est créé dans le navigateur de l'utilisateur
-        et gère les interactions locales (zoom, pan, état du drag).
-      </li>
-    </ol>
-
-    
-</div>
-</details>
-<h2>Couche de Communication Sécurisée</h2>
-    
-    <p>
-      Lorsque des interfaces complexes ou des fichiers de très grosse taille (comme l'éditeur Codex) doivent être affichés, le système gère les transferts de manière transparente en arrière-plan. Cela garantit un affichage fluide et immédiat, accompagné d'un indicateur visuel de progression pour ne jamais laisser l'utilisateur dans l'attente.
+      Lorsque des interfaces riches ou des fichiers volumineux (comme l'éditeur Codex) doivent être affichés, le système découpe et transmet les données par fragments en arrière-plan, accompagnés d'une barre de progression visuelle afin de maintenir la réactivité du navigateur.
     </p>
 
     <div class="mermaid-wrapper">
@@ -151,136 +117,60 @@ sequenceDiagram
       génération, total et maximum de la fenêtre contextuelle.
     </p>
     <img src="images/context_tooltip.png" alt="Tooltip de Contexte" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
-    <h3>B. Icône Quota (jauge circulaire SVG)</h3>
+    <h3>B. Icône Quota et Infobulle d'Authentification</h3>
     <p>
-      Une icône cadenas à gauche de la barre représente le quota restant du modèle API native
-      actuellement actif. La jauge circulaire SVG est calculée via l'attribut
-      <code>stroke-dashoffset</code> à partir de <code>quota_fraction</code>
-      (0,0 = épuisé, 1,0 = plein). La couleur varie selon trois seuils :
+      L'anneau circulaire autour du cadenas à gauche de la barre indique la fraction de quota restante pour le modèle actif :
+      <strong>Vert</strong> au-delà de 50 %, <strong>Orange</strong> entre 20 % et 50 %, et <strong>Rouge</strong> en dessous de 20 %.
+      Au survol du cadenas, l'infobulle affiche l'identité active et les métriques de quota :
     </p>
-    <ul>
-      <li><strong>Vert <code>#10b981</code> :</strong> <code>quota_fraction > 0,50</code></li>
-      <li><strong>Orange <code>#f59e0b</code> :</strong> <code>0,20 &lt; quota_fraction ≤ 0,50</code></li>
-      <li><strong>Rouge <code>#f85149</code> :</strong> <code>quota_fraction ≤ 0,20</code></li>
-    </ul>
+    <img src="images/auth_quota_tooltip.png" alt="Tooltip Authentification et Quotas" class="doc-screenshot">
 
-    <h3>C. Tooltip Authentification / Quotas</h3>
-    <p>Au survol de l'icône cadenas, un tooltip affiche deux sections :</p>
-    <img src="images/auth_quota_tooltip.png" alt="Tooltip Authentification et Quotas" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
-
-    <div class="code-header">Section AUTHENTIFICATION</div>
-    <pre><code>🔐 Source  : méthode d'auth (OAUTH2, API_KEY, etc.)
-👤 Compte  : google_user_email (depuis identity.db)
-🏗️ Projet  : google_project_id (depuis identity.db)</code></pre>
-
-    <div class="code-header">Section QUOTAS (données fraîches via fetch_available_models)</div>
-    <pre><code>💳 Crédits      : google_credits_total (crédits AI disponibles)
-🤖 Modèle CA    : ca_model_id actif (ex: gemini-3.5-flash)
-📊 Quota        : quota_fraction × 100% - coloré selon seuils
-📅 Req/jour     : requestsPerDayRemaining / requestsPerDayLimit (N/A si non fourni)
-⚡ Req/min      : requestsPerMinuteRemaining / requestsPerMinuteLimit (N/A si non fourni)
-🔄 Reset        : heure de reset du quota - formatée HH:MM (Xmin restantes)
-🏷️ Type         : google_quota_type (ex: CODE_ASSIST)</code></pre>
-
-    <div class="note-box">
-      <h4>Source et fraîcheur des données quota</h4>
-      <p>
-        Les données de quota proviennent de <code>fetch_available_models()</code> (endpoint API native
-        <code>:fetchAvailableModels</code>), stockées dans <code>google_quota_by_model</code>
-        (JSON dict dans <code>identity.db</code>). Le rafraîchissement est déclenché de manière
-        asynchrone et non-bloquante via <code>refresh_quota_if_needed()</code> avec un cooldown
-        de 10 minutes. Les champs <code>requestsPerDay/Min</code> peuvent être absents selon les
-        réponses de l'API - dans ce cas, « N/A » est affiché. Cela n'affecte pas la
-        <code>quota_fraction</code>, calculée séparément.
-      </p>
-    </div>
+    <div class="code-header">Sections AUTHENTIFICATION &amp; QUOTAS</div>
+    <pre><code>🔐 Source       : méthode d'auth active (OAUTH2, API_KEY)
+👤 Compte       : adresse du compte Google authentifié
+🏗️ Projet Perso : identifiant du projet Cloud personnel
+🌐 Tenant       : aicode-consumers (routage global Code Assist)
+💳 Crédits      : crédits AI disponibles
+🤖 Modèle CA    : ca_model_id actif (ex: gemini-3.8-flash-high)
+📊 Quota        : pourcentage restant coloré selon les seuils
+📅 Req/jour     : requêtes quotidiennes restantes (ou N/A)
+⚡ Req/min      : requêtes par minute restantes (ou N/A)
+🔄 Reset        : heure de réinitialisation du quota
+🏷️ Type         : type de quota (ex: CODE_ASSIST)</code></pre>
 
 
 
-    <h2>Le Sandbox Monitor / Image Viewer (Visualiseur Intelligent)</h2>
-<img src="images/monitor_wikipedia.png" alt="Sandbox Monitor Wikipedia" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
+    <h2>Le Sandbox Monitor / Image Viewer (Visualiseur Interactif)</h2>
+    <img src="images/monitor_wikipedia.png" alt="Sandbox Monitor Wikipedia" class="doc-screenshot">
 
     <p>
-      Invoqué via <code>EchoUI.get_floating_monitor_js()</code> (navigation web, sandbox de code) ou
-      <code>EchoUI.show_image_js()</code> (affichage d'images), ce composant est une fenêtre flottante
-      surdimensionnable, déplaçable et zoomable injectée dans le DOM.
+      Lors d'une navigation web autonome ou de l'exécution d'une application graphique dans la Sandbox, une fenêtre flottante déplaçable et redimensionnable s'ouvre à l'écran. Vous pouvez y zoomer à la molette, déplacer la vue par glisser-déposer ou sélectionner une zone d'intérêt précise.
     </p>
-    
-    <div class="note-box" style="margin-bottom: 20px;">
-      <h4>Factorisation : Classe EchoFloatingWindow</h4>
-      <p>
-        Toutes les fenêtres (Identity Vault, Sandbox Monitor, WebPlayer, etc.) héritent désormais de la classe unifiée <strong><code>EchoFloatingWindow</code></strong> pour garantir une standardisation absolue des interactions et des rendus.
-      </p>
-    </div>
 
-    <div class="note-box">
-      <h4>Protocole UCTP & Iframe Sandbox</h4>
-      <p>
-        Le composant n'utilise plus le pattern <em>Data Island</em>. Il repose sur un multiplexage asynchrone natif <strong>JSONL via le protocole UCTP</strong>.
-        Le rendu est généré dynamiquement dans une balise <code>iframe srcdoc</code> sécurisée, sans recours au MutationObserver.
-      </p>
-    </div>
+    <h2>ECHO Identity Vault (Coffre-Fort d'Identités HUD)</h2>
+    <img src="images/identity_vault.png" alt="Identity Vault" class="doc-screenshot">
+
+    <p>
+      L'écosystème HUD intègre également l'interface <strong>ECHO Identity Vault</strong>, un gestionnaire visuel de secrets applicatifs permettant de configurer vos identifiants pour les automatisations N8N et les serveurs MCP sans quitter la conversation.
+    </p>
+
+    <h2>Modales Natives Asynchrones &amp; Mobile First</h2>
+    <p>
+      Lorsque l'IA a besoin d'une confirmation ou d'un choix de votre part, le HUD affiche une boîte de dialogue interactive dotée de boutons de sélection rapides, adaptée aux écrans tactiles mobiles comme aux ordinateurs de bureau.
+    </p>
 
     <details class="tech-spec">
-<summary>Fonctionnalités techniques</summary>
-<div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
-<h3>Fonctionnalités techniques</h3>
-    <ul>
-      <li>
-        <strong>Accélération GPU :</strong> utilisation de <code>translate3d(x, y, 0)</code>
-        pour forcer la création de calques de composition matérielle et assurer une fluidité 60 fps
-        même sur des images haute résolution.
-      </li>
-      <li>
-        <strong>Calcul de ratio dynamique :</strong> la fonction <code>getBestSize</code> ajuste
-        automatiquement les dimensions de la fenêtre pour respecter le ratio natif de l'image
-        (<em>aspect ratio</em>).
-      </li>
-      <li>
-        <strong>Zoom &amp; Pan universel :</strong> <strong>Ctrl + Molette</strong> pour le zoom
-        (jusqu'à 15×), <strong>Clic + Glisser</strong> pour le déplacement. Pilotage via la
-        propriété CSS <code>transform: scale()</code> sur le conteneur image.
-      </li>
-      <li>
-        <strong>Crop-Box interactif :</strong> boîte de sélection redimensionnable permettant de
-        définir une zone d'intérêt à transmettre au modèle pour une analyse ciblée.
-      </li>
-    </ul>
-</div>
-</details>
-
-
-
-    
-    <h2>Vault UI</h2>
-<img src="images/identity_vault.png" alt="Identity Vault" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
-
-    <p>
-      L'écosystème intègre également le <strong>Vault UI</strong>, un gestionnaire de fichiers avancé. Il assure une synchronisation parfaite entre les processus d'arrière-plan (N8N, MCP) et l'interface client, sans nécessiter de rafraîchissement global de la page.
-    </p>
-
-    
-
-    <h2>Système OWUI Tools et Modales Natives Asynchrones</h2>
-
-    <p>
-      Le HUD déploie des modales asynchrones interactives, permettant de solliciter l'utilisateur (formulaires, confirmations) de manière non bloquante et parfaitement optimisée pour tous les appareils (notamment les mobiles).
-    </p>
-
-    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
-      <summary style="font-weight:bold; color:#60a5fa; font-size:1.1rem;">⚙️ Dossier d'Ingénierie & Spécifications</summary>
-      <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
-        
-        <h3 style="color:#93c5fd;">1. Implémentation UCTP</h3>
-        <p>Le protocole UCTP est implémenté dans <code>echo_events.py</code>. Il répond directement aux limites drastiques de taille de payload imposées par les WAF (BunkerWeb) et les implémentations WebSocket natives.</p>
+      <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
+      <div>
+        <h3>1. Architecture Backend ↔ Frontend &amp; Protocole UCTP (<code>echo_events.py</code> &amp; <code>echo_ui.py</code>)</h3>
         <ul>
-          <li><strong>Fragmentation :</strong> Tout payload excédant 256 Ko est automatiquement fragmenté. Le backend génère des appels <code>__event_call__</code> séquentiels.</li>
-          <li><strong>Buffering JS :</strong> Le frontend intercepte ces morceaux via un micro-script (bootstrap) et les accumule dans la variable globale temporaire <code>window.echoUCTPBuffer</code>.</li>
-          <li><strong>UX Asynchrone :</strong> Pour prévenir tout gel du navigateur (Event Loop bloquée), un composant HUD (Spinner & Progress Bar) est injecté avant la transmission et détruit dynamiquement lors du signal d'achèvement (<code>ECHO_UCTP_EOF</code>).</li>
+          <li><strong>Canal d'Événements (<code>EchoEvents</code>) :</strong> Génère des payloads JS injectés via les ponts <code>__event_emitter__</code> et <code>__event_call__</code> d'Open WebUI.</li>
+          <li><strong>Fragmentation UCTP (<code>ECHO_UCTP_CHUNK_SIZE = 256 000</code>) :</strong> Tout payload excédant 256 Ko est découpé en chunks séquentiels accumulés dans <code>window.echoUCTPBuffer</code> avec HUD de progression non-bloquant jusqu'au signal <code>ECHO_UCTP_EOF</code>, contournant les limites WebSocket et WAF.</li>
+          <li><strong>Fenêtrage &amp; Rendu :</strong> L'Identity Vault hérite de la classe unifiée <code>EchoFloatingWindow</code>, tandis que le Cognitive Monitor conserve une architecture dédiée pour éviter les lenteurs DOM. Le Sandbox Monitor exploite le multiplexage JSONL via UCTP (<code>emit_execute</code> dans une <code>iframe srcdoc</code>) avec accélération GPU (<code>translate3d</code>), zoom <code>Ctrl+Molette</code> jusqu'à 15×, synchronisation d'URL en direct (<code>echoWebPlayerUpdate</code>) et icônes vectorielles légères (<code>ECHO_ICONS</code>).</li>
         </ul>
 
-        <h3 style="color:#93c5fd; margin-top: 2rem;">2. Signature de deploy_context_gauge()</h3>
-        <p>La fonction <code>EchoUI.deploy_context_gauge()</code> est appelée par <code>pipe_engine.py</code> :</p>
+        <h3>2. Signature de <code>deploy_context_gauge()</code> &amp; Rafraîchissement Quotas</h3>
+        <p>Appelée par <code>pipe_engine.py</code>, elle calcule l'anneau SVG via <code>stroke-dashoffset</code> sur <code>quota_fraction</code> (rafraîchi de manière non-bloquante par <code>fetch_available_models()</code> toutes les 10 min dans <code>identity.db</code>) :</p>
         <pre><code>deploy_context_gauge(
     events,                        # EchoEvents
     plan_name, credits_val,        # Identité du plan
@@ -295,17 +185,12 @@ sequenceDiagram
     quota_rpd_lim, quota_rpm_rem, quota_rpm_lim
 )</code></pre>
 
-        <h3 style="color:#93c5fd; margin-top: 2rem;">3. Persistance de l'état du Monitor (LocalStorage)</h3>
-        <p>Le Monitor mémorise sa position et son zoom dans le <code>localStorage</code> du navigateur sous la clé <code>STATE_KEY</code> générée par le backend. Format : <code>{ "x": 120, "y": 45, "s": 1.5, "ix": 0, "iy": 0, "m": false }</code> (<code>s</code> = échelle, <code>ix/iy</code> = offset pan, <code>m</code> = crop mode).</p>
-
-        <h3 style="color:#93c5fd; margin-top: 2rem;">4. Caractéristiques Techniques (ECHO Codex & Agent Monitor)</h3>
+        <h3>3. Caractéristiques Techniques (ECHO Codex, Agent Monitor &amp; Mobile First)</h3>
         <ul>
-          <li><strong>Moteur Codex :</strong> Monaco Editor 0.52.2 chargé via CDN jsDelivr. Détection du thème via <code>document.documentElement.classList.contains('dark')</code>.</li>
-          <li><strong>Persistance HUD Codex :</strong> Position et taille stockées dans <code>localStorage['echo_codex_{chat_id}']</code>.</li>
-          <li><strong>HUD Multi-Agent :</strong> Fusion chronologique des threads (<code>threads_json</code>), rendu arborescent hiérarchique pour les superviseurs (via <code>worker_branch</code> et <code>indent_override</code>). Clamp Viewport via <code>clampHud</code>.</li>
-          <li><strong>Système OWUI Tools :</strong> Optimisations mobiles natives (unités dvh, anti-zoom iOS, touch targets 44px, anti-scroll du body). Assainissement DOM via <code>window.echoSanitizeHTML</code>.</li>
+          <li><strong>Moteur Codex :</strong> Monaco Editor, lecteur PDF WYSIWYG natif par Blob, trigger asynchrone <code>_echoCodexTarget</code> et persistance dans <code>localStorage['echo_codex_{chat_id}']</code>.</li>
+          <li><strong>HUD Multi-Agent :</strong> Fusion chronologique des threads (<code>threads_json</code>), rendu arborescent hiérarchique pour les superviseurs et maintien dans le viewport via <code>clampHud</code>.</li>
+          <li><strong>Optimisations Mobiles &amp; Sécurité DOM :</strong> Unités <code>100dvh</code>, anti-zoom iOS, cibles tactiles 44px, modales asynchrones (<code>window.echoCustomConfirm</code>, <code>window.echoCustomPrompt</code> à boutons <em>pills</em>, <code>window.mcpAlert</code>) et assainissement DOM systématique via <code>window.echoSanitizeHTML</code>.</li>
         </ul>
-
       </div>
     </details>
 
@@ -316,7 +201,7 @@ sequenceDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.45 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

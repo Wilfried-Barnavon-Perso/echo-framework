@@ -29,8 +29,8 @@
 
     <div class="grid-container">
       <div class="card">
-        <h3>📝 9a. Planification & Exécution</h3>
-        <p>ECHO construit et maintient des plans d'action (check-lists) pour les projets au long cours. Il dispose également d'une Sandbox isolée pour générer et exécuter du code (Python, JS) en toute sécurité afin de tester ses solutions ou traiter vos données.</p>
+        <h3>📝 9a. Planification &amp; Exécution</h3>
+        <p>ECHO construit et maintient des plans d'action pour les projets au long cours, pilote votre calendrier et programme des tâches récurrentes dans Open WebUI. Il dispose également d'une Sandbox isolée pour générer et exécuter du code (Python, JS) en toute sécurité.</p>
         <a href="10_planification_execution.html">Explorer &rarr;</a>
       </div>
       
@@ -59,36 +59,33 @@
       </div>
     </div>
 
-    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
-      <summary style="font-weight:bold; color:#60a5fa; font-size:1.1rem;">⚙️ Dossier d'Ingénierie & Spécifications</summary>
-      <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
-        
-        <h3 style="color:#93c5fd;">1. Standards de Développement OWUI</h3>
-        <p>Le développement des outils dans le dossier <code>12-owui-tools/</code> est régi par des règles architecturales strictes :</p>
+    <details class="tech-spec">
+      <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
+      <div>
+        <h3>1. Standards de Développement OWUI (<code>12-owui-tools/</code>)</h3>
         <ul>
-          <li><strong>Injection des Métadonnées :</strong> Chaque outil DOIT déclarer <code>__user__</code> et <code>__metadata__</code> dans sa signature Python. Cela ordonne au runtime Open WebUI d'injecter nativement le contexte d'exécution (Identity, Permissions, Chat ID) et bloque toute tentative de falsification de session.</li>
-          <li><strong>Norme PEP8 Stricte :</strong> Le code est purgé de tout import inutilisé ou variable morte (marquée par un <code>_</code>) pour maximiser l'efficacité d'exécution et réduire le payload d'erreur.</li>
-          <li><strong>Protocole Multipart Standardisé :</strong> Tous les outils (y compris ceux manipulant des images, audios, ou interfaces Data Island) utilisent le wrapper <code>wrap_tool_output()</code> (défini dans le State Manager). Les payloads multimédias transitent via la clé normée <code>echo_tool_multiparts</code> (qui remplace l'obsolète <code>nouveaux_fichiers</code>).</li>
+          <li><strong>Injection Native du Contexte :</strong> Chaque outil déclare obligatoirement <code>__user__</code> et <code>__metadata__</code> dans sa signature Python pour garantir l'injection authentifiée de la session par Open WebUI.</li>
+          <li><strong>Propagation d'Identité Asynchrone (<code>ECHO_SUBAGENT_CONTEXT</code>) :</strong> La variable <code>contextvars.ContextVar</code> transporte de manière transparente l'identité des sous-agents (<code>sub_sid</code>, <code>is_subagent</code>, <code>sub_tools_names</code>) à travers les frontières asynchrones sans modifier les signatures inspectées par Open WebUI.</li>
+          <li><strong>Protocole Multipart &amp; FIFO Destructif (<code>wrap_tool_output</code>) :</strong> Les payloads multimodaux sont encapsulés sous la clé standardisée <code>echo_tool_multiparts</code> (déballée par <code>unbox_tool_output()</code> dans <code>echo_core.py</code>), tandis que les événements système (<code>aec_event</code>, <code>aec_directive</code>) sont consommés selon un mécanisme FIFO destructif qui préserve intactes les ressources persistantes du registre.</li>
+          <li><strong>Norme PEP8 Stricte :</strong> Suppression des imports inutilisés et préfixage par <code>_</code> des variables locales non consommées.</li>
         </ul>
 
-        <h3 style="color:#93c5fd; margin-top: 2rem;">2. Isolation et Journalisation (Tool Journal)</h3>
-        <p>La sécurité repose sur la ségrégation absolue par tenant :</p>
+        <h3>2. Isolation Multi-Tenant et Journalisation (<code>tool_journal</code>)</h3>
         <ul>
-          <li><strong>Filtre UID :</strong> La totalité des requêtes IO/Fichiers/DB implémentent un filtre <code>user_id</code> de priorité absolue. L'usurpation d'un <code>source_id</code> d'un autre tenant générera une erreur 404 transparente pour le modèle.</li>
-          <li><strong>Journalisation Cumulée :</strong> Chaque appel d'outil (entrées et sorties, même massives) est consigné dans la table SQLite <code>TOOL_JOURNAL</code> par le Pipe Engine. Ce journal est lié de manière cryptographique au <code>cumulative_hash</code> du tour courant, ce qui permet la Suture Bit-Perfect sans obliger Gemini à regénérer le résultat d'un outil coûteux (ex: Web Scraping) lors d'un <em>Cold Recovery</em> local.</li>
+          <li><strong>Cloisonnement par <code>user_id</code> :</strong> Toutes les opérations fichiers, SQLite et Qdrant filtrent strictement par <code>user_id</code> (et <code>chat_id</code> pour les domaines de session).</li>
+          <li><strong>Journalisation Cryptographique :</strong> Chaque appel et retour d'outil est scellé dans la table SQLite <code>tool_journal</code> et lié au <code>cumulative_hash</code> du tour dans <code>suture_index</code>, garantissant la reconstruction Bit-Perfect de l'historique sans ré-exécution des outils.</li>
         </ul>
-
       </div>
     </details>
 
     <div class="transition-text">
       <a href="08_cerveau_cognitif.html">&larr; 8. La Cognition</a>
       &nbsp;&nbsp;
-      <a href="10_planification_execution.html">10. Planification & Exécution &rarr;</a>
+      <a href="10_planification_execution.html">10. Planification &amp; Exécution &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.45 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

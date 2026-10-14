@@ -3,66 +3,145 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Manuel Utilisateur du Framework ECHO v5 : posture cognitive, connexion SSO/MFA, sélection des modes cognitifs, commandes rapides et tiroir d'actions.">
   <title>ECHO v5 - 2. Manuel Utilisateur</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
-<!-- CONTENU PRINCIPAL -->
-  <main class="content-area">
-      <header>
-        <h1>2. Manuel Utilisateur</h1>
-        <p class="page-subtitle">
-          Documentation officielle de l'<strong>Espace Cognitif Heuristique Opérationnel</strong>. 
-          Ce manuel a été co-rédigé par l'intelligence artificielle ECHO elle-même.
-        </p>
-      </header>
 
-      <section class="doc-section">
-        <h2>
-          1. Introduction
-        </h2>
-        <p>
-          <strong>ECHO</strong> (Espace Cognitif Heuristique Opérationnel) est un framework d'intelligence artificielle et d'orchestration cognitive conçu par <strong>Wilfried BARNAVON</strong>, distribué sous licence libre <strong>Apache 2.0</strong>.
-        </p>
-        <p>
-          À l'opposé des assistants conversationnels passifs, ECHO a été forgée pour incarner une <strong>Sparring Partner rationnelle-logique et assertive-incisive</strong>. Son utilité réside dans son mordant intellectuel, sa rigueur dialectique et son orientation implacable vers la factualité et l'impact opérationnel.
-        </p>
+  <main>
+    <h1>2. Manuel Utilisateur</h1>
 
-        <div class="grid-3">
-          <div class="card">
-            <div class="card-title">
-              <span>Rationnelle & Logique</span>
-              <span class="badge badge-cyan">Pilier</span>
-            </div>
-            <p style="font-size: 0.88rem; margin: 0;">Déduction analytique stricte, détection des biais cognitifs, validation formelle des hypothèses et refus catégorique des raccourcis intuitifs non prouvés.</p>
-          </div>
-          <div class="card">
-            <div class="card-title">
-              <span>Assertive & Incisive</span>
-              <span class="badge badge-indigo">Posture</span>
-            </div>
-            <p style="font-size: 0.88rem; margin: 0;">Opposition constructive. Elle pointe immédiatement les incohérences d'un plan ou d'une argumentation sans fard rhétorique ni bavardage obséquieux.</p>
-          </div>
-          <div class="card">
-            <div class="card-title">
-              <span>Souveraine & Éthique</span>
-              <span class="badge badge-emerald">Norme</span>
-            </div>
-            <p style="font-size: 0.88rem; margin: 0;">Environnement privé et local. Neutralité morale absolue vis-à-vis des objectifs de l'utilisateur : focalisation exclusive sur la faisabilité technique.</p>
-          </div>
-        </div>
-      </section>
+    <p>
+      Documentation officielle de l'<strong>Espace Cognitif Heuristique Opérationnel (ECHO)</strong>,
+      conçu par <strong>Wilfried BARNAVON</strong> et distribué sous licence libre <strong>Apache 2.0</strong>.
+      À l'opposé des assistants conversationnels passifs, ECHO incarne une <strong>Sparring Partner rationnelle-logique et assertive-incisive</strong>, orientée vers la rigueur dialectique, la factualité et l'action opérationnelle.
+    </p>
+
+    <div class="grid-container">
+      <div class="card">
+        <h3>Rationnelle &amp; Logique <span class="badge badge-blue">Pilier</span></h3>
+        <p>Déduction analytique stricte, détection des biais cognitifs, validation formelle des hypothèses et vérification factuelle systématique avant affirmation.</p>
+      </div>
+      <div class="card">
+        <h3>Assertive &amp; Incisive <span class="badge badge-purple">Posture</span></h3>
+        <p>Opposition constructive : l'IA pointe immédiatement les failles d'un plan ou d'une argumentation sans fard rhétorique ni formules obséquieuses.</p>
+      </div>
+      <div class="card">
+        <h3>Souveraine &amp; Locale <span class="badge badge-green">Norme</span></h3>
+        <p>Environnement privé et auto-hébergé. Neutralité vis-à-vis des objectifs de l'utilisateur et focalisation exclusive sur la faisabilité technique.</p>
+      </div>
+    </div>
+
+    <h2>1. Connexion et Sécurité SSO</h2>
+    <p>
+      L'accès à la plateforme ECHO est protégé par le portail d'identité <strong>ECHO Auth</strong>.
+      Vous vous authentifiez avec votre adresse e-mail et votre mot de passe, suivis d'un code à usage unique temporaire (MFA / TOTP généré sur votre application d'authentification).
+    </p>
+
+    <div class="didactic-box">
+      <h4>💡 Comportement du Single Sign-On (SSO)</h4>
+      <p>
+        Une fois l'authentification validée, votre session est automatiquement propagée à l'interface de discussion (Open WebUI) ainsi qu'aux services autorisés sans ressaisie de mot de passe. Lors d'une déconnexion, la session est purgée sur l'ensemble des composants.
+      </p>
+    </div>
       
-      <section class="doc-section">
-        <h2>Connexion et Sécurité SSO</h2>
-        <p>L'accès à la plateforme ECHO est protégé par le module <strong>ECHO Auth</strong> couplé à BunkerWeb. L'utilisateur s'authentifie par adresse e-mail et mot de passe, suivis obligatoirement d'un code OTP (Time-based One-Time Password).</p>
-        
-        <div class="callout tip"><div class="callout-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-emerald)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></div><div class="callout-body">
-          <h4>Comportement du Single Sign-On (SSO)</h4>
-          <p>Une fois l'authentification validée, la session (via jeton JWT) est propagée. La navigation transversale s'effectue sans demande de reconnexion, garantissant un environnement de travail fluide.</p>
-        </div></div>
-      </section>
+    <h2>2. Sélection du Mode Cognitif</h2>
+    <p>
+      Dans le sélecteur de modèle d'Open WebUI (ou via les paramètres du moteur ECHO), vous pouvez laisser l'IA gérer automatiquement sa puissance de réflexion ou fixer un palier précis :
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Mode</th>
+          <th>Comportement</th>
+          <th>Usage recommandé</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong><code>AUTO</code></strong></td>
+          <td>Démarre en mode léger (<code>LITE</code>) et escalade de lui-même jusqu'à <code>FLASH</code> si la demande nécessite des outils ou une recherche.</td>
+          <td>Usage quotidien polyvalent (compromis vitesse / autonomie).</td>
+        </tr>
+        <tr>
+          <td><strong><code>AUTO_PRO</code></strong></td>
+          <td>Autorise l'escalade autonome complète de <code>LITE</code> vers <code>FLASH</code> puis jusqu'à <code>PRO</code> pour les problèmes d'architecture ou d'orchestration lourde.</td>
+          <td>Projets d'ingénierie, R&amp;D et missions complexes.</td>
+        </tr>
+        <tr>
+          <td><strong><code>MODEL_LITE</code></strong></td>
+          <td>Verrouille le modèle rapide pour la discussion courante, la synthèse rapide et la consultation de vos préférences.</td>
+          <td>Échanges conversationnels rapides et économie de quota.</td>
+        </tr>
+        <tr>
+          <td><strong><code>MODEL_FLASH</code></strong></td>
+          <td>Active d'emblée le modèle agentique doté d'une réflexion approfondie et de l'exécution d'outils (Web, Code, Codex).</td>
+          <td>Développement, recherche web et analyse de fichiers.</td>
+        </tr>
+        <tr>
+          <td><strong><code>MODEL_PRO</code></strong></td>
+          <td>Mobilise la capacité de raisonnement maximale pour les arbitrages critiques et l'orchestration multi-agents.</td>
+          <td>Conception système (HLD), débats d'experts (Delphi) et débogage ardu.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>3. Les Commandes Opérationnelles (<code>!commande</code>)</h2>
+    <p>
+      Vous pouvez piloter directement le comportement du cœur d'ECHO en plaçant l'une des commandes suivantes dans votre message :
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Commande</th>
+          <th>Effet immédiat</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>!help</code></td>
+          <td>Affiche les noms et versions du Modèle et du Framework, la liste des commandes et outils disponibles, puis propose un accompagnement adapté à votre objectif.</td>
+        </tr>
+        <tr>
+          <td><code>!plan</code></td>
+          <td>Active le mode de conception Top-Down : ECHO s'interdit toute action modificatrice, conçoit un plan d'action formel, une arborescence architecturale et une analyse contradictoire des failles, puis attend votre validation.</td>
+        </tr>
+        <tr>
+          <td><code>!goal</code></td>
+          <td>Lance une exécution autonome continue : ECHO agit comme un hyperviseur qui délègue l'exécution technique et les tests à ses sous-agents de manière itérative jusqu'à la satisfaction empirique de l'objectif.</td>
+        </tr>
+        <tr>
+          <td><code>!status</code></td>
+          <td>Génère un rapport d'état structuré (Modèle &amp; Framework, Résumé, état de la Persona, Apprentissage, Artéfacts de la session et état proprioceptif).</td>
+        </tr>
+        <tr>
+          <td><code>!Résumé</code></td>
+          <td>Présente une synthèse structurée de l'avancement de la session en cours.</td>
+        </tr>
+        <tr>
+          <td><code>!Rédacteur</code> / <code>!Coach</code> / <code>!Prof</code></td>
+          <td>Active le mode spécialisé correspondant de la Persona d'ECHO (ou <code>!Persona</code> pour revenir au comportement natif).</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>4. Interface Visuelle : Jauge et Tiroir d'Actions</h2>
+    <ul>
+      <li><strong>Jauge de Contexte &amp; Quota (en haut de l'écran) :</strong> Affiche en permanence la mémoire de travail occupée par la discussion ainsi que votre quota d'API restant. Survolez l'icône cadenas ou la barre colorée pour lire les détails.</li>
+      <li><strong>Tiroir d'Actions (ECHO App Drawer, bouton flottant à droite) :</strong> Regroupe en un clic toutes les applications intégrées : l'éditeur de code et de documents <strong>ECHO Codex</strong>, le coffre-fort de secrets <strong>Identity Vault</strong>, la supervision en direct des agents (<strong>Agent Monitor</strong>), le rejeu vidéo de navigation web, l'export <strong>PDF</strong>, la purge chirurgicale de mémoire et le transfert résumé vers une nouvelle discussion.</li>
+    </ul>
+
+    <div class="transition-text">
+      <a href="01_fondations.html">&larr; 1. Fondations &amp; Philosophie</a>
+      &nbsp;&nbsp;
+      <a href="03_exemples_prompts.html">3. Exemples de Prompts &rarr;</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
   </main>
   <script src="nav.js"></script>
 </body>

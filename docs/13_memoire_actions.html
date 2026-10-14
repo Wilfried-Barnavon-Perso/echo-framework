@@ -27,67 +27,59 @@
       <li><strong>Génération automatique :</strong> L'IA gère cette mémoire de manière autonome. Elle met à jour ou supprime les souvenirs obsolètes d'elle-même.</li>
     </ul>
 
-    <h2>2. Le Cockpit et les Actions</h2>
+    <h2>2. Le Tiroir d'Actions (ECHO App Drawer)</h2>
     <div style="display: flex; gap: 2rem; align-items: flex-start; flex-wrap: wrap;">
       <div style="flex: 1; min-width: 300px;">
         <p>
-          En plus de discuter avec ECHO, vous disposez d'un panneau d'actions rapides (souvent situé au-dessus ou en dessous de la conversation). Ces actions vous permettent d'interagir directement avec le système sans avoir à écrire de texte :
+          En plus de discuter avec ECHO, vous disposez d'un tiroir d'actions flottant sur le bord droit de l'écran (ainsi que sous chaque message). Ces commandes vous permettent d'agir directement sur votre session sans saisir de texte :
         </p>
         <ul>
-          <li><strong>Export PDF :</strong> Vous pouvez transformer l'intégralité d'une longue conversation (avec ses diagrammes et tableaux) en un document PDF propre et professionnel, en un seul clic.</li>
-          <li><strong>Purge Vectorielle :</strong> Si vous souhaitez réinitialiser l'esprit de l'IA sur un sujet précis, vous pouvez ouvrir un panneau visuel qui vous permet d'effacer chirurgicalement certains souvenirs.</li>
-          <li><strong>Agent Monitor :</strong> Permet d'observer en direct le travail des sous-agents de l'IA (comme le navigateur fantôme) pour voir exactement ce qu'ils sont en train de faire sur le web.</li>
+          <li><strong>Export PDF :</strong> Transforme l'intégralité d'une conversation (avec ses diagrammes et tableaux) en un document PDF mis en page en un clic.</li>
+          <li><strong>Purge Vectorielle :</strong> Ouvre un panneau visuel permettant d'effacer chirurgicalement certains souvenirs à long terme.</li>
+          <li><strong>Résume et Transfert :</strong> Condense une longue discussion arrivée à saturation et transfère automatiquement l'état de votre projet dans une nouvelle session fraîche.</li>
+          <li><strong>Agent Monitor &amp; Rejeu Web :</strong> Permet d'observer en direct l'arbre de travail des sous-agents et de revoir la navigation du navigateur autonome.</li>
         </ul>
       </div>
       <div>
-        <img src="images/toolbar_actions.png" alt="Actions Toolbar" style="max-width: 80px; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+        <img src="images/toolbar_actions.png" alt="ECHO App Drawer" style="max-width: 80px; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
       </div>
     </div>
 
-    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
-      <summary style="font-weight:bold; color:#60a5fa; font-size:1.1rem;">⚙️ Dossier d'Ingénierie & Spécifications</summary>
-      <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
-        
-        <h3 style="color:#93c5fd;">1. Memory & RAG Tool (<code>memory_and_rag_tool.py</code>)</h3>
-        <p>L'outil offre au LLM une API complète de manipulation des deux collections Qdrant (<code>echo_meta_artifacts</code> et <code>echo_session_rag</code>).</p>
+    <details class="tech-spec">
+      <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
+      <div>
+        <h3>1. Memory &amp; RAG Tool (<code>memory_and_rag_tool.py</code>)</h3>
+        <p>Offre au LLM une API complète sur les deux collections Qdrant (<code>echo_meta_artifacts</code> et <code>echo_session_rag</code>) :</p>
         <ul>
-          <li><strong>Outils RAG Organique :</strong> <code>update_meta_artifact</code> (création/mise à jour), <code>search_meta_artifacts</code> (recherche avec Reranking <code>MEMORY_IMPORTANCE_WEIGHTS</code>), <code>delete_meta_artifact_item</code>.</li>
-          <li><strong>Outils Session RAG :</strong> <code>save_session_context</code> (Déchargement cognitif proactif), <code>search_sessions_context</code>, <code>delete_session_context_source</code>.</li>
+          <li><strong>Outils RAG Organique :</strong> <code>update_meta_artifact</code> (fusion sémantique préservant le score maximal), <code>search_meta_artifacts</code> (recherche hybride et cartographie d'index avec Reranking <code>MEMORY_IMPORTANCE_WEIGHTS</code>), <code>delete_meta_artifact_item</code>.</li>
+          <li><strong>Outils Session RAG :</strong> <code>save_session_context</code>, <code>search_sessions_context</code> (incluant le paramètre <code>global_search</code> pour étendre la recherche à tout l'historique inter-sessions sur marqueurs temporels) et <code>delete_session_context_source</code>.</li>
         </ul>
 
-        <h3 style="color:#93c5fd; margin-top: 2rem;">2. Actions UI & Cockpit</h3>
-        <p>L'interface Open WebUI est étendue par des "Actions" (boutons UI déclenchant du code) :</p>
+        <h3>2. Actions Interactives &amp; Migration de Session (<code>13-owui-actions/</code>)</h3>
         <ul>
-          <li><strong>Export PDF (<code>print_pdf_action.py</code>) :</strong> Opération 100% <em>Client-Side</em>. Résout les limites de l'export PDF natif d'Open WebUI (qui ignore les <code>&lt;iframe&gt;</code>) via <code>html2canvas</code> en capturant directement <code>iframe.contentDocument.body</code> (nécessite <em>Iframe Same-Origin Access</em>).</li>
-          <li><strong>Purge Vectorielle :</strong> Action injectant un HUD interactif scrollable listant le contenu de <code>echo_meta_artifacts</code>, permettant la suppression ciblée via appels API.</li>
-          <li><strong>Agent Monitor :</strong> HUD temps réel (Data Island) écoutant l'état des Workers distants (via SSE interne) pour afficher la progression des sous-agents.</li>
+          <li><strong>Export PDF (<code>print_pdf_action.py</code>) :</strong> Capture complète Client-Side incluant les <code>&lt;iframe&gt;</code> Data Island (avec permission <code>allow-modals</code>).</li>
+          <li><strong>Purge Vectorielle (<code>purge_memory_action.py</code>) :</strong> Interface scrollable d'inspection et de suppression ciblée dans <code>echo_meta_artifacts</code> avec gestion stricte de l'annulation modale.</li>
+          <li><strong>Résume et Transfert (<code>resume_in_new_chat_action.py</code>) :</strong> Nettoie les balises <code>&lt;artifact id="AEC_.*?"&gt;</code> par regex, distille séparément l'historique complet (Macro-objectif racine) et l'historique récent, puis crée un nouveau chat doté d'une routine d'<strong>Onboarding Cognitif</strong>.</li>
+          <li><strong>Agent Monitor (<code>agent_monitor_action.py</code>) &amp; Replay (<code>web_navigation_replay_action.py</code>) :</strong> Supervision arborescente temps réel des sous-agents et lecteur de rejeu Playwright avec zoom <code>Ctrl+Molette</code>.</li>
         </ul>
 
-
-        <h3 style="color:#93c5fd; margin-top: 2rem;">Context Gauge (context_gauge.py)</h3>
+        <h3>3. Jauge de Contexte, Registre &amp; Outils Généralistes</h3>
         <ul>
-          <li><strong>get_context_load :</strong> Surveillance de la saturation du contexte (Tokens) et déclencheur d'escalade cognitive.</li>
-        </ul>
-        <h3 style="color:#93c5fd; margin-top: 2rem;">Generalist Tools (generalist_tools.py)</h3>
-        <ul>
-          <li><strong>wait_timer :</strong> Met en pause l'exécution. Strictement limité à 1 seule tentative par boucle.</li>
-          <li><strong>ask_user_input :</strong> Interrompt brièvement l'exécution pour afficher une boîte de dialogue à l'utilisateur.</li>
-        </ul>
-        <h3 style="color:#93c5fd; margin-top: 2rem;">Query Registry (query_registry_tool.py)</h3>
-        <ul>
-          <li><strong>query_registry :</strong> Consultation centralisée de l'état des ressources du Registre (validation obligatoire).</li>
+          <li><strong>Context Gauge (<code>context_gauge.py</code>) :</strong> <code>get_context_load</code> lit la saturation de la fenêtre dans le registre KV unifié <code>echo_settings</code> (seuils d'alerte <code>40%</code> et critique <code>60%</code>).</li>
+          <li><strong>Generalist Tools (<code>generalist_tools.py</code>) :</strong> <code>async_wait_timer</code> programmable (plafonné à 180 s), <code>ask_user_input</code> (modale non-bloquante <code>window.echoCustomPrompt</code> avec boutons <em>pills</em>), gestion des automatisations UI (<code>create_ui_automation</code>, <code>list_ui_automations</code>), calendrier Open WebUI, et <code>delegate_to_tool_consultant</code> (Agent Stratège Stateless).</li>
+          <li><strong>Query Registry (<code>query_registry_tool.py</code>) :</strong> Consultation obligatoire de <code>echo_resources</code> et des statuts <code>FILE_INGESTION_STATUS</code> avant manipulation de fichiers.</li>
         </ul>
       </div>
     </details>
 
     <div class="transition-text">
-      <a href="12_edition_visuelle.html">&larr; 12. Édition & Visuel</a>
+      <a href="12_edition_visuelle.html">&larr; 12. Édition &amp; Visuel</a>
       &nbsp;&nbsp;
-      <a href="14_agents_automatisation.html">14. Agents & Automatisation &rarr;</a>
+      <a href="14_agents_automatisation.html">14. Agents &amp; Automatisation &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.45 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

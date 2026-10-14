@@ -2,17 +2,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 7.58
+version: 7.59
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.59: Injection dynamique de l'AEC_directive d'initialisation de session (PIS) ou de mise à niveau dans rich_parts.
 # 7.58: Correction du fallback ZoneInfo (TypeError sur import pytz as ZoneInfo -> from pytz import timezone).
 # 7.57: Refactorisation algorithmique PGCU et renommage (current_user_multipart_payload).
 # 7.56: Extraction de dr.get("summary") dans la clé 'message' du delta hors-tour.
 # 7.54: Correction du bug d'ingestion des fichiers attachés au premier message (chat_id récupéré depuis le body).
-# 7.51: Correction d'un bug critique (NameError) bloquant l'injection de l'AEC via l'import de FILE_INGESTION_STATUS.
-# 7.48: Typage hiérarchique XML de l'AEC et suppression du formateur YAML.
 
 
 from pydantic import BaseModel, Field
@@ -284,6 +283,44 @@ class Filter:
                 rich_parts.append({"text": EchoAEC.render_time_context(date_heure, timezone, tour_conversation)})
                 rich_parts.append({"text": EchoAEC.render_location_context(final_loc)})
 
+                # === AEC : Directive d'Initialisation de Session ou Montée de Version ===
+                directive_to_inject = None
+                if idx == len(msgs) - 1:
+                    if chat_id and state_manager:
+                        last_version = state_manager.get_session_setting("last_framework_version")
+                        is_new_session = (last_version is None or tour_conversation == 1)
+                        is_upgrade = (
+                            last_version is not None
+                            and version != "##ECHO_VERSION##"
+                            and last_version != version
+                        )
+
+                        if is_new_session:
+                            directive_to_inject = EchoAEC.render_directive(
+                                "Directive d'Initialisation de Session : Saluer l'Utilisateur et présenter "
+                                f"le Framework (nom vernaculaire Écho, nom technique ECHO, version active {version}, "
+                                "missions fondamentales), consulter silencieusement les Méta-Artéfacts si pertinent, "
+                                "recommander la commande !help, puis répondre à la requête de l'Utilisateur."
+                            )
+                            if version != "##ECHO_VERSION##":
+                                state_manager.save_session_setting("last_framework_version", version)
+                        elif is_upgrade:
+                            directive_to_inject = EchoAEC.render_directive(
+                                f"Directive de Mise à Niveau du Framework : La version du Framework a évolué ({last_version} -> {version}). "
+                                "Confirmer succinctement la mise à jour de la version avant de traiter la requête de l'Utilisateur."
+                            )
+                            state_manager.save_session_setting("last_framework_version", version)
+                    elif tour_conversation == 1:
+                        directive_to_inject = EchoAEC.render_directive(
+                            "Directive d'Initialisation de Session : Saluer l'Utilisateur et présenter "
+                            f"le Framework (nom vernaculaire Écho, nom technique ECHO, version active {version}, "
+                            "missions fondamentales), consulter silencieusement les Méta-Artéfacts si pertinent, "
+                            "recommander la commande !help, puis répondre à la requête de l'Utilisateur."
+                        )
+
+                if directive_to_inject:
+                    rich_parts.append({"text": directive_to_inject})
+
                 # === Configuration ZoneInfo ===
                 try:
                     from zoneinfo import ZoneInfo
@@ -293,7 +330,11 @@ class Filter:
                 try:
                     user_tz = ZoneInfo(user_tz_str)
                 except Exception:
-                    user_tz = ZoneInfo("UTC")
+                    try:
+                        user_tz = ZoneInfo("UTC")
+                    except Exception:
+                        from datetime import timezone as dt_timezone
+                        user_tz = dt_timezone.utc
 
                 # === AEC : Évènements système (fichiers uploadés ce tour) ===
                 sys_events = []

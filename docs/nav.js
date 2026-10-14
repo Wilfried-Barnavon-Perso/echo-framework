@@ -62,7 +62,8 @@ document.addEventListener('DOMContentLoaded', () => {
       { text: "16. Périphériques & Infra", href: "16_infrastructure_globale.html" },
       { text: "17. Inférence Distante", href: "17_edge_inference.html" },
       { text: "18. Annexes Techniques", href: "18_annexes.html" },
-      { text: "19. Crédits", href: "19_credits.html" }
+      { text: "19. Crédits", href: "19_credits.html" },
+      { text: "20. Registre d'Audit", href: "15_registre_audit.html" }
     ]
   }
 ];
@@ -112,9 +113,42 @@ document.addEventListener('DOMContentLoaded', () => {
   const main = document.querySelector('main');
   if (!main) return;
 
-  // Collecte tous les h2 et h3 du contenu principal
-  const headings = Array.from(main.querySelectorAll('h2, h3'));
-  if (headings.length >= 2) { // Bloc TOC si au moins 2 titres
+  // Sauvegarde du code source Mermaid des encarts <details> et re-rendu à l'ouverture
+  document.querySelectorAll('.mermaid').forEach(el => {
+    if (!el.getAttribute('data-mermaid-src')) {
+      el.setAttribute('data-mermaid-src', el.textContent.trim());
+    }
+  });
+  document.querySelectorAll('details').forEach(det => {
+    det.addEventListener('toggle', async () => {
+      if (!det.open) return;
+      const hiddenMermaids = det.querySelectorAll('.mermaid');
+      if (!hiddenMermaids.length) return;
+      try {
+        const mod = await import('https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs');
+        const mermaid = mod.default;
+        for (const m of hiddenMermaids) {
+          const g = m.querySelector('svg g');
+          if (!m.querySelector('svg') || (g && g.children.length === 0)) {
+            const src = m.getAttribute('data-mermaid-src');
+            if (src) {
+              m.removeAttribute('data-processed');
+              m.textContent = src;
+            }
+          }
+        }
+        await mermaid.run({ nodes: Array.from(hiddenMermaids) });
+      } catch (_) {}
+    });
+  });
+
+  // Collecte tous les h2 et h3 du tronc utilisateur (exclut .card et <details class="tech-spec">)
+  const headings = Array.from(main.querySelectorAll('h2, h3')).filter(
+    h => !h.closest('details.tech-spec') && !h.closest('.card')
+  );
+  const techDetails = main.querySelector('details.tech-spec');
+
+  if (headings.length >= 2 || (headings.length >= 1 && techDetails)) {
 
   // Injection de la div TOC dans le DOM
   const tocEl = document.createElement('nav');
@@ -129,12 +163,10 @@ document.addEventListener('DOMContentLoaded', () => {
         .trim().replace(/\s+/g, '-');
 
   let tocHTML = '<h3>Sommaire</h3><ol>';
-  let currentH2Li = null;
-  let currentSubList = null;
-  let h2Count = 0;
+  let hasOpenH2 = false;
+  let currentSubList = false;
 
   headings.forEach(heading => {
-    // Ajout d'un id si absent
     if (!heading.id) {
       heading.id = toSlug(heading.textContent);
     }
@@ -142,11 +174,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const id   = heading.id;
 
     if (heading.tagName === 'H2') {
-      h2Count++;
-      if (currentSubList) tocHTML += '</ol></li>';
+      if (currentSubList) {
+        tocHTML += '</ol>';
+        currentSubList = false;
+      }
+      if (hasOpenH2) {
+        tocHTML += '</li>';
+      }
       tocHTML += `<li><a href="#${id}">${text}</a>`;
-      currentSubList = null;
+      hasOpenH2 = true;
     } else if (heading.tagName === 'H3') {
+      if (!hasOpenH2) {
+        tocHTML += `<li><a href="#${id}">${text}</a></li>`;
+        return;
+      }
       if (!currentSubList) {
         tocHTML += '<ol class="toc-sub">';
         currentSubList = true;
@@ -155,14 +196,27 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
   if (currentSubList) tocHTML += '</ol>';
-  tocHTML += '</li></ol>';
+  if (hasOpenH2) tocHTML += '</li>';
+
+  if (techDetails) {
+    if (!techDetails.id) techDetails.id = 'dossier-ingenierie';
+    tocHTML += `<li><a href="#${techDetails.id}" data-open-details="true">⚙️ Dossier d'Ingénierie</a></li>`;
+  }
+  tocHTML += '</ol>';
 
   tocEl.innerHTML = tocHTML;
   document.body.appendChild(tocEl);
 
+  tocEl.addEventListener('click', (e) => {
+    const link = e.target.closest('a[data-open-details="true"]');
+    if (link && techDetails) {
+      techDetails.open = true;
+    }
+  });
+
   /* ---- Surlignage de la section active au scroll ---- */
   const tocLinks = tocEl.querySelectorAll('a');
-  const headingEls = headings;
+  const headingEls = techDetails ? [...headings, techDetails] : headings;
 
   const observer = new IntersectionObserver(
     (entries) => {

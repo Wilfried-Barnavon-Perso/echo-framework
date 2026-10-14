@@ -1,26 +1,25 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 1.12 (Architecture Data-Driven pour le catalogue de services MCP)
+VERSION : 1.14 (Interception ciblée AuthRequiredError)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-10-10
+DATE MAJ : 2026-10-13
 ================================================================================
 """
-from starlette.requests import Request
-from modules.m5_proxy_mcp import proxy_mcp_request
-from modules.m2_jobs_omnisearch import setup_jobs_omnisearch_mcp
-from core.security import user_id_var
-from starlette.responses import PlainTextResponse, JSONResponse
-from modules.m4_academic import register_academic_tools
-from modules.m3_corporate import register_corporate_tools
-from mcp.server import MCPServer
-import uvicorn
-
 import logging
+import uvicorn
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse, JSONResponse
+from mcp.server import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
+
+from core.security import user_id_var
+from modules.m5_proxy_mcp import proxy_mcp_request, AuthRequiredError
+from modules.m2_jobs_omnisearch import setup_jobs_omnisearch_mcp
+from modules.m3_corporate import register_corporate_tools
+from modules.m4_academic import register_academic_tools
 
 logger = logging.getLogger(__name__)
-
-from mcp.server.transport_security import TransportSecuritySettings
 
 # Initialisation du serveur MCP avec protection DNS Rebinding désactivée
 # (Docker interne)
@@ -82,22 +81,46 @@ SERVICE_SCHEMAS = {
         "category": "mcp_resident",
         "name": "Google Workspace MCP (Résident)",
         "command": "workspace-mcp",
-        "auth_failure_instructions": "Le Modèle DOIT guider l'Utilisateur pour configurer Google Workspace UNIQUEMENT si l'auth échoue ou est absente : 1. Créer un projet sur Google Cloud Console, activer les APIs (Calendar, Gmail, Drive, etc.) et créer un identifiant OAuth 'Application Web' avec l'URI de redirection `https://developers.google.com/oauthplayground`. 2. Se rendre sur ce lien Playground et cliquer sur l'engrenage (Paramètres) en haut à droite. 3. Cocher 'Use your own OAuth credentials' et y insérer son Client ID et Client Secret. 4. Dans 'Input your own scopes', coller `openid https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/presentations https://www.googleapis.com/auth/tasks`. 5. Autoriser les APIs, échanger le code contre les tokens, et récupérer le 'Refresh token'. 6. Insérer ces 4 valeurs (Email, ID, Secret, Refresh Token) dans le Vault.",
+        "user_required_instructions": (
+            "Le Modèle DOIT guider l'Utilisateur pour configurer Google Workspace si les identifiants sont manquants ou invalides : "
+            "1. Créer un projet sur Google Cloud Console, activer les APIs (Calendar, Gmail, Drive, etc.) et créer un identifiant OAuth 'Application Web' "
+            "avec l'URI de redirection `https://developers.google.com/oauthplayground`. "
+            "2. Se rendre sur ce lien Playground et cliquer sur l'engrenage (Paramètres) en haut à droite. "
+            "3. Cocher 'Use your own OAuth credentials' et y insérer son Client ID et Client Secret. "
+            "4. Dans 'Input your own scopes', coller `openid https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email "
+            "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify "
+            "https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts https://www.googleapis.com/auth/spreadsheets "
+            "https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/presentations https://www.googleapis.com/auth/tasks`. "
+            "5. Autoriser les APIs, échanger le code contre les tokens, et récupérer le 'Refresh token'. "
+            "6. Enregistrer dans l'Identity Vault sous le service 'google_workspace' les 4 clés exactes suivantes : "
+            "'USER_GOOGLE_EMAIL', 'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'GOOGLE_OAUTH_REFRESH_TOKEN'."
+        ),
         "fields": [
-            {"id": "USER_GOOGLE_EMAIL", "label": "Email Google", "type": "text", "help": "Email du compte (ex: john.doe@gmail.com)"},
-            {"id": "GOOGLE_OAUTH_CLIENT_ID", "label": "Client ID", "type": "text", "help": "ID Client OAuth2 Google"},
-            {"id": "GOOGLE_OAUTH_CLIENT_SECRET", "label": "Client Secret", "type": "password", "help": "Secret Client OAuth2 Google"},
-            {"id": "GOOGLE_OAUTH_REFRESH_TOKEN", "label": "Refresh Token", "type": "password", "help": "Généré via OAuth Playground"}
+            {"id": "USER_GOOGLE_EMAIL", "label": "Email Google", "type": "text", "required": True, "help": "Email du compte (ex: john.doe@gmail.com)"},
+            {"id": "GOOGLE_OAUTH_CLIENT_ID", "label": "Client ID", "type": "text", "required": True, "help": "ID Client OAuth2 Google"},
+            {"id": "GOOGLE_OAUTH_CLIENT_SECRET", "label": "Client Secret", "type": "password", "required": True, "help": "Secret Client OAuth2 Google"},
+            {"id": "GOOGLE_OAUTH_REFRESH_TOKEN", "label": "Refresh Token", "type": "password", "required": True, "help": "Généré via OAuth Playground"}
         ]
     },
     "microsoft_365": {
         "category": "mcp_resident",
         "name": "Microsoft 365 MCP (Résident)",
         "command": "microsoft-mcp",
-        "auth_failure_instructions": "Le Modèle DOIT guider l'Utilisateur pour configurer Microsoft 365 UNIQUEMENT si l'auth échoue ou est absente : 1. Demander à l'utilisateur de créer une application sur le portail Azure (Entra ID) avec la plateforme 'Application mobile et de bureau' (Redirect URI natif) et d'ajouter les permissions Microsoft Graph déléguées requises (Mail.ReadWrite, Mail.Send, Calendars.ReadWrite, User.Read, Files.ReadWrite.All). 2. L'utilisateur doit insérer son 'Client ID' (App ID) et 'Tenant ID' (ou 'consumers' pour les comptes personnels) dans l'Identity Vault. 3. Une fois les clés dans le Vault, le Modèle DOIT invoquer l'outil 'authenticate_account' du MCP Microsoft. 4. Le Modèle DOIT fournir à l'Utilisateur l'URL de vérification et le 'User Code' générés, et lui demander d'aller s'authentifier. 5. Une fois que l'Utilisateur confirme avoir saisi le code, le Modèle DOIT invoquer l'outil 'complete_authentication' avec le 'flow_cache' pour finaliser la connexion MSAL.",
+        "user_required_instructions": (
+            "Le Modèle DOIT guider l'Utilisateur pour configurer Microsoft 365 si les identifiants sont manquants ou invalides : "
+            "1. Demander à l'Utilisateur de créer une application sur le portail Azure (Entra ID) avec la plateforme 'Application mobile et de bureau' "
+            "(Redirect URI natif) et d'ajouter les permissions Microsoft Graph déléguées requises : "
+            "Mail.ReadWrite, Mail.Send, Calendars.ReadWrite, User.Read, Files.ReadWrite.All, offline_access. "
+            "2. L'Utilisateur doit enregistrer dans l'Identity Vault pour le service 'microsoft_365' les deux clés exactes suivantes : "
+            "'MICROSOFT_MCP_CLIENT_ID' (Client ID / Application ID Azure) et 'MICROSOFT_MCP_TENANT_ID' "
+            "(Tenant ID, ex: 'consumers' pour les comptes personnels @outlook/@hotmail, ou l'ID d'annuaire de l'organisation). "
+            "3. Une fois les clés renseignées dans le Vault, le Modèle DOIT appeler la fonction 'authenticate_account' du MCP Microsoft. "
+            "4. Le Modèle DOIT restituer à l'Utilisateur l'URL de vérification ainsi que le 'User Code' fournis par le MCP, et inviter l'Utilisateur à valider la connexion. "
+            "5. Après confirmation de l'Utilisateur, le Modèle DOIT appeler la fonction 'complete_authentication' avec le 'flow_cache' pour clore l'authentification MSAL."
+        ),
         "fields": [
-            {"id": "MICROSOFT_MCP_CLIENT_ID", "label": "App ID Azure", "type": "text", "help": "ID de l'application enregistrée sur Azure"},
-            {"id": "MICROSOFT_MCP_TENANT_ID", "label": "Tenant ID", "type": "text", "help": "ID du Tenant (consumers, common, etc.)"}
+            {"id": "MICROSOFT_MCP_CLIENT_ID", "label": "App ID Azure", "type": "text", "required": True, "help": "ID de l'application enregistrée sur Azure"},
+            {"id": "MICROSOFT_MCP_TENANT_ID", "label": "Tenant ID", "type": "text", "required": True, "help": "ID du Tenant (consumers, common, etc.)"}
         ]
     },
     "remote_mcp": {
@@ -157,31 +180,44 @@ app.add_middleware(WebUIUserMiddleware)
 
 
 async def proxy_mcp_route(request: Request):
+    payload = {}
     try:
         payload = await request.json()
         result = await proxy_mcp_request(payload)
         return JSONResponse(result)
+    except AuthRequiredError as ae:
+        logger.warning(f"Erreur de prérequis Proxy MCP : {ae}")
+        service_name = payload.get("service", "")
+        schema_def = SERVICE_SCHEMAS.get(service_name, {})
+        instructions = schema_def.get("user_required_instructions", "")
+        return JSONResponse({
+            "status": "error",
+            "source": "auth_required",
+            "service": service_name,
+            "message": str(ae),
+            "user_required_instructions": instructions
+        }, status_code=400)
     except Exception as e:
         logger.exception("Erreur Proxy MCP globale :")
-        
+
         status_code = 500
         message = repr(e) if not str(e).strip() else str(e)
-        payload = {"status": "error", "source": "broker_internal", "message": message}
-        
+        error_payload = {"status": "error", "source": "broker_internal", "message": message}
+
         # Interception dynamique de l'erreur httpx/httpx2 (HTTPStatusError)
         if type(e).__name__ == 'HTTPStatusError':
             status_code = 502  # Bad Gateway
             remote_status = getattr(e.response, "status_code", "Inconnu") if hasattr(e, "response") else "Inconnu"
             remote_url = getattr(e.request, "url", "Inconnue") if hasattr(e, "request") else "Inconnue"
             message = f"La cible distante ({remote_url}) a rejeté la requête avec le code {remote_status}."
-            payload = {
-                "status": "error", 
-                "source": "remote_server", 
+            error_payload = {
+                "status": "error",
+                "source": "remote_server",
                 "http_code": remote_status,
                 "message": message
             }
-            
-        return JSONResponse(payload, status_code=status_code)
+
+        return JSONResponse(error_payload, status_code=status_code)
 
 app.add_route("/proxy_mcp", proxy_mcp_route, methods=["POST"])
 

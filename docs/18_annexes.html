@@ -19,14 +19,11 @@
       collections Qdrant et dictionnaire des valves de configuration.
     </p>
 
-    <h2>Topologie Réseau et Ports</h2>
+    <h2>Topologie Réseau (Domain-Driven IPAM) et Ports</h2>
 
     <p>
-      ECHO orchestre un cluster de conteneurs sur un réseau Docker privé (<code>echo-network</code>),
-      dont la configuration de référence est définie par l'orchestrateur <code>stack-echo.yml</code>.
-      La passerelle BunkerWeb est l'unique point d'entrée exposé sur le WAN lorsqu'elle est activée.
-      Les services de l'Arsenal (Browser Agent, Coding Worker, SearxNG) ne sont jamais exposés
-      directement.
+      ECHO orchestre un cluster de conteneurs sur deux réseaux Docker isolés (<code>echo-network</code> en <code>10.20.40.0/24</code> par défaut et <code>echo-sandbox</code> en <code>10.20.50.0/24</code> pour le Coding Worker), régis par <code>stack-echo.yml</code> et <code>bunkerweb-stack.yml</code>.
+      Les briques Core utilisent la plage <code>.100–.103</code> et les Workers ECHO calquent leur dernier octet IP sur le numéro de leur dossier source (<code>.20–.32</code>).
     </p>
 
     <table>
@@ -34,24 +31,28 @@
         <tr>
           <th>Service</th>
           <th>Conteneur</th>
+          <th>IP (<code>echo-network</code>)</th>
           <th>Port interne</th>
-          <th>Port hôte</th>
-          <th>Exposé WAN ?</th>
+          <th>Port hôte / Exposition</th>
         </tr>
       </thead>
       <tbody>
-        <tr><td>Open WebUI</td><td><code>echo-open-webui</code></td><td>8080</td><td>3000</td><td>Via BunkerWeb</td></tr>
-        <tr><td>Admin Manager</td><td><code>echo-admin-manager</code></td><td><strong>3001</strong></td><td>3001</td><td>Via BunkerWeb</td></tr>
-        <tr><td>Qdrant</td><td><code>echo-qdrant</code></td><td>6333</td><td>Non</td><td>Non</td></tr>
-        <tr><td>Embedding Worker (HTTP/WS)</td><td><code>echo-embedding</code></td><td>7997</td><td>Non</td><td>Via WAF (<code>/ws/edge-embed</code>)</td></tr>
-        <tr><td>STT Worker</td><td><code>echo-stt-worker</code></td><td>7995</td><td>Non</td><td>Non</td></tr>
-        <tr><td>TTS Worker</td><td><code>echo-tts-worker</code></td><td>7996</td><td>Non</td><td>Non</td></tr>
-        <tr><td>Browser Worker</td><td><code>echo-browser-worker</code></td><td><strong>5002</strong></td><td>Non</td><td>Non</td></tr>
-        <tr><td>Coding Worker</td><td><code>echo-coding-worker</code></td><td><strong>5000</strong></td><td>Non</td><td>Non</td></tr>
-        <tr><td>SearxNG</td><td><code>echo-searxng</code></td><td>8080</td><td>Non</td><td>Non</td></tr>
-        <tr><td>SSH Tunnel Auth</td><td>In-process WebUI</td><td>8020–8024</td><td>8020–8024</td><td>Non - localhost uniquement</td></tr>
-        <tr><td>Callback OAuth2</td><td>In-process WebUI</td><td>8025–8034</td><td>Non</td><td>Non - via tunnel SSH uniquement</td></tr>
-        <tr><td>BunkerWeb (WAF)</td><td><code>echo-bunkerweb</code></td><td>80 / 443</td><td>80 / 443</td><td>Oui</td></tr>
+        <tr><td>Open WebUI (Cortex)</td><td><code>echo-open-webui</code></td><td><code>.100</code></td><td>8080</td><td>3000 (ou <code>ui.</code> via BunkerWeb)</td></tr>
+        <tr><td>SearXNG</td><td><code>echo-searxng</code></td><td><code>.101</code></td><td>8080</td><td>Interne uniquement</td></tr>
+        <tr><td>Watchtower</td><td><code>echo-watchtower</code></td><td><code>.102</code></td><td>-</td><td>Interne uniquement</td></tr>
+        <tr><td>Qdrant</td><td><code>echo-qdrant</code></td><td><code>.103</code></td><td>6333</td><td>Interne uniquement</td></tr>
+        <tr><td>Admin Manager</td><td><code>echo-admin-manager</code></td><td><code>.20</code></td><td><strong>3001</strong></td><td>3001 (ou <code>am.</code> via BunkerWeb)</td></tr>
+        <tr><td>Coding Worker (Sandbox)</td><td><code>echo-coding-worker</code></td><td><code>.21</code> (<code>echo-sandbox</code>)</td><td><strong>5000</strong></td><td>Interne (réseau <code>echo-sandbox</code>)</td></tr>
+        <tr><td>Browser Worker</td><td><code>echo-browser-worker</code></td><td><code>.22</code></td><td><strong>5002</strong></td><td>Interne uniquement</td></tr>
+        <tr><td>MCP Broker</td><td><code>echo-mcp-broker</code></td><td><code>.23</code></td><td><strong>8000</strong></td><td>Interne uniquement</td></tr>
+        <tr><td>ECHO Auth Manager (IdP)</td><td><code>echo-auth-manager</code></td><td><code>.24</code></td><td><strong>8000</strong></td><td>Sous-domaine <code>auth.</code> via BunkerWeb</td></tr>
+        <tr><td>Download Broker</td><td><code>echo-download-broker</code></td><td><code>.25</code></td><td>Daemon</td><td>Interne uniquement</td></tr>
+        <tr><td>N8N Worker (Headless)</td><td><code>echo-n8n-worker</code></td><td><code>.26</code></td><td><strong>5003</strong> (API) / 5678</td><td>Interne uniquement</td></tr>
+        <tr><td>Embedding Worker</td><td><code>echo-embedding</code></td><td><code>.30</code></td><td><strong>7997</strong></td><td>WAF (<code>/ws/edge-embed</code>)</td></tr>
+        <tr><td>TTS Worker (Kokoro)</td><td><code>echo-tts-worker</code></td><td><code>.31</code></td><td><strong>7996</strong></td><td>Interne uniquement</td></tr>
+        <tr><td>STT Worker (Whisper)</td><td><code>echo-stt-worker</code></td><td><code>.32</code></td><td><strong>7995</strong></td><td>Interne uniquement</td></tr>
+        <tr><td>SSH Tunnel Auth PKCE</td><td>In-process WebUI</td><td><code>.100</code></td><td>8020–8024</td><td>8020–8024 (callback interne 8025–8034)</td></tr>
+        <tr><td>BunkerWeb (WAF )</td><td><code>echo-bunkerweb</code></td><td><code>bw-universe</code></td><td>80 / 443</td><td>80 / 443 (WAN)</td></tr>
       </tbody>
     </table>
 
@@ -63,7 +64,7 @@
         <tr>
           <td><code>echo-webui-data</code></td>
           <td><code>/app/backend/data</code></td>
-          <td><code>webui.db</code>, <code>identity.db</code> par utilisateur, bases SQLite de session (<code>{chat_id}.db</code>), Vault fichiers.</td>
+          <td><code>webui.db</code>, <code>identity.db</code> par utilisateur, bases SQLite de session (<code>{chat_id}.db</code>), Codex Git (<code>main</code>/<code>sandbox</code>), Vault fichiers et cache <code>.cache/pip</code>.</td>
         </tr>
         <tr>
           <td><code>echo-qdrant-data</code></td>
@@ -71,24 +72,34 @@
           <td>Index vectoriels Qdrant (<code>echo_meta_artifacts</code>, <code>echo_session_rag</code>).</td>
         </tr>
         <tr>
+          <td><code>echo-download-broker-data</code></td>
+          <td><code>/app/downloads</code></td>
+          <td>Drop-zone partagée entre Browser Worker, N8N Worker et Download Broker.</td>
+        </tr>
+        <tr>
+          <td><code>echo-n8n-data</code></td>
+          <td><code>/home/node/.n8n</code></td>
+          <td>Base SQLite native et workflows persistants du moteur N8N.</td>
+        </tr>
+        <tr>
+          <td><code>echo-auth-data</code></td>
+          <td><code>/app/auth-data</code></td>
+          <td>Base SQLite <code>auth.db</code> (comptes Argon2, secrets TOTP et sessions SSO).</td>
+        </tr>
+        <tr>
+          <td><code>echo-embedding-cache</code></td>
+          <td><code>/root/.cache/huggingface</code></td>
+          <td>Poids GGUF F16 du modèle <code>microsoft/Harrier-OSS-v1-0.6B</code>.</td>
+        </tr>
+        <tr>
           <td><code>echo-backups</code></td>
           <td><code>/opt/ECHO/backups</code></td>
-          <td>Archives <code>tar.gz</code> générées par l'Admin Manager.</td>
+          <td>Archives de sauvegarde à chaud générées par l'Admin Manager.</td>
         </tr>
         <tr>
-          <td><code>echo-worker-data</code></td>
-          <td><code>/data</code> (Coding Worker)</td>
-          <td>Artefacts temporaires d'exécution Python.</td>
-        </tr>
-        <tr>
-          <td><code>echo-browser-data</code></td>
-          <td><code>/data</code> (Browser Agent)</td>
-          <td>Captures d'écran, exports de sessions de navigation.</td>
-        </tr>
-        <tr>
-          <td><code>echo-bunkerweb-data</code></td>
+          <td><code>bw-data</code> / <code>bw-db-data</code></td>
           <td><code>/opt/ECHO/bunkerweb</code></td>
-          <td>Configuration WAF persistante (certificats, règles).</td>
+          <td>Certificats Let's Encrypt, configurations WAF et base MariaDB 11.4.</td>
         </tr>
       </tbody>
     </table>
@@ -135,12 +146,12 @@
     <table>
       <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><code>message_id</code></td><td>TEXT PK</td><td>UUID du message fourni par Open WebUI.</td></tr>
+        <tr><td><code>message_id</code></td><td>TEXT PK</td><td>UUID du message fourni par Open WebUI (indexé également sur <code>chat_id</code>).</td></tr>
+        <tr><td><code>chat_id</code></td><td>TEXT NOT NULL</td><td>Identifiant de la session de chat.</td></tr>
+        <tr><td><code>role</code></td><td>TEXT NOT NULL</td><td>Rôle de l'émetteur (<code>user</code> ou <code>model</code>).</td></tr>
+        <tr><td><code>full_parts_json</code></td><td>TEXT (JSON)</td><td>Structure Gemini complète des <code>parts</code> (texte, inlineData, functionCall, etc.).</td></tr>
         <tr><td><code>updated_at</code></td><td>INT</td><td>Verrou de Version - timestamp physique de la dernière modification du message.</td></tr>
-        <tr><td><code>parent_id</code></td><td>TEXT</td><td>UUID du message parent (chaîne de conversation).</td></tr>
-        <tr><td><code>cumulative_hash</code></td><td>TEXT FK</td><td>Référence vers <code>suture_index</code>.</td></tr>
-        <tr><td><code>parts</code></td><td>TEXT (JSON)</td><td>Structure Gemini complète des <code>parts</code> (texte, inlineData, thoughtSignature, etc.)</td></tr>
-        <tr><td><code>created_at</code></td><td>INT</td><td>Timestamp de scellement.</td></tr>
+        <tr><td><code>is_embedded</code></td><td>INT DEFAULT 0</td><td>Flag booléen O(1) interrogé par <code>conversation_rag_filter.py</code> pour éviter toute réindexation redondante dans Qdrant.</td></tr>
       </tbody>
     </table>
 
@@ -149,10 +160,11 @@
       <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
       <tbody>
         <tr><td><code>cumulative_hash</code></td><td>TEXT PK</td><td>SHA-256 cumulatif - ADN de la conversation.</td></tr>
-        <tr><td><code>message_id</code></td><td>TEXT FK</td><td>Référence vers <code>message_shadows</code>.</td></tr>
-        <tr><td><code>invariant_hash</code></td><td>TEXT</td><td>SHA-256 du contenu seul, indépendant de la position dans l'historique.</td></tr>
+        <tr><td><code>chat_id</code></td><td>TEXT NOT NULL</td><td>Identifiant de la session (index <code>idx_chat_id</code>).</td></tr>
+        <tr><td><code>invariant_hash</code></td><td>TEXT NOT NULL</td><td>SHA-256 du contenu seul, indépendant de la position dans l'historique.</td></tr>
         <tr><td><code>parent_hash</code></td><td>TEXT</td><td>Hash cumulatif du tour précédent - forme la chaîne Merkle.</td></tr>
-        <tr><td><code>created_at</code></td><td>INT</td><td>Timestamp de scellement.</td></tr>
+        <tr><td><code>message_id</code></td><td>TEXT</td><td>Référence vers <code>message_shadows</code>.</td></tr>
+        <tr><td><code>timestamp</code></td><td>INT</td><td>Timestamp de scellement.</td></tr>
       </tbody>
     </table>
 
@@ -161,8 +173,8 @@
       <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
       <tbody>
         <tr><td><code>cumulative_hash</code></td><td>TEXT PK</td><td>Lié au tour courant (chaîne Merkle).</td></tr>
-        <tr><td><code>thought_signature</code></td><td>TEXT</td><td>ThoughtSignature Gemini - jeton opaque cryptographique réinjecté au tour suivant.</td></tr>
-        <tr><td><code>message_id</code></td><td>TEXT</td><td>UUID du message (colonne de migration, nullable).</td></tr>
+        <tr><td><code>thought_signature</code></td><td>TEXT NOT NULL</td><td>ThoughtSignature Gemini 3+ - jeton opaque cryptographique rattaché au premier <code>functionCall</code>.</td></tr>
+        <tr><td><code>message_id</code></td><td>TEXT</td><td>UUID du message (indexé par <code>idx_sig_msg_id</code> avec tri <code>ORDER BY updated_at DESC LIMIT 1</code>).</td></tr>
         <tr><td><code>model_id</code></td><td>TEXT</td><td>Identifiant du modèle ayant généré la pensée.</td></tr>
         <tr><td><code>updated_at</code></td><td>INT</td><td>Timestamp de scellement.</td></tr>
       </tbody>
@@ -178,85 +190,37 @@
       </tbody>
     </table>
 
-    <h3>Table <code>thought_archive</code></h3>
+    <h3>Table <code>echo_resources</code> (Registre Unifié v8.0)</h3>
     <table>
       <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><code>cumulative_hash</code></td><td>TEXT PK</td><td>Lié au tour courant.</td></tr>
-        <tr><td><code>raw_thought</code></td><td>TEXT</td><td>Texte intégral de la pensée (thinking block) du modèle, archivé pour traçabilité.</td></tr>
-        <tr><td><code>updated_at</code></td><td>INT</td><td>Timestamp de scellement.</td></tr>
+        <tr><td><code>id</code></td><td>TEXT PK</td><td>Identifiant unique de la ressource ou de l'événement (<code>aec_directive</code>, <code>aec_event</code>).</td></tr>
+        <tr><td><code>name</code></td><td>TEXT NOT NULL</td><td>Nom du fichier, du plan, du workflow N8N ou de l'événement.</td></tr>
+        <tr><td><code>resource_type</code></td><td>TEXT NOT NULL</td><td>Type (<code>codex</code>, <code>plan</code>, <code>media</code>, <code>binary</code>, <code>weburl</code>, <code>n8n_workflow</code>, <code>aec_directive</code>, <code>aec_event</code>).</td></tr>
+        <tr><td><code>mime</code> / <code>status</code></td><td>TEXT</td><td>Type MIME et statut (<code>put_in_context</code>, <code>vectorized_sum_up</code>, <code>indexed</code>, <code>pending_ingestion</code>, etc.).</td></tr>
+        <tr><td><code>summary</code> / <code>storage_path</code></td><td>TEXT</td><td>Résumé Smart Context ou message de directive AEC, et chemin physique dans le Vault/Codex.</td></tr>
+        <tr><td><code>item_type</code></td><td>TEXT DEFAULT 'file'</td><td>Distinction <code>file</code> ou <code>directory</code> pour l'arborescence Codex Multi-Workspace.</td></tr>
+        <tr><td><code>created_at</code> / <code>updated_at</code></td><td>INT NOT NULL</td><td>Horodatages de création et de mise à jour (indexés).</td></tr>
       </tbody>
     </table>
 
-    <h3>Table <code>processed_files</code></h3>
+    <h3>Table <code>echo_settings</code> (Registre KV Unifié de Session)</h3>
     <table>
       <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><code>chat_id</code></td><td>TEXT PK</td><td>Session de rattachement.</td></tr>
-        <tr><td><code>source_id</code></td><td>TEXT PK</td><td>UUID natif (clé composite avec chat_id).</td></tr>
-        <tr><td><code>filename</code></td><td>TEXT</td><td>Nom original du fichier uploadé.</td></tr>
-        <tr><td><code>mime</code></td><td>TEXT</td><td>Type MIME détecté.</td></tr>
-        <tr><td><code>mode</code></td><td>TEXT</td><td>Mode de traitement (<code>direct</code>, <code>vectorized_sum_up</code>, <code>rag_organic</code>).</td></tr>
-        <tr><td><code>message_id</code></td><td>TEXT</td><td>Message dans lequel le fichier a été soumis.</td></tr>
-        <tr><td><code>timestamp</code></td><td>INT</td><td>Timestamp de traitement.</td></tr>
+        <tr><td><code>key</code></td><td>TEXT PK</td><td>Clé de réglage (<code>last_model_id</code>, <code>turn_origin_model</code>, <code>last_framework_version</code>, <code>context_stats</code>, <code>aec_tier_*</code>, <code>model_policy</code>).</td></tr>
+        <tr><td><code>value</code></td><td>TEXT NOT NULL</td><td>Valeur sérialisée (remplace les anciennes tables <code>session_state</code> et <code>context_stats</code>).</td></tr>
+        <tr><td><code>updated_at</code></td><td>INT NOT NULL</td><td>Timestamp de dernière mise à jour.</td></tr>
       </tbody>
     </table>
 
-    <h3>Table <code>call_bridge</code></h3>
-    <table>
-      <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
-      <tbody>
-        <tr><td><code>call_id</code></td><td>TEXT PK</td><td>UUID de l'appel de fonction.</td></tr>
-        <tr><td><code>signature</code></td><td>TEXT</td><td>Signature de la fonction (nom + hash des arguments).</td></tr>
-        <tr><td><code>function_name</code></td><td>TEXT</td><td>Nom de l'outil appelé.</td></tr>
-        <tr><td><code>args_json</code></td><td>TEXT (JSON)</td><td>Arguments sérialisés de l'appel.</td></tr>
-        <tr><td><code>timestamp</code></td><td>INT</td><td>Timestamp de l'appel.</td></tr>
-      </tbody>
-    </table>
-
-    <h3>Table <code>rich_payloads</code></h3>
-    <table>
-      <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
-      <tbody>
-        <tr><td><code>invariant_hash</code></td><td>TEXT PK</td><td>Hash invariant du message porteur.</td></tr>
-        <tr><td><code>rich_parts_json</code></td><td>TEXT (JSON)</td><td>Parts Gemini enrichies (inlineData, fichiers binaires encodés).</td></tr>
-        <tr><td><code>message_id</code></td><td>TEXT</td><td>UUID du message.</td></tr>
-        <tr><td><code>created_at</code></td><td>INT</td><td>Timestamp de création.</td></tr>
-      </tbody>
-    </table>
-
-    <h3>Table <code>plans</code></h3>
-    <p>
-      Table utilisée par le <a href="09a_strategic_planner.html">Planificateur Stratégique</a>
-      pour persister les plans d'action de chaque chat. Gérée par l'outil <code>strategic_planner.py</code>.
-    </p>
-
-    <h3>Table <code>context_stats</code></h3>
-    <table>
-      <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
-      <tbody>
-        <tr><td><code>id</code></td><td>INT PK (=1)</td><td>Ligne unique - singleton.</td></tr>
-        <tr><td><code>data</code></td><td>TEXT (JSON)</td><td>Statistiques de contexte sérialisées (tokens, cache, etc.).</td></tr>
-        <tr><td><code>updated_at</code></td><td>INT</td><td>Timestamp de la dernière mise à jour.</td></tr>
-      </tbody>
-    </table>
-
-    <h3>Table <code>session_state</code></h3>
-    <table>
-      <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
-      <tbody>
-        <tr><td><code>id</code></td><td>INT PK</td><td>Ligne unique - singleton.</td></tr>
-        <tr><td><code>last_model_id</code></td><td>TEXT</td><td>Dernier modèle utilisé dans cette session (pour reprise).</td></tr>
-        <tr><td><code>updated_at</code></td><td>INT</td><td>Timestamp.</td></tr>
-      </tbody>
-    </table>
-
-    <h3>Table <code>cognitive_threads</code></h3>
-    <p>
-      Table de support pour les délégations cognitives récursives
-      (<a href="09d_memory_cognition.html">Conseil d'Experts</a>). Stocke les échanges
-      par sous-session (<code>sub_sid</code>) et rôle (<code>role_id</code>).
-    </p>
+    <h3>Tables Complémentaires (<code>call_bridge</code>, <code>rich_payloads</code>, <code>plans</code>, <code>codex_docs</code>, <code>cognitive_threads</code>)</h3>
+    <ul>
+      <li><strong><code>call_bridge</code> :</strong> Pont entre un <code>call_id</code> d'outil (<code>signature</code>, <code>function_name</code>, <code>args_json</code>) et son résultat au sous-tour suivant.</li>
+      <li><strong><code>rich_payloads</code> :</strong> Stocke les parts enrichies (<code>rich_parts_json</code>) indexées par <code>invariant_hash</code>.</li>
+      <li><strong><code>plans</code> &amp; <code>codex_docs</code> :</strong> Tables de suivi utilisées par le <a href="10_planification_execution.html">Planificateur Stratégique</a> et l'<a href="12_edition_visuelle.html">Éditeur Codex</a>.</li>
+      <li><strong><code>cognitive_threads</code> :</strong> Stocke l'historique des délégations multi-agents (<a href="14_agents_automatisation.html">Conseil Delphi &amp; Sous-Agents</a>) par <code>(sub_sid, step_index)</code>.</li>
+    </ul>
 
     <h2>Collections Qdrant</h2>
 
@@ -283,31 +247,29 @@
       </tbody>
     </table>
 
-    <h2>Dictionnaire des Valves Critiques</h2>
+    <h2>Dictionnaire des Constantes &amp; Valves Critiques (<code>echo_constants.py</code>)</h2>
 
     <p>
-      Les valves sont des paramètres configurables exposés dans l'interface d'administration
-      Open WebUI pour chaque composant (Pipe, Filtres, Outils). Elles permettent d'ajuster
-      le comportement sans redéploiement.
+      Ces constantes et valves gouvernent les seuils d'ingestion, la résilience réseau et les rappels cognitifs au sein de la Stack ECHO.
     </p>
 
     <table>
-      <thead><tr><th>Valve</th><th>Défaut</th><th>Composant</th><th>Impact</th></tr></thead>
+      <thead><tr><th>Constante / Valve</th><th>Défaut</th><th>Composant</th><th>Impact</th></tr></thead>
       <tbody>
-        <tr><td><code>MAX_DIRECT_TEXT_SIZE</code></td><td>256 Ko</td><td>Filtre Inlet</td><td>Seuil de basculement en Moulage (Smart Context).</td></tr>
-        <tr><td><code>ECHO_API_KEY_THRESHOLD</code></td><td>2</td><td>Pipe</td><td>Nombre d'échecs avant failover vers la source d'auth suivante.</td></tr>
-        <tr><td><code>ECHO_API_MAX_RETRIES</code></td><td>5</td><td>Pipe</td><td>Nombre maximum de tentatives par source.</td></tr>
-        <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td>2,0 s</td><td>Pipe</td><td>Délai de base du backoff exponentiel.</td></tr>
-        <tr><td><code>ECHO_RETRY_MULTIPLIER</code></td><td>2,0</td><td>Pipe</td><td>Multiplicateur du backoff.</td></tr>
-        <tr><td><code>ECHO_RETRY_JITTER_MIN/MAX</code></td><td>0,7 / 1,3</td><td>Pipe</td><td>Plage de jitter aléatoire pour éviter les tempêtes de retry.</td></tr>
-        <tr><td><code>PKCE_CALLBACK_TIMEOUT</code></td><td>300 s</td><td>Auth</td><td>Délai maximal pour l'utilisateur pour autoriser dans le navigateur.</td></tr>
-        <tr><td><code>GOOGLE_OAUTH_TOKEN_LIFETIME</code></td><td>3 300 s</td><td>Auth</td><td>Durée proactive de rafraîchissement du token (55 min).</td></tr>
-        <tr><td><code>SCORE_THRESHOLD</code></td><td>0,45</td><td>Mémoire</td><td>Score pondéré minimal pour inclure un résultat de <code>search_meta_artifacts</code>.</td></tr>
-        <tr><td><code>PROBE_TIMEOUT</code></td><td>120 s</td><td>Vault Explorer</td><td>Timeout de l'analyse sémantique <code>semantic_probe</code> (appel LLM).</td></tr>
+        <tr><td><code>MAX_DIRECT_TEXT_INJECT_SIZE</code></td><td>32 Ko</td><td>Ingestion</td><td>Plafond d'injection directe en contexte pour les fichiers texte (au-delà : Smart Context RAG).</td></tr>
+        <tr><td><code>MAX_DIRECT_MMEDIA_INJECT_SIZE</code></td><td>1 Mo</td><td>Ingestion</td><td>Plafond d'injection directe Base64 pour les fichiers multimédias et PDF.</td></tr>
+        <tr><td><code>ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS</code></td><td>131 Ko</td><td>API / Sandbox</td><td>Plafond anti-OOM de sortie textuelle pour <code>api_client</code> et <code>worker_api</code>.</td></tr>
+        <tr><td><code>ECHO_UCTP_CHUNK_SIZE</code></td><td>256 Ko</td><td>UI Events</td><td>Taille de fragmentation des payloads JS transmis via le protocole UCTP.</td></tr>
+        <tr><td><code>ECHO_API_KEY_RETRIES</code></td><td>2</td><td>Client Gemini</td><td>Nombre d'échecs avant basculement vers la source d'authentification suivante.</td></tr>
+        <tr><td><code>ECHO_API_MAX_RETRIES</code></td><td>5</td><td>Client Gemini</td><td>Nombre maximum de tentatives par source.</td></tr>
+        <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td>3,0 s</td><td>Client Gemini</td><td>Délai de base du backoff exponentiel (compatible avec <code>GUNICORN_TIMEOUT=120s</code>).</td></tr>
+        <tr><td><code>ECHO_RETRY_MULTIPLIER</code></td><td>1,5</td><td>Client Gemini</td><td>Multiplicateur du backoff exponentiel.</td></tr>
+        <tr><td><code>ECHO_RETRY_JITTER_MIN/MAX</code></td><td>0,7 / 1,3</td><td>Client Gemini</td><td>Plage de jitter aléatoire pour éviter les tempêtes de retry.</td></tr>
+        <tr><td><code>AEC_REMINDERS</code></td><td>30k / 40k / 88k</td><td>Pipe Engine</td><td>Paliers de tokens déclenchant les rappels cognitifs multi-axes (<code>strategy</code>, <code>alignment</code>, <code>kernel</code>).</td></tr>
+        <tr><td><code>PKCE_CALLBACK_TIMEOUT</code></td><td>300 s</td><td>Auth PKCE</td><td>Délai maximal accordé à l'utilisateur pour valider l'autorisation OAuth2.</td></tr>
+        <tr><td><code>GOOGLE_OAUTH_TOKEN_LIFETIME</code></td><td>3 300 s</td><td>Auth PKCE</td><td>Durée proactive de rafraîchissement du token OAuth2 (55 min).</td></tr>
       </tbody>
     </table>
-
-
 
     <h2>Référence API - Classes Fondamentales</h2>
 
@@ -316,14 +278,13 @@
     <table>
       <thead><tr><th>Méthode</th><th>Signature</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><code>get_message_shadow</code></td><td><code>(message_id, updated_at) → dict | None</code></td><td>Lit l'Ombre du message. Retourne <code>None</code> si absente ou Verrou invalide.</td></tr>
-        <tr><td><code>save_message_shadow</code></td><td><code>(message_id, chat_id, role, parts, updated_at)</code></td><td>Scelle l'Ombre en base. Upsert idempotent. 5 paramètres.</td></tr>
-        <tr><td><code>get_signature_by_id</code></td><td><code>(message_id) → str | None</code></td><td>Lit l'Ancre ThoughtSignature depuis <code>cognitive_signatures</code> par <code>message_id</code>.</td></tr>
-        <tr><td><code>save_signature_by_id</code></td><td><code>(message_id, signature)</code></td><td>Scelle la ThoughtSignature.</td></tr>
-        <tr><td><code>index_suture</code></td><td><code>(cumul, chat_id, inv, parent, message_id)</code></td><td>Met à jour la chaîne Merkle dans <code>suture_index</code>. <code>chat_id</code> est le 2ème argument.</td></tr>
-        <tr><td><code>save_cognitive_data</code></td><td><code>(cumul, sig, thought, tool_io, message_id, model_id)</code></td><td>Journalise les données cognitives du tour (ThoughtSignature, pensées, appels d'outils, modèle).</td></tr>
-        <tr><td><code>get_auth_data</code></td><td><code>(key_name, user_id) → str | None</code></td><td>Lecture clé-valeur depuis <code>auth_data</code> (identity.db).</td></tr>
-        <tr><td><code>save_api_key</code></td><td><code>(key_name, value, user_id)</code></td><td>Écriture clé-valeur dans <code>auth_data</code>. Upsert.</td></tr>
+        <tr><td><code>get_message_shadow</code></td><td><code>(message_id, updated_at) → list | None</code></td><td>Lit l'Ombre du message. Retourne <code>None</code> si absente ou si le Verrou de Version diffère.</td></tr>
+        <tr><td><code>save_message_shadow</code></td><td><code>(message_id, chat_id, role, parts, updated_at)</code></td><td>Scelle l'Ombre en base. Upsert idempotent.</td></tr>
+        <tr><td><code>is_message_embedded</code></td><td><code>(message_id) → bool</code></td><td>Validation O(1) en amont vérifiant le flag <code>is_embedded</code> dans <code>message_shadows</code>.</td></tr>
+        <tr><td><code>get_signature_by_id</code></td><td><code>(message_id) → str | None</code></td><td>Lit la dernière <code>thoughtSignature</code> via <code>ORDER BY updated_at DESC LIMIT 1</code>.</td></tr>
+        <tr><td><code>index_suture</code></td><td><code>(cumul, chat_id, inv, parent, message_id)</code></td><td>Met à jour la chaîne Merkle dans <code>suture_index</code>.</td></tr>
+        <tr><td><code>save_session_setting</code></td><td><code>(key, value, conn=None)</code></td><td>Écrit dans le registre KV unifié <code>echo_settings</code> (supporte l'injection de connexion anti-deadlock).</td></tr>
+        <tr><td><code>get_auth_data</code> / <code>save_api_key</code></td><td><code>(key_name, ...)</code></td><td>Lecture et écriture clé-valeur dans <code>auth_data</code> (<code>identity.db</code>).</td></tr>
       </tbody>
     </table>
 
@@ -332,43 +293,40 @@
     <table>
       <thead><tr><th>Méthode</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><code>call(model, payload, user_id, chat_id)</code></td><td>Appel non-streamant (utilisé pour la distillation). Gère automatiquement le choix du backend (AI Studio / API Antigravity) et le failover.</td></tr>
-        <tr><td><code>call_distillation(prompt, __user__, __metadata__, is_json, max_tokens)</code></td><td>Exécute une tâche de distillation. Route par défaut vers <code>gemini-2.5-flash</code> (API). Gère le nettoyage des thoughts et le parsing JSON.</td></tr>
-        <tr><td><code>generate_embedding(text, task_type, __user__, __metadata__)</code></td><td>Vectorise un texte via le modèle local Microsoft/Harrier-OSS (Embedding Worker). Retourne une liste de 1024 floats.</td></tr>
-        <tr><td><code>get_stealth_headers(url)</code></td><td>Construit les en-têtes HTTP/2 haute fidélité (User-Agent Chrome 123, Sec-Fetch-*) pour le téléchargement Stealth. Paramètre <code>url</code> optionnel.</td></tr>
+        <tr><td><code>call(model, payload, user_id, chat_id)</code></td><td>Appel non-streamant gérant automatiquement le choix du backend (AI Studio / Code Assist) et le Circuit Breaker OAuth2.</td></tr>
+        <tr><td><code>call_distillation(prompt, __user__, __metadata__, is_json, max_tokens)</code></td><td>Exécute une tâche de distillation via <code>MODEL_DISTILLATION</code> (<code>gemini-3.5-flash-lite</code> / <code>gemini-3.1-flash-lite</code>).</td></tr>
+        <tr><td><code>generate_embedding(text, task_type, __user__, __metadata__)</code></td><td>Vectorise un texte en 1024 floats via l'Edge Bridge WebGPU ou le fallback local <code>microsoft/Harrier-OSS-v1-0.6B</code>.</td></tr>
+        <tr><td><code>get_stealth_headers(url)</code></td><td>Construit les en-têtes HTTP/2 haute fidélité (<code>ECHO_STEALTH_USER_AGENT</code> Chrome 123, <code>Sec-Fetch-*</code>).</td></tr>
       </tbody>
     </table>
 
-    
-  <h2>Transport HTTP/2 et Headers Stealth</h2>
+    <h2>Transport HTTP/2 et En-têtes Antigravity</h2>
 
     <p>
       <code>EchoGeminiClient</code> utilise <code>httpx</code> avec l'option <code>http2=True</code>
-      (dépendance <code>h2</code> obligatoire). Pour les requêtes vers l'API Antigravity, les en-têtes
-      de requête reproduisent ceux d'un IDE réel grâce à <code>get_stealth_headers()</code> :
+      (dépendance <code>h2</code> obligatoire). Pour les requêtes vers l'API Code Assist, les en-têtes
+      reproduisent l'identité de la plateforme Linux Docker émulée :
     </p>
 
-    <div class="code-header">En-têtes Stealth - ECHO API Antigravity</div>
-    <pre><code>User-Agent: antigravity/2.1.0 (language_server; os_type=Windows; os_version=10.0.26100; arch=x64)
-x-goog-api-client: antigravity/2.1.0
+    <div class="code-header">En-têtes - ECHO API Code Assist (Antigravity 2.5.5)</div>
+    <pre><code>User-Agent: antigravity/2.5.5 linux/amd64
+x-goog-api-client: antigravity/2.5.5
 Authorization: Bearer {oauth_token}
 Content-Type: application/json</code></pre>
 
-    
-<h2>Réseau et Furtivité</h2>
+    <h2>Réseau et Furtivité</h2>
     <p>
-      Les requêtes web orchestrées par le Cortex s'appuient sur des connexions HTTP/2 strictes (via <code>httpx</code>) couplées à l'injection d'en-têtes de navigation haute fidélité (<code>get_stealth_headers</code>). Cette mécanique simule un navigateur réel et contourne les protections anti-bot de bas niveau lors des investigations agentiques.
+      Les requêtes web orchestrées par le Cortex s'appuient sur des connexions HTTP/2 strictes couplées à l'injection d'en-têtes de navigation haute fidélité (<code>get_stealth_headers</code>), simulant un navigateur réel lors des investigations agentiques.
     </p>
 
-    
-  <div class="transition-text">
+    <div class="transition-text">
       <a href="17_edge_inference.html">&larr; 17. Inférence Distante</a>
       &nbsp;&nbsp;
       <a href="19_credits.html">19. Crédits &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.45 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

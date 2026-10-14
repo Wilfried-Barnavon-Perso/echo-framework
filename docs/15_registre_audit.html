@@ -2,31 +2,16 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
-  <title>ECHO v5 - 15. Registre d'Audit et Domaine de Confidentialité</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Registre d'Audit et Domaine de Confidentialité du Framework ECHO v5.">
+  <title>ECHO v5 - 20. Registre d'Audit et Domaine de Confidentialité</title>
   <link rel="stylesheet" href="style.css">
-  <style>
-    .audit-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 20px;
-      margin-bottom: 30px;
-    }
-    .audit-table th, .audit-table td {
-      border: 1px solid #38bdf8;
-      padding: 12px;
-      text-align: left;
-    }
-    .audit-table th {
-      background-color: #1e293b;
-      color: #cdd9e5;
-    }
-  </style>
 </head>
 <body>
-  <div class="sidebar"></div>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
   <main>
-    <h1>15. Registre d'Audit et Domaine de Confidentialité</h1>
+    <h1>20. Registre d'Audit et Domaine de Confidentialité</h1>
 
     <p>Ce document est destiné aux auditeurs et aux parties prenantes évaluant l'intégrité, la sécurité et la classification des données manipulées par l'architecture ECHO Framework. Il consigne les informations de traçabilité, de rédaction et de validation de la documentation, conformément aux exigences d'audit qualité.</p>
 
@@ -35,14 +20,14 @@
     <h2>Classification des Données</h2>
     <div class="note-box">
       <p><strong>Niveau de Classification : PUBLIC</strong></p>
-      <p>Le Framework ECHO est un projet Open Source intégralement distribué sous licence <strong>Apache 2.0</strong>. La présente documentation technique, ainsi que le code source, ne contiennent aucune donnée personnelle (PII). Il est à noter que le code source embarque publiquement les identifiants OAuth2 du client lourd Google (obtenus par rétro-ingénierie à des fins d'interopérabilité stricte avec le protocole ECHO). À l'exception de ces métadonnées d'API techniques, aucun jeton d'authentification utilisateur, secret industriel ou clé d'API personnelle de production n'est exposé.</p>
+      <p>Le Framework ECHO est un projet Open Source intégralement distribué sous licence <strong>Apache 2.0</strong>. La présente documentation technique, ainsi que le code source, ne contiennent aucune donnée personnelle de production (PII). Le code source embarque les identifiants OAuth2 du client Desktop Google à des fins d'interopérabilité PKCE. À l'exception de ces métadonnées d'API techniques, aucun jeton d'authentification utilisateur, secret industriel ou clé d'API personnelle n'est exposé.</p>
     </div>
 
     <h2>Règles de Transparence</h2>
     <p>Conformément aux standards de développement ouvert :</p>
     <ul>
       <li>Les identifiants et mots de passe mentionnés dans ce document sont générés à titre d'exemple et n'ont aucune validité sur des systèmes en production.</li>
-      <li>Les noms de domaine utilisés (tels que <code>ui.votre-domaine.public</code> ou <code>am.votre-domaine.public</code>) sont des espaces de noms documentaires fictifs.</li>
+      <li>Les noms de domaine utilisés (tels que <code>ui.votre-domaine.public</code>, <code>am.votre-domaine.public</code> ou <code>auth.votre-domaine.public</code>) sont des espaces de noms documentaires fictifs.</li>
       <li>Le code embarqué dans l'architecture locale de l'utilisateur (Vault) demeure dans un périmètre réseau strictement isolé, garantissant l'auto-hébergement souverain.</li>
     </ul>
 
@@ -58,6 +43,18 @@
         </tr>
       </thead>
       <tbody>
+        <tr>
+          <td><strong>Revue et Validation Finale (V5.221.57)</strong></td>
+          <td>Wilfried BARNAVON</td>
+          <td>2026-10-14</td>
+          <td><span class="badge badge-green">Approuvé</span></td>
+        </tr>
+        <tr>
+          <td><strong>Audit d'Alignement Algorithmique, UX &amp; Schémas (V5.221.57)</strong></td>
+          <td>Agent ECHO (ECHO Framework Core)</td>
+          <td>2026-10-14</td>
+          <td><span class="badge badge-green">Approuvé</span></td>
+        </tr>
         <tr>
           <td><strong>Audit d'Alignement Documentaire Strict (V5.209.40)</strong></td>
           <td>Agent ECHO (ECHO Framework Core)</td>
@@ -132,9 +129,9 @@
         </tr>
         <tr>
           <td><strong>Refonte Documentaire Majeure (V5.199.38)</strong></td>
-          <td>Architecte Logiciel (ECHO N8N & Auth)</td>
+          <td>Architecte Logiciel (ECHO N8N &amp; Auth)</td>
           <td>2026-08-19</td>
-          <td><span class="status-badge status-ok">Intègre</span></td>
+          <td><span class="badge badge-green">Intègre</span></td>
         </tr>
         <tr>
           <td><strong>Revue et Validation Finale</strong></td>
@@ -290,11 +287,11 @@
     </table>
 
     <div class="transition-text">
-      <a href="19_credits.html">&larr; Crédits Open Source</a>
+      <a href="19_credits.html">&larr; 19. Crédits Open Source</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.45 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

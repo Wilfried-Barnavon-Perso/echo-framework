@@ -26,39 +26,46 @@
     </p>
 
     <h2>2. La Sandbox (Exécution Sécurisée de Code)</h2>
-<img src="images/codex.png" alt="Codex Sandbox" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
+    <img src="images/codex.png" alt="Codex Sandbox" class="doc-screenshot">
     <p>
       ECHO possède la capacité d'écrire, mais surtout d'<strong>exécuter</strong> du code informatique (Python ou JavaScript) en temps réel.
     </p>
     <p>
-      Si vous lui demandez de trier un fichier Excel de 100 000 lignes ou de résoudre un algorithme complexe, l'IA va générer un script et l'exécuter dans un environnement "bac à sable" ultra-sécurisé. Cela lui permet d'analyser d'immenses quantités de données avec la puissance de l'ordinateur, sans aucun risque pour votre système principal : tout ce qui est exécuté dans la Sandbox est détruit dès que le calcul est terminé.
+      Si vous lui demandez de trier un fichier Excel de 100 000 lignes ou de résoudre un algorithme complexe, l'IA génère un script et l'exécute dans un environnement « bac à sable » isolé. Cela lui permet d'analyser d'importantes quantités de données avec la puissance de l'ordinateur, sans risque pour votre système principal.
     </p>
 
-    <details class="tech-spec" style="cursor:pointer; margin-top: 2rem; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #0f172a;">
-      <summary style="font-weight:bold; color:#60a5fa; font-size:1.1rem;">⚙️ Dossier d'Ingénierie & Spécifications</summary>
-      <div style="margin-top: 1.5rem; padding-left: 1rem; border-left: 2px solid #3b82f6;">
-        
-        <h3 style="color:#93c5fd;">1. Strategic Planner (<code>strategic_planner.py</code>)</h3>
-        <p>L'outil gère la création et le suivi tactique des plans de l'IA.</p>
+    <h2>3. Calendrier et Programmation de Tâches (Open WebUI)</h2>
+    <p>
+      ECHO pilote directement l'agenda et le moteur de planification intégrés à votre interface Open WebUI :
+    </p>
+    <ul>
+      <li><strong>Gestion de votre Calendrier :</strong> Vous pouvez demander à ECHO de vérifier vos disponibilités, de rechercher un rendez-vous, de planifier un nouvel événement (avec titre, lieu, description et horaires) ou d'annuler un créneau devenu obsolète.</li>
+      <li><strong>Programmation de Tâches Récurrentes (CRON Cognitif) :</strong> Vous pouvez ordonner à ECHO de programmer ses propres missions différées ou périodiques (par exemple : <em>« Tous les lundis à 8h, fais une synthèse des nouvelles vulnérabilités critiques et classe-la dans mon dossier Veille »</em>). À chaque échéance, le système crée automatiquement une nouvelle discussion dédiée dans le dossier choisi et exécute la mission sans que vous ayez à intervenir.</li>
+    </ul>
+
+    <details class="tech-spec">
+      <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
+      <div>
+        <h3>1. Strategic Planner (<code>strategic_planner.py</code>)</h3>
         <ul>
-          <li><strong>Création :</strong> <code>create_plan</code> rédige un fichier Markdown dans le Codex (Git) et l'indexe dans SQLite (table <code>PLAN_RECORDS</code>).</li>
-          <li><strong>Mise à jour :</strong> <code>update_plan</code> utilise un prompt de réécriture (<code>SYSTEM_PROMPT_UPDATE</code>) pour modifier l'état d'un plan (en attente <code>[ ]</code>, en cours <code>[/]</code>, terminée <code>[x]</code>, échouée <code>[!]</code>).</li>
-          <li><strong>Proprioception :</strong> Le modèle n'est pas notifié passivement du plan. Il doit interroger la base via <code>query_registry</code> pour lire l'état global, épargnant ainsi le contexte.</li>
+          <li><strong>Création &amp; Persistance Git :</strong> <code>create_plan</code> (propulsé par <code>PLANNER_MODEL_BUILD = MODEL_PRO</code>) génère un plan Markdown structuré dans le Codex Git et l'indexe dans SQLite (tables <code>plans</code> et <code>echo_resources</code> avec statuts <code>proposed</code>, <code>executing</code>, <code>success</code>, <code>partial</code>, <code>failed</code>, <code>abandoned</code>).</li>
+          <li><strong>Suivi Tactique &amp; Analyse :</strong> <code>update_plan</code> (<code>PLANNER_MODEL_UPDATE = MODEL_FLASH</code>) met à jour l'avancement des tâches (<code>[ ]</code>, <code>[/]</code>, <code>[x]</code>, <code>[!]</code>, <code>[-]</code>), complété par <code>analyze_plan</code> pour l'audit de progression.</li>
+          <li><strong>Proprioception :</strong> Le modèle consulte l'état des plans à la demande via <code>query_registry</code> afin de préserver la fenêtre contextuelle.</li>
         </ul>
 
-        <h3 style="color:#93c5fd; margin-top: 2rem;">2. Coding Worker (Sandbox d'Exécution)</h3>
-        <p>Micro-service Docker isolé (<code>echo-coding-worker</code>) hébergeant <code>worker_api.py</code> (Flask, Port 5000).</p>
+        <h3>2. Coding Worker &amp; Code Executor (<code>worker_api.py</code> &amp; <code>code_executor_tool.py</code>)</h3>
+        <p>Micro-service Docker isolé (<code>echo-coding-worker</code>, IP <code>.21</code> sur <code>echo-sandbox</code>, Flask Port 5000) exécutant Python et Node.js.</p>
         <ul>
-          <li><strong>Architecture :</strong> Basé sur <code>python:3.14-slim</code> et <strong>Node 22</strong>. Utilise <code>bwrap</code> pour isoler les exécutions (montage en lecture seule de <code>/echo_libs_sandbox</code>).</li>
-          <li><strong>Isolation OS :</strong> Chaque requête est exécutée dans un <em>address space</em> hermétique. L'exécution se fait strictement depuis un fichier du Codex (Workspace).</li>
-          <li><strong>Dépendances Dynamiques :</strong> Le Worker autorise l'installation à la volée de librairies (via le paramètre <code>dependencies</code>) qui sont stockées dans un volume persistant, évitant de re-télécharger à chaque appel.</li>
-          <li><strong>ECHO Monitor :</strong> Une librairie maison (<code>echo_monitor</code>, disponible en Python et Node.js) est pré-installée. Elle permet au code de générer et d'afficher des interfaces web complètes (HTML/JS) directement dans la fenêtre "Sandbox Monitor" de l'utilisateur via `echo_monitor.display()`.</li>
-          <li><strong>Sorties :</strong> Les flux <code>stdout</code> et <code>stderr</code> sont capturés via <code>contextlib.redirect_stdout/stderr</code>. Tout retour <code>stderr</code> non vide déclenche le statut <code>error</code>.</li>
+          <li><strong>Confinement Bubblewrap (<code>bwrap</code>) &amp; Linting Pré-Exécution :</strong> Chaque script est validé syntaxiquement avant lancement (<code>py_compile</code> pour Python, <code>node -c</code> pour Node.js) puis exécuté depuis l'espace <code>sandbox</code> du Codex dans un namespace isolé avec montages contrôlés (<code>/sandbox</code>, <code>/main</code>, <code>/files</code>, <code>/echo_libs_sandbox</code>, <code>/sandbox-agent-readme.txt</code> et <code>.tmp</code>). La sortie texte est plafonnée par <code>ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS = 131 072</code> octets (131 Ko, protection anti-OOM).</li>
+          <li><strong>Bidi Polling &amp; Multiplexage JSONL UCTP (<code>echo_monitor</code>) :</strong> Double canal asynchrone temps réel permettant au script d'émettre des interfaces HTML/JS multi-fenêtres (<code>window_id</code> via <code>/sandbox/.echo_monitor.jsonl</code> transmis par UCTP) et de recevoir les événements interactifs du navigateur via <code>get_ui_payload()</code> (<code>.echo_ui_payload.json</code> mis à jour atomiquement par <code>os.replace</code>).</li>
+          <li><strong>Supervisor Pattern &amp; JS Heartbeat (Anti-Zombie) :</strong> Un pacemaker JS surveille la fenêtre du Sandbox Monitor. En cas de fermeture par l'utilisateur, d'expiration du Boot Timeout ou d'appel à l'outil <code>kill_sandbox_execution</code>, le superviseur invoque la route distante <code>/kill</code> qui détruit immédiatement l'arbre de processus (PID tracking dans <code>_active_sandboxes</code>).</li>
         </ul>
 
-        <h3 style="color:#93c5fd; margin-top: 2rem;">Code Executor (code_executor_tool.py)</h3>
+        <h3>3. Pilotage du Calendrier &amp; Automatisations Open WebUI (<code>generalist_tools.py</code>)</h3>
+        <p>Les fonctions natives d'Open WebUI sont encapsulées de manière sécurisée par le proxy <code>safe_owui_call</code> (filtrage dynamique de signature via <code>inspect.signature</code> et retour normalisé <code>wrap_tool_output</code>) :</p>
         <ul>
-          <li><strong>code_executor :</strong> Permet au modèle d'exécuter du code (Python ou Node.js) dans une Sandbox isolée. Le modèle délègue désormais la gestion du timeout et gère lui-même les dépendances requises.</li>
+          <li><strong>Calendrier UI :</strong> <code>search_ui_calendar_events</code>, <code>create_ui_calendar_event</code> (titre, description, lieu, dates <code>start</code>/<code>end</code> au format strict ISO 8601) et <code>delete_ui_calendar_event</code>.</li>
+          <li><strong>CRON Cognitif (Automatisations UI) :</strong> <code>create_ui_automation</code> programme des tâches de fond récurrentes ou ponctuelles selon la norme iCalendar <code>RRULE</code> (avec <code>DTSTART</code> obligatoire si <code>COUNT</code> est défini) et résout ou crée automatiquement le dossier cible (<code>target_folder_name</code>, assisté de <code>list_ui_folders</code>). Chaque déclenchement instancie un chat indépendant. Complété par <code>list_ui_automations</code> et <code>delete_ui_automation</code>.</li>
         </ul>
       </div>
     </details>
@@ -66,11 +73,11 @@
     <div class="transition-text">
       <a href="09_arsenal_outils.html">&larr; 9. L'Arsenal des Outils</a>
       &nbsp;&nbsp;
-      <a href="11_recherche_navigation.html">11. Recherche & Navigation &rarr;</a>
+      <a href="11_recherche_navigation.html">11. Recherche &amp; Navigation &rarr;</a>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.45 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

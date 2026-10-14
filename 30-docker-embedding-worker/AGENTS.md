@@ -8,13 +8,13 @@ Ce dossier contient le service d'**Embedding Worker**. C'est un microservice sp�
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `app.py`
-Fichier Python hébergeant le service de vectorisation.
-- **Stratégie de Fallback (Harrier-OSS / GGUF CPU)** : Dans l'architecture ECHO, le travail de vectorisation est prioritairement déporté vers le client via l'Edge Embedding Bridge (WebGPU/WASM). Si le client ne peut pas traiter la charge, ce Worker prend le relais (Fallback). Il utilise un modèle optimisé (ex: `llama.cpp` ou GGUF CPU) pour générer les vecteurs directement sur le serveur.
-- **API Compatible OpenAI** : Le service expose des endpoints HTTP (généralement `/v1/embeddings`) structurés selon le standard de l'API OpenAI, permettant à Open WebUI et aux filtres (comme `conversation_rag_filter.py`) de s'y connecter nativement sans modification de code.
+### `app.py` (v2.4)
+Fichier Python (FastAPI) hébergeant le service de vectorisation et le concentrateur WebSocket Edge.
+- **Hub WebSocket Edge Embedding (`/ws/edge-embed`) & Fallback CPU (`llama.cpp` GGUF)** : Maintient le registre `active_edge_clients` (indexé par `user_id` et `client_id` avec statuts `connecting`, `active`, `incompatible`) et route prioritairement les requêtes de vectorisation vers le navigateur Desktop via des `asyncio.Future` (`pending_edge_requests`). Si aucun client WebGPU actif n'est disponible ou en cas de déconnexion/incompatibilité, bascule instantanément sur l'inférence CPU locale via `llama-cpp-python` (`microsoft/Harrier-OSS-v1-0.6B`, `harrier-oss-v1-0.6b.f16.gguf` dans `stack-echo.yml`, `MAX_LENGTH=4096`) avec **CLS Token Pooling (index 0)** et normalisation L2.
+- **API Compatible OpenAI (`/v1/embeddings` & `/health`)** : Expose des endpoints HTTP compatibles OpenAI (1024 dimensions), sérialise l'inférence CPU par un `asyncio.Lock()`, expose l'état Edge par utilisateur dans `/health`, et limite les logs de healthcheck via `RateLimitHealthCheckFilter` (1/5min).
 
 ### `Dockerfile` & `requirements.txt`
-- Build d'une image Docker contenant les bibliothèques d'inférence ML (`sentence-transformers`, `llama-cpp-python` ou équivalent). Ce conteneur est souvent le plus lourd du Tier 2 en raison des dépendances mathématiques.
+- Build basé sur `python:3.11-slim` compilant `llama-cpp-python` (`CMAKE_BUILD_PARALLEL_LEVEL=2`) sans PyTorch afin de minimiser l'empreinte RAM (plafonnée à 3 Go dans `stack-echo.yml`).
 
 ## 3. Dépendances Logiques
 - Ce Worker est invoqué par les filtres RAG de `11-owui-filters` et par les outils de persistance de `12-owui-tools` (`memory_and_rag_tool.py`).
