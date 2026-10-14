@@ -1,11 +1,11 @@
 <div align="center">
   <img src="docs/logo-echo-full.png" alt="ECHO Framework Logo" width="350">
   
-  # 🧠 ECHO Framework v5.221.57
+  # 🧠 ECHO Framework v5.223.4
   
   **The Sovereign Intelligence Orchestrator**
   
-  [![Version](https://img.shields.io/badge/version-5.221.57-blue.svg)](#)
+  [![Version](https://img.shields.io/badge/version-5.223.4-blue.svg)](#)
   [![Open WebUI](https://img.shields.io/badge/Powered%20by-Open%20WebUI-4CAF50.svg)](#)
   [![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-F9AB00.svg)](#)
   [![License](https://img.shields.io/badge/license-Apache%202.0-purple.svg)](#)
@@ -36,7 +36,7 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
 ┌────────────────────────────────────▼────────────────────────────────────┐
 │                          CORTEX (OPEN WEBUI)                            │
 │   • Pipe Engine : routage cognitif, Verrou de Tour, suture SQLite       │
-│   • SSOT Registry : gouvernance dual-backend (PRO, FLASH, LITE)         │
+│   • SSOT Registry : gouvernance dual-backend (PROMETHEUS, APOLLO, ZEPHYR)         │
 │   • Filtres & AEC : Smart Context, directives XML, drainage atomique    │
 │   • HUD & UI Engine : protocole UCTP (256 Ko), interfaces mobile-first  │
 └──────────────────┬───────────────────────────────────┬──────────────────┘
@@ -48,7 +48,7 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
  │ • Harrier-OSS 0.6B (GGUF F16)     │   │ • Browser Worker (Playwright) │
  │ • Codex Git multi-workspaces      │   │ • N8N Headless & Download Brk │
  │ • Identity Vault (Secrets & MCP)  │   │ • MCP Broker (Proxy sans BDD) │
- │ • Registre KV (echo_settings)     │   │ • Workers Audio (STT & TTS)   │
+ │ • Registre KV (echo_settings)     │   │ • Pont Audio In-Process       │
  └───────────────────────────────────┘   └───────────────────────────────┘
 ```
 
@@ -58,12 +58,12 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
 
 - 🔒 **Souveraineté & Sécurité Périmétrique** : Vos bases vectorielles (Qdrant), votre historique de shadow-messages (SQLite) et vos fichiers (Codex) restent confinés localement sur deux réseaux IPAM isolés (`echo-network` et `echo-sandbox`). L'accès est verrouillé par **ECHO Auth Manager** (IdP natif avec hachage Argon2, MFA/TOTP et flux SSO Forward Auth `/api/verify` intégrant **l'invalidation proactive des sessions** via `/sso-logout`) placé derrière un reverse-proxy WAF **BunkerWeb**.
 - 🧠 **Mémoire Vectorisée O(1) & Edge Bridge** : Fini le gouffre de la fenêtre glissante. ECHO associe une indexation vectorielle sans latence (avec **validation O(1) en amont** via le flag `is_embedded` dans SQLite) à un **Edge Embedding Bridge** exploitant l'accélération matérielle (`onnx-community/harrier-oss-v1-0.6b-ONNX` en `q4f16`, WebGPU / WASM) directement sur le navigateur Desktop, tout en appliquant un **bypass serveur-side automatique sur mobile**. En relais serveur, le worker local exécute **Harrier-OSS-v1-0.6B** (`harrier-oss-v1-0.6b.f16.gguf`) sous `llama.cpp` avec CLS Token Pooling.
-- 🪢 **Suture Sémantique (Bit-perfect), Verrou de Tour & SSOT** : Le Pipe Engine garantit une reprise de session chirurgicale via un Cumulative Hash, un tri chronologique déterministe des `thoughtSignature` et un **Verrou de Tour (`turn_origin_model`)** préservant le cache de préfixes Gemini. Toutes les capacités LLM sont régies par le registre unifié `ECHO_MODELS_REGISTRY` (`MODEL_PRO`, `MODEL_FLASH`, `MODEL_LITE`, `MODEL_DISTILLATION`), doté d'un **Circuit Breaker OAuth2** (Fast-Failover Intra-Retry en HTTP/2), d'un **Drainage Transactionnel Atomique** des directives XML (`<artifact id="AEC_directive">`) et de **Rappels Cognitifs Multi-Axes (`AEC_REMINDERS`)**.
+- 🪢 **Suture Sémantique (Bit-perfect), Verrou de Tour & SSOT** : Le Pipe Engine garantit une reprise de session chirurgicale via un Cumulative Hash, un tri chronologique déterministe des `thoughtSignature` et un **Verrou de Tour (`turn_origin_model`)** préservant le cache de préfixes Gemini. Toutes les capacités LLM sont régies par le registre unifié `ECHO_MODELS_REGISTRY` (`MODEL_PROMETHEUS`, `MODEL_APOLLO`, `MODEL_ZEPHYR`, `MODEL_DISTILLATION`), doté d'un **Circuit Breaker OAuth2** (Fast-Failover Intra-Retry en HTTP/2), d'un **Drainage Transactionnel Atomique** des directives XML (`<artifact id="AEC_directive">`) et de **Rappels Cognitifs Multi-Axes (`AEC_REMINDERS`)**.
 - 🔐 **Identity Vault & Sécurité Applicative** : Gestionnaire de secrets intégré permettant d'enregistrer et de manipuler des accès applicatifs (N8N, serveurs MCP) dans SQLite sans jamais exposer les clés en clair au LLM (injection par macros `__ECHO_SECRET_...` à l'exécution).
 - 🛠️ **Sovereign Toolbox & Workers Dédiés** :
   - **ECHO N8N Orchestrator & Download Broker** : Pilotage direct de workflows d'automatisation avec distinction stricte entre Sandbox éphémère (`Execute Workflow Trigger`, sortie synchrone bornée à 8 Ko anti-OOM) et Déploiement Démon permanent (Webhooks/Crons), conception assistée (`delegate_to_n8n_grapher`), recherche sur le Hub N8N et collecte asynchrone des fichiers produits via le **Download Broker** (`__ECHO_DOWNLOAD_DIR__`).
   - **MCP Broker (Proxy HTTP sans BDD)** : Serveur Model Context Protocol natif agissant comme un **Proxy HTTP complet sans accès à la base de données** (`m5_proxy_mcp.py`, sessions `sse` et `streamable_http` mises en cache en mémoire par couple utilisateur/service), couplé à l'outil universel `echo_mcp_tool.py` qui injecte les identifiants depuis SQLite en amont.
-  - **Workers STT & TTS** : Transcription vocale locale de haute précision (`faster-whisper`) et synthèse vocale multilingue (`Kokoro ONNX INT8` avec détection `Lingua` et G2P hybride) intégrées dans le Tier 2.
+  - **Pont Audio In-Process (STT & TTS)** : Passerelle vocale native intégrée au Cortex (`/echo/v1/audio`) combinant la transcription multimodale haute précision via Gemini `MODEL_ZEPHYR` (sniffing automatique des magic bytes audio WebM, WAV, OGG, FLAC, MP3, MP4/M4A jusqu'à 14 Mo) et la synthèse vocale neuronale en streaming via Microsoft Edge Read-Aloud (`edge-tts`, voix `fr-FR-VivienneMultilingualNeural`, vitesse nominale `1.0`, pitch feutré `-2Hz`).
   - **Coding Worker Sandbox** : Conteneur isolé sous Python 3.14 et Node.js 22 avec confinement `bubblewrap` (`bwrap`), linting pré-exécution, Bidi Polling temps réel, multiplexage JSONL via UCTP (`echo_monitor`) et Supervisor Pattern (JS Heartbeat `/kill`).
   - **Browser Worker** : Navigation web autonome asynchrone propulsée par Playwright (bridée à 9 FPS), dotée d'un contournement WAF/Anti-Bot avancé, d'un Lidar Check anti-Layout Shift et d'un ciblage géométrique de précision (Viseur Rouge).
   - **ECHO Codex, Delphi & Skills** : Éditeur Monaco multi-workspaces (`main` / `sandbox`) avec lecteur PDF WYSIWYG, gestionnaire Git embarqué (`dulwich`), tables rondes multi-agents parallélisées (`consult_council`, `consult_supervised_workers`) et gestionnaire de compétences (`Skill Management`).

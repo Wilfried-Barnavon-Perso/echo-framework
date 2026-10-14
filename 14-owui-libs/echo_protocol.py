@@ -1,15 +1,16 @@
 """
 title: ECHO Protocol Adapter
 author: Wilfried BARNAVON
-version: 1.1
+version: 1.2
 description: Couche de traduction parametres ECHO -> format API Gemini. Deux backends : AI Studio (cle API) et Code Assist v1internal (OAuth2). Fonctions pures -- aucun appel reseau, aucun etat. Point de modification unique pour adapter les requetes CA.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.0: Creation initiale (migration Gemini-CI -> AGY, 2026-05-25).
+# 1.2: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.1: CA_EXCLUDED_GEN_CONF_FIELDS vide -- thinkingConfig doit passer
 # integralement vers CA (includeThoughts=True requis pour visibilite
 # des pensees dans pipe_engine). Confirme OK par diag D/D-bis/D-ter.
+# 1.0: Creation initiale (migration Gemini-CI -> AGY, 2026-05-25).
 
 from echo_constants import get_generation_config
 
@@ -23,7 +24,7 @@ from echo_constants import get_generation_config
 #   pipe_engine.py construit : {includeThoughts: True, thinkingLevel: THINKING_LEVEL_*}.
 #   includeThoughts=True est requis pour que CA retourne des parts "thought=True" lisibles.
 #   Sans ce champ, CA retourne uniquement le thoughtSignature opaque -- pensees invisibles.
-#   thinkingLevel depuis constantes ECHO (THINKING_LEVEL_PRO/FLASH/LITE) -- redondant
+#   thinkingLevel depuis constantes ECHO (THINKING_LEVEL_PROMETHEUS/APOLLO/ZEPHYR) -- redondant
 #   avec le nom du modele (*-agent=HIGH) mais inoffensif (diag D/D-bis/D-ter : 200).
 #
 # response_mime_type : PAS exclu.
@@ -38,7 +39,7 @@ def get_ca_model_id(echo_model: str) -> str:
     """
     from echo_constants import ECHO_MODELS_REGISTRY
     config = ECHO_MODELS_REGISTRY.get(echo_model)
-    return config["ca_model_id"] if config else ECHO_MODELS_REGISTRY.get("MODEL_LITE", {}).get("ca_model_id", "gemini-3.1-flash-lite")
+    return config["ca_model_id"] if config else ECHO_MODELS_REGISTRY.get("MODEL_ZEPHYR", {}).get("ca_model_id", "gemini-3.1-flash-lite")
 
 
 def build_ca_generation_config(raw_gen_conf: dict) -> dict:
@@ -53,7 +54,7 @@ def build_ca_generation_config(raw_gen_conf: dict) -> dict:
     thinkingConfig : passe integralement.
       includeThoughts=True est pose par pipe_engine pour rendre les pensees visibles
       dans le stream (<think>...</think> gere par pipe_engine.process()).
-      thinkingLevel herite des constantes ECHO (THINKING_LEVEL_PRO/FLASH/LITE).
+      thinkingLevel herite des constantes ECHO (THINKING_LEVEL_PROMETHEUS/APOLLO/ZEPHYR).
 
     topP, temperature, response_mime_type : conserves.
     response_mime_type accepte sur CA (diag section 11, 200 sur tous modeles).
@@ -69,6 +70,6 @@ def build_ca_generation_config(raw_gen_conf: dict) -> dict:
 
     # 2. Cap universel maxOutputTokens (meme valeur AI Studio et CA -- decision D1)
     if "maxOutputTokens" in gen:
-        gen["maxOutputTokens"] = min(gen["maxOutputTokens"], get_generation_config("MODEL_FLASH").get("maxOutputTokens", 65535))
+        gen["maxOutputTokens"] = min(gen["maxOutputTokens"], get_generation_config("MODEL_APOLLO").get("maxOutputTokens", 65535))
 
     return gen

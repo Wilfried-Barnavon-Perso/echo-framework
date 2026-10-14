@@ -1,22 +1,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.39
+version: 5.40
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.40: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 5.38: Mise à jour de la docstring de forge_skill pour recommander l'usage de search_skill en amont.
 # 5.37: Ajout des outils read_skill et search_skill pour la consultation et la découverte sémantique.
 # 5.36: Fix: Initialisation manquante de EchoEvents dans delete_user_skill.
 # 5.35: Restitution explicite de rounds_remaining pour les agents supervisés.
-# 5.34: Ajout d'une mécanique simplifiée d'extension dynamique du budget d'outils via injection in-situ.
-# 5.32: Protection de delete_user_skill contre l'invocation headless (vérification de __event_call__).
-# 5.31: Ajout du paramètre timeout_seconds (5 min par défaut) à delete_user_skill et modale auto-annulable.
-# 5.27: Ajout de delete_user_skill avec modale de confirmation.
-# 5.25: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 5.24: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
-# 5.23: Précision "multi-agentique" dans la docstring de consult_supervised_workers.
 
 import sys
 import orjson as json
@@ -187,11 +181,11 @@ class Tools:
         await events.status("🔍 Recherche sémantique de l'expertise requise...")
 
         res, _, _ = await EchoGeminiClient.call_cascade(
-            target_model_key="MODEL_FLASH",
+            target_model_key="MODEL_APOLLO",
             payload={
                 "contents": [{"role": "user", "parts": [{"text": f"Besoin : {need_description}"}]}],
                 "systemInstruction": {"parts": [{"text": system_prompt}]},
-                "generationConfig": {**get_generation_config("MODEL_FLASH", override_thinking="medium"), "responseMimeType": "application/json"}
+                "generationConfig": {**get_generation_config("MODEL_APOLLO", override_thinking="medium"), "responseMimeType": "application/json"}
             },
             user_id=user_id,
             metadata=(__metadata__ or {}),
@@ -325,8 +319,8 @@ class Tools:
         question: str,
         participants: List[str],
         council_id: str,
-        target_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_PRO",
-        synthesis_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_PRO",
+        target_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_PROMETHEUS",
+        synthesis_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_PROMETHEUS",
         rounds: Optional[int] = None,
         close_on_finish: bool = False,
         __user__: Optional[dict] = None,
@@ -575,8 +569,8 @@ class Tools:
         self,
         objective: str,
         workers: dict,
-        target_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_FLASH",
-        critic_model: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_PRO",
+        target_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_APOLLO",
+        critic_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_PROMETHEUS",
         max_correction_rounds: Optional[int] = None,
         close_on_finish: bool = False,
         __user__: Optional[dict] = None,

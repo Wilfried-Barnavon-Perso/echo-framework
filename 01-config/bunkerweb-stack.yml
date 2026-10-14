@@ -1,21 +1,12 @@
 # ==============================================================================
 # ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
-# VERSION : 1.34
+# VERSION : 1.35
 # ==============================================================================
+#                  1.35: Alignement IPAM suite au passage en pont audio in-process (retrait .31/.32).
 #                  1.34: Ajout de MULTISITE="yes" pour bw-scheduler (évite www.example.com).
 #                  1.33: Fix conflit Nginx: migration des variables globales vers x-bw-config.
 #                  1.32: Surcharge de max_allowed_packet à 128M pour bw-db.
 #                  1.31: Élargissement de l'API_WHITELIST_IP à 10.0.0.0/8.
-#                  1.30: IPAM dynamique répercuté sur API_WHITELIST_IP (évite blocage bw-scheduler).
-#                  1.29: Résolution du conflit IP (.10) avec watchtower, alignement IPAM Domain-Driven.
-#                  1.28: IPAM dynamique (ECHO_NET_BW_UNIVERSE_PREFIX).
-#                  1.27: Mise à jour de BunkerWeb 1.6.14 -> 1.6.15
-#                  1.26: GUNICORN_TIMEOUT 60 → 120s : évite le SIGKILL des workers
-#                        uvicorn en cours de retry backoff SSE (asyncio.sleep).
-#                        60s déclenchait un crash silencieux lors de surcharges API.
-#                  1.25: Renommage du service echo-auth en echo-auth-manager.
-#                  1.24: Bump MariaDB 10.11 -> 11.4 (LTS, EOL 2029)
-#                  1.23: Ajout healthcheck bw-db + depends_on ordonné
 # ==============================================================================
 # Architecture Robuste (MariaDB Backend, Shared Config via Anchors)
 # ==============================================================================
@@ -38,8 +29,6 @@
 #    - download-broker  : .25  (Dossier 25-)
 #    - n8n-worker       : .26  (Dossier 26-)
 #    - embedding        : .30  (Dossier 30-)
-#    - tts-worker       : .31  (Dossier 31-)
-#    - stt-worker       : .32  (Dossier 32-)
 # ==============================================================================
 
 # --- BLOC DE CONFIGURATION PARTAGÉ (YAML ANCHOR) ---

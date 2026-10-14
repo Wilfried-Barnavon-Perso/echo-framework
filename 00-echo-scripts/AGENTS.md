@@ -19,12 +19,12 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 ### `config-owui.sh`
 **Rôle** : Configuration post-déploiement automatisée de l'interface Open WebUI via son API REST locale.
 - **`refresh_token()`** : Récupère le jeton JWT d'administration.
-- **`api_upsert()`** : Upsert idempotent des modèles (ex: configuration de Harrier-OSS, Flash, Lite).
+- **`api_upsert()`** : Upsert idempotent des modèles (ex: configuration de Harrier-OSS, Apollo, Zephyr).
 - **`toggle_state()`** : Active ou désactive des réglages spécifiques dans l'interface OWUI.
 
 ### `sync-echo.sh`
 **Rôle** : Pont de distribution déclaratif (v4.11) entre le dépôt source et `/opt/ECHO`.
-- **`sync_resource()` & Boucle Déclarative** : Synchronise dynamiquement les répertoires (`00-*` à `32-*`), supprime les fichiers fantômes obsolètes, applique un nettoyage conditionnel `sed` des caractères CRLF/BOM (préservant l'horodatage `mtime` et le cache Docker BuildKit), et affiche un encart de versioning Git (Avant/Après).
+- **`sync_resource()` & Boucle Déclarative** : Synchronise dynamiquement les répertoires (`00-*` à `30-*`, `_assets`, `docker-python-base`), supprime les fichiers fantômes obsolètes, applique un nettoyage conditionnel `sed` des caractères CRLF/BOM (préservant l'horodatage `mtime` et le cache Docker BuildKit), et affiche un encart de versioning Git (Avant/Après).
 
 ### Sécurité Périmétrique (`enable-bunkerweb.sh` & `disable-bunkerweb.sh`)
 **Rôle** : Bascule de l'infrastructure réseau derrière le WAF BunkerWeb (v4.2).

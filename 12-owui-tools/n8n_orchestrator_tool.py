@@ -1,8 +1,10 @@
 """
 title: ECHO N8N Orchestrator
 author: ECHO
-version: 1.17
+version: 1.18
 description: Outil agentique de cycle de vie et d'exécution N8N (Phase 2 & 3). Refactorisation institutionnelle et N8N Grapher.
+--- CHANGELOG 1.18 ---
+- Nomenclature : Alignement de la délégation N8N Grapher sur MODEL_PROMETHEUS.
 --- CHANGELOG 1.17 ---
 - Documentation : Ajout des directives d'usage de la macro __ECHO_DOWNLOAD_DIR__ et obligation de validation One-Shot avant déploiement.
 --- CHANGELOG 1.16 ---
@@ -691,7 +693,7 @@ class Tools:
             result = await delegate.delegate_to_agent(
                 task=instructions,
                 system_prompt=SYS_ORCHESTRATOR_N8N_GRAPHER,
-                target_model_key="MODEL_PRO",
+                target_model_key="MODEL_PROMETHEUS",
                 allowed_tools=allowed,
                 __user__=__user__,
                 __chat_id__=chat_id,

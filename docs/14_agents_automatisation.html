@@ -47,7 +47,7 @@
       <div>
         <h3>1. Orchestration Multi-Agents &amp; Skills (<code>agent_orchestration_tool.py</code> &amp; <code>agent_engine_tool.py</code>)</h3>
         <ul>
-          <li><strong>Table Ronde Delphi &amp; Supervision :</strong> <code>consult_council</code> (N experts parallélisés avec dialectique structurée Analyse/Dialectique/Réponse et synthèse par défaut sur <code>MODEL_PRO</code>) et <code>consult_supervised_workers</code> (boucle critique/correction récursive restituant les budgets de tours restants).</li>
+          <li><strong>Table Ronde Delphi &amp; Supervision :</strong> <code>consult_council</code> (N experts parallélisés avec dialectique structurée Analyse/Dialectique/Réponse et synthèse par défaut sur <code>MODEL_PROMETHEUS</code>) et <code>consult_supervised_workers</code> (boucle critique/correction récursive restituant les budgets de tours restants).</li>
           <li><strong>Skill Management :</strong> Découverte sémantique et lecture de compétences via <code>search_skill</code> et <code>read_skill</code> avant création par <code>forge_skill</code> (avec modale de confirmation interactive). La suppression <code>delete_user_skill</code> est bloquée en mode Headless grâce à l'inspection de <code>ECHO_SUBAGENT_CONTEXT</code> (qui propage <code>sub_sid</code>, <code>is_subagent</code> et <code>sub_tools_names</code>).</li>
           <li><strong>Agent Engine :</strong> <code>delegate_to_agent</code>, <code>list_agent_sessions</code> et <code>close_agent_session</code> avec garde anti-récursion (<code>DELEGATE_AGENT_BLACKLIST</code>).</li>
         </ul>
@@ -80,7 +80,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.223.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

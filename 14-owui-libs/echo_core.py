@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 1.8
+version: 1.9
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.9: Renommage souverain des modèles cognitifs (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS) et politique AUTO_PROM.
 # 1.8: Correction d'un bug majeur (dict copy sur scalaires) dans unbox_tool_output et extraction de payload.
 # 1.7: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations).
 # 1.6: Assignation de resource_type='aec_directive' pour les avertissements outils et purge FIFO étendue.
 # 1.5: Implémentation du FIFO destructif pour purger les aec_event de la base SQLite sans altérer les autres ressources.
-# 1.4: Protection de la QFIFO dans wrap_tool_output contre les sous-agents (is_subagent).
 import re
 import time
 from datetime import datetime
@@ -157,7 +157,6 @@ def smart_truncate_history(history: list, start_index: int = 0) -> int:
         return removed_size
         
     is_call = any(isinstance(p, dict) and "functionCall" in p for p in parts)
-    is_response = any(isinstance(p, dict) and "functionResponse" in p for p in parts)
     
     history.pop(start_index)
     
@@ -286,12 +285,12 @@ def resolve_model_policy(metadata: dict, user_id: str = None) -> tuple:
         selection = "AUTO"
 
     if selection == "AUTO":
-        return ("auto", "MODEL_FLASH")
-    elif selection == "AUTO_PRO":
-        return ("auto_pro", "MODEL_PRO")
+        return ("auto", "MODEL_APOLLO")
+    elif selection == "AUTO_PROM":
+        return ("auto_pro", "MODEL_PROMETHEUS")
     elif selection in ECHO_MODELS_REGISTRY:
         return ("fixed", selection)
-    return ("auto", "MODEL_FLASH")
+    return ("auto", "MODEL_APOLLO")
 
 def clamp_model(requested: str, metadata: dict, user_id: str = None) -> str:
     """

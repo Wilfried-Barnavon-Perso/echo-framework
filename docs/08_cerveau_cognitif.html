@@ -27,7 +27,7 @@
 
     <h2>2. L'Orchestration des Tâches</h2>
     <p>
-      Lorsqu'ECHO reçoit votre message, il n'essaie pas d'y répondre d'un seul coup. Il va d'abord évaluer la complexité de votre demande. S'il s'agit d'une simple discussion, il répondra rapidement. S'il s'agit d'une tâche complexe (ex: "Analyse ce projet et propose-moi une nouvelle architecture"), il va d'abord l'escalader à un niveau de réflexion supérieur. Il va ensuite s'armer des outils adéquats (recherche web, lecture de fichiers, exécution de code) et mener son enquête avant de revenir vers vous avec une réponse élaborée. De plus, ECHO possède la capacité unique de sélectionner en toute autonomie son niveau de cognition (LITE, FLASH, ou PRO) en évaluant lui-même la difficulté intrinsèque de la tâche, optimisant ainsi ses ressources et son temps de réponse.
+      Lorsqu'ECHO reçoit votre message, il n'essaie pas d'y répondre d'un seul coup. Il va d'abord évaluer la complexité de votre demande. S'il s'agit d'une simple discussion, il répondra rapidement. S'il s'agit d'une tâche complexe (ex: "Analyse ce projet et propose-moi une nouvelle architecture"), il va d'abord l'escalader à un niveau de réflexion supérieur. Il va ensuite s'armer des outils adéquats (recherche web, lecture de fichiers, exécution de code) et mener son enquête avant de revenir vers vous avec une réponse élaborée. De plus, ECHO possède la capacité unique de sélectionner en toute autonomie son niveau de cognition (ZEPHYR, APOLLO, ou PROMETHEUS) en évaluant lui-même la difficulté intrinsèque de la tâche, optimisant ainsi ses ressources et son temps de réponse.
     </p>
 
     <h2>3. Identité et Raisonnement</h2>
@@ -52,17 +52,17 @@
         <h3>2. Le Pipe Engine (<code>pipe_engine.py</code>)</h3>
         <p>Le Cortex principal gouverne la Suture Bit-Perfect et le routage cognitif :</p>
         <ul>
-          <li><strong>Registre Cognitif &amp; Élasticité :</strong> Interroge <code>ECHO_MODELS_REGISTRY</code> (<code>MODEL_LITE</code> élevé en <code>thinkingLevel="medium"</code>, <code>MODEL_FLASH</code> et <code>MODEL_PRO</code> en <code>high</code>). Interdit l'inertie cognitive en LITE et FLASH via <code>new_cognitive_level</code>, tout en excluant du menu d'escalade les modèles ayant échoué durant le tour courant (<code>failed_models_this_turn</code>).</li>
+          <li><strong>Registre Cognitif &amp; Élasticité :</strong> Interroge <code>ECHO_MODELS_REGISTRY</code> (<code>MODEL_ZEPHYR</code> élevé en <code>thinkingLevel="medium"</code>, <code>MODEL_APOLLO</code> et <code>MODEL_PROMETHEUS</code> en <code>high</code>). Interdit l'inertie cognitive en ZEPHYR et APOLLO via <code>new_cognitive_level</code>, tout en excluant du menu d'escalade les modèles ayant échoué durant le tour courant (<code>failed_models_this_turn</code>).</li>
           <li><strong>Verrou de Tour (<code>turn_origin_model</code>) &amp; Préservation du Cache de Préfixes :</strong> Scelle l'origine cognitive du tour dans <code>echo_settings</code> pour les continuations d'outils et cascades. <code>_mutate_context_identity()</code> patche chirurgicalement la seule dernière occurrence de <code>&lt;artifact id="AEC_modele"&gt;</code> (parcours inversé) afin de ne pas invalider le Context Caching Gemini sur l'historique.</li>
-          <li><strong>Drainage Transactionnel Atomique &amp; Rappels Multi-Axes :</strong> <code>EchoAEC.drain_pending_directives()</code> extrait et purge en une seule transaction SQLite les <code>aec_directive</code> et <code>aec_event</code> avant scellement dans le Shadow. <code>AEC_REMINDERS</code> injecte des rappels d'alignement par paliers de <code>promptTokenCount</code> (<code>kernel</code> 88k, <code>alignment</code> 40k, <code>strategy</code> 30k), et l'Auto-Continue relance automatiquement la génération sur <code>MAX_TOKENS</code>.</li>
-          <li><strong>Fast-Track Système :</strong> Intercepte <code>title_generation</code>, <code>tags_generation</code> et <code>follow_up_generation</code> vers <code>MODEL_LITE</code> en <code>stateless_bypass</code> (exclusion du prompt système, <code>responseMimeType="application/json"</code>, <code>thinkingLevel="low"</code>, <code>maxOutputTokens=200</code> et filtrage des parts <code>thought</code>).</li>
+          <li><strong>Drainage Transactionnel Atomique &amp; Rappels Multi-Axes :</strong> <code>EchoAEC.drain_pending_directives()</code> extrait et purge en une seule transaction SQLite les <code>aec_directive</code> et <code>aec_event</code> avant scellement dans le Shadow. <code>AEC_REMINDERS</code> injecte des rappels cognitifs multi-axes déclenchés sur double seuil (jetons <code>promptTokenCount</code> ou nombre d'appels d'outils : <code>context_hygiene</code> 120k / 40 outils, <code>kernel</code> 88k / 30, <code>factuality</code> 55k / 25, <code>alignment</code> 34k / 15, <code>strategy</code> 34k / 15, <code>efficiency</code> 22k / 9), et l'Auto-Continue relance automatiquement la génération sur <code>MAX_TOKENS</code>.</li>
+          <li><strong>Fast-Track Système :</strong> Intercepte <code>title_generation</code>, <code>tags_generation</code> et <code>follow_up_generation</code> vers <code>MODEL_ZEPHYR</code> en <code>stateless_bypass</code> (exclusion du prompt système, <code>responseMimeType="application/json"</code>, <code>thinkingLevel="low"</code>, <code>maxOutputTokens=8192</code> et filtrage des parts <code>thought</code>).</li>
         </ul>
 
         <h3>3. Le Kernel Statique (<code>01-config/system-prompt.md</code> &amp; <code>echo_prompts.py</code>)</h3>
         <p>Les méta-principes et protocoles fondamentaux gouvernent l'agent principal et le <code>ECHO_FOUNDATION_KERNEL</code> des sous-agents :</p>
         <ul>
-          <li><strong>PCIR (Principe de Cognition Interne et Réflexion) :</strong> Réflexion interne critique et planifiée obligatoire avant toute réponse ou appel d'outil (<code>thoughtSignature</code> rattachée au premier <code>functionCall</code>).</li>
-          <li><strong>PGCU (Gestion du Contexte Unifié) &amp; PTD (Triage Dynamique) :</strong> Hiérarchie d'attention stricte (Kernel &gt; AEC &gt; Mémoires &gt; Requêtes &gt; Outils) et répartition des rôles LITE / FLASH / PRO.</li>
+          <li><strong>PARE (Principe d'Agentivité et de Raisonnement Efficients) :</strong> Impose le Rasoir d'Ockham (exécution directe des tâches triviales), la formulation d'un plan formel sur tâche complexe, et un ordre strict de délégation (1. Sous-Agents dès que l'action nécessite potentiellement plus de 3 outils successifs, 2. Outils natifs, 3. Code via Sous-Agent spécialisé), avec arrêt obligatoire après 3 échecs consécutifs. Les signatures cognitives (<code>thoughtSignature</code>) sont rattachées exclusivement au premier <code>functionCall</code>.</li>
+          <li><strong>PGCU (Gestion du Contexte Unifié) &amp; PTD (Triage Dynamique) :</strong> Hiérarchie d'attention stricte (Kernel &gt; AEC &gt; Mémoires &gt; Requêtes &gt; Outils) et répartition des rôles ZEPHYR / APOLLO / PROMETHEUS.</li>
           <li><strong>PRAF (Rigueur Analytique et Factuelle) :</strong> Interdiction de toute hypothèse non vérifiée sur le réel ; recherche web obligatoire avec indice de confiance justifié.</li>
           <li><strong>PAS, PACP, PRAC &amp; MPSI :</strong> Adressage impersonnel à haut rapport signal/bruit pour les sous-agents (PAS), assimilation itérative des préférences et apprentissages par occurrences 1-2-3 (PACP/PRAC), et immunité du Kernel contre toute altération en session (MPSI).</li>
         </ul>
@@ -86,7 +86,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.223.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

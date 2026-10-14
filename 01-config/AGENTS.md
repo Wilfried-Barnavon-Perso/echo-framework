@@ -10,23 +10,23 @@ Ce dossier est le **Centre Névralgique Statique** de l'architecture. Il contien
 
 ### `system-prompt.md` (Le Kernel Statique)
 **Rôle** : C'est le cerveau primordial de l'agent.
-- **Sémantique** : Il définit le persona, les règles indépassables et les 4 principes cardinaux du système (PCIR pour la réflexion interne, PGCU pour la gestion hiérarchique du contexte, PRAF pour la rigueur factuelle). 
+- **Sémantique** : Il définit le persona, les 4 méta-principes indépassables (`MPDI`, `MPAH`, `MPSI`, `MPNR`), les 5 principes opérationnels du système (`PGCU` pour la gestion hiérarchique du contexte, `PARE` pour l'agentivité et le raisonnement efficients, `PRAF` pour la rigueur analytique et factuelle, `PACP` pour l'alignement préférentiel, `PRAC` pour l'amélioration continue) et les protocoles (`PAS`, `PTD` sur `MODEL_ZEPHYR`, `MODEL_APOLLO`, `MODEL_PROMETHEUS`).
 - **Injection** : Il est injecté au démarrage dans l'API Open WebUI pour structurer chaque interaction LLM.
 
 ### `stack-echo.yml`
-**Rôle** : Le manifeste d'orchestration Docker Compose principal (v9.77).
+**Rôle** : Le manifeste d'orchestration Docker Compose principal (v9.78).
 - **Sémantique** : Définit la topologie du cluster sur 4 Tiers séquentiels (Fondations > Workers > OWUI > Admin).
-- **Domain-Driven IPAM & Persistance** : Opère sur deux sous-réseaux isolés (`echo-network` via `${ECHO_NET_MAIN_PREFIX}` et `echo-sandbox` via `${ECHO_NET_SANDBOX_PREFIX}`) avec adressage IPv4 statique (`.100-.103` pour les briques Core et `.20-.32` calqués sur les numéros des dossiers Workers). Monte les volumes nommés (`echo-qdrant-data`, `echo-n8n-data`, `echo_libs_sandbox`, etc.) ainsi que `logging.json` (horodatage ISO 8601) sur l'ensemble des workers Python.
+- **Domain-Driven IPAM & Persistance** : Opère sur deux sous-réseaux isolés (`echo-network` via `${ECHO_NET_MAIN_PREFIX}` et `echo-sandbox` via `${ECHO_NET_SANDBOX_PREFIX}`) avec adressage IPv4 statique (`.100-.103` pour les briques Core et `.20-.30` calqués sur les numéros des dossiers Workers, après suppression des anciens conteneurs `.31`/`.32` au profit du pont audio in-process `edge-tts` dans `echo-open-webui`). Monte les volumes nommés (`echo-qdrant-data`, `echo-n8n-data`, `echo_libs_sandbox`, etc.) ainsi que `logging.json` (horodatage ISO 8601) sur l'ensemble des workers Python.
 - **Intégration BunkerWeb & Résilience SPA** : Configure sur `echo-open-webui` le Forward Auth (`/api/verify`), la résolution DNS dynamique Nginx (`set $$upstream`), le Smart Proxy Mock sur `/api/version`, l'Auto-Heal SPA par `sub_filter` sur `/auth`, le bounce `/sso-logout` (`Clear-Site-Data: "cache"`), et `USE_MODSECURITY=no` (reposant sur `BAD_BEHAVIOR` pour les codes `405 444` et un Rate Limit `300r/s` burst `1000`).
 - **Règles d'Exécution** : Gère les `healthcheck` stricts pour s'assurer que les fondations (Qdrant `v1.19.1`, SearXNG) soient actives avant de lancer les Workers IA et l'ECHO N8N Orchestrator.
 
 ### `bunkerweb-stack.yml`
-**Rôle** : L'enveloppe de sécurité périmétrique (WAF BunkerWeb v1.6.15, manifeste v1.34).
+**Rôle** : L'enveloppe de sécurité périmétrique (WAF BunkerWeb v1.6.15, manifeste v1.35).
 - **Sémantique** : Ce manifeste secondaire est activé par `enable-bunkerweb.sh` pour proxyfier les requêtes vers Open WebUI (`ui.`), l'Admin Manager (`am.`) et l'IdP `echo-auth-manager` (`auth.`, IP `.24`), adossé à MariaDB `11.4` (`--max-allowed-packet=128M`). Intègre dans l'ancre partagée (`x-bw-config`) les directives critiques `MULTISITE: "yes"`, `AUTO_LETS_ENCRYPT`, `GUNICORN_TIMEOUT: "120"` et l'exclusion `www.example.com_AUTO_LETS_ENCRYPT: "no"`, qui ne doivent **jamais** être répétées sous forme de labels sur des conteneurs dynamiques pour éviter l'effacement par Autoconf.
 
 ### `webui-settings.json` & `model-config.json`
 **Rôle** : Fichiers d'amorçage (Seed) pour l'interface de chat.
-- **Sémantique** : Ils définissent les permissions par défaut, l'activation des outils systémiques, et la taxonomie des modèles (Flash, Pro, Lite) avant même l'initialisation de la base de données SQLite de l'UI.
+- **Sémantique** : Ils définissent les permissions par défaut, l'activation des outils systémiques, la taxonomie cognitive (`MODEL_ZEPHYR`, `MODEL_APOLLO`, `MODEL_PROMETHEUS`) et le routage vers le pont audio in-process (`http://127.0.0.1:8080/echo/v1` : STT sur `MODEL_ZEPHYR`, TTS `edge-tts` sur la voix `fr-FR-VivienneMultilingualNeural` avec `speed: 1.0`, `pitch: -2Hz`) avant même l'initialisation de la base de données SQLite de l'UI.
 
 ### `searxng-settings.yml`
 **Rôle** : Configuration du moteur de méta-recherche souverain.

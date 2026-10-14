@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.74
+version: 5.82
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.74: Élévation de MODEL_LITE en thinkingLevel medium pour garantir le discernement initial et le traitement des AEC.
-# 5.73: Ajout du modèle Claude Opus 5.5 high (ca_model_id: claude-opus-5-5-high
-# 5.72: Ajout du modèle Gemini 3.1 Pro (ca_model_id: gemini-3.1-pro
-# 5.69: Factorisation du Stealth User-Agent.
-# 5.68: Ajout des constantes ECHO_CODEX_EDIT_TIMEOUT et ECHO_CODEX_MAX_AI_PASSES (UCTP).
+# 5.82: Définition de ECHO_AUDIO_DEFAULT_TTS_PITCH (-2Hz) et vitesse nominale 1.0 (100%).
+# 5.81: Ajustement de ECHO_AUDIO_DEFAULT_TTS_SPEED à 1.06 (106%) pour la synthèse vocale.
+# 5.80: Ajustement de ECHO_AUDIO_DEFAULT_TTS_SPEED à 1.1 (110%) pour la synthèse vocale.
+# 5.79: Définition de ECHO_AUDIO_DEFAULT_TTS_SPEED (1.25 / 125%) pour la synthèse Edge TTS.
+# 5.78: Définition des constantes du pont audio in-process (STT Gemini, TTS Edge Vivienne).
 
 import os
 import contextvars
@@ -201,22 +201,40 @@ ECHO_RETRY_JITTER_MAX    = 1.3
 # ==============================================================================
 AEC_REMINDERS = [
     {
+        "id": "context_hygiene",
+        "token_threshold": 120000,
+        "tool_calls_threshold": 40,
+        "message": "Rappel : Charge contextuelle élevée. Le Modèle DOIT recentrer son attention sur le vecteur thématique principal et consolider le Méta-Artéfact Résumé. Appliquer le PGCU."
+    },
+    {
         "id": "kernel",
         "token_threshold": 88000,
-        "tool_calls_threshold": 50,
+        "tool_calls_threshold": 30,
         "message": "Rappel : L'alignement sur le Kernel et la rigueur d'analyse sont FONDAMENTAUX."
     },
     {
+        "id": "factuality",
+        "token_threshold": 55000,
+        "tool_calls_threshold": 25,
+        "message": "Rappel : Toute hypothèse non vérifiée est présumée incertaine. Le Modèle DOIT sourcer rigoureusement et vérifier via recherche Web ou inspection de code si un doute subsiste. Appliquer le PRAF."
+    },
+    {
         "id": "alignment",
-        "token_threshold": 40000,
-        "tool_calls_threshold": 20,
-        "message": "Rappel : Le Modèle DOIT s'assurer de maintenir et respecter scrupuleusement le Profil d'Alignement et les préférences de l'Utilisateur. Applique PACP."
+        "token_threshold": 34000,
+        "tool_calls_threshold": 15,
+        "message": "Rappel : Le Modèle DOIT s'assurer de maintenir et respecter scrupuleusement le Profil d'Alignement et les préférences de l'Utilisateur. Appliquer le PACP."
     },
     {
         "id": "strategy",
-        "token_threshold": 30000,
+        "token_threshold": 34000,
         "tool_calls_threshold": 15,
-        "message": "Rappel : Le Modèle DOIT vérifier ses Hypothèses d'Apprentissage et le plan stratégique en cours pour éviter la vision tunnel. Applique le PRAC."
+        "message": "Rappel : Le Modèle DOIT s'assurer de mettre à jour judicieusement, et appliquer, ses Hypothèses d'Apprentissage et le plan stratégique en cours pour éviter la vision tunnel. Appliquer le PRAC."
+    },
+    {
+        "id": "efficiency",
+        "token_threshold": 22000,
+        "tool_calls_threshold": 9,
+        "message": "Rappel : Le Modèle DOIT privilégier l'usage de Sous-Agents pour économiser son contexte. Appliquer le PARE."
     }
 ]
 
@@ -231,7 +249,7 @@ AEC_REMINDERS = [
 # ==============================================================================
 
 ECHO_MODELS_REGISTRY = {
-    "MODEL_PRO": {
+    "MODEL_PROMETHEUS": {
         "ai_studio_id": "gemini-3.1-pro-preview",
         "ca_model_id":  "claude-opus-5-5-high",
         "hierarchy": 2,
@@ -242,7 +260,7 @@ ECHO_MODELS_REGISTRY = {
             "thinkingConfig": {"thinkingLevel": "high"}
         }
     },
-    "MODEL_FLASH": {
+    "MODEL_APOLLO": {
         "ai_studio_id": "gemini-3.8-flash",
         "ca_model_id":  "gemini-3.8-flash-high",
         "hierarchy": 1,
@@ -253,7 +271,7 @@ ECHO_MODELS_REGISTRY = {
             "thinkingConfig": {"thinkingLevel": "high"}
         }
     },
-    "MODEL_LITE": {
+    "MODEL_ZEPHYR": {
         "ai_studio_id": "gemini-3.5-flash-lite",
         "ca_model_id":  "gemini-3.1-flash-lite",
         "hierarchy": 0,
@@ -278,9 +296,9 @@ ECHO_MODELS_REGISTRY = {
 }
 
 # L'Abstraction pure
-MODEL_PRO          = "MODEL_PRO"
-MODEL_FLASH        = "MODEL_FLASH"
-MODEL_LITE         = "MODEL_LITE"
+MODEL_PROMETHEUS          = "MODEL_PROMETHEUS"
+MODEL_APOLLO        = "MODEL_APOLLO"
+MODEL_ZEPHYR         = "MODEL_ZEPHYR"
 MODEL_DISTILLATION = "MODEL_DISTILLATION"
 
 ECHO_SAFETY_SETTINGS = [
@@ -292,11 +310,11 @@ ECHO_SAFETY_SETTINGS = [
 
 # Unique survivant : la politique métier UI (qui reste statique)
 MODEL_ENUM_BY_POLICY = {
-    "MODEL_LITE":  ["MODEL_LITE"],
-    "MODEL_FLASH": ["MODEL_FLASH"],
-    "MODEL_PRO":   ["MODEL_PRO"],
-    "AUTO":        ["MODEL_LITE", "MODEL_FLASH"],
-    "AUTO_PRO":    ["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"],
+    "MODEL_ZEPHYR":  ["MODEL_ZEPHYR"],
+    "MODEL_APOLLO": ["MODEL_APOLLO"],
+    "MODEL_PROMETHEUS":   ["MODEL_PROMETHEUS"],
+    "AUTO":        ["MODEL_ZEPHYR", "MODEL_APOLLO"],
+    "AUTO_PROM":    ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"],
 }
 
 EMBEDDING_DIM      = 1024               # Dimension Harrier-OSS
@@ -322,14 +340,14 @@ MEMORY_IMPORTANCE_LABELS: dict[int, str] = {
 }
 
 def get_model_identity(model_str: str) -> str:
-    """Retourne la clé abstraite (ex: MODEL_PRO) à partir de n'importe quel ID."""
+    """Retourne la clé abstraite (ex: MODEL_PROMETHEUS) à partir de n'importe quel ID."""
     registry = globals().get("ECHO_MODELS_REGISTRY", {})
     if model_str in registry: return model_str
     for k, v in registry.items():
         if model_str in (v.get("ai_studio_id"), v.get("ca_model_id")): return k
     return "UNKNOWN"
 
-def get_generation_config(model_key: str = "MODEL_LITE", override_thinking: str = None) -> dict:
+def get_generation_config(model_key: str = "MODEL_ZEPHYR", override_thinking: str = None) -> dict:
     """
     Extrait le generationConfig depuis le SSOT.
     Permet de surcharger dynamiquement le thinkingLevel (ex: MINIMAL pour le grounding).
@@ -337,7 +355,7 @@ def get_generation_config(model_key: str = "MODEL_LITE", override_thinking: str 
     import copy
     # Récupération sécurisée du dictionnaire global
     registry = globals().get("ECHO_MODELS_REGISTRY", {})
-    base_gen = copy.deepcopy(registry.get(model_key, registry.get("MODEL_LITE", {})).get("generationConfig", {}))
+    base_gen = copy.deepcopy(registry.get(model_key, registry.get("MODEL_ZEPHYR", {})).get("generationConfig", {}))
     if override_thinking and "thinkingConfig" in base_gen:
         base_gen["thinkingConfig"]["thinkingLevel"] = override_thinking
     return base_gen
@@ -349,8 +367,8 @@ def get_generation_config(model_key: str = "MODEL_LITE", override_thinking: str 
 # ==============================================================================
 
 # Modèles par défaut pour l'agent de planification stratégique
-PLANNER_MODEL_BUILD = "MODEL_PRO"
-PLANNER_MODEL_UPDATE = "MODEL_FLASH"
+PLANNER_MODEL_BUILD = "MODEL_PROMETHEUS"
+PLANNER_MODEL_UPDATE = "MODEL_APOLLO"
 
 # Statuts globaux d'un plan (champ `status:` du frontmatter YAML)
 PLAN_STATUS = {
@@ -540,15 +558,15 @@ SÉQUENTIALITÉ OBLIGATOIRE : Le Modèle DOIT appeler les outils STRICTEMENT UN 
 
 # ENUM MODÈLES PAR POLITIQUE — utilisé par convert_owui_tools() pour filtrage dynamique
 MODEL_ENUM_BY_POLICY = {
-    "MODEL_LITE":  ["MODEL_LITE"],
-    "MODEL_FLASH": ["MODEL_FLASH"],
-    "MODEL_PRO":   ["MODEL_PRO"],
-    "AUTO":        ["MODEL_LITE", "MODEL_FLASH"],
-    "AUTO_PRO":    ["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"],
+    "MODEL_ZEPHYR":  ["MODEL_ZEPHYR"],
+    "MODEL_APOLLO": ["MODEL_APOLLO"],
+    "MODEL_PROMETHEUS":   ["MODEL_PROMETHEUS"],
+    "AUTO":        ["MODEL_ZEPHYR", "MODEL_APOLLO"],
+    "AUTO_PROM":    ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"],
 }
 
 # Set de référence pour détecter les enum modèle dans les specs d'outils
-MODEL_ENUM_REFERENCE = {"MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"}
+MODEL_ENUM_REFERENCE = {"MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"}
 
 # ==============================================================================
 # 1.6 INFRASTRUCTURE & RÉSEAU (CENTRALISATION V5)
@@ -759,12 +777,22 @@ PROMPT_SENSORY_DISTILLATION = (
 # Dictionnaire des clés JSON Schema autorisées par le validateur Protobuf de l'API Gemini.
 # Utilisé par clean_gemini_schema() dans echo_utils.py pour purger les objets Pydantic générés.
 GEMINI_ALLOWED_SCHEMA_KEYS = {
-    "type", 
-    "format", 
-    "description", 
-    "nullable", 
-    "enum", 
-    "properties", 
-    "required", 
+    "type",
+    "format",
+    "description",
+    "nullable",
+    "enum",
+    "properties",
+    "required",
     "items"
 }
+
+# ==============================================================================
+# 12. ECHO AUDIO IN-PROCESS BRIDGE (STT & TTS)
+# ==============================================================================
+ECHO_AUDIO_PREFIX: str = "/echo/v1"
+ECHO_AUDIO_DEFAULT_TTS_VOICE: str = "fr-FR-VivienneMultilingualNeural"
+ECHO_AUDIO_DEFAULT_TTS_SPEED: float = 1.0
+ECHO_AUDIO_DEFAULT_TTS_PITCH: str = "-2Hz"
+ECHO_AUDIO_DEFAULT_STT_MODEL: str = "MODEL_ZEPHYR"
+ECHO_AUDIO_MAX_UPLOAD_SIZE: int = 14 * 1024 * 1024  # 14 Mo max pour transcriptions

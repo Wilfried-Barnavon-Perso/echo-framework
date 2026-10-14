@@ -1,28 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.104
+version: 5.105
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.105: Alignement du sélecteur de modèle Codex HUD sur la nomenclature cognitive (Apollo, Prometheus, Zephyr).
 # 5.104: Rollback de la factorisation globale (5.102/5.103) suite à des lenteurs massives et instabilités. Retour à la version 5.101 (état validé avant factorisation du clamping).
 # 5.101: Fix Identity Vault - Injection de EchoUI.get_floating_window_class_js() dans _generate_identity_vault_js (TypeError: window.EchoFloatingWindow is not a constructor hors chargement préalable du Monitor).
 # 5.100: Rollback de la factorisation 5.99 (Codex/WebPlayer) : NameError f-string (HUD_ID/CODEX_ID), IDs DOM orphelins, classe EchoFloatingWindow non injectée. Retour au code 5.98 validé.
 # 5.98: Support du Trigger Asynchrone JS via _echoCodexTarget pour forcer l'ouverture du Codex sur un fichier spécifique.
-# 5.97: Architecture - Factorisation du HUD ECHO Identity Vault via la classe unifiée EchoFloatingWindow. Maintien de l'architecture spécifique pour le Cognitive Monitor et le WebPlayer.
-# 5.97: Architecture - Factorisation du HUD ECHO Identity Vault via la classe unifiée EchoFloatingWindow. Maintien de l'architecture spécifique pour le Cognitive Monitor et le WebPlayer.
-# 5.96: Architecture - Factorisation des fenêtres flottantes via la classe unifiée EchoFloatingWindow. L'ECHO Monitor devient le Sandbox Monitor natif.
-# 5.95: Fix Monitor - Extraction de echoCreateFloatingMonitor dans get_floating_monitor_js() (non injecté auparavant), iframe construite via DOM (srcdoc natif), retrait de allow-same-origin.
-# 5.94: Abandon du Pattern Data Island pour le Monitor. Implémentation du mode Multiplexé via UCTP natif (events.emit_execute) et suppression du MutationObserver.
-# 5.93: Implémentation du Pattern Data Island pour le rendu des composants ECHO Sandbox Monitor via iframe sécurisée.
-# 5.88: Codex - Remplacement des icônes d'import/export par des SVG (Upload/Download).
-# 5.86: Fix - Correction d'une erreur de syntaxe f-string dans le JS injecté du Lazy Loading.
-# 5.77: Factorisation de l'arbre (treeMap) pour tous les espaces (main/sandbox) avec tri descendant par date (mtime).
-# 5.76: Rendu asymétrique de l'arborescence Codex (liste plate pour le main, arbre pour la sandbox).
-# 5.75: Support du paramètre timeoutSeconds dans echoCustomConfirm pour annulation automatique avec rétrocompatibilité.
-# (EchoUI.get_custom_modals_js) avec implémentation de boutons interactifs
-# (pills) pour les options de prompt.
 
 
 import sys
@@ -1493,7 +1481,7 @@ return new Promise(function(resolve) {{
       let isHistoryMode = false;
       let historyContent = null;
       let lastInstruction = '';
-      let lastModel = 'MODEL_FLASH';
+      let lastModel = 'MODEL_APOLLO';
       let modified = false;
       let previewOpen = false;
       let editorRatio = 33;
@@ -1654,9 +1642,9 @@ return new Promise(function(resolve) {{
           />
           <select id="${{CODEX_ID}}-model" title="Mod\u00e8le AI" style="background:transparent; border:1px solid ${{borderColor}};
             color:${{textColor}}; padding:2px 6px; border-radius:4px; font-size:11px; max-width:90px;">
-            <option value="MODEL_FLASH" selected>Flash</option>
-            <option value="MODEL_PRO">Pro</option>
-            <option value="MODEL_LITE">Lite</option>
+            <option value="MODEL_APOLLO" selected>Apollo</option>
+            <option value="MODEL_PROMETHEUS">Prometheus</option>
+            <option value="MODEL_ZEPHYR">Zephyr</option>
           </select>
           <button id="${{CODEX_ID}}-ai-send" style="background:${{accentColor}}; border:none; color:#1e1e2e;
             padding:6px 14px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600;">Envoyer</button>
@@ -2118,7 +2106,7 @@ return new Promise(function(resolve) {{
           selection: selection || null,
           filename: currentFile,
           language: files.find(f => f.filename === currentFile)?.lang || 'plaintext',
-          model: modelSelect ? modelSelect.value : 'MODEL_FLASH',
+          model: modelSelect ? modelSelect.value : 'MODEL_APOLLO',
         }});
       }}
 

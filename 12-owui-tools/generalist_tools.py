@@ -1,24 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.25
+version: 1.26
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.26: Alignement sur la nomenclature cognitive (MODEL_PROMETHEUS).
 # 1.25: Correction des retours de delegate_to_tool_consultant pour forcer l'encapsulation wrap_tool_output.
 # 1.24: Ajout de delegate_to_tool_consultant (Agent Stratège Stateless).
 # 1.23: Renommage de search_ui_automations en list_ui_automations pour correspondre à l'appel LLM.
 # 1.22: Correction de la formulation de la docstring pour create_ui_calendar_event.
-# 1.21: Précision "de l'Interface Utilisateur" dans les docstrings des outils UI.
-# 1.20: Ajout de l'outil search_ui_automations pour rendre autonome la gestion des CRONs.
-# 1.19: Filtrage strict des kwargs via inspect.signature dans safe_owui_call pour compatibilité OWUI API.
-# 1.18: Implémentation de safe_owui_call pour les outils natifs OWUI (compliance avec le protocole ECHO).
-# 1.17: Exposition de l'argument location et documentation explicite du format ISO 8601 pour les méthodes calendrier.
-# 1.16: Ajout des contraintes strictes iCalendar RRULE dans la docstring de create_ui_automation.
-# 1.15: Renommage des actions d'automatisation en *_ui_automation.
-# 1.14: Suppression du préfixe 'action_' sur les outils pour simplifier l'interface LLM.
-# 1.0: Outils utilitaires généraux. Inclus un Wait Timer asynchrone avec HUD visuel.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -438,9 +430,9 @@ class Tools:
                 "contents": [{"role": "user", "parts": [{"text": objective}]}],
                 "systemInstruction": {"role": "system", "parts": [{"text": system_prompt}]}
             }
-            # Inférence Stateless (MODEL_PRO) sans exposer la section tools
+            # Inférence Stateless (MODEL_PROMETHEUS) sans exposer la section tools
             response = await EchoGeminiClient.call(
-                target_model="MODEL_PRO",
+                target_model="MODEL_PROMETHEUS",
                 payload=payload,
                 user_id=user_id,
                 chat_id=chat_id

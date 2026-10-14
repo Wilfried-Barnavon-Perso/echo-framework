@@ -1,22 +1,15 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 2.11
+version: 2.12
 description: Permet au modèle de manipuler un espace de travail virtuel et asynchrone (Codex) avec versioning Git invisible, et accès natif à Python/Bash sécurisés.
 """
 # Historique des versions :
+# 2.12: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 2.11: Fix - Blocage de l'outil `open_codex_ui` au premier tour (vérification __messages__) et ajout de la règle de parcimonie LLM.
 # 2.10: Fix critique - Extraction du `session_id` pour le passer à `trigger_action` afin d'éviter le crash en boucle de l'Event Caller.
 # 2.9: Injection absolue des variables de contexte (`chat_id`, `message_id`, `model_id`) vers le déclencheur d'action, garantissant un déterminisme total.
 # 2.8: Simplification extrême de `open_codex_ui` en utilisant la nouvelle méthode factorisée `events.trigger_action()` du framework.
-# 2.7: Refonte absolue du déclencheur `open_codex_ui` via un appel API Direct (fetch sur `/api/chat/actions`) sans dépendre du DOM (Factorisable).
-# 2.6: Fix - Implémentation d'un polling robuste (setInterval) et ciblage par aria-label pour l'outil `open_codex_ui` afin de garantir l'ouverture même pendant la génération LLM.
-# 2.5: Ajout de l'outil `open_codex_ui` pour permettre au LLM d'ouvrir le HUD sur un fichier cible (Découplage JS).
-# 2.4: Refonte de `search_codex` (recherche multi-fichiers par dossiers) et fusion du voyage temporel (Delta/Pickaxe) via `trace_history`.
-# 2.3: Ajout de l'outil `restore_codex` et support de lecture historique (`commit_hash`) dans `read_codex`.
-# 2.2: Purge récursive des sous-ressources orphelines dans `delete_codex` (unpack tuple).
-# 2.1: Purge mémoire (`delete_resource`) lors de delete_codex, ajout des fonctions utilitaires (_get_context).
-# 1.8: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -47,7 +40,7 @@ class Tools:
 
     class UserValves(BaseModel):
         CODEX_EDIT_MODEL: str = Field(
-            default="MODEL_FLASH",
+            default="MODEL_APOLLO",
             description="Modèle pour l'édition assistée Codex (sub-chat).",
         )
 
@@ -190,7 +183,7 @@ class Tools:
 
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-                "generationConfig": get_generation_config("MODEL_FLASH"),
+                "generationConfig": get_generation_config("MODEL_APOLLO"),
                 "systemInstruction": {
                     "parts": [{"text": SYS_CODEX_EDIT.format(filename=filename, language=lang)}]
                 },

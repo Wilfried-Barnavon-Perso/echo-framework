@@ -1,5 +1,5 @@
 /**
- * ECHO Documentation - nav.js v2.1
+ * ECHO Documentation - nav.js v2.2
  * Génération sidebar + TOC dynamique imbriqué.
  * Aucun style inline - pilotage exclusif par classes CSS (style.css).
  */
@@ -63,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
       { text: "17. Inférence Distante", href: "17_edge_inference.html" },
       { text: "18. Annexes Techniques", href: "18_annexes.html" },
       { text: "19. Crédits", href: "19_credits.html" },
-      { text: "20. Registre d'Audit", href: "15_registre_audit.html" }
+      { text: "20. Registre d'Audit", href: "20_registre_audit.html" }
     ]
   }
 ];

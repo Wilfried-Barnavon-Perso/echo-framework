@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.79
+version: 192.81
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.81: Enregistrement idempotent du pont in-process ECHO Audio (routes /echo/v1/audio).
+# 192.80: Renommage souverain des modèles cognitifs (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS) et politique AUTO_PROM.
 # 192.79: Augmentation de maxOutputTokens à 8192 dans le Fast-Track pour absorber le thinking sur les prompts volumineux.
 # 192.78: Fiabilisation du Fast-Track (title_generation en JSON, exclusion du system prompt, thinkingLevel low sans temperature et filtrage des parts thought).
 # 192.77: Implémentation du Verrou de Tour (turn_origin_model) protégeant l'origine cognitive lors des continuations d'outils et cascades.
-# 192.76: Prise de conscience du modèle lors de la cascade descendante (injection/drainage AEC) et correction mutation XML.
-# 192.75: Optimisation du cache et des imports modulaires.
 
 
 # ==============================================================================
@@ -47,8 +47,12 @@ from echo_gemini_client import EchoGeminiClient
 from echo_logger import DebugLogger
 from echo_protocol import get_ca_model_id
 from echo_ui import EchoUI
+try:
+    from echo_audio import register_echo_audio_routes
+except ImportError:
+    register_echo_audio_routes = None
 from echo_constants import (
-    MODEL_LITE, MODEL_FLASH, MODEL_PRO,
+    MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS,
     FILE_INGESTION_STATUS,
     CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE,
     ECHO_TOOLS_CACHE_MAX_SIZE,
@@ -553,7 +557,7 @@ class Pipe:
         MAX_CONTEXT_SIZE: int = Field(default=1048576, description="Taille maximale du contexte absorbable en tokens.")
     class UserValves(BaseModel):
         SHOW_CONTEXT_METRICS: bool = Field(default=True)
-        MODEL_SELECTION: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO", "AUTO", "AUTO_PRO"] = Field(default="AUTO")
+        MODEL_SELECTION: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "AUTO", "AUTO_PROM"] = Field(default="AUTO")
         # Thinking, temperature, topP et max_tokens sont des constantes ECHO (echo_constants.py v4.8).
         # Plus de valves pour ces paramètres.
         ENABLE_PAID_CREDITS: bool = Field(default=False, description="Activer l'utilisation des crédits Google One AI pour les requêtes OAuth2. Désactivé par défaut.")
@@ -561,7 +565,13 @@ class Pipe:
         # [AUTO-CONTINUE] Valve contrôlant le nombre maximal de boucles de relance automatique autorisées en cas de troncature API (MAX_TOKENS).
         ECHO_AUTO_CONTINUE_MAX: int = Field(default=2, ge=1, le=10, description="Nombre max de relances si le modèle est interrompu (MAX_TOKENS).")
 
-    def __init__(self): self.valves, self.data_dir = self.Valves(), "/app/backend/data"
+    def __init__(self):
+        self.valves, self.data_dir = self.Valves(), "/app/backend/data"
+        if register_echo_audio_routes is not None:
+            try:
+                register_echo_audio_routes()
+            except Exception as e:
+                print(f"[ECHO Engine] ⚠️ Échec enregistrement routes audio : {e}")
 
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, __request__: Optional[Any] = None, __tools__: list = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
 
@@ -605,9 +615,9 @@ class Pipe:
             }
 
             try:
-                # Appel direct au modèle LITE, by-pass total de l'agent ECHO (sans streaming)
+                # Appel direct au modèle ZEPHYR, by-pass total de l'agent ECHO (sans streaming)
                 res = await EchoGeminiClient.call(
-                    target_model=MODEL_LITE,
+                    target_model=MODEL_ZEPHYR,
                     payload=payload,
                     user_id=__user__["id"] if __user__ else "system",
                     events=None,
@@ -806,7 +816,7 @@ class Pipe:
                     _found_model = True
                     break
             if not _found_model:
-                last_model = MODEL_LITE  # Fallback sécurisé pour les orphelins
+                last_model = MODEL_ZEPHYR  # Fallback sécurisé pour les orphelins
 
         def _get_ui_display(model_key: str) -> str:
             config = ECHO_MODELS_REGISTRY.get(model_key, {})
@@ -824,12 +834,12 @@ class Pipe:
         if is_tool_continuation:
             # Sous-tour d'outil : Le modèle actif poursuit le traitement de son propre outil.
             # L'origine du tour utilisateur est préservée via le Verrou de Tour (interdiction d'écraser avec last_model).
-            target_model = last_model or MODEL_LITE
+            target_model = last_model or MODEL_ZEPHYR
             saved_turn_origin = orch.user_data_manager.state_manager.get_session_setting("turn_origin_model")
             origine_model = saved_turn_origin if saved_turn_origin else (last_model or "aucun")
-        elif model_selection in ["AUTO", "AUTO_PRO"]:
+        elif model_selection in ["AUTO", "AUTO_PROM"]:
             # Nouveau tour utilisateur : Calcul normal de la cible et fixation du Verrou de Tour
-            ceiling = MODEL_PRO if model_selection == "AUTO_PRO" else MODEL_FLASH
+            ceiling = MODEL_PROMETHEUS if model_selection == "AUTO_PROM" else MODEL_APOLLO
             if last_model and last_model != "aucun":
                 # Clamping dynamique via la hiérarchie du SSOT
                 last_hierarchy = ECHO_MODELS_REGISTRY.get(last_model, {}).get("hierarchy")
@@ -843,9 +853,9 @@ class Pipe:
                 origine_model = last_model
                 await events.status(f"🧠  Reprise du contexte ({_get_ui_display(target_model)})...")
             else:
-                target_model = MODEL_LITE
+                target_model = MODEL_ZEPHYR
                 origine_model = "aucun"
-                await events.status(f"🧠  Initialisation de session ({_get_ui_display(MODEL_LITE)})...")
+                await events.status(f"🧠  Initialisation de session ({_get_ui_display(MODEL_ZEPHYR)})...")
             # Enregistrement du Verrou de Tour pour les sous-tours d'outils subséquents
             orch.user_data_manager.state_manager.save_session_setting("turn_origin_model", origine_model)
         else:
@@ -864,11 +874,11 @@ class Pipe:
             orch._mutate_context_identity(context, target_model, origine_model)
 
         # --- [NOUVEAU] CONFIGURATION CASCADE ---
-        is_auto = user_valves.MODEL_SELECTION in ["AUTO", "AUTO_PRO"]
+        is_auto = user_valves.MODEL_SELECTION in ["AUTO", "AUTO_PROM"]
         # Détermination des niveaux autorisés pour le schéma de l'outil (Approach: Clean Prompt)
-        niveaux_autorises = ["MODEL_FLASH"]
-        if user_valves.MODEL_SELECTION == "AUTO_PRO":
-            niveaux_autorises.append("MODEL_PRO")
+        niveaux_autorises = ["MODEL_APOLLO"]
+        if user_valves.MODEL_SELECTION == "AUTO_PROM":
+            niveaux_autorises.append("MODEL_PROMETHEUS")
 
         max_cascade_attempts = user_valves.MAX_CASCADE_ATTEMPTS
         cascade_attempt = 0
@@ -912,7 +922,7 @@ class Pipe:
             resolved_sys = resolve_placeholders(sys_instr_raw, target_model, orch.model_origin)
             sys_instr = {"parts": [{"text": resolved_sys}]}
 
-            gen_config = copy.deepcopy(ECHO_MODELS_REGISTRY.get(target_model, ECHO_MODELS_REGISTRY.get("MODEL_LITE", {})).get("generationConfig", {}))
+            gen_config = copy.deepcopy(ECHO_MODELS_REGISTRY.get(target_model, ECHO_MODELS_REGISTRY.get("MODEL_ZEPHYR", {})).get("generationConfig", {}))
             if "thinkingConfig" in gen_config:
                 gen_config["thinkingConfig"]["includeThoughts"] = True
 
@@ -927,9 +937,9 @@ class Pipe:
             # --- [NOUVEAU] INJECTION OUTIL CHANGEMENT COGNITIF (BIDIRECTIONNEL) ---
             if is_auto:
                 # Construction simplifiée : tous les modèles dispos, moins le modèle actif
-                menu_escalade = ["MODEL_LITE", "MODEL_FLASH"]
-                if user_valves.MODEL_SELECTION == "AUTO_PRO":
-                    menu_escalade.append("MODEL_PRO")
+                menu_escalade = ["MODEL_ZEPHYR", "MODEL_APOLLO"]
+                if user_valves.MODEL_SELECTION == "AUTO_PROM":
+                    menu_escalade.append("MODEL_PROMETHEUS")
                 target_identity = get_model_identity(target_model)
                 if target_identity in menu_escalade:
                     menu_escalade.remove(target_identity)
@@ -948,23 +958,23 @@ class Pipe:
                             "toute tâche nécessitant d'adapter le niveau cognitif pour garantir la "
                             "qualité de la réponse ou optimiser les ressources.\n\n"
                             "## Règles de sélection\n"
-                            "- **MODEL_LITE** (Réflexe — défaut) : Salutations, remerciements, extractions simples, "
+                            "- **MODEL_ZEPHYR** (Réflexe — défaut) : Salutations, remerciements, extractions simples, "
                             "traduction courte, le simple réflexe ou la simple conversation. L'inertie "
-                            "en LITE est proscrite et demande une évaluation silencieuse.\n"
-                            "- **MODEL_FLASH** (Exécution — moteur agentique) : Escalade requise pour toute "
+                            "en ZEPHYR est proscrite et demande une évaluation silencieuse.\n"
+                            "- **MODEL_APOLLO** (Exécution — moteur agentique) : Escalade requise pour toute "
                             "tâche non-triviale (Recherche web, code, analyse, orchestration d'outils, "
                             "planification, raisonnement multi-étapes).\n"
-                            "  \u2192 Le Modèle escalade vers FLASH systématiquement dès que la tâche dépasse "
-                            "le simple réflexe. L'inertie en FLASH est proscrite et demande une évaluation silencieuse.\n"
-                            "- **MODEL_PRO** (Expertise & Réflexion Profonde) : Dès qu'une tâche nécessite un "
+                            "  \u2192 Le Modèle escalade vers APOLLO systématiquement dès que la tâche dépasse "
+                            "le simple réflexe. L'inertie en APOLLO est proscrite et demande une évaluation silencieuse.\n"
+                            "- **MODEL_PROMETHEUS** (Expertise & Réflexion Profonde) : Dès qu'une tâche nécessite un "
                             "raisonnement cognitif poussé, une anticipation structurelle ou une logique formelle. "
                             "Privilégier de manière proactive.\n"
-                            "  → Le Modèle justifie le moindre besoin d'analyse et redescend vers FLASH ou LITE "
+                            "  → Le Modèle justifie le moindre besoin d'analyse et redescend vers APOLLO ou ZEPHYR "
                             "une fois la tâche complexe accomplie.\n"
                             "(Note : Le modèle actuel est exclu de l'enum).\n\n"
                             "## Corrélation contextuelle\n"
                             "La saturation contextuelle est atténuée par la Mémoire Vectorisée de Session. "
-                            "Vigilance accrue à haute charge (> 50%) — préférer alors FLASH ou PRO."
+                            "Vigilance accrue à haute charge (> 50%) — préférer alors APOLLO ou PROMETHEUS."
                         ),
                         "parameters": {
                             "type": "object",
@@ -1010,7 +1020,7 @@ class Pipe:
                 if is_auto and cascade_attempt < max_cascade_attempts:
                     target_identity = get_model_identity(target_model)
                     if target_identity == 'UNKNOWN':
-                        target_identity = 'MODEL_FLASH'
+                        target_identity = 'MODEL_APOLLO'
                     target_hierarchy = ECHO_MODELS_REGISTRY.get(target_identity, {}).get("hierarchy")
                     target_hierarchy = target_hierarchy if target_hierarchy is not None else 0
                     cascade_order_keys = sorted(
@@ -1069,13 +1079,13 @@ class Pipe:
                     })
                     context.append({
                         "role": "user",
-                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "message": f"ERREUR : Niveau '{target_req}' inconnu. Choisissez parmi MODEL_LITE, MODEL_FLASH ou MODEL_PRO."}, "id": sys_tc_id}}]
+                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "message": f"ERREUR : Niveau '{target_req}' inconnu. Choisissez parmi MODEL_ZEPHYR, MODEL_APOLLO ou MODEL_PROMETHEUS."}, "id": sys_tc_id}}]
                     })
                     continue
 
                 # Vérification des droits (Valve)
-                if user_valves.MODEL_SELECTION == "AUTO" and new_target == MODEL_PRO:
-                    await events.status("⚠️  Transfert vers MODEL_PRO refusé (Valve AUTO).")
+                if user_valves.MODEL_SELECTION == "AUTO" and new_target == MODEL_PROMETHEUS:
+                    await events.status("⚠️  Transfert vers MODEL_PROMETHEUS refusé (Valve AUTO).")
                     sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
                     # Signalement de refus au modèle actuel
                     context.append({

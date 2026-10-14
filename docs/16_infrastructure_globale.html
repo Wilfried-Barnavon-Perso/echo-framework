@@ -19,7 +19,7 @@
 
     <h2>1. La Sécurité Intégrale (Identité et Pare-feu)</h2>
     <p>
-      L'accès à votre intelligence artificielle est protégé par des standards de sécurité de niveau militaire. Le système intègre son propre gestionnaire d'identité. Avant même de pouvoir accéder à l'interface, chaque connexion nécessite une authentification forte avec validation en deux étapes (MFA/TOTP). De plus, l'ensemble du système est placé derrière un bouclier de sécurité (Pare-feu / WAF) qui filtre et analyse en temps réel toutes les requêtes réseau, bloquant instantanément toute tentative d'intrusion ou de comportement malveillant.
+      L'accès à votre intelligence artificielle est protégé par une architecture de défense multicouche. Le système intègre son propre gestionnaire d'identité : avant même de pouvoir accéder à l'interface, chaque connexion nécessite une authentification forte avec validation en deux étapes (code temporaire à usage unique). De plus, l'ensemble du système est placé derrière un bouclier de filtrage réseau qui analyse en temps réel toutes les requêtes entrantes et bloque instantanément les tentatives d'intrusion ou les comportements anormaux.
     </p>
 
     <h2>2. Maintenance Autonome et Téléchargements (Brokers)</h2>
@@ -30,9 +30,9 @@
       En parallèle, un service dédié (le Download Broker) s'occupe de rapatrier, d'indexer et de classer silencieusement les très gros fichiers que l'IA serait amenée à télécharger lors de ses navigations web, sans bloquer ou ralentir la conversation en cours.
     </p>
 
-    <h2>3. L'Ouïe et la Parole (Workers Audio)</h2>
+    <h2>3. L'Ouïe et la Parole (Passerelle Vocale Intégrée)</h2>
     <p>
-      Afin que l'IA puisse interagir naturellement avec vous par la voix, l'infrastructure embarque des moteurs de synthèse vocale et de transcription. Contrairement aux assistants classiques du commerce, <strong>votre voix et vos requêtes vocales ne sont jamais envoyées sur internet</strong>. Elles sont traitées localement par ces moteurs intégrés, préservant l'intimité de vos échanges audios.
+      Afin que l'IA puisse interagir naturellement avec vous par la voix sans alourdir votre serveur avec des conteneurs dédiés gourmands en mémoire, ECHO intègre une passerelle vocale directement au cœur de son interface. Elle détecte automatiquement le format de vos enregistrements vocaux pour les transcrire avec précision via le modèle rapide <code>ZEPHYR</code>, et restitue les réponses en flux continu avec une voix synthétique naturelle au timbre feutré tout en adaptant automatiquement le style de réponse à l'oral.
     </p>
 
     <details class="tech-spec">
@@ -47,11 +47,11 @@
         <h3>3. Bouclier BunkerWeb WAF</h3>
         <p>Reverse Proxy adossé à MariaDB 11.4 LTS (<code>--max-allowed-packet=128M</code>). Les paramètres globaux (<code>MULTISITE: "yes"</code>, <code>DISABLE_DEFAULT_SERVER</code>, <code>AUTO_LETS_ENCRYPT</code>, <code>www.example.com_AUTO_LETS_ENCRYPT: "no"</code>, <code>GUNICORN_TIMEOUT: "120"</code>) sont centralisés dans l'ancre YAML <code>x-bw-config</code> et ne doivent jamais être posés en labels sur les conteneurs dynamiques. Sur Open WebUI, il applique la résolution DNS dynamique Nginx (<code>set $$upstream</code>), le Smart Proxy Mock sur <code>/api/version</code>, l'Auto-Heal SPA par <code>sub_filter</code> sur <code>/auth</code>, <code>USE_MODSECURITY=no</code> et un Rate Limit assoupli (<code>300r/s</code>, burst <code>1000</code>).</p>
 
-        <h3>4. Audio Workers (<code>tts_api.py</code> &amp; <code>stt_api.py</code>)</h3>
+        <h3>4. Pont Audio In-Process (<code>echo_audio.py</code> v1.4) &amp; Logs Unifiés</h3>
         <ul>
-          <li><strong>Kokoro TTS (Port 7996, IP <code>.31</code>) :</strong> Modèle quantisé <code>kokoro-v1.0.int8.onnx</code> avec détecteur multilingue <code>Lingua</code> (8 langues) et parseur G2P hybride franglais, streamé en MP3 128 kbps via <code>ffmpeg</code> avec arrêt anti-zombie en cas de déconnexion client.</li>
-          <li><strong>Whisper STT (Port 7995, IP <code>.32</code>) :</strong> API FastAPI propulsée par <code>faster-whisper</code> (branche <em>master</em> GitHub corrigeant les erreurs PyAV), exécutée dans <code>run_in_threadpool</code> avec sanitization dynamique du paramètre <code>language</code>.</li>
-          <li><strong>Logs unifiés :</strong> Montage de <code>logging.json</code> (ISO 8601) et <code>RateLimitHealthCheckFilter</code> (1 log / 5 min sur <code>/health</code>) sur l'ensemble des workers Python.</li>
+          <li><strong>STT Multimodal (<code>POST /echo/v1/audio/transcriptions</code>) :</strong> Inspecte les magic bytes du flux binaire (<code>sniff_audio_mime_type</code> : WebM/Matroska, WAV/RIFF, OGG, FLAC, MP3, MP4/M4A, plafond <code>ECHO_AUDIO_MAX_UPLOAD_SIZE = 14 Mo</code>) et invoque <code>EchoGeminiClient.call</code> sur <code>MODEL_ZEPHYR</code> (<code>maxOutputTokens=8192</code>, <code>thinkingLevel="minimal"</code>, prompt <code>USR_AUDIO_TRANSCRIBE</code>).</li>
+          <li><strong>TTS Streaming (<code>POST /echo/v1/audio/speech</code>) :</strong> Génère un flux <code>audio/mpeg</code> asynchrone via Microsoft Edge Read-Aloud (<code>edge-tts</code>), configuré par défaut sur la voix <code>fr-FR-VivienneMultilingualNeural</code> (<code>ECHO_AUDIO_DEFAULT_TTS_SPEED = 1.0</code>, <code>ECHO_AUDIO_DEFAULT_TTS_PITCH = "-2Hz"</code>). En mode appel vocal, <code>task.voice.prompt_template</code> injecte un événement <code>AEC_evenement_systeme</code> imposant à <code>MODEL_ZEPHYR</code> un style oral concis sans Markdown, listes, code ni emoji.</li>
+          <li><strong>Logs unifiés &amp; Sonde de Santé :</strong> Montage de <code>logging.json</code> (ISO 8601) et <code>RateLimitHealthCheckFilter</code> (1 log / 3600 s sur HTTP 200 <code>/health</code>) sur l'ensemble des workers Python.</li>
         </ul>
 
         <h3>5. Download Broker (<code>download_broker.py</code>)</h3>
@@ -66,7 +66,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.223.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

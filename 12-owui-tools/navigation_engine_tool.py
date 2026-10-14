@@ -1,32 +1,16 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.40
+version: 11.41
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 11.41: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 11.40: Fix de la compatibilité API (camelCase) pour l'injection du fichier téléchargé et ajout explicite de systemInstruction pour contrer le stripping des thoughts.
 # 11.39: Rétablissement de la grille de vision spatiale fine à 48px.
 # 11.38: Lot C - Isolation par sub_sid (ECHO_SUBAGENT_CONTEXT), refonte du Sniper Protocol et utilisation de vision_capture.
 # 11.36: Modification de la consigne d'action_zoom_in pour exiger la vérification stricte du viseur rouge.
-# 11.35: Intégration du système de ciblage par zoom itératif et gestion de la rétention mémoire (is_zooming).
-# 11.34: Injection Télémétrique Absolue (mouse_position) dans le payload JSON pour fiabiliser le calcul balistique.
-# 11.29: Affinement du maillage spatial (vision_grid_step=48) pour optimiser l'interpolation des LLMs sur les Anti-Bots.
-# 11.14: Descente Cognitive - Injection dynamique de action_analyze_page et action_archive_page dans BROWSER_TOOLS_SCHEMA pour rendre le Sous-Agent autonome, et correction d'un bug de payload sur inspect_page.
-# 11.13: Refonte - Remplacement du distillateur web monolithique par une dichotomie stricte (analyze_web_page via Streaming Sémantique natif ECHO et archive_web_page asynchrone).
-# 11.12: Optim - Ajout de la règle interdisant explicitement l'usage des moteurs de recherche généralistes au niveau du navigateur autonome.
-# 11.11: Optim - Autorisation du Parallel Function Calling dans les instructions pour accélérer la perception (règle 1) et les actions (règle 3).
-# 11.10: Fix - Ajout de la Valve PRUNE_CONTENT_THRESHOLD pour configurer le seuil d'élagage dynamique du contexte.
-# 11.15: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 11.16: Nettoyage PEP8 : F841 (Variables locales inutilisées préfixées par _ ou retirées).
-# 11.17: Suppression d'assignations obsolètes.
-# 11.18: Ajout de **kwargs à get_browser_frames_history pour ignorer les arguments hallucinés.
-# 11.19: Correction de l'appel wrap_tool_output (nouveaux_fichiers) et retrait de **kwargs.
-# 11.20: Correction du bug EchoStateManager: passage de chat_id manquant.
-# 11.21: Correction architecturale: injection des images via echo_tool_multiparts.
-# 11.22: Synchronisation URL en temps réel dans stream_proxy pour le HUD Live.
-# 11.24: Ajustement sémantique du retour pour cibler l'usage explicite de query_registry.
 
 import os
 import time
@@ -125,7 +109,7 @@ class Tools:
 
     async def delegate_web_browsing(
         self, task_objective: str, start_url: Optional[str] = None, 
-        target_model_key: Literal["MODEL_FLASH", "MODEL_PRO"] = "MODEL_FLASH", 
+        target_model_key: Literal["MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_APOLLO", 
         max_iterations: int = 30,
         __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None
     ) -> dict:
@@ -581,10 +565,10 @@ class Tools:
                 {"inlineData": {"mimeType": "text/plain", "data": f"___ECHO_STREAM_FILE___{tmp_path}___"}}
             ]}],
             "systemInstruction": {"parts": [{"text": SYS_NAV_BROWSER}]},
-            "generationConfig": get_generation_config("MODEL_FLASH", override_thinking="low")
+            "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="low")
         }
         
-        analyse_model = clamp_model("MODEL_FLASH", __metadata__, user_id=uid)
+        analyse_model = clamp_model("MODEL_APOLLO", __metadata__, user_id=uid)
         data, _, _ = await EchoGeminiClient.call_cascade(
             target_model_key=analyse_model,
             payload=payload,
@@ -691,7 +675,6 @@ class Tools:
         uid = __user__.get("id", "anonymous")
         state_manager = EchoStateManager(user_id=uid, chat_id=chat_id)
         try:
-            conn = state_manager._get_connection()
             resources = state_manager.get_resources(resource_type='media')
             # Filtrer uniquement les captures de navigation web (ID pattern U_*_C_*_T_*)
             nav_resources = [r for r in resources if r['id'].startswith('U_') and '_C_' in r['id'] and '_T_' in r['id']]

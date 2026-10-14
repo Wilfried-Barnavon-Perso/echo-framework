@@ -1,17 +1,16 @@
 """
 title: ECHO Maps Grounding
 author: Wilfried BARNAVON
-version: 13.7
+version: 13.8
 description: Composant système interne : ECHO Maps Grounding.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 13.8: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 13.6: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
+# 13.5: Nettoyage du code : suppression des imports inutilisés (PEP8).
 # 13.4: Fix - Intégration de TEMP_DEFAULT et TOP_P_DEFAULT dans generationConfig.
 # 13.3: Ajout argument optionnel print_map et lecture de _echo_suppress_map_ui pour blocage du rendu UI.
-# 13.2: Fix commentaires : MODEL_LITE est le plancher de la cascade (pas de fallback
-# descendant possible). Aucune cascade automatique vers un modèle inférieur.
-# 13.5: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 import sys
 from typing import Any, Tuple, Union
@@ -71,7 +70,7 @@ class Tools:
             "contents": [{"role": "user", "parts": [{"text": query}]}],
             # Grounding natif Google Maps — active l'outil googleMaps du modèle Gemini
             "tools": [{"googleMaps": {"enableWidget": True}}],
-            "generationConfig": get_generation_config("MODEL_LITE", override_thinking="minimal"),
+            "generationConfig": get_generation_config("MODEL_ZEPHYR", override_thinking="minimal"),
             "systemInstruction": {"parts": [{"text": SYS_MAPS_GROUNDING}]}
         }
 
@@ -88,11 +87,11 @@ class Tools:
 
         try:
             # call_cascade gère : clamping politique Pipe, thinkingConfig auto.
-            # MODEL_LITE est le plancher de la cascade (PRO→FLASH→LITE) : aucun fallback
-            # descendant possible depuis ce niveau. Si LITE est indisponible, la cascade
-            # est épuisée immédiatement. Utiliser MODEL_FLASH si un repli vers LITE est souhaité.
+            # MODEL_ZEPHYR est le plancher de la cascade (PROMETHEUS→APOLLO→ZEPHYR) : aucun fallback
+            # descendant possible depuis ce niveau. Si ZEPHYR est indisponible, la cascade
+            # est épuisée immédiatement. Utiliser MODEL_APOLLO si un repli vers ZEPHYR est souhaité.
             data, model_key, reason = await EchoGeminiClient.call_cascade(
-                target_model_key="MODEL_LITE",
+                target_model_key="MODEL_ZEPHYR",
                 payload=payload,
                 user_id=user_id,
                 metadata=__metadata__,

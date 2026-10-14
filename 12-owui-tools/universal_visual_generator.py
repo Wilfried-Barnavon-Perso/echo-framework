@@ -1,25 +1,22 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 5.14
+version: 5.15
 description: Composant système interne : ECHO Visual Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.15: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
+# 5.12: Suppression d'assignations obsolètes.
+# 5.11: Nettoyage PEP8 : F841 (Variables locales inutilisées préfixées par _ ou retirées).
+# 5.10: Nettoyage du code : suppression des imports inutilisés (PEP8).
 # 5.9: Implémentation de la boucle de rétroaction sémantique (Pydantic) via call_cascade (suppression call_distillation).
-# 5.8: Intégration du moteur cartographique Leaflet (v1.9) et ajout du manuel des moteurs dans la docstring.
-# 5.6: Fix - Intégration de TEMP_DEFAULT et TOP_P_DEFAULT dans le payload de génération via call_cascade.
-# 5.5: Optimisation du prompt Architecte Visuel (balises XML, bloc <thinking>, ton impersonnel).
-# 5.1: Ajout de la contrainte de précision syntaxique Mermaid v11 (identifiants de nœuds sans caractères spéciaux). 5.2: Renommage niveau_cognitif→target_model, migration stream→call_cascade() centralisé.
 # MOTEURS INTÉGRÉS ET DATAFLOWS :
 # - mermaid (v11) : Syntaxe Mermaid pure
 # - echarts (v5) : JSON ECharts strict
 # - markmap (v0.17) : Markdown hiérarchique
 # - leaflet (v1.9) : JSON {"center": [lat,lng], "zoom": int, "markers": [{"lat": float, "lng": float, "popup": "html"}]}
 # - vega (v5), cytoscape, wavedrom, timeline, aframe, etc.
-# 5.10: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 5.11: Nettoyage PEP8 : F841 (Variables locales inutilisées préfixées par _ ou retirées).
-# 5.12: Suppression d'assignations obsolètes.
 
 import sys
 import re
@@ -64,14 +61,14 @@ class Tools:
     donnees_contextuelles: str,
     # [MAINTENANCE_AI] Avertissement: Toujours mettre à jour ce Literal lors de l'ajout/suppression d'un moteur de rendu.
     moteur: Optional[Literal["markmap", "mermaid", "sketch", "echarts", "vega", "timeline", "bpmn", "gantt", "aframe", "svg", "cytoscape", "wavedrom", "chem", "science", "bio", "astro", "leaflet"]] = None,
-    niveau_cognitif: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_FLASH",
+    niveau_cognitif: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_APOLLO",
     __user__: dict = {},
     __metadata__: dict = {},
     __event_emitter__: Any = None,
     __event_call__: Any = None
   ) -> Union[dict, Tuple[HTMLResponse, dict]]:
     """
-    Génération asynchrone d'interfaces interactives (Mindmaps, Graphes, Tableaux). Sub-chat MODEL_FLASH. Retourne le composant ECHO Visual.
+    Génération asynchrone d'interfaces interactives (Mindmaps, Graphes, Tableaux). Sub-chat MODEL_APOLLO. Retourne le composant ECHO Visual.
     :param intention: Objectif du rendu visuel.
     :param donnees_contextuelles: Données brutes à modéliser.
     :param moteur: (Optionnel) markmap, mermaid, echarts, etc.
@@ -94,7 +91,7 @@ class Tools:
           payload={
               "contents": [{"role": "user", "parts": [{"text": f"INTENTION : {intention}\nDONNÉES : {donnees_contextuelles}"}]}],
               "systemInstruction": {"parts": [{"text": system_prompt}]},
-              "generationConfig": get_generation_config("MODEL_FLASH", override_thinking="medium")
+              "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="medium")
           },
           user_id=user_id,
           metadata=__metadata__,

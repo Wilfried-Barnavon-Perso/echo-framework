@@ -1,18 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.24
+version: 1.25
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.25: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.24: Injection des sub_tools_names dans ECHO_SUBAGENT_CONTEXT pour permettre le filtrage dynamique par les outils internes (ex: Tool Consultant).
 # 1.23: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations, functionCallingConfig).
 # 1.22: Transformation de calls_used en calls_remaining pour l'orchestrateur parent.
 # 1.21: Coupure stricte de l'interface utilisateur (__event_call__: None) pour forcer le mode Headless des sous-agents.
-# 1.20: Remplacement de l'injection subagent_metadata par la propagation asynchrone ECHO_SUBAGENT_CONTEXT.
-# 1.19: Injection de sub_sid dans subagent_metadata pour le RAG sécurisé des sous-agents.
-# 1.18: Injection du paramètre is_subagent dans les métadonnées pour bypasser les modales UI.
 
 import sys
 import uuid
@@ -180,7 +178,7 @@ class Tools:
 
         # 3. Résolution du modèle — orchestrateur > politique par défaut
         #    clamp_model = min(demandé, plafond_politique), centralisé dans echo_utils
-        requested = target_model_key or "MODEL_FLASH"
+        requested = target_model_key or "MODEL_APOLLO"
         current_model_key = clamp_model(requested, __metadata__ or {}, user_id)
 
         # -----------------------------------------------------------------------
@@ -439,7 +437,7 @@ class Tools:
         )
 
         data, model_used, _ = await EchoGeminiClient.call_cascade(
-            target_model_key="MODEL_FLASH",
+            target_model_key="MODEL_APOLLO",
             payload={
                 "contents": [{"role": "user", "parts": [{"text": distill_prompt}]}],
                 "generationConfig": {**get_generation_config("MODEL_DISTILLATION"), "maxOutputTokens": 8192},
@@ -642,7 +640,7 @@ async def _run_agent_loop(
                 forced_payload: dict = {
                     "contents": history,
                     "systemInstruction": {"parts": [{"text": final_system}]},
-                    "generationConfig": get_generation_config("MODEL_FLASH"),
+                    "generationConfig": get_generation_config("MODEL_APOLLO"),
                 }
                 data2, _, _ = await EchoGeminiClient.call_cascade(
                     target_model_key=current_model_key,

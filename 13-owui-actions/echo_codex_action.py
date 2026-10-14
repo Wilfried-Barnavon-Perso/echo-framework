@@ -1,52 +1,23 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 3.15
+version: 3.16
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle d'Historique : Ne garder que les 5 dernieres versions.
 # Historique des versions :
+# 3.16: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 3.15: Fix du gel de l'UI lors du basculement de workspace via encapsulation asynchrone robuste (try-except global et asyncio.to_thread).
 # 3.14: Prise en charge du paramètre optionnel `current_file` lors de l'événement `switch_workspace` pour permettre le ciblage direct d'un fichier via le trigger LLM `open_codex_ui`.
 # 3.13: Ajout du proxy load_directory pour orchestrer le Lazy Loading avec le moteur Git.
-# 3.12: Ajout du proxy load_directory pour orchestrer le Lazy Loading avec le moteur Git.
 # 3.11: Optimisation absolue du ping heartbeat : suppression de get_repo_stats, ajout asyncio.to_thread pour purger la congestion de l'Event Loop.
-# 3.10: Support des workspaces main/sandbox.
-# 3.9: Fiabilisation de la boucle asynchrone (injection return true; pour l'API action JS).
-# 3.8: Sélection visuelle automatique du fichier (Focus) après sa création, et ajustement sémantique du reset.
-# 3.6: Gestion UI du nouveau paramètre booléen de trace (Trace Delta) pour le LLM.
-# 3.5: Support du passage de Workspace en argument optionnel pour toutes les actions.(évite PermissionError au save) et nettoyage des logs debug perturbants.
-# 3.4: Support de la création de dossiers vides dans l'espace 'main' sans notification/pollution du Registre (SQLite).
-# 3.2: Chargement automatique du dernier fichier lors du changement de workspace.
-# 2.6: Mise à jour de la priorité d'affichage à 70.
-# 2.5: Fix timeout (augmentation du CODEX_EDIT_TIMEOUT à 600s pour permettre la réflexion prolongée du MODEL_PRO sur des contextes massifs sans échec HTTPX).
-# 2.4: Fix du crash silencieux (UnboundLocalError sur files_json), support de l'upload multiple (batch), et correction de la synchronisation UI après une suppression.
-# 2.3: Fix du crash silencieux de la boucle asynchrone (get_latest_commit n'existait pas).
-# Remplacement par get_repo_stats().get('last_commit_hash').
-# 2.2: Refonte de la boucle événementielle en tâche de fond (asyncio) pour
-# upload, download, historique ◀ ▶, reset). Sub-chat MODEL_FLASH via call_cascade.
-# 1.1: Ajout load_file (chargement contenu via echoCodexSetContent), delete_file
-# (suppression individuelle avec refresh tree). Bouton × par fichier dans le tree.
-# 1.2: Support sélecteur modèle (Flash/Pro/Lite). Spinner masqué sur erreur AI.
-# 1.3: Feedback modèle effectif — repositionnement dropdown après cascade.
-# Bouton copier. _codex_ai_edit retourne (texte, model_key).
-# 1.6: Preview Panel WYSIWYG — Panneau latéral droit déployable (toggle 🤖).
-# Rendu Markdown/HTML/CSS/SVG temps réel. Splitter draggable.
-# 1.7: Bouton Sauver explicite. Rename fichier via changement de langage.
-# 1.8: Rename fichier via handler dédié.
-# 2.0: Registre Unifié V2 — save_codex_record → save_resource,
-# delete_codex_record → delete_resource, clear_codex_records →
-# clear_resources_by_type.
-# 2.1: Fix Race Condition au chargement initial (Pull au lieu de Push).
-# Affichage direct du contenu vide lors de la création manuelle (new_file).
 
 import sys
 import orjson as json
 import logging
 from typing import Optional
 from pydantic import BaseModel, Field
-import asyncio
 
 # Ajout dynamique du chemin pour les libs ECHO avant l'import
 sys.path.append("/app/backend/echo_libs")
@@ -265,7 +236,7 @@ class Action:
                         if not instruction or not filename:
                             continue
 
-                        target_model = response.get("model", "MODEL_FLASH")
+                        target_model = response.get("model", "MODEL_APOLLO")
                         await events.status(f"🧠 Codex AI ({target_model.split('_')[-1]}) : édition de {filename}...", done=False)
 
                         result = await self._codex_ai_edit(
@@ -693,7 +664,7 @@ class Action:
         cid: str,
         events: EchoEvents,
         metadata: dict,
-        target_model: str = "MODEL_FLASH",
+        target_model: str = "MODEL_APOLLO",
     ) -> Optional[tuple]:
         """Sub-chat : instruction + contenu → cascade → code modifié.
         Retourne (texte_modifié, model_key_effectif) ou None."""
@@ -704,7 +675,7 @@ class Action:
 
         payload = {
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-            "generationConfig": get_generation_config("MODEL_FLASH", override_thinking="medium"),
+            "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="medium"),
             "systemInstruction": {
                 "parts": [{"text": SYS_CODEX_EDIT.format(filename=filename, language=lang)}]
             },

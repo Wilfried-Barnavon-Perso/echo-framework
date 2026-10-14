@@ -2,31 +2,24 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 1.9
+version: 1.10
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.10: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.9: Tolérance de lecture snake_case/camelCase (functionDeclarations) pour la sécurisation des schémas d'outils.
 # 1.8: Silence Failover UI (429/401) et routage exclusif vers logs Docker pour une UX fluide.
 # 1.7: Migration vers ECHO_SUBAGENT_CONTEXT pour l'isolation du RAG des sous-agents.
 # 1.6: Injection de sub_sid dans le payload Qdrant pour isoler le RAG des sous-agents.
-# 1.5: Normalisation camelCase de inline_data en inlineData pour compatibilité stricte AI Studio.
-# 1.4: Ajout du code HTTP 420 aux conditions de failover (surcharge/rate limit).
-# 1.3: Alignement strict du payload gRPC/JSON Code Assist (OAuth2) sur le format Antigravity.
-# 1.2: Standardisation PEP8, déplacement de l'import ECHO_GLOBAL_TENANT_PROJECT_ID en en-tête.
-# 1.1: Injection du tenant global ECHO_GLOBAL_TENANT_PROJECT_ID pour éviter les limites OAuth2.
-import os
 import time
 import random
-import re
 import hashlib
 import orjson as json
 import orjson as std_json
 import asyncio
 import httpx
 import pybase64 as base64
-from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Union
 from echo_auth import EchoAuth
 from echo_events import EchoEvents
@@ -361,7 +354,7 @@ class EchoGeminiClient:
         contents = parts if parts else [{"role": "user", "parts": [{"text": prompt}]}]
 
         # --- ROUTAGE API ---
-        base_gen = copy.deepcopy(ECHO_MODELS_REGISTRY.get(actual_model, ECHO_MODELS_REGISTRY.get("MODEL_LITE", {})).get("generationConfig", {}))
+        base_gen = copy.deepcopy(ECHO_MODELS_REGISTRY.get(actual_model, ECHO_MODELS_REGISTRY.get("MODEL_ZEPHYR", {})).get("generationConfig", {}))
         base_gen["maxOutputTokens"] = max_tokens
         
         payload = {
@@ -726,7 +719,7 @@ class EchoGeminiClient:
                 )
 
         # 2. Construction cascade descendante depuis le modèle clampé
-        cascade_order = ["MODEL_PRO", "MODEL_FLASH", "MODEL_LITE"]
+        cascade_order = ["MODEL_PROMETHEUS", "MODEL_APOLLO", "MODEL_ZEPHYR"]
         start_idx = cascade_order.index(clamped_key) if clamped_key in cascade_order else 1
         cascade = cascade_order[start_idx:]
 
@@ -736,7 +729,7 @@ class EchoGeminiClient:
 
             import copy
             from echo_constants import ECHO_MODELS_REGISTRY
-            base_gen = copy.deepcopy(ECHO_MODELS_REGISTRY.get(model_key, ECHO_MODELS_REGISTRY.get("MODEL_LITE", {})).get("generationConfig", {}))
+            base_gen = copy.deepcopy(ECHO_MODELS_REGISTRY.get(model_key, ECHO_MODELS_REGISTRY.get("MODEL_ZEPHYR", {})).get("generationConfig", {}))
             if "thinkingConfig" in base_gen:
                 base_gen["thinkingConfig"]["includeThoughts"] = include_thoughts
             payload["generationConfig"] = base_gen

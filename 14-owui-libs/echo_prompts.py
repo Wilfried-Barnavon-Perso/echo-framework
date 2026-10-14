@@ -4,8 +4,9 @@
 # !!! ATTENTION : NE JAMAIS EFFACER CES RÈGLES DE NOMENCLATURE !!!
 # Nomenclature Obligatoire : [TYPE]_[DOMAINE]_[ACTION]
 # - TYPE    : SYS (System Prompt - Comportement), USR (User Prompt - Requête), TPL (Template fragmentaire)
-# - DOMAINE : PLANNER, CODEX, RAG, NAV, VISUAL, BROKER, INGEST, ACTION, ORCHESTRATOR, MAPS, EXPLORE
-# - ACTION  : BUILD, UPDATE, DISTILL, EXTRACT, REPAIR, SEARCH, ANALYZE, EXPLORE, CONSULT, GROUNDING, BROWSER, PROBE, SUMMARIZE
+# - DOMAINE : PLANNER, CODEX, RAG, NAV, VISUAL, BROKER, INGEST, ACTION, ORCHESTRATOR, MAPS, EXPLORE, AUDIO
+# - ACTION  : BUILD, UPDATE, DISTILL, EXTRACT, REPAIR, SEARCH, ANALYZE, EXPLORE, CONSULT, GROUNDING, BROWSER,
+#             PROBE, SUMMARIZE, TRANSCRIBE
 # 
 # Les placeholders des variables (.format()) doivent toujours être documentés sous la déclaration.
 # ==============================================================================
@@ -668,3 +669,16 @@ Le Modèle doit piloter un navigateur de manière autonome pour accomplir son ob
 SYS_MAPS_GROUNDING = ECHO_FOUNDATION_KERNEL + "\n\n" + """<persona>
 Le Modèle est un analyste géospatial expert, utilisant ses outils de navigation pour localiser des Points d'Intérêt.
 </persona>"""
+
+# ==============================================================================
+# DOMAINE : AUDIO
+# ==============================================================================
+
+# Variables attendues : Aucune (requête multimodale avec inlineData audio)
+USR_AUDIO_TRANSCRIBE = """Transcris fidèlement et mot à mot cet enregistrement audio en texte brut.
+Règles strictes :
+- Ne restitue QUE la transcription exacte des paroles prononcées, sans aucun commentaire,
+  sans balisage Markdown, sans préambule ni postface.
+- Si l'enregistrement est inaudible, vide ou ne comporte que des bruits de fond,
+  renvoie une chaîne vide sans générer d'erreur.
+- Respecte scrupuleusement la langue parlée, l'orthographe et la ponctuation."""

@@ -210,8 +210,6 @@ sudo bash 00-echo-scripts/install-stack.sh
             <tr><td><code>25-docker-download-broker/</code></td><td><code>/opt/ECHO/docker-download-broker/</code></td><td>Download Broker Daemon</td></tr>
             <tr><td><code>26-docker-n8n-worker/</code></td><td><code>/opt/ECHO/docker-n8n-worker/</code></td><td>Headless N8N Worker (Port 5003)</td></tr>
             <tr><td><code>30-docker-embedding-worker/</code></td><td><code>/opt/ECHO/docker-embedding-worker/</code></td><td>Embedding Worker Harrier-OSS (Port 7997)</td></tr>
-            <tr><td><code>31-docker-tts-worker/</code></td><td><code>/opt/ECHO/docker-tts-worker/</code></td><td>Worker TTS Kokoro ONNX INT8 (Port 7996)</td></tr>
-            <tr><td><code>32-docker-stt-worker/</code></td><td><code>/opt/ECHO/docker-stt-worker/</code></td><td>Worker STT Faster-Whisper (Port 7995)</td></tr>
           </tbody>
         </table>
         <p>Le script applique un nettoyage conditionnel <code>sed</code> des caractères CRLF/BOM uniquement sur les fichiers impactés afin de préserver les horodatages (<code>mtime</code>) et le cache Docker BuildKit.</p>
@@ -219,8 +217,8 @@ sudo bash 00-echo-scripts/install-stack.sh
         <h3>3. Séquençage Docker &amp; Autosafety (<code>stack-echo.yml</code> &amp; <code>install-stack.sh</code>)</h3>
         <ul>
           <li><strong>Tier 1 (Fondations) :</strong> Qdrant (<code>v1.19.1</code>, IP <code>.103</code>), SearXNG (<code>.101</code>), Watchtower (<code>.102</code>).</li>
-          <li><strong>Tier 2 (Workers) :</strong> Embedding (<code>.30</code>), Coding Worker (<code>.21</code> sur <code>echo-sandbox</code>), Browser Worker (<code>.22</code>), MCP Broker (<code>.23</code>), Download Broker (<code>.25</code>), N8N Worker (<code>.26</code>), TTS Worker (<code>.31</code>), STT Worker (<code>.32</code>).</li>
-          <li><strong>Tier 3 (Cortex) :</strong> Open WebUI (<code>main-slim</code>, IP <code>.100</code>, cache persistant <code>PIP_CACHE_DIR=/app/backend/data/.cache/pip</code>, <code>dulwich</code>, <code>h2</code>, <code>pybase64</code>).</li>
+          <li><strong>Tier 2 (Workers) :</strong> Embedding (<code>.30</code>), Coding Worker (<code>.21</code> sur <code>echo-sandbox</code>), Browser Worker (<code>.22</code>), MCP Broker (<code>.23</code>), Download Broker (<code>.25</code>), N8N Worker (<code>.26</code>).</li>
+          <li><strong>Tier 3 (Cortex) :</strong> Open WebUI (<code>main-slim</code>, IP <code>.100</code>, cache persistant <code>PIP_CACHE_DIR=/app/backend/data/.cache/pip</code>, <code>mgzip</code>, <code>dulwich</code>, <code>markitdown[all]</code>, <code>h2</code>, <code>pybase64</code>, <code>edge-tts</code>).</li>
           <li><strong>Tier 4 (Gouvernance) :</strong> Admin Manager (<code>.20</code>) et ECHO Auth Manager (<code>.24</code>).</li>
         </ul>
         <p><code>install-stack.sh</code> configure l'<strong>Autosafety Docker</strong> (logs max 10 Mo, cron hebdomadaire <code>clean-echo.sh</code>), compile l'image socle <code>echo-python-base:latest</code> avec <code>CMAKE_BUILD_PARALLEL_LEVEL=2</code> et un throttle de 30 jours (<code>.last_base_pull</code>). Les conteneurs labellisés <code>echo.hot-reload=true</code> sont rechargés à chaud par <code>update-echo</code>, tandis que <code>rebuild-echo</code> (<code>upgrade-echo.sh</code>) exige une double saisie de sécurité (<code>CONFIRMER</code> puis <code>DETRUIRE</code>).</p>
@@ -234,7 +232,7 @@ sudo bash 00-echo-scripts/install-stack.sh
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.223.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

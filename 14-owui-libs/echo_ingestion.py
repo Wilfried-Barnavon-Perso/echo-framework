@@ -3,11 +3,12 @@ ECHO Ingestion Pipeline
 Gestion unifiée, asynchrone et Zéro-RAM de l'ingestion des fichiers (CAS 1, 2, 3, 4).
 Factorisé à partir de new_context_filter.py pour permettre le traitement en arrière-plan.
 Version: 1.5 (Correction de l'instruction système du smart_context pour guider vers semantic_probe sur les binaires)
-version: 1.2
+version: 1.3
 description: Composant du système ECHO : Echo Ingestion.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.3: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.2: SSOT AEC : Remplacement du hardcoding XML par EchoAEC.render_smart_context.
 
 import os
@@ -194,7 +195,7 @@ class EchoIngestionPipeline:
         return None
 
     async def _describe_ooxml_images(self, path: str, filename: str, user_id: str, chat_id: str, events: any) -> list:
-        """Extrait les images d'un OOXML (docx/pptx) et les décrit via LITE."""
+        """Extrait les images d'un OOXML (docx/pptx) et les décrit via MODEL_ZEPHYR."""
         import zipfile
         descriptions = []
         try:
@@ -218,7 +219,7 @@ class EchoIngestionPipeline:
                             f"Décris cette image extraite du document '{filename}' de manière concise et précise (2-3 phrases max).",
                             u_ctx, m_ctx, is_json=False,
                             parts=[{"role": "user", "parts": [{"text": f"Décris cette image '{os.path.basename(img_name)}' extraite du document '{filename}'."}, {"inline_data": {"mime_type": img_mime, "data": b64}}]}],
-                            target_model="MODEL_LITE"
+                            target_model="MODEL_ZEPHYR"
                         )
                         if description and description != "Analyse indisponible.":
                             descriptions.append(f"**Image {i+1}** (`{os.path.basename(img_name)}`) : {description}")
@@ -369,7 +370,7 @@ class EchoIngestionPipeline:
             await events.status(f"👁️ Analyse multimodale de {filename}...", False)
             extraction_prompt = SYS_INGEST_EXTRACT
             
-            base_gen = copy.deepcopy(ECHO_MODELS_REGISTRY.get(MODEL_DISTILLATION, ECHO_MODELS_REGISTRY.get("MODEL_LITE", {})).get("generationConfig", {}))
+            base_gen = copy.deepcopy(ECHO_MODELS_REGISTRY.get(MODEL_DISTILLATION, ECHO_MODELS_REGISTRY.get("MODEL_ZEPHYR", {})).get("generationConfig", {}))
             
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": extraction_prompt}, {"inline_data": {"mime_type": mime, "data": f"___ECHO_STREAM_FILE___{filepath}___"}}]}],

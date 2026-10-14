@@ -177,6 +177,9 @@ flowchart TD
         <div style="flex: 1; min-width: 200px; background: #0f172a; border: 1px dashed #3b82f6; border-radius: 8px; padding: 15px;">
     <div style="color: #60a5fa; font-size: 12px; text-align: center; margin-bottom: 15px; letter-spacing: 1px;">14-owui-libs (Suite)</div>
     <div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_audio.py</div>
+    <div style="color: #64748b; font-size: 11px;">Pont Audio In-Process (STT/TTS)</div>
+</div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_gemini_client.py</div>
     <div style="color: #64748b; font-size: 11px;">Client HTTP/2 Gemini</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
@@ -256,8 +259,8 @@ flowchart TD
     <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Embedding :7997</div>
     <div style="color: #64748b; font-size: 10px;">Harrier-OSS-v1-0.6B</div><div style="color: #64748b; font-size: 10px;">Edge Bridge / GGUF F16</div>
 </div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
-    <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Audio Workers</div>
-    <div style="color: #64748b; font-size: 10px;">Kokoro TTS :7996</div><div style="color: #64748b; font-size: 10px;">Whisper STT :7995</div>
+    <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">SearXNG :8080</div>
+    <div style="color: #64748b; font-size: 10px;">Métamoteur Web (.101)</div><div style="color: #64748b; font-size: 10px;">Recherche Souveraine JSON</div>
 </div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
     <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Browser Worker</div>
     <div style="color: #64748b; font-size: 10px;">Playwright Headless</div><div style="color: #64748b; font-size: 10px;">Port 5002</div>
@@ -470,8 +473,10 @@ flowchart TB
     OWUI["🖥️ Open WebUI"]
     F("🌒 Filtres Inlet/Outlet")
     P("⚙️ Pipe Engine")
+    AUD("🎙️ Pont Audio In-Process<br/>(/echo/v1/audio)")
     SSH["🚇 SSH PKCE (:8020-8024)"]
     OWUI --> F --> P
+    OWUI <--> AUD
   end
 
   subgraph DATA ["🗄️ ZONE 3 : PERSISTANCE & VECTORISATION"]
@@ -489,7 +494,6 @@ flowchart TB
     MCP["🔌 MCP Broker<br/>(.23 :8000)"]
     DL["⬇️ Download Broker<br/>(.25 Daemon)"]
     N8N["⚙️ N8N Worker<br/>(.26 :5003)"]
-    AUD["🎙️ TTS (.31 :7996)<br/>& STT (.32 :7995)"]
     SNG["🔍 SearXNG (.101 :8080)"]
   end
 
@@ -505,7 +509,7 @@ flowchart TB
   U -. "Tunnel PKCE" .-> SSH
   P ==> SQL & QD
   P ==> CW & BA & MCP & N8N & SNG
-  P == "HTTP/2" ==> GEMINI
+  P & AUD == "HTTP/2" ==> GEMINI
   BA & N8N --> DL
   BA & SNG ==> WWW
 
@@ -516,8 +520,8 @@ flowchart TB
 
   class U,BW,OWUI,AUTH,AM,DOCKER,SSH node
   class SQL,QD,EMB db
-  class F,P core
-  class BA,CW,MCP,N8N,SNG,AUD,DL tool
+  class F,P,AUD core
+  class BA,CW,MCP,N8N,SNG,DL tool
       </div>
     </div>
     <h2>Schéma de Persistance (Ombres Riches)</h2>
@@ -612,6 +616,9 @@ erDiagram
           <h4>✅ Exactitude - Cold Recovery</h4>
           <p>Le <strong>Verrou de Version</strong> compare le couple <code>(message_id, updated_at)</code> lors de la Suture. Si un message est modifié manuellement dans Open WebUI, l'Ombre SQLite correspondante est écartée, les événements postérieurs au <code>t_pivot</code> sont purgés via <code>EchoAEC.purge_orphaned_events()</code>, et le Pipe bascule en <strong>Cold Recovery</strong> tout en préservant la continuité de la session.</p>
         </div>
+
+        <h3>5. Pont Audio In-Process (<code>echo_audio.py</code> v1.4)</h3>
+        <p>Injecté de manière idempotente en position <code>0</code> du routeur FastAPI d'Open WebUI via <code>register_echo_audio_routes()</code> (pour devancer le catch-all <code>SPAStaticFiles</code>), ce module expose les endpoints compatibles OpenAI sous <code>/echo/v1/audio</code> : transcription STT (<code>/transcriptions</code>) relayée vers Gemini <code>MODEL_ZEPHYR</code> (<code>maxOutputTokens=8192</code>, <code>thinkingLevel="minimal"</code>, plafond <code>14 Mo</code>, détection binaire des conteneurs WebM/WAV/OGG/FLAC/MP3/MP4 par <code>sniff_audio_mime_type</code>) et synthèse vocale TTS en streaming <code>audio/mpeg</code> (<code>/speech</code>) via Microsoft Edge Read-Aloud (<code>edge-tts</code>, voix <code>fr-FR-VivienneMultilingualNeural</code>, vitesse nominale <code>1.0</code>, pitch feutré <code>-2Hz</code>).</p>
       </div>
     </details>
 
@@ -622,7 +629,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.223.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

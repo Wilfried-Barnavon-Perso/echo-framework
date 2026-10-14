@@ -48,8 +48,8 @@
       <div>
         <h3>1. Strategic Planner (<code>strategic_planner.py</code>)</h3>
         <ul>
-          <li><strong>Création &amp; Persistance Git :</strong> <code>create_plan</code> (propulsé par <code>PLANNER_MODEL_BUILD = MODEL_PRO</code>) génère un plan Markdown structuré dans le Codex Git et l'indexe dans SQLite (tables <code>plans</code> et <code>echo_resources</code> avec statuts <code>proposed</code>, <code>executing</code>, <code>success</code>, <code>partial</code>, <code>failed</code>, <code>abandoned</code>).</li>
-          <li><strong>Suivi Tactique &amp; Analyse :</strong> <code>update_plan</code> (<code>PLANNER_MODEL_UPDATE = MODEL_FLASH</code>) met à jour l'avancement des tâches (<code>[ ]</code>, <code>[/]</code>, <code>[x]</code>, <code>[!]</code>, <code>[-]</code>), complété par <code>analyze_plan</code> pour l'audit de progression.</li>
+          <li><strong>Création &amp; Persistance Git :</strong> <code>create_plan</code> (propulsé par <code>PLANNER_MODEL_BUILD = MODEL_PROMETHEUS</code>) génère un plan Markdown structuré dans le Codex Git et l'indexe dans SQLite (tables <code>plans</code> et <code>echo_resources</code> avec statuts <code>proposed</code>, <code>executing</code>, <code>success</code>, <code>partial</code>, <code>failed</code>, <code>abandoned</code>).</li>
+          <li><strong>Suivi Tactique &amp; Analyse :</strong> <code>update_plan</code> (<code>PLANNER_MODEL_UPDATE = MODEL_APOLLO</code>) met à jour l'avancement des tâches (<code>[ ]</code>, <code>[/]</code>, <code>[x]</code>, <code>[!]</code>, <code>[-]</code>), complété par <code>analyze_plan</code> pour l'audit de progression.</li>
           <li><strong>Proprioception :</strong> Le modèle consulte l'état des plans à la demande via <code>query_registry</code> afin de préserver la fenêtre contextuelle.</li>
         </ul>
 
@@ -77,7 +77,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.223.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

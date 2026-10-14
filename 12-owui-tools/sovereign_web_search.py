@@ -1,14 +1,15 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 1.18
+version: 1.19
 description: Composant système interne : ECHO Sovereign Web Search.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.15: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
-# 1.16: Nettoyage du code : suppression des imports inutilisés (PEP8).
+# 1.19: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.17: Optim - Ajout de la priorisation des informations récentes via consignes et utilisation proactive de time_range.
+# 1.16: Nettoyage du code : suppression des imports inutilisés (PEP8).
+# 1.15: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
 
 import httpx
 import sys
@@ -156,7 +157,7 @@ class Tools:
         self,
         query: str,
         engines: Optional[str] = Field(default=None, description="Ciblage éventuel des moteurs pour l'agent (ex: 'scholar,wikipedia')"),
-        target_model_key: Literal["MODEL_LITE", "MODEL_FLASH", "MODEL_PRO"] = "MODEL_PRO",
+        target_model_key: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_PROMETHEUS",
         __user__: dict = {},
         __chat_id__: str = "",
         __metadata__: dict = {},

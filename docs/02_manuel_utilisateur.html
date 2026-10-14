@@ -62,26 +62,26 @@
       <tbody>
         <tr>
           <td><strong><code>AUTO</code></strong></td>
-          <td>Démarre en mode léger (<code>LITE</code>) et escalade de lui-même jusqu'à <code>FLASH</code> si la demande nécessite des outils ou une recherche.</td>
+          <td>Démarre en mode léger (<code>ZEPHYR</code>) et escalade de lui-même jusqu'à <code>APOLLO</code> si la demande nécessite des outils ou une recherche.</td>
           <td>Usage quotidien polyvalent (compromis vitesse / autonomie).</td>
         </tr>
         <tr>
-          <td><strong><code>AUTO_PRO</code></strong></td>
-          <td>Autorise l'escalade autonome complète de <code>LITE</code> vers <code>FLASH</code> puis jusqu'à <code>PRO</code> pour les problèmes d'architecture ou d'orchestration lourde.</td>
+          <td><strong><code>AUTO_PROM</code></strong></td>
+          <td>Autorise l'escalade autonome complète de <code>ZEPHYR</code> vers <code>APOLLO</code> puis jusqu'à <code>PROMETHEUS</code> pour les problèmes d'architecture ou d'orchestration lourde.</td>
           <td>Projets d'ingénierie, R&amp;D et missions complexes.</td>
         </tr>
         <tr>
-          <td><strong><code>MODEL_LITE</code></strong></td>
+          <td><strong><code>MODEL_ZEPHYR</code></strong></td>
           <td>Verrouille le modèle rapide pour la discussion courante, la synthèse rapide et la consultation de vos préférences.</td>
           <td>Échanges conversationnels rapides et économie de quota.</td>
         </tr>
         <tr>
-          <td><strong><code>MODEL_FLASH</code></strong></td>
+          <td><strong><code>MODEL_APOLLO</code></strong></td>
           <td>Active d'emblée le modèle agentique doté d'une réflexion approfondie et de l'exécution d'outils (Web, Code, Codex).</td>
           <td>Développement, recherche web et analyse de fichiers.</td>
         </tr>
         <tr>
-          <td><strong><code>MODEL_PRO</code></strong></td>
+          <td><strong><code>MODEL_PROMETHEUS</code></strong></td>
           <td>Mobilise la capacité de raisonnement maximale pour les arbitrages critiques et l'orchestration multi-agents.</td>
           <td>Conception système (HLD), débats d'experts (Delphi) et débogage ardu.</td>
         </tr>
@@ -127,10 +127,11 @@
       </tbody>
     </table>
 
-    <h2>4. Interface Visuelle : Jauge et Tiroir d'Actions</h2>
+    <h2>4. Interface Visuelle : Jauge, Tiroir d'Actions et Mode Vocal</h2>
     <ul>
       <li><strong>Jauge de Contexte &amp; Quota (en haut de l'écran) :</strong> Affiche en permanence la mémoire de travail occupée par la discussion ainsi que votre quota d'API restant. Survolez l'icône cadenas ou la barre colorée pour lire les détails.</li>
       <li><strong>Tiroir d'Actions (ECHO App Drawer, bouton flottant à droite) :</strong> Regroupe en un clic toutes les applications intégrées : l'éditeur de code et de documents <strong>ECHO Codex</strong>, le coffre-fort de secrets <strong>Identity Vault</strong>, la supervision en direct des agents (<strong>Agent Monitor</strong>), le rejeu vidéo de navigation web, l'export <strong>PDF</strong>, la purge chirurgicale de mémoire et le transfert résumé vers une nouvelle discussion.</li>
+      <li><strong>Interaction Vocale Directe (Dictée &amp; Mode Appel Vocal) :</strong> Le bouton microphone et le mode d'appel vocal intégré vous permettent d'échanger à la voix sans configuration supplémentaire. En mode appel vocal, ECHO privilégie automatiquement son palier rapide (<code>ZEPHYR</code>), adapte sa syntaxe au style oral (réponses concises, sans listes ni blocs de code) et restitue ses réponses via une synthèse vocale naturelle au timbre feutré.</li>
     </ul>
 
     <div class="transition-text">
@@ -140,7 +141,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.223.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

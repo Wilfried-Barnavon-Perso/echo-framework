@@ -81,7 +81,7 @@
         <tr>
           <td><strong>Autonomie</strong></td>
           <td>Arsenal d'outils sensoriels et exécutifs pilotés par le Kernel sans intervention humaine.</td>
-          <td>Browser Agent, Coding Worker, SearxNG, Qdrant RAG, STT Worker, TTS Worker.</td>
+          <td>Browser Agent, Coding Worker, N8N Worker, MCP Broker, SearXNG, Qdrant RAG, Pont Audio In-Process.</td>
         </tr>
       </tbody>
     </table>
@@ -127,7 +127,7 @@
         <ul>
           <li><strong>RAG Organique (<code>echo_meta_artifacts</code>) :</strong> indexé par <code>user_id</code> avec score d'importance pondéré (<code>MEMORY_IMPORTANCE_WEIGHTS</code> de 1-Trivial à 5-Axiome). Manipulé via <code>update_meta_artifact</code>, <code>search_meta_artifacts</code> et <code>delete_meta_artifact_item</code>.</li>
           <li><strong>Session RAG (<code>echo_session_rag</code>) :</strong> indexé par <code>user_id + chat_id + source_id</code> via <code>save_session_context</code>, <code>search_sessions_context</code> (avec support <code>global_search</code> inter-sessions) et <code>delete_session_context_source</code>.</li>
-          <li><strong>Corrélation contextuelle :</strong> Au-delà des seuils de charge contextuelle (<code>CONTEXT_LOAD_WARNING_THRESHOLD = 40%</code>, <code>CONTEXT_LOAD_CRITICAL_THRESHOLD = 60%</code>), l'outil <code>new_cognitive_level</code> permet au modèle actif de déclencher une escalade cognitive vers <code>MODEL_FLASH</code> ou <code>MODEL_PRO</code>.</li>
+          <li><strong>Corrélation contextuelle :</strong> Au-delà des seuils de charge contextuelle (<code>CONTEXT_LOAD_WARNING_THRESHOLD = 40%</code>, <code>CONTEXT_LOAD_CRITICAL_THRESHOLD = 60%</code>), l'outil <code>new_cognitive_level</code> permet au modèle actif de déclencher une escalade cognitive vers <code>MODEL_APOLLO</code> ou <code>MODEL_PROMETHEUS</code>.</li>
         </ul>
 
         <h3>2. Pont d'Inférence Edge (<code>edge_embed_bridge_filter.py</code>)</h3>
@@ -145,7 +145,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.221.57 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.223.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
