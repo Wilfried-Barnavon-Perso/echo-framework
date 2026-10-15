@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.81
+version: 192.82
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.82: Suppression du statut initial "⚙️ Traitement en cours...".
 # 192.81: Enregistrement idempotent du pont in-process ECHO Audio (routes /echo/v1/audio).
 # 192.80: Renommage souverain des modèles cognitifs (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS) et politique AUTO_PROM.
 # 192.79: Augmentation de maxOutputTokens à 8192 dans le Fast-Track pour absorber le thinking sur les prompts volumineux.
 # 192.78: Fiabilisation du Fast-Track (title_generation en JSON, exclusion du system prompt, thinkingLevel low sans temperature et filtrage des parts thought).
-# 192.77: Implémentation du Verrou de Tour (turn_origin_model) protégeant l'origine cognitive lors des continuations d'outils et cascades.
 
 
 # ==============================================================================
@@ -643,7 +643,6 @@ class Pipe:
         # SUITE NORMALE DU PIPE ECHO (Agentivité, RAG, Outils...)
         # ==============================================================================
         events = EchoEvents(__event_emitter__)
-        if events: await events.status("⚙️ Traitement en cours...", done=False)
         if not __user__:
             yield "❌ Identité manquante."; return
         user_valves = __user__.get("valves") or self.UserValves()

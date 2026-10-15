@@ -2,16 +2,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 7.59
+version: 7.60
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.60: Ajustement sémantique de l'AEC_directive de mise à niveau (notification du passage de l'ancienne à la nouvelle version).
 # 7.59: Injection dynamique de l'AEC_directive d'initialisation de session (PIS) ou de mise à niveau dans rich_parts.
 # 7.58: Correction du fallback ZoneInfo (TypeError sur import pytz as ZoneInfo -> from pytz import timezone).
 # 7.57: Refactorisation algorithmique PGCU et renommage (current_user_multipart_payload).
 # 7.56: Extraction de dr.get("summary") dans la clé 'message' du delta hors-tour.
-# 7.54: Correction du bug d'ingestion des fichiers attachés au premier message (chat_id récupéré depuis le body).
 
 
 from pydantic import BaseModel, Field
@@ -307,7 +307,7 @@ class Filter:
                         elif is_upgrade:
                             directive_to_inject = EchoAEC.render_directive(
                                 f"Directive de Mise à Niveau du Framework : La version du Framework a évolué ({last_version} -> {version}). "
-                                "Confirmer succinctement la mise à jour de la version avant de traiter la requête de l'Utilisateur."
+                                "Notifier succinctement la mise à jour de l'ancienne version à la nouvelle avant de traiter la requête de l'Utilisateur."
                             )
                             state_manager.save_session_setting("last_framework_version", version)
                     elif tour_conversation == 1:

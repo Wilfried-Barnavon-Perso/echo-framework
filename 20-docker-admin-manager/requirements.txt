@@ -6,3 +6,4 @@ paramiko
 APScheduler
 schedule
 passlib[argon2]
+httpx

@@ -8,25 +8,31 @@ Ce dossier contient l'application **ECHO Admin Manager**. Il s'agit d'un contene
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `server.py`
-Fichier monolithique (plus de 160Ko) contenant l'ensemble de la logique serveur (Flask) et le rendu HTML inline du Dashboard.
+L'application est structurée en **4 couches modulaires** (`v5.136`) orchestrées par le point d'entrée léger `server.py` (injection directe de l'instance Flask `app` sans `Blueprint` pour préserver les résolutions `url_for`).
 
-#### A. Gouvernance & Dashboard
-- **Dashboard Actif & Monitoring** : Interface web affichant un suivi en temps réel des conteneurs via l'API de bas niveau Docker. Il expose des **Statistiques Détaillées** (CPU, RAM, Size, Temps de démarrage) récoltées via des pools de threads asynchrones (`concurrent.futures`), et permet un tri dynamique.
-- **Révocations Granulaires & Kill-Switch** : Permet à l'administrateur de forcer l'arrêt de conteneurs (Workers ou OWUI) et de révoquer l'accès aux utilisateurs via la purge ciblée des bases de données d'authentification.
-- **Autosafety & Maintenance** : Lance de manière programmatique des commandes de nettoyage (`docker system prune`) ou l'optimisation des bases de données SQLite (requêtes `VACUUM`, `PRAGMA wal_checkpoint`). Intègre un **Garbage Collector FS (RefCounting)** purgeant de manière asynchrone les fichiers du Vault global et les uploads résiduels via l'inspection des liens symboliques. Le nouveau **Séquenceur Nocturne** (adossé à `apscheduler`) génère désormais un rapport HTML esthétique structuré en grille Bootstrap remplaçant l'arborescence texte, et s'appuie sur des retours de fonctions par dictionnaires structurés (supprimant le recours aux regex instables).
+### `server.py` (Point d'Entrée)
+Initialise l'amorçage CPU (`psutil.cpu_percent`), démarre le singleton `backup_scheduler` (`BackgroundScheduler`), synchronise la planification (`update_system_schedules`) et lance le serveur Flask (`port=3001, debug=False, threaded=True`).
 
-#### B. Purge Vectorielle Asynchrone
-- **`run_semantic_pruning`** : Algorithme critique d'élagage temporel (TTL) qui purge automatiquement les vecteurs orphelins dans Qdrant et les vieilles sessions SQLite. Gère la découverte dynamique et la vérification d'existence des collections Qdrant pour éviter les crashs.
-- **Multithreading** : Afin de ne jamais bloquer l'interface web Flask, cet élagage est exécuté en arrière-plan via `threading.Thread(target=run_semantic_pruning)`.
-- **API `pollTaskStatus()`** : L'interface web (JavaScript) utilise le *long-polling* (`setInterval` à 3000ms) en requêtant `/api/task_status` pour mettre à jour la barre de progression en temps réel pendant que le thread d'élagage tourne.
+### Couche 1 : `core/` (Socle Technique)
+- **`core/config.py`** : Instancie `app` (`Flask`), `backup_scheduler` (`BackgroundScheduler`), `MAINTENANCE_STATE` (`is_running`, `task_type`, `status`, `percent`, `start_time`) et centralise l'ensemble des constantes de chemins (`WEBUI_DB_PATH`, `N8N_DATA_DIR`, `N8N_DB_PATH`, `MCP_CACHE_DIR`, `DOWNLOADS_DIR`, `MAINT_HISTORY_FILE`, `QDRANT_URL`, `N8N_WORKER_URL`, `DEFAULT_MAINT_CONFIG` avec `purge_orphaned_chats=True` et `purge_orphaned_users=True` par défaut, `DEFAULT_AUTH_SETTINGS`).
+- **`core/utils.py`** : Fonctions analytiques sans état (`human_size`, `get_cpu_model_name`, `get_dir_stats`, `get_echo_version`, `_format_bytes`, `_get_tree_size`).
+- **`core/settings_io.py`** : Persistance JSON des configurations (`get_auth_settings`, `save_auth_settings`, `load_maint_config`, `save_maint_config`, `load_maint_history`, `save_maint_report`, `load_settings` avec auto-heal `auto_cleanup=True`, `save_settings`, `get_rclone_remotes` via `configparser`).
+- **`core/security.py`** : Barrière SSO Forward Auth (`@app.before_request check_sso_auth`), génération de mots de passe complexes (`generate_complex_temp_password`) et rotation SSH (`change_system_password`).
 
-#### C. Sauvegarde à Chaud (Hot Backups)
-- Lance des processus de sauvegarde intégrale des volumes de données (`perform_backup_task`) sans interrompre le fonctionnement des Tiers 1 à 3.
+### Couche 2 : `services/` (Logique Métier & Tâches Asynchrones)
+- **`services/semantic_pruning.py`** : Algorithme d'élagage temporel (`run_semantic_pruning`, `_run_semantic_pruning`) et de purge synchrone par utilisateur (`purge_user_artifacts`) reposant sur `/app/backend/data/webui.db` (`table user`) comme **Single Source of Truth (SSoT)** avec une **politique Fail-Closed stricte** (3 verrous cumulatifs : Wait-for-it post-backup vérifiant `user` et `chat`, API Safeguard OWUI, et vérification `PRAGMA quick_check(1)` + présence de `admin@echo.local` + filtrage de `db_valid_chats` par `valid_ids` ; abandon immédiat sans suppression ni `VACUUM` si la base SSoT est injoignable ou verrouillée, ou si `pruning_error` capture une exception). Intègre en outre le verrou d'intégrité `n8n_whitelist_complete` (si la lecture d'un dossier de workflows ou d'une base `session.db` échoue lors de la construction de `n8n_active_ids`, l'appel `POST /prune` vers `echo-n8n-worker` et la GC N8N des Drop Zones sont annulés pour prévenir la destruction de démons actifs). Assure la réconciliation des 5 volumes (`echo-webui-data`, `echo-qdrant-data`, `echo-download-broker-data`, `echo-n8n-data` via `/prune`, `echo-mcp-cache`), la purge des tables SQLite `webui.db` orphelines (`user_id NOT IN user`), et le `VACUUM` sur `session.db`, `identity.db`, `webui.db`, `auth.db` et `database.sqlite` (N8N).
+- **`services/memory_consolidation.py`** : Consolidation vectorielle Lvl1 → Lvl2 (`_cosine_sim`, `_centroid`, `consolidate_memories_for_user`) par clustering greedy et centroïde L2-normalisé (`"with_vector": True` sur `/points/scroll`, `"exact": True` sur `/points/count`) sans appel au worker d'embedding.
+- **`services/maintenance_backup.py`** : Sauvegardes `tar.xz` incluant `echo-webui-data`, `echo-qdrant-data`, `echo-auth-data`, `echo-n8n-data` et `echo-mcp-cache` avec arrêt/redémarrage coordonné (`echo-open-webui`, `echo-qdrant`, `echo-n8n-worker`, `echo-mcp-broker`), suivi de progression temps-réel dans `MAINTENANCE_STATE` (`tar -cJf` via `psutil.Process.io_counters().read_bytes`, `sftp.put` via callback natif `_sftp_cb`, `rclone copy` via lecture de `/proc/<pid>/fdinfo` dans `_get_proc_file_offset`), création récursive `_sftp_mkdir_p`, enregistrement d'un rapport HTML lors des sauvegardes manuelles (`record_report=True`), Séquenceur Nocturne (`run_nightly_maintenance_cycle`) et programmation APScheduler (`update_system_schedules`).
+
+### Couche 3 : `routes/` (Contrôleurs HTTP & API)
+- **`routes/routes.py`** : Héberge l'ensemble des contrôleurs Flask (`@app.route`), incluant le Dashboard (`/`), le polling d'état (`/api/task_status`), l'historique (`/api/maint/history`), les métriques temps-réel (`/api/stats`, `/api/containers` avec `ThreadPoolExecutor`), la création directe de profils Rclone INI (`/action/rclone/create` via `configparser`, nettoyage des `\r\n` sur les tokens JSON Google Drive et `rclone obscure` pour WebDAV), la gouvernance SSoT/SSO Fail-Closed (`/action/auth/delete` exécutant la transaction de purge sur toutes les tables `user_id` de `webui.db` avant `auth.db` et `purge_user_artifacts`, `/action/auth_reset/<user_id>` purgeant simultanément `identity.db` et `/app/mcp_cache/<service>/<user_id>`) et le pilotage WAF BunkerWeb (`/api/bunkerweb/*`).
+
+### Couche 4 : `templates/` (Rendu UI)
+- **`templates/templates.py`** : Constantes HTML/Jinja2 inline (`HTML_LOGIN`, `HTML_DASHBOARD`), incluant le bandeau de progression temps-réel `#task-progress-card`, le journal des opérations dans l'onglet Sauvegardes (`#backupHistoryList`) et l'assistant `#rcloneWizardModal` (avec désactivation dynamique `disabled` des champs masqués via `toggleWizardFields()`).
 
 ### `Dockerfile` & `requirements.txt`
-- Build standard du conteneur en Python (image légère). Installation des dépendances Flask, requêtes HTTP, et client Qdrant.
+- Image héritant de `echo-python-base:latest`, installant `rclone` et les dépendances Python (`flask`, `docker`, `psutil`, `paramiko`, `APScheduler`, `passlib[argon2]`, `httpx`), et copiant `server.py` ainsi que les 4 packages (`core`, `services`, `routes`, `templates`).
 
 ## 3. Dépendances Logiques
-- Le Admin Manager s'exécute sur le port **3001** et monte directement les sockets Docker (`/var/run/docker.sock`) pour interagir avec les autres conteneurs.
-- Il partage les volumes `echo-qdrant-data` et `echo-auth-data` afin de pouvoir exécuter ses routines d'optimisation SQLite et Qdrant.
+- L'Admin Manager s'exécute sur le port **3001** et monte directement le socket Docker (`/var/run/docker.sock`) ainsi que les bind-mounts `:ro` de ses 4 packages pour supporter le Hot-Reload (`echo.hot-reload=true`).
+- Il partage les volumes `echo-webui-data`, `echo-qdrant-data`, `echo-auth-data`, `echo-backups`, `echo-download-broker-data`, `echo-n8n-data` et `echo-mcp-cache` afin d'exécuter ses routines de sauvegarde, restauration, réconciliation SSoT et d'optimisation SQLite/Qdrant/FS.

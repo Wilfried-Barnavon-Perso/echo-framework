@@ -2,7 +2,7 @@
 FROM echo-python-base:latest
 
 LABEL maintainer="Wilfried BARNAVON"
-LABEL version="1.0"
+LABEL version="5.135"
 LABEL description="ECHO Admin Manager (System & Orchestration)"
 
 WORKDIR /app
@@ -17,7 +17,11 @@ COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     CMAKE_BUILD_PARALLEL_LEVEL=2 pip install -r requirements.txt
 
-# Copie de l'application
+# Copie de l'application modulaire
+COPY core /app/core
+COPY services /app/services
+COPY routes /app/routes
+COPY templates /app/templates
 COPY server.py /app/server.py
 
 ENV TZ=Europe/Paris

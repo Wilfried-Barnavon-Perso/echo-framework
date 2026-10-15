@@ -8,7 +8,7 @@ Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégratio
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `pipe_engine.py` (v192.81)
+### `pipe_engine.py` (v192.82)
 
 #### A. Classe `UserDataManager` (Le Tisserand de Mémoire)
 **Rôle** : Gestionnaire de l'état asynchrone SQLite (proxy vers `EchoStateManager`). Il reconstruit l'historique exact de la conversation.
@@ -31,7 +31,7 @@ Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégratio
 - **Gestion de l'Auto-Continue (MAX_TOKENS)** : Le pipeline gère nativement la troncature. Si le modèle s'arrête prématurément (MAX_TOKENS) au milieu d'un texte ou d'un appel d'outil massif, le système injecte dynamiquement une instruction de continuation via une balise sémantique `<artifact id="AEC_directive">` stricte et relance automatiquement la génération de façon transparente. Le préfixe UI Status pour ces rappels d'alignement est `🛤️ Alignement du Modèle`.
 
 #### D. Classe `Pipe` (Point d'Entrée OWUI)
-**Rôle** : Interface de connexion conforme à la signature Open WebUI. Initialise les Valves, intercepte en **Fast-Track** les tâches système d'Open WebUI (`title_generation`, `tags_generation`, `follow_up_generation`) vers `MODEL_ZEPHYR` en `stateless_bypass` (en excluant le message `role == "system"`, avec `maxOutputTokens: 8192`, `thinkingLevel: "low"`, `responseMimeType: "application/json"`, et filtrage des `parts` de type `thought`), alimente le cache `_TOOLS_CACHE` (bridé par `ECHO_TOOLS_CACHE_MAX_SIZE = 100`), gère le flux d'authentification PKCE par tunnel SSH éphémère, enregistre de manière idempotente le pont audio in-process (`register_echo_audio_routes()`), et lance le pipeline principal.
+**Rôle** : Interface de connexion conforme à la signature Open WebUI. Initialise les Valves, intercepte en **Fast-Track** les tâches système d'Open WebUI (`title_generation`, `tags_generation`, `follow_up_generation`) vers `MODEL_ZEPHYR` en `stateless_bypass` (en excluant le message `role == "system"`, avec `maxOutputTokens: 8192`, `thinkingLevel: "low"`, `responseMimeType: "application/json"`, et filtrage des `parts` de type `thought`), alimente le cache `_TOOLS_CACHE` (bridé par `ECHO_TOOLS_CACHE_MAX_SIZE = 100`), gère le flux d'authentification PKCE par tunnel SSH éphémère, enregistre de manière idempotente le pont audio in-process (`register_echo_audio_routes()`), et lance directement le pipeline principal sans émettre de statut initial générique (`"⚙️ Traitement en cours..."` supprimé en v192.82).
 
 ## 3. Dépendances Logiques & Infrastructure
 - Ce composant dépend intimement des nouvelles librairies modulaires de `14-owui-libs` (`echo_constants.py` pour le Registre Cognitif et `echo_state_manager.py` pour le requêtage de base de données).

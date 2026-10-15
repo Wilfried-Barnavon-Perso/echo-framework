@@ -24,7 +24,7 @@
 
     <h2>2. Maintenance Autonome et Téléchargements (Brokers)</h2>
     <p>
-      Pour que l'expérience reste fluide au fil du temps sans intervention de votre part, ECHO intègre un gestionnaire interne (l'Admin Manager) fonctionnant en tâche de fond. Son rôle est de nettoyer automatiquement la mémoire morte, d'optimiser les bases de données et d'assurer que l'application ne sature jamais l'espace de votre ordinateur. 
+      Pour que l'expérience reste fluide et rassurante au fil du temps sans intervention de votre part, ECHO intègre un centre de contrôle interne (l'Admin Manager) fonctionnant en tâche de fond. Chaque nuit, il consolide les souvenirs récurrents, nettoie la mémoire morte, optimise les bases de données et effectue une sauvegarde complète pouvant être exportée automatiquement vers votre serveur personnel (NAS SFTP) ou votre Cloud (Google Drive, OneDrive, Nextcloud). Il obéit à une sécurité stricte (« Fail-Closed ») qui interdit tout nettoyage si une base est temporairement indisponible, et affiche en direct une barre de progression précise lors de chaque opération.
     </p>
     <p>
       En parallèle, un service dédié (le Download Broker) s'occupe de rapatrier, d'indexer et de classer silencieusement les très gros fichiers que l'IA serait amenée à télécharger lors de ses navigations web, sans bloquer ou ralentir la conversation en cours.
@@ -38,8 +38,13 @@
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Admin Manager (<code>server.py</code>)</h3>
-        <p>Orchestrateur Flask (Port 3001, IP <code>.20</code>) pilotant le cluster via <code>/var/run/docker.sock</code> : monitoring temps réel (CPU, RAM, Size, Uptime via pools de threads), élagage vectoriel asynchrone (<code>run_semantic_pruning()</code> en thread dédié interrogé par <code>/api/task_status</code>), Vacuum/WAL SQLite, Garbage Collector FS par comptage de références des symlinks, purge Whitelist des workflows N8N (<code>/prune</code>), sauvegardes à chaud et Séquenceur Nocturne (<code>apscheduler</code>) générant des rapports HTML Bootstrap.</p>
+        <h3>1. Admin Manager Modulaire (<code>20-docker-admin-manager/</code> v5.136)</h3>
+        <p>Orchestrateur Flask (Port 3001, IP <code>.20</code>) structuré en 4 packages (<code>core/</code>, <code>services/</code>, <code>routes/</code>, <code>templates/</code>) autour du point d'entrée <code>server.py</code> et pilotant le cluster via <code>/var/run/docker.sock</code> :</p>
+        <ul>
+          <li><strong>Gouvernance SSoT Fail-Closed (<code>webui.db::user</code>) :</strong> La table <code>user</code> d'Open WebUI est l'unique source de vérité. Trois verrous cumulatifs (Wait-for-it post-sauvegarde vérifiant <code>user</code> et <code>chat</code>, API Safeguard sur <code>/api/v1/users</code>, et validation SQLite <code>PRAGMA quick_check(1) == "ok"</code> + présence de <code>admin@echo.local</code>) avortent toute purge et tout <code>VACUUM</code> en cas d'indisponibilité. Le verrou <code>n8n_whitelist_complete</code> suspend en outre <code>/prune</code> N8N et la GC Drop Zone si un <code>session.db</code> est illisible. La suppression d'un utilisateur (<code>/action/auth/delete</code> &rarr; <code>purge_user_artifacts</code>) réconcilie les 5 volumes de bout en bout, et la réinitialisation d'accès (<code>/action/auth_reset/&lt;user_id&gt;</code>) purge <code>identity.db</code> ainsi que <code>/app/mcp_cache/&lt;service&gt;/&lt;user_id&gt;</code>.</li>
+          <li><strong>Consolidation Vectorielle Nocturne (<code>services/memory_consolidation.py</code>) :</strong> Regroupe par similarité cosinus (seuil <code>0.78</code>, <code>min_cluster_size=3</code>) les souvenirs de niveau <code>1 - Trivial</code> (<code>memory_importance=1</code>) d'un même utilisateur dans <code>echo_meta_artifacts</code> (requêtes Qdrant avec <code>"exact": True</code> et <code>"with_vector": True</code>), calcule leur centroïde L2-normalisé sans solliciter l'Embedding Worker ni Gemini, et promeut le souvenir consolidé au niveau <code>2 - Mineur</code>.</li>
+          <li><strong>Sauvegardes 5 Volumes, Télémétrie Temps Réel &amp; Cloud Rclone :</strong> <code>perform_backup_task</code> archive en <code>tar.xz</code> les 5 volumes (<code>echo-webui-data</code>, <code>echo-qdrant-data</code>, <code>echo-auth-data</code>, <code>echo-n8n-data</code>, <code>echo-mcp-cache</code>). L'état <code>MAINTENANCE_STATE</code> (interrogé par <code>/api/task_status</code> et affiché dans <code>#task-progress-card</code>) suit en temps réel la compression <code>tar -cJf</code> via <code>psutil.Process.io_counters().read_bytes</code>, l'envoi SFTP via callback Paramiko (<code>_sftp_cb</code> et <code>_sftp_mkdir_p</code>) et le transfert Cloud Rclone via <code>/proc/&lt;pid&gt;/fdinfo</code> (<code>_get_proc_file_offset</code>). L'assistant <code>/action/rclone/create</code> écrit directement les profils INI via <code>configparser</code> dans <code>rclone.conf</code> (nettoyage <code>\r\n</code> des tokens JSON OAuth et chiffrement <code>rclone obscure</code>).</li>
+        </ul>
 
         <h3>2. ECHO Auth Manager SSO &amp; MFA (<code>auth_server.py</code>)</h3>
         <p>IdP FastAPI autonome (Port 8000, IP <code>.24</code>, exposé sous <code>auth.${ECHO_DOMAIN}</code>) adossé à <code>auth.db</code> (SQLite WAL). Il assure le hachage <strong>Argon2</strong> des mots de passe et questions de sécurité, la validation <strong>TOTP</strong> (<code>pyotp</code>), et expose l'endpoint Forward Auth <code>/api/verify</code> (renvoyant HTTP <code>401</code> sur expiration pour déclencher la redirection propre) ainsi que la déconnexion globale <code>/sso-logout</code> (avec <code>Clear-Site-Data: "cache"</code> et invalidation de la session Open WebUI). La suppression d'un utilisateur déclenche une purge atomique sur toutes les bases SQLite et Qdrant.</p>
@@ -66,7 +71,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.223.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.223.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

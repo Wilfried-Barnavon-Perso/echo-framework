@@ -1,17 +1,17 @@
 # ==============================================================================
 # ECHO FRAMEWORK
 # REGLE: Ne garder que les 5 dernières versions du changelog.
-# Version : 9.78
+# Version : 9.81
+# --- CHANGELOG 9.81 ---
+# - BunkerWeb : Suppression de la mention (WAF) dans le template de retour HTML 403 Forbidden.
+# --- CHANGELOG 9.80 ---
+# - Docker Compose : Création du volume externe echo-mcp-cache (/app/mcp_cache) sur echo-mcp-broker et montage de echo-n8n-data et echo-mcp-cache dans echo-admin-manager.
+# --- CHANGELOG 9.79 ---
+# - Docker Compose : Ajout des bind-mounts modulaires (core, services, routes, templates) pour le Hot-Reload de echo-admin-manager v5.131.
 # --- CHANGELOG 9.78 ---
 # - Docker Compose : In-process audio bridge (edge-tts), suppression des conteneurs echo-stt-worker (.32) et echo-tts-worker (.31).
 # --- CHANGELOG 9.77 ---
 # - Docker Compose : Ajout des volumes echo_libs_sandbox et sandbox-agent-readme.txt pour le Coding Worker.
-# --- CHANGELOG 9.76 ---
-# - Docker Compose : Mise à niveau de Qdrant (Base Vectorielle) vers la version 1.19.1.
-# --- CHANGELOG 9.75 ---
-# - Docker Compose : Refactorisation structurelle IPAM (Domain-Driven) et résolution du conflit IP (.10) avec le WAF.
-# --- CHANGELOG 9.74 ---
-# - Docker Compose : Variables d'environnement pour l'IPAM (ECHO_NET_MAIN_PREFIX, ECHO_NET_SANDBOX_PREFIX).
 # ==============================================================================
 #                  inventés par la syntaxe officielle BunkerWeb (REVERSE_PROXY_AUTH_REQUEST*).
 #                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
@@ -141,7 +141,7 @@ services:
 
       # 🛡️ ECHO AUTH : Forward Auth
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST=/api/verify"
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @api_403_reject; error_page 429 = @api_429_reject; error_page 500 501 502 503 504 = @api_5xx_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/(api|ollama|openai|audio|images|v1)/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_x_sveltekit_data) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @api_403_reject { if ($$request_uri ~* ^/(api|ollama|openai|audio|images|v1)/) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } if ($$http_accept ~* application/json) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } if ($$http_x_sveltekit_data) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } default_type text/html; return 403 '<html><body><center><h1>403 Forbidden (WAF)</h1></center></body></html>'; } location @api_429_reject { if ($$request_uri ~* ^/(api|ollama|openai|audio|images|v1)/) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } if ($$http_accept ~* application/json) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } if ($$http_x_sveltekit_data) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } default_type text/html; return 429 '<html><body><center><h1>429 Too Many Requests</h1></center></body></html>'; } location @api_5xx_reject { if ($$request_uri ~* ^/api/version) { return 200 '{\"version\":\"booting\",\"deployment_id\":\"startup\"}'; } if ($$request_uri ~* ^/(api|ollama|openai|audio|images|v1)/) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } if ($$http_accept ~* application/json) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } if ($$http_x_sveltekit_data) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } default_type text/html; return 500 '<html><body><center><h1>500 Internal Server Error</h1><p>Le backend de l\\'application est temporairement indisponible.</p></center></body></html>'; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @api_403_reject; error_page 429 = @api_429_reject; error_page 500 501 502 503 504 = @api_5xx_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/(api|ollama|openai|audio|images|v1)/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_x_sveltekit_data) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @api_403_reject { if ($$request_uri ~* ^/(api|ollama|openai|audio|images|v1)/) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } if ($$http_accept ~* application/json) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } if ($$http_x_sveltekit_data) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } default_type text/html; return 403 '<html><body><center><h1>403 Forbidden</h1></center></body></html>'; } location @api_429_reject { if ($$request_uri ~* ^/(api|ollama|openai|audio|images|v1)/) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } if ($$http_accept ~* application/json) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } if ($$http_x_sveltekit_data) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } default_type text/html; return 429 '<html><body><center><h1>429 Too Many Requests</h1></center></body></html>'; } location @api_5xx_reject { if ($$request_uri ~* ^/api/version) { return 200 '{\"version\":\"booting\",\"deployment_id\":\"startup\"}'; } if ($$request_uri ~* ^/(api|ollama|openai|audio|images|v1)/) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } if ($$http_accept ~* application/json) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } if ($$http_x_sveltekit_data) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } default_type text/html; return 500 '<html><body><center><h1>500 Internal Server Error</h1><p>Le backend de l\\'application est temporairement indisponible.</p></center></body></html>'; }"
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$webui_name $$upstream_http_x_webui_name"
       - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name"
 
@@ -260,7 +260,7 @@ services:
       - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=yes"
       # 🛡️ ECHO AUTH : Forward Auth + SSO Secret (Syntaxe Officielle BunkerWeb 1.6)
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST=/api/verify"
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @api_403_reject; error_page 429 = @api_429_reject; error_page 500 501 502 503 504 = @api_5xx_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @api_403_reject { if ($$request_uri ~* ^/api/) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403)\"}'; } default_type text/html; return 403 '<html><body><center><h1>403 Forbidden (WAF)</h1></center></body></html>'; } location @api_429_reject { if ($$request_uri ~* ^/api/) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } default_type text/html; return 429 '<html><body><center><h1>429 Too Many Requests</h1></center></body></html>'; } location @api_5xx_reject { default_type application/json; if ($$request_uri ~* ^/api/) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } return 500 '{\"detail\":\"Internal Error (500)\"}'; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @api_403_reject; error_page 429 = @api_429_reject; error_page 500 501 502 503 504 = @api_5xx_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @api_403_reject { if ($$request_uri ~* ^/api/) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403)\"}'; } default_type text/html; return 403 '<html><body><center><h1>403 Forbidden</h1></center></body></html>'; } location @api_429_reject { if ($$request_uri ~* ^/api/) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } default_type text/html; return 429 '<html><body><center><h1>429 Too Many Requests</h1></center></body></html>'; } location @api_5xx_reject { default_type application/json; if ($$request_uri ~* ^/api/) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } return 500 '{\"detail\":\"Internal Error (500)\"}'; }"
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$webui_name $$upstream_http_x_webui_name;$$dummy $$upstream_http_dummy"
       - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name;X-Echo-Sso-Secret ${ECHO_SSO_SECRET}"
       
@@ -298,6 +298,10 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/ECHO/docker-admin-manager/server.py:/app/server.py:ro
+      - /opt/ECHO/docker-admin-manager/core:/app/core:ro
+      - /opt/ECHO/docker-admin-manager/services:/app/services:ro
+      - /opt/ECHO/docker-admin-manager/routes:/app/routes:ro
+      - /opt/ECHO/docker-admin-manager/templates:/app/templates:ro
       - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
       - /opt/ECHO/echo-images:/app/static:ro
       - echo-backups:/backups
@@ -307,6 +311,8 @@ services:
       - /opt/ECHO/.secrets:/app/secrets:ro
       - /opt/ECHO/ECHO_VERSION:/app/ECHO_VERSION:ro
       - echo-download-broker-data:/app/downloads:rw
+      - echo-n8n-data:/app/n8n-data:rw
+      - echo-mcp-cache:/app/mcp_cache:rw
     
     # EXPOSITION : Port 3001 ouvert pour le Reverse Proxy distant
     ports:
@@ -341,6 +347,7 @@ services:
       - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
       - /opt/ECHO/docker-mcp-broker/core:/app/core:ro
       - /opt/ECHO/docker-mcp-broker/modules:/app/modules:ro
+      - echo-mcp-cache:/app/mcp_cache:rw
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
@@ -614,4 +621,6 @@ volumes:
   echo-auth-data:
     external: true
   echo-n8n-data:
+    external: true
+  echo-mcp-cache:
     external: true

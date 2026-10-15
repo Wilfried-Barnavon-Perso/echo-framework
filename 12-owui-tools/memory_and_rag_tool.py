@@ -1,20 +1,16 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.29
+version: 2.30
 description: ECHO Toolbox pour gestion RAG (Sessions & Codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 2.30: Paramètre importance obligatoire (Literal["1".."5"]), alignement PACP/PRAC et énonciation impersonnelle stricte.
 # 2.29: Suppression des emojis dans les retours de l'outil delete_session_context_source pour maximiser le signal/bruit.
 # 2.28: Utilisation de ECHO_SUBAGENT_CONTEXT pour l'isolation asynchrone du RAG.
 # 2.27: Isolation du RAG pour les sous-agents (filtrage strict par sub_sid).
 # 2.26: Fix RAG (Purge idempotente pré-indexation, bridage de l'overlap max_chunk).
-# 2.25: Correctif (Recall) : Injection du paramètre score_threshold vers Qdrant.
-# 2.24: Améliorations de formatage PEP8 (espacements, indentations, ifs sur ligne unique).
-# 2.23: Correction (HTTP 400) : Remplacement d'une valeur par défaut mutable.
-# 2.21: Renommage search_session_context -> search_sessions_context.
-# 2.22: Focale Sémantique (certainty_level) et déduplication floue sur search_sessions_context.
 
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
@@ -97,20 +93,42 @@ class Tools:
         self,
         artifact_name: Literal["Profil d'Alignement", "Hypothèses d'Apprentissage"],
         fact: str,
-        importance: int = 3,
+        importance: Literal["1", "2", "3", "4", "5"],
         __user__: Optional[dict] = None,
         __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None
     ) -> dict:
         """
-        Consigne de manière persistante une information dans un Méta-Artéfact (PACP ou PRAC). Retourne le memory_id généré. Ce retour est indispensable pour permettre au Modèle de supprimer ou cibler ce fait ultérieurement via delete_meta_artifact_item.
-        :param artifact_name: Le nom du Méta-Artéfact cible.
-        :param fact: Le fait ou l'hypothèse à enregistrer.
-        :param importance: Niveau d'importance de 1 à 5.
+        Permet au Modèle de consigner de manière persistante une information dans un Méta-Artéfact (PACP ou PRAC).
+        Cet outil retourne le memory_id généré, indispensable pour permettre au Modèle de supprimer ou de cibler ce fait ultérieurement via delete_meta_artifact_item.
+
+        Échelle des niveaux d'importance autorisés (sélection obligatoire) :
+        - "1" (Trivial) : Fait atomique ponctuel, observation isolée ou indice faible non confirmé (Pondération 0.6x, TTL 30j sans accès, éligible à la consolidation nocturne Lvl1 -> Lvl2).
+        - "2" (Mineur) : Hypothèse de travail récurrente, préférence contextuelle secondaire ou synthèse consolidée (Pondération 0.8x, TTL 30j sans accès).
+        - "3" (Utile) : Fait vérifié, contexte technique récurrent ou habitude opérationnelle établie (Pondération 1.0x, TTL 30j sans accès).
+        - "4" (Majeur) : Préférence forte validée, architecture clé ou règle métier structurante (Pondération 1.3x, permanent hors TTL).
+        - "5" (Axiome) : Directive absolue de l'Utilisateur, contrainte critique de sécurité ou invariant identitaire (Pondération 1.6x, sanctuarisé hors TTL).
+
+        :param artifact_name: Le nom du Méta-Artéfact cible ("Profil d'Alignement" ou "Hypothèses d'Apprentissage").
+        :param fact: L'énoncé factuel, la préférence ou l'hypothèse à persister.
+        :param importance: Le niveau d'importance obligatoire choisi parmi "1", "2", "3", "4", "5".
         """
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id") or not __metadata__:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+
+        try:
+            imp_val = int(str(importance).strip())
+            if imp_val not in (1, 2, 3, 4, 5):
+                raise ValueError
+        except (ValueError, TypeError):
+            return wrap_tool_output(
+                text="❌ Paramètre `importance` invalide. Valeurs autorisées : '1', '2', '3', '4', '5'.",
+                status={"status": "error"},
+                user_id=__user__.get("id", "system") if __user__ else "system",
+                chat_id=__metadata__.get("chat_id") if __metadata__ else None,
+                metadata=__metadata__
+            )
 
         user_id = __user__.get("id")
         chat_id = __metadata__.get("chat_id")
@@ -141,7 +159,7 @@ class Tools:
                     "payload": {
                         "user_id": user_id, "chat_id": chat_id, "memory_id": memory_id, "summary": fact,
                         "artifact_name": artifact_name,
-                        "memory_importance": int(importance), "tags": tags, "timestamp": int(time.time())
+                        "memory_importance": imp_val, "tags": tags, "timestamp": int(time.time())
                     }
                 }]}
                 resp = await client.put(
@@ -150,9 +168,10 @@ class Tools:
                 )
                 if resp.status_code != 200:
                     return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                imp_label = MEMORY_IMPORTANCE_LABELS.get(imp_val, str(imp_val))
                 if self.valves.DEBUG_MODE:
-                    print(f"[ECHO-MEMORY] ✅ save_memory : {memory_id} inséré avec succès. (Tags: {tags}, Imp: {importance})", flush=True)
-                return wrap_tool_output(text=f"✅ Souvenir `{memory_id}` enregistré dans la base vectorielle.", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    print(f"[ECHO-MEMORY] ✅ save_memory : {memory_id} inséré avec succès. (Tags: {tags}, Imp: {imp_val} - {imp_label})", flush=True)
+                return wrap_tool_output(text=f"✅ Souvenir `{memory_id}` enregistré dans la base vectorielle (Niveau {imp_val} - {imp_label}).", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -329,7 +348,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __metadata__: Optional[dict] = None,
     ) -> dict:
-        """Supprime une information obsolète ou erronée d'un Méta-Artéfact par son memory_id."""
+        """Permet au Modèle de supprimer une information obsolète ou erronée d'un Méta-Artéfact à partir de son memory_id."""
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id"):
             return wrap_tool_output(text="❌ Erreur : Utilisateur non identifié.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)

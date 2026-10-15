@@ -1,4 +1,4 @@
-# VERSION : 1.15 (Alignement mcp 2.x : TolerantClientSession, tâche propriétaire de session, sérialisation alias)
+# VERSION : 1.16 (Persistance volume echo-mcp-cache & invalidation cache MSAL sur rotation credentials)
 
 import asyncio
 import json
@@ -166,6 +166,29 @@ async def _open_transport(stack: AsyncExitStack, user_id: str, service: str, cre
             if service == "microsoft_365":
                 cache_dir = f"/app/mcp_cache/microsoft_365/{user_id}"
                 os.makedirs(cache_dir, exist_ok=True)
+                ms_sig = hashlib.md5(
+                    f"{credentials.get('MICROSOFT_MCP_CLIENT_ID', '')}:{credentials.get('MICROSOFT_MCP_TENANT_ID', '')}".encode()
+                ).hexdigest()
+                sig_file = os.path.join(cache_dir, ".cred_hash")
+                token_cache_file = os.path.join(cache_dir, ".microsoft_mcp_token_cache.json")
+                old_sig = None
+                if os.path.exists(sig_file):
+                    try:
+                        with open(sig_file, "r", encoding="utf-8") as sf_in:
+                            old_sig = sf_in.read().strip()
+                    except Exception:
+                        old_sig = None
+                if old_sig and old_sig != ms_sig and os.path.exists(token_cache_file):
+                    try:
+                        os.remove(token_cache_file)
+                    except Exception:
+                        pass
+                if old_sig != ms_sig:
+                    try:
+                        with open(sig_file, "w", encoding="utf-8") as sf_out:
+                            sf_out.write(ms_sig)
+                    except Exception:
+                        pass
                 env["HOME"] = cache_dir
 
             # ---- INJECTION DYNAMIQUE ISOLÉE POUR GOOGLE WORKSPACE ----

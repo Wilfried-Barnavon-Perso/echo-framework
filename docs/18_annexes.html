@@ -77,8 +77,13 @@
         </tr>
         <tr>
           <td><code>echo-n8n-data</code></td>
-          <td><code>/home/node/.n8n</code></td>
-          <td>Base SQLite native et workflows persistants du moteur N8N.</td>
+          <td><code>/home/node/.n8n</code> (et <code>/app/n8n-data</code> sur Admin Manager)</td>
+          <td>Base SQLite native (<code>database.sqlite</code>) et workflows persistants du moteur N8N.</td>
+        </tr>
+        <tr>
+          <td><code>echo-mcp-cache</code></td>
+          <td><code>/app/mcp_cache</code></td>
+          <td>Cache persistant des tokens OAuth2 MSAL Microsoft 365 (<code>.microsoft_mcp_token_cache.json</code> et empreinte MD5 <code>.cred_hash</code>) partagé entre <code>echo-mcp-broker</code> et <code>echo-admin-manager</code>.</td>
         </tr>
         <tr>
           <td><code>echo-auth-data</code></td>
@@ -93,7 +98,7 @@
         <tr>
           <td><code>echo-backups</code></td>
           <td><code>/opt/ECHO/backups</code></td>
-          <td>Archives de sauvegarde à chaud générées par l'Admin Manager.</td>
+          <td>Archives de sauvegarde <code>tar.xz</code> (5 volumes) générées par l'Admin Manager.</td>
         </tr>
         <tr>
           <td><code>bw-data</code> / <code>bw-db-data</code></td>
@@ -233,7 +238,7 @@
           <td>1024 (Harrier-OSS)</td>
           <td>Cosinus</td>
           <td><code>user_id</code></td>
-          <td>Permanent - TTL par niveau (Admin Manager)</td>
+          <td>Permanent - Consolidation <code>Lvl1&rarr;Lvl2</code> &amp; TTL par niveau (Admin Manager)</td>
         </tr>
         <tr>
           <td><code>echo_session_rag</code></td>
@@ -247,7 +252,6 @@
     </table>
 
     <h2>Dictionnaire des Constantes &amp; Valves Critiques (<code>echo_constants.py</code>)</h2>
-
     <p>
       Ces constantes et valves gouvernent les seuils d'ingestion, la résilience réseau et les rappels cognitifs au sein de la Stack ECHO.
     </p>
@@ -329,7 +333,7 @@ Content-Type: application/json</code></pre>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.223.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.223.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

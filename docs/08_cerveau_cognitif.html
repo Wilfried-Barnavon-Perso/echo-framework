@@ -35,7 +35,7 @@
       ECHO possède une identité propre, définie au cœur même du système (le Kernel). Elle est conçue pour agir comme une <em>Sparring Partner</em> rationnelle et incisive. Elle s'exprime au féminin, privilégie un français parfait (sans anglicismes superflus), et n'a pas peur de vous contredire ou de pointer du doigt les failles de votre raisonnement si cela sert votre objectif. 
     </p>
     <p>
-      De plus, ECHO est doté d'une profonde honnêteté intellectuelle : si le système ignore une information factuelle ou n'arrive pas à la vérifier sur le web, il vous le dira explicitement plutôt que de l'inventer.
+      De plus, ECHO est doté d'une profonde honnêteté intellectuelle : si le système ignore une information factuelle ou n'arrive pas à la vérifier sur le web, il vous le dira explicitement plutôt que de l'inventer. Son apprentissage de vos habitudes suit également une progression humaine naturelle : une préférence perçue une seule fois est appliquée avec subtilité (<em>Trivial</em>), renforcée à la deuxième occurrence (<em>Mineur</em>), adoptée systématiquement dès la troisième confirmation (<em>Utile</em> ou <em>Majeur</em>), ou gravée immédiatement lorsque vous formulez une consigne directe (<em>Axiome</em>).
     </p>
 
     <details class="tech-spec">
@@ -45,7 +45,7 @@
         <p>Le Filtre Inlet (priorité 20) orchestre la préparation sémantique (Draft) selon la hiérarchie stricte du PGCU :</p>
         <ul>
           <li><strong>AEC XML Natifs (<code>EchoAEC</code>) :</strong> Injection des vecteurs proprioceptifs au format <code>&lt;artifact id="AEC_..."&gt;</code> (<code>AEC_directive</code>, <code>AEC_modele</code>, <code>AEC_identite</code>, <code>AEC_temporalite</code>, <code>AEC_localisation</code>, <code>AEC_smart_context</code>, <code>AEC_evenement_systeme</code>).</li>
-          <li><strong>Directive Dynamique PIS &amp; Mise à Niveau :</strong> Au Tour 1 d'une session neuve (ou lors d'une évolution de version détectée via <code>last_framework_version</code> dans <code>echo_settings</code>, protégée durant les sous-tours <code>role == "tool"</code>), le filtre injecte <code>&lt;artifact id="AEC_directive" source="Système"&gt;</code> via <code>EchoAEC.render_directive()</code>, garantissant le silence proprioceptif sur les tours subséquents.</li>
+          <li><strong>Directive Dynamique PIS &amp; Mise à Niveau :</strong> Au Tour 1 d'une session neuve (ou lors d'une évolution de version détectée via <code>last_framework_version</code> dans <code>echo_settings</code>, notifiant explicitement la transition de l'ancienne vers la nouvelle version et protégée durant les sous-tours <code>role == "tool"</code>), le filtre injecte <code>&lt;artifact id="AEC_directive" source="Système"&gt;</code> via <code>EchoAEC.render_directive()</code>, garantissant le silence proprioceptif sur les tours subséquents.</li>
           <li><strong>Ingestion Zéro-RAM &amp; Smart Context :</strong> Les fichiers texte <code>&lt; 32 Ko</code> (<code>MAX_DIRECT_TEXT_INJECT_SIZE</code>, versionnés dans le Codex) et multimédias <code>&lt; 1 Mo</code> (<code>MAX_DIRECT_MMEDIA_INJECT_SIZE</code>) sont injectés en <code>put_in_context</code>. Les fichiers volumineux et documents Office (convertis via <code>MarkItDown</code> avec extraction d'images OOXML) sont découpés par <code>AgnosticStreamingSplitter</code> (blocs de 4 000 caractères), vectorisés dans <code>echo_session_rag</code> et résumés dans <code>&lt;artifact id="AEC_smart_context"&gt;</code> avec leur <code>source_id</code>.</li>
         </ul>
 
@@ -64,7 +64,7 @@
           <li><strong>PARE (Principe d'Agentivité et de Raisonnement Efficients) :</strong> Impose le Rasoir d'Ockham (exécution directe des tâches triviales), la formulation d'un plan formel sur tâche complexe, et un ordre strict de délégation (1. Sous-Agents dès que l'action nécessite potentiellement plus de 3 outils successifs, 2. Outils natifs, 3. Code via Sous-Agent spécialisé), avec arrêt obligatoire après 3 échecs consécutifs. Les signatures cognitives (<code>thoughtSignature</code>) sont rattachées exclusivement au premier <code>functionCall</code>.</li>
           <li><strong>PGCU (Gestion du Contexte Unifié) &amp; PTD (Triage Dynamique) :</strong> Hiérarchie d'attention stricte (Kernel &gt; AEC &gt; Mémoires &gt; Requêtes &gt; Outils) et répartition des rôles ZEPHYR / APOLLO / PROMETHEUS.</li>
           <li><strong>PRAF (Rigueur Analytique et Factuelle) :</strong> Interdiction de toute hypothèse non vérifiée sur le réel ; recherche web obligatoire avec indice de confiance justifié.</li>
-          <li><strong>PAS, PACP, PRAC &amp; MPSI :</strong> Adressage impersonnel à haut rapport signal/bruit pour les sous-agents (PAS), assimilation itérative des préférences et apprentissages par occurrences 1-2-3 (PACP/PRAC), et immunité du Kernel contre toute altération en session (MPSI).</li>
+          <li><strong>PAS, PACP, PRAC &amp; MPSI :</strong> Adressage impersonnel à haut rapport signal/bruit pour les sous-agents (PAS), graduation déterministe sur 5 niveaux indexée sur les itérations pour l'application et la consignation dans <code>update_meta_artifact</code> (<code>1 - Trivial</code> sur 1 occurrence isolée, <code>2 - Mineur</code> sur 2 occurrences concordantes, <code>3 - Utile</code> ou <code>4 - Majeur</code> sur 3 occurrences concordantes, et <code>5 - Axiome</code> sur <code>Injonction Explicite</code> ou <code>Invariant Stratégique</code> pour PACP/PRAC), et immunité du Kernel contre toute altération en session (MPSI).</li>
         </ul>
 
         <h3>4. Filtres Complémentaires (<code>11-owui-filters/</code>)</h3>
@@ -86,7 +86,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.223.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.223.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

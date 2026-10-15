@@ -19,12 +19,12 @@
 
     <h2>1. La Mémoire à Long Terme</h2>
     <p>
-      ECHO possède une mémoire permanente, qui survit à vos différentes sessions de discussion. 
+      ECHO possède une mémoire permanente qui survit à vos différentes sessions de discussion et reproduit les mécanismes de la mémoire humaine : elle évite aussi bien l'amnésie que la généralisation hâtive d'une remarque isolée.
     </p>
     <ul>
-      <li><strong>Préférences :</strong> Il se souvient de votre nom, de vos contraintes techniques ou de votre façon de travailler.</li>
-      <li><strong>Apprentissage :</strong> Lorsqu'il résout un problème complexe, il peut décider de l'enregistrer dans sa mémoire (sous forme d'<em>Axiome</em>) pour ne plus jamais faire la même erreur à l'avenir.</li>
-      <li><strong>Génération automatique :</strong> L'IA gère cette mémoire de manière autonome. Elle met à jour ou supprime les souvenirs obsolètes d'elle-même.</li>
+      <li><strong>Graduation biomimétique (5 paliers) :</strong> Une préférence ou une piste méthodologique perçue une seule fois est consignée au niveau <em>1 - Trivial</em> (appliquée avec subtilité). Si elle se répète une deuxième fois, elle passe au niveau <em>2 - Mineur</em>. Dès trois occurrences concordantes, elle devient une règle <em>3 - Utile</em> ou <em>4 - Majeur</em> appliquée systématiquement. Enfin, toute consigne explicite de votre part ou découverte stratégique validée est immédiatement sanctuarisée en <em>5 - Axiome</em>.</li>
+      <li><strong>Consolidation nocturne :</strong> Chaque nuit, le système analyse les observations triviales accumulées. Lorsque plusieurs signaux faibles convergent autour d'un même sujet, ils sont fusionnés et promus au niveau supérieur, tandis que les détails isolés finissent par s'estomper après 30 jours.</li>
+      <li><strong>Gouvernance autonome :</strong> L'IA entretient cette mémoire d'elle-même, en promouvant, fusionnant ou supprimant les souvenirs devenus obsolètes.</li>
     </ul>
 
     <h2>2. Le Tiroir d'Actions (ECHO App Drawer)</h2>
@@ -48,10 +48,10 @@
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Memory &amp; RAG Tool (<code>memory_and_rag_tool.py</code>)</h3>
+        <h3>1. Memory &amp; RAG Tool (<code>memory_and_rag_tool.py</code> v2.30)</h3>
         <p>Offre au LLM une API complète sur les deux collections Qdrant (<code>echo_meta_artifacts</code> et <code>echo_session_rag</code>) :</p>
         <ul>
-          <li><strong>Outils RAG Organique :</strong> <code>update_meta_artifact</code> (fusion sémantique préservant le score maximal), <code>search_meta_artifacts</code> (recherche hybride et cartographie d'index avec Reranking <code>MEMORY_IMPORTANCE_WEIGHTS</code>), <code>delete_meta_artifact_item</code>.</li>
+          <li><strong>Outils RAG Organique :</strong> <code>update_meta_artifact</code> (qualification obligatoire de <code>importance: Literal["1", "2", "3", "4", "5"]</code> sans valeur par défaut, alignée sur <code>PACP</code>/<code>PRAC</code>, fusion sémantique préservant le score maximal <code>max(existing_imp, imp_val)</code> et restitution explicite du label via <code>MEMORY_IMPORTANCE_LABELS</code>), <code>search_meta_artifacts</code> (recherche hybride et cartographie d'index avec Reranking <code>MEMORY_IMPORTANCE_WEIGHTS</code> : <code>0.55</code>, <code>0.75</code>, <code>1.00</code>, <code>1.30</code>, <code>1.70</code>), <code>delete_meta_artifact_item</code>.</li>
           <li><strong>Outils Session RAG :</strong> <code>save_session_context</code>, <code>search_sessions_context</code> (incluant le paramètre <code>global_search</code> pour étendre la recherche à tout l'historique inter-sessions sur marqueurs temporels) et <code>delete_session_context_source</code>.</li>
         </ul>
 
@@ -79,7 +79,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.223.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.223.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

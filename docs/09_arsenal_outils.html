@@ -48,7 +48,7 @@
 
       <div class="card">
         <h3>🧠 9d. Mémoire & Actions</h3>
-        <p>Le système entretient une mémoire à long terme de vos préférences (Axiomes). Vous disposez également de boutons d'Actions rapides (Cockpit) pour purger cette mémoire chirurgicalement ou exporter d'un clic vos conversations en un superbe document PDF.</p>
+        <p>Le système entretient une mémoire à long terme graduée de vos préférences et apprentissages (du signal faible jusqu'à l'Axiome). Vous disposez également de boutons d'Actions rapides (Cockpit) pour purger cette mémoire chirurgicalement ou exporter d'un clic vos conversations en document PDF.</p>
         <a href="13_memoire_actions.html">Explorer &rarr;</a>
       </div>
 
@@ -67,7 +67,7 @@
           <li><strong>Injection Native du Contexte :</strong> Chaque outil déclare obligatoirement <code>__user__</code> et <code>__metadata__</code> dans sa signature Python pour garantir l'injection authentifiée de la session par Open WebUI.</li>
           <li><strong>Propagation d'Identité Asynchrone (<code>ECHO_SUBAGENT_CONTEXT</code>) :</strong> La variable <code>contextvars.ContextVar</code> transporte de manière transparente l'identité des sous-agents (<code>sub_sid</code>, <code>is_subagent</code>, <code>sub_tools_names</code>) à travers les frontières asynchrones sans modifier les signatures inspectées par Open WebUI.</li>
           <li><strong>Protocole Multipart &amp; FIFO Destructif (<code>wrap_tool_output</code>) :</strong> Les payloads multimodaux sont encapsulés sous la clé standardisée <code>echo_tool_multiparts</code> (déballée par <code>unbox_tool_output()</code> dans <code>echo_core.py</code>), tandis que les événements système (<code>aec_event</code>, <code>aec_directive</code>) sont consommés selon un mécanisme FIFO destructif qui préserve intactes les ressources persistantes du registre.</li>
-          <li><strong>Norme PEP8 Stricte :</strong> Suppression des imports inutilisés et préfixage par <code>_</code> des variables locales non consommées.</li>
+          <li><strong>Norme PEP8 &amp; Énonciation Impersonnelle :</strong> Suppression des imports inutilisés, préfixage par <code>_</code> des variables locales non consommées, et rédaction des docstrings d'outils à la troisième personne (« Permet au Modèle de... »).</li>
         </ul>
 
         <h3>2. Isolation Multi-Tenant et Journalisation (<code>tool_journal</code>)</h3>
@@ -85,7 +85,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.223.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.223.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
