@@ -2,12 +2,14 @@
 """
 title: ECHO Echo Events
 author: Wilfried BARNAVON
-version: 2.5
+version: 2.6
 description: Gestionnaire des événements WebSocket et UI. Intègre le protocole UCTP (Universal Chunked Transfer Protocol).
 """
 # Historique des versions :
+# 2.6: Fix critique - Timeout asynchrone sur call_execute (anti-hang RPC Socket.IO), et fast-path dans trigger_action si le HUD Codex est déjà actif.
 # 2.5: Fix critique - Injection explicite du `session_id` dans `trigger_action` pour empêcher le crash en boucle de l'Event Caller côté serveur.
 # 2.4: Purge des heuristiques JS et passage à l'injection stricte (`chat_id`, `message_id`, `model_id`) depuis le contexte métier.
+import asyncio
 from typing import Any, Optional
 import uuid
 import orjson as json
@@ -117,7 +119,7 @@ class EchoEvents:
         except Exception as e:
             print(f"[EchoEvents] Emit Execute Error: {e}")
 
-    async def call_execute(self, code_str: str) -> Any:
+    async def call_execute(self, code_str: str, timeout: Optional[float] = None) -> Any:
         """ Émet du JS, attend un retour, gère la fragmentation Bidi UCTP (Python <-> JS) """
         if not self.caller:
             return None
@@ -180,9 +182,11 @@ class EchoEvents:
                 const AsyncFunction = Object.getPrototypeOf(async function(){{}}).constructor;
                 return await (new AsyncFunction(code))();
                 """
-                res = await self.caller({"type": "execute", "data": {"code": final_exec}})
+                coro = self.caller({"type": "execute", "data": {"code": final_exec}})
+                res = await asyncio.wait_for(coro, timeout=timeout) if (timeout is not None and timeout > 0) else await coro
             else:
-                res = await self.caller({"type": "execute", "data": {"code": code_str}})
+                coro = self.caller({"type": "execute", "data": {"code": code_str}})
+                res = await asyncio.wait_for(coro, timeout=timeout) if (timeout is not None and timeout > 0) else await coro
 
             # UCTP Bidi Réception (JS -> Python)
             if isinstance(res, dict) and res.get("action") == "__chunked_payload__":
@@ -190,7 +194,8 @@ class EchoEvents:
                 total = res.get("total_chunks", 1)
 
                 for _ in range(1, total):
-                    next_res = await self.caller({"type": "execute", "data": {"code": res.get("wait_code")}})
+                    coro_next = self.caller({"type": "execute", "data": {"code": res.get("wait_code")}})
+                    next_res = await asyncio.wait_for(coro_next, timeout=timeout) if (timeout is not None and timeout > 0) else await coro_next
                     if isinstance(next_res, dict) and next_res.get("action") == "__chunked_payload__":
                         buffer.append(next_res.get("data", ""))
                     else:
@@ -205,6 +210,9 @@ class EchoEvents:
                     return None
 
             return res
+        except asyncio.TimeoutError:
+            print(f"[EchoEvents] Call Execute Timeout ({timeout}s)")
+            return None
         except Exception as e:
             print(f"[EchoEvents] Call Execute Error: {e}")
             return None
@@ -214,10 +222,29 @@ class EchoEvents:
         Déclenche une action native Open WebUI de manière asynchrone via l'API.
         Bypass Svelte. Variables de contexte injectées de manière absolue.
         """
+        if not action_id:
+            return False
+
         payload_js = json.dumps(payload or {}).decode("utf-8")
         js_payload = f"""
         (async () => {{
             try {{
+                // Fast-path ECHO Codex : si le HUD est déjà ouvert dans le DOM et actif,
+                // réveiller directement la boucle existante sans recréer l'action ni réinjecter le DOM.
+                if ('{action_id}' === 'echo_codex_action' && document.getElementById('echo-codex-hud') && typeof window.sendCodexAction === 'function') {{
+                    const target = window._echoCodexTarget;
+                    if (target) {{
+                        window.sendCodexAction({{
+                            action: 'switch_workspace',
+                            workspace: target.workspace || 'main',
+                            current_file: target.file
+                        }});
+                    }} else {{
+                        window.sendCodexAction({{ action: 'ping' }});
+                    }}
+                    return true;
+                }}
+
                 const token = localStorage.token ? localStorage.token.replace(/^"|"$/g, '') : '';
                 const extraPayload = {payload_js};
                 
@@ -249,4 +276,4 @@ class EchoEvents:
             }}
         }})();
         """
-        return await self.call_execute(js_payload)
+        return await self.call_execute(js_payload, timeout=10.0)
