@@ -66,7 +66,7 @@
         <h3>3. Jauge de Contexte, Registre &amp; Outils Généralistes</h3>
         <ul>
           <li><strong>Context Gauge (<code>context_gauge.py</code>) :</strong> <code>get_context_load</code> lit la saturation de la fenêtre dans le registre KV unifié <code>echo_settings</code> (seuils d'alerte <code>40%</code> et critique <code>60%</code>).</li>
-          <li><strong>Generalist Tools (<code>generalist_tools.py</code>) :</strong> <code>async_wait_timer</code> programmable (plafonné à 180 s), <code>ask_user_input</code> (modale non-bloquante <code>window.echoCustomPrompt</code> avec boutons <em>pills</em>), gestion des automatisations UI (<code>create_ui_automation</code>, <code>list_ui_automations</code>), calendrier Open WebUI, et <code>delegate_to_tool_consultant</code> (Agent Stratège Stateless).</li>
+          <li><strong>Generalist Tools (<code>generalist_tools.py</code>) :</strong> <code>async_wait_timer</code> programmable (plafonné à 180 s), <code>ask_user_input</code> (modale non-bloquante <code>window.echoCustomPrompt</code> avec boutons <em>pills</em>), gestion des automatisations UI (<code>create_ui_automation</code>, <code>read_ui_automations</code>, <code>list_ui_automations</code>), calendrier Open WebUI, et <code>delegate_to_tool_consultant</code> (Agent Stratège Stateless).</li>
           <li><strong>Query Registry (<code>query_registry_tool.py</code>) :</strong> Consultation obligatoire de <code>echo_resources</code> et des statuts <code>FILE_INGESTION_STATUS</code> avant manipulation de fichiers.</li>
         </ul>
       </div>

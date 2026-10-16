@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.26
+version: 1.27
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.27: Ajout de read_ui_automations pour l'inspection complète des tâches CRON.
 # 1.26: Alignement sur la nomenclature cognitive (MODEL_PROMETHEUS).
 # 1.25: Correction des retours de delegate_to_tool_consultant pour forcer l'encapsulation wrap_tool_output.
 # 1.24: Ajout de delegate_to_tool_consultant (Agent Stratège Stateless).
 # 1.23: Renommage de search_ui_automations en list_ui_automations pour correspondre à l'appel LLM.
-# 1.22: Correction de la formulation de la docstring pour create_ui_calendar_event.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -328,6 +328,71 @@ class Tools:
     async def delete_ui_automation(self, automation_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """Le Modèle DOIT utiliser cet outil pour supprimer une de ses tâches de fond de l'Interface Utilisateur si elle n'est plus nécessaire."""
         return await safe_owui_call(_owui_delete_auto, automation_id=automation_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
+
+    async def read_ui_automations(self, automation_ids: list[str], __user__: dict = {}, __metadata__: dict = {}) -> str:
+        """
+        Le Modèle DOIT utiliser cet outil pour inspecter le contenu intégral et la configuration technique (prompt complet, modèle cible, règle RRULE, statut) d'une ou plusieurs tâches de fond (CRON) de l'Interface Utilisateur à partir de leurs identifiants.
+        Complément indispensable de list_ui_automations pour analyser ou auditer une automatisation avant modification ou suppression.
+
+        :param automation_ids: Liste des identifiants (IDs au format UUID) des automatisations à inspecter.
+        """
+        user_id = __user__.get("id")
+        if not user_id:
+            return wrap_tool_output(text=json.dumps({"error": "User context missing"}), status={"status": "error"}, metadata=__metadata__)
+
+        if isinstance(automation_ids, str):
+            clean_ids = [aid.strip() for aid in automation_ids.split(",") if aid.strip()]
+        elif isinstance(automation_ids, list):
+            clean_ids = [str(aid).strip() for aid in automation_ids if str(aid).strip()]
+        else:
+            clean_ids = []
+
+        if not clean_ids:
+            return wrap_tool_output(text=json.dumps({"error": "Aucun identifiant d'automatisation valide fourni."}), status={"status": "error"}, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
+
+        try:
+            tasks = [Automations.get_by_id(aid) for aid in clean_ids]
+            raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            automations = []
+            not_found = []
+
+            for aid, res in zip(clean_ids, raw_results):
+                if isinstance(res, Exception) or res is None or res.user_id != user_id:
+                    not_found.append(aid)
+                    continue
+
+                automations.append({
+                    "id": res.id,
+                    "name": res.name,
+                    "folder_id": res.folder_id,
+                    "prompt": res.data.get("prompt", "") if res.data else "",
+                    "model_id": res.data.get("model_id", "") if res.data else "",
+                    "rrule": res.data.get("rrule", "") if res.data else "",
+                    "target": res.data.get("target") if res.data else None,
+                    "is_active": res.is_active,
+                    "last_run_at": res.last_run_at,
+                    "next_run_at": res.next_run_at,
+                    "created_at": res.created_at,
+                    "updated_at": res.updated_at
+                })
+
+            payload = {
+                "automations": automations,
+                "total_found": len(automations)
+            }
+            if not_found:
+                payload["not_found"] = not_found
+
+            return wrap_tool_output(
+                text=json.dumps(payload, ensure_ascii=False),
+                status={"status": "success"},
+                user_id=user_id,
+                chat_id=__metadata__.get("chat_id"),
+                metadata=__metadata__
+            )
+        except Exception as e:
+            return wrap_tool_output(text=json.dumps({"error": str(e)}), status={"status": "error"}, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
 
     async def list_ui_automations(self, query: str = "", limit: int = 30, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """

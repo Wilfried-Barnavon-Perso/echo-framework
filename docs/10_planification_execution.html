@@ -65,7 +65,7 @@
         <p>Les fonctions natives d'Open WebUI sont encapsulées de manière sécurisée par le proxy <code>safe_owui_call</code> (filtrage dynamique de signature via <code>inspect.signature</code> et retour normalisé <code>wrap_tool_output</code>) :</p>
         <ul>
           <li><strong>Calendrier UI :</strong> <code>search_ui_calendar_events</code>, <code>create_ui_calendar_event</code> (titre, description, lieu, dates <code>start</code>/<code>end</code> au format strict ISO 8601) et <code>delete_ui_calendar_event</code>.</li>
-          <li><strong>CRON Cognitif (Automatisations UI) :</strong> <code>create_ui_automation</code> programme des tâches de fond récurrentes ou ponctuelles selon la norme iCalendar <code>RRULE</code> (avec <code>DTSTART</code> obligatoire si <code>COUNT</code> est défini) et résout ou crée automatiquement le dossier cible (<code>target_folder_name</code>, assisté de <code>list_ui_folders</code>). Chaque déclenchement instancie un chat indépendant. Complété par <code>list_ui_automations</code> et <code>delete_ui_automation</code>.</li>
+          <li><strong>CRON Cognitif (Automatisations UI) :</strong> <code>create_ui_automation</code> programme des tâches de fond récurrentes ou ponctuelles selon la norme iCalendar <code>RRULE</code> (avec <code>DTSTART</code> obligatoire si <code>COUNT</code> est défini) et résout ou crée automatiquement le dossier cible (<code>target_folder_name</code>, assisté de <code>list_ui_folders</code>). Chaque déclenchement instancie un chat indépendant. Complété par <code>read_ui_automations</code> (inspection détaillée du prompt et des paramètres), <code>list_ui_automations</code> et <code>delete_ui_automation</code>.</li>
         </ul>
       </div>
     </details>
