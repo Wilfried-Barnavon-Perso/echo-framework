@@ -1,4 +1,4 @@
-# VERSION : 1.0 (Adaptateurs de cycle de vie des fournisseurs MCP résidents : Microsoft 365 MSAL & Google Workspace OAuth2)
+# VERSION : 1.1 (Occultation intégrale de _flow_cache dans tools/list et authenticate_account pour zéro fuite en contexte LLM)
 """
 ECHO MCP Broker - Adaptateurs de cycle de vie spécifiques aux fournisseurs MCP résidents.
 Isole la logique d'authentification et de préparation d'environnement (Microsoft 365 MSAL,
@@ -34,6 +34,14 @@ class MCPServiceProvider:
     ) -> None:
         """Prépare le système de fichiers et les variables d'environnement avant lancement Stdio."""
         return None
+
+    async def after_list_tools(
+        self,
+        user_id: str,
+        result: dict,
+    ) -> dict:
+        """Hook exécuté après `session.list_tools()` sur le dictionnaire sérialisé."""
+        return result
 
     async def before_tool_call(
         self,
@@ -240,6 +248,37 @@ class Microsoft365Provider(MCPServiceProvider):
 
         env["HOME"] = cache_dir
 
+    async def after_list_tools(
+        self,
+        user_id: str,
+        result: dict,
+    ) -> dict:
+        """Retire `flow_cache` du schéma exposé au LLM pour `complete_authentication`."""
+        tools = result.get("tools")
+        if not isinstance(tools, list):
+            return result
+
+        result = dict(result)
+        patched_tools = []
+        for tool in tools:
+            if isinstance(tool, dict) and tool.get("name") == "complete_authentication":
+                t_copy = dict(tool)
+                t_copy["description"] = (
+                    "Complete the authentication process after the user has entered the device code. "
+                    "No arguments required (the Device Flow state is persisted automatically by the MCP Broker)."
+                )
+                t_copy["inputSchema"] = {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": False,
+                }
+                patched_tools.append(t_copy)
+            else:
+                patched_tools.append(tool)
+        result["tools"] = patched_tools
+        return result
+
     async def before_tool_call(
         self,
         user_id: str,
@@ -376,6 +415,27 @@ class Microsoft365Provider(MCPServiceProvider):
                 with open(flow_path, "w", encoding="utf-8") as f:
                     json.dump({"_flow_cache": str(payload["_flow_cache"])}, f)
                 logger.info("MS365: _flow_cache sauvegardé dans %s", flow_path)
+
+                # Suppression complète de _flow_cache de la réponse exposée au LLM
+                sanitized = dict(payload)
+                sanitized.pop("_flow_cache", None)
+                sanitized["step4"] = (
+                    "After the user confirms authentication, call 'complete_authentication' "
+                    "with empty arguments {}."
+                )
+                result = dict(result)
+                if isinstance(result.get("structuredContent"), dict):
+                    result["structuredContent"] = sanitized
+                if isinstance(result.get("content"), list):
+                    new_content = []
+                    for item in result["content"]:
+                        if isinstance(item, dict) and item.get("type") == "text":
+                            new_item = dict(item)
+                            new_item["text"] = json.dumps(sanitized, ensure_ascii=False)
+                            new_content.append(new_item)
+                        else:
+                            new_content.append(item)
+                    result["content"] = new_content
             except Exception as e:
                 logger.warning("MS365: échec de sauvegarde de _flow_cache: %s", e)
 

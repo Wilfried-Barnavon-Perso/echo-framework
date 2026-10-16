@@ -1,4 +1,4 @@
-# VERSION : 1.17 (Découplage Provider Adapters via m5_providers.py & éviction générique BaseException)
+# VERSION : 1.18 (Hook générique after_list_tools pour l'adaptation des schémas de fournisseurs résidents)
 
 import asyncio
 import json
@@ -277,7 +277,8 @@ async def proxy_mcp_request(payload: dict) -> dict:
 
     try:
         if method == "tools/list":
-            return _dump(await session.list_tools())
+            dumped_tools = _dump(await session.list_tools())
+            return await provider.after_list_tools(user_id, dumped_tools)
         elif method == "tools/call":
             name = params.get("name")
             args = params.get("arguments", {})
