@@ -2,7 +2,7 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER (ENTRYPOINT)
-VERSION : 5.136 (Gouvernance SSoT Open WebUI Fail-Closed & Intégration Volumes N8N / MCP Cache)
+VERSION : 5.137 (Rapport Nocturne Complet Sauvegarde/Externalisation & Compteur session.db)
 AUTEUR : Wilfried BARNAVON
 ================================================================================
 """

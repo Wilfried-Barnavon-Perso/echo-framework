@@ -2,7 +2,7 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - FLASK ROUTES
-VERSION : 5.136
+VERSION : 5.137
 ================================================================================
 """
 import configparser
@@ -98,13 +98,8 @@ def index():
             owui_sessions_count = conn.execute("SELECT COUNT(id) FROM chat").fetchone()[0]
     except Exception: pass
 
-    # Compteur de Sessions Réelles (Uniquement .db dans /chats/) - Fichiers physiques
-    real_session_count = 0
-    if os.path.exists(ECHO_USERS_ROOT):
-        for root, _, files in os.walk(ECHO_USERS_ROOT):
-            if "chats" in root:
-                for f in files:
-                    if f.endswith('.db'): real_session_count += 1
+    # Compteur de Sessions Réelles (Uniquement session.db à la racine de chaque dossier chat)
+    real_session_count = len(glob.glob(os.path.join(ECHO_USERS_ROOT, "*", "chats", "*", "session.db")))
 
     # Pourcentage d'utilisation du volume Docker (echo-webui-data monté sur OWUI_DATA_ROOT)
     vault_disk_percent = 0
