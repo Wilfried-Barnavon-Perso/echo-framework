@@ -1,11 +1,12 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 1.19
+version: 1.20
 description: Composant système interne : ECHO Sovereign Web Search.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.20: Résolution robuste de chat_id avec fallback sur __metadata__ dans delegate_deep_research.
 # 1.19: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.17: Optim - Ajout de la priorisation des informations récentes via consignes et utilisation proactive de time_range.
 # 1.16: Nettoyage du code : suppression des imports inutilisés (PEP8).
@@ -169,6 +170,7 @@ class Tools:
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system")
+        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id") or ""
         u_valves = __user__.get("valves", self.UserValves()) if __user__ else self.UserValves()
         
         await events.status(f"🕵️‍♂️ Initialisation de la recherche profonde : {query}...")
@@ -179,7 +181,7 @@ class Tools:
             return wrap_tool_output(
                 text="❌ `agent_engine_tool` introuvable. IMPLIQUE notification utilisateur pour activation.",
                 status={"status": "error"}
-            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=chat_id or None, metadata=__metadata__)
         
         # Instanciation du Delegate
         delegate = _agent_mod.Tools()
@@ -214,7 +216,7 @@ class Tools:
             max_calls_override=u_valves.DEEP_RESEARCH_MAX_CALLS,
             __tools__=None,
             __user__=__user__,
-            __chat_id__=__chat_id__,
+            __chat_id__=chat_id,
             __metadata__=child_metadata,
             __event_emitter__=__event_emitter__,
             __event_call__=__event_call__
@@ -222,7 +224,7 @@ class Tools:
         
         # Nettoyage de la DB (thread éphémère)
         try:
-            EchoStateManager(user_id, __chat_id__).delete_thread(sid)
+            EchoStateManager(user_id, chat_id).delete_thread(sid)
         except Exception:
             pass
             

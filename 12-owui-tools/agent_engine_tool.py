@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.25
+version: 1.26
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.26: Résolution robuste de chat_id depuis __metadata__ et propagation de __metadata__ dans infra_kwargs des sous-agents.
 # 1.25: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.24: Injection des sub_tools_names dans ECHO_SUBAGENT_CONTEXT pour permettre le filtrage dynamique par les outils internes (ex: Tool Consultant).
 # 1.23: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations, functionCallingConfig).
 # 1.22: Transformation de calls_used en calls_remaining pour l'orchestrateur parent.
-# 1.21: Coupure stricte de l'interface utilisateur (__event_call__: None) pour forcer le mode Headless des sous-agents.
 
 import sys
 import uuid
@@ -111,7 +111,7 @@ class Tools:
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = (__user__ or {}).get("id", "system")
-        chat_id = __chat_id__ or ""
+        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id") or ""
         max_calls = max_calls_override or self.user_valves.MAX_AGENT_FUNCTION_CALLS
 
         if not user_id or user_id == "system":
@@ -281,7 +281,7 @@ class Tools:
             events=events,
             valves=self.valves,
             __user__=__user__,
-            __chat_id__=__chat_id__,
+            __chat_id__=chat_id,
             __metadata__=__metadata__,
             __event_emitter__=__event_emitter__,
             __event_call__=__event_call__,
@@ -300,17 +300,18 @@ class Tools:
     ) -> str:
         """Liste des sessions d'agents actives."""
         user_id = (__user__ or {}).get("id", "system")
-        if not __chat_id__:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
+        if not chat_id:
+            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=None, metadata=__metadata__)
 
-        state = EchoStateManager(user_id=user_id, chat_id=__chat_id__)
-        threads = state.list_threads(__chat_id__)
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        threads = state.list_threads(chat_id)
 
         if not threads:
             return wrap_tool_output(
                 text="ℹ️ Aucune session d'agent active pour cette conversation.",
                 status={"status": "success", "sessions": []}
-            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=chat_id, metadata=__metadata__)
 
         md = "### 🤖 SESSIONS D'AGENTS ACTIVES\n\n"
         for t in threads:
@@ -334,7 +335,7 @@ class Tools:
         return wrap_tool_output(
             text=md,
             status={"status": "success", "sessions": [t["sub_sid"] for t in threads]}
-        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=chat_id, metadata=__metadata__)
 
     # ==========================================================================
     # 3. FERMETURE DE SESSION
@@ -352,25 +353,26 @@ class Tools:
         :param sub_sid: Identifiant strict de la session.
         """
         user_id = (__user__ or {}).get("id", "system")
-        if not __chat_id__:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
+        if not chat_id:
+            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=None, metadata=__metadata__)
 
         # Garde-fou : vérifier que le thread appartient au chat courant
-        state = EchoStateManager(user_id=user_id, chat_id=__chat_id__)
-        threads = state.list_threads(__chat_id__)
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        threads = state.list_threads(chat_id)
         sids_in_chat = {t["sub_sid"] for t in threads}
 
         if sub_sid not in sids_in_chat:
             return wrap_tool_output(
                 text=f"❌ Session `{sub_sid}` introuvable dans ce chat ou accès refusé.",
                 status={"status": "error"}
-            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=chat_id, metadata=__metadata__)
 
         state.delete_thread(sub_sid)
         return wrap_tool_output(
             text=f"✅ Session `{sub_sid}` fermée et purgée.",
             status={"status": "success", "sid": sub_sid}
-        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=chat_id, metadata=__metadata__)
 
     # ==========================================================================
     # 4. RÉSUMÉ DE SESSION
@@ -389,12 +391,13 @@ class Tools:
         """
         events = EchoEvents(__event_emitter__)
         user_id = (__user__ or {}).get("id", "system")
-        if not __chat_id__:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
+        if not chat_id:
+            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=None, metadata=__metadata__)
 
         # Garde-fou d'appartenance
-        state = EchoStateManager(user_id=user_id, chat_id=__chat_id__)
-        threads = state.list_threads(__chat_id__)
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        threads = state.list_threads(chat_id)
         sids_in_chat = {t["sub_sid"] for t in threads}
 
         if sub_sid not in sids_in_chat:
@@ -713,7 +716,8 @@ async def _run_agent_loop(
                 try:
                     infra_kwargs = {
                         "__user__": __user__,
-                        "__chat_id__": __chat_id__,
+                        "__chat_id__": chat_id,
+                        "__metadata__": __metadata__,
                         "__event_emitter__": __event_emitter__,
                         "__event_call__": None,
                     }

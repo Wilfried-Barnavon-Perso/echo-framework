@@ -1,7 +1,7 @@
 """
 title: ECHO Delegate to Data Broker
 author: ECHO
-version: 1.4
+version: 1.5
 description: Délégation de collecte de données externes structurées au Data Broker autonome.
 """
 from pydantic import BaseModel, Field
@@ -44,10 +44,11 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
 
         system_prompt = SYS_BROKER_DELEGATE
+        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id") or ""
 
         # Outils autorisés pour le Data Broker (noms dans _TOOLS_CACHE unifié)
         allowed = [
-            "list_identities_services", "list_identities", "manage_identity",
+            "list_identities_services", "list_identities",
             "list_mcp_functions", "call_mcp_function",
             "search_web", "search_instant_answer",
         ]
@@ -68,7 +69,7 @@ class Tools:
                 target_model_key="MODEL_PROMETHEUS",
                 allowed_tools=allowed,
                 __user__=__user__,
-                __chat_id__=__chat_id__,
+                __chat_id__=chat_id,
                 __metadata__=__metadata__,
                 __event_emitter__=__event_emitter__,
                 __event_call__=__event_call__

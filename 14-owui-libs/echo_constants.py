@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.82
+version: 5.83
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.83: Ajout des outils interactifs Headless-interdits (ask_user_input, delete_user_skill, manage_identity, open_codex_ui) dans DELEGATE_AGENT_BLACKLIST.
 # 5.82: Définition de ECHO_AUDIO_DEFAULT_TTS_PITCH (-2Hz) et vitesse nominale 1.0 (100%).
 # 5.81: Ajustement de ECHO_AUDIO_DEFAULT_TTS_SPEED à 1.06 (106%) pour la synthèse vocale.
 # 5.80: Ajustement de ECHO_AUDIO_DEFAULT_TTS_SPEED à 1.1 (110%) pour la synthèse vocale.
 # 5.79: Définition de ECHO_AUDIO_DEFAULT_TTS_SPEED (1.25 / 125%) pour la synthèse Edge TTS.
-# 5.78: Définition des constantes du pont audio in-process (STT Gemini, TTS Edge Vivienne).
 
 import os
 import contextvars
@@ -512,8 +512,12 @@ DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
     "update_meta_artifact",   # Écrit en mémoire long terme (Qdrant)
     "delete_meta_artifact_item", # Supprime de la mémoire long terme
     # Note: save_session_context et delete_session_context_source sont autorisés pour l'agent
-    # 3. Rendu UI
+    # 3. Rendu UI & Modales Interactives (interdits en mode Headless / Sous-agent)
     "generate_rich_visualization",  # Génère du HTML interactif pour le stream principal
+    "ask_user_input",               # Modale interactive bloquée en mode Headless
+    "delete_user_skill",            # Modale de confirmation bloquée en mode Headless
+    "manage_identity",              # Gestion d'identités bloquée en mode Headless
+    "open_codex_ui",                # Déclenchement UI HUD réservé au flux principal
     # 4. Méta-session (gestion des sessions du tool delegate)
     "list_agent_sessions",
     "close_agent_session",

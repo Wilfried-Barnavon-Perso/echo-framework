@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.27
+version: 1.28
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.28: Fiabilisation de delegate_to_tool_consultant en sous-agent (résolution chat_id depuis __metadata__, filtrage BLACKLIST/Headless et call_cascade).
 # 1.27: Ajout de read_ui_automations pour l'inspection complète des tâches CRON.
 # 1.26: Alignement sur la nomenclature cognitive (MODEL_PROMETHEUS).
 # 1.25: Correction des retours de delegate_to_tool_consultant pour forcer l'encapsulation wrap_tool_output.
 # 1.24: Ajout de delegate_to_tool_consultant (Agent Stratège Stateless).
-# 1.23: Renommage de search_ui_automations en list_ui_automations pour correspondre à l'appel LLM.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -453,7 +453,7 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
         await events.status("🧠 Conseiller Outils : Analyse du catalogue d'outils en cours...")
 
-        chat_id = __chat_id__ or ""
+        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id") or ""
         user_id = __user__.get("id", "system")
 
         # Introspection Dynamique : Extraction sécurisée du cache Pipe
@@ -464,19 +464,22 @@ class Tools:
         if not _tools_dict:
             _tools_dict = (__metadata__ or {}).get("_echo_tools_dict", {})
 
-        from echo_constants import ECHO_SUBAGENT_CONTEXT
+        from echo_constants import ECHO_SUBAGENT_CONTEXT, DELEGATE_AGENT_BLACKLIST
         sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
-        if sub_ctx.get("is_subagent") and "sub_tools_names" in sub_ctx:
+        is_subagent = bool(sub_ctx.get("is_subagent"))
+        if is_subagent and "sub_tools_names" in sub_ctx:
             allowed = set(sub_ctx["sub_tools_names"])
             _tools_dict = {k: v for k, v in _tools_dict.items() if k in allowed}
 
         # Liste noire : Ne pas lister ces outils au conseiller pour éviter la récursion
-        BLACKLIST = ["delegate_to_agent"]
+        blacklist = {"delegate_to_agent", "delegate_to_tool_consultant"}
+        if is_subagent:
+            blacklist |= set(DELEGATE_AGENT_BLACKLIST)
 
         # Construction textuelle du catalogue d'outils
         tools_docs = []
         for t_name, t_spec in _tools_dict.items():
-            if t_name in BLACKLIST:
+            if t_name in blacklist:
                 continue
             spec = t_spec.get("spec", {})
             desc = spec.get("description", "Pas de description")
@@ -495,19 +498,31 @@ class Tools:
                 "contents": [{"role": "user", "parts": [{"text": objective}]}],
                 "systemInstruction": {"role": "system", "parts": [{"text": system_prompt}]}
             }
-            # Inférence Stateless (MODEL_PROMETHEUS) sans exposer la section tools
-            response = await EchoGeminiClient.call(
-                target_model="MODEL_PROMETHEUS",
+            # Inférence Stateless via call_cascade (Clamping + résilience) sans exposer la section tools
+            response, _, _ = await EchoGeminiClient.call_cascade(
+                target_model_key="MODEL_PROMETHEUS",
                 payload=payload,
                 user_id=user_id,
-                chat_id=chat_id
+                metadata=__metadata__,
+                events=events,
+                chat_id=chat_id,
+                include_thoughts=False,
             )
-            
+            if not response:
+                await events.status("❌ Erreur Conseiller Outils : Cascade épuisée", done=True)
+                return wrap_tool_output(
+                    text="Erreur lors de la délégation au Conseiller Outils : Aucun modèle disponible (cascade épuisée).",
+                    status={"status": "error", "message": "cascade exhausted"},
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    metadata=__metadata__
+                )
+
             text_result = ""
             candidates = response.get("candidates", [])
             if candidates and candidates[0].get("content"):
                 for p in candidates[0]["content"].get("parts", []):
-                    if "text" in p:
+                    if "text" in p and not p.get("thought"):
                         text_result += p["text"]
             await events.status("✅ Conseiller Outils : Planification terminée.", done=True)
             return wrap_tool_output(
