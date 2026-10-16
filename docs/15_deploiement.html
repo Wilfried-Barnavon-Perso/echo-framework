@@ -214,7 +214,7 @@ sudo bash 00-echo-scripts/install-stack.sh
         </table>
         <p>Le script applique un nettoyage conditionnel <code>sed</code> des caractères CRLF/BOM uniquement sur les fichiers impactés afin de préserver les horodatages (<code>mtime</code>) et le cache Docker BuildKit.</p>
 
-        <h3>3. Séquençage Docker &amp; Autosafety (<code>stack-echo.yml</code> v9.81 &amp; <code>install-stack.sh</code>)</h3>
+        <h3>3. Séquençage Docker &amp; Autosafety (<code>stack-echo.yml</code> v9.82 &amp; <code>install-stack.sh</code>)</h3>
         <ul>
           <li><strong>Tier 1 (Fondations) :</strong> Qdrant (<code>v1.19.1</code>, IP <code>.103</code>), SearXNG (<code>.101</code>), Watchtower (<code>.102</code>).</li>
           <li><strong>Tier 2 (Workers) :</strong> Embedding (<code>.30</code>), Coding Worker (<code>.21</code> sur <code>echo-sandbox</code>), Browser Worker (<code>.22</code>), MCP Broker (<code>.23</code>, volume persistant <code>echo-mcp-cache</code>), Download Broker (<code>.25</code>), N8N Worker (<code>.26</code>).</li>

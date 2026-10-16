@@ -5,7 +5,7 @@
 - **IDE :** VS Code.
 - **Terminal :** PowerShell (Admin requis pour Hyper-V).
 - **Infrastructure Cible :** Machine Virtuelle Ubuntu 24.04 sur Hyper-V (Allouée à 8Go RAM et 70Go VHD dynamiques).
-- **Orchestration :** Docker Compose (Standardisé `stack-echo.yml` v9.81 et `bunkerweb-stack.yml` v1.35 : Forward Auth SSO `/api/verify`, Rate Limiting `300r/s` burst `1000`, `USE_MODSECURITY=no` sur Open WebUI, et protection `BAD_BEHAVIOR` ciblée sur les codes `405 444`).
+- **Orchestration :** Docker Compose (Standardisé `stack-echo.yml` v9.82 et `bunkerweb-stack.yml` v1.35 : Forward Auth SSO `/api/verify`, Rate Limiting `300r/s` burst `1000`, `USE_MODSECURITY=no` sur Open WebUI, et protection `BAD_BEHAVIOR` ciblée sur les codes `405 444`).
 - **Note Critique :** L'agent opère depuis l'hôte Windows. L'interaction avec la cible se fait via `install-hyperv.ps1` (injection ZIP via disque Seed, pointant par défaut sur la branche `dev`), `sync-echo.sh` (distribution), et `upgrade-echo.sh` (mise à niveau majeure).
 
 ---
@@ -114,7 +114,7 @@ L'infrastructure s'est enrichie pour supporter les flux asynchrones Headless N8N
 
 ## 9. 🚦 Orchestration Séquentielle (Docker Compose)
 
-L'infrastructure est désormais pilotée via la configuration standardisée `stack-echo.yml` (v9.81) et `bunkerweb-stack.yml` (v1.35) et opère sur deux réseaux IPAM dynamiques isolés (`echo-network` via `${ECHO_NET_MAIN_PREFIX}` par défaut en `10.20.40.0/24` et `echo-sandbox` via `${ECHO_NET_SANDBOX_PREFIX}` par défaut en `10.20.50.0/24`) suivant un adressage statique **Domain-Driven IPAM** (`.100-.103` pour les briques Core/Externes et `.20-.30` calqués sur les numéros de dossiers des Workers ECHO). Démarrage ordonné par hostnames stricts (`echo-*`) via `healthcheck` + `depends_on: condition: service_healthy`. Elle intègre une limitation stricte du parallélisme de compilation (`CMAKE_BUILD_PARALLEL_LEVEL=2`) pour prévenir les OOM Killers lors des déploiements massifs :
+L'infrastructure est désormais pilotée via la configuration standardisée `stack-echo.yml` (v9.82) et `bunkerweb-stack.yml` (v1.35) et opère sur deux réseaux IPAM dynamiques isolés (`echo-network` via `${ECHO_NET_MAIN_PREFIX}` par défaut en `10.20.40.0/24` et `echo-sandbox` via `${ECHO_NET_SANDBOX_PREFIX}` par défaut en `10.20.50.0/24`) suivant un adressage statique **Domain-Driven IPAM** (`.100-.103` pour les briques Core/Externes et `.20-.30` calqués sur les numéros de dossiers des Workers ECHO). Démarrage ordonné par hostnames stricts (`echo-*`) via `healthcheck` + `depends_on: condition: service_healthy`. Elle intègre une limitation stricte du parallélisme de compilation (`CMAKE_BUILD_PARALLEL_LEVEL=2`) pour prévenir les OOM Killers lors des déploiements massifs :
 - **Tier 1 (Fondations)** : Qdrant (`v1.19.1`), SearXNG, Watchtower.
 - **Tier 2 (Workers)** : Embedding, Coding Worker, Browser Worker, MCP Broker, Download Broker, N8N Worker (Volumes Hot-Reload).
 - **Tier 3** : Open WebUI (`main-slim`).

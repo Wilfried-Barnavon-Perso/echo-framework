@@ -14,7 +14,7 @@ Ce dossier est le **Centre Névralgique Statique** de l'architecture. Il contien
 - **Injection** : Il est injecté au démarrage dans l'API Open WebUI pour structurer chaque interaction LLM.
 
 ### `stack-echo.yml`
-**Rôle** : Le manifeste d'orchestration Docker Compose principal (v9.81).
+**Rôle** : Le manifeste d'orchestration Docker Compose principal (v9.82).
 - **Sémantique** : Définit la topologie du cluster sur 4 Tiers séquentiels (Fondations > Workers > OWUI > Admin).
 - **Domain-Driven IPAM & Persistance** : Opère sur deux sous-réseaux isolés (`echo-network` via `${ECHO_NET_MAIN_PREFIX}` et `echo-sandbox` via `${ECHO_NET_SANDBOX_PREFIX}`) avec adressage IPv4 statique (`.100-.103` pour les briques Core et `.20-.30` calqués sur les numéros des dossiers Workers, après suppression des anciens conteneurs `.31`/`.32` au profit du pont audio in-process `edge-tts` dans `echo-open-webui`). Monte les volumes nommés (`echo-qdrant-data`, `echo-n8n-data`, `echo-mcp-cache`, `echo_libs_sandbox`, etc.), les 4 packages Hot-Reload de `echo-admin-manager` (`core`, `services`, `routes`, `templates` en `:ro` + `echo-n8n-data` et `echo-mcp-cache` en `:rw`), ainsi que `logging.json` (horodatage ISO 8601) sur l'ensemble des workers Python.
 - **Intégration BunkerWeb & Résilience SPA** : Configure sur `echo-open-webui` le Forward Auth (`/api/verify`), la résolution DNS dynamique Nginx (`set $$upstream`), le Smart Proxy Mock sur `/api/version`, l'Auto-Heal SPA par `sub_filter` sur `/auth`, le bounce `/sso-logout` (`Clear-Site-Data: "cache"`), et `USE_MODSECURITY=no` (reposant sur `BAD_BEHAVIOR` pour les codes `405 444` et un Rate Limit `300r/s` burst `1000`).

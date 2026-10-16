@@ -1,7 +1,9 @@
 # ==============================================================================
 # ECHO FRAMEWORK
 # REGLE: Ne garder que les 5 dernières versions du changelog.
-# Version : 9.81
+# Version : 9.82
+# --- CHANGELOG 9.82 ---
+# - BunkerWeb : Ajustement de MAX_CLIENT_SIZE de 500m à 4096m sur echo-open-webui.
 # --- CHANGELOG 9.81 ---
 # - BunkerWeb : Suppression de la mention (WAF) dans le template de retour HTML 403 Forbidden.
 # --- CHANGELOG 9.80 ---
@@ -10,8 +12,6 @@
 # - Docker Compose : Ajout des bind-mounts modulaires (core, services, routes, templates) pour le Hot-Reload de echo-admin-manager v5.131.
 # --- CHANGELOG 9.78 ---
 # - Docker Compose : In-process audio bridge (edge-tts), suppression des conteneurs echo-stt-worker (.32) et echo-tts-worker (.31).
-# --- CHANGELOG 9.77 ---
-# - Docker Compose : Ajout des volumes echo_libs_sandbox et sandbox-agent-readme.txt pour le Coding Worker.
 # ==============================================================================
 #                  inventés par la syntaxe officielle BunkerWeb (REVERSE_PROXY_AUTH_REQUEST*).
 #                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
@@ -113,7 +113,7 @@ services:
       # 1. OPTIMISATIONS STREAMING & UPLOAD
       - "bunkerweb.REVERSE_PROXY_BUFFERING=no"
       - "bunkerweb.REVERSE_PROXY_REQUEST_BUFFERING=yes"
-      - "bunkerweb.MAX_CLIENT_SIZE=500m"
+      - "bunkerweb.MAX_CLIENT_SIZE=4096m"
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_buffers=client_body_buffer_size 100m; proxy_buffer_size 128k; proxy_buffers 4 256k; proxy_busy_buffers_size 256k;"
       - "bunkerweb.REVERSE_PROXY_READ_TIMEOUT=600s"
       - "bunkerweb.REVERSE_PROXY_SEND_TIMEOUT=600s"
