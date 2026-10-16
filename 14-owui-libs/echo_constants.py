@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.83
+version: 5.84
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.84: Factorisation de get_descending_cascade et forçage thinkingLevel="high" sur repli 429 dans get_generation_config.
 # 5.83: Ajout des outils interactifs Headless-interdits (ask_user_input, delete_user_skill, manage_identity, open_codex_ui) dans DELEGATE_AGENT_BLACKLIST.
 # 5.82: Définition de ECHO_AUDIO_DEFAULT_TTS_PITCH (-2Hz) et vitesse nominale 1.0 (100%).
 # 5.81: Ajustement de ECHO_AUDIO_DEFAULT_TTS_SPEED à 1.06 (106%) pour la synthèse vocale.
 # 5.80: Ajustement de ECHO_AUDIO_DEFAULT_TTS_SPEED à 1.1 (110%) pour la synthèse vocale.
-# 5.79: Définition de ECHO_AUDIO_DEFAULT_TTS_SPEED (1.25 / 125%) pour la synthèse Edge TTS.
 
 import os
 import contextvars
@@ -347,18 +347,49 @@ def get_model_identity(model_str: str) -> str:
         if model_str in (v.get("ai_studio_id"), v.get("ca_model_id")): return k
     return "UNKNOWN"
 
-def get_generation_config(model_key: str = "MODEL_ZEPHYR", override_thinking: str = None) -> dict:
+def get_generation_config(
+    model_key: str = "MODEL_ZEPHYR",
+    override_thinking: str = None,
+    is_fallback_cascade: bool = False,
+    include_thoughts: bool = None,
+) -> dict:
     """
     Extrait le generationConfig depuis le SSOT.
-    Permet de surcharger dynamiquement le thinkingLevel (ex: MINIMAL pour le grounding).
+    Permet de surcharger dynamiquement le thinkingLevel (ex: MINIMAL pour le grounding)
+    et force obligatoirement thinkingLevel="high" lors d'une cascade descendante (429).
     """
     import copy
     # Récupération sécurisée du dictionnaire global
     registry = globals().get("ECHO_MODELS_REGISTRY", {})
     base_gen = copy.deepcopy(registry.get(model_key, registry.get("MODEL_ZEPHYR", {})).get("generationConfig", {}))
-    if override_thinking and "thinkingConfig" in base_gen:
-        base_gen["thinkingConfig"]["thinkingLevel"] = override_thinking
+    if "thinkingConfig" in base_gen:
+        if is_fallback_cascade:
+            base_gen["thinkingConfig"]["thinkingLevel"] = "high"
+        elif override_thinking:
+            base_gen["thinkingConfig"]["thinkingLevel"] = override_thinking
+        if include_thoughts is not None:
+            base_gen["thinkingConfig"]["includeThoughts"] = include_thoughts
     return base_gen
+
+
+def get_descending_cascade(start_model_key: str, include_start: bool = False) -> list:
+    """
+    Calcule dynamiquement la séquence de cascade descendante depuis ECHO_MODELS_REGISTRY.
+    Si include_start=True, inclut le modèle de départ en tête de liste (usage call_cascade).
+    Si include_start=False, retourne uniquement les modèles strictement inférieurs (usage pipe_engine).
+    """
+    registry = globals().get("ECHO_MODELS_REGISTRY", {})
+    identity = get_model_identity(start_model_key)
+    if identity == "UNKNOWN":
+        identity = "MODEL_APOLLO"
+    start_h = registry.get(identity, {}).get("hierarchy")
+    start_h = start_h if start_h is not None else 1
+    candidates = [
+        k for k, v in registry.items()
+        if v.get("hierarchy") is not None
+        and (v.get("hierarchy") <= start_h if include_start else v.get("hierarchy") < start_h)
+    ]
+    return sorted(candidates, key=lambda k: registry[k]["hierarchy"], reverse=True)
 
 # ----------------------------
 

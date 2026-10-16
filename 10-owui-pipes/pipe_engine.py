@@ -1,24 +1,23 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.82
+version: 192.83
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.83: Factorisation de la cascade descendante (get_descending_cascade) et forçage thinkingLevel="high" sur repli 429.
 # 192.82: Suppression du statut initial "⚙️ Traitement en cours...".
 # 192.81: Enregistrement idempotent du pont in-process ECHO Audio (routes /echo/v1/audio).
 # 192.80: Renommage souverain des modèles cognitifs (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS) et politique AUTO_PROM.
 # 192.79: Augmentation de maxOutputTokens à 8192 dans le Fast-Track pour absorber le thinking sur les prompts volumineux.
-# 192.78: Fiabilisation du Fast-Track (title_generation en JSON, exclusion du system prompt, thinkingLevel low sans temperature et filtrage des parts thought).
 
 
 # ==============================================================================
 # SECTION 0 : IMPORTS & CONFIGURATION
 # ==============================================================================
 import sys
-import copy
 import secrets
 import re
 import time
@@ -56,7 +55,8 @@ from echo_constants import (
     FILE_INGESTION_STATUS,
     CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE,
     ECHO_TOOLS_CACHE_MAX_SIZE,
-    ECHO_MODELS_REGISTRY, get_model_identity, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN,
+    ECHO_MODELS_REGISTRY, get_model_identity, get_generation_config,
+    get_descending_cascade, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN,
     AUTH_DATA_USER_EMAIL, AUTH_DATA_USER_TIER, AUTH_DATA_PROJECT_ID,
     AEC_REMINDERS
 )
@@ -893,6 +893,7 @@ class Pipe:
         asst_msg_id = kwargs.get("__message_id__")
         failed_models_this_turn = set()
         applied_model = target_model
+        is_fallback_cascade = False
 
         while cascade_attempt < max_cascade_attempts:
             cascade_attempt += 1
@@ -921,9 +922,11 @@ class Pipe:
             resolved_sys = resolve_placeholders(sys_instr_raw, target_model, orch.model_origin)
             sys_instr = {"parts": [{"text": resolved_sys}]}
 
-            gen_config = copy.deepcopy(ECHO_MODELS_REGISTRY.get(target_model, ECHO_MODELS_REGISTRY.get("MODEL_ZEPHYR", {})).get("generationConfig", {}))
-            if "thinkingConfig" in gen_config:
-                gen_config["thinkingConfig"]["includeThoughts"] = True
+            gen_config = get_generation_config(
+                target_model,
+                is_fallback_cascade=is_fallback_cascade,
+                include_thoughts=True,
+            )
 
             payload = {
                 "contents": context,
@@ -1017,20 +1020,12 @@ class Pipe:
                 log.error(f"[PipeEngine] Erreur API lors de l'appel Gemini: {e}")
                 # GESTION DES ÉCHECS TECHNIQUES — CASCADE DESCENDANTE
                 if is_auto and cascade_attempt < max_cascade_attempts:
-                    target_identity = get_model_identity(target_model)
-                    if target_identity == 'UNKNOWN':
-                        target_identity = 'MODEL_APOLLO'
-                    target_hierarchy = ECHO_MODELS_REGISTRY.get(target_identity, {}).get("hierarchy")
-                    target_hierarchy = target_hierarchy if target_hierarchy is not None else 0
-                    cascade_order_keys = sorted(
-                        [k for k in ECHO_MODELS_REGISTRY if ECHO_MODELS_REGISTRY[k].get("hierarchy") is not None and ECHO_MODELS_REGISTRY[k].get("hierarchy") < target_hierarchy],
-                        key=lambda k: ECHO_MODELS_REGISTRY[k].get("hierarchy"), reverse=True
-                    )
-                    cascade_order = cascade_order_keys
+                    cascade_order = get_descending_cascade(target_model, include_start=False)
                     if cascade_order:
                         prev_model = target_model
                         target_model = cascade_order[0]
                         failed_models_this_turn.add(prev_model)
+                        is_fallback_cascade = True
 
                         await events.status(f"⚡ {prev_model} indisponible → cascade vers {target_model}")
                         await events.toast(f"⚡ Cascade : {prev_model} → {target_model} (erreur: {str(e)[:80]})", "warning")
@@ -1188,6 +1183,7 @@ class Pipe:
 
                 target_model = new_target
                 applied_model = new_target
+                is_fallback_cascade = False
                 continue
             else:
                 # [NOUVEAU] INDEXATION FINALE (SUTURE)
