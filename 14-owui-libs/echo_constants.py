@@ -240,7 +240,7 @@ AEC_REMINDERS = [
 
 # ==============================================================================
 # 1.1 MODULE : CONSTANTES ET DEFAULTS ECHO (CENTRALISATION)
-# VERSION : 5.999.3
+# VERSION : 5.999.4
 # ==============================================================================
 
 
@@ -257,7 +257,7 @@ ECHO_MODELS_REGISTRY = {
             "temperature": 1.0,
             "topP": 0.9,
             "maxOutputTokens": 65535,
-            "thinkingConfig": {"thinkingLevel": "high"}
+            "thinkingConfig": {"thinkingLevel": "medium"}
         }
     },
     "MODEL_APOLLO": {

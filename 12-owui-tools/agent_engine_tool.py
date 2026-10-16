@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.26
+version: 1.27
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.27: Bascule de la synthèse d'agent vers MODEL_APOLLO (medium) au lieu de MODEL_DISTILLATION.
 # 1.26: Résolution robuste de chat_id depuis __metadata__ et propagation de __metadata__ dans infra_kwargs des sous-agents.
 # 1.25: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.24: Injection des sub_tools_names dans ECHO_SUBAGENT_CONTEXT pour permettre le filtrage dynamique par les outils internes (ex: Tool Consultant).
 # 1.23: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations, functionCallingConfig).
-# 1.22: Transformation de calls_used en calls_remaining pour l'orchestrateur parent.
 
 import sys
 import uuid
@@ -443,7 +443,7 @@ class Tools:
             target_model_key="MODEL_APOLLO",
             payload={
                 "contents": [{"role": "user", "parts": [{"text": distill_prompt}]}],
-                "generationConfig": {**get_generation_config("MODEL_DISTILLATION"), "maxOutputTokens": 8192},
+                "generationConfig": {**get_generation_config("MODEL_APOLLO", override_thinking="medium"), "maxOutputTokens": 8192},
             },
             user_id=user_id,
             metadata=__metadata__,

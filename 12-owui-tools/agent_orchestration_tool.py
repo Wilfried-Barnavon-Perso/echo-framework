@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.41
+version: 5.42
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.42: Sanctuarisation thinkingLevel "high" sur synthèse Delphi et critique, consolidation sur MODEL_APOLLO (medium).
 # 5.41: Résolution robuste de chat_id avec fallback sur __metadata__ pour la propagation aux sous-agents.
 # 5.40: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 5.38: Mise à jour de la docstring de forge_skill pour recommander l'usage de search_skill en amont.
 # 5.37: Ajout des outils read_skill et search_skill pour la consultation et la découverte sémantique.
-# 5.36: Fix: Initialisation manquante de EchoEvents dans delete_user_skill.
 
 import sys
 import orjson as json
@@ -525,7 +525,7 @@ class Tools:
         synthesis_payload = {
             "contents": [{"role": "user", "parts": [{"text": transcript}]}],
             "systemInstruction": {"parts": [{"text": synthesis_system}]},
-            "generationConfig": {**get_generation_config(synthesis_model), "maxOutputTokens": 16000}
+            "generationConfig": {**get_generation_config(synthesis_model, override_thinking="high"), "maxOutputTokens": 16000}
         }
 
         res, _, _ = await EchoGeminiClient.call_cascade(
@@ -693,7 +693,7 @@ class Tools:
                 target_model_key=critic_model,
                 payload={
                     "contents": [{"role": "user", "parts": [{"text": critic_prompt}]}],
-                    "generationConfig": get_generation_config("MODEL_DISTILLATION"),
+                    "generationConfig": get_generation_config(critic_model, override_thinking="high"),
                 },
                 user_id=user_id,
                 metadata=(__metadata__ or {}),
@@ -803,10 +803,10 @@ class Tools:
         )
 
         consolidation_res, _, _ = await EchoGeminiClient.call_cascade(
-            target_model_key=critic_model,
+            target_model_key="MODEL_APOLLO",
             payload={
                 "contents": [{"role": "user", "parts": [{"text": consolidation_prompt}]}],
-                "generationConfig": {**get_generation_config("MODEL_DISTILLATION"), "maxOutputTokens": 16000},
+                "generationConfig": {**get_generation_config("MODEL_APOLLO", override_thinking="medium"), "maxOutputTokens": 16000},
             },
             user_id=user_id,
             metadata=(__metadata__ or {}),

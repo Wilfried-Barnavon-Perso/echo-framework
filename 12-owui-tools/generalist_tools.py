@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.28
+version: 1.29
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.29: Ajout de generationConfig explicite avec thinking medium sur delegate_to_tool_consultant.
 # 1.28: Fiabilisation de delegate_to_tool_consultant en sous-agent (résolution chat_id depuis __metadata__, filtrage BLACKLIST/Headless et call_cascade).
 # 1.27: Ajout de read_ui_automations pour l'inspection complète des tâches CRON.
 # 1.26: Alignement sur la nomenclature cognitive (MODEL_PROMETHEUS).
 # 1.25: Correction des retours de delegate_to_tool_consultant pour forcer l'encapsulation wrap_tool_output.
-# 1.24: Ajout de delegate_to_tool_consultant (Agent Stratège Stateless).
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -25,7 +25,7 @@ from typing import Any
 sys.path.append("/app/backend/echo_libs")
 from echo_core import wrap_tool_output
 from echo_events import EchoEvents
-from echo_constants import ECHO_MAX_WAIT_TIMER
+from echo_constants import ECHO_MAX_WAIT_TIMER, get_generation_config
 from echo_ui import EchoUI
 from echo_gemini_client import EchoGeminiClient
 from echo_prompts import SYS_ORCHESTRATOR_CONSULTANT
@@ -496,6 +496,7 @@ class Tools:
         try:
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": objective}]}],
+                "generationConfig": get_generation_config("MODEL_PROMETHEUS", override_thinking="medium"),
                 "systemInstruction": {"role": "system", "parts": [{"text": system_prompt}]}
             }
             # Inférence Stateless via call_cascade (Clamping + résilience) sans exposer la section tools

@@ -1,16 +1,16 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 1.13
+version: 1.14
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.14: Sanctuarisation du thinkingLevel "high" sur build_plan et analyze_plan.
 # 1.13: Refonte UX complète (zéro émoji), statut "proposed" par défaut, retrait des modales build/update, et ajout de l'outil analyze_plan.
 # 1.11: Affichage des instructions de pointage dans l'évènement UI de update_tasks.
 # 1.9: Création de process_plan, modale optionnelle, verrouillage frontend de update_plan contre les démarrages illicites.
 # 1.6: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 1.5: Refonte des system prompts (BUILD/UPDATE) avec balises XML, exemples yaml et ton impersonnel.
 # 1.4: Registre Unifié V2 — Plans stockés dans le Codex (Git) au lieu du dossier plans/.
 
 import sys
@@ -202,7 +202,7 @@ class Tools:
 
         payload = {
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-            "generationConfig": get_generation_config(PLANNER_MODEL_BUILD),
+            "generationConfig": get_generation_config(PLANNER_MODEL_BUILD, override_thinking="high"),
             "systemInstruction": {"parts": [{"text": system_prompt}]},
         }
 
@@ -685,7 +685,7 @@ Le plan `{plan_id}` est officiellement EN COURS D'EXÉCUTION.
 
         payload = {
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-            "generationConfig": get_generation_config(PLANNER_MODEL_BUILD),
+            "generationConfig": get_generation_config(PLANNER_MODEL_BUILD, override_thinking="high"),
             "systemInstruction": {"parts": [{"text": SYS_PLANNER_ANALYZE}]},
         }
 

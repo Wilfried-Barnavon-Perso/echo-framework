@@ -1,7 +1,7 @@
 """
 title: ECHO Delegate to Data Broker
 author: ECHO
-version: 1.5
+version: 1.6
 description: Délégation de collecte de données externes structurées au Data Broker autonome.
 """
 from pydantic import BaseModel, Field
@@ -66,7 +66,7 @@ class Tools:
             result = await delegate.delegate_to_agent(
                 task=query,
                 system_prompt=system_prompt,
-                target_model_key="MODEL_PROMETHEUS",
+                target_model_key="MODEL_APOLLO",
                 allowed_tools=allowed,
                 __user__=__user__,
                 __chat_id__=chat_id,

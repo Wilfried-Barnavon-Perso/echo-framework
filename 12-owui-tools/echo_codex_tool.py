@@ -1,10 +1,11 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 2.13
+version: 2.14
 description: Permet au modèle de manipuler un espace de travail virtuel et asynchrone (Codex) avec versioning Git invisible, et accès natif à Python/Bash sécurisés.
 """
 # Historique des versions :
+# 2.14: Remplacement de la distillation par MODEL_APOLLO (thinking: medium) dans summarize_codex pour fiabiliser la synthèse.
 # 2.13: Fix critique - Levée du blocage du 1er tour et ancrage déterministe de l'action sur le message utilisateur immuable (user_msg_id) pour éliminer le stale write-back (Chat.svelte:1724) et fiabiliser la réouverture du HUD.
 # 2.12: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 2.11: Fix - Blocage de l'outil `open_codex_ui` au premier tour (vérification __messages__) et ajout de la règle de parcimonie LLM.
@@ -431,17 +432,23 @@ class Tools:
         lang = CodexRepo.detect_language(filename)
         await events.status(f"🔍 Distillation de {filename} ({result['total_lines']} lignes)...", done=False)
 
-        parts = [{"role": "user", "parts": [{"text": result["content"]}]}]
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": result["content"]}]}],
+            "systemInstruction": {"parts": [{"text": SYS_CODEX_SUMMARIZE.format(filename=filename, language=lang)}]},
+            "generationConfig": {**get_generation_config("MODEL_APOLLO", override_thinking="medium"), "maxOutputTokens": 8192}
+        }
 
-        summary = await EchoGeminiClient.call_distillation(
-            prompt="",
-            __user__=__user__,
-            __metadata__=__metadata__,
-            is_json=False,
-            parts=parts,
-            max_tokens=8192,
-            system_instruction=SYS_CODEX_SUMMARIZE.format(filename=filename, language=lang)
+        data, _, err = await EchoGeminiClient.call_cascade(
+            target_model_key="MODEL_APOLLO",
+            payload=payload,
+            user_id=uid,
+            metadata=__metadata__,
+            events=events,
+            timeout=self.valves.CODEX_EDIT_TIMEOUT,
+            chat_id=cid,
+            include_thoughts=False
         )
+        summary = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "") if data else f"❌ Échec synthèse : {err}"
 
         await events.status(f"✅ Synthèse de {filename} terminée.", done=True)
         return wrap_tool_output(
