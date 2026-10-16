@@ -1,12 +1,12 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.84
+version: 5.85
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.84: Factorisation de get_descending_cascade et forçage thinkingLevel="high" sur repli 429 dans get_generation_config.
+# 5.85: Passage PROMETHEUS en "gemini-4-argon". Factorisation de get_descending_cascade et forçage thinkingLevel="high" sur repli 429 dans get_generation_config.
 # 5.83: Ajout des outils interactifs Headless-interdits (ask_user_input, delete_user_skill, manage_identity, open_codex_ui) dans DELEGATE_AGENT_BLACKLIST.
 # 5.82: Définition de ECHO_AUDIO_DEFAULT_TTS_PITCH (-2Hz) et vitesse nominale 1.0 (100%).
 # 5.81: Ajustement de ECHO_AUDIO_DEFAULT_TTS_SPEED à 1.06 (106%) pour la synthèse vocale.
@@ -247,11 +247,10 @@ AEC_REMINDERS = [
 # ==============================================================================
 # REGISTRE COGNITIF ECHO (SINGLE SOURCE OF TRUTH)
 # ==============================================================================
-
 ECHO_MODELS_REGISTRY = {
     "MODEL_PROMETHEUS": {
-        "ai_studio_id": "gemini-3.1-pro-preview",
-        "ca_model_id":  "claude-opus-5-5-high",
+        "ai_studio_id": "gemini-4-argon",
+        "ca_model_id":  "gemini-4-argon-high",
         "hierarchy": 2,
         "generationConfig": {
             "temperature": 1.0,
