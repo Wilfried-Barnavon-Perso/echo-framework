@@ -1,15 +1,16 @@
 """
 title: ECHO Protocol Adapter
 author: Wilfried BARNAVON
-version: 1.2
+version: 1.3
 description: Couche de traduction parametres ECHO -> format API Gemini. Deux backends : AI Studio (cle API) et Code Assist v1internal (OAuth2). Fonctions pures -- aucun appel reseau, aucun etat. Point de modification unique pour adapter les requetes CA.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.3: Alignement documentaire interne sur echo_orchestrator.py.
 # 1.2: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.1: CA_EXCLUDED_GEN_CONF_FIELDS vide -- thinkingConfig doit passer
 # integralement vers CA (includeThoughts=True requis pour visibilite
-# des pensees dans pipe_engine). Confirme OK par diag D/D-bis/D-ter.
+# des pensees dans echo_orchestrator). Confirme OK par diag D/D-bis/D-ter.
 # 1.0: Creation initiale (migration Gemini-CI -> AGY, 2026-05-25).
 
 from echo_constants import get_generation_config
@@ -21,7 +22,7 @@ from echo_constants import get_generation_config
 # Actuellement vide : tous les champs generationConfig passent integralement vers CA.
 #
 # thinkingConfig : PAS exclu.
-#   pipe_engine.py construit : {includeThoughts: True, thinkingLevel: THINKING_LEVEL_*}.
+#   echo_orchestrator.py construit : {includeThoughts: True, thinkingLevel: THINKING_LEVEL_*}.
 #   includeThoughts=True est requis pour que CA retourne des parts "thought=True" lisibles.
 #   Sans ce champ, CA retourne uniquement le thoughtSignature opaque -- pensees invisibles.
 #   thinkingLevel depuis constantes ECHO (THINKING_LEVEL_PROMETHEUS/APOLLO/ZEPHYR) -- redondant
@@ -52,8 +53,8 @@ def build_ca_generation_config(raw_gen_conf: dict) -> dict:
          Corrige le 400 de production : 65536 > 65535 sur Gemini 3.1 Pro/Lite CA.
 
     thinkingConfig : passe integralement.
-      includeThoughts=True est pose par pipe_engine pour rendre les pensees visibles
-      dans le stream (<think>...</think> gere par pipe_engine.process()).
+      includeThoughts=True est pose par echo_orchestrator pour rendre les pensees visibles
+      dans le stream (<think>...</think> gere par echo_orchestrator.process()).
       thinkingLevel herite des constantes ECHO (THINKING_LEVEL_PROMETHEUS/APOLLO/ZEPHYR).
 
     topP, temperature, response_mime_type : conserves.

@@ -1,20 +1,16 @@
 """
 title: Résume et Transfert vers un nouveau chat
 author: ECHO Framework
-version: 1.12
+version: 1.13
 description: Migre le contexte de travail saturé vers une nouvelle conversation optimisée (clonage Workspace).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0yMSAxNnYuNWExLjUgMS41IDAgMCAxLTEuNSAxLjVoLTZMMTIgMjBsLTIuNS0yLjVoLTZBMS41IDEuNSAwIDAgMSAyIDE2LjVWNGExLjUgMS41IDAgMCAxIDEuNS0xLjVoMTVBMS41IDEuNSAwIDAgMSAyMCA0djciLz48cGF0aCBkPSJtMTggMjIgMy0zLTMtMyIvPjxwb2x5bGluZSBwb2ludHM9IjIxIDE5IDEzIDE5Ii8+PC9zdmc+
 """
 # Historique des versions :
+# 1.13: Alignement du modèle cible par défaut sur echo_orchestrator.
 # 1.12: Injection de la requête racine (RAG macro-objectif) et ajout de la routine de reprise obligatoire (Onboarding cognitif).
 # 1.11: Renommage de l'action et augmentation de l'historique de distillation à 80 messages.
 # 1.10: Version précédente.
 # 1.9: Correction extraction des messages (compatibilité OWUI v0.3+), nettoyage de la clé redondante, cohérence ID HUD.
-# 1.8: Remplacement des regex de purge par une regex globale sur <artifact> pour le nettoyage OWUI.
-# 1.5: Ajout d'une demande de confirmation explicite avant le déclenchement de la migration.
-# 1.4: Mise à jour de la priorité d'affichage à 20.
-# 1.3: Préservation des liens symboliques lors du clonage du Vault (compatibilité ingestion).
-# 1.2: Nettoyage tokens (fichiers + balises proprioceptives) pour distillation optimisée.
 
 import sys
 import os
@@ -205,7 +201,8 @@ class Action:
 
         await update_hud(40, "📝 Instanciation de la nouvelle session...")
         message_id = str(uuid.uuid4())
-        old_models = old_chat.chat.get("models", ["pipe_engine"]) if old_chat and hasattr(old_chat, "chat") else ["pipe_engine"]
+        raw_models = old_chat.chat.get("models", ["echo_orchestrator"]) if old_chat and hasattr(old_chat, "chat") else ["echo_orchestrator"]
+        old_models = ["echo_orchestrator" if m == "pipe_engine" else m for m in (raw_models or ["echo_orchestrator"])]
         
         routine_reprise = (
             "\n\n---\n"

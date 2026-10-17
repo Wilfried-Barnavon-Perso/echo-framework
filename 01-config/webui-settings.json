@@ -12,10 +12,10 @@
   "ui.pending_user_overlay_content": "",
   "ui.watermark": "",
   "ui.prompt_suggestions": [],
-  "ui.default_models": "pipe_engine",
-  "ui.default_pinned_models": "pipe_engine",
+  "ui.default_models": "echo_orchestrator",
+  "ui.default_pinned_models": "echo_orchestrator",
   "ui.model_order_list": [
-    "pipe_engine"
+    "echo_orchestrator"
   ],
   "webhook_url": "",
   "auth.admin.show": true,
@@ -60,7 +60,7 @@
   "code_interpreter.jupyter.auth_token": "",
   "code_interpreter.jupyter.auth_password": "",
   "code_interpreter.jupyter.timeout": 60,
-  "task.model.default": "pipe_engine",
+  "task.model.default": "echo_orchestrator",
   "task.model.external": "",
   "task.title.enable": true,
   "task.title.prompt_template": "### Tâche\nLe Modèle DOIT générer un titre concis (limité à 5 mots maximum) résumant le sujet principal de l'échange fourni.\n### Règles\n1. Utiliser la langue majoritairement employée dans la conversation (français par défaut).\n2. Le titre DOIT être strictement limité à 5 mots maximum (idéalement 2 à 5 mots), précis, sans emoji, sans guillemets ni formatage Markdown.\n3. Le retour DOIT être un objet JSON strict contenant l'unique clé \"title\" associée à une chaîne de caractères : {\"title\": \"Votre titre concis\"}.\n### Historique\n<chat_history>\n{{MESSAGES:END:2}}\n</chat_history>",

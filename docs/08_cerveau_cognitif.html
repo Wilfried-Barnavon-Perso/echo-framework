@@ -49,7 +49,7 @@
           <li><strong>Ingestion Zéro-RAM &amp; Smart Context :</strong> Les fichiers texte <code>&lt; 32 Ko</code> (<code>MAX_DIRECT_TEXT_INJECT_SIZE</code>, versionnés dans le Codex) et multimédias <code>&lt; 1 Mo</code> (<code>MAX_DIRECT_MMEDIA_INJECT_SIZE</code>) sont injectés en <code>put_in_context</code>. Les fichiers volumineux et documents Office (convertis via <code>MarkItDown</code> avec extraction d'images OOXML) sont découpés par <code>AgnosticStreamingSplitter</code> (blocs de 4 000 caractères), vectorisés dans <code>echo_session_rag</code> et résumés dans <code>&lt;artifact id="AEC_smart_context"&gt;</code> avec leur <code>source_id</code>.</li>
         </ul>
 
-        <h3>2. Le Pipe Engine (<code>pipe_engine.py</code>)</h3>
+        <h3>2. Le Pipe Engine (<code>echo_orchestrator.py</code>)</h3>
         <p>Le Cortex principal gouverne la Suture Bit-Perfect et le routage cognitif :</p>
         <ul>
           <li><strong>Registre Cognitif &amp; Élasticité :</strong> Interroge <code>ECHO_MODELS_REGISTRY</code> (<code>MODEL_ZEPHYR</code> élevé en <code>thinkingLevel="medium"</code>, <code>MODEL_APOLLO</code> et <code>MODEL_PROMETHEUS</code> en <code>high</code>). Interdit l'inertie cognitive en ZEPHYR et APOLLO via <code>new_cognitive_level</code>, tout en excluant du menu d'escalade les modèles ayant échoué durant le tour courant (<code>failed_models_this_turn</code>).</li>

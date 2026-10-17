@@ -212,7 +212,7 @@ flowchart TD
             <div style="background: #1e1b4b; border: 1px dashed #4338ca; border-radius: 8px; padding: 15px; flex: 1;">
                 <div style="color: #6366f1; font-size: 12px; text-align: center; margin-bottom: 15px; letter-spacing: 1px;">10-owui-pipes</div>
                 <div style="background: #172554; border: 1px solid #4338ca; border-radius: 6px; padding: 10px;">
-                    <div style="color: #818cf8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">pipe_engine.py</div>
+                    <div style="color: #818cf8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_orchestrator.py</div>
                     <div style="color: #64748b; font-size: 11px;">Cerveau principal du système</div>
                     <div style="color: #64748b; font-size: 11px;">Reconstruction de l'historique</div>
                     <div style="color: #64748b; font-size: 11px;">Lecture des réponses en direct</div>
@@ -286,7 +286,7 @@ flowchart TD
     <div class="grid-container">
       <div class="card">
         <h3>⚔️ La Suture (Cognitive Suture)</h3>
-        <p><strong>Nature :</strong> Algorithme de reconstruction (<code>Orchestrator.prepare_context()</code> dans <code>pipe_engine.py</code>).</p>
+        <p><strong>Nature :</strong> Algorithme de reconstruction (<code>Orchestrator.prepare_context()</code> dans <code>echo_orchestrator.py</code>).</p>
         <p>
           Reconstruit l'historique complet à partir des Ombres SQLite (<code>message_shadows</code>). Le <strong>Verrou de Version</strong>
           (<code>message_id + updated_at</code>) et le <strong>Verrou de Tour</strong> (<code>turn_origin_model</code>) garantissent une reprise bit-perfect tout en préservant le cache de préfixes de l'API Gemini. En cas d'édition manuelle d'un message, le Pipe bascule en <em>Cold Recovery</em>.

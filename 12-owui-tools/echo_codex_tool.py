@@ -1,16 +1,15 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 2.14
+version: 2.15
 description: Permet au modèle de manipuler un espace de travail virtuel et asynchrone (Codex) avec versioning Git invisible, et accès natif à Python/Bash sécurisés.
 """
 # Historique des versions :
+# 2.15: Alignement du fallback model_id sur echo_orchestrator dans open_codex_ui.
 # 2.14: Remplacement de la distillation par MODEL_APOLLO (thinking: medium) dans summarize_codex pour fiabiliser la synthèse.
 # 2.13: Fix critique - Levée du blocage du 1er tour et ancrage déterministe de l'action sur le message utilisateur immuable (user_msg_id) pour éliminer le stale write-back (Chat.svelte:1724) et fiabiliser la réouverture du HUD.
 # 2.12: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 2.11: Fix - Blocage de l'outil `open_codex_ui` au premier tour (vérification __messages__) et ajout de la règle de parcimonie LLM.
-# 2.10: Fix critique - Extraction du `session_id` pour le passer à `trigger_action` afin d'éviter le crash en boucle de l'Event Caller.
-# 2.9: Injection absolue des variables de contexte (`chat_id`, `message_id`, `model_id`) vers le déclencheur d'action, garantissant un déterminisme total.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -549,7 +548,7 @@ class Tools:
             or (meta.get("user_message") or {}).get("id")
             or meta.get("message_id", "")
         )
-        model_id = (__model__ or {}).get("id", "echo-agent")
+        model_id = (__model__ or {}).get("id", "echo_orchestrator")
         session_id = meta.get("session_id", "")
         
         # 1. Injection de la cible

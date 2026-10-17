@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.27
+version: 1.28
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.28: Alignement du cache d'outils sur sys.modules["function_echo_orchestrator"].
 # 1.27: Bascule de la synthèse d'agent vers MODEL_APOLLO (medium) au lieu de MODEL_DISTILLATION.
 # 1.26: Résolution robuste de chat_id depuis __metadata__ et propagation de __metadata__ dans infra_kwargs des sous-agents.
 # 1.25: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.24: Injection des sub_tools_names dans ECHO_SUBAGENT_CONTEXT pour permettre le filtrage dynamique par les outils internes (ex: Tool Consultant).
-# 1.23: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations, functionCallingConfig).
 
 import sys
 import uuid
@@ -193,7 +193,7 @@ class Tools:
         #
         # Solution (ECHO v5.166.2) :
         #   Le Pipe stocke __tools__ dans _TOOLS_CACHE[chat_id] (module-level).
-        #   agent_engine_tool lit ce cache via sys.modules["function_pipe_engine"].
+        #   agent_engine_tool lit ce cache via sys.modules["function_echo_orchestrator"].
         #   Cette lecture est un accès direct à un attribut de module, PAS un scan.
         #
         # Priorité des sources :
@@ -206,7 +206,7 @@ class Tools:
         _log = _dlog.getLogger("echo.delegate")
 
         # Source 1 : cache module-level du Pipe (contient les callables OWUI originaux)
-        _pipe_mod = _sys.modules.get("function_pipe_engine")
+        _pipe_mod = _sys.modules.get("function_echo_orchestrator")
         _tools_cache: dict = (getattr(_pipe_mod, "_TOOLS_CACHE", {}) or {}) if _pipe_mod else {}
         _tools_dict: dict = _tools_cache.get(chat_id, {})
 

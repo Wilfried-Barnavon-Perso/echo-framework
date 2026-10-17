@@ -170,7 +170,7 @@ sequenceDiagram
         </ul>
 
         <h3>2. Signature de <code>deploy_context_gauge()</code> &amp; Rafraîchissement Quotas</h3>
-        <p>Appelée par <code>pipe_engine.py</code>, elle calcule l'anneau SVG via <code>stroke-dashoffset</code> sur <code>quota_fraction</code> (rafraîchi de manière non-bloquante par <code>fetch_available_models()</code> toutes les 10 min dans <code>identity.db</code>) :</p>
+        <p>Appelée par <code>echo_orchestrator.py</code>, elle calcule l'anneau SVG via <code>stroke-dashoffset</code> sur <code>quota_fraction</code> (rafraîchi de manière non-bloquante par <code>fetch_available_models()</code> toutes les 10 min dans <code>identity.db</code>) :</p>
         <pre><code>deploy_context_gauge(
     events,                        # EchoEvents
     plan_name, credits_val,        # Identité du plan

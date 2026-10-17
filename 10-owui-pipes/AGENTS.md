@@ -4,11 +4,11 @@
 
 ## 1. Rôle du Dossier
 
-Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégration LLM dans ECHO, à savoir le moteur `pipe_engine.py`. Ce composant a été formellement implémenté en tant que composant *core* (Pipe Manifold) Open WebUI. Il est conçu pour intercepter, formater, gérer la mémoire et router toutes les requêtes utilisateur vers l'API Gemini ou l'ECHO N8N Orchestrator, tout en préservant une intégrité bit-perfect des métadonnées (Suture State).
+Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégration LLM dans ECHO, à savoir le moteur `echo_orchestrator.py`. Ce composant a été formellement implémenté en tant que composant *core* (Pipe Manifold) Open WebUI. Il est conçu pour intercepter, formater, gérer la mémoire et router toutes les requêtes utilisateur vers l'API Gemini ou l'ECHO N8N Orchestrator, tout en préservant une intégrité bit-perfect des métadonnées (Suture State).
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `pipe_engine.py` (v192.85)
+### `echo_orchestrator.py` (v192.86)
 
 #### A. Classe `UserDataManager` (Le Tisserand de Mémoire)
 **Rôle** : Gestionnaire de l'état asynchrone SQLite (proxy vers `EchoStateManager`). Il reconstruit l'historique exact de la conversation.

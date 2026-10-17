@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.67
+# VERSION : 7.68
 # ==============================================================================
 
 # --- INITIALISATION : CORE ECHO GLOBALS ---
@@ -246,6 +246,10 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
     fi
 
     # 5. Déploiement (ENDPOINTS STABLES v5.29.0)
+    echo "   🧹 [PURGE] Éradication des Modèles existants en base de données..."
+    DEL_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "$OWUI_URL/api/v1/models/delete/all" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
+    [ "$DEL_CODE" -eq 401 ] && refresh_token && curl -s -o /dev/null -X DELETE "$OWUI_URL/api/v1/models/delete/all" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER
+
     CHECK_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/model?id=$MODEL_ID" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
     [ "$CHECK_CODE" -eq 401 ] && refresh_token && CHECK_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/model?id=$MODEL_ID" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
 

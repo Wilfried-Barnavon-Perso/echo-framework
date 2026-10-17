@@ -1,17 +1,17 @@
 """
-title: ECHO Engine
+title: Écho
 author: Wilfried BARNAVON
-version: 192.85
+version: 192.86
 requirements: asyncssh
-description: Composant système interne : ECHO Engine.
+description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.86: Renommage du composant en echo_orchestrator.py (Écho / ECHO - Orchestrateur).
 # 192.85: Affichage du modèle technique lors du transfert cognitif (_get_ui_display) dans le statut UI.
 # 192.84: Réactivation du rafraîchissement asynchrone des quotas OAuth2 et affichage HUD des quotas 5h et hebdomadaire.
 # 192.83: Factorisation de la cascade descendante (get_descending_cascade) et forçage thinkingLevel="high" sur repli 429.
 # 192.82: Suppression du statut initial "⚙️ Traitement en cours...".
-# 192.81: Enregistrement idempotent du pont in-process ECHO Audio (routes /echo/v1/audio).
 
 
 # ==============================================================================
@@ -70,7 +70,7 @@ try:
     # Protocole HTTP/2 obligatoire (h2)
     import h2  # noqa: F401
     import logging
-    log = logging.getLogger("echo.pipe_engine")
+    log = logging.getLogger("echo.echo_orchestrator")
 except ImportError as e:
     missing_module = e.name or "inconnu"
     raise ImportError(f"❌ Module critique manquant : '{missing_module}'. ECHO exige httpx, orjson, pybase64 et h2 (HTTP/2).") from e
@@ -544,7 +544,7 @@ class StreamProcessor:
 #
 # Solution : le Pipe stocke __tools__[chat_id] dans ce dict module-level.
 #   Comme le Pipe et tous les outils s'exécutent dans le même processus Python,
-#   agent_engine_tool peut accéder à ce cache via sys.modules["function_pipe_engine"].
+#   agent_engine_tool peut accéder à ce cache via sys.modules["function_echo_orchestrator"].
 #
 # Durée de vie : le cache persiste tant que le processus uvicorn tourne.
 #   En cas de redémarrage, il est reconstitué au premier message de chaque chat.
@@ -571,7 +571,7 @@ class Pipe:
             try:
                 register_echo_audio_routes()
             except Exception as e:
-                print(f"[ECHO Engine] ⚠️ Échec enregistrement routes audio : {e}")
+                print(f"[Écho] ⚠️ Échec enregistrement routes audio : {e}")
 
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, __request__: Optional[Any] = None, __tools__: list = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
 

@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.30
+version: 1.31
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.31: Alignement du cache d'outils sur sys.modules["function_echo_orchestrator"].
 # 1.30: Ajout de list_ui_calendar_events, read_ui_calendar_events, update_ui_calendar_event et update_ui_automation.
 # 1.29: Ajout de generationConfig explicite avec thinking medium sur delegate_to_tool_consultant.
 # 1.28: Fiabilisation de delegate_to_tool_consultant en sous-agent (résolution chat_id depuis __metadata__, filtrage BLACKLIST/Headless et call_cascade).
 # 1.27: Ajout de read_ui_automations pour l'inspection complète des tâches CRON.
-# 1.26: Alignement sur la nomenclature cognitive (MODEL_PROMETHEUS).
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -665,7 +665,7 @@ class Tools:
         user_id = __user__.get("id", "system")
 
         # Introspection Dynamique : Extraction sécurisée du cache Pipe
-        _pipe_mod = sys.modules.get("function_pipe_engine")
+        _pipe_mod = sys.modules.get("function_echo_orchestrator")
         _tools_cache = (getattr(_pipe_mod, "_TOOLS_CACHE", {}) or {}) if _pipe_mod else {}
         _tools_dict = _tools_cache.get(chat_id, {})
         

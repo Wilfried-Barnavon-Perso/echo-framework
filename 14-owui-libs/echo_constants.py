@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.87
+version: 5.88
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.88: Alignement documentaire interne sur echo_orchestrator.
 # 5.87: Mise à jour des modèles ECHO ZEPHYR et ECHO DISTILLATION vers Gemini 3.5 Flash-Lite.
 # 5.86: Alignement des User-Agents (ECHO_AGY_USER_AGENT, ECHO_USER_AGENT) et de ECHO_CLIENT_METADATA sur Antigravity Desktop v2.24.0 (cl=1000335682).
 # 5.85: Passage PROMETHEUS en "gemini-4-argon". Factorisation de get_descending_cascade et forçage thinkingLevel="high" sur repli 429 dans get_generation_config.
 # 5.83: Ajout des outils interactifs Headless-interdits (ask_user_input, delete_user_skill, manage_identity, open_codex_ui) dans DELEGATE_AGENT_BLACKLIST.
-# 5.82: Définition de ECHO_AUDIO_DEFAULT_TTS_PITCH (-2Hz) et vitesse nominale 1.0 (100%).
 
 
 import os
@@ -380,7 +380,7 @@ def get_descending_cascade(start_model_key: str, include_start: bool = False) ->
     """
     Calcule dynamiquement la séquence de cascade descendante depuis ECHO_MODELS_REGISTRY.
     Si include_start=True, inclut le modèle de départ en tête de liste (usage call_cascade).
-    Si include_start=False, retourne uniquement les modèles strictement inférieurs (usage pipe_engine).
+    Si include_start=False, retourne uniquement les modèles strictement inférieurs (usage echo_orchestrator).
     """
     registry = globals().get("ECHO_MODELS_REGISTRY", {})
     identity = get_model_identity(start_model_key)
@@ -646,7 +646,7 @@ ECHO_SEARXNG_BASE_URL = "http://echo-searxng:8080"
 ECHO_ALLOWED_DOMAINS = "*"
 
 # --- Configuration HTTP/2 & Connexions (Pool httpx partagé) ---
-# Anciennement Valves dans pipe_engine, elles pilotent le client global _get_global_client() dans echo_utils.py.
+# Anciennement Valves dans echo_orchestrator, elles pilotent le client global _get_global_client() dans echo_utils.py.
 # Optimisation du pool de connexion HTTP(2) pour éviter la saturation réseau sous forte charge.
 ECHO_HTTP_CLIENT_TIMEOUT = 600       # Délai d'abandon (600s) si Google API ne répond pas.
 ECHO_HTTP_MAX_CONNECTIONS = 100      # Nombre max de connexions simultanées.
