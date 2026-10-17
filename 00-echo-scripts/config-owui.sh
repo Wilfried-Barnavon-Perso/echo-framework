@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.66
+# VERSION : 7.67
 # ==============================================================================
 
 # --- INITIALISATION : CORE ECHO GLOBALS ---
@@ -26,6 +26,7 @@ CONFIG_DIR="$ECHO_CONFIG"
 MODEL_CONFIG_FILE="$CONFIG_DIR/model-config.json"
 SYSTEM_PROMPT_FILE="$CONFIG_DIR/system-prompt.md"
 SETTINGS_FILE="$CONFIG_DIR/webui-settings.json"
+BANNERS_FILE="$CONFIG_DIR/webui-banners.json"
 IMAGE_BASE_DIR="$ECHO_IMAGES"
 
 # Comptes
@@ -279,6 +280,34 @@ if [ -f "$SETTINGS_FILE" ]; then
         HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/admin/config/reload" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
         [ "$HTTP_CODE" -eq 401 ] && refresh_token && curl -s -X GET "$OWUI_URL/api/v1/admin/config/reload" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
         sleep 5
+    fi
+fi
+
+# --- 6. CONFIGURATION DES BANNIÈRES ---
+if [ -f "$BANNERS_FILE" ]; then
+    echo "📢 [Config] Configuration des bannières applicatives..."
+    TMP_BANNERS_PAYLOAD="/tmp/owui_banners_$$.json"
+    
+    # Prise en charge format tableau [...] ou objet {"banners": [...]}
+    # Injection dynamique d'un timestamp Unix (now | floor) si omis
+    jq 'if type == "array" then {banners: [ .[] | .timestamp //= (now | floor) ]} else {banners: [ .banners[] | .timestamp //= (now | floor) ]} end' "$BANNERS_FILE" > "$TMP_BANNERS_PAYLOAD"
+    
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/configs/banners" \
+        -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER \
+        -H "Content-Type: application/json" -d "@$TMP_BANNERS_PAYLOAD")
+        
+    if [ "$HTTP_CODE" -eq 401 ] && refresh_token; then
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/configs/banners" \
+            -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER \
+            -H "Content-Type: application/json" -d "@$TMP_BANNERS_PAYLOAD")
+    fi
+    
+    rm -f "$TMP_BANNERS_PAYLOAD"
+    
+    if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
+        echo "   ✅ Bannières synchronisées (HTTP $HTTP_CODE)."
+    else
+        echo "   ⚠️ Échec configuration bannières (HTTP $HTTP_CODE)."
     fi
 fi
 

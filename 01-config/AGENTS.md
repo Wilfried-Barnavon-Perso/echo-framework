@@ -28,6 +28,12 @@ Ce dossier est le **Centre Névralgique Statique** de l'architecture. Il contien
 **Rôle** : Fichiers d'amorçage (Seed) pour l'interface de chat.
 - **Sémantique** : Ils définissent les permissions par défaut, l'activation des outils systémiques, la taxonomie cognitive (`MODEL_ZEPHYR`, `MODEL_APOLLO`, `MODEL_PROMETHEUS`) et le routage vers le pont audio in-process (`http://127.0.0.1:8080/echo/v1` : STT sur `MODEL_ZEPHYR`, TTS `edge-tts` sur la voix `fr-FR-VivienneMultilingualNeural` avec `speed: 1.0`, `pitch: -2Hz`) avant même l'initialisation de la base de données SQLite de l'UI.
 
+### `webui-banners.json`
+**Rôle** : Déclaration déclarative des bannières et annonces d'en-tête de l'interface Open WebUI.
+- **Sémantique** : Définit la collection ordonnée des bannières affichées aux utilisateurs (`id`, `type`, `title`, `content`, `dismissible`, `timestamp`, `i18n`).
+- **Typologies Validées** : Mappe strictement les 4 types acceptés et stylisés par le composant `Banner.svelte` : `info` (badge bleu), `warning` (badge jaune), `error` (badge rouge), `success` (badge vert).
+- **Persistance** : Le drapeau `dismissible: true` enregistre l'identifiant fermé dans le `localStorage` du client (`dismissedBannerIds`), tandis que `dismissible: false` limite l'occultation à la session courante en mémoire.
+
 ### `searxng-settings.yml`
 **Rôle** : Configuration du moteur de méta-recherche souverain.
 - **Sémantique** : Désactive les moteurs bridés, configure les requêtes en JSON pour permettre la consommation automatique des résultats par l'outil LLM de recherche web (`Sovereign Web Search`).

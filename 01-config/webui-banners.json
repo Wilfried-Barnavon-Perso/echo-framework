@@ -1,0 +1,34 @@
+[
+  {
+    "id": "echo-banner-nomenclature",
+    "type": "success",
+    "title": "Nouvelle nomenclature",
+    "content": "ECHO incorpore désormais une nouvelle nomenclature de modèles. Sous le Modèle Prometheus se trouve Gemini 4 Argon.",
+    "dismissible": true,
+    "timestamp": 1729178400
+  },
+  {
+    "id": "echo-banner-prometheus-tokens",
+    "type": "warning",
+    "title": "Consommation Tokens",
+    "content": "Le modèle Prometheus est grand consommateur de token. Le passage en full Prometheus est déconseillé. Utilisez plutôt le mode AUTO-PROM.",
+    "dismissible": true,
+    "timestamp": 1729178400
+  },
+  {
+    "id": "echo-banner-think-levels",
+    "type": "info",
+    "title": "Think Levels",
+    "content": "L'étagement des Think Level de chaque modèle a été revu et adapté à chaque type de tâche, pour une meilleure gestion des quotas de tokens, une rapidité adaptée à la tâche.",
+    "dismissible": true,
+    "timestamp": 1729178400
+  },
+  {
+    "id": "echo-banner-workspace-m365",
+    "type": "info",
+    "title": "Connectivité Workspace & M365",
+    "content": "ECHO est désormais connectable à votre Google Workspace ou à votre compte Microsoft 365, y compris dans leurs versions gratuites. Demandez à Écho de vous guider et échanger des captures d'écran avec elle pour configurer vos comptes.",
+    "dismissible": true,
+    "timestamp": 1729178400
+  }
+]

@@ -12,7 +12,6 @@
   "ui.pending_user_overlay_content": "",
   "ui.watermark": "",
   "ui.prompt_suggestions": [],
-  "ui.banners": [],
   "ui.default_models": "pipe_engine",
   "ui.default_pinned_models": "pipe_engine",
   "ui.model_order_list": [

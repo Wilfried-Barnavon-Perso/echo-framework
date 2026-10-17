@@ -17,10 +17,11 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 - **`generate_secret()`** : Générateur cryptographique aléatoire de clés de sécurité (incluant `ECHO_SSO_SECRET` pour le Forward Auth hybride).
 
 ### `config-owui.sh`
-**Rôle** : Configuration post-déploiement automatisée de l'interface Open WebUI via son API REST locale.
+**Rôle** : Configuration post-déploiement automatisée de l'interface Open WebUI via son API REST locale (v7.67).
 - **`refresh_token()`** : Récupère le jeton JWT d'administration.
 - **`api_upsert()`** : Upsert idempotent des modèles (ex: configuration de Harrier-OSS, Apollo, Zephyr).
 - **`toggle_state()`** : Active ou désactive des réglages spécifiques dans l'interface OWUI.
+- **Synchronisation des Bannières** : Traitement automatisé de `webui-banners.json` avec normalisation `jq` et injection atomique via `POST /api/v1/configs/banners` déclenchant l'évènement temps-réel `CONFIG_BANNERS_UPDATED`.
 
 ### `sync-echo.sh`
 **Rôle** : Pont de distribution déclaratif (v4.11) entre le dépôt source et `/opt/ECHO`.
