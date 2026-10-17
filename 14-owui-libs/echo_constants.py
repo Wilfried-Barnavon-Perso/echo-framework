@@ -1,16 +1,17 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.86
+version: 5.87
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.87: Mise à jour des modèles ECHO ZEPHYR et ECHO DISTILLATION vers Gemini 3.5 Flash-Lite.
 # 5.86: Alignement des User-Agents (ECHO_AGY_USER_AGENT, ECHO_USER_AGENT) et de ECHO_CLIENT_METADATA sur Antigravity Desktop v2.24.0 (cl=1000335682).
 # 5.85: Passage PROMETHEUS en "gemini-4-argon". Factorisation de get_descending_cascade et forçage thinkingLevel="high" sur repli 429 dans get_generation_config.
 # 5.83: Ajout des outils interactifs Headless-interdits (ask_user_input, delete_user_skill, manage_identity, open_codex_ui) dans DELEGATE_AGENT_BLACKLIST.
 # 5.82: Définition de ECHO_AUDIO_DEFAULT_TTS_PITCH (-2Hz) et vitesse nominale 1.0 (100%).
-# 5.81: Ajustement de ECHO_AUDIO_DEFAULT_TTS_SPEED à 1.06 (106%) pour la synthèse vocale.
+
 
 import os
 import contextvars
@@ -276,7 +277,7 @@ ECHO_MODELS_REGISTRY = {
     },
     "MODEL_ZEPHYR": {
         "ai_studio_id": "gemini-3.5-flash-lite",
-        "ca_model_id":  "gemini-3.1-flash-lite",
+        "ca_model_id":  "gemini-3.5-flash-lite",
         "hierarchy": 0,
         "generationConfig": {
             "temperature": 1.0,
@@ -287,7 +288,7 @@ ECHO_MODELS_REGISTRY = {
     },
     "MODEL_DISTILLATION": {
         "ai_studio_id": "gemini-3.5-flash-lite",
-        "ca_model_id":  "gemini-3.1-flash-lite",
+        "ca_model_id":  "gemini-3.5-flash-lite",
         "hierarchy": None,
         "generationConfig": {
             "temperature": 0.0,

@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.84
+version: 192.85
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.85: Affichage du modèle technique lors du transfert cognitif (_get_ui_display) dans le statut UI.
 # 192.84: Réactivation du rafraîchissement asynchrone des quotas OAuth2 et affichage HUD des quotas 5h et hebdomadaire.
 # 192.83: Factorisation de la cascade descendante (get_descending_cascade) et forçage thinkingLevel="high" sur repli 429.
 # 192.82: Suppression du statut initial "⚙️ Traitement en cours...".
 # 192.81: Enregistrement idempotent du pont in-process ECHO Audio (routes /echo/v1/audio).
-# 192.80: Renommage souverain des modèles cognitifs (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS) et politique AUTO_PROM.
 
 
 # ==============================================================================
@@ -1105,7 +1105,7 @@ class Pipe:
                     })
                     continue
 
-                await events.status(f"🚀 Transfert cognitif vers {new_target}...")
+                await events.status(f"🚀 Transfert cognitif vers {_get_ui_display(new_target)}...")
 
                 if proc.captured_sig:
                     orch.user_data_manager.save_call_bridge(f"esc-{secrets.token_hex(4)}", proc.captured_sig, "new_cognitive_level", req)

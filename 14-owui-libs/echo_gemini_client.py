@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 1.11
+version: 1.12
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.12: Harmonisation du message UI lors des retries ("⛓️💥 Reconnexion au modèle, tentative...").
 # 1.11: Utilisation factorisée de get_descending_cascade et get_generation_config (thinkingLevel="high" sur cascade 429).
 # 1.10: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.9: Tolérance de lecture snake_case/camelCase (functionDeclarations) pour la sécurisation des schémas d'outils.
 # 1.8: Silence Failover UI (429/401) et routage exclusif vers logs Docker pour une UX fluide.
-# 1.7: Migration vers ECHO_SUBAGENT_CONTEXT pour l'isolation du RAG des sous-agents.
 import time
 import random
 import hashlib
@@ -670,7 +670,7 @@ class EchoGeminiClient:
                 if attempt < current_limit:
                     wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
                     print(f"[EchoGemini] ⚠️ Tentative {attempt + 1}/{current_limit} échouée pour {target_model} : {e.__class__.__name__} - {str(e)}")
-                    if events: await events.status(f"⚠️ Erreur réseau. Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s...", done=False)
+                    if events: await events.status(f"⛓️💥 Reconnexion au modèle, tentative {attempt + 1}/{current_limit} dans {wait_time:.1f}s...", done=False)
                     await asyncio.sleep(wait_time)
                     current_delay *= ECHO_RETRY_MULTIPLIER
                     attempt += 1
@@ -929,7 +929,7 @@ class EchoGeminiClient:
                 current_limit = max_retries if provider.get("type") == AUTH_METHOD_OAUTH2 else threshold
                 if attempt < current_limit:
                     wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
-                    if events: await events.status(f"⚠️ Erreur réseau. Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s...", done=False)
+                    if events: await events.status(f"⛓️💥 Reconnexion au modèle, tentative {attempt + 1}/{current_limit} dans {wait_time:.1f}s...", done=False)
                     await asyncio.sleep(wait_time)
                     current_delay *= ECHO_RETRY_MULTIPLIER
                     attempt += 1
