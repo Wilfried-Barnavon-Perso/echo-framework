@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.29
+version: 1.30
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.30: Ajout de list_ui_calendar_events, read_ui_calendar_events, update_ui_calendar_event et update_ui_automation.
 # 1.29: Ajout de generationConfig explicite avec thinking medium sur delegate_to_tool_consultant.
 # 1.28: Fiabilisation de delegate_to_tool_consultant en sous-agent (résolution chat_id depuis __metadata__, filtrage BLACKLIST/Headless et call_cascade).
 # 1.27: Ajout de read_ui_automations pour l'inspection complète des tâches CRON.
 # 1.26: Alignement sur la nomenclature cognitive (MODEL_PROMETHEUS).
-# 1.25: Correction des retours de delegate_to_tool_consultant pour forcer l'encapsulation wrap_tool_output.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -33,12 +33,17 @@ from echo_prompts import SYS_ORCHESTRATOR_CONSULTANT
 from open_webui.tools.builtin import (
     search_calendar_events as _owui_search,
     create_calendar_event as _owui_create_cal,
+    update_calendar_event as _owui_update_cal,
     delete_calendar_event as _owui_delete_cal,
     create_automation as _owui_create_auto,
-    delete_automation as _owui_delete_auto
+    update_automation as _owui_update_auto,
+    delete_automation as _owui_delete_auto,
+    _get_user_tz,
+    _ns_to_dt,
 )
 from open_webui.models.folders import Folders, FolderForm
 from open_webui.models.automations import Automations
+from open_webui.models.calendar import CalendarEvents
 import logging
 
 log = logging.getLogger(__name__)
@@ -49,7 +54,8 @@ async def safe_owui_call(func, *args, **kwargs):
     __metadata__ = kwargs.get("__metadata__", {})
     
     sig = inspect.signature(func)
-    filtered_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+    has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+    filtered_kwargs = kwargs if has_var_keyword else {k: v for k, v in kwargs.items() if k in sig.parameters}
     
     try:
         res = await func(*args, **filtered_kwargs)
@@ -272,12 +278,105 @@ class Tools:
             metadata=__metadata__
         )
 
-    async def search_ui_calendar_events(self, query: str = "", start: str = None, end: str = None, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
+    async def search_ui_calendar_events(self, query: str = "", start: str = None, end: str = None, limit: int = 10, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """
-        Le Modèle DOIT consulter l'agenda de l'Interface Utilisateur pour vérifier ses disponibilités et filtrer par dates.
+        Le Modèle DOIT consulter l'agenda de l'Interface Utilisateur pour vérifier ses disponibilités et filtrer par dates ou mots-clés.
         Format attendu pour start/end : Chaîne ISO 8601 (ex: "2026-10-10T10:00:00Z") ou "YYYY-MM-DD HH:MM".
+
+        :param query: Terme de recherche textuelle optionnel (titre, description, lieu).
+        :param start: Date/heure minimale de début pour borner la recherche (optionnel).
+        :param end: Date/heure maximale de début pour borner la recherche (optionnel).
+        :param limit: Nombre maximal d'évènements à retourner (par défaut 10).
         """
-        return await safe_owui_call(_owui_search, query=query, start=start, end=end, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
+        return await safe_owui_call(_owui_search, query=query, start=start, end=end, count=limit, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
+
+    async def list_ui_calendar_events(self, query: str = "", start: str = None, end: str = None, limit: int = 30, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
+        """
+        Permet au Modèle de lister et explorer les évènements de son agenda dans l'Interface Utilisateur.
+        Complément indispensable pour inspecter les disponibilités ou identifier les identifiants d'évènements avant modification ou suppression.
+        Format attendu pour start/end : Chaîne ISO 8601 (ex: "2026-10-10T10:00:00Z") ou "YYYY-MM-DD HH:MM".
+
+        :param query: Terme de recherche textuelle optionnel filtrant sur le titre, la description ou le lieu.
+        :param start: Date/heure minimale de début pour borner la liste (optionnel).
+        :param end: Date/heure maximale de début pour borner la liste (optionnel).
+        :param limit: Nombre maximal d'évènements à lister (par défaut 30).
+        """
+        return await safe_owui_call(_owui_search, query=query, start=start, end=end, count=limit, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
+
+    async def read_ui_calendar_events(self, event_ids: list[str], __user__: dict = {}, __metadata__: dict = {}) -> str:
+        """
+        Le Modèle DOIT utiliser cet outil pour inspecter le contenu intégral et les détails techniques
+        (titre, description, dates locales, récurrence RRULE, rappels, statut d'annulation, lieu, participants)
+        d'un ou plusieurs évènements du calendrier de l'Interface Utilisateur à partir de leurs identifiants.
+        Complément indispensable de list_ui_calendar_events pour analyser ou auditer un évènement avant modification ou suppression.
+
+        :param event_ids: Liste des identifiants (IDs au format UUID) des évènements à inspecter (ou chaîne d'identifiants séparés par des virgules).
+        """
+        user_id = __user__.get("id")
+        if not user_id:
+            return wrap_tool_output(text=json.dumps({"error": "User context missing"}), status={"status": "error"}, metadata=__metadata__)
+
+        if isinstance(event_ids, str):
+            clean_ids = [eid.strip() for eid in event_ids.split(",") if eid.strip()]
+        elif isinstance(event_ids, list):
+            clean_ids = [str(eid).strip() for eid in event_ids if str(eid).strip()]
+        else:
+            clean_ids = []
+
+        if not clean_ids:
+            return wrap_tool_output(text=json.dumps({"error": "Aucun identifiant d'évènement valide fourni."}), status={"status": "error"}, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
+
+        try:
+            tz = _get_user_tz(__user__)
+            tasks = [CalendarEvents.get_event_by_id(eid) for eid in clean_ids]
+            raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            events = []
+            not_found = []
+
+            for eid, res in zip(clean_ids, raw_results):
+                if isinstance(res, Exception) or res is None or res.user_id != user_id:
+                    not_found.append(eid)
+                    continue
+
+                alert_minutes = 10
+                if res.meta and "alert_minutes" in res.meta:
+                    alert_minutes = res.meta["alert_minutes"]
+
+                events.append({
+                    "id": res.id,
+                    "calendar_id": res.calendar_id,
+                    "title": res.title,
+                    "description": res.description or "",
+                    "start": _ns_to_dt(res.start_at, tz) if res.start_at else None,
+                    "end": _ns_to_dt(res.end_at, tz) if res.end_at else None,
+                    "all_day": res.all_day,
+                    "rrule": res.rrule or "",
+                    "location": res.location or "",
+                    "color": res.color or "",
+                    "reminder_minutes": alert_minutes,
+                    "is_cancelled": res.is_cancelled,
+                    "attendees": [a.model_dump() if hasattr(a, "model_dump") else a for a in (res.attendees or [])],
+                    "created_at": res.created_at,
+                    "updated_at": res.updated_at
+                })
+
+            payload = {
+                "events": events,
+                "total_found": len(events)
+            }
+            if not_found:
+                payload["not_found"] = not_found
+
+            return wrap_tool_output(
+                text=json.dumps(payload, ensure_ascii=False),
+                status={"status": "success"},
+                user_id=user_id,
+                chat_id=__metadata__.get("chat_id"),
+                metadata=__metadata__
+            )
+        except Exception as e:
+            return wrap_tool_output(text=json.dumps({"error": str(e)}), status={"status": "error"}, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
 
     async def create_ui_calendar_event(self, title: str, description: str = "", start: str = "", end: str = "", location: str = "", __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """
@@ -285,6 +384,52 @@ class Tools:
         Format attendu pour start/end : Chaîne ISO 8601 (ex: "2026-10-10T10:00:00Z") ou "YYYY-MM-DD HH:MM".
         """
         return await safe_owui_call(_owui_create_cal, title=title, description=description, start=start, end=end, location=location, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
+
+    async def update_ui_calendar_event(
+        self,
+        event_id: str,
+        title: str = None,
+        description: str = None,
+        start: str = None,
+        end: str = None,
+        all_day: bool = None,
+        location: str = None,
+        is_cancelled: bool = None,
+        reminder_minutes: int = None,
+        __request__ = None,
+        __user__: dict = {},
+        __metadata__: dict = {}
+    ) -> str:
+        """
+        Le Modèle DOIT mettre à jour un évènement existant dans le calendrier de l'Interface Utilisateur via cette fonction.
+        Seuls les champs explicitement fournis sont modifiés ; les champs omis conservent leur valeur actuelle.
+        Format attendu pour start/end : Chaîne ISO 8601 (ex: "2026-10-10T10:00:00Z") ou "YYYY-MM-DD HH:MM".
+
+        :param event_id: Identifiant unique de l'évènement à modifier (obligatoire).
+        :param title: Nouveau titre de l'évènement (optionnel).
+        :param description: Nouvelle description ou notes de l'évènement (optionnel).
+        :param start: Nouvelle date/heure de début locale (optionnel).
+        :param end: Nouvelle date/heure de fin locale (optionnel).
+        :param all_day: Indique si l'évènement dure toute la journée (optionnel).
+        :param location: Nouveau lieu de l'évènement (optionnel).
+        :param is_cancelled: Définir à True pour annuler l'évènement (optionnel).
+        :param reminder_minutes: Délai en minutes avant l'évènement pour envoyer une notification de rappel (optionnel). 0 pour notification à l'heure pile, -1 pour désactiver.
+        """
+        return await safe_owui_call(
+            _owui_update_cal,
+            event_id=event_id,
+            title=title,
+            description=description,
+            start=start,
+            end=end,
+            all_day=all_day,
+            location=location,
+            is_cancelled=is_cancelled,
+            reminder_minutes=reminder_minutes,
+            __request__=__request__,
+            __user__=__user__,
+            __metadata__=__metadata__
+        )
 
     async def delete_ui_calendar_event(self, event_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """Le Modèle DOIT supprimer un évènement du calendrier de l'Interface Utilisateur s'il est devenu obsolète ou erroné."""
@@ -324,6 +469,69 @@ class Tools:
                 folder_id = None
             
         return await safe_owui_call(_owui_create_auto, name=name, prompt=prompt, rrule=rrule, folder_id=folder_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
+
+    async def update_ui_automation(
+        self,
+        automation_id: str,
+        name: str = None,
+        prompt: str = None,
+        rrule: str = None,
+        model_id: str = None,
+        target_folder_name: str = None,
+        __request__ = None,
+        __user__: dict = {},
+        __metadata__: dict = {}
+    ) -> str:
+        """
+        CRON Cognitif : Le Modèle DOIT utiliser cet outil pour modifier une tâche de fond automatisée (CRON) existante dans l'Interface Utilisateur.
+        Seuls les champs explicitement fournis sont modifiés ; les champs omis conservent leur valeur actuelle.
+        Si 'target_folder_name' est spécifié, la tâche sera rattachée à ce dossier (créé automatiquement s'il n'existe pas).
+
+        RÈGLES STRICTES DE SYNTAXE RRULE :
+        L'argument rrule DOIT être une chaîne iCalendar valide. Si 'COUNT' est spécifié, 'DTSTART' est OBLIGATOIRE.
+        Le format DTSTART exige la syntaxe YYYYMMDDTHHMMSS.
+        Exemples valides :
+        - Une seule fois à une date précise : "DTSTART:20261015T140000\nRRULE:FREQ=DAILY;COUNT=1"
+        - Tous les jours à 9h : "DTSTART:20261001T090000\nRRULE:FREQ=DAILY"
+        - Toutes les heures : "RRULE:FREQ=HOURLY;INTERVAL=1"
+
+        :param automation_id: Identifiant unique de la tâche automatisée à modifier (obligatoire).
+        :param name: Nouveau nom descriptif de l'automatisation (optionnel).
+        :param prompt: Nouvelles instructions/prompt exécutées à chaque déclenchement (optionnel).
+        :param rrule: Nouvelle périodicité au format RRULE iCalendar (optionnel).
+        :param model_id: Identifiant du modèle cible à exécuter (optionnel).
+        :param target_folder_name: Nom du dossier cible pour les chats générés (optionnel, conserve le dossier actuel si omis).
+        """
+        user_id = __user__.get("id")
+        if not user_id:
+            return json.dumps({"error": "User context missing"})
+
+        folder_id = ""
+        if target_folder_name is not None:
+            folders = await Folders.get_folders_by_user_id(user_id) if hasattr(Folders, 'get_folders_by_user_id') else []
+            folder_match = next((f for f in folders if f.name == target_folder_name), None)
+            if folder_match:
+                folder_id = folder_match.id
+            else:
+                try:
+                    new_folder = await Folders.insert_new_folder(user_id, FolderForm(name=target_folder_name))
+                    folder_id = new_folder.id
+                except Exception as e:
+                    log.error(f"ECHO: Failed to create target folder '{target_folder_name}' - {e}")
+                    folder_id = ""
+
+        return await safe_owui_call(
+            _owui_update_auto,
+            automation_id=automation_id,
+            name=name,
+            prompt=prompt,
+            rrule=rrule,
+            model_id=model_id,
+            folder_id=folder_id,
+            __request__=__request__,
+            __user__=__user__,
+            __metadata__=__metadata__
+        )
 
     async def delete_ui_automation(self, automation_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """Le Modèle DOIT utiliser cet outil pour supprimer une de ses tâches de fond de l'Interface Utilisateur si elle n'est plus nécessaire."""
