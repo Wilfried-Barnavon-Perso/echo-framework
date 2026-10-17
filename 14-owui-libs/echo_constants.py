@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.85
+version: 5.86
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.86: Alignement des User-Agents (ECHO_AGY_USER_AGENT, ECHO_USER_AGENT) et de ECHO_CLIENT_METADATA sur Antigravity Desktop v2.24.0 (cl=1000335682).
 # 5.85: Passage PROMETHEUS en "gemini-4-argon". Factorisation de get_descending_cascade et forçage thinkingLevel="high" sur repli 429 dans get_generation_config.
 # 5.83: Ajout des outils interactifs Headless-interdits (ask_user_input, delete_user_skill, manage_identity, open_codex_ui) dans DELEGATE_AGENT_BLACKLIST.
 # 5.82: Définition de ECHO_AUDIO_DEFAULT_TTS_PITCH (-2Hz) et vitesse nominale 1.0 (100%).
 # 5.81: Ajustement de ECHO_AUDIO_DEFAULT_TTS_SPEED à 1.06 (106%) pour la synthèse vocale.
-# 5.80: Ajustement de ECHO_AUDIO_DEFAULT_TTS_SPEED à 1.1 (110%) pour la synthèse vocale.
 
 import os
 import contextvars
@@ -58,12 +58,16 @@ ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 ECHO_SESSION_DOMAINS = ["codex", "files", "db", "n8n_workflows", "dependencies"]
 ECHO_GLOBAL_DOMAINS = ["skills", "files", "chats", "n8n_workflow_templates"]
 
-# Identité Réseau (Antigravity 2.5.5 — aligné sur AGY IDE product.json:ideVersion)
-# Format natif AGY IDE : "{app}/{ideVersion} {os}/{arch}" (cloudCodeMainService.js)
+# Identité Réseau (Antigravity 2.24.0 — aligné sur Antigravity Desktop package.json & language_server --stamp)
+# Format natif AGY Hub : "antigravity/hub/{ideVersion} (os_type=...; arch=...; cl=...; auth_method=personal_consumer; proxy_client=antigravity/{ideVersion})"
 # ECHO tourne sous Docker Linux — on émet l'identité réelle de la plateforme hôte.
-_AGY_IDE_VERSION = "2.5.5"  # Miroir de product.json:ideVersion — à synchroniser lors des mises à jour
+_AGY_IDE_VERSION = "2.24.0"      # Miroir de package.json:version — à synchroniser lors des mises à jour
+_AGY_LS_CL       = "1000335682"  # Changelist language_server (--stamp)
 ECHO_USER_AGENT             = f"antigravity/{_AGY_IDE_VERSION}"
-ECHO_AGY_USER_AGENT         = f"antigravity/{_AGY_IDE_VERSION} linux/amd64"
+ECHO_AGY_USER_AGENT         = (
+    f"antigravity/hub/{_AGY_IDE_VERSION} "
+    f"(os_type=linux; arch=amd64; cl={_AGY_LS_CL}; auth_method=personal_consumer; proxy_client=antigravity/{_AGY_IDE_VERSION})"
+)
 ECHO_STEALTH_USER_AGENT     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 
 # Points d'accès Locaux (Souveraineté)

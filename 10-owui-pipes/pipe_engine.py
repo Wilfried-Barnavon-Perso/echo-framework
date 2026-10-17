@@ -1,17 +1,17 @@
 """
 title: ECHO Engine
 author: Wilfried BARNAVON
-version: 192.83
+version: 192.84
 requirements: asyncssh
 description: Composant système interne : ECHO Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 192.84: Réactivation du rafraîchissement asynchrone des quotas OAuth2 et affichage HUD des quotas 5h et hebdomadaire.
 # 192.83: Factorisation de la cascade descendante (get_descending_cascade) et forçage thinkingLevel="high" sur repli 429.
 # 192.82: Suppression du statut initial "⚙️ Traitement en cours...".
 # 192.81: Enregistrement idempotent du pont in-process ECHO Audio (routes /echo/v1/audio).
 # 192.80: Renommage souverain des modèles cognitifs (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS) et politique AUTO_PROM.
-# 192.79: Augmentation de maxOutputTokens à 8192 dans le Fast-Track pour absorber le thinking sur les prompts volumineux.
 
 
 # ==============================================================================
@@ -58,7 +58,7 @@ from echo_constants import (
     ECHO_MODELS_REGISTRY, get_model_identity, get_generation_config,
     get_descending_cascade, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN,
     AUTH_DATA_USER_EMAIL, AUTH_DATA_USER_TIER, AUTH_DATA_PROJECT_ID,
-    AEC_REMINDERS
+    AUTH_METHOD_OAUTH2, AEC_REMINDERS
 )
 from echo_auth import EchoAuth
 
@@ -1316,7 +1316,13 @@ class Pipe:
         # --- HUD METRICS ---
         if user_valves.SHOW_CONTEXT_METRICS:
             # Rafraîchissement intelligent des quotas (OAuth2 uniquement) - ASYNCHRONE NON BLOQUANT
-            # # asyncio.create_task(auth.refresh_quota_if_needed())  # [192.38]  # [192.38] DÉSACTIVÉ : AuthService n'existe plus
+            if auth_providers and auth_providers[0].get("type") == AUTH_METHOD_OAUTH2:
+                import asyncio
+                if '_BACKGROUND_TASKS' not in globals():
+                    _BACKGROUND_TASKS = set()
+                q_task = asyncio.create_task(auth.refresh_quota_if_needed())
+                _BACKGROUND_TASKS.add(q_task)
+                q_task.add_done_callback(_BACKGROUND_TASKS.discard)
 
             p_t = cumulative_usage_stats.get("promptTokenCount", 0)
             c_t = cumulative_usage_stats.get("cachedContentTokenCount", 0)
@@ -1335,31 +1341,64 @@ class Pipe:
             tier = echo_auth.get_auth_data(AUTH_DATA_USER_TIER)
             proj = echo_auth.get_auth_data(AUTH_DATA_PROJECT_ID)
 
-            # Quota spécifique au modèle CA courant
+            # Quota spécifique au modèle CA courant (5h + Hebdomadaire)
             ca_model_id = get_ca_model_id(target_model)
             model_quota = echo_auth.get_model_quota(ca_model_id)
+            q_summary = echo_auth.get_quota_summary(ca_model_id)
 
-            q_fraction = float(model_quota.get("remainingFraction",
-                               float(echo_auth.get_auth_data("google_quota_fraction") or 1.0)))
-            q_reset_raw = str(model_quota.get("resetTime",
-                              echo_auth.get_auth_data("google_quota_reset") or "N/A"))
+            def _format_quota_reset(raw_iso: str) -> str:
+                if not raw_iso or "T" not in raw_iso:
+                    return raw_iso or "N/A"
+                try:
+                    reset_dt = datetime.fromisoformat(raw_iso.replace("Z", "+00:00"))
+                    diff_sec = (reset_dt - datetime.now(timezone.utc)).total_seconds()
+                    if diff_sec <= 0:
+                        return "Imminent"
+                    diff_min = int(diff_sec / 60)
+                    if diff_min >= 1440:
+                        days = diff_min // 1440
+                        hours = (diff_min % 1440) // 60
+                        return f"{reset_dt.strftime('%d/%m %H:%M')} ({days}j {hours}h)"
+                    if diff_min >= 60:
+                        hours = diff_min // 60
+                        mins = diff_min % 60
+                        return f"{reset_dt.strftime('%H:%M')} ({hours}h{mins:02d})"
+                    return f"{reset_dt.strftime('%H:%M')} ({diff_min}')"
+                except Exception:
+                    return raw_iso
+
+            q5_info = q_summary.get("5h", {})
+            qw_info = q_summary.get("weekly", {})
+
+            q5_disabled = bool(q5_info.get("quotaDisabled", False))
+            q5_frac = float(q5_info.get("remainingFraction", 1.0)) if q5_info else None
+            q5_reset = _format_quota_reset(str(q5_info.get("resetTime", "N/A"))) if q5_info else "N/A"
+
+            qw_frac = float(qw_info.get("remainingFraction", 1.0)) if qw_info else None
+            qw_reset = _format_quota_reset(str(qw_info.get("resetTime", "N/A"))) if qw_info else "N/A"
+
+            # Calcul de la fraction globale pour l'anneau SVG (minimum des quotas actifs)
+            active_fracs = []
+            if q5_frac is not None and not q5_disabled:
+                active_fracs.append(q5_frac)
+            if qw_frac is not None:
+                active_fracs.append(qw_frac)
+
+            if active_fracs:
+                q_fraction = min(active_fracs)
+                q_reset = qw_reset if (qw_frac is not None and q_fraction == qw_frac) else q5_reset
+            else:
+                q_fraction = float(model_quota.get("remainingFraction",
+                                   float(echo_auth.get_auth_data("google_quota_fraction") or 1.0)))
+                q_reset_raw = str(model_quota.get("resetTime",
+                                  echo_auth.get_auth_data("google_quota_reset") or "N/A"))
+                q_reset = _format_quota_reset(q_reset_raw)
+
             q_type = echo_auth.get_auth_data("google_quota_type") or "CODE_ASSIST"
 
             # Crédits AI (source : loadCodeAssist HEALTH_CHECK)
             credits_raw = echo_auth.get_auth_data("google_credits_total") or echo_auth.get_auth_data("google_g1_credits")
-            credits_val = credits_raw if (credits_raw and credits_raw != "0") else "∞"
-
-            # Formatage du reset : ISO → HH:MM + minutes restantes
-            q_reset = q_reset_raw
-            if "T" in q_reset_raw:
-                try:
-                    q_reset = q_reset_raw.split("T")[1][:5]
-                    reset_dt = datetime.fromisoformat(q_reset_raw.replace("Z", "+00:00"))
-                    diff_min = int((reset_dt - datetime.now(timezone.utc)).total_seconds() / 60)
-                    if diff_min > 0:
-                        q_reset = f"{q_reset} ({diff_min}')"
-                except Exception:
-                    pass
+            credits_val = credits_raw if (credits_raw is not None and credits_raw != "") else "0"
 
             # Champs détaillés du quota modèle (RPD / RPM)
             q_rpd_rem = str(model_quota.get("requestsPerDayRemaining", "N/A"))
@@ -1386,6 +1425,8 @@ class Pipe:
                 quota_model=q_model_label,
                 quota_rpd_rem=q_rpd_rem, quota_rpd_lim=q_rpd_lim,
                 quota_rpm_rem=q_rpm_rem, quota_rpm_lim=q_rpm_lim,
+                quota_5h_fraction=q5_frac, quota_5h_reset=q5_reset, quota_5h_disabled=q5_disabled,
+                quota_weekly_fraction=qw_frac, quota_weekly_reset=qw_reset,
             )
 
         if cumulative_usage_stats.get("totalTokenCount", 0) > 0:
