@@ -1,17 +1,17 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 3.16
+version: 3.17
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle d'Historique : Ne garder que les 5 dernieres versions.
 # Historique des versions :
+# 3.17: Prise en charge de la fermeture propre et fiabilisation de la boucle RPC long-polling.
 # 3.16: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 3.15: Fix du gel de l'UI lors du basculement de workspace via encapsulation asynchrone robuste (try-except global et asyncio.to_thread).
 # 3.14: Prise en charge du paramètre optionnel `current_file` lors de l'événement `switch_workspace` pour permettre le ciblage direct d'un fichier via le trigger LLM `open_codex_ui`.
 # 3.13: Ajout du proxy load_directory pour orchestrer le Lazy Loading avec le moteur Git.
-# 3.11: Optimisation absolue du ping heartbeat : suppression de get_repo_stats, ajout asyncio.to_thread pour purger la congestion de l'Event Loop.
 
 import sys
 import orjson as json

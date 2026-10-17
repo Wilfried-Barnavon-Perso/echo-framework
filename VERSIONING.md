@@ -39,7 +39,7 @@ Chaque module ou outil possède sa propre version interne pour permettre un suiv
   "release_date": "2026-05-16",
   "description": "Fiabilisation du Cortex : Implémentation du lecteur Python robuste (ast.literal_eval) et résolution des conflits de noms d'outils.",
   "components": {
-    "pipe_engine.py": "190.6",
+    "echo_orchestrator.py": "190.6",
     "cognitive_agents.py": "5.7"
   }
 }

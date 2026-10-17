@@ -17,23 +17,26 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 - **`generate_secret()`** : Générateur cryptographique aléatoire de clés de sécurité (incluant `ECHO_SSO_SECRET` pour le Forward Auth hybride).
 
 ### `config-owui.sh`
-**Rôle** : Configuration post-déploiement automatisée de l'interface Open WebUI via son API REST locale.
+**Rôle** : Configuration post-déploiement automatisée de l'interface Open WebUI via son API REST locale (v7.69).
 - **`refresh_token()`** : Récupère le jeton JWT d'administration.
-- **`api_upsert()`** : Upsert idempotent des modèles (ex: configuration de Harrier-OSS, Apollo, Zephyr).
+- **`api_purge_all_ghosts()`** : Purge intégralement à froid les `"tools"`, `"functions"` (Filtres, Actions, Pipes) et `"models"` (via `POST /api/v1/models/model/delete`) avant réassemblage afin d'évincer tout artefact ou ancien modèle (`pipe_engine`) obsolète.
+- **`api_upsert()`** : Upsert idempotent unifié des outils, fonctions et du modèle maître unique `echo_orchestrator` (`Écho`, routé sur `POST /api/v1/models/model/update` en cas d'existence).
 - **`toggle_state()`** : Active ou désactive des réglages spécifiques dans l'interface OWUI.
+- **Synchronisation des Bannières** : Traitement automatisé de `webui-banners.json` avec normalisation `jq` et injection atomique via `POST /api/v1/configs/banners` déclenchant l'évènement temps-réel `CONFIG_BANNERS_UPDATED`.
 
 ### `sync-echo.sh`
 **Rôle** : Pont de distribution déclaratif (v4.11) entre le dépôt source et `/opt/ECHO`.
 - **`sync_resource()` & Boucle Déclarative** : Synchronise dynamiquement les répertoires (`00-*` à `30-*`, `_assets`, `docker-python-base`), supprime les fichiers fantômes obsolètes, applique un nettoyage conditionnel `sed` des caractères CRLF/BOM (préservant l'horodatage `mtime` et le cache Docker BuildKit), et affiche un encart de versioning Git (Avant/Après).
 
 ### Sécurité Périmétrique (`enable-bunkerweb.sh` & `disable-bunkerweb.sh`)
-**Rôle** : Bascule de l'infrastructure réseau derrière le WAF BunkerWeb (v4.2).
-- Le script `enable-bunkerweb.sh` gère l'injection des secrets SSL, sécurise la création IPAM dynamique (`echo-network`, `echo-sandbox`, `bw-universe`) et reconfigure les ports via `update_env()` et `generate_secret()`.
-- Le script `disable-bunkerweb.sh` révoque la proxyfication et expose directement les ports d'Open WebUI et de l'Admin Manager (Port 3001).
+**Rôle** : Bascule de l'infrastructure réseau derrière le WAF BunkerWeb (v4.2 / v2.5).
+- Le script `enable-bunkerweb.sh` (v4.2) gère l'injection des secrets SSL, sécurise la création IPAM dynamique (`echo-network`, `echo-sandbox`, `bw-universe`) et reconfigure les ports via `update_env()` et `generate_secret()`.
+- Le script `disable-bunkerweb.sh` (v2.5) révoque la proxyfication et expose directement les ports d'Open WebUI et de l'Admin Manager (Port 3001).
 
 ### Utilitaires
 - **`echo-globals.sh`** : Définition des variables d'environnement globales sourcées par les autres scripts.
 - **`clean-echo.sh`** : Script automatisé de maintenance système (purge APT, `journalctl --vacuum-size=100M`, et `docker system prune` gradué selon les seuils d'occupation disque : routine 168h, urgence $\ge 85\%$, critique $\ge 90\%$).
+- **`logs-echo.sh` (v1.1) & `ps-echo.sh` (v1.1)** : Utilitaires de diagnostic rapide en ligne de commande pour le suivi temps-réel des journaux Docker Compose (`logs -f --tail=100`) et l'affichage consolidé de l'état des conteneurs de la stack ECHO.
 - **`show-echo-admin.sh`** : Affichage sécurisé dans le terminal des identifiants et des URL d'accès de l'instance pour l'utilisateur.
 - **`update-echo.sh` (v6.3.1) / `upgrade-echo.sh` (v6.10)** : Scripts pour le tirage des modifications Git, le redémarrage Hot-Reload des conteneurs labellisés `echo.hot-reload=true` (`update-echo.sh`), ou la mise à niveau majeure (`upgrade-echo.sh`). Lorsqu'il est appelé via `/usr/local/bin/rebuild-echo`, `upgrade-echo.sh` impose une double confirmation stricte (`CONFIRMER` puis `DETRUIRE`) avant de purger les volumes et secrets.
 

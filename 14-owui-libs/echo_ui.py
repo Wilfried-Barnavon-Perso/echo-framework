@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.105
+version: 5.107
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.107: Affichage du badge et de la ligne de Checkpoint Cognitif actif dans deploy_context_gauge.
+# 5.106: Affichage du Tier, déduplication du Project ID Tenant et intégration des jauges Quota 5h et Quota Semaine dans deploy_context_gauge.
 # 5.105: Alignement du sélecteur de modèle Codex HUD sur la nomenclature cognitive (Apollo, Prometheus, Zephyr).
 # 5.104: Rollback de la factorisation globale (5.102/5.103) suite à des lenteurs massives et instabilités. Retour à la version 5.101 (état validé avant factorisation du clamping).
 # 5.101: Fix Identity Vault - Injection de EchoUI.get_floating_window_class_js() dans _generate_identity_vault_js (TypeError: window.EchoFloatingWindow is not a constructor hors chargement préalable du Monitor).
-# 5.100: Rollback de la factorisation 5.99 (Codex/WebPlayer) : NameError f-string (HUD_ID/CODEX_ID), IDs DOM orphelins, classe EchoFloatingWindow non injectée. Retour au code 5.98 validé.
-# 5.98: Support du Trigger Asynchrone JS via _echoCodexTarget pour forcer l'ouverture du Codex sur un fichier spécifique.
 
 
 import sys
@@ -882,17 +882,66 @@ class EchoUI(EchoRichUI):
             quota_rpd_rem: str = "N/A",
             quota_rpd_lim: str = "N/A",
             quota_rpm_rem: str = "N/A",
-            quota_rpm_lim: str = "N/A"):
+            quota_rpm_lim: str = "N/A",
+            quota_5h_fraction: Optional[float] = None,
+            quota_5h_reset: str = "N/A",
+            quota_5h_disabled: bool = False,
+            quota_weekly_fraction: Optional[float] = None,
+            quota_weekly_reset: str = "N/A",
+            compaction_count: int = 0,
+            compacted_turns: int = 0):
         """Déploie le HUD ECHO flottant avec tooltips en dessous."""
         auth_list = ", ".join(auth_sources) if auth_sources else "N/A"
         total_t = c_t + active_p_t + g_t
-        q_color = "#10b981"
-        if quota_fraction < 0.2:
-            q_color = "#ef4444"
-        elif quota_fraction < 0.5:
-            q_color = "#f59e0b"
+
+        def _color_for_frac(f: float) -> str:
+            if f < 0.2:
+                return "#ef4444"
+            if f < 0.5:
+                return "#f59e0b"
+            return "#10b981"
+
+        q_color = _color_for_frac(quota_fraction)
         dash_array = 2 * 3.14159 * 8
         dash_offset = dash_array * (1 - quota_fraction)
+
+        tier_html = f'<div class="tooltip-row"><span>💎 Tier:</span> <span style="color:#38bdf8;font-weight:bold;">{user_tier}</span></div>' if user_tier else ""
+        proj_html = f'<div class="tooltip-row"><span>🏗️ Projet Perso:</span> <span>{project_id}</span></div>' if (project_id and project_id != ECHO_GLOBAL_TENANT_PROJECT_ID) else ""
+
+        if quota_5h_fraction is not None or quota_weekly_fraction is not None:
+            q5_rows = ""
+            if quota_5h_disabled:
+                q5_rows = '<div class="tooltip-row"><span>⏱️ Quota 5h:</span> <span style="color:#94a3b8;">Désactivé</span></div>'
+            elif quota_5h_fraction is not None:
+                c5 = _color_for_frac(quota_5h_fraction)
+                r5_str = "" if quota_5h_reset in ("N/A", "—", "") else f' <span style="color:#94a3b8;font-size:10px;">(🔄 {quota_5h_reset})</span>'
+                q5_rows = f'<div class="tooltip-row"><span>⏱️ Quota 5h:</span> <span><b style="color:{c5};">{quota_5h_fraction * 100:.0f}%</b>{r5_str}</span></div>'
+
+            qw_rows = ""
+            if quota_weekly_fraction is not None:
+                cw = _color_for_frac(quota_weekly_fraction)
+                rw_str = "" if quota_weekly_reset in ("N/A", "—", "") else f' <span style="color:#94a3b8;font-size:10px;">(🔄 {quota_weekly_reset})</span>'
+                qw_rows = f'<div class="tooltip-row"><span>📅 Quota Sem.:</span> <span><b style="color:{cw};">{quota_weekly_fraction * 100:.0f}%</b>{rw_str}</span></div>'
+
+            q_rows_html = q5_rows + qw_rows
+        else:
+            r_str = "" if quota_reset in ("N/A", "—", "") else f' <span style="color:#94a3b8;font-size:10px;">(🔄 {quota_reset})</span>'
+            q_rows_html = f'<div class="tooltip-row"><span>📊 Quota:</span> <span><b style="color:{q_color};">{quota_fraction * 100:.1f}%</b>{r_str}</span></div>'
+
+        rpd_html = f'<div class="tooltip-row"><span>📆 Req/jour:</span> <span>{quota_rpd_rem} / {quota_rpd_lim}</span></div>' if quota_rpd_rem != "N/A" else ""
+        rpm_html = f'<div class="tooltip-row"><span>⚡ Req/min:</span> <span>{quota_rpm_rem} / {quota_rpm_lim}</span></div>' if quota_rpm_rem != "N/A" else ""
+
+        cp_row_html = (
+            f'<div class="tooltip-row"><span>🗜️ Checkpoint:</span> <span style="color:#38bdf8;font-weight:bold;">#{compaction_count} ({compacted_turns} tours)</span></div>'
+            if compaction_count > 0
+            else ""
+        )
+        cp_badge_html = (
+            f'<span id="echo-nav-checkpoint-badge" title="Checkpoint Cognitif #{compaction_count} actif ({compacted_turns} tours condensés)" '
+            f'style="font-size:10px;font-weight:700;color:#38bdf8;background:rgba(56,189,248,0.15);border:1px solid rgba(56,189,248,0.35);padding:1px 6px;border-radius:10px;white-space:nowrap;">🗜️ #{compaction_count}</span>'
+            if compaction_count > 0
+            else ""
+        )
 
         js_code = f"""
     (function() {{
@@ -930,9 +979,9 @@ class EchoUI(EchoRichUI):
       var hud = document.createElement('div');
       hud.id = 'echo-nav-context-hud';
       hud.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:12px;pointer-events:auto;background:rgba(0,0,0,0.2);padding:4px 12px;border-radius:20px;backdrop-filter:blur(4px);';
-      var iconHtml = `<div class="echo-tooltip"><svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2" /><circle cx="10" cy="10" r="8" fill="none" stroke="{q_color}" stroke-width="2" stroke-dasharray="{dash_array}" stroke-dashoffset="{dash_offset}" transform="rotate(-90 10 10)" stroke-linecap="round" /><path d="M10 6a2.5 2.5 0 00-2.5 2.5V10h5V8.5A2.5 2.5 0 0010 6zm3.5 4H6.5a1 1 0 00-1 1v4a1 1 0 001 1h7a1 1 0 001 1h7a1 1 0 001-1v-4a1 1 0 00-1-1z" fill="white" opacity="0.9" /></svg><div class="tooltip-box" style="width:300px;"><div class="tooltip-title">AUTHENTIFICATION</div><div class="tooltip-row"><span>🔐 Source:</span> <span>{auth_list}</span></div><div class="tooltip-row"><span>👤 Compte:</span> <span>{user_email or 'N/A'}</span></div><div class="tooltip-row"><span>🏗️ Projet Perso:</span> <span>{project_id or 'N/A'}</span></div><div class="tooltip-row"><span>🌐 Tenant:</span> <span style="color:#10b981;">{ECHO_GLOBAL_TENANT_PROJECT_ID}</span></div><div class="tooltip-title" style="margin-top:8px;border-top:1px solid rgba(0,212,255,0.2);padding-top:6px;">QUOTAS</div><div class="tooltip-row"><span>💳 Crédits:</span> <b style="color:#10b981;">{credits_val}</b></div><div class="tooltip-row"><span>🤖 Modèle CA:</span> <span style="color:#a3a3a3;font-size:10px;">{quota_model or "—"}</span></div><div class="tooltip-row"><span>📊 Quota:</span> <b style="color:{q_color};">{quota_fraction * 100:.1f}%</b></div><div class="tooltip-row"><span>📅 Req/jour:</span> <span>{"N/A" if quota_rpd_rem == "N/A" else f"{quota_rpd_rem} / {quota_rpd_lim}"}</span></div><div class="tooltip-row"><span>⚡ Req/min:</span> <span>{"N/A" if quota_rpm_rem == "N/A" else f"{quota_rpm_rem} / {quota_rpm_lim}"}</span></div><div class="tooltip-row"><span>🔄 Reset:</span> <span>{"—" if quota_reset == "N/A" else quota_reset}</span></div><div class="tooltip-row"><span>🏷️ Type:</span> <span style="color:#a3a3a3;font-size:10px;">{quota_type}</span></div></div></div>`;
-      var barHtml = `<div class="echo-tooltip" style="min-width:180px;"><div style="display:flex;width:100%;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;"><div style="width:{cache_pct}%;background:#8b5cf6;"></div><div style="width:{prompt_pct}%;background:#10b981;"></div><div style="width:{gen_pct}%;background:#f59e0b;"></div></div><div class="tooltip-box" style="width:240px;"><div class="tooltip-title">CONTEXTE</div><div class="tooltip-row"><span>Cache:</span> <span>{c_t}</span></div><div class="tooltip-row"><span>Prompt:</span> <span>{active_p_t}</span></div><div class="tooltip-row"><span>Génération:</span> <span>{g_t}</span></div><div class="tooltip-row" style="font-weight:bold;margin-top:4px;"><span>Total:</span> <span>{total_t} / {max_t}</span></div></div></div>`;
-      hud.innerHTML = iconHtml + barHtml;
+      var iconHtml = `<div class="echo-tooltip"><svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2" /><circle cx="10" cy="10" r="8" fill="none" stroke="{q_color}" stroke-width="2" stroke-dasharray="{dash_array}" stroke-dashoffset="{dash_offset}" transform="rotate(-90 10 10)" stroke-linecap="round" /><path d="M10 6a2.5 2.5 0 00-2.5 2.5V10h5V8.5A2.5 2.5 0 0010 6zm3.5 4H6.5a1 1 0 00-1 1v4a1 1 0 001 1h7a1 1 0 001-1v-4a1 1 0 00-1-1z" fill="white" opacity="0.9" /></svg><div class="tooltip-box" style="width:310px;"><div class="tooltip-title">AUTHENTIFICATION</div><div class="tooltip-row"><span>🔐 Source:</span> <span>{auth_list}</span></div><div class="tooltip-row"><span>👤 Compte:</span> <span>{user_email or 'N/A'}</span></div>{tier_html}{proj_html}<div class="tooltip-row"><span>🌐 Tenant:</span> <span style="color:#10b981;">{ECHO_GLOBAL_TENANT_PROJECT_ID}</span></div><div class="tooltip-title" style="margin-top:8px;border-top:1px solid rgba(0,212,255,0.2);padding-top:6px;">QUOTAS</div><div class="tooltip-row"><span>💳 Crédits IA:</span> <b style="color:#10b981;">{credits_val}</b></div><div class="tooltip-row"><span>🤖 Modèle CA:</span> <span style="color:#a3a3a3;font-size:10px;">{quota_model or "—"}</span></div>{q_rows_html}{rpd_html}{rpm_html}<div class="tooltip-row"><span>🏷️ Type:</span> <span style="color:#a3a3a3;font-size:10px;">{quota_type}</span></div></div></div>`;
+      var barHtml = `<div class="echo-tooltip" style="min-width:180px;"><div style="display:flex;width:100%;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;"><div style="width:{cache_pct}%;background:#8b5cf6;"></div><div style="width:{prompt_pct}%;background:#10b981;"></div><div style="width:{gen_pct}%;background:#f59e0b;"></div></div><div class="tooltip-box" style="width:240px;"><div class="tooltip-title">CONTEXTE</div><div class="tooltip-row"><span>Cache:</span> <span>{c_t}</span></div><div class="tooltip-row"><span>Prompt:</span> <span>{active_p_t}</span></div><div class="tooltip-row"><span>Génération:</span> <span>{g_t}</span></div>{cp_row_html}<div class="tooltip-row" style="font-weight:bold;margin-top:4px;"><span>Total:</span> <span>{total_t} / {max_t}</span></div></div></div>`;
+      hud.innerHTML = iconHtml + barHtml + `{cp_badge_html}`;
       hudWrapper.appendChild(hud);
       document.body.appendChild(hudWrapper);
     }})();

@@ -96,13 +96,16 @@
       contexte, mais leur influence sur la génération devient négligeable. Au-delà de <strong>50 %</strong>,
       la dégradation est critique.
     </p>
-    <p>ECHO y répond par une architecture mémorielle à deux niveaux :</p>
+    <p>Face à l'allongement d'une conversation, ECHO y répond en combinant le <strong>Compactage Contextuel sur Place (Checkpoint Cognitif)</strong> et <strong>deux mémoires vectorielles distinctes</strong> :</p>
     <ul>
       <li>
-        <strong>Mémoire Organique à Long Terme</strong> : mémoire permanente de vos préférences, contraintes et décisions d'architecture, qui survit d'une session à l'autre. Inspirée de la psychologie cognitive humaine, elle capte les signaux faibles dès la première observation (<em>Trivial</em>), les renforce par récurrence (<em>Mineur</em>, <em>Utile</em>, <em>Majeur</em>) ou les sanctuarise immédiatement sur consigne explicite (<em>Axiome</em>), tout en consolidant chaque nuit les observations récurrentes en souvenirs durables.
+        <strong>Compactage Contextuel sur Place (Checkpoint Cognitif)</strong> : compresse automatiquement ou sur demande les anciens tours de parole en un résumé structuré (Checkpoint) injecté directement dans la discussion en cours, libérant la fenêtre d'attention sans jamais perdre le fil ni quitter la session.
       </li>
       <li>
-        <strong>Mémoire Vectorisée de Session</strong> : mémoire de travail dédiée à la discussion en cours (et interrogeable à travers l'historique), permettant de décharger les documents massifs sans saturer l'attention du modèle.
+        <strong>Mémoire Organique à Long Terme (Mémoire Globale)</strong> : mémoire permanente de vos préférences, contraintes et décisions d'architecture, qui survit d'une session à l'autre. Inspirée de la psychologie cognitive humaine, elle capte les signaux faibles dès la première observation (<em>Trivial</em>), les renforce par récurrence (<em>Mineur</em>, <em>Utile</em>, <em>Majeur</em>) ou les sanctuarise immédiatement sur consigne explicite (<em>Axiome</em>), tout en consolidant chaque nuit les observations récurrentes en souvenirs durables.
+      </li>
+      <li>
+        <strong>Mémoire Vectorisée de Session</strong> : mémoire de travail dédiée à la discussion en cours (et interrogeable à travers l'historique), permettant de décharger les documents massifs et l'historique conversationnel sans saturer l'attention du modèle.
       </li>
     </ul>
 
@@ -123,10 +126,10 @@
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Collections Vectorielles Qdrant &amp; Escalade</h3>
+        <h3>1. Collections Vectorielles Qdrant, Compaction &amp; Escalade</h3>
         <ul>
           <li><strong>RAG Organique (<code>echo_meta_artifacts</code>) :</strong> indexé par <code>user_id</code> avec qualification obligatoire sur 5 niveaux d'importance (<code>MEMORY_IMPORTANCE_WEIGHTS</code> et <code>MEMORY_IMPORTANCE_LABELS</code> de <code>1 - Trivial</code> à <code>5 - Axiome</code>, alignés sur les protocoles <code>PACP</code>/<code>PRAC</code>) et consolidation nocturne par centroïde L2-normalisé (<code>Lvl1 &rarr; Lvl2</code>). Manipulé via <code>update_meta_artifact</code>, <code>search_meta_artifacts</code> et <code>delete_meta_artifact_item</code>.</li>
-          <li><strong>Session RAG (<code>echo_session_rag</code>) :</strong> indexé par <code>user_id + chat_id + source_id</code> via <code>save_session_context</code>, <code>search_sessions_context</code> (avec support <code>global_search</code> inter-sessions) et <code>delete_session_context_source</code>.</li>
+          <li><strong>Session RAG (<code>echo_session_rag</code>) &amp; Mémoire Épisodique Active :</strong> indexé par <code>user_id + chat_id + source_id</code> via <code>save_session_context</code>, <code>search_sessions_context</code> (avec support <code>global_search</code> inter-sessions) et <code>delete_session_context_source</code>. En complément du Session RAG, le filtre <code>context_compaction_filter.py</code> (Priorité 15) et l'action <code>compact_context_action.py</code> opèrent un <strong>Compactage Contextuel In-Place</strong> (<code>45% &rarr; 25%</code> de <code>ECHO_MAX_CONTEXT_SIZE</code> via <code>MODEL_APOLLO</code>, budget <code>32768</code> tokens) consolidant les tours anciens dans <code>&lt;artifact id="AEC_context_checkpoint"&gt;</code>.</li>
           <li><strong>Corrélation contextuelle :</strong> Au-delà des seuils de charge contextuelle (<code>CONTEXT_LOAD_WARNING_THRESHOLD = 40%</code>, <code>CONTEXT_LOAD_CRITICAL_THRESHOLD = 60%</code>), l'outil <code>new_cognitive_level</code> permet au modèle actif de déclencher une escalade cognitive vers <code>MODEL_APOLLO</code> ou <code>MODEL_PROMETHEUS</code>.</li>
         </ul>
 
@@ -145,7 +148,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.223.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.226.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

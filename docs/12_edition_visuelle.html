@@ -51,7 +51,7 @@
         <ul>
           <li><strong>Le Moteur Git (<code>echo_codex_git.py</code>) :</strong> Surcouche Python pure autour de <code>dulwich</code> gérant deux espaces de travail distincts (<code>ECHO_CODEX_WORKSPACES</code> : <code>main</code> versionné sous Git et <code>sandbox</code> dédié à l'exécution). Il intègre un contrôle d'état en <strong>O(1) (<code>get_latest_state</code>)</strong>, filtre les répertoires massifs via <code>ECHO_SYNC_EXCLUDE_LIST</code> (<code>node_modules</code>, <code>.venv</code>, etc.) pour prévenir tout gel de l'arborescence UI, et retourne <code>(commit_hash, paths_to_rm)</code> lors d'un <code>delete_file</code> pour purger récursivement SQLite.</li>
           <li><strong>L'Interface HUD (<code>echo_codex_action.py</code>) :</strong> Injection de <strong>Monaco Editor</strong> propulsée par le protocole <strong>UCTP</strong> (<code>EchoEvents</code>), avec gestion native des dossiers (colonne <code>item_type = file | directory</code> dans <code>echo_resources</code>), lecteur <strong>PDF WYSIWYG</strong> par reconstruction Blob, verrou logiciel anti-Race Condition à la sauvegarde et ping <code>heartbeat</code> déporté via <code>asyncio.to_thread</code>.</li>
-          <li><strong>L'Outil LLM (<code>echo_codex_tool.py</code>) :</strong> Expose les primitives d'édition et de voyage temporel (<code>read_codex</code>, <code>edit_codex</code>, <code>trace_history</code>, <code>restore_codex</code>) ainsi que le trigger <strong><code>open_codex_ui</code></strong> (bloqué au 1er tour) permettant d'ouvrir directement un fichier ciblé (<code>current_file</code>) sur l'écran de l'utilisateur via <code>events.trigger_action()</code>.</li>
+          <li><strong>L'Outil LLM (<code>echo_codex_tool.py</code>) :</strong> Expose les primitives d'édition et de voyage temporel (<code>read_codex</code>, <code>edit_codex</code>, <code>summarize_codex</code> exécuté sur <code>MODEL_APOLLO</code> avec <code>thinking="medium"</code> et <code>maxOutputTokens: 8192</code>, <code>trace_history</code>, <code>restore_codex</code>) ainsi que le trigger <strong><code>open_codex_ui</code></strong> permettant d'ouvrir directement un fichier ciblé (<code>current_file</code>) sur l'écran de l'utilisateur via <code>events.trigger_action()</code> en ancrant <code>message_id</code> sur le message utilisateur immuable (<code>_echo_user_msg_id</code>) pour prévenir tout écrasement asynchrone par le write-back de <code>Chat.svelte:1724</code>.</li>
         </ul>
       </div>
     </details>
@@ -63,7 +63,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.223.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.226.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

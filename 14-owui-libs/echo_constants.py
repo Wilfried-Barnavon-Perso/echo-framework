@@ -1,16 +1,17 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.82
+version: 5.89
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.82: Définition de ECHO_AUDIO_DEFAULT_TTS_PITCH (-2Hz) et vitesse nominale 1.0 (100%).
-# 5.81: Ajustement de ECHO_AUDIO_DEFAULT_TTS_SPEED à 1.06 (106%) pour la synthèse vocale.
-# 5.80: Ajustement de ECHO_AUDIO_DEFAULT_TTS_SPEED à 1.1 (110%) pour la synthèse vocale.
-# 5.79: Définition de ECHO_AUDIO_DEFAULT_TTS_SPEED (1.25 / 125%) pour la synthèse Edge TTS.
-# 5.78: Définition des constantes du pont audio in-process (STT Gemini, TTS Edge Vivienne).
+# 5.89: Ajout des constantes de compactage contextuel in-place (ECHO_COMPACTION_*, CONTEXT_COMPACTION_*) pilotées par MODEL_APOLLO (32768 tokens).
+# 5.88: Alignement documentaire interne sur echo_orchestrator.
+# 5.87: Mise à jour des modèles ECHO ZEPHYR et ECHO DISTILLATION vers Gemini 3.5 Flash-Lite.
+# 5.86: Alignement des User-Agents (ECHO_AGY_USER_AGENT, ECHO_USER_AGENT) et de ECHO_CLIENT_METADATA sur Antigravity Desktop v2.24.0 (cl=1000335682).
+# 5.85: Passage PROMETHEUS en "gemini-4-argon". Factorisation de get_descending_cascade et forçage thinkingLevel="high" sur repli 429 dans get_generation_config.
+
 
 import os
 import contextvars
@@ -58,12 +59,16 @@ ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 ECHO_SESSION_DOMAINS = ["codex", "files", "db", "n8n_workflows", "dependencies"]
 ECHO_GLOBAL_DOMAINS = ["skills", "files", "chats", "n8n_workflow_templates"]
 
-# Identité Réseau (Antigravity 2.5.5 — aligné sur AGY IDE product.json:ideVersion)
-# Format natif AGY IDE : "{app}/{ideVersion} {os}/{arch}" (cloudCodeMainService.js)
+# Identité Réseau (Antigravity 2.24.0 — aligné sur Antigravity Desktop package.json & language_server --stamp)
+# Format natif AGY Hub : "antigravity/hub/{ideVersion} (os_type=...; arch=...; cl=...; auth_method=personal_consumer; proxy_client=antigravity/{ideVersion})"
 # ECHO tourne sous Docker Linux — on émet l'identité réelle de la plateforme hôte.
-_AGY_IDE_VERSION = "2.5.5"  # Miroir de product.json:ideVersion — à synchroniser lors des mises à jour
+_AGY_IDE_VERSION = "2.24.0"      # Miroir de package.json:version — à synchroniser lors des mises à jour
+_AGY_LS_CL       = "1000335682"  # Changelist language_server (--stamp)
 ECHO_USER_AGENT             = f"antigravity/{_AGY_IDE_VERSION}"
-ECHO_AGY_USER_AGENT         = f"antigravity/{_AGY_IDE_VERSION} linux/amd64"
+ECHO_AGY_USER_AGENT         = (
+    f"antigravity/hub/{_AGY_IDE_VERSION} "
+    f"(os_type=linux; arch=amd64; cl={_AGY_LS_CL}; auth_method=personal_consumer; proxy_client=antigravity/{_AGY_IDE_VERSION})"
+)
 ECHO_STEALTH_USER_AGENT     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 
 # Points d'accès Locaux (Souveraineté)
@@ -240,24 +245,23 @@ AEC_REMINDERS = [
 
 # ==============================================================================
 # 1.1 MODULE : CONSTANTES ET DEFAULTS ECHO (CENTRALISATION)
-# VERSION : 5.999.3
+# VERSION : 5.999.4
 # ==============================================================================
 
 
 # ==============================================================================
 # REGISTRE COGNITIF ECHO (SINGLE SOURCE OF TRUTH)
 # ==============================================================================
-
 ECHO_MODELS_REGISTRY = {
     "MODEL_PROMETHEUS": {
-        "ai_studio_id": "gemini-3.1-pro-preview",
-        "ca_model_id":  "claude-opus-5-5-high",
+        "ai_studio_id": "gemini-4-argon",
+        "ca_model_id":  "gemini-4-argon-high",
         "hierarchy": 2,
         "generationConfig": {
             "temperature": 1.0,
             "topP": 0.9,
             "maxOutputTokens": 65535,
-            "thinkingConfig": {"thinkingLevel": "high"}
+            "thinkingConfig": {"thinkingLevel": "medium"}
         }
     },
     "MODEL_APOLLO": {
@@ -273,7 +277,7 @@ ECHO_MODELS_REGISTRY = {
     },
     "MODEL_ZEPHYR": {
         "ai_studio_id": "gemini-3.5-flash-lite",
-        "ca_model_id":  "gemini-3.1-flash-lite",
+        "ca_model_id":  "gemini-3.5-flash-lite",
         "hierarchy": 0,
         "generationConfig": {
             "temperature": 1.0,
@@ -284,7 +288,7 @@ ECHO_MODELS_REGISTRY = {
     },
     "MODEL_DISTILLATION": {
         "ai_studio_id": "gemini-3.5-flash-lite",
-        "ca_model_id":  "gemini-3.1-flash-lite",
+        "ca_model_id":  "gemini-3.5-flash-lite",
         "hierarchy": None,
         "generationConfig": {
             "temperature": 0.0,
@@ -347,18 +351,49 @@ def get_model_identity(model_str: str) -> str:
         if model_str in (v.get("ai_studio_id"), v.get("ca_model_id")): return k
     return "UNKNOWN"
 
-def get_generation_config(model_key: str = "MODEL_ZEPHYR", override_thinking: str = None) -> dict:
+def get_generation_config(
+    model_key: str = "MODEL_ZEPHYR",
+    override_thinking: str = None,
+    is_fallback_cascade: bool = False,
+    include_thoughts: bool = None,
+) -> dict:
     """
     Extrait le generationConfig depuis le SSOT.
-    Permet de surcharger dynamiquement le thinkingLevel (ex: MINIMAL pour le grounding).
+    Permet de surcharger dynamiquement le thinkingLevel (ex: MINIMAL pour le grounding)
+    et force obligatoirement thinkingLevel="high" lors d'une cascade descendante (429).
     """
     import copy
     # Récupération sécurisée du dictionnaire global
     registry = globals().get("ECHO_MODELS_REGISTRY", {})
     base_gen = copy.deepcopy(registry.get(model_key, registry.get("MODEL_ZEPHYR", {})).get("generationConfig", {}))
-    if override_thinking and "thinkingConfig" in base_gen:
-        base_gen["thinkingConfig"]["thinkingLevel"] = override_thinking
+    if "thinkingConfig" in base_gen:
+        if is_fallback_cascade:
+            base_gen["thinkingConfig"]["thinkingLevel"] = "high"
+        elif override_thinking:
+            base_gen["thinkingConfig"]["thinkingLevel"] = override_thinking
+        if include_thoughts is not None:
+            base_gen["thinkingConfig"]["includeThoughts"] = include_thoughts
     return base_gen
+
+
+def get_descending_cascade(start_model_key: str, include_start: bool = False) -> list:
+    """
+    Calcule dynamiquement la séquence de cascade descendante depuis ECHO_MODELS_REGISTRY.
+    Si include_start=True, inclut le modèle de départ en tête de liste (usage call_cascade).
+    Si include_start=False, retourne uniquement les modèles strictement inférieurs (usage echo_orchestrator).
+    """
+    registry = globals().get("ECHO_MODELS_REGISTRY", {})
+    identity = get_model_identity(start_model_key)
+    if identity == "UNKNOWN":
+        identity = "MODEL_APOLLO"
+    start_h = registry.get(identity, {}).get("hierarchy")
+    start_h = start_h if start_h is not None else 1
+    candidates = [
+        k for k, v in registry.items()
+        if v.get("hierarchy") is not None
+        and (v.get("hierarchy") <= start_h if include_start else v.get("hierarchy") < start_h)
+    ]
+    return sorted(candidates, key=lambda k: registry[k]["hierarchy"], reverse=True)
 
 # ----------------------------
 
@@ -512,8 +547,12 @@ DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
     "update_meta_artifact",   # Écrit en mémoire long terme (Qdrant)
     "delete_meta_artifact_item", # Supprime de la mémoire long terme
     # Note: save_session_context et delete_session_context_source sont autorisés pour l'agent
-    # 3. Rendu UI
+    # 3. Rendu UI & Modales Interactives (interdits en mode Headless / Sous-agent)
     "generate_rich_visualization",  # Génère du HTML interactif pour le stream principal
+    "ask_user_input",               # Modale interactive bloquée en mode Headless
+    "delete_user_skill",            # Modale de confirmation bloquée en mode Headless
+    "manage_identity",              # Gestion d'identités bloquée en mode Headless
+    "open_codex_ui",                # Déclenchement UI HUD réservé au flux principal
     # 4. Méta-session (gestion des sessions du tool delegate)
     "list_agent_sessions",
     "close_agent_session",
@@ -607,7 +646,7 @@ ECHO_SEARXNG_BASE_URL = "http://echo-searxng:8080"
 ECHO_ALLOWED_DOMAINS = "*"
 
 # --- Configuration HTTP/2 & Connexions (Pool httpx partagé) ---
-# Anciennement Valves dans pipe_engine, elles pilotent le client global _get_global_client() dans echo_utils.py.
+# Anciennement Valves dans echo_orchestrator, elles pilotent le client global _get_global_client() dans echo_utils.py.
 # Optimisation du pool de connexion HTTP(2) pour éviter la saturation réseau sous forte charge.
 ECHO_HTTP_CLIENT_TIMEOUT = 600       # Délai d'abandon (600s) si Google API ne répond pas.
 ECHO_HTTP_MAX_CONNECTIONS = 100      # Nombre max de connexions simultanées.
@@ -686,8 +725,16 @@ MIME_MAPPING_BIN = {
 # ==============================================================================
 CHARS_PER_TOKEN = 4
 ECHO_MAX_CONTEXT_SIZE = 1000000  # Limite technique 1M (on peut cibler plus bas si Gemini Flash/Pro a des limites strictes pour ECHO)
-CONTEXT_WARNING_THRESHOLD = 0.80  # 80% : Toast d'alerte jaune (Résume et Transfert vers un nouveau chat conseillé)
+CONTEXT_WARNING_THRESHOLD = 0.80  # 80% : Toast d'alerte jaune (Compactage de session conseillé)
 CONTEXT_TRUNCATE_THRESHOLD = 0.90 # 90% : Troncature silencieuse
+
+# --- COMPACTAGE DE CONTEXTE IN-PLACE (CHECKPOINTING) ---
+ECHO_COMPACTION_ENABLED_DEFAULT: bool = False          # UserValve ENABLE_AUTO_COMPACTION désactivée par défaut
+CONTEXT_COMPACTION_TRIGGER_RATIO: float = 0.45         # 45% de ECHO_MAX_CONTEXT_SIZE (450 000 tokens) : Déclenchement auto
+CONTEXT_COMPACTION_TARGET_RATIO: float = 0.25          # 25% de ECHO_MAX_CONTEXT_SIZE (250 000 tokens) : Cible post-compactage
+ECHO_COMPACTION_MIN_TURNS_TO_KEEP: int = 2             # Minimum de tours complets conservés dans la queue active
+ECHO_COMPACTION_MODEL: str = MODEL_APOLLO              # Modèle de synthèse haute capacité (Gemini 3.8 Flash, thinkingLevel="high", fenêtre 1M)
+ECHO_COMPACTION_MAX_OUTPUT_TOKENS: int = 32768         # Plafond de sortie du Checkpoint (inclut thoughtsTokenCount + synthèse Markdown)
 
 # Seuils de saturation pour l'outil context_gauge (déclencheurs d'escalade)
 CONTEXT_LOAD_WARNING_THRESHOLD = 40.0

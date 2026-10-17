@@ -1,8 +1,8 @@
 """
 title: ECHO Universal MCP Tool
 author: ECHO
-version: 2.5
-description: Outil universel permettant au Modèle d'interroger et d'exécuter des requêtes sur l'infrastructure MCP (serveurs natifs, résidents ou distants) via un routage dynamique.
+version: 2.6
+description: Outil universel permettant au Modèle d'interroger et d'exécuter des requêtes sur l'infrastructure MCP via un routage dynamique.
 """
 import sys
 import json
@@ -48,7 +48,9 @@ class Tools:
         L'argument 'service' doit strictement correspondre à une clé valide issue du registre de l'Identity Vault.
         """
         if not __user__:
-            return wrap_tool_output("Erreur: Contexte manquant.", {"status": "error"}, user_id="", chat_id="", metadata={})
+            return wrap_tool_output(
+                "Erreur: Contexte manquant.", {"status": "error"}, user_id="", chat_id="", metadata={}
+            )
 
         events = EchoEvents(__event_emitter__, __event_call__)
         await events.status(f"🌐 Routage dynamique pour l'interrogation de '{service}'...")
@@ -85,10 +87,18 @@ class Tools:
                     }
                     resp = await client.post(self.proxy_url, json=payload)
                     data = resp.json()
-                    is_err = data.get("status") == "error" or resp.status_code >= 400
+                    is_err = (
+                        data.get("status") == "error"
+                        or data.get("isError") is True
+                        or resp.status_code >= 400
+                    )
                     status_val = "error" if is_err else "success"
 
-                label = f"✅ Schémas récupérés pour '{service}'." if status_val == "success" else f"⚠️ Accès à '{service}' : configuration requise."
+                label = (
+                    f"✅ Schémas récupérés pour '{service}'."
+                    if status_val == "success"
+                    else f"⚠️ Accès à '{service}' : configuration requise."
+                )
                 await events.status(label, done=True)
                 return wrap_tool_output(
                     json.dumps(data),
@@ -98,8 +108,9 @@ class Tools:
                     metadata=__metadata__
                 )
         except Exception as e:
+            err_msg = str(e).strip() or type(e).__name__
             return wrap_tool_output(
-                json.dumps({"status": "error", "message": str(e)}),
+                json.dumps({"status": "error", "message": err_msg}),
                 status={"status": "error"},
                 user_id=__user__["id"],
                 chat_id=__metadata__.get("chat_id"),
@@ -121,7 +132,9 @@ class Tools:
         L'argument 'service' et 'function_name' sont strictement obligatoires.
         """
         if not __user__:
-            return wrap_tool_output("Erreur: Contexte manquant.", {"status": "error"}, user_id="", chat_id="", metadata={})
+            return wrap_tool_output(
+                "Erreur: Contexte manquant.", {"status": "error"}, user_id="", chat_id="", metadata={}
+            )
 
         events = EchoEvents(__event_emitter__, __event_call__)
         await events.status(f"⚙️ Exécution de la fonction '{function_name}' sur '{service}'...")
@@ -145,7 +158,12 @@ class Tools:
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 if category == "mcp_native":
-                    rpc = {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": function_name, "arguments": arguments}, "id": 1}
+                    rpc = {
+                        "jsonrpc": "2.0",
+                        "method": "tools/call",
+                        "params": {"name": function_name, "arguments": arguments},
+                        "id": 1,
+                    }
                     resp = await client.post(self.mcp_native_url, json=rpc)
                     resp.raise_for_status()
                     data = resp.json()
@@ -155,14 +173,27 @@ class Tools:
                         "user_id": __user__["id"],
                         "service": service,
                         "credentials": credentials,
-                        "rpc_request": {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": function_name, "arguments": arguments}, "id": 1}
+                        "rpc_request": {
+                            "jsonrpc": "2.0",
+                            "method": "tools/call",
+                            "params": {"name": function_name, "arguments": arguments},
+                            "id": 1,
+                        },
                     }
                     resp = await client.post(self.proxy_url, json=payload)
                     data = resp.json()
-                    is_err = data.get("status") == "error" or resp.status_code >= 400
+                    is_err = (
+                        data.get("status") == "error"
+                        or data.get("isError") is True
+                        or resp.status_code >= 400
+                    )
                     status_val = "error" if is_err else "success"
 
-                label = "✅ Exécution terminée." if status_val == "success" else f"⚠️ Erreur lors de l'exécution sur '{service}'."
+                label = (
+                    "✅ Exécution terminée."
+                    if status_val == "success"
+                    else f"⚠️ Erreur lors de l'exécution sur '{service}'."
+                )
                 await events.status(label, done=True)
                 return wrap_tool_output(
                     json.dumps(data),
@@ -172,8 +203,9 @@ class Tools:
                     metadata=__metadata__
                 )
         except Exception as e:
+            err_msg = str(e).strip() or type(e).__name__
             return wrap_tool_output(
-                json.dumps({"status": "error", "message": str(e)}),
+                json.dumps({"status": "error", "message": err_msg}),
                 status={"status": "error"},
                 user_id=__user__["id"],
                 chat_id=__metadata__.get("chat_id"),

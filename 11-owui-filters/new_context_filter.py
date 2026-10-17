@@ -2,16 +2,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 7.60
+version: 7.61
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 7.61: Compatibilité avec context_compaction_filter (offset _echo_compacted_user_turns sur tour_conversation et préservation de AEC_context_checkpoint).
 # 7.60: Ajustement sémantique de l'AEC_directive de mise à niveau (notification du passage de l'ancienne à la nouvelle version).
 # 7.59: Injection dynamique de l'AEC_directive d'initialisation de session (PIS) ou de mise à niveau dans rich_parts.
 # 7.58: Correction du fallback ZoneInfo (TypeError sur import pytz as ZoneInfo -> from pytz import timezone).
 # 7.57: Refactorisation algorithmique PGCU et renommage (current_user_multipart_payload).
-# 7.56: Extraction de dr.get("summary") dans la clé 'message' du delta hors-tour.
 
 
 from pydantic import BaseModel, Field
@@ -225,6 +225,7 @@ class Filter:
 
             idx = -1
             current_user_multipart_payload = []  # Payload hybride courant (texte + inline_data)
+            extracted_checkpoint_xml = None
             for i in range(len(msgs)-1, -1, -1):
                 if msgs[i].get("role") == "user":
                     idx = i
@@ -238,15 +239,27 @@ class Filter:
                                     # ECHO gérera l'image via son propre pipeline d'ingestion (inline_data ou text_summary).
                                     pass
                                 elif p.get("type") == "text":
-                                    if p.get("text", "").strip():
-                                        current_user_multipart_payload.append({"text": f"<REQUETE_UTILISATEUR>\n{p['text']}\n</REQUETE_UTILISATEUR>"})
+                                    txt_val = p.get("text", "")
+                                    if '<artifact id="AEC_context_checkpoint"' in txt_val:
+                                        from echo_core import EchoCompactionEngine
+                                        cp_xml, txt_val = EchoCompactionEngine.strip_checkpoint_tag(txt_val)
+                                        if cp_xml:
+                                            extracted_checkpoint_xml = cp_xml
+                                    if txt_val.strip():
+                                        current_user_multipart_payload.append({"text": f"<REQUETE_UTILISATEUR>\n{txt_val}\n</REQUETE_UTILISATEUR>"})
                                 else:
                                     # [PASSTHROUGH] Liste Blanche implicite.
                                     # On laisse passer les 'inline_data' d'ECHO, et tout futur format inattendu.
                                     current_user_multipart_payload.append(p)
                     else:
-                        if orig_content and str(orig_content).strip():
-                            current_user_multipart_payload.append({"text": f"<REQUETE_UTILISATEUR>\n{str(orig_content)}\n</REQUETE_UTILISATEUR>"})
+                        txt_val = str(orig_content or "")
+                        if '<artifact id="AEC_context_checkpoint"' in txt_val:
+                            from echo_core import EchoCompactionEngine
+                            cp_xml, txt_val = EchoCompactionEngine.strip_checkpoint_tag(txt_val)
+                            if cp_xml:
+                                extracted_checkpoint_xml = cp_xml
+                        if txt_val.strip():
+                            current_user_multipart_payload.append({"text": f"<REQUETE_UTILISATEUR>\n{txt_val}\n</REQUETE_UTILISATEUR>"})
                     break
 
             if idx != -1:
@@ -259,7 +272,8 @@ class Filter:
                 u_loc = meta.get("_echo_override_location", "")
                 final_loc = u_loc if u_loc else sys_loc
 
-                tour_conversation = sum(1 for m in msgs if m.get("role") == "user")
+                compacted_offset = int(body.get("metadata", {}).get("_echo_compacted_user_turns", 0))
+                tour_conversation = compacted_offset + sum(1 for m in msgs if m.get("role") == "user")
 
                 # === AEC : Méta-données brutes ===
                 date_heure = meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu")
@@ -278,6 +292,8 @@ class Filter:
                 from echo_aec import EchoAEC
 
                 rich_parts = []
+                if extracted_checkpoint_xml:
+                    rich_parts.append({"text": extracted_checkpoint_xml + "\n\n"})
                 rich_parts.append({"text": EchoAEC.render_model_context(model_id, model_origin, version)})
                 rich_parts.append({"text": EchoAEC.render_identity_context(display_name)})
                 rich_parts.append({"text": EchoAEC.render_time_context(date_heure, timezone, tour_conversation)})

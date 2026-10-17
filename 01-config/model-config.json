@@ -1,7 +1,7 @@
 [
     {
-        "id": "pipe_engine",
-        "name": "ECHO Engine",
+        "id": "echo_orchestrator",
+        "name": "Écho",
         "object": "model",
         "owned_by": "openai",
         "pipe": {
@@ -26,7 +26,7 @@
             "function_calling": "native"
         },
         "meta": {
-            "description": "ECHO Engine - Orchestrateur Cognitif",
+            "description": "ECHO - Orchestrateur",
             "capabilities": {
                 "file_context": false,
                 "vision": true,

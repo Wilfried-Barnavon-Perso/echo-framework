@@ -195,9 +195,9 @@ sudo bash 00-echo-scripts/install-stack.sh
           </thead>
           <tbody>
             <tr><td><code>00-echo-scripts/</code></td><td><code>/opt/ECHO/echo-scripts/</code></td><td>Scripts Bash d'administration et liens <code>/usr/local/bin/</code></td></tr>
-            <tr><td><code>01-config/</code></td><td><code>/opt/ECHO/config/</code></td><td>Manifestes Compose, Kernel statique, JSON, <code>logging.json</code></td></tr>
+            <tr><td><code>01-config/</code></td><td><code>/opt/ECHO/config/</code></td><td>Manifestes Compose, Kernel statique, <code>webui-settings.json</code>, <code>webui-banners.json</code>, <code>logging.json</code></td></tr>
             <tr><td><code>docker-python-base/</code></td><td><code>/opt/ECHO/docker-python-base/</code></td><td>Image mutualisée <code>echo-python-base:latest</code></td></tr>
-            <tr><td><code>10-owui-pipes/</code></td><td><code>/opt/ECHO/owui-pipes/</code></td><td>Pipe Engine Python (Cortex)</td></tr>
+            <tr><td><code>10-owui-pipes/</code></td><td><code>/opt/ECHO/owui-pipes/</code></td><td>Orchestrateur Cognitif Python (<code>echo_orchestrator.py</code>, Cortex)</td></tr>
             <tr><td><code>11-owui-filters/</code></td><td><code>/opt/ECHO/owui-filters/</code></td><td>Filtres Inlet &amp; Outlet</td></tr>
             <tr><td><code>12-owui-tools/</code></td><td><code>/opt/ECHO/owui-tools/</code></td><td>Outils de l'Arsenal</td></tr>
             <tr><td><code>13-owui-actions/</code></td><td><code>/opt/ECHO/owui-actions/</code></td><td>Actions interactives HUD</td></tr>
@@ -214,14 +214,14 @@ sudo bash 00-echo-scripts/install-stack.sh
         </table>
         <p>Le script applique un nettoyage conditionnel <code>sed</code> des caractères CRLF/BOM uniquement sur les fichiers impactés afin de préserver les horodatages (<code>mtime</code>) et le cache Docker BuildKit.</p>
 
-        <h3>3. Séquençage Docker &amp; Autosafety (<code>stack-echo.yml</code> v9.81 &amp; <code>install-stack.sh</code>)</h3>
+        <h3>3. Séquençage Docker &amp; Autosafety (<code>stack-echo.yml</code> v9.83 &amp; <code>install-stack.sh</code>)</h3>
         <ul>
           <li><strong>Tier 1 (Fondations) :</strong> Qdrant (<code>v1.19.1</code>, IP <code>.103</code>), SearXNG (<code>.101</code>), Watchtower (<code>.102</code>).</li>
           <li><strong>Tier 2 (Workers) :</strong> Embedding (<code>.30</code>), Coding Worker (<code>.21</code> sur <code>echo-sandbox</code>), Browser Worker (<code>.22</code>), MCP Broker (<code>.23</code>, volume persistant <code>echo-mcp-cache</code>), Download Broker (<code>.25</code>), N8N Worker (<code>.26</code>).</li>
-          <li><strong>Tier 3 (Cortex) :</strong> Open WebUI (<code>main-slim</code>, IP <code>.100</code>, cache persistant <code>PIP_CACHE_DIR=/app/backend/data/.cache/pip</code>, <code>mgzip</code>, <code>dulwich</code>, <code>markitdown[all]</code>, <code>h2</code>, <code>pybase64</code>, <code>edge-tts</code>).</li>
+          <li><strong>Tier 3 (Cortex) :</strong> Open WebUI (<code>main-slim</code>, IP <code>.100</code>, <code>ENABLE_CONTEXT_COMPACTION=false</code> neutralisant la compaction native d'Open WebUI au profit du moteur ECHO, label <code>bunkerweb.MAX_CLIENT_SIZE=4096m</code>, cache persistant <code>PIP_CACHE_DIR=/app/backend/data/.cache/pip</code>, <code>mgzip</code>, <code>dulwich</code>, <code>markitdown[all]</code>, <code>h2</code>, <code>pybase64</code>, <code>edge-tts</code>).</li>
           <li><strong>Tier 4 (Gouvernance) :</strong> Admin Manager (<code>.20</code>, montages Hot-Reload en lecture seule <code>:ro</code> de <code>server.py</code>, <code>core/</code>, <code>services/</code>, <code>routes/</code>, <code>templates/</code> et accès aux 5 volumes de données dont <code>echo-n8n-data</code> et <code>echo-mcp-cache</code>) et ECHO Auth Manager (<code>.24</code>).</li>
         </ul>
-        <p><code>install-stack.sh</code> configure l'<strong>Autosafety Docker</strong> (logs max 10 Mo, cron hebdomadaire <code>clean-echo.sh</code>), compile l'image socle <code>echo-python-base:latest</code> avec <code>CMAKE_BUILD_PARALLEL_LEVEL=2</code> et un throttle de 30 jours (<code>.last_base_pull</code>). Les conteneurs labellisés <code>echo.hot-reload=true</code> sont rechargés à chaud par <code>update-echo</code>, tandis que <code>rebuild-echo</code> (<code>upgrade-echo.sh</code>) exige une double saisie de sécurité (<code>CONFIRMER</code> puis <code>DETRUIRE</code>).</p>
+        <p><code>install-stack.sh</code> configure l'<strong>Autosafety Docker</strong> (logs max 10 Mo, cron hebdomadaire <code>clean-echo.sh</code>), compile l'image socle <code>echo-python-base:latest</code> avec <code>CMAKE_BUILD_PARALLEL_LEVEL=2</code> et un throttle de 30 jours (<code>.last_base_pull</code>), puis exécute <code>config-owui.sh</code> (<code>v7.69</code>) qui synchronise <code>webui-settings.json</code> et <code>webui-banners.json</code>, purge les modèles fantômes obsolètes en base SQLite et enregistre l'Orchestrateur Cognitif <code>echo_orchestrator</code> ainsi que les filtres, outils et actions HUD. Les conteneurs labellisés <code>echo.hot-reload=true</code> sont rechargés à chaud par <code>update-echo</code>, tandis que <code>rebuild-echo</code> (<code>upgrade-echo.sh</code>) exige une double saisie de sécurité (<code>CONFIRMER</code> puis <code>DETRUIRE</code>).</p>
       </div>
     </details>
 
@@ -232,7 +232,7 @@ sudo bash 00-echo-scripts/install-stack.sh
     </div>
 
     <footer>
-      ECHO Framework - Version 5.223.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.226.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

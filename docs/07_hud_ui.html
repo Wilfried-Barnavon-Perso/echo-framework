@@ -113,8 +113,8 @@ sequenceDiagram
       </tbody>
     </table>
     <p>
-      Au survol de la barre, un tooltip affiche les valeurs absolues : cache, prompt actif,
-      génération, total et maximum de la fenêtre contextuelle.
+      La pilule principale (<code>#echo-nav-context-hud</code>) affiche également un badge de Checkpoint <code>🗜️ #N</code> (<code>#echo-nav-checkpoint-badge</code>) dès qu'un compactage a eu lieu. Au survol de la barre, un tooltip affiche les valeurs absolues : cache, prompt actif,
+      génération, total et maximum de la fenêtre contextuelle, ainsi que la ligne <code>🗜️ Checkpoint: #N (M tours)</code> sous le compteur de tokens.
     </p>
     <img src="images/context_tooltip.png" alt="Tooltip de Contexte" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
     <h3>B. Icône Quota et Infobulle d'Authentification</h3>
@@ -128,11 +128,14 @@ sequenceDiagram
     <div class="code-header">Sections AUTHENTIFICATION &amp; QUOTAS</div>
     <pre><code>🔐 Source       : méthode d'auth active (OAUTH2, API_KEY)
 👤 Compte       : adresse du compte Google authentifié
-🏗️ Projet Perso : identifiant du projet Cloud personnel
-🌐 Tenant       : aicode-consumers (routage global Code Assist)
-💳 Crédits      : crédits AI disponibles
+💎 Tier         : niveau d'abonnement Cloud de l'utilisateur
+🏗️ Projet Perso : identifiant du projet Cloud personnel (masqué s'il est identique au 🏢 Tenant ou égal à aicode-consumers)
+🏢 Tenant       : aicode-consumers (routage global Code Assist)
+💳 Crédits IA   : crédits disponibles (google_g1_credits)
 🤖 Modèle CA    : ca_model_id actif (ex: gemini-3.8-flash-high)
 📊 Quota        : pourcentage restant coloré selon les seuils
+⏱️ Quota 5h     : barre de progression + compte à rebours (dans Xh Ym) ou badge Désactivé (si quota_5h_disabled)
+📅 Quota Sem.   : barre de progression + compte à rebours (dans Xj Yh)
 📅 Req/jour     : requêtes quotidiennes restantes (ou N/A)
 ⚡ Req/min      : requêtes par minute restantes (ou N/A)
 🔄 Reset        : heure de réinitialisation du quota
@@ -169,8 +172,8 @@ sequenceDiagram
           <li><strong>Fenêtrage &amp; Rendu :</strong> L'Identity Vault hérite de la classe unifiée <code>EchoFloatingWindow</code>, tandis que le Cognitive Monitor conserve une architecture dédiée pour éviter les lenteurs DOM. Le Sandbox Monitor exploite le multiplexage JSONL via UCTP (<code>emit_execute</code> dans une <code>iframe srcdoc</code>) avec accélération GPU (<code>translate3d</code>), zoom <code>Ctrl+Molette</code> jusqu'à 15×, synchronisation d'URL en direct (<code>echoWebPlayerUpdate</code>) et icônes vectorielles légères (<code>ECHO_ICONS</code>).</li>
         </ul>
 
-        <h3>2. Signature de <code>deploy_context_gauge()</code> &amp; Rafraîchissement Quotas</h3>
-        <p>Appelée par <code>pipe_engine.py</code>, elle calcule l'anneau SVG via <code>stroke-dashoffset</code> sur <code>quota_fraction</code> (rafraîchi de manière non-bloquante par <code>fetch_available_models()</code> toutes les 10 min dans <code>identity.db</code>) :</p>
+        <h3>2. Signature de <code>deploy_context_gauge()</code> &amp; Rafraîchissement Quotas (<code>echo_ui.py</code> v5.107)</h3>
+        <p>Appelée par <code>echo_orchestrator.py</code>, elle calcule l'anneau SVG via <code>stroke-dashoffset</code> sur <code>quota_fraction</code> (rafraîchi de manière non-bloquante par <code>fetch_available_models()</code> toutes les 10 min dans <code>identity.db</code>, tandis que les quotas 5h et hebdomadaire sont extraits via l'endpoint <code>:retrieveUserQuotaSummary</code> dans <code>echo_auth.py</code> v1.2) :</p>
         <pre><code>deploy_context_gauge(
     events,                        # EchoEvents
     plan_name, credits_val,        # Identité du plan
@@ -182,7 +185,10 @@ sequenceDiagram
     quota_amount, quota_fraction,  # Quota brut et fraction (0.0–1.0)
     quota_reset, quota_type,       # Heure de reset et type (ex: CODE_ASSIST)
     quota_model, quota_rpd_rem,    # CA model_id et Requests per day
-    quota_rpd_lim, quota_rpm_rem, quota_rpm_lim
+    quota_rpd_lim, quota_rpm_rem, quota_rpm_lim,
+    quota_5h_fraction=None, quota_5h_reset="", quota_5h_disabled=False,
+    quota_weekly_fraction=None, quota_weekly_reset="",
+    compaction_count=0, compacted_turns=0
 )</code></pre>
 
         <h3>3. Caractéristiques Techniques (ECHO Codex, Agent Monitor &amp; Mobile First)</h3>
@@ -201,7 +207,7 @@ sequenceDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.223.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.226.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

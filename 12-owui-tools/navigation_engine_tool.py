@@ -1,16 +1,16 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.41
+version: 11.43
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 11.43: Séparation stricte entre chat_id (persistance SQLite/Vault) et browser_session_id (isolation Playwright par sub_sid) pour empêcher la création de dossiers chats/<sub_sid> orphelins.
+# 11.42: Ajustement du thinking level de analyze_web_page à medium.
 # 11.41: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 11.40: Fix de la compatibilité API (camelCase) pour l'injection du fichier téléchargé et ajout explicite de systemInstruction pour contrer le stripping des thoughts.
 # 11.39: Rétablissement de la grille de vision spatiale fine à 48px.
-# 11.38: Lot C - Isolation par sub_sid (ECHO_SUBAGENT_CONTEXT), refonte du Sniper Protocol et utilisation de vision_capture.
-# 11.36: Modification de la consigne d'action_zoom_in pour exiger la vérification stricte du viseur rouge.
 
 import os
 import time
@@ -36,38 +36,55 @@ from echo_gemini_client import EchoGeminiClient
 from echo_prompts import SYS_NAV_BROWSER
 from echo_ui import EchoUI
 from echo_browser_lib import EchoBrowserLib, BROWSER_TOOLS_SCHEMA, req_to_browser
-from echo_constants import FILE_INGESTION_STATUS, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE, PRUNE_CONTENT_THRESHOLD, DEFAULT_VISION_GRID_STEP
+from echo_constants import FILE_INGESTION_STATUS, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE, PRUNE_CONTENT_THRESHOLD, DEFAULT_VISION_GRID_STEP, ECHO_SUBAGENT_CONTEXT
 
-async def _verify_engine_status(timeout: int, chat_id: str, user_id: str, u_valves: Any, events: EchoEvents) -> bool:
-    res = await req_to_browser(timeout, "/action", {"session_id": chat_id, "action": "ping"}, user_id)
+async def _verify_engine_status(
+    timeout: int,
+    session_id: str,
+    user_id: str,
+    u_valves: Any,
+    events: EchoEvents,
+    chat_id: Optional[str] = None
+) -> bool:
+    res = await req_to_browser(timeout, "/action", {"session_id": session_id, "action": "ping"}, user_id)
     if res.get("message") == "RESTART_REQUIRED" or res.get("error_type") == "SESSION_NOT_FOUND":
         await events.status("🌐 Moteur de navigation initialisation...", done=False)
         start_res = await req_to_browser(timeout, "/start_session", {
-            "session_id": chat_id,
+            "session_id": session_id,
+            "chat_id": chat_id or session_id,
             "idle_timeout": 900,
             "mode": getattr(u_valves, 'BROWSER_MODE', 'desktop')
         }, user_id)
         return start_res.get("status") == "success"
     return True
 
-async def _deploy_navigation_monitor(res_view: dict, chat_id: str, uid: str, u_valves: Any, events: EchoEvents):
+async def _deploy_navigation_monitor(
+    res_view: dict,
+    chat_id: str,
+    uid: str,
+    u_valves: Any,
+    events: EchoEvents,
+    browser_session_id: Optional[str] = None
+):
     b64 = res_view.get("screenshot_b64", "")
-    
+    eff_session_id = browser_session_id or chat_id
+
     if b64:
         try:
             file_id = generate_echo_file_id(uid, chat_id)
             filename = f"{file_id}_frame.jpg"
             state_manager = EchoStateManager(user_id=uid, chat_id=chat_id)
             vault_path = get_echo_session_path(uid, chat_id, "files")
+            os.makedirs(vault_path, exist_ok=True)
             filepath = os.path.join(vault_path, filename)
-            
+
             def _write_img(b64_str, path):
                 img_data = base64.b64decode(b64_str)
-                with open(path, "wb") as f: 
+                with open(path, "wb") as f:
                     f.write(img_data)
-            
+
             await asyncio.to_thread(_write_img, b64, filepath)
-            
+
             state_manager.save_resource(
                 id=file_id, name=filename, resource_type='media',
                 status=FILE_INGESTION_STATUS['INDEXED'], mime='image/jpeg',
@@ -81,14 +98,14 @@ async def _deploy_navigation_monitor(res_view: dict, chat_id: str, uid: str, u_v
         return
 
     metadata = res_view.get("metadata", [])
-    
+
     await EchoUI.safe_deploy(
         events=events,
         monitor_func=EchoUI.monitor_ECHO,
         b64=b64,
         metadata=metadata,
-        hud_id=f"nav-{chat_id[:8]}",
-        state_key=f"nav_state_{chat_id}",
+        hud_id=f"nav-{eff_session_id[:8]}",
+        state_key=f"nav_state_{eff_session_id}",
         current_url=res_view.get("url", ""),
         webp_b64=res_view.get("webp_b64")
     )
@@ -121,23 +138,22 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
         
         # Récupération de l'identité du sous-agent via contextvars
-        from echo_constants import ECHO_SUBAGENT_CONTEXT
         sub_context = ECHO_SUBAGENT_CONTEXT.get()
-        base_chat_id = __metadata__.get("chat_id", "default_session")
+        chat_id = (__metadata__ or {}).get("chat_id", "default_session")
         sub_sid = sub_context.get("sub_sid")
         
-        # Le navigateur s'attache prioritairement à l'ID du sous-agent pour isoler les sessions
-        chat_id = sub_sid if sub_sid else base_chat_id
+        # Isolation Playwright en RAM via browser_session_id, persistance SQLite/Vault stricte sur chat_id
+        browser_session_id = sub_sid if sub_sid else chat_id
         
-        uid = __user__.get("id", "anonymous")
-        u_valves = __user__.get("valves", self.UserValves())
+        uid = (__user__ or {}).get("id", "anonymous")
+        u_valves = (__user__ or {}).get("valves", self.UserValves())
         use_vision = getattr(u_valves, 'USE_MULTIMODAL_VISION', True)
 
-        await events.status(f"📡 Agent Navigateur [{chat_id[:8]}]: Prise de contrôle...")
-        if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, chat_id, uid, u_valves, events):
-            return wrap_tool_output(text="❌ Navigateur indisponible.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        await events.status(f"📡 Agent Navigateur [{browser_session_id[:8]}]: Prise de contrôle...")
+        if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, browser_session_id, uid, u_valves, events, chat_id=chat_id):
+            return wrap_tool_output(text="❌ Navigateur indisponible.", status={"status": "error"}, user_id=(__user__ or {}).get("id", "system"), chat_id=(__metadata__ or {}).get("chat_id"), metadata=__metadata__)
 
-        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, chat_id, uid, vision_grid_step=getattr(u_valves, 'VISION_GRID_STEP', DEFAULT_VISION_GRID_STEP))
+        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, browser_session_id, uid, vision_grid_step=getattr(u_valves, 'VISION_GRID_STEP', DEFAULT_VISION_GRID_STEP))
         registry = browser.get_registry()
         
         sid = f"thread_web_{uuid.uuid4().hex[:8]}"
@@ -148,7 +164,7 @@ class Tools:
             await browser.action_browser_control(command="navigate", value=start_url)
         
         res_view = await browser.highlight()
-        await _deploy_navigation_monitor(res_view, chat_id, uid, u_valves, events)
+        await _deploy_navigation_monitor(res_view, chat_id, uid, u_valves, events, browser_session_id=browser_session_id)
 
         vision_requested = False
 
@@ -231,10 +247,10 @@ class Tools:
         async def stream_proxy():
             last_id = 0
             import re
-            clean_hud_id = re.sub(r'[^a-zA-Z0-9]', '_', f"nav-{chat_id[:8]}")
+            clean_hud_id = re.sub(r'[^a-zA-Z0-9]', '_', f"nav-{browser_session_id[:8]}")
             while not stop_streaming.is_set():
                 try:
-                    resp = await req_to_browser(10, "/screencast/latest", {"session_id": chat_id, "last_frame_id": last_id}, uid)
+                    resp = await req_to_browser(10, "/screencast/latest", {"session_id": browser_session_id, "last_frame_id": last_id}, uid)
                     if resp and resp.get("status") == "success":
                         new_id = resp.get("frame_id", last_id)
                         b64 = resp.get("frame_b64")
@@ -387,7 +403,7 @@ class Tools:
                                                 hud_view["webp_b64"] = sc_res["webp_b64"]
                                         except: pass
                                     
-                                    await _deploy_navigation_monitor(hud_view, chat_id, uid, u_valves, events)
+                                    await _deploy_navigation_monitor(hud_view, chat_id, uid, u_valves, events, browser_session_id=browser_session_id)
                                     last_fn_name = fn_name
                                     
                                 elif action_res.get("status") != "error":
@@ -406,7 +422,7 @@ class Tools:
                                                 last_view["webp_b64"] = sc_res["webp_b64"]
                                         except: pass
                                     
-                                        await _deploy_navigation_monitor(last_view, chat_id, uid, u_valves, events)
+                                        await _deploy_navigation_monitor(last_view, chat_id, uid, u_valves, events, browser_session_id=browser_session_id)
                                         _resp = {"status": "success", "dom_map": last_view.get("metadata", [])}
                                     
                                         if action_res.get("status") == "downloading":
@@ -533,14 +549,17 @@ class Tools:
         :param query: La directive (ex: 'Résume cet article', 'Trouve le prix', 'Décris le produit').
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        chat_id = __metadata__.get("chat_id", "default_session")
+        chat_id = (__metadata__ or {}).get("chat_id", "default_session")
+        sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
+        sub_sid = sub_ctx.get("sub_sid") if sub_ctx else None
+        browser_session_id = sub_sid if sub_sid else chat_id
         uid = __user__.get("id", "anonymous")
         u_valves = __user__.get("valves", self.UserValves())
         
-        if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, chat_id, uid, u_valves, events):
+        if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, browser_session_id, uid, u_valves, events, chat_id=chat_id):
             return wrap_tool_output(text="Erreur critique : Session perdue.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, chat_id, uid)
+        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, browser_session_id, uid)
         await events.status(f"🌐 Navigation vers {url}...")
         await browser.action_browser_control(command="navigate", value=url)
         
@@ -565,7 +584,7 @@ class Tools:
                 {"inlineData": {"mimeType": "text/plain", "data": f"___ECHO_STREAM_FILE___{tmp_path}___"}}
             ]}],
             "systemInstruction": {"parts": [{"text": SYS_NAV_BROWSER}]},
-            "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="low")
+            "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="medium")
         }
         
         analyse_model = clamp_model("MODEL_APOLLO", __metadata__, user_id=uid)
@@ -587,14 +606,17 @@ class Tools:
         :param url: L'URL absolue de la page à archiver.
         """
         events = EchoEvents(__event_emitter__, __event_call__)
-        chat_id = __metadata__.get("chat_id", "default_session")
+        chat_id = (__metadata__ or {}).get("chat_id", "default_session")
+        sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
+        sub_sid = sub_ctx.get("sub_sid") if sub_ctx else None
+        browser_session_id = sub_sid if sub_sid else chat_id
         uid = __user__.get("id", "anonymous")
         u_valves = __user__.get("valves", self.UserValves())
         
-        if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, chat_id, uid, u_valves, events):
+        if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, browser_session_id, uid, u_valves, events, chat_id=chat_id):
             return wrap_tool_output(text="Erreur critique : Session perdue.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, chat_id, uid)
+        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, browser_session_id, uid)
         await events.status(f"🌐 Navigation vers {url}...")
         await browser.action_browser_control(command="navigate", value=url)
         
@@ -631,9 +653,12 @@ class Tools:
 
     async def web_browse_reset(self, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
         """Réinitialise la session du navigateur (Fermeture et Nettoyage)."""
-        chat_id = __metadata__.get("chat_id", "default_session")
+        chat_id = (__metadata__ or {}).get("chat_id", "default_session")
+        sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
+        sub_sid = sub_ctx.get("sub_sid") if sub_ctx else None
+        browser_session_id = sub_sid if sub_sid else chat_id
         uid = __user__.get("id", "anonymous")
-        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, chat_id, uid)
+        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, browser_session_id, uid)
         res = await browser.reset_session()
         return wrap_tool_output(text="🚀 Navigateur réinitialisé.", status=res, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 

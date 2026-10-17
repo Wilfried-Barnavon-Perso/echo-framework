@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 1.10
+version: 1.13
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.13: Filtrage strict des parts de pensée native (thought=True) et journalisation des erreurs dans call_distillation.
+# 1.12: Harmonisation du message UI lors des retries ("⛓️💥 Reconnexion au modèle, tentative...").
+# 1.11: Utilisation factorisée de get_descending_cascade et get_generation_config (thinkingLevel="high" sur cascade 429).
 # 1.10: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.9: Tolérance de lecture snake_case/camelCase (functionDeclarations) pour la sécurisation des schémas d'outils.
-# 1.8: Silence Failover UI (429/401) et routage exclusif vers logs Docker pour une UX fluide.
-# 1.7: Migration vers ECHO_SUBAGENT_CONTEXT pour l'isolation du RAG des sous-agents.
-# 1.6: Injection de sub_sid dans le payload Qdrant pour isoler le RAG des sous-agents.
 import time
 import random
 import hashlib
@@ -27,7 +27,7 @@ from echo_state_manager import EchoStateManager
 from echo_http import _get_global_client, FatalAPIError
 from echo_core import clamp_model, split_thought_process
 from echo_protocol import build_ca_generation_config
-from echo_constants import AUTH_DATA_PROJECT_ID, AUTH_METHOD_OAUTH2, ECHO_AGY_USER_AGENT, ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, ECHO_GLOBAL_TENANT_PROJECT_ID, ECHO_RETRY_BASE_DELAY, ECHO_RETRY_JITTER_MAX, ECHO_RETRY_JITTER_MIN, ECHO_RETRY_MULTIPLIER, ECHO_SAFETY_SETTINGS, ECHO_USER_AGENT, GOOGLE_API_BASE_URL, GOOGLE_OAUTH_TOKEN_LIFETIME
+from echo_constants import AUTH_DATA_PROJECT_ID, AUTH_METHOD_OAUTH2, ECHO_AGY_USER_AGENT, ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, ECHO_GLOBAL_TENANT_PROJECT_ID, ECHO_RETRY_BASE_DELAY, ECHO_RETRY_JITTER_MAX, ECHO_RETRY_JITTER_MIN, ECHO_RETRY_MULTIPLIER, ECHO_SAFETY_SETTINGS, ECHO_USER_AGENT, GOOGLE_API_BASE_URL, GOOGLE_OAUTH_TOKEN_LIFETIME, get_descending_cascade, get_generation_config
 
 class EchoGeminiClient:
     """Moteur factorisé pour les appels API Gemini avec Architecture Symétrique (AI Studio & Code Assist)."""
@@ -371,18 +371,21 @@ class EchoGeminiClient:
         try:
             data = await EchoGeminiClient.call(actual_model, payload, user_id, chat_id=chat_id)
 
-            # Extraction et Nettoyage
+            # Extraction et Nettoyage (exclusion stricte des parts de pensée native Gemini)
             target = data.get("response", {}) if "response" in data else data
             candidates = target.get("candidates", [])
-            if not candidates: return {} if is_json else ""
+            if not candidates:
+                return {} if is_json else ""
 
-            full_text = "".join([p.get("text", "") for p in candidates[0]["content"].get("parts", [])])
+            parts_list = candidates[0].get("content", {}).get("parts", [])
+            full_text = "".join([p.get("text", "") for p in parts_list if not p.get("thought")])
             clean_text, _ = split_thought_process(full_text)
 
             if is_json:
                 return std_json.loads(clean_text)
             return clean_text
-        except:
+        except Exception as e:
+            print(f"[EchoGeminiClient.call_distillation] Error ({actual_model}): {e}", flush=True)
             return {} if is_json else ""
 
     @staticmethod
@@ -670,7 +673,7 @@ class EchoGeminiClient:
                 if attempt < current_limit:
                     wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
                     print(f"[EchoGemini] ⚠️ Tentative {attempt + 1}/{current_limit} échouée pour {target_model} : {e.__class__.__name__} - {str(e)}")
-                    if events: await events.status(f"⚠️ Erreur réseau. Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s...", done=False)
+                    if events: await events.status(f"⛓️💥 Reconnexion au modèle, tentative {attempt + 1}/{current_limit} dans {wait_time:.1f}s...", done=False)
                     await asyncio.sleep(wait_time)
                     current_delay *= ECHO_RETRY_MULTIPLIER
                     attempt += 1
@@ -719,20 +722,16 @@ class EchoGeminiClient:
                 )
 
         # 2. Construction cascade descendante depuis le modèle clampé
-        cascade_order = ["MODEL_PROMETHEUS", "MODEL_APOLLO", "MODEL_ZEPHYR"]
-        start_idx = cascade_order.index(clamped_key) if clamped_key in cascade_order else 1
-        cascade = cascade_order[start_idx:]
+        cascade = get_descending_cascade(clamped_key, include_start=True)
 
         # 3. Tentatives en cascade
         for model_key in cascade:
             actual_model = model_key
-
-            import copy
-            from echo_constants import ECHO_MODELS_REGISTRY
-            base_gen = copy.deepcopy(ECHO_MODELS_REGISTRY.get(model_key, ECHO_MODELS_REGISTRY.get("MODEL_ZEPHYR", {})).get("generationConfig", {}))
-            if "thinkingConfig" in base_gen:
-                base_gen["thinkingConfig"]["includeThoughts"] = include_thoughts
-            payload["generationConfig"] = base_gen
+            payload["generationConfig"] = get_generation_config(
+                model_key,
+                is_fallback_cascade=(model_key != clamped_key),
+                include_thoughts=include_thoughts,
+            )
 
             try:
                 data = await EchoGeminiClient.call(
@@ -933,7 +932,7 @@ class EchoGeminiClient:
                 current_limit = max_retries if provider.get("type") == AUTH_METHOD_OAUTH2 else threshold
                 if attempt < current_limit:
                     wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
-                    if events: await events.status(f"⚠️ Erreur réseau. Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s...", done=False)
+                    if events: await events.status(f"⛓️💥 Reconnexion au modèle, tentative {attempt + 1}/{current_limit} dans {wait_time:.1f}s...", done=False)
                     await asyncio.sleep(wait_time)
                     current_delay *= ECHO_RETRY_MULTIPLIER
                     attempt += 1

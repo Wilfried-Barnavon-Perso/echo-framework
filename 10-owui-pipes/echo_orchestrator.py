@@ -1,24 +1,23 @@
 """
-title: ECHO Engine
+title: Écho
 author: Wilfried BARNAVON
-version: 192.82
+version: 192.88
 requirements: asyncssh
-description: Composant système interne : ECHO Engine.
+description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 192.82: Suppression du statut initial "⚙️ Traitement en cours...".
-# 192.81: Enregistrement idempotent du pont in-process ECHO Audio (routes /echo/v1/audio).
-# 192.80: Renommage souverain des modèles cognitifs (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS) et politique AUTO_PROM.
-# 192.79: Augmentation de maxOutputTokens à 8192 dans le Fast-Track pour absorber le thinking sur les prompts volumineux.
-# 192.78: Fiabilisation du Fast-Track (title_generation en JSON, exclusion du system prompt, thinkingLevel low sans temperature et filtrage des parts thought).
+# 192.88: Transmission des métriques de Checkpoint Cognitif actif (compaction_count, compacted_turns) à EchoUI.deploy_context_gauge.
+# 192.87: Support de <artifact id="AEC_context_checkpoint"> sur le message pivot (préservation bit-perfect du shadow et séparation PGCU).
+# 192.86: Renommage du composant en echo_orchestrator.py (Écho / ECHO - Orchestrateur).
+# 192.85: Affichage du modèle technique lors du transfert cognitif (_get_ui_display) dans le statut UI.
+# 192.84: Réactivation du rafraîchissement asynchrone des quotas OAuth2 et affichage HUD des quotas 5h et hebdomadaire.
 
 
 # ==============================================================================
 # SECTION 0 : IMPORTS & CONFIGURATION
 # ==============================================================================
 import sys
-import copy
 import secrets
 import re
 import time
@@ -56,9 +55,10 @@ from echo_constants import (
     FILE_INGESTION_STATUS,
     CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE,
     ECHO_TOOLS_CACHE_MAX_SIZE,
-    ECHO_MODELS_REGISTRY, get_model_identity, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN,
+    ECHO_MODELS_REGISTRY, get_model_identity, get_generation_config,
+    get_descending_cascade, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN,
     AUTH_DATA_USER_EMAIL, AUTH_DATA_USER_TIER, AUTH_DATA_PROJECT_ID,
-    AEC_REMINDERS
+    AUTH_METHOD_OAUTH2, AEC_REMINDERS
 )
 from echo_auth import EchoAuth
 
@@ -70,7 +70,7 @@ try:
     # Protocole HTTP/2 obligatoire (h2)
     import h2  # noqa: F401
     import logging
-    log = logging.getLogger("echo.pipe_engine")
+    log = logging.getLogger("echo.echo_orchestrator")
 except ImportError as e:
     missing_module = e.name or "inconnu"
     raise ImportError(f"❌ Module critique manquant : '{missing_module}'. ECHO exige httpx, orjson, pybase64 et h2 (HTTP/2).") from e
@@ -257,6 +257,11 @@ class Orchestrator:
                 i += 1; continue
 
             # --- PRIORITÉ 1 : SHADOW BIT-PERFECT (ID + TIMESTAMP) ---
+            checkpoint_xml_on_msg = None
+            if role == "user" and isinstance(content, str) and '<artifact id="AEC_context_checkpoint"' in content:
+                from echo_core import EchoCompactionEngine
+                checkpoint_xml_on_msg, content = EchoCompactionEngine.strip_checkpoint_tag(content)
+
             if msg_id and updated_at:
                 shadow_data = self.user_data_manager.get_shadow(msg_id, updated_at)
                 if shadow_data:
@@ -269,6 +274,15 @@ class Orchestrator:
                         i += 1; continue
                     else:
                         # Shadow Classique (Parts uniquement)
+                        if checkpoint_xml_on_msg and isinstance(shadow_data, list):
+                            first_txt = shadow_data[0].get("text", "") if shadow_data and isinstance(shadow_data[0], dict) else ""
+                            if checkpoint_xml_on_msg not in first_txt:
+                                cleaned_shadow = [
+                                    p for p in shadow_data
+                                    if not (isinstance(p, dict) and '<artifact id="AEC_context_checkpoint"' in str(p.get("text", "")))
+                                ]
+                                shadow_data = [{"text": checkpoint_xml_on_msg + "\n\n"}] + cleaned_shadow
+                                self.user_data_manager.save_shadow(msg_id, updated_at, shadow_data, chat_id, role)
                         role_gemini = "model" if role in ["assistant", "model"] else "user"
                         final_contents.append({"role": role_gemini, "parts": shadow_data})
                         inv_hash = self.user_data_manager.calculate_invariant(role, shadow_data)
@@ -309,6 +323,8 @@ class Orchestrator:
                         for p in restored_parts:
                             if "text" in p:
                                 p["text"] = f"<REQUETE_UTILISATEUR>\n{p['text']}\n</REQUETE_UTILISATEUR>"
+                        if checkpoint_xml_on_msg:
+                            restored_parts = [{"text": checkpoint_xml_on_msg + "\n\n"}] + restored_parts
                 else:
                     # Assistant
                     tool_calls = m.get("tool_calls", [])
@@ -380,7 +396,7 @@ class Orchestrator:
             max_tokens = getattr(self.valves, "MAX_CONTEXT_SIZE", ECHO_MAX_CONTEXT_SIZE)
 
             if size > max_tokens * CONTEXT_WARNING_THRESHOLD:
-                await events.toast("⚠️ Approche de la limite contextuelle. Migration recommandée (Action 'Résume et Transfert vers un nouveau chat').", "warning", "ECHO V5")
+                await events.toast("⚠️ Approche de la limite contextuelle. Compactage recommandé (Action 'Compacter le contexte de la session' ou UserValve Auto-Compaction).", "warning", "ECHO V5")
 
             if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
                 system_parts = final_contents[0] if final_contents and final_contents[0].get("role") == "system" else None
@@ -544,7 +560,7 @@ class StreamProcessor:
 #
 # Solution : le Pipe stocke __tools__[chat_id] dans ce dict module-level.
 #   Comme le Pipe et tous les outils s'exécutent dans le même processus Python,
-#   agent_engine_tool peut accéder à ce cache via sys.modules["function_pipe_engine"].
+#   agent_engine_tool peut accéder à ce cache via sys.modules["function_echo_orchestrator"].
 #
 # Durée de vie : le cache persiste tant que le processus uvicorn tourne.
 #   En cas de redémarrage, il est reconstitué au premier message de chaque chat.
@@ -571,7 +587,7 @@ class Pipe:
             try:
                 register_echo_audio_routes()
             except Exception as e:
-                print(f"[ECHO Engine] ⚠️ Échec enregistrement routes audio : {e}")
+                print(f"[Écho] ⚠️ Échec enregistrement routes audio : {e}")
 
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, __request__: Optional[Any] = None, __tools__: list = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
 
@@ -893,6 +909,7 @@ class Pipe:
         asst_msg_id = kwargs.get("__message_id__")
         failed_models_this_turn = set()
         applied_model = target_model
+        is_fallback_cascade = False
 
         while cascade_attempt < max_cascade_attempts:
             cascade_attempt += 1
@@ -921,9 +938,11 @@ class Pipe:
             resolved_sys = resolve_placeholders(sys_instr_raw, target_model, orch.model_origin)
             sys_instr = {"parts": [{"text": resolved_sys}]}
 
-            gen_config = copy.deepcopy(ECHO_MODELS_REGISTRY.get(target_model, ECHO_MODELS_REGISTRY.get("MODEL_ZEPHYR", {})).get("generationConfig", {}))
-            if "thinkingConfig" in gen_config:
-                gen_config["thinkingConfig"]["includeThoughts"] = True
+            gen_config = get_generation_config(
+                target_model,
+                is_fallback_cascade=is_fallback_cascade,
+                include_thoughts=True,
+            )
 
             payload = {
                 "contents": context,
@@ -1017,20 +1036,12 @@ class Pipe:
                 log.error(f"[PipeEngine] Erreur API lors de l'appel Gemini: {e}")
                 # GESTION DES ÉCHECS TECHNIQUES — CASCADE DESCENDANTE
                 if is_auto and cascade_attempt < max_cascade_attempts:
-                    target_identity = get_model_identity(target_model)
-                    if target_identity == 'UNKNOWN':
-                        target_identity = 'MODEL_APOLLO'
-                    target_hierarchy = ECHO_MODELS_REGISTRY.get(target_identity, {}).get("hierarchy")
-                    target_hierarchy = target_hierarchy if target_hierarchy is not None else 0
-                    cascade_order_keys = sorted(
-                        [k for k in ECHO_MODELS_REGISTRY if ECHO_MODELS_REGISTRY[k].get("hierarchy") is not None and ECHO_MODELS_REGISTRY[k].get("hierarchy") < target_hierarchy],
-                        key=lambda k: ECHO_MODELS_REGISTRY[k].get("hierarchy"), reverse=True
-                    )
-                    cascade_order = cascade_order_keys
+                    cascade_order = get_descending_cascade(target_model, include_start=False)
                     if cascade_order:
                         prev_model = target_model
                         target_model = cascade_order[0]
                         failed_models_this_turn.add(prev_model)
+                        is_fallback_cascade = True
 
                         await events.status(f"⚡ {prev_model} indisponible → cascade vers {target_model}")
                         await events.toast(f"⚡ Cascade : {prev_model} → {target_model} (erreur: {str(e)[:80]})", "warning")
@@ -1110,7 +1121,7 @@ class Pipe:
                     })
                     continue
 
-                await events.status(f"🚀 Transfert cognitif vers {new_target}...")
+                await events.status(f"🚀 Transfert cognitif vers {_get_ui_display(new_target)}...")
 
                 if proc.captured_sig:
                     orch.user_data_manager.save_call_bridge(f"esc-{secrets.token_hex(4)}", proc.captured_sig, "new_cognitive_level", req)
@@ -1188,6 +1199,7 @@ class Pipe:
 
                 target_model = new_target
                 applied_model = new_target
+                is_fallback_cascade = False
                 continue
             else:
                 # [NOUVEAU] INDEXATION FINALE (SUTURE)
@@ -1320,7 +1332,13 @@ class Pipe:
         # --- HUD METRICS ---
         if user_valves.SHOW_CONTEXT_METRICS:
             # Rafraîchissement intelligent des quotas (OAuth2 uniquement) - ASYNCHRONE NON BLOQUANT
-            # # asyncio.create_task(auth.refresh_quota_if_needed())  # [192.38]  # [192.38] DÉSACTIVÉ : AuthService n'existe plus
+            if auth_providers and auth_providers[0].get("type") == AUTH_METHOD_OAUTH2:
+                import asyncio
+                if '_BACKGROUND_TASKS' not in globals():
+                    _BACKGROUND_TASKS = set()
+                q_task = asyncio.create_task(auth.refresh_quota_if_needed())
+                _BACKGROUND_TASKS.add(q_task)
+                q_task.add_done_callback(_BACKGROUND_TASKS.discard)
 
             p_t = cumulative_usage_stats.get("promptTokenCount", 0)
             c_t = cumulative_usage_stats.get("cachedContentTokenCount", 0)
@@ -1339,31 +1357,64 @@ class Pipe:
             tier = echo_auth.get_auth_data(AUTH_DATA_USER_TIER)
             proj = echo_auth.get_auth_data(AUTH_DATA_PROJECT_ID)
 
-            # Quota spécifique au modèle CA courant
+            # Quota spécifique au modèle CA courant (5h + Hebdomadaire)
             ca_model_id = get_ca_model_id(target_model)
             model_quota = echo_auth.get_model_quota(ca_model_id)
+            q_summary = echo_auth.get_quota_summary(ca_model_id)
 
-            q_fraction = float(model_quota.get("remainingFraction",
-                               float(echo_auth.get_auth_data("google_quota_fraction") or 1.0)))
-            q_reset_raw = str(model_quota.get("resetTime",
-                              echo_auth.get_auth_data("google_quota_reset") or "N/A"))
+            def _format_quota_reset(raw_iso: str) -> str:
+                if not raw_iso or "T" not in raw_iso:
+                    return raw_iso or "N/A"
+                try:
+                    reset_dt = datetime.fromisoformat(raw_iso.replace("Z", "+00:00"))
+                    diff_sec = (reset_dt - datetime.now(timezone.utc)).total_seconds()
+                    if diff_sec <= 0:
+                        return "Imminent"
+                    diff_min = int(diff_sec / 60)
+                    if diff_min >= 1440:
+                        days = diff_min // 1440
+                        hours = (diff_min % 1440) // 60
+                        return f"{reset_dt.strftime('%d/%m %H:%M')} ({days}j {hours}h)"
+                    if diff_min >= 60:
+                        hours = diff_min // 60
+                        mins = diff_min % 60
+                        return f"{reset_dt.strftime('%H:%M')} ({hours}h{mins:02d})"
+                    return f"{reset_dt.strftime('%H:%M')} ({diff_min}')"
+                except Exception:
+                    return raw_iso
+
+            q5_info = q_summary.get("5h", {})
+            qw_info = q_summary.get("weekly", {})
+
+            q5_disabled = bool(q5_info.get("quotaDisabled", False))
+            q5_frac = float(q5_info.get("remainingFraction", 1.0)) if q5_info else None
+            q5_reset = _format_quota_reset(str(q5_info.get("resetTime", "N/A"))) if q5_info else "N/A"
+
+            qw_frac = float(qw_info.get("remainingFraction", 1.0)) if qw_info else None
+            qw_reset = _format_quota_reset(str(qw_info.get("resetTime", "N/A"))) if qw_info else "N/A"
+
+            # Calcul de la fraction globale pour l'anneau SVG (minimum des quotas actifs)
+            active_fracs = []
+            if q5_frac is not None and not q5_disabled:
+                active_fracs.append(q5_frac)
+            if qw_frac is not None:
+                active_fracs.append(qw_frac)
+
+            if active_fracs:
+                q_fraction = min(active_fracs)
+                q_reset = qw_reset if (qw_frac is not None and q_fraction == qw_frac) else q5_reset
+            else:
+                q_fraction = float(model_quota.get("remainingFraction",
+                                   float(echo_auth.get_auth_data("google_quota_fraction") or 1.0)))
+                q_reset_raw = str(model_quota.get("resetTime",
+                                  echo_auth.get_auth_data("google_quota_reset") or "N/A"))
+                q_reset = _format_quota_reset(q_reset_raw)
+
             q_type = echo_auth.get_auth_data("google_quota_type") or "CODE_ASSIST"
 
             # Crédits AI (source : loadCodeAssist HEALTH_CHECK)
             credits_raw = echo_auth.get_auth_data("google_credits_total") or echo_auth.get_auth_data("google_g1_credits")
-            credits_val = credits_raw if (credits_raw and credits_raw != "0") else "∞"
-
-            # Formatage du reset : ISO → HH:MM + minutes restantes
-            q_reset = q_reset_raw
-            if "T" in q_reset_raw:
-                try:
-                    q_reset = q_reset_raw.split("T")[1][:5]
-                    reset_dt = datetime.fromisoformat(q_reset_raw.replace("Z", "+00:00"))
-                    diff_min = int((reset_dt - datetime.now(timezone.utc)).total_seconds() / 60)
-                    if diff_min > 0:
-                        q_reset = f"{q_reset} ({diff_min}')"
-                except Exception:
-                    pass
+            credits_val = credits_raw if (credits_raw is not None and credits_raw != "") else "0"
 
             # Champs détaillés du quota modèle (RPD / RPM)
             q_rpd_rem = str(model_quota.get("requestsPerDayRemaining", "N/A"))
@@ -1380,6 +1431,11 @@ class Pipe:
             prompt_pct = min(100, (active_p_t / max_t) * 100)
             gen_pct = min(100, (g_t / max_t) * 100)
 
+            from echo_core import EchoCompactionEngine
+            _cp_state = EchoCompactionEngine.get_compaction_state(orch.user_data_manager.state_manager) if chat_id else None
+            _cp_count = int(_cp_state.get("compaction_count", 0)) if _cp_state else 0
+            _cp_turns = int(_cp_state.get("compacted_turns", 0)) if _cp_state else 0
+
             await EchoUI.deploy_context_gauge(
                 events=events, plan_name=plan_name, credits_val=credits_val, quota_str=quota_str,
                 c_t=c_t, active_p_t=active_p_t, g_t=g_t, max_t=max_t,
@@ -1390,6 +1446,9 @@ class Pipe:
                 quota_model=q_model_label,
                 quota_rpd_rem=q_rpd_rem, quota_rpd_lim=q_rpd_lim,
                 quota_rpm_rem=q_rpm_rem, quota_rpm_lim=q_rpm_lim,
+                quota_5h_fraction=q5_frac, quota_5h_reset=q5_reset, quota_5h_disabled=q5_disabled,
+                quota_weekly_fraction=qw_frac, quota_weekly_reset=qw_reset,
+                compaction_count=_cp_count, compacted_turns=_cp_turns,
             )
 
         if cumulative_usage_stats.get("totalTokenCount", 0) > 0:

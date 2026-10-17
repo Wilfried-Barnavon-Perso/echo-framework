@@ -128,6 +128,8 @@
         <tr><td><code>google_user_tier</code></td><td>TEXT</td><td>Niveau d'abonnement Google (ex. <code>FREE</code>, <code>STANDARD</code>).</td></tr>
         <tr><td><code>google_project_id</code></td><td>TEXT</td><td>ID du projet API Antigravity actif.</td></tr>
         <tr><td><code>google_credits_total</code></td><td>TEXT</td><td>Crédits AI disponibles (depuis <code>paidTier.availableCredits</code>).</td></tr>
+        <tr><td><code>google_g1_credits</code></td><td>TEXT</td><td>Crédits Google One AI disponibles.</td></tr>
+        <tr><td><code>google_quota_summary</code></td><td>TEXT (JSON)</td><td>Quotas glissants 5h et hebdomadaire sérialisés en JSON (depuis <code>:retrieveUserQuotaSummary</code>).</td></tr>
         <tr><td><code>google_quota_by_model</code></td><td>TEXT (JSON)</td><td>Dict <code>{ca_model_id: quotaInfo}</code>. Source du quota affiché dans le HUD.</td></tr>
         <tr><td><code>google_quota_fraction</code></td><td>TEXT</td><td>Fraction quota restante du modèle principal (0,0–1,0).</td></tr>
         <tr><td><code>google_quota_reset</code></td><td>TEXT</td><td>Heure de reset du quota (ISO 8601).</td></tr>
@@ -212,7 +214,7 @@
     <table>
       <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><code>key</code></td><td>TEXT PK</td><td>Clé de réglage (<code>last_model_id</code>, <code>turn_origin_model</code>, <code>last_framework_version</code>, <code>context_stats</code>, <code>aec_tier_*</code>, <code>model_policy</code>).</td></tr>
+        <tr><td><code>key</code></td><td>TEXT PK</td><td>Clé de réglage (<code>last_model_id</code>, <code>turn_origin_model</code>, <code>last_framework_version</code>, <code>context_stats</code>, <code>compaction_state</code>, <code>aec_tier_*</code>, <code>model_policy</code>).</td></tr>
         <tr><td><code>value</code></td><td>TEXT NOT NULL</td><td>Valeur sérialisée (remplace les anciennes tables <code>session_state</code> et <code>context_stats</code>).</td></tr>
         <tr><td><code>updated_at</code></td><td>INT NOT NULL</td><td>Timestamp de dernière mise à jour.</td></tr>
       </tbody>
@@ -268,7 +270,13 @@
         <tr><td><code>ECHO_RETRY_BASE_DELAY</code></td><td>3,0 s</td><td>Client Gemini</td><td>Délai de base du backoff exponentiel (compatible avec <code>GUNICORN_TIMEOUT=120s</code>).</td></tr>
         <tr><td><code>ECHO_RETRY_MULTIPLIER</code></td><td>1,5</td><td>Client Gemini</td><td>Multiplicateur du backoff exponentiel.</td></tr>
         <tr><td><code>ECHO_RETRY_JITTER_MIN/MAX</code></td><td>0,7 / 1,3</td><td>Client Gemini</td><td>Plage de jitter aléatoire pour éviter les tempêtes de retry.</td></tr>
-        <tr><td><code>AEC_REMINDERS</code></td><td>22k / 34k / 55k / 88k / 120k</td><td>Pipe Engine</td><td>Paliers de tokens et outils déclenchant les rappels cognitifs multi-axes (<code>efficiency</code>, <code>strategy</code>, <code>alignment</code>, <code>factuality</code>, <code>kernel</code>, <code>context_hygiene</code>).</td></tr>
+        <tr><td><code>AEC_REMINDERS</code></td><td>22k / 34k / 55k / 88k / 120k</td><td>Echo Orchestrator</td><td>Paliers de tokens et outils déclenchant les rappels cognitifs multi-axes (<code>efficiency</code>, <code>strategy</code>, <code>alignment</code>, <code>factuality</code>, <code>kernel</code>, <code>context_hygiene</code>).</td></tr>
+        <tr><td><code>ECHO_COMPACTION_ENABLED_DEFAULT</code></td><td><code>False</code></td><td>Compaction</td><td>État par défaut de la valve d'auto-compaction contextuelle (<code>ENABLE_AUTO_COMPACTION</code>).</td></tr>
+        <tr><td><code>CONTEXT_COMPACTION_TRIGGER_RATIO</code></td><td><code>0.45</code></td><td>Compaction</td><td>Ratio de charge de <code>ECHO_MAX_CONTEXT_SIZE</code> (45 %) déclenchant le compactage contextuel in-place.</td></tr>
+        <tr><td><code>CONTEXT_COMPACTION_TARGET_RATIO</code></td><td><code>0.25</code></td><td>Compaction</td><td>Ratio cible de fenêtre récente conservée (25 %) après élagage et synthèse du Checkpoint.</td></tr>
+        <tr><td><code>ECHO_COMPACTION_MIN_TURNS_TO_KEEP</code></td><td><code>2</code></td><td>Compaction</td><td>Nombre minimal de tours complets récents préservés intacts lors du compactage.</td></tr>
+        <tr><td><code>ECHO_COMPACTION_MODEL</code></td><td><code>MODEL_APOLLO</code></td><td>Compaction</td><td>Modèle cognitif sollicité par <code>EchoCompactionEngine</code> pour la consolidation téléscopique.</td></tr>
+        <tr><td><code>ECHO_COMPACTION_MAX_OUTPUT_TOKENS</code></td><td><code>32768</code></td><td>Compaction</td><td>Budget maximal de tokens de sortie alloué à la génération du Checkpoint cognitif.</td></tr>
         <tr><td><code>PKCE_CALLBACK_TIMEOUT</code></td><td>300 s</td><td>Auth PKCE</td><td>Délai maximal accordé à l'utilisateur pour valider l'autorisation OAuth2.</td></tr>
         <tr><td><code>GOOGLE_OAUTH_TOKEN_LIFETIME</code></td><td>3 300 s</td><td>Auth PKCE</td><td>Durée proactive de rafraîchissement du token OAuth2 (55 min).</td></tr>
         <tr><td><code>ECHO_AUDIO_DEFAULT_TTS_VOICE</code></td><td><code>fr-FR-VivienneMultilingualNeural</code></td><td>Pont Audio</td><td>Voix neuronale multilingue par défaut de la synthèse vocale Edge TTS.</td></tr>
@@ -301,7 +309,7 @@
       <thead><tr><th>Méthode</th><th>Description</th></tr></thead>
       <tbody>
         <tr><td><code>call(model, payload, user_id, chat_id)</code></td><td>Appel non-streamant gérant automatiquement le choix du backend (AI Studio / Code Assist) et le Circuit Breaker OAuth2.</td></tr>
-        <tr><td><code>call_distillation(prompt, __user__, __metadata__, is_json, max_tokens)</code></td><td>Exécute une tâche de distillation via <code>MODEL_DISTILLATION</code> (<code>gemini-3.5-flash-lite</code> / <code>gemini-3.1-flash-lite</code>).</td></tr>
+        <tr><td><code>call_distillation(prompt, __user__, __metadata__, is_json, max_tokens)</code></td><td>Exécute une tâche de distillation via <code>MODEL_DISTILLATION</code> (<code>gemini-3.5-flash-lite</code> sur les deux backends, avec filtrage strict des blocs de pensée native <code>thought</code>).</td></tr>
         <tr><td><code>generate_embedding(text, task_type, __user__, __metadata__)</code></td><td>Vectorise un texte en 1024 floats via l'Edge Bridge WebGPU ou le fallback local <code>microsoft/Harrier-OSS-v1-0.6B</code>.</td></tr>
         <tr><td><code>get_stealth_headers(url)</code></td><td>Construit les en-têtes HTTP/2 haute fidélité (<code>ECHO_STEALTH_USER_AGENT</code> Chrome 123, <code>Sec-Fetch-*</code>).</td></tr>
       </tbody>
@@ -315,9 +323,9 @@
       reproduisent l'identité de la plateforme Linux Docker émulée :
     </p>
 
-    <div class="code-header">En-têtes - ECHO API Code Assist (Antigravity 2.5.5)</div>
-    <pre><code>User-Agent: antigravity/2.5.5 linux/amd64
-x-goog-api-client: antigravity/2.5.5
+    <div class="code-header">En-têtes - ECHO API Code Assist (Antigravity 2.24.0)</div>
+    <pre><code>User-Agent: antigravity/hub/2.24.0 (os_type=linux; arch=amd64; cl=1000335682; auth_method=personal_consumer; proxy_client=antigravity/2.24.0)
+x-goog-api-client: antigravity/2.24.0
 Authorization: Bearer {oauth_token}
 Content-Type: application/json</code></pre>
 
@@ -333,7 +341,7 @@ Content-Type: application/json</code></pre>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.223.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.226.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

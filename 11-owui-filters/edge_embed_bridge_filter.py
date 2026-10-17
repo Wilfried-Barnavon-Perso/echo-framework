@@ -2,19 +2,16 @@
 title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
-version: 1.25
+version: 1.26
 description: Composant système interne : Edge Embedding Bridge Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.26: Ajustement du HUD WebGPU (Décalage horizontal à calc(50% + 125px) pour éviter le chevauchement avec la barre de contexte).
 # 1.25: Fix HUD WebGPU (Saut de position lors du clignotement) via CSS scale indépendant.
 # 1.24: Optimisation (Bypass Serveur-Side) empêchant l'injection JS sur mobile et purge du code mort associé.
 # 1.23: Désactivation totale de WebGPU sur mobile (Fallback CPU immédiat).
 # 1.22: Fix bypass timeout. Support du statut connecting et timeout unknown à 5s.
-# 1.21: Rétablissement de q4f16 pour compatibilité WebGPU stricte.
-# 1.18: Purge des références bge-m3. Fix fallback q4 universel pour GPU mobiles (Android).
-# 1.17: Fix compatibilité Android (suppression du setTimeout et de la transparence causant l'invisibilité de l'icône).
-# 1.14: Fix HUD WebGPU Mobile (Opacité/Morphing) et standardisation 1024D (Harrier 0.6b).
 
 import asyncio
 from pydantic import BaseModel, Field
@@ -23,6 +20,7 @@ try:
     from echo_constants import DEFAULT_EDGE_EMBEDDING_TIMEOUT
 except ImportError:
     DEFAULT_EDGE_EMBEDDING_TIMEOUT = 180
+
 
 class Filter:
     class Valves(BaseModel):
@@ -43,7 +41,6 @@ class Filter:
     def __init__(self):
         self.valves = self.Valves()
         self.icon = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTMgMmwyIDYuNW0tNyAwaDIuNW0tMyA3LjVsMi41LTdtMyA3bC0yLjUtN20tNiA0aDEwbTEgMmEyIDIgMCAwIDEgMiAydjZhMiAyIDAgMCAxLTIgMmgtMTJhMiAyIDAgMCAxLTItMnYtNmEyIDIgMCAwIDEgMi0yaDEyIi8+PC9zdmc+"
-
 
     async def inlet(
         self,
@@ -79,7 +76,7 @@ class Filter:
             if re.search(r'mobi|android|iphone|ipad|ipod', user_agent):
                 import logging
                 logger = logging.getLogger("ECHO-EDGE-BRIDGE")
-                logger.info(f"📱 Bypass Mobile (Server-Side) : Pont WebGPU ignoré pour ce client.")
+                logger.info("📱 Bypass Mobile (Server-Side) : Pont WebGPU ignoré pour ce client.")
                 return body
 
         user_id = __user__.get("id", "anonymous") if __user__ else "anonymous"
@@ -89,11 +86,11 @@ class Filter:
         # 2. HUD Echo discret (en bas à droite)
         # 3. Import Transformers.js
         # 4. Connexion WSS
-        SCRIPT_VERSION = "1.25"
+        SCRIPT_VERSION = "1.26"
         
         # --- SYNCHRONISATION DYNAMIQUE DU MODÈLE (CPU -> GPU) ---
         import httpx
-        cpu_model = "microsoft/Harrier-OSS-v1-0.6B" # Par défaut
+        cpu_model = "microsoft/Harrier-OSS-v1-0.6B"  # Par défaut
         try:
             with httpx.Client(timeout=1.5) as client:
                 resp = client.get("http://echo-embedding:7997/health")
@@ -429,7 +426,7 @@ class Filter:
                                 yOffset = 0;
                                 hud.style.transform = 'translate3d(0, 0, 0)';
                                 
-                                hud.style.left = 'calc(50% + 90px)';
+                                hud.style.left = 'calc(50% + 125px)';
                                 hud.style.opacity = '0.85';
                                 
                                 hud.title = "ECHO Edge WebGPU actif (__HUD_TITLE__)";

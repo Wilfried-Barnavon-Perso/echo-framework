@@ -48,12 +48,12 @@
         <ul>
           <li><strong>Ciblage Géométrique &amp; Lidar Check :</strong> L'agent combine une <em>Vision Grid</em> (pas de 48 px) avec le recadrage CDP sans altération du viewport (<code>action_zoom_in</code> / <code>action_zoom_out</code> projetant un <strong>Viseur Rouge</strong> au centre) et l'action <code>click_current</code>. Avant chaque clic, un <code>wait_for_settle</code> et un <strong>Lidar Check</strong> recalibrent la bounding box et valident le hit-test (<code>document.elementFromPoint</code>) sur une carte DOM à indexation générationnelle (<code>gen:n</code>).</li>
           <li><strong>Furtivité WAF Bypass :</strong> Suppression atomique du descripteur <code>navigator.webdriver</code> sur le prototype, instanciation native de <code>PluginArray</code>, spoofing WebGL (RTX 3060) et proxys JS haute fidélité pour franchir Cloudflare et DataDome.</li>
-          <li><strong>Outils de Navigation :</strong> <code>delegate_web_browsing</code> (boucle OODA isolée par <code>sub_sid</code>), <code>analyze_web_page</code>, <code>archive_web_page</code> (indexation RAG asynchrone) et <code>prune_heavy_context</code> (élagage proactif au-delà de <code>PRUNE_CONTENT_THRESHOLD = 60 000</code> caractères).</li>
+          <li><strong>Outils de Navigation :</strong> Séparation stricte entre <code>chat_id</code> (utilisé pour la base SQLite <code>session.db</code> et le Vault <code>files/</code>) et <code>browser_session_id</code> (<code>sub_sid</code> du sous-agent ou <code>chat_id</code>, utilisé pour isoler le contexte Playwright et le HUD). Inclut <code>delegate_web_browsing</code> (boucle OODA isolée par <code>sub_sid</code>), <code>analyze_web_page</code> (exécuté sur <code>MODEL_APOLLO</code> avec <code>thinking="medium"</code>), <code>archive_web_page</code> (indexation RAG asynchrone) et <code>prune_heavy_context</code> (élagage proactif au-delà de <code>PRUNE_CONTENT_THRESHOLD = 60 000</code> caractères).</li>
         </ul>
 
         <h3>2. Recherche Souveraine &amp; Data Broker (<code>sovereign_web_search.py</code> &amp; <code>delegate_to_data_broker.py</code>)</h3>
         <ul>
-          <li><strong>Sovereign Web Search :</strong> S'appuie sur le proxy local <code>echo-searxng</code> (port 8080) et DuckDuckGo via <code>search_instant_answer</code>, <code>search_web</code> et <code>delegate_deep_research</code> (agent de recherche profonde multi-tours, budget par défaut <code>200</code> appels).</li>
+          <li><strong>Sovereign Web Search :</strong> S'appuie sur le proxy local <code>echo-searxng</code> (port 8080) et DuckDuckGo via <code>search_instant_answer</code>, <code>search_web</code> et <code>delegate_deep_research</code> (agent de recherche profonde multi-tours, budget par défaut <code>200</code> appels ; en fin d'exécution, l'outil invoque explicitement <code>reset_session()</code> sur le Browser Worker en plus de purger la session SQLite éphémère <code>sub_sid</code>).</li>
           <li><strong>Data Broker (<code>ask_data_broker</code>) :</strong> Délégation de la collecte et du croisement de données volumineuses à un sous-agent dédié.</li>
         </ul>
 
@@ -72,7 +72,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.223.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.226.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

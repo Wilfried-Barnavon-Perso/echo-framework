@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.40
+version: 5.42
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.42: Sanctuarisation thinkingLevel "high" sur synthèse Delphi et critique, consolidation sur MODEL_APOLLO (medium).
+# 5.41: Résolution robuste de chat_id avec fallback sur __metadata__ pour la propagation aux sous-agents.
 # 5.40: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 5.38: Mise à jour de la docstring de forge_skill pour recommander l'usage de search_skill en amont.
 # 5.37: Ajout des outils read_skill et search_skill pour la consultation et la découverte sémantique.
-# 5.36: Fix: Initialisation manquante de EchoEvents dans delete_user_skill.
-# 5.35: Restitution explicite de rounds_remaining pour les agents supervisés.
 
 import sys
 import orjson as json
@@ -343,8 +343,9 @@ class Tools:
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
-        if not __chat_id__:
-            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
+        if not chat_id:
+            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=user_id, chat_id=None, metadata=__metadata__)
 
         # ── Phase 0 : Validation & Chargement ──
         skill_ids = [s.strip() for s in participants if s.strip()]
@@ -467,7 +468,7 @@ class Tools:
                     target_model_key=target_model,
                     max_calls_override=max_calls_per_round,
                     __user__=__user__,
-                    __chat_id__=__chat_id__,
+                    __chat_id__=chat_id,
                     __metadata__=__metadata__,
                     __event_emitter__=__event_emitter__,
                     __event_call__=__event_call__,
@@ -524,7 +525,7 @@ class Tools:
         synthesis_payload = {
             "contents": [{"role": "user", "parts": [{"text": transcript}]}],
             "systemInstruction": {"parts": [{"text": synthesis_system}]},
-            "generationConfig": {**get_generation_config(synthesis_model), "maxOutputTokens": 16000}
+            "generationConfig": {**get_generation_config(synthesis_model, override_thinking="high"), "maxOutputTokens": 16000}
         }
 
         res, _, _ = await EchoGeminiClient.call_cascade(
@@ -547,7 +548,7 @@ class Tools:
 
         # ── Phase 4 : Clôture ──
         if close_on_finish:
-            state = EchoStateManager(user_id=user_id, chat_id=__chat_id__)
+            state = EchoStateManager(user_id=user_id, chat_id=chat_id)
             for agent_sid in council_sids:
                 state.delete_thread(agent_sid)
 
@@ -559,7 +560,7 @@ class Tools:
                 f"**Participants** : {roster_summary}\n\n"
                 f"{synthesis_text}"
             )
-        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        , user_id=user_id, chat_id=chat_id, metadata=__metadata__)
 
     # ==========================================================================
     # 3. SUPERVISEUR (Boucle critique / correction récursive)
@@ -593,17 +594,18 @@ class Tools:
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
-        if not __chat_id__:
-            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
+        if not chat_id:
+            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=user_id, chat_id=None, metadata=__metadata__)
 
         # Parsing du dict workers
         try:
             workers_dict = json.loads(workers) if isinstance(workers, str) else workers
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Format JSON invalide pour workers : {e}", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text=f"❌ Format JSON invalide pour workers : {e}", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
 
         if not workers_dict or not isinstance(workers_dict, dict):
-            return wrap_tool_output(text="❌ workers doit être un dict JSON non vide.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text="❌ workers doit être un dict JSON non vide.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
 
         task_id = f"sup_{uuid.uuid4().hex[:8]}"
         max_rounds = max_correction_rounds or self.user_valves.SUPERVISOR_MAX_CORRECTION_ROUNDS
@@ -616,7 +618,7 @@ class Tools:
         _delegate_mod = sys.modules.get("tool_agent_engine_tool")
         _delegate_cls = getattr(_delegate_mod, "Tools", None) if _delegate_mod else None
         if not _delegate_cls:
-            return wrap_tool_output(text="❌ Module agent_engine_tool introuvable dans sys.modules.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text="❌ Module agent_engine_tool introuvable dans sys.modules.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
         delegate = _delegate_cls()
         delegate.valves.KEY_SWITCH_THRESHOLD = self.valves.KEY_SWITCH_THRESHOLD
         delegate.valves.MAX_RETRIES = self.valves.MAX_RETRIES
@@ -641,7 +643,7 @@ class Tools:
                 sub_sid=agent_sid,
                 target_model_key=target_model,
                 __user__=__user__,
-                __chat_id__=__chat_id__,
+                __chat_id__=chat_id,
                 __metadata__=__metadata__,
                 __event_emitter__=__event_emitter__,
                 __event_call__=__event_call__,
@@ -691,7 +693,7 @@ class Tools:
                 target_model_key=critic_model,
                 payload={
                     "contents": [{"role": "user", "parts": [{"text": critic_prompt}]}],
-                    "generationConfig": get_generation_config("MODEL_DISTILLATION"),
+                    "generationConfig": get_generation_config(critic_model, override_thinking="high"),
                 },
                 user_id=user_id,
                 metadata=(__metadata__ or {}),
@@ -760,7 +762,7 @@ class Tools:
                     sub_sid=agent_sid,
                     target_model_key=target_model,
                     __user__=__user__,
-                    __chat_id__=__chat_id__,
+                    __chat_id__=chat_id,
                     __metadata__=__metadata__,
                     __event_emitter__=__event_emitter__,
                     __event_call__=__event_call__,
@@ -801,10 +803,10 @@ class Tools:
         )
 
         consolidation_res, _, _ = await EchoGeminiClient.call_cascade(
-            target_model_key=critic_model,
+            target_model_key="MODEL_APOLLO",
             payload={
                 "contents": [{"role": "user", "parts": [{"text": consolidation_prompt}]}],
-                "generationConfig": {**get_generation_config("MODEL_DISTILLATION"), "maxOutputTokens": 16000},
+                "generationConfig": {**get_generation_config("MODEL_APOLLO", override_thinking="medium"), "maxOutputTokens": 16000},
             },
             user_id=user_id,
             metadata=(__metadata__ or {}),
@@ -824,7 +826,7 @@ class Tools:
 
         # Clôture
         if close_on_finish:
-            state = EchoStateManager(user_id=user_id, chat_id=__chat_id__)
+            state = EchoStateManager(user_id=user_id, chat_id=chat_id)
             for agent_sid in worker_sids.values():
                 state.delete_thread(agent_sid)
 
@@ -840,8 +842,8 @@ class Tools:
                 "rounds_remaining": max_rounds - correction_round,
                 "workers_count": len(workers_dict)
             },
-            user_id=__user__.get("id", "system") if __user__ else "system",
-            chat_id=__metadata__.get("chat_id") if __metadata__ else None,
+            user_id=user_id,
+            chat_id=chat_id,
             metadata=__metadata__
         )
 
@@ -861,11 +863,12 @@ class Tools:
         :return: Markdown listant les conseils avec leurs participants et état.
         """
         user_id = __user__.get("id", "system") if __user__ else "system"
-        if not __chat_id__:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
+        if not chat_id:
+            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=user_id, chat_id=None, metadata=__metadata__)
 
-        state = EchoStateManager(user_id=user_id, chat_id=__chat_id__)
-        threads = state.list_threads(__chat_id__)
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        threads = state.list_threads(chat_id)
 
         councils: Dict[str, list] = {}
         for t in threads:
@@ -878,14 +881,14 @@ class Tools:
                     councils.setdefault(cid, []).append(t)
 
         if not councils:
-            return wrap_tool_output(text="ℹ️ Aucun conseil actif.", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text="ℹ️ Aucun conseil actif.", status={"status": "success"}, user_id=user_id, chat_id=chat_id, metadata=__metadata__)
 
         md = "### 🏛️ CONSEILS ACTIFS\n\n"
         for cid, members in councils.items():
             skills = [t["sub_sid"].split("_", 3)[3] if len(t["sub_sid"].split("_", 3)) >= 4 else "?" for t in members]
             md += f"- **ID:** `{cid}` | **Participants:** {', '.join(skills)} | **Sessions:** {len(members)}\n"
 
-        return wrap_tool_output(text=md, status={"status": "success", "councils": list(councils.keys())}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        return wrap_tool_output(text=md, status={"status": "success", "councils": list(councils.keys())}, user_id=user_id, chat_id=chat_id, metadata=__metadata__)
 
     async def close_council(
         self,
@@ -900,16 +903,17 @@ class Tools:
         :param council_id: Identifiant du conseil à fermer.
         """
         user_id = __user__.get("id", "system") if __user__ else "system"
-        if not __chat_id__:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
+        if not chat_id:
+            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=user_id, chat_id=None, metadata=__metadata__)
 
-        state = EchoStateManager(user_id=user_id, chat_id=__chat_id__)
-        threads = state.list_threads(__chat_id__)
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        threads = state.list_threads(chat_id)
         prefix = f"thread_council_{council_id}_"
         to_delete = [t["sub_sid"] for t in threads if t["sub_sid"].startswith(prefix)]
 
         if not to_delete:
-            return wrap_tool_output(text=f"❌ Conseil '{council_id}' introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text=f"❌ Conseil '{council_id}' introuvable.", status={"status": "error"}, user_id=user_id, chat_id=chat_id, metadata=__metadata__)
 
         for sid in to_delete:
             state.delete_thread(sid)
@@ -917,7 +921,7 @@ class Tools:
         return wrap_tool_output(
             text=f"✅ Conseil `{council_id}` fermé ({len(to_delete)} sessions purgées).",
             status={"status": "success"}
-        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        , user_id=user_id, chat_id=chat_id, metadata=__metadata__)
 
     async def list_supervised_tasks(
         self,
@@ -931,11 +935,12 @@ class Tools:
         :return: Markdown listant les tâches avec leurs workers et état.
         """
         user_id = __user__.get("id", "system") if __user__ else "system"
-        if not __chat_id__:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
+        if not chat_id:
+            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=user_id, chat_id=None, metadata=__metadata__)
 
-        state = EchoStateManager(user_id=user_id, chat_id=__chat_id__)
-        threads = state.list_threads(__chat_id__)
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        threads = state.list_threads(chat_id)
 
         tasks: Dict[str, list] = {}
         for t in threads:
@@ -947,14 +952,14 @@ class Tools:
                     tasks.setdefault(tid, []).append(t)
 
         if not tasks:
-            return wrap_tool_output(text="ℹ️ Aucune tâche supervisée active.", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text="ℹ️ Aucune tâche supervisée active.", status={"status": "success"}, user_id=user_id, chat_id=chat_id, metadata=__metadata__)
 
         md = "### 📋 TÂCHES SUPERVISÉES ACTIVES\n\n"
         for tid, workers in tasks.items():
             worker_ids = [t["sub_sid"].split("_", 3)[3] if len(t["sub_sid"].split("_", 3)) >= 4 else "?" for t in workers]
             md += f"- **ID:** `{tid}` | **Workers:** {', '.join(worker_ids)} | **Sessions:** {len(workers)}\n"
 
-        return wrap_tool_output(text=md, status={"status": "success", "tasks": list(tasks.keys())}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        return wrap_tool_output(text=md, status={"status": "success", "tasks": list(tasks.keys())}, user_id=user_id, chat_id=chat_id, metadata=__metadata__)
 
     async def close_supervised_task(
         self,
@@ -969,16 +974,17 @@ class Tools:
         :param task_id: Identifiant de la tâche supervisée à fermer.
         """
         user_id = __user__.get("id", "system") if __user__ else "system"
-        if not __chat_id__:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
+        if not chat_id:
+            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=user_id, chat_id=None, metadata=__metadata__)
 
-        state = EchoStateManager(user_id=user_id, chat_id=__chat_id__)
-        threads = state.list_threads(__chat_id__)
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        threads = state.list_threads(chat_id)
         prefix = f"thread_supervisor_{task_id}_"
         to_delete = [t["sub_sid"] for t in threads if t["sub_sid"].startswith(prefix)]
 
         if not to_delete:
-            return wrap_tool_output(text=f"❌ Tâche '{task_id}' introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text=f"❌ Tâche '{task_id}' introuvable.", status={"status": "error"}, user_id=user_id, chat_id=chat_id, metadata=__metadata__)
 
         for sid in to_delete:
             state.delete_thread(sid)
@@ -986,4 +992,4 @@ class Tools:
         return wrap_tool_output(
             text=f"✅ Tâche supervisée `{task_id}` fermée ({len(to_delete)} sessions purgées).",
             status={"status": "success"}
-        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        , user_id=user_id, chat_id=chat_id, metadata=__metadata__)

@@ -1,15 +1,15 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 2.12
+version: 2.15
 description: Permet au modèle de manipuler un espace de travail virtuel et asynchrone (Codex) avec versioning Git invisible, et accès natif à Python/Bash sécurisés.
 """
 # Historique des versions :
+# 2.15: Alignement du fallback model_id sur echo_orchestrator dans open_codex_ui.
+# 2.14: Remplacement de la distillation par MODEL_APOLLO (thinking: medium) dans summarize_codex pour fiabiliser la synthèse.
+# 2.13: Fix critique - Levée du blocage du 1er tour et ancrage déterministe de l'action sur le message utilisateur immuable (user_msg_id) pour éliminer le stale write-back (Chat.svelte:1724) et fiabiliser la réouverture du HUD.
 # 2.12: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 2.11: Fix - Blocage de l'outil `open_codex_ui` au premier tour (vérification __messages__) et ajout de la règle de parcimonie LLM.
-# 2.10: Fix critique - Extraction du `session_id` pour le passer à `trigger_action` afin d'éviter le crash en boucle de l'Event Caller.
-# 2.9: Injection absolue des variables de contexte (`chat_id`, `message_id`, `model_id`) vers le déclencheur d'action, garantissant un déterminisme total.
-# 2.8: Simplification extrême de `open_codex_ui` en utilisant la nouvelle méthode factorisée `events.trigger_action()` du framework.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -431,17 +431,23 @@ class Tools:
         lang = CodexRepo.detect_language(filename)
         await events.status(f"🔍 Distillation de {filename} ({result['total_lines']} lignes)...", done=False)
 
-        parts = [{"role": "user", "parts": [{"text": result["content"]}]}]
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": result["content"]}]}],
+            "systemInstruction": {"parts": [{"text": SYS_CODEX_SUMMARIZE.format(filename=filename, language=lang)}]},
+            "generationConfig": {**get_generation_config("MODEL_APOLLO", override_thinking="medium"), "maxOutputTokens": 8192}
+        }
 
-        summary = await EchoGeminiClient.call_distillation(
-            prompt="",
-            __user__=__user__,
-            __metadata__=__metadata__,
-            is_json=False,
-            parts=parts,
-            max_tokens=8192,
-            system_instruction=SYS_CODEX_SUMMARIZE.format(filename=filename, language=lang)
+        data, _, err = await EchoGeminiClient.call_cascade(
+            target_model_key="MODEL_APOLLO",
+            payload=payload,
+            user_id=uid,
+            metadata=__metadata__,
+            events=events,
+            timeout=self.valves.CODEX_EDIT_TIMEOUT,
+            chat_id=cid,
+            include_thoughts=False
         )
+        summary = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "") if data else f"❌ Échec synthèse : {err}"
 
         await events.status(f"✅ Synthèse de {filename} terminée.", done=True)
         return wrap_tool_output(
@@ -530,26 +536,27 @@ class Tools:
         """
         events = EchoEvents(__event_emitter__, __event_call__)
         
-        if len(__messages__) <= 2:
-            return wrap_tool_output(
-                text="Impossible au premier tour. Codex non disponible.",
-                status={"status": "error"},
-                user_id=__user__.get("id", "system") if __user__ else "system",
-                chat_id=__metadata__.get("chat_id") if __metadata__ else None,
-                metadata=__metadata__
-            )
-        
         chat_id = (__metadata__ or {}).get("chat_id", "")
-        message_id = (__metadata__ or {}).get("message_id", "")
-        model_id = (__model__ or {}).get("id", "echo-agent")
-        session_id = (__metadata__ or {}).get("session_id", "")
+        # CRITIQUE (Chat.svelte:1513-1724) : Ancrer l'Action sur le message UTILISATEUR immuable
+        # du tour courant (_echo_user_msg_id / parent_id) et NON sur le message assistant en cours
+        # de streaming (message_id), afin que la réécriture différée de Chat.svelte:1724 après le
+        # long-polling wait_code n'écrase jamais history.messages[assistant_message_id] (done: false).
+        meta = __metadata__ or {}
+        user_msg_id = (
+            meta.get("_echo_user_msg_id")
+            or meta.get("parent_id")
+            or (meta.get("user_message") or {}).get("id")
+            or meta.get("message_id", "")
+        )
+        model_id = (__model__ or {}).get("id", "echo_orchestrator")
+        session_id = meta.get("session_id", "")
         
         # 1. Injection de la cible
         target_payload = f"window._echoCodexTarget = {{ file: '{filename}', workspace: '{workspace}' }};\nreturn true;"
-        await events.call_execute(target_payload)
+        await events.call_execute(target_payload, timeout=5.0)
         
-        # 2. Déclenchement de l'action native via la méthode factorisée
-        await events.trigger_action("echo_codex_action", chat_id, message_id, model_id, session_id)
+        # 2. Déclenchement de l'action native via la méthode factorisée ancrée sur user_msg_id
+        await events.trigger_action("echo_codex_action", chat_id, user_msg_id, model_id, session_id)
         await events.status(f"Ouverture du Codex demandée pour {filename}...", done=True)
         
         return wrap_tool_output(

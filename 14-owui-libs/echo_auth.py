@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Auth
 author: Wilfried BARNAVON
-version: 1.1
+version: 1.2
 description: Gestion de l'authentification et OAuth2.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.2: Extraction des quotas 5h et semaine (retrieveUserQuotaSummary), correction Protobuf v3 (0.0) dans fetchAvailableModels et refresh OAuth2 proactif dans refresh_quota_if_needed.
 # 1.1: Restauration de l'usage d'AuthService pour le support PKCE et API keys.
 import os
 import time
@@ -32,7 +33,7 @@ from echo_constants import (
     ECHO_CALLBACK_PORT_RANGE_START, ECHO_CALLBACK_PORT_RANGE_END,
     ANTIGRAVITY_DESKTOP_CLIENT_ID, ANTIGRAVITY_DESKTOP_CLIENT_SECRET, AUTH_DATA_PROJECT_ID,
     AUTH_DATA_USER_TIER, AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_KEY_SECONDARY, AUTH_METHOD_OAUTH2,
-    ECHO_USERS_ROOT, GOOGLE_OAUTH_TOKEN_URL
+    ECHO_USERS_ROOT, GOOGLE_OAUTH_TOKEN_URL, GOOGLE_OAUTH_TOKEN_LIFETIME
 )
 class EchoAuth:
     def __init__(self, user_id: str = "system"):
@@ -79,6 +80,23 @@ class EchoAuth:
         if not raw:
             return {}
         return _j.loads(raw).get(ca_model_id, {})
+
+    def get_quota_summary(self, ca_model_id: str = "") -> dict:
+        """
+        Retourne {"5h": {...}, "weekly": {...}} pour la famille du modèle CA courant ("gemini" ou "3p").
+        Source : google_quota_summary (JSON) persisté par AuthService.fetch_user_quota.
+        """
+        import json as _j
+        raw = self.get_auth_data("google_quota_summary")
+        if not raw:
+            return {}
+        try:
+            summary = _j.loads(raw)
+            mid_lower = (ca_model_id or "").lower()
+            group_key = "3p" if (mid_lower.startswith("claude") or mid_lower.startswith("gpt")) else "gemini"
+            return summary.get(group_key) or summary.get("gemini") or {}
+        except Exception:
+            return {}
 
     async def get_ordered_auth_providers(self, user_id: str) -> List[Dict]:
         """Résout le registre des fournisseurs d'accès aux modèles par priorité (OAuth2 > Clé Primaire > Clé Secondaire)."""
@@ -692,8 +710,8 @@ class AuthService:
 
     async def fetch_user_quota(self, access_token: str, project_id: str):
 
-        """Récupère et persiste les quotas et crédits API Antigravity (Truth Source)."""
-
+        """Récupère et persiste les quotas (5h et semaine) et crédits API Antigravity (Truth Source)."""
+        import json as _j
         client = await _get_global_client()
 
         headers = {
@@ -708,7 +726,7 @@ class AuthService:
 
 
 
-        # 1. RAFRAÎCHISSEMENT DES CRÉDITS (Mode HEALTH_CHECK)
+        # 1. RAFRAÎCHISSEMENT DU TIER ET DES CRÉDITS (Mode HEALTH_CHECK)
 
         health_payload = {
 
@@ -756,35 +774,46 @@ class AuthService:
 
                     data  = h_resp.json()
 
-                    t_obj = data.get("paidTier") or data.get("currentTier")
+                    t_obj = data.get("paidTier") or data.get("paid_tier") or data.get("currentTier") or data.get("current_tier")
 
                     if isinstance(t_obj, dict):
 
-                        avail = t_obj.get("availableCredits") or []
+                        t_id   = t_obj.get("id")
+                        t_name = t_obj.get("name")
+                        if t_name and t_id and t_name.lower() != t_id.lower():
+                            tier_label = f"{t_name} ({t_id})"
+                        else:
+                            tier_label = t_id or t_name
+                        if tier_label:
+                            self.echo_auth.save_api_key(AUTH_DATA_USER_TIER, str(tier_label))
 
-                        # Capture de tous les crédits disponibles
+                        avail = t_obj.get("availableCredits") or t_obj.get("available_credits") or []
+
+                        # Capture de tous les crédits disponibles (y compris passage à 0)
 
                         total = sum(int(c.get("creditAmount", 0)) for c in avail if c.get("creditAmount"))
 
-                        if total > 0:
-
-                            self.echo_auth.save_api_key("google_credits_total", str(total))
+                        self.echo_auth.save_api_key("google_credits_total", str(total))
 
                         # Backward compat : clé spécifique GOOGLE_ONE_AI
-
+                        g1_found = False
                         for c in avail:
 
                             if c.get("creditType") == "GOOGLE_ONE_AI":
 
                                 self.echo_auth.save_api_key("google_g1_credits", str(c.get("creditAmount", "0")))
+                                g1_found = True
 
                                 break
+                        if not g1_found:
+                            self.echo_auth.save_api_key("google_g1_credits", "0")
 
-            except: pass
+            except Exception:
+                pass
 
             
 
-            # 2. RAFRAÎCHISSEMENT DES QUOTAS (retrieveUserQuotaSummary — aligné AGY IDE)
+            # 2. RAFRAÎCHISSEMENT DES QUOTAS 5H ET SEMAINE (retrieveUserQuotaSummary)
 
             try:
 
@@ -812,45 +841,122 @@ class AuthService:
 
                 if q_resp.status_code == 200:
 
-                    data    = q_resp.json()
+                    data     = q_resp.json()
 
-                    # Format AGY IDE (Protobuf JSON) :
+                    # Structure Protobuf JSON de retrieveUserQuotaSummary :
+                    # { groups: [ { displayName, description, buckets: [ { bucketId, window, remainingFraction, resetTime, disabled, description } ] } ] }
 
-                    #   { response?: { groups: [ { remaining: { case, value }, description, disabled } ] } }
+                    response = data.get("response", data)
 
-                    response = data.get("response", data)  # Fallback si pas de wrapper
-
-                    groups = response.get("groups", [])
+                    groups   = response.get("groups", [])
 
                     if groups:
 
-                        g = groups[0]
+                        summary_map = {}
 
-                        # remaining est un oneof Protobuf : extraire remainingFraction
+                        for g in groups:
 
-                        remaining = g.get("remaining", {})
+                            g_name = str(g.get("displayName") or "").lower()
 
-                        if isinstance(remaining, dict) and remaining.get("case") == "remainingFraction":
+                            g_key  = "3p" if ("claude" in g_name or "gpt" in g_name) else "gemini"
 
-                            fraction = remaining.get("value", 1.0)
+                            buckets = g.get("buckets") or []
 
-                        elif isinstance(remaining, (int, float)):
+                            g_buckets = {}
 
-                            # Fallback JSON simple (pas proto-json)
+                            if buckets:
 
-                            fraction = remaining
+                                for b in buckets:
 
-                        else:
+                                    bid = str(b.get("bucketId") or "").lower()
 
-                            fraction = g.get("remainingFraction", 1.0)
+                                    win = str(b.get("window") or "").lower()
 
-                        self.echo_auth.save_api_key("google_quota_fraction",  str(fraction))
+                                    w_key = "5h" if (win == "5h" or "5h" in bid) else "weekly"
 
-                        # description est un texte libre (ex: "Resets in 2h"), pas un ISO timestamp
+                                    rem = b.get("remaining")
 
-                        self.echo_auth.save_api_key("google_quota_reset",     str(g.get("description", "N/A")))
+                                    if isinstance(rem, dict) and rem.get("case") == "remainingFraction":
 
-                        self.echo_auth.save_api_key("google_quota_type",      "CODE_ASSIST")
+                                        frac = float(rem.get("value", 0.0))
+
+                                    elif isinstance(rem, (int, float)):
+
+                                        frac = float(rem)
+
+                                    elif "remainingFraction" in b:
+
+                                        frac = float(b.get("remainingFraction", 0.0))
+
+                                    else:
+
+                                        frac = 0.0 if b.get("resetTime") else 1.0
+
+                                    g_buckets[w_key] = {
+
+                                        "remainingFraction": frac,
+
+                                        "resetTime":         str(b.get("resetTime", "N/A")),
+
+                                        "disabled":          bool(b.get("disabled", False)),
+
+                                        "description":       str(b.get("description", "N/A")),
+
+                                    }
+
+                            else:
+
+                                # Fallback si un groupe plat sans sous-buckets est renvoyé
+
+                                rem = g.get("remaining", {})
+
+                                if isinstance(rem, dict) and rem.get("case") == "remainingFraction":
+
+                                    frac = float(rem.get("value", 1.0))
+
+                                elif isinstance(rem, (int, float)):
+
+                                    frac = float(rem)
+
+                                else:
+
+                                    frac = float(g.get("remainingFraction", 1.0))
+
+                                g_buckets["weekly"] = {
+
+                                    "remainingFraction": frac,
+
+                                    "resetTime":         str(g.get("resetTime") or g.get("description") or "N/A"),
+
+                                    "disabled":          bool(g.get("disabled", False)),
+
+                                    "description":       str(g.get("description", "N/A")),
+
+                                }
+
+                            summary_map[g_key] = g_buckets
+
+
+
+                        if summary_map:
+
+                            self.echo_auth.save_api_key("google_quota_summary", _j.dumps(summary_map))
+
+                            gem_b = summary_map.get("gemini") or next(iter(summary_map.values()), {})
+
+                            active_b = [v for v in gem_b.values() if isinstance(v, dict) and not v.get("disabled")]
+
+                            if active_b:
+
+                                min_b = min(active_b, key=lambda x: float(x.get("remainingFraction", 1.0)))
+
+                                self.echo_auth.save_api_key("google_quota_fraction", str(min_b["remainingFraction"]))
+
+                                self.echo_auth.save_api_key("google_quota_reset",    str(min_b["resetTime"]))
+
+
+
+                        self.echo_auth.save_api_key("google_quota_type",       "CODE_ASSIST")
 
                         self.echo_auth.save_api_key("google_quota_last_fetch", str(time.time()))
 
@@ -942,23 +1048,22 @@ class AuthService:
 
                         model_ids = list(models_raw.keys())
 
-                        # Capture quotaInfo par modèle CA
+                        # Capture quotaInfo par modèle CA (en Protobuf v3, remainingFraction=0.0 est omis lorsque resetTime est présent)
 
-                        quota_map = {
-
-                            mid: {
-
-                                "remainingFraction": float(mdata.get("quotaInfo", {}).get("remainingFraction", 1.0)),
-
-                                "resetTime": str(mdata.get("quotaInfo", {}).get("resetTime", "N/A"))
-
-                            }
-
-                            for mid, mdata in models_raw.items()
-
-                            if isinstance(mdata, dict) and mdata.get("quotaInfo")
-
-                        }
+                        quota_map = {}
+                        for mid, mdata in models_raw.items():
+                            if isinstance(mdata, dict) and mdata.get("quotaInfo"):
+                                qi = mdata["quotaInfo"]
+                                if "remainingFraction" in qi:
+                                    q_frac = float(qi["remainingFraction"])
+                                elif qi.get("resetTime"):
+                                    q_frac = 0.0
+                                else:
+                                    q_frac = 1.0
+                                quota_map[mid] = {
+                                    "remainingFraction": q_frac,
+                                    "resetTime": str(qi.get("resetTime", "N/A"))
+                                }
 
                     elif isinstance(models_raw, list):
 
@@ -990,17 +1095,18 @@ class AuthService:
 
                         self.echo_auth.save_api_key("google_quota_by_model", _j.dumps(quota_map))
 
-                        # Legacy : premier modèle avec quotaInfo comme référence globale
+                        # Fallback legacy uniquement si retrieveUserQuotaSummary n'a pas déjà renseigné google_quota_summary
+                        if not self.echo_auth.get_auth_data("google_quota_summary"):
 
-                        first_qi = next(iter(quota_map.values()))
+                            first_qi = next(iter(quota_map.values()))
 
-                        self.echo_auth.save_api_key("google_quota_fraction",   str(first_qi["remainingFraction"]))
+                            self.echo_auth.save_api_key("google_quota_fraction",   str(first_qi["remainingFraction"]))
 
-                        self.echo_auth.save_api_key("google_quota_reset",      first_qi["resetTime"])
+                            self.echo_auth.save_api_key("google_quota_reset",      first_qi["resetTime"])
 
-                        self.echo_auth.save_api_key("google_quota_type",       "CODE_ASSIST")
+                            self.echo_auth.save_api_key("google_quota_type",       "CODE_ASSIST")
 
-                        self.echo_auth.save_api_key("google_quota_last_fetch", str(time.time()))
+                            self.echo_auth.save_api_key("google_quota_last_fetch", str(time.time()))
 
 
 
@@ -1020,9 +1126,11 @@ class AuthService:
 
         """Rafraîchit les métriques si OAuth2 est actif (Threshold: 10 min)."""
 
-        priority = self.echo_auth.get_auth_data("google_auth_priority")
+        refresh_token = self.echo_auth.get_auth_data("google_oauth2_refresh_token")
 
-        if priority != AUTH_METHOD_OAUTH2: return
+        if not refresh_token:
+
+            return
 
 
 
@@ -1030,17 +1138,37 @@ class AuthService:
 
             last_fetch = float(self.echo_auth.get_auth_data("google_quota_last_fetch") or 0)
 
-        except: last_fetch = 0
+        except Exception:
+
+            last_fetch = 0
 
 
 
-        if time.time() - last_fetch < 600: return
+        if time.time() - last_fetch < 600:
+
+            return
 
 
 
         access_token = self.echo_auth.get_auth_data("google_oauth2_access_token")
 
-        project_id   = self.echo_auth.get_auth_data(AUTH_DATA_PROJECT_ID)
+        try:
+
+            last_refresh = float(self.echo_auth.get_auth_data("google_oauth2_last_refresh") or 0)
+
+        except Exception:
+
+            last_refresh = 0
+
+
+
+        if not access_token or (time.time() - last_refresh) > GOOGLE_OAUTH_TOKEN_LIFETIME:
+
+            access_token = await self.echo_auth.refresh_google_oauth_token(refresh_token, self.user_id)
+
+
+
+        project_id = self.echo_auth.get_auth_data(AUTH_DATA_PROJECT_ID)
 
 
 
@@ -1090,7 +1218,7 @@ class AuthService:
 
         async def _extract_tier_info(data: Dict) -> Tuple[Optional[str], int]:
 
-            """Extrait l'ID du Tier et le solde des crédits AI."""
+            """Extrait l'ID/Nom du Tier et le solde des crédits AI."""
 
             t_obj = data.get("paidTier") or data.get("paid_tier") or data.get("currentTier") or data.get("current_tier")
 
@@ -1100,7 +1228,12 @@ class AuthService:
 
             if isinstance(t_obj, dict):
 
-                tier_id = t_obj.get("id")
+                t_id   = t_obj.get("id")
+                t_name = t_obj.get("name")
+                if t_name and t_id and t_name.lower() != t_id.lower():
+                    tier_id = f"{t_name} ({t_id})"
+                else:
+                    tier_id = t_id or t_name
 
                 avail   = t_obj.get("availableCredits") or t_obj.get("available_credits") or []
 

@@ -18,6 +18,6 @@ Le cœur du gestionnaire d'identités (FastAPI).
 - Contiennent les interfaces de connexion front-end (HTML/CSS/JS) présentées à l'utilisateur lors de son authentification, stylisées selon l'esthétique du projet ECHO. Le formulaire d'enrôlement (`enroll.html`) a été réagencé ergonomiquement pour exiger la **Question de Sécurité** *avant* la saisie du code TOTP.
 
 ## 3. Dépendances Logiques
-- Ce Worker s'interface intimement avec la librairie `echo_auth.py` (dans `14-owui-libs`) pour appliquer les règles de révocation.
+- Ce Worker s'interface avec `echo-admin-manager` (`20-docker-admin-manager`) et `echo-open-webui` via la base SQLite partagée `auth.db` et `auth-settings.json` sur le volume `echo-auth-data`.
 - Il partage le volume `echo-auth-data` où est persistée la base de données SQLite contenant les hachages de mots de passe, les secrets TOTP et les tokens de session en cours.
 - Dépendance totale à l'infrastructure WAF (`bunkerweb-stack.yml`).

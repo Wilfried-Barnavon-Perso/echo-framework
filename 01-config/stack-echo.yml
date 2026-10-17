@@ -1,17 +1,17 @@
 # ==============================================================================
 # ECHO FRAMEWORK
 # REGLE: Ne garder que les 5 dernières versions du changelog.
-# Version : 9.81
+# Version : 9.83
+# --- CHANGELOG 9.83 ---
+# - Open WebUI : Désactivation forcée de ENABLE_CONTEXT_COMPACTION=false au profit du moteur de Checkpoint ECHO.
+# --- CHANGELOG 9.82 ---
+# - BunkerWeb : Ajustement de MAX_CLIENT_SIZE de 500m à 4096m sur echo-open-webui.
 # --- CHANGELOG 9.81 ---
 # - BunkerWeb : Suppression de la mention (WAF) dans le template de retour HTML 403 Forbidden.
 # --- CHANGELOG 9.80 ---
 # - Docker Compose : Création du volume externe echo-mcp-cache (/app/mcp_cache) sur echo-mcp-broker et montage de echo-n8n-data et echo-mcp-cache dans echo-admin-manager.
 # --- CHANGELOG 9.79 ---
 # - Docker Compose : Ajout des bind-mounts modulaires (core, services, routes, templates) pour le Hot-Reload de echo-admin-manager v5.131.
-# --- CHANGELOG 9.78 ---
-# - Docker Compose : In-process audio bridge (edge-tts), suppression des conteneurs echo-stt-worker (.32) et echo-tts-worker (.31).
-# --- CHANGELOG 9.77 ---
-# - Docker Compose : Ajout des volumes echo_libs_sandbox et sandbox-agent-readme.txt pour le Coding Worker.
 # ==============================================================================
 #                  inventés par la syntaxe officielle BunkerWeb (REVERSE_PROXY_AUTH_REQUEST*).
 #                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
@@ -91,6 +91,7 @@ services:
       - RAG_EMBEDDING_ENGINE=openai
       - RAG_EMBEDDING_MODEL=dummy_model
       - ENABLE_RAG_WEB_SEARCH=false
+      - ENABLE_CONTEXT_COMPACTION=false
       - ECHO_VERSION_PATH=/app/backend/data/ECHO_VERSION
       - ENABLE_FORWARD_USER_INFO_HEADERS=true
       # Désactivation de l'expiration du token interne (géré par SSO/WAF)
@@ -113,7 +114,7 @@ services:
       # 1. OPTIMISATIONS STREAMING & UPLOAD
       - "bunkerweb.REVERSE_PROXY_BUFFERING=no"
       - "bunkerweb.REVERSE_PROXY_REQUEST_BUFFERING=yes"
-      - "bunkerweb.MAX_CLIENT_SIZE=500m"
+      - "bunkerweb.MAX_CLIENT_SIZE=4096m"
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_buffers=client_body_buffer_size 100m; proxy_buffer_size 128k; proxy_buffers 4 256k; proxy_busy_buffers_size 256k;"
       - "bunkerweb.REVERSE_PROXY_READ_TIMEOUT=600s"
       - "bunkerweb.REVERSE_PROXY_SEND_TIMEOUT=600s"

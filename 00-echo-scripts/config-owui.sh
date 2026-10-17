@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.66
+# VERSION : 7.69
 # ==============================================================================
 
 # --- INITIALISATION : CORE ECHO GLOBALS ---
@@ -26,6 +26,7 @@ CONFIG_DIR="$ECHO_CONFIG"
 MODEL_CONFIG_FILE="$CONFIG_DIR/model-config.json"
 SYSTEM_PROMPT_FILE="$CONFIG_DIR/system-prompt.md"
 SETTINGS_FILE="$CONFIG_DIR/webui-settings.json"
+BANNERS_FILE="$CONFIG_DIR/webui-banners.json"
 IMAGE_BASE_DIR="$ECHO_IMAGES"
 
 # Comptes
@@ -125,8 +126,10 @@ api_upsert() {
     if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
         echo "   ✅ $desc : $id créé."
     elif [ "$HTTP_CODE" -eq 409 ] || [ "$HTTP_CODE" -eq 400 ]; then
-        UPDATE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$payload_file")
-        [ "$UPDATE_CODE" -eq 401 ] && refresh_token && UPDATE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/id/$id/update" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$payload_file")
+        local update_url="$OWUI_URL/api/v1/$endpoint/id/$id/update"
+        [ "$endpoint" == "models" ] && update_url="$OWUI_URL/api/v1/models/model/update"
+        UPDATE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$update_url" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$payload_file")
+        [ "$UPDATE_CODE" -eq 401 ] && refresh_token && UPDATE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$update_url" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$payload_file")
         if [ "$UPDATE_CODE" -eq 200 ]; then echo "   🔄 $desc : $id mis à jour."; else echo "   ❌ Echec $desc $id (HTTP $UPDATE_CODE)."; fi
     fi
 }
@@ -154,7 +157,11 @@ api_purge_all_ghosts() {
     
     for id in $(echo "$list_json" | jq -r '.[].id // empty'); do
         if [ -n "$id" ]; then
-            curl -s -X DELETE "$OWUI_URL/api/v1/$endpoint/id/$id/delete" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
+            if [ "$endpoint" == "models" ]; then
+                curl -s -X POST "$OWUI_URL/api/v1/models/model/delete" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "{\"id\": \"$id\"}" > /dev/null
+            else
+                curl -s -X DELETE "$OWUI_URL/api/v1/$endpoint/id/$id/delete" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
+            fi
             echo "      🗑️ Purge : $id"
         fi
     done
@@ -163,6 +170,7 @@ api_purge_all_ghosts() {
 echo "🔥 Démarrage de la reconstruction système vierge..."
 api_purge_all_ghosts "tools" "Outils"
 api_purge_all_ghosts "functions" "Fonctions (Filtres, Actions, Pipes)"
+api_purge_all_ghosts "models" "Modèles"
 
 for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:functions:Pipe" "functions:functions:Action"; do
     IFS=":" read -r DIR_NAME API_ENDPOINT DESC <<< "$DIR_TYPE"
@@ -244,24 +252,8 @@ if [ -f "$MODEL_CONFIG_FILE" ]; then
         rm -f "$TMP_B64"
     fi
 
-    # 5. Déploiement (ENDPOINTS STABLES v5.29.0)
-    CHECK_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/model?id=$MODEL_ID" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
-    [ "$CHECK_CODE" -eq 401 ] && refresh_token && CHECK_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/models/model?id=$MODEL_ID" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
-
-    if [ "$CHECK_CODE" -eq 200 ]; then
-        echo "   🚀 Mise à jour du modèle existant (POST /update)..."
-        TARGET_URL="$OWUI_URL/api/v1/models/model/update"
-    else
-        echo "   🚀 Création du nouveau modèle (POST /create)..."
-        TARGET_URL="$OWUI_URL/api/v1/models/create"
-    fi
-    
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$TARGET_URL" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$TMP_FINAL")
-    
-    if [ "$HTTP_CODE" -eq 401 ] && refresh_token; then
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$TARGET_URL" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$TMP_FINAL")
-    fi
-    echo "   ✅ Modèlle $MODEL_ID déployé (HTTP $HTTP_CODE)."
+    # 5. Déploiement (Harmonisé via api_upsert)
+    api_upsert "models" "$MODEL_ID" "$TMP_FINAL" "Modèle"
     
     rm -f "$TMP_TOOLS" "$TMP_FILTERS" "$TMP_ACTIONS" "$TMP_FINAL"
 fi
@@ -279,6 +271,34 @@ if [ -f "$SETTINGS_FILE" ]; then
         HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X GET "$OWUI_URL/api/v1/admin/config/reload" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
         [ "$HTTP_CODE" -eq 401 ] && refresh_token && curl -s -X GET "$OWUI_URL/api/v1/admin/config/reload" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
         sleep 5
+    fi
+fi
+
+# --- 6. CONFIGURATION DES BANNIÈRES ---
+if [ -f "$BANNERS_FILE" ]; then
+    echo "📢 [Config] Configuration des bannières applicatives..."
+    TMP_BANNERS_PAYLOAD="/tmp/owui_banners_$$.json"
+    
+    # Prise en charge format tableau [...] ou objet {"banners": [...]}
+    # Injection dynamique d'un timestamp Unix (now | floor) si omis
+    jq 'if type == "array" then {banners: [ .[] | .timestamp //= (now | floor) ]} else {banners: [ .banners[] | .timestamp //= (now | floor) ]} end' "$BANNERS_FILE" > "$TMP_BANNERS_PAYLOAD"
+    
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/configs/banners" \
+        -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER \
+        -H "Content-Type: application/json" -d "@$TMP_BANNERS_PAYLOAD")
+        
+    if [ "$HTTP_CODE" -eq 401 ] && refresh_token; then
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/configs/banners" \
+            -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER \
+            -H "Content-Type: application/json" -d "@$TMP_BANNERS_PAYLOAD")
+    fi
+    
+    rm -f "$TMP_BANNERS_PAYLOAD"
+    
+    if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
+        echo "   ✅ Bannières synchronisées (HTTP $HTTP_CODE)."
+    else
+        echo "   ⚠️ Échec configuration bannières (HTTP $HTTP_CODE)."
     fi
 fi
 

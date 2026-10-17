@@ -1,16 +1,16 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.109.31
+version: 5.109.32
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.109.32: Fix thinking medium explicite sur semantic_probe et read_multimedia_file (MODEL_APOLLO).
 # 5.109.31: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 5.109.30: Intégration de l'accès aux espaces Codex (main/sandbox) via _resolve_extended_file_path et mise à jour des docstrings.
 # 5.109.29: Fix read_raw_file_content (numérotation factice sur offset et troncature silencieuse).
 # 5.109.27: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
-# 5.109.26: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 import os
 import sys
@@ -203,7 +203,7 @@ class Tools:
         try:
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": query}, {"inline_data": {"mime_type": mime, "data": f"___ECHO_STREAM_FILE___{fpath}___"}}]}],
-                "generationConfig": get_generation_config("MODEL_APOLLO"),
+                "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="medium"),
                 "systemInstruction": {"parts": [{"text": SYS_EXPLORER_PROBE}]}
             }
             cascade_task = asyncio.create_task(EchoGeminiClient.call_cascade(
@@ -286,6 +286,7 @@ class Tools:
         try:
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": mime, "data": f"___ECHO_STREAM_FILE___{fpath}___"}}]}],
+                "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="medium"),
                 "systemInstruction": {"parts": [{"text": SYS_EXPLORER_PROBE}]}
             }
 

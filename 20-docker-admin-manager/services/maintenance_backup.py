@@ -2,7 +2,7 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - MAINTENANCE & BACKUP SCHEDULER
-VERSION : 5.136
+VERSION : 5.137
 ================================================================================
 """
 import datetime
@@ -76,6 +76,23 @@ def _get_proc_file_offset(pid: int, target_path: str) -> int:
         except Exception:
             pass
     return max_pos
+
+def _build_ext_status_html(ext_mode: str, sets: dict, ext_error: str | None) -> tuple[str, str]:
+    """Construit le badge HTML et le détail d'erreur éventuel pour l'externalisation."""
+    if ext_mode == "local":
+        return "<span class='badge bg-secondary'>Désactivée (Local)</span>", ""
+    if ext_error:
+        target = sets.get("rclone_remote", "") if ext_mode == "rclone" else sets.get("sftp_host", "")
+        target_html = f" <small class='text-muted'>({html.escape(target)})</small>" if target else ""
+        return (
+            f"<span class='badge bg-warning text-dark'>Échec Distant</span>{target_html}",
+            f"<div class='text-warning x-small mt-1'>⚠️ {html.escape(ext_error)}</div>",
+        )
+    if ext_mode == "rclone":
+        remote_lbl = html.escape(sets.get("rclone_remote", ""))
+        return f"<span class='badge bg-success'>Cloud Rclone OK</span> <small class='text-muted'>({remote_lbl})</small>", ""
+    sftp_lbl = html.escape(f"{sets.get('sftp_host', '')}:{sets.get('sftp_path', '/backups/echo')}")
+    return f"<span class='badge bg-success'>NAS SFTP OK</span> <small class='text-muted'>({sftp_lbl})</small>", ""
 
 def perform_backup_task(record_report: bool = False):
     if not DOCKER_AVAILABLE:
@@ -287,22 +304,23 @@ def perform_backup_task(record_report: bool = False):
         MAINTENANCE_STATE["percent"] = 100
         MAINTENANCE_STATE["status"] = "Sauvegarde terminée."
 
-        if record_report:
-            dur_sec = max(1, int(time.time() - t_start))
-            dur_str = f"{dur_sec // 60}m {dur_sec % 60:02d}s" if dur_sec >= 60 else f"{dur_sec}s"
-            if ext_mode == "local":
-                ext_badge = "<span class='badge bg-secondary'>Désactivée (Local)</span>"
-                ext_detail = ""
-            elif ext_error:
-                ext_badge = "<span class='badge bg-warning text-dark'>Échec Distant</span>"
-                ext_detail = f"<div class='text-warning x-small mt-1'>⚠️ {html.escape(ext_error)}</div>"
-            elif ext_mode == "rclone":
-                ext_badge = f"<span class='badge bg-success'>Cloud Rclone OK</span> <small class='text-muted'>({html.escape(sets.get('rclone_remote', ''))})</small>"
-                ext_detail = ""
-            else:
-                ext_badge = f"<span class='badge bg-success'>NAS SFTP OK</span> <small class='text-muted'>({html.escape(sets.get('sftp_host', ''))})</small>"
-                ext_detail = ""
+        dur_sec = max(1, int(time.time() - t_start))
+        dur_str = f"{dur_sec // 60}m {dur_sec % 60:02d}s" if dur_sec >= 60 else f"{dur_sec}s"
+        ext_badge, ext_detail = _build_ext_status_html(ext_mode, sets, ext_error)
 
+        backup_info = {
+            "archive_name": archive_name,
+            "arch_size": arch_size,
+            "arch_size_fmt": human_size(arch_size),
+            "duration_str": dur_str,
+            "local_kept": local_kept,
+            "ext_mode": ext_mode,
+            "ext_badge_html": ext_badge,
+            "ext_detail_html": ext_detail,
+            "ext_error": ext_error,
+        }
+
+        if record_report:
             report_html = f"""
             <div style='line-height: 1.45;'>
                 <b><i class='bi bi-hdd-network text-success'></i> Sauvegarde Manuelle Complète</b><br>
@@ -313,7 +331,7 @@ def perform_backup_task(record_report: bool = False):
             """
             save_maint_report(report_html)
 
-        return ext_error
+        return backup_info
     except Exception as e:
         for c_name in (TARGET_CONTAINER, 'echo-qdrant', 'echo-n8n-worker', 'echo-mcp-broker'):
             try:
@@ -338,18 +356,17 @@ def perform_backup_task(record_report: bool = False):
 def run_nightly_maintenance_cycle():
     """Séquenceur Maître : Sauvegarde -> Redémarrage -> Purge -> Consolidation -> Vacuum."""
     bck_cfg = load_settings()
-    log_lines = ["🟢 CYCLE MAINTENANCE NOCTURNE"]
-    ext_err = None
+    bck_info = None
+    bck_fatal_err = None
 
     # 1. Sauvegarde (Coupe potentiellement Qdrant)
     if bck_cfg.get("auto_backup"):
         try:
-            ext_err = perform_backup_task()
-            log_lines.append("├─ Sauvegarde : Terminée")
+            res = perform_backup_task(record_report=False)
+            if isinstance(res, dict):
+                bck_info = res
         except Exception as e:
-            log_lines.append(f"├─ Sauvegarde : Erreur ({e})")
-    else:
-        log_lines.append("├─ Sauvegarde : Ignorée (Désactivée)")
+            bck_fatal_err = str(e)
 
     # 2. Assurance Haute Disponibilité (Redémarrage garanti des services critiques)
     if DOCKER_AVAILABLE:
@@ -367,25 +384,47 @@ def run_nightly_maintenance_cycle():
             pass
 
     # 3. Purge, Consolidation et Vacuum
-    backup_ok_str = "Terminée" if bck_cfg.get("auto_backup") else "Désactivée"
-    if "Erreur" in log_lines[-1] or ("Erreur" in log_lines[-2] if len(log_lines) > 1 else False):
+    if not bck_cfg.get("auto_backup"):
+        backup_ok_str = "Désactivée"
+        badge_cls = "secondary"
+        backup_details_html = ""
+    elif bck_fatal_err:
         backup_ok_str = "Erreur"
-    elif ext_err:
-        backup_ok_str = "Locale OK / Ext. Échec"
-
-    badge_cls = 'success' if backup_ok_str == 'Terminée' else ('warning text-dark' if 'Ext.' in backup_ok_str else ('danger' if backup_ok_str == 'Erreur' else 'secondary'))
-    ext_err_html = f"<div class='text-warning x-small mb-1'>⚠️ Externalisation : {html.escape(ext_err)}</div>" if ext_err else ""
+        badge_cls = "danger"
+        backup_details_html = (
+            f"<div class='text-danger x-small mb-2'>❌ {html.escape(bck_fatal_err)}</div>"
+        )
+    elif bck_info:
+        ext_err = bck_info.get("ext_error")
+        backup_ok_str = "Locale OK / Ext. Échec" if ext_err else "Terminée"
+        badge_cls = "warning text-dark" if ext_err else "success"
+        backup_details_html = f"""
+            <div class='mb-2' style='line-height: 1.45;'>
+                📦 <b>Archive</b> : <code>{html.escape(bck_info.get('archive_name', ''))}</code> <i>({html.escape(bck_info.get('arch_size_fmt', ''))})</i><br>
+                ⏱️ <b>Durée</b> : {html.escape(bck_info.get('duration_str', ''))} &nbsp;|&nbsp; 🗂️ <b>Rétention locale</b> : {bck_info.get('local_kept', 0)} archive(s)<br>
+                ☁️ <b>Externalisation</b> : {bck_info.get('ext_badge_html', '')}{bck_info.get('ext_detail_html', '')}
+            </div>
+        """
+    else:
+        backup_ok_str = "Ignorée"
+        badge_cls = "secondary"
+        backup_details_html = ""
 
     try:
         # On exécute la purge en mode silencieux et on récupère les datas brutes
         report_html, stats = run_semantic_pruning(silent=True)
+        drop_total_b = (
+            stats.get('drop_users', {}).get('b', 0)
+            + stats.get('drop_chats', {}).get('b', 0)
+            + stats.get('drop_n8n', {}).get('b', 0)
+        )
 
         pretty_report = f"""
         <div style='line-height: 1.5; font-size: 0.85rem;' class='text-light'>
             <div class='mb-2 pb-1 border-bottom border-secondary'>
                 <b class='text-success'><i class='bi bi-check-circle-fill'></i> CYCLE MAINTENANCE GLOBAL</b>
             </div>
-            <div class='row gx-2 mb-2'>
+            <div class='row gx-2 mb-1'>
                 <div class='col-6'>
                     <span class='text-muted'>Sauvegarde :</span> 
                     <span class='badge bg-{badge_cls}'>{backup_ok_str}</span>
@@ -395,14 +434,16 @@ def run_nightly_maintenance_cycle():
                     <span class='badge bg-info'>Vérifiée</span>
                 </div>
             </div>
-            {ext_err_html}
+            {backup_details_html}
             <div class='mt-2 pt-1 border-top border-secondary'>
                 <b class='text-info'><i class='bi bi-trash'></i> Bilan Élagage & SQLite</b><br>
                 <i class='bi bi-people'></i> Utilisateurs : <b>{stats.get('users', {}).get('c', 0)}</b> <i>({_format_bytes(stats.get('users', {}).get('b', 0))})</i><br>
-                <i class='bi bi-key'></i> MCP Cache : <b>{stats.get('mcp_cache', {}).get('c', 0)}</b> <i>({_format_bytes(stats.get('mcp_cache', {}).get('b', 0))})</i><br>
                 <i class='bi bi-chat-left-dots'></i> Chats : <b>{stats.get('chats', {}).get('c', 0)}</b> <i>({_format_bytes(stats.get('chats', {}).get('b', 0))})</i><br>
-                <i class='bi bi-hdd'></i> Drop Zones : Libéré <b>{_format_bytes(stats.get('drop_users', {}).get('b', 0) + stats.get('drop_chats', {}).get('b', 0) + stats.get('drop_n8n', {}).get('b', 0))}</b><br>
-                <i class='bi bi-diagram-3'></i> Consolidation : <b>{stats.get('promoted_clusters', 0)}</b> vecteurs promus<br>
+                <i class='bi bi-file-earmark-code'></i> Fichiers FS : <b>{stats.get('files', {}).get('c', 0)}</b> <i>({_format_bytes(stats.get('files', {}).get('b', 0))})</i><br>
+                <i class='bi bi-key'></i> MCP Cache : <b>{stats.get('mcp_cache', {}).get('c', 0)}</b> <i>({_format_bytes(stats.get('mcp_cache', {}).get('b', 0))})</i><br>
+                <i class='bi bi-hdd'></i> Drop Zones : <b>{stats.get('drop_users', {}).get('c', 0)}</b> Users, <b>{stats.get('drop_chats', {}).get('c', 0)}</b> Chats, <b>{stats.get('drop_n8n', {}).get('c', 0)}</b> N8N <i>(Libéré: {_format_bytes(drop_total_b)})</i><br>
+                <i class='bi bi-diagram-3'></i> Consolidation : <b>{stats.get('promoted_clusters', 0)}</b> clusters promus (Lvl1→Lvl2)<br>
+                <i class='bi bi-database-check'></i> SQLite : <b>{stats.get('sqlite_ghosts', 0)}</b> fantômes, <b>{stats.get('sqlite_vacuumed', 0)}</b> bases optimisées<br>
             </div>
         </div>
         """
