@@ -12,8 +12,8 @@ Ce dossier contient le code source de l'**API Playwright**. Il s'agit d'un conte
 Fichier monolithique (environ 57Ko) exposant l'API de contrôle du navigateur asynchrone (FastAPI).
 
 #### A. Pilotage Asynchrone (Playwright)
-- **Sémantique** : Initialise des contextes Playwright (`async_playwright()`). Il crée un onglet par session et isole les cookies et le cache.
-- **Endpoints d'Action** : Expose des routes REST (`/navigate`, `/click`, `/type`, `/scroll`, `/extract`) permettant au moteur principal de déclencher des manipulations sur le DOM ciblé.
+- **Sémantique** : Initialise des contextes Playwright (`async_playwright()`). Il crée un onglet par session (`sid`) et isole les cookies et le cache tout en conservant le `chat_id` parent (`session.chat_id`) afin de router les téléchargements (`download`, `save_target`) vers la drop-zone du chat réel (`/app/downloads/<user_id>/<chat_id>/browser`) même lorsque la session est pilotée par un sous-agent (`sub_sid`).
+- **Endpoints d'Action** : Expose des routes REST (`/start_session`, `/action`, `/highlight`, `/vision_capture`, `/screencast/*`, `/reset`) permettant au moteur principal de déclencher des manipulations sur le DOM ciblé.
 
 #### B. Streaming Vidéo Bridé & Rejeu
 - **Sémantique** : Enregistre le flux d'interactions de la page.

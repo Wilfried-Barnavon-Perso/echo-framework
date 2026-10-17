@@ -1,9 +1,12 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 9.30 (Spoofing strict Webdriver/PluginArray)
+VERSION : 9.31 (Séparation session_id RAM vs chat_id Drop-Zone)
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-10-12
+DATE MAJ : 2026-10-17
+
+CHANGELOG 9.31 :
+- FIX: Séparation entre `sid` (isolation Playwright en RAM par `sub_sid`) et `chat_id` (routage des téléchargements `/app/downloads/<user_id>/<chat_id>/browser`) pour garantir l'ingestion par `download_broker.py` lors d'un appel par sous-agent.
 
 CHANGELOG 9.30 :
 - FIX: Settle asynchrone post-scroll et Lidar Check (recalibrage instantané de Bounding Box) pour annuler les clics ratés lors de Layout Shifts.
@@ -498,8 +501,9 @@ def pick_lru_victim():
 
 # --- SESSIONS ---
 class BrowserSession:
-    def __init__(self, sid, user_id, context, idle_timeout, mode="desktop"):
+    def __init__(self, sid, user_id, context, idle_timeout, mode="desktop", chat_id=None):
         self.sid = sid
+        self.chat_id = chat_id or sid
         self.user_id = user_id
         self.context = context
         self.idle_timeout = idle_timeout
@@ -672,6 +676,7 @@ async def start_session(request: Request):
     data = await request.json()
     user_id = request.headers.get('X-OpenWebUI-User-Id', 'anonymous')
     sid = data.get("session_id")
+    chat_id = data.get("chat_id") or sid
     idle_timeout = data.get("idle_timeout", IDLE_TIMEOUT_DEFAULT)
     mode = data.get("mode", "mobile")
     if not sid: return {"status": "error", "message": "ERREUR_TECHNIQUE : Identifiant de chat manquant."}
@@ -680,6 +685,7 @@ async def start_session(request: Request):
         if sid in SESSIONS:
             if getattr(SESSIONS[sid], 'mode', None) == mode:
                 SESSIONS[sid].last_activity = time.time()
+                if chat_id: SESSIONS[sid].chat_id = chat_id
                 return {"session_id": sid, "status": "success", "message": "Session deja active."}
             else:
                 logger.info(f"[{sid}] 🔄 Uservalve changed to {mode}. Resetting session.")
@@ -763,10 +769,10 @@ async def start_session(request: Request):
             Object.defineProperty(navigator, 'platform', { get: () => isIpad ? 'MacIntel' : 'Win32' });
         """
         await context.add_init_script(stealth_script)
-        session = BrowserSession(sid, user_id, context, idle_timeout, mode)
+        session = BrowserSession(sid, user_id, context, idle_timeout, mode, chat_id=chat_id)
         session.attach_page_tracking()
         SESSIONS[sid] = session
-        logger.info(f"[{sid}] 🆕 v6 Session created (Mode: {mode})")
+        logger.info(f"[{sid}] 🆕 v6 Session created (Mode: {mode}, Chat: {chat_id})")
         return {"session_id": sid, "status": "success"}
 
 async def find_element_and_frame(page, selector):
@@ -934,7 +940,7 @@ async def browser_action(request: Request):
                             async with page.expect_download(timeout=120000) as download_info:
                                 await loc.click()
                             download = await download_info.value
-                            dl_dir = os.path.join("/app/downloads", session.user_id, sid, "browser")
+                            dl_dir = os.path.join("/app/downloads", session.user_id, session.chat_id, "browser")
                             os.makedirs(dl_dir, exist_ok=True)
                             filename = download.suggested_filename
                             final_path = os.path.join(dl_dir, f"{file_id}_{filename}")
@@ -956,7 +962,7 @@ async def browser_action(request: Request):
                             from urllib.parse import urljoin
                             target_url = urljoin(page.url, target_url)
                             file_id = params.get("download_file_id", f"DL_{int(time.time())}")
-                            dl_dir = os.path.join("/app/downloads", session.user_id, sid, "browser")
+                            dl_dir = os.path.join("/app/downloads", session.user_id, session.chat_id, "browser")
                             os.makedirs(dl_dir, exist_ok=True)
                             filename = target_url.split("/")[-1].split("?")[0]
                             if not filename: filename = "downloaded_file"
@@ -1048,7 +1054,7 @@ async def browser_action(request: Request):
                                 async with page.expect_download(timeout=120000) as download_info:
                                     await loc.click()
                                 download = await download_info.value
-                                dl_dir = os.path.join("/app/downloads", session.user_id, sid, "browser")
+                                dl_dir = os.path.join("/app/downloads", session.user_id, session.chat_id, "browser")
                                 os.makedirs(dl_dir, exist_ok=True)
                                 filename = download.suggested_filename
                                 final_path = os.path.join(dl_dir, f"{file_id}_{filename}")
@@ -1070,7 +1076,7 @@ async def browser_action(request: Request):
                                 from urllib.parse import urljoin
                                 target_url = urljoin(page.url, target_url)
                                 file_id = params.get("download_file_id", f"DL_{int(time.time())}")
-                                dl_dir = os.path.join("/app/downloads", session.user_id, sid, "browser")
+                                dl_dir = os.path.join("/app/downloads", session.user_id, session.chat_id, "browser")
                                 os.makedirs(dl_dir, exist_ok=True)
                                 filename = target_url.split("/")[-1].split("?")[0]
                                 if not filename: filename = "downloaded_file"

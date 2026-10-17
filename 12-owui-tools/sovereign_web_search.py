@@ -1,16 +1,16 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 1.20
+version: 1.21
 description: Composant système interne : ECHO Sovereign Web Search.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.21: Fermeture explicite de la session navigateur Playwright (reset_session) en fin de delegate_deep_research.
 # 1.20: Résolution robuste de chat_id avec fallback sur __metadata__ dans delegate_deep_research.
 # 1.19: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.17: Optim - Ajout de la priorisation des informations récentes via consignes et utilisation proactive de time_range.
 # 1.16: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 1.15: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.
 
 import httpx
 import sys
@@ -222,9 +222,14 @@ class Tools:
             __event_call__=__event_call__
         )
         
-        # Nettoyage de la DB (thread éphémère)
+        # Nettoyage de la DB (thread éphémère) et de la session Playwright éventuelle
         try:
             EchoStateManager(user_id, chat_id).delete_thread(sid)
+        except Exception:
+            pass
+        try:
+            from echo_browser_lib import EchoBrowserLib
+            await EchoBrowserLib(10, sid, user_id).reset_session()
         except Exception:
             pass
             
