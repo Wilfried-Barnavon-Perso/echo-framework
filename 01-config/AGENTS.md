@@ -22,7 +22,7 @@ Ce dossier est le **Centre Névralgique Statique** de l'architecture. Il contien
 
 ### `bunkerweb-stack.yml`
 **Rôle** : L'enveloppe de sécurité périmétrique (WAF BunkerWeb v1.6.15, manifeste v1.35).
-- **Sémantique** : Ce manifeste secondaire est activé par `enable-bunkerweb.sh` pour proxyfier les requêtes vers Open WebUI (`ui.`), l'Admin Manager (`am.`) et l'IdP `echo-auth-manager` (`auth.`, IP `.24`), adossé à MariaDB `11.4` (`--max-allowed-packet=128M`). Intègre dans l'ancre partagée (`x-bw-config`) les directives critiques `MULTISITE: "yes"`, `AUTO_LETS_ENCRYPT`, `GUNICORN_TIMEOUT: "120"` et l'exclusion `www.example.com_AUTO_LETS_ENCRYPT: "no"`, qui ne doivent **jamais** être répétées sous forme de labels sur des conteneurs dynamiques pour éviter l'effacement par Autoconf.
+- **Sémantique** : Ce manifeste secondaire est activé par `enable-bunkerweb.sh` pour proxyfier les requêtes vers Open WebUI (`ui.`), l'Admin Manager (`am.`) et l'IdP `echo-auth-manager` (`auth.`, IP `.24`), adossé à MariaDB `11.4` (`--max-allowed-packet=128M`). Intègre dans l'ancre partagée (`x-bw-config`) les directives critiques `DISABLE_DEFAULT_SERVER: "yes"`, `AUTO_LETS_ENCRYPT`, `GUNICORN_TIMEOUT: "120"` et l'exclusion `www.example.com_AUTO_LETS_ENCRYPT: "no"`, tandis que `MULTISITE: "yes"` est injecté dans le bloc `environment:` de `bunkerweb` et `bw-scheduler`. Ces variables globales ne doivent **jamais** être répétées sous forme de labels sur des conteneurs dynamiques pour éviter l'effacement par Autoconf.
 
 ### `webui-settings.json` & `model-config.json`
 **Rôle** : Fichiers d'amorçage (Seed) pour l'interface de chat.
@@ -37,6 +37,11 @@ Ce dossier est le **Centre Névralgique Statique** de l'architecture. Il contien
 ### `searxng-settings.yml`
 **Rôle** : Configuration du moteur de méta-recherche souverain.
 - **Sémantique** : Désactive les moteurs bridés, configure les requêtes en JSON pour permettre la consommation automatique des résultats par l'outil LLM de recherche web (`Sovereign Web Search`).
+
+### `logging.json` & `Dockerfile.python-base`
+**Rôle** : Standardisation des journaux et de l'image socle Python.
+- **`logging.json`** : Configuration centralisée du formateur de logs Python (`%(asctime)s.%(msecs)03d [%(levelname)s] [%(name)s] %(message)s` au format ISO-8601) montée en lecture seule (`/app/logging.json:ro`) sur les conteneurs workers Python.
+- **`Dockerfile.python-base`** : Définit l'image socle mutualisée `echo-python-base:latest` (`FROM python:3.12-slim`) embarquant les dépendances communes (`fastapi`, `uvicorn`, `httpx`, `pydantic`, `requests`) utilisées par les workers `20`, `22`, `23`, `24` et `25`.
 
 ## 3. Dépendances Logiques
 - Les manifestes `.yml` de ce dossier sont exploités directement par le dossier `00-echo-scripts` lors de l'exécution de `install-stack.sh`.

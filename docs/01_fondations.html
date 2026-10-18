@@ -24,9 +24,9 @@
     <div class="didactic-box">
       <h4>💡 L'analogie du véhicule</h4>
       <p>
-        Si Gemini est le moteur, ECHO est le véhicule complet : châssis (infrastructure Docker), capteurs
-        (filtres d'interception), mémoire à long terme (Qdrant), boîte noire inaltérable (SQLite Ombres) et
-        habitacle de pilotage (HUD). L'utilisateur conduit ; ECHO s'assure que le moteur dispose toujours
+        Si Gemini est le moteur, ECHO est le véhicule complet : châssis d'infrastructure isolée, capteurs
+        contextuels, mémoire à long terme, boîte noire conversationnelle inaltérable et
+        habitacle de pilotage visuel. L'utilisateur conduit ; ECHO s'assure que le moteur dispose toujours
         de l'information complète pour avancer.
       </p>
     </div>
@@ -46,15 +46,15 @@
 
     <h3>Évolution V4 → V5</h3>
     <p>
-      La <strong>V4 (Legacy)</strong>, conservée dans le répertoire <code>_v4-legacy-concept/</code>, est un prompt
-      de personnalisation avancé pour Gemini. Elle établit les fondements conceptuels d'ECHO - la Mémoire,
-      la Suture, la Souveraineté - mais s'exécute entièrement dans le contexte de la conversation, sans
+      La <strong>V4 (historique)</strong> reposait sur un prompt
+      de personnalisation avancé pour Gemini. Elle a établi les fondements conceptuels d'ECHO - la Mémoire,
+      la Continuité et la Souveraineté - mais s'exécutait entièrement dans le contexte de la conversation, sans
       infrastructure dédiée.
     </p>
     <p>
-      La <strong>V5 (actuelle)</strong> matérialise ces concepts en une infrastructure conteneurisée.
-      Elle introduit l'<em>Ombre Riche</em> (persistance SQLite bit-perfect), le double RAG vectoriel
-      (Qdrant), les filtres Python d'interception, et le Pipe comme orchestrateur central. 
+      La <strong>V5 (actuelle)</strong> matérialise ces concepts en une plateforme auto-hébergée complète.
+      Elle introduit la persistance exacte de l'historique conversationnel, une double mémoire vectorielle
+      à court et long terme, des filtres contextuels intelligents et un orchestrateur central. 
     </p>
 
     <h2>Les trois piliers fondamentaux</h2>
@@ -63,7 +63,7 @@
       <thead>
         <tr>
           <th>Pilier</th>
-          <th>Engagement technique</th>
+          <th>Engagement</th>
           <th>Mise en œuvre</th>
         </tr>
       </thead>
@@ -71,17 +71,17 @@
         <tr>
           <td><strong>Auto-Hébergement</strong></td>
           <td>Isolation locale. Pas de télémétrie. L'Espace Personnel ne quitte jamais l'infrastructure.</td>
-          <td>Docker sur Hyper-V, volumes locaux, BunkerWeb WAF, clés API stockées dans <code>identity.db</code>.</td>
+          <td>Déploiement conteneurisé local, stockage souverain, pare-feu applicatif intégré et coffre-fort de secrets chiffré.</td>
         </tr>
         <tr>
           <td><strong>Véracité</strong></td>
-          <td>Recherche contre les hallucinations et la capacité de mobiliser des connaissances externes.</td>
-          <td>Un prompt système orienté sur la non complaisance dans une hiérarchie de principes très stricte et des outils de recherche web avancée.</td>
+          <td>Recherche contre les hallucinations et capacité de mobiliser des connaissances externes vérifiées.</td>
+          <td>Prompt système orienté sur la non-complaisance dans une hiérarchie de principes stricte et outils de recherche web souveraine.</td>
         </tr>
         <tr>
           <td><strong>Autonomie</strong></td>
-          <td>Arsenal d'outils sensoriels et exécutifs pilotés par le Kernel sans intervention humaine.</td>
-          <td>Browser Agent, Coding Worker, N8N Worker, MCP Broker, SearXNG, Qdrant RAG, Pont Audio In-Process.</td>
+          <td>Arsenal d'outils sensoriels et exécutifs pilotés par le système sans intervention manuelle.</td>
+          <td>Navigation web autonome, exécution de code isolée, automatisation de processus, connecteurs externes, mémoire long terme et pont vocal intégré.</td>
         </tr>
       </tbody>
     </table>
@@ -96,7 +96,7 @@
       contexte, mais leur influence sur la génération devient négligeable. Au-delà de <strong>50 %</strong>,
       la dégradation est critique.
     </p>
-    <p>Face à l'allongement d'une conversation, ECHO y répond en combinant le <strong>Compactage Contextuel sur Place (Checkpoint Cognitif)</strong> et <strong>deux mémoires vectorielles distinctes</strong> :</p>
+    <p>Face à l'allongement d'une conversation, ECHO y répond en combinant le <strong>Compactage Contextuel sur Place (Checkpoint Cognitif)</strong> et <strong>deux mémoires complémentaires</strong> :</p>
     <ul>
       <li>
         <strong>Compactage Contextuel sur Place (Checkpoint Cognitif)</strong> : compresse automatiquement ou sur demande les anciens tours de parole en un résumé structuré (Checkpoint) injecté directement dans la discussion en cours, libérant la fenêtre d'attention sans jamais perdre le fil ni quitter la session.
@@ -109,12 +109,12 @@
       </li>
     </ul>
 
-    <h3>L'Inférence Distante (Edge Computing)</h3>
+    <h3>L'Inférence Distante (Calcul sur le Poste Client)</h3>
     <p>
-      La vectorisation (transformation du texte en mémoire mathématique) est une opération exigeante en calcul. ECHO intègre un paradigme d'<strong>Edge Computing</strong> : sur ordinateur de bureau (Desktop), le calcul vectoriel est déporté vers la carte graphique du navigateur client via <strong>WebGPU</strong> et <strong>WASM</strong>.
+      La vectorisation (transformation du texte en mémoire mathématique) est une opération exigeante en calcul. ECHO intègre un mécanisme de déport de calcul : sur ordinateur de bureau, le traitement vectoriel est confié directement à la carte graphique de votre navigateur.
     </p>
     <p>
-      Sur appareil mobile, ou si le poste client ne dispose pas d'accélération compatible, le serveur détecte immédiatement la configuration et bascule sans délai sur son propre moteur d'inférence CPU local. Cela réduit la charge énergétique du serveur d'auto-hébergement tout en garantissant une réactivité constante sur tous les terminaux.
+      Sur appareil mobile, ou si votre poste ne dispose pas d'accélération graphique compatible, le serveur détecte immédiatement la configuration et bascule sans délai sur son propre moteur de calcul local. Cela préserve les ressources du serveur d'auto-hébergement tout en garantissant une réactivité constante sur tous les terminaux.
     </p>
 
     <h2>Standards de Développement</h2>
@@ -148,7 +148,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.226.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.226.5 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

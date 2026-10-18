@@ -251,7 +251,7 @@ flowchart TD
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px;">
         <div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
     <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">SQLite Shadows</div>
-    <div style="color: #64748b; font-size: 10px;">/users/{uid}/chats/{cid}.db</div><div style="color: #64748b; font-size: 10px;">message_shadows + identity.db</div>
+    <div style="color: #64748b; font-size: 10px;">/users/{uid}/chats/{cid}/session.db</div><div style="color: #64748b; font-size: 10px;">message_shadows + identity.db</div>
 </div><div style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
     <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Qdrant :6333</div>
     <div style="color: #64748b; font-size: 10px;">echo_meta_artifacts (permanent)</div><div style="color: #64748b; font-size: 10px;">echo_session_rag (session)</div>
@@ -288,39 +288,39 @@ flowchart TD
 
     <div class="grid-container">
       <div class="card">
-        <h3>⚔️ La Suture (Cognitive Suture)</h3>
-        <p><strong>Nature :</strong> Algorithme de reconstruction (<code>Orchestrator.prepare_context()</code> dans <code>echo_orchestrator.py</code>).</p>
+        <h3>⚔️ La Suture (Continuité Conversationnelle)</h3>
+        <p><strong>Nature :</strong> Mécanisme de reconstruction fidèle de l'historique.</p>
         <p>
-          Reconstruit l'historique complet à partir des Ombres SQLite (<code>message_shadows</code>). Le <strong>Verrou de Version</strong>
-          (<code>message_id + updated_at</code>) et le <strong>Verrou de Tour</strong> (<code>turn_origin_model</code>) garantissent une reprise bit-perfect tout en préservant le cache de préfixes de l'API Gemini. En cas d'édition manuelle d'un message, le Pipe bascule en <em>Cold Recovery</em>.
+          Reconstruit l'historique complet de la session à partir des Ombres SQLite locales. Le <strong>Verrou de Version</strong>
+          et le <strong>Verrou de Tour</strong> garantissent une reprise exacte au bit près tout en préservant le cache de préfixes du fournisseur Cloud. En cas d'édition manuelle d'un message, l'orchestrateur recalcule proprement la branche modifiée (<em>Cold Recovery</em>).
         </p>
       </div>
       <div class="card">
         <h3>📡 L'AEC (Artéfacts Environnementaux et Contextuels)</h3>
-        <p><strong>Nature :</strong> Vecteurs proprioceptifs XML natifs (<code>EchoAEC</code>).</p>
+        <p><strong>Nature :</strong> Vecteurs proprioceptifs structurés en XML.</p>
         <p>
-          Injectés au format strict <code>&lt;artifact id="AEC_..."&gt;</code> : <code>AEC_directive</code> (priorité 4, PIS au Tour 1, mises à niveau, rappels d'alignement et cascades), <code>AEC_modele</code>, <code>AEC_identite</code>, <code>AEC_temporalite</code>, <code>AEC_localisation</code>, <code>AEC_smart_context</code>, <code>AEC_context_checkpoint</code> et <code>AEC_evenement_systeme</code>. Drainés atomiquement en une seule transaction SQLite via <code>drain_pending_directives()</code>.
+          Informe le modèle en temps réel de son environnement d'exécution : directives système prioritaires (initialisation, mises à niveau, rappels d'alignement), identité cognitive, temporalité, localisation, contexte documentaire distillé, Checkpoint de continuité et événements système asynchrones.
         </p>
       </div>
       <div class="card">
         <h3>🧱 Le Moulage (Smart Context RAG)</h3>
-        <p><strong>Nature :</strong> Pipeline d'ingestion Zéro-RAM (<code>echo_ingestion.py</code>).</p>
+        <p><strong>Nature :</strong> Pipeline d'ingestion documentaire sans saturation mémoire.</p>
         <p>
-          Au-delà de <strong>32 Ko</strong> pour le texte ou <strong>1 Mo</strong> pour le multimédia (et après conversion Markdown des fichiers Office via <code>MarkItDown</code>), le contenu est indexé dans <code>echo_session_rag</code> (Qdrant, <code>microsoft/Harrier-OSS-v1-0.6B</code>) et synthétisé via <code>MODEL_DISTILLATION</code> dans une balise <code>&lt;artifact id="AEC_smart_context"&gt;</code>.
+          Au-delà de <strong>32 Ko</strong> pour le texte ou <strong>1 Mo</strong> pour le multimédia (et après conversion automatique des documents bureautiques en Markdown), le contenu est indexé dans la mémoire vectorielle de session et synthétisé sous forme d'aperçu structuré pour préserver l'attention du modèle.
         </p>
       </div>
       <div class="card">
         <h3>📝 Le Draft (Brouillon Sémantique)</h3>
-        <p><strong>Nature :</strong> État mémoire préparé par le Filtre Inlet.</p>
+        <p><strong>Nature :</strong> Enveloppe contextuelle préparée en amont de l'orchestrateur.</p>
         <p>
-          Conteneur stocké dans <code>metadata._echo_user_parts_draft</code> assemblant selon l'ordre du PGCU les <code>AEC_smart_context</code>, les directives système ponctuelles, la requête utilisateur multipart (<code>&lt;REQUETE_UTILISATEUR&gt;</code>), les événements système et les pièces jointes directes.
+          Assemble selon la hiérarchie stricte du PGCU les aperçus documentaires, les directives système ponctuelles, la requête utilisateur, les notifications d'événements système et les pièces jointes avant transmission au moteur d'inférence.
         </p>
       </div>
       <div class="card">
-        <h3>⛳ L'Ancre (Thought Signature)</h3>
-        <p><strong>Nature :</strong> Jeton opaque cryptographique de l'API Gemini 3+.</p>
+        <h3>⛳ L'Ancre (Signature de Raisonnement)</h3>
+        <p><strong>Nature :</strong> Jeton cryptographique de continuité cognitive Gemini 3+.</p>
         <p>
-          Capturé et persisté dans <code>cognitive_signatures</code> (extrait par tri chronologique déterministe <code>ORDER BY updated_at DESC LIMIT 1</code>), il est rattaché exclusivement au premier <code>functionCall</code> lors des appels parallèles, permettant au modèle de retrouver son état de raisonnement sans relire ses pensées brutes.
+          Capturé et persisté localement à chaque tour de réflexion, il est restitué lors des appels d'outils successifs pour permettre au modèle de retrouver instantanément son état de raisonnement interne sans avoir à relire ses pensées brutes.
         </p>
         <p class="text-muted">
           ⚠ Distinct du <strong>Context Caching</strong> (cache implicite des activations clé/valeur côté Google).
@@ -331,30 +331,26 @@ flowchart TD
     <h2>Architecture Mémorielle Duale</h2>
 
     <p>
-      ECHO opère deux collections Qdrant physiquement isolées, vectorisées en 1024 dimensions par le modèle
-      <strong>microsoft/Harrier-OSS-v1-0.6B</strong> via l'Edge Embedding Bridge (WebGPU Desktop) ou l'<em>Embedding Worker</em> local
-      (<code>http://echo-embedding:7997/v1</code>). Aucune donnée ne quitte l'infrastructure.
+      ECHO opère deux collections vectorielles Qdrant physiquement isolées, vectorisées en 1024 dimensions par le modèle
+      <strong>Harrier-OSS-v1-0.6B</strong> via le pont WebGPU du navigateur client ou le service d'embedding local.
+      Aucune donnée ne quitte l'infrastructure.
     </p>
 
     <div class="grid-container">
       <div class="card">
-        <h3>🧠 RAG Organique (<code>echo_meta_artifacts</code>)</h3>
-        <p><strong>Outils :</strong> <code>update_meta_artifact</code>, <code>search_meta_artifacts</code>, <code>delete_meta_artifact_item</code></p>
-        <p><strong>Scope :</strong> <code>user_id</code> - permanent, survit aux sessions.</p>
-        <p><strong>Usage :</strong> Préférences (<code>PACP</code>), contraintes techniques, décisions structurelles et apprentissages méthodologiques (<code>PRAC</code>) gradués sur 5 niveaux (<code>1-Trivial</code> dès la 1ère occurrence isolée, <code>2-Mineur</code> sur 2 occurrences, <code>3-Utile</code> / <code>4-Majeur</code> sur 3 occurrences concordantes, <code>5-Axiome</code> sur injonction explicite ou invariant stratégique).</p>
+        <h3>🧠 Mémoire Organique à Long Terme</h3>
+        <p><strong>Portée :</strong> Par utilisateur — permanente et transverse à toutes les sessions.</p>
+        <p><strong>Usage :</strong> Préférences personnelles (<code>PACP</code>), contraintes techniques, décisions structurelles et apprentissages méthodologiques (<code>PRAC</code>) gradués sur 5 niveaux d'importance (de <em>1 - Trivial</em> dès la première observation jusqu'à <em>5 - Axiome</em> sur injonction explicite ou invariant stratégique).</p>
         <p>
-          <strong>Reranking :</strong> <code>score_pondéré = cos_score × MEMORY_IMPORTANCE_WEIGHTS[lvl]</code>.
-          Un Axiome (niveau 5, poids 1,70) à similarité cosinus 0,60 surclasse un Trivial (niveau 1, poids 0,55)
-          à similarité 0,85.
+          <strong>Priorisation Sémantique :</strong> Lors de la recherche, la pertinence thématique est pondérée par le niveau d'importance du souvenir afin qu'un <em>Axiome</em> prime systématiquement sur une observation <em>Triviale</em>.
         </p>
-        <p><strong>Consolidation &amp; Purge TTL :</strong> Consolidation nocturne <code>Lvl1 &rarr; Lvl2</code> par centroïde L2-normalisé et purge TTL de 30 jours (Trivial) à 540 jours (Axiome), orchestrées par l'Admin Manager sous gouvernance SSoT Fail-Closed.</p>
+        <p><strong>Consolidation &amp; Cycle de Vie :</strong> Fusion nocturne des observations récurrentes en souvenirs consolidés et élagage automatique selon l'ancienneté (de 30 jours pour un élément <em>Trivial</em> à 540 jours pour un <em>Axiome</em>).</p>
       </div>
       <div class="card">
-        <h3>⏱️ Mémoire Vectorisée de Session (<code>echo_session_rag</code>)</h3>
-        <p><strong>Outils :</strong> <code>save_session_context</code>, <code>search_sessions_context</code>, <code>delete_session_context_source</code></p>
-        <p><strong>Scope :</strong> <code>user_id + chat_id + source_id</code> - session courante uniquement.</p>
-        <p><strong>Usage :</strong> Distillats de fichiers volumineux, résultats de navigation web, données intermédiaires d'analyse.</p>
-        <p><strong>Purge :</strong> Automatique en fin de session par l'Admin Manager (suppression filtrée par <code>chat_id</code>).</p>
+        <h3>⏱️ Mémoire Vectorisée de Session</h3>
+        <p><strong>Portée :</strong> Isolée par discussion (avec possibilité de recherche globale inter-sessions sur demande).</p>
+        <p><strong>Usage :</strong> Indexation des fichiers volumineux, de l'historique conversationnel au fil de l'eau, des résultats de navigation web et des données intermédiaires d'analyse.</p>
+        <p><strong>Cycle de Vie :</strong> Purgée automatiquement lors de la suppression de la discussion correspondante.</p>
       </div>
     </div>
 
@@ -362,11 +358,9 @@ flowchart TD
       <h4>La Vallée de la Mort et la compensation RAG</h4>
       <p>
         Lorsque le contexte dépasse ~30 % de la fenêtre maximale, les informations des premiers tours
-        deviennent effectivement inaccessibles au mécanisme d'attention. Les deux RAG constituent la
-        réponse architecturale : <code>save_session_context</code> indexe proactivement avant saturation,
-        <code>search_sessions_context</code> permet une lecture sémantique précise indépendante de la
-        position dans l'historique. <code>search_meta_artifacts</code> couvre les préférences de l'Utilisateur et l'expérience du Modèle découvertes au cours des différentes sessions,
-        totalement absentes du contexte actif.
+        deviennent progressivement moins accessibles au mécanisme d'attention. Les deux mémoires vectorielles constituent la
+        réponse architecturale : la mémoire de session indexe proactivement les contenus volumineux et permet une lecture sémantique précise indépendante de la
+        position dans l'historique, tandis que la mémoire organique restitue les préférences de l'utilisateur et l'expérience accumulée au fil des sessions précédentes.
       </p>
     </div>
 
@@ -471,7 +465,7 @@ flowchart TB
     BW -. "Forward Auth /api/verify" .-> AUTH
   end
 
-  subgraph APP ["🖥️ ZONE 2 : CORTEX OPEN WEBUI (.100 :3000)"]
+  subgraph APP ["🖥️ ZONE 2 : CORTEX OPEN WEBUI (.100 :8080 / hôte :3000)"]
     direction LR
     OWUI["🖥️ Open WebUI"]
     F("🌒 Filtres Inlet/Outlet")
@@ -484,7 +478,7 @@ flowchart TB
 
   subgraph DATA ["🗄️ ZONE 3 : PERSISTANCE & VECTORISATION"]
     direction LR
-    SQL[("🗄️ SQLite WAL<br/>({chat_id}.db & identity.db)")]
+    SQL[("🗄️ SQLite WAL<br/>(session.db & identity.db)")]
     QD[("🧠 Qdrant<br/>(.103 :6333)")]
     EMB[("🔢 Embedding Worker<br/>(.30 :7997)")]
     QD <--> EMB
@@ -603,9 +597,10 @@ erDiagram
         <h3>1. Authentification, Quotas &amp; Crédits Cloud (<code>echo_auth.py</code>, <code>echo_pkce_server.py</code>, <code>echo_ssh_tunnel.py</code>)</h3>
         <p>Gère le cycle OAuth2 headless via <strong>Authorization Code + PKCE (RFC 7636)</strong> sur tunnel SSH éphémère (ports 8020–8024), le rafraîchissement proactif des tokens à 55 minutes et le fallback sur clés AI Studio. Interroge de manière non-bloquante l'endpoint <code>:retrieveUserQuotaSummary</code> (cache <code>google_quota_summary</code>) pour extraire les quotas glissants <strong>5 heures</strong> (<code>quota_5h_fraction</code>, <code>quota_5h_reset</code>, <code>quota_5h_disabled</code>) et <strong>Hebdomadaire</strong> (<code>quota_weekly_fraction</code>, <code>quota_weekly_reset</code>), en gérant la convention d'omission Protobuf v3 (<code>remainingFraction=0.0</code> par défaut lorsque le champ est absent) au profit de la Context Gauge.</p>
 
-        <h3>2. Moteur de Protocole, Suture Bit-Perfect &amp; Compaction (<code>echo_protocol.py</code> &amp; <code>echo_core.py</code>)</h3>
+        <h3>2. Moteur de Protocole, Suture Bit-Perfect &amp; Compaction (<code>echo_protocol.py</code>, <code>echo_core.py</code> &amp; <code>echo_aec.py</code>)</h3>
         <ul>
-          <li><strong>Traduction &amp; Normalisation :</strong> Convertit les identifiants abstraits ECHO vers le backend actif (AI Studio ou Code Assist) et normalise les schémas d'outils en <code>camelCase</code> (<code>convert_owui_tools</code>).</li>
+          <li><strong>Suture, Signatures &amp; Drainage AEC :</strong> <code>Orchestrator.prepare_context()</code> reconstruit l'historique depuis <code>message_shadows</code> (dans <code>/users/{uid}/chats/{cid}/session.db</code>) sous contrôle du Verrou de Version (<code>message_id + updated_at</code>) et du Verrou de Tour (<code>turn_origin_model</code>), extrait la dernière <code>thoughtSignature</code> de <code>cognitive_signatures</code> par tri déterministe (<code>ORDER BY updated_at DESC LIMIT 1</code>, rattachée au premier <code>functionCall</code>), assemble le brouillon <code>metadata._echo_user_parts_draft</code> et draine atomiquement les directives et événements XML (<code>&lt;artifact id="AEC_..."&gt;</code>) via <code>EchoAEC.drain_pending_directives()</code>.</li>
+          <li><strong>Traduction, Moulage &amp; Pondération RAG :</strong> Convertit les identifiants abstraits ECHO vers le backend actif (AI Studio ou Code Assist) et normalise les schémas d'outils en <code>camelCase</code> (<code>convert_owui_tools</code>). Le pipeline <code>echo_ingestion.py</code> convertit les documents via <code>MarkItDown</code>, distille via <code>MODEL_DISTILLATION</code> dans <code>&lt;artifact id="AEC_smart_context"&gt;</code> et vectorise dans <code>echo_session_rag</code> ou <code>echo_meta_artifacts</code> (<code>http://echo-embedding:7997/v1</code>). Le reranking de <code>echo_meta_artifacts</code> applique <code>score_pondéré = cos_score &times; MEMORY_IMPORTANCE_WEIGHTS[lvl]</code> (où un <em>Axiome</em> niveau 5 à <code>1.70</code> surclasse un <em>Trivial</em> niveau 1 à <code>0.55</code>).</li>
           <li><strong>Déballage Multimodal &amp; FIFO Destructif :</strong> <code>unbox_tool_output</code> et <code>wrap_tool_output</code> extraient les médias <code>echo_tool_multiparts</code> et purgent les événements transitoires <code>aec_event</code> / <code>aec_directive</code> sans toucher aux ressources persistantes.</li>
           <li><strong>Compactage Contextuel In-Place (<code>EchoCompactionEngine</code>) :</strong> Déclenché automatiquement (seuil <code>45% &rarr; 25%</code> de <code>ECHO_MAX_CONTEXT_SIZE</code> via <code>context_compaction_filter.py</code>, Priorité 15) ou manuellement (<code>compact_context_action.py</code>), le moteur opère une consolidation téléscopique à encombrement borné (<code>MODEL_APOLLO</code>, budget <code>32768</code> tokens) scellée dans <code>echo_settings</code> (clé <code>compaction_state</code>). Le filtre rejoue de manière déterministe la balise <code>&lt;artifact id="AEC_context_checkpoint"&gt;</code> sur le message pivot, tandis que <code>echo_orchestrator.py</code> re-scelle l'ombre dans <code>message_shadows</code> après nettoyage de la balise (<code>strip_checkpoint_tag</code>) pour préserver la pureté de la Suture.</li>
         </ul>
@@ -633,7 +628,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.226.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.226.5 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

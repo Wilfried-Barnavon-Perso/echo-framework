@@ -23,7 +23,7 @@ Le manifeste des règles de conception N8N imposées à l'agent.
 - Interdit l'usage de credentials en dur, imposant le passage par le Vault (via des variables injectées).
 
 ### `Dockerfile` & `start.sh`
-- **Build Hybride** : Le `Dockerfile` part de l'image officielle n8n (Node.js) mais installe un environnement Python 3 en parallèle.
+- **Build Multi-Stage Hybride** : Le `Dockerfile` extrait `/usr/local/lib/node_modules/n8n` depuis `n8nio/n8n:latest` (stage `n8n_extractor`) vers une image finale `node:26-alpine` équipée d'un environnement Python 3 / FastAPI (`uvicorn`, `httpx`).
 - **`start.sh`** : Script d'amorçage asynchrone lançant le processus principal n8n en tâche de fond et l'API Python (`n8n_api.py`) au premier plan.
 - **Volumes Externes (Hot-Reload)** : Les fichiers critiques `n8n_api.py` et `start.sh` sont désormais montés en Read-Only (ro) depuis le volume hôte via `stack-echo.yml`. Cela active le mécanisme de Hot-Reload et accélère considérablement le développement en s'affranchissant de la recompilation du conteneur.
 

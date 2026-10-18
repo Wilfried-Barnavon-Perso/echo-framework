@@ -8,18 +8,18 @@ Ce dossier contient le **MCP Broker** (Model Context Protocol). Il s'agit d'un s
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `server.py` & `core/cache_manager.py`
+### `server.py` (v1.14) & `core/cache_manager.py`
 Fichier d'entrée du Broker instanciant le serveur `FastMCP` propulsé par `Uvicorn`.
-- **Sémantique ASGI & Proxy** : Le serveur expose ses outils non pas en SSE classique, mais via le protocole natif MCP sur HTTP. Il agit désormais comme un **Proxy HTTP complet** avec gestion du cycle de vie et authentification.
-- **WebUI Auth Middleware** : Il intègre un middleware d'authentification pur ASGI conçu pour intercepter et valider silencieusement le JWT WebUI et l'en-tête `x-openwebui-user-id`. Cette interception permet au serveur de propager l'identité sécurisée de l'utilisateur à l'intérieur des appels d'outils (Data Broker, Vault).
-- **Cache Manager** : `core/cache_manager.py` permet au Broker de mémoriser les schémas et identifiants temporaires de la session en cours.
+- **Sémantique ASGI & Proxy** : Le serveur expose ses outils via le protocole natif MCP (`streamable-http` sur `/mcp`) ainsi que les routes REST `/schemas`, `/proxy_mcp` et `/health`. Il agit comme un **Proxy HTTP complet** sans accès direct aux bases de données d'Open WebUI.
+- **WebUI User Middleware (`WebUIUserMiddleware`)** : Middleware pur ASGI interceptant l'en-tête HTTP `x-openwebui-user-id` (ou fallback `x-echo-user-id`) afin d'injecter l'identifiant utilisateur dans le `ContextVar` `user_id_var` (`core/security.py`).
+- **Cache Manager** : `core/cache_manager.py` met en cache les résultats d'exécution des outils par empreinte MD5 (`tool_name` + arguments JSON triés) dans la base SQLite locale `/app/data/mcp_cache.db` (table `cache_entries`).
 
 ### `core/` & `modules/`
 Dossiers contenant la logique métier des outils exposés par le Broker.
 - **`core/security.py`** : Maintient le contexte de sécurité. `security.py` gère l'identification de la requête asynchrone courante (ID utilisateur) via un `ContextVar` injecté par le middleware, servant de support sécurisé au proxy sans connexion directe à une base de données.
 - **`modules/m3_corporate.py`** (Corporate Sirene/Bodacc) : Intégration active (via `httpx`) avec les API d'entreprise de l'Etat pour la récupération légale d'entités (abandon des mocks JSON).
 - **`modules/m4_academic.py`** (Academic) : Connecteurs réels asynchrones (`httpx`) vers arXiv ou d'autres bases documentaires pour la recherche scientifique structurée.
-- **`modules/m2_jobs_omnisearch.py`** (Omnisearch Jobs) : Mécanismes d'interrogation multi-sources (ex: APEC HTML parsing).
+- **`modules/m2_jobs_omnisearch.py` (v1.3)** (Omnisearch Jobs) : Mécanismes d'interrogation multi-sources (France Travail, Adzuna, Jooble, Arbeitnow, APEC).
 - **Adaptateurs de Fournisseurs Résidents (`modules/m5_providers.py`, v1.1)** : Isole la logique de cycle de vie spécifique aux fournisseurs MCP résidents derrière l'interface `MCPServiceProvider` (`prepare_env`, `after_list_tools`, `before_tool_call`, `after_tool_call`) :
   - **`Microsoft365Provider`** : dirige `env["HOME"]` vers `/app/mcp_cache/microsoft_365/<user_id>` (volume `echo-mcp-cache`) avec invalidation `.cred_hash` sur rotation de `MICROSOFT_MCP_CLIENT_ID`/`MICROSOFT_MCP_TENANT_ID`. Dans `after_list_tools`, retire le paramètre `flow_cache` du schéma `inputSchema` de `complete_authentication`. Dans `after_tool_call`, sauvegarde le `_flow_cache` brut de `authenticate_account` dans `.microsoft_mcp_device_flow.json` et le supprime intégralement (`pop`) du JSON retourné au LLM (empêchant toute exposition du `device_code` en contexte et toute tentative d'indexation dans `save_session_context`), puis le réinjecte automatiquement avec `expires_at = 0` lors de `complete_authentication`. Avant tout appel d'outil métier, vérifie la présence de `.microsoft_mcp_token_cache.json` et résout automatiquement `account_id` (email `username` ou compte unique vers `home_account_id`).
   - **`GoogleWorkspaceProvider`** : rafraîchit le jeton OAuth2 Google et l'injecte dans un répertoire temporaire via `WORKSPACE_MCP_CREDENTIALS_DIR`.
@@ -30,5 +30,5 @@ Dossiers contenant la logique métier des outils exposés par le Broker.
   - **Éviction** : toute exception (`except BaseException:`, incluant `asyncio.CancelledError` sur timeout HTTP client) entraîne le retrait de la session du cache et sa fermeture protégée par `asyncio.shield(holder.close())`.
 
 ## 3. Dépendances Logiques
-- Le MCP Broker est déclaré nativement dans l'interface Open WebUI, qui agit comme un **MCP Client**.
-- Il se repose sur `ECHO_SESSION_DOMAINS` pour requêter des *Credentials* stockés dans le coffre-fort utilisateur, utilisant l'ID intercepté dans les en-têtes HTTP, et monte le volume externe `echo-mcp-cache` sur `/app/mcp_cache`.
+- Le MCP Broker est interrogé par l'outil `12-owui-tools/echo_mcp_tool.py` et l'action `13-owui-actions/echo_identity_vault_action.py` via ses endpoints HTTP REST (`http://echo-mcp-broker:8000/proxy_mcp` et `/schemas`).
+- N'ayant aucun accès direct aux bases SQLite d'Open WebUI, il reçoit les *Credentials* (extraits en amont de `identity.db` par `echo_mcp_tool.py` via `EchoStateManager`) directement dans le corps de la requête `/proxy_mcp`, et monte le volume externe `echo-mcp-cache` sur `/app/mcp_cache`.

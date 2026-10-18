@@ -22,24 +22,24 @@
       Face à un problème extrêmement ardu, ECHO peut décider qu'il ne peut pas le résoudre seul. Il va alors instancier une équipe de "Sous-Agents" virtuels (chacun ayant une spécialité). 
     </p>
     <p>
-      Ces agents vont mener une Table Ronde (méthode Delphi) : l'un peut être chargé de chercher des informations sur le Web, un autre de consolider les données dans un tableur, pendant que l'agent principal rédige la synthèse finale. Vous pouvez d'ailleurs suivre leurs discussions en direct via l'Action HUD <em>Agent Monitor</em>.
+      Ces agents vont mener une Table Ronde (méthode Delphi) : l'un peut être chargé de chercher des informations sur le Web, un autre de consolider les données dans un tableur, pendant que l'agent principal rédige la synthèse finale. Vous pouvez d'ailleurs suivre leurs discussions en direct via le moniteur de supervision des agents.
     </p>
 
-    <h2>2. L'Automatisation en Arrière-plan (N8N & MCP)</h2>
+    <h2>2. L'Automatisation en Arrière-plan</h2>
     <p>
       Vous pouvez demander à ECHO de configurer des tâches automatisées qui tourneront sans que vous soyez connecté. Par exemple : "Vérifie les nouveaux emails de mon client tous les matins, génère un résumé et envoie-le sur Slack". 
     </p>
     <p>
-      Pour cela, ECHO écrit lui-même des scénarios d'automatisation (via le moteur N8N intégré) et peut communiquer avec des centaines de services externes (via le standard MCP). Si une automatisation rencontre un problème (un serveur externe ne répond pas), ECHO recevra une notification d'erreur détaillée et corrigera le script de lui-même de manière autonome.
+      Pour cela, ECHO conçoit lui-même des scénarios d'automatisation et communique avec des centaines de services externes. Si une automatisation rencontre un problème (un serveur externe ne répond pas), ECHO reçoit une notification d'erreur détaillée et corrige le scénario de lui-même de manière autonome.
     </p>
 
-    <h2>3. Le Coffre-Fort Sécurisé (Identity Vault)</h2>
+    <h2>3. Le Coffre-Fort d'Identités</h2>
     <img src="images/identity_vault.png" alt="ECHO Identity Vault" class="doc-screenshot">
     <p>
       Pour interagir avec vos applications (votre boîte mail, Slack, vos bases de données), le système a besoin d'identifiants ou de mots de passe. 
     </p>
     <p>
-      L'<strong>Identity Vault</strong> est un coffre-fort chiffré. Vous y enregistrez vos clés, et l'IA ne les voit <em>jamais</em> en texte clair. Lorsqu'elle configure une automatisation, elle utilise des alias (macros) que le coffre-fort remplace au moment précis de contacter le service externe.
+      Le <strong>Coffre-Fort d'Identités</strong> est un registre chiffré. Vous y enregistrez vos clés, et l'IA ne les voit <em>jamais</em> en texte clair. Lorsqu'elle configure une automatisation, elle utilise des alias sécurisés que le coffre-fort remplace au moment précis de contacter le service externe.
     </p>
 
     <details class="tech-spec">
@@ -52,13 +52,13 @@
           <li><strong>Agent Engine :</strong> <code>delegate_to_agent</code>, <code>summarize_agent_session</code> (exécuté sur <code>MODEL_APOLLO</code> en <code>thinkingLevel="medium"</code>), <code>list_agent_sessions</code> et <code>close_agent_session</code> avec garde anti-récursion et blocage des outils à modales/triggers UI (<code>ask_user_input</code>, <code>delete_user_skill</code>, <code>manage_identity</code>, <code>open_codex_ui</code>) en mode Headless via <code>DELEGATE_AGENT_BLACKLIST</code>.</li>
         </ul>
 
-        <h3>2. ECHO N8N Orchestrator (<code>n8n_orchestrator_tool.py</code> &amp; <code>n8n_api.py</code>)</h3>
+        <h3>2. ECHO N8N Orchestrator (<code>n8n_orchestrator_tool.py</code> v1.18 &amp; <code>n8n_api.py</code> v2.18)</h3>
         <ul>
           <li><strong>Architecture Duale :</strong> Distinction stricte entre les workflows <strong>Sandbox éphémères</strong> (démarrant obligatoirement par un <code>Execute Workflow Trigger</code> avec mocking de payload et validation via <code>run_n8n_oneshot_workflow</code>, sortie synchrone bornée à <strong>8 Ko / 8192 octets</strong> anti-OOM) et les <strong>Démons permanents</strong> (<code>deploy_n8n_daemon</code> en 2 étapes REST sur N8N).</li>
-          <li><strong>Conception &amp; Collecte :</strong> Délégation architecturale via <code>delegate_to_n8n_grapher</code>, recherche de templates sur le Hub N8N (<code>search_n8n_hub</code>, <code>download_n8n_hub_template</code>) et écriture disque via la macro <code>__ECHO_DOWNLOAD_DIR__/fichier.ext</code> collectée par le Download Broker.</li>
+          <li><strong>Conception &amp; Collecte :</strong> Délégation architecturale via <code>delegate_to_n8n_grapher</code> (exécuté sur <code>MODEL_PROMETHEUS</code>), recherche de templates sur le Hub N8N (<code>search_n8n_hub</code>, <code>download_n8n_hub_template</code>) et écriture disque via la macro <code>__ECHO_DOWNLOAD_DIR__/fichier.ext</code> collectée par le Download Broker.</li>
         </ul>
 
-        <h3>3. MCP Broker &amp; Identity Vault (<code>m5_proxy_mcp.py</code> v1.18, <code>m5_providers.py</code> v1.1, <code>echo_mcp_tool.py</code> v2.6, <code>identity_vault_tool.py</code>)</h3>
+        <h3>3. MCP Broker &amp; Identity Vault (<code>m5_proxy_mcp.py</code> v1.18, <code>m5_providers.py</code> v1.1, <code>echo_mcp_tool.py</code> v2.6, <code>identity_vault_tool.py</code> v3.29)</h3>
         <p>Le serveur <strong>MCP Broker</strong> (<code>server.py</code>, port 8000) agit comme un <strong>Proxy HTTP complet sans accès à la base de données</strong> :</p>
         <ul>
           <li><strong>Routage Data-Driven &amp; Extraction Amont :</strong> L'outil universel <code>echo_mcp_tool.py</code> (<code>list_mcp_functions</code>, <code>call_mcp_function</code>) extrait les credentials de SQLite via <code>EchoStateManager</code> en amont et route la requête selon la taxonomie (<code>mcp_native</code>, <code>mcp_resident</code>, <code>mcp_remote</code>) sur les transports <code>sse</code> et <code>streamable_http</code>.</li>
@@ -66,7 +66,7 @@
           <li><strong>Identity Vault :</strong> Le modèle a l'interdiction d'utiliser des secrets en dur (usage obligatoire de la macro <code>__ECHO_SECRET_...</code>). Il DOIT appeler <code>list_identities_services</code> avant <code>list_identities</code> et suivre les <code>user_required_instructions</code> en cas de secret manquant ou invalide.</li>
         </ul>
 
-        <h3>4. Client HTTP Universel (<code>api_client.py</code>)</h3>
+        <h3>4. Client HTTP Universel (<code>api_client.py</code> v1.7)</h3>
         <ul>
           <li><strong><code>call_api</code> :</strong> Exécute les appels REST/GraphQL standards (strictement interdit pour initier des connexions MCP) avec troncature de sécurité à <strong>131 Ko</strong> (<code>ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS</code>).</li>
         </ul>
@@ -80,7 +80,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.226.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.226.5 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

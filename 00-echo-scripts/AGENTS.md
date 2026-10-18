@@ -10,8 +10,8 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 
 ### `install-stack.sh`
 **Rôle** : Déploiement central de l'architecture Docker (v6.33).
-- **`ensure_docker_autosafety()`** : Configure de manière globale le démon Docker (`/etc/docker/daemon.json`) pour imposer une limite de taille des logs (max 10Mo, 3 fichiers) et injecte un cron hebdomadaire (`/etc/cron.weekly/docker-prune`) appelant `clean-echo.sh`, évitant ainsi la saturation du disque de la VM.
-- **Compilation `echo-python-base:latest` & Throttle Mensuel** : Compile en amont l'image socle mutualisée (`docker-python-base`) et applique un verrou de 30 jours (`.last_base_pull`) sur le pull des images `:latest` (`alpine:latest`, `n8nio/n8n:latest`) tout en limitant le parallélisme (`CMAKE_BUILD_PARALLEL_LEVEL=2`).
+- **`ensure_docker_autosafety()`** : Configure de manière globale le démon Docker (`/etc/docker/daemon.json`) pour imposer une limite de taille des logs (max 10Mo, 3 fichiers) et injecte un cron quotidien (`/etc/cron.daily/clean-echo`) appelant `clean-echo.sh`, évitant ainsi la saturation du disque de la VM.
+- **Compilation `echo-python-base:latest` & Throttle Mensuel** : Compile en amont l'image socle mutualisée (`01-config/Dockerfile.python-base`) et applique un verrou de 30 jours (`.last_base_pull`) sur le pull des images `:latest` (`alpine:latest`, `n8nio/n8n:latest`) tout en limitant le parallélisme (`CMAKE_BUILD_PARALLEL_LEVEL=2`).
 - **`ensure_volume()` / `ensure_network()`** : Création idempotente des volumes et des sous-réseaux IPAM dynamiques (`echo-network` via `ECHO_NET_MAIN_PREFIX` en `10.20.40.0/24` et `echo-sandbox` via `ECHO_NET_SANDBOX_PREFIX` en `10.20.50.0/24`).
 - **`wait_for_docker()`** : Algorithme de blocage asynchrone vérifiant l'état du démon avant déploiement.
 - **`generate_secret()`** : Générateur cryptographique aléatoire de clés de sécurité (incluant `ECHO_SSO_SECRET` pour le Forward Auth hybride).
@@ -34,10 +34,10 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 - Le script `disable-bunkerweb.sh` (v2.5) révoque la proxyfication et expose directement les ports d'Open WebUI et de l'Admin Manager (Port 3001).
 
 ### Utilitaires
-- **`echo-globals.sh`** : Définition des variables d'environnement globales sourcées par les autres scripts.
-- **`clean-echo.sh`** : Script automatisé de maintenance système (purge APT, `journalctl --vacuum-size=100M`, et `docker system prune` gradué selon les seuils d'occupation disque : routine 168h, urgence $\ge 85\%$, critique $\ge 90\%$).
+- **`echo-globals.sh` (v1.0)** : Définition des variables d'environnement globales sourcées par les autres scripts.
+- **`clean-echo.sh` (v1.3)** : Script automatisé de maintenance système (purge APT, `journalctl --vacuum-size=100M`, et `docker system prune` gradué selon les seuils d'occupation disque : routine 168h, urgence $\ge 85\%$, critique $\ge 90\%$).
 - **`logs-echo.sh` (v1.1) & `ps-echo.sh` (v1.1)** : Utilitaires de diagnostic rapide en ligne de commande pour le suivi temps-réel des journaux Docker Compose (`logs -f --tail=100`) et l'affichage consolidé de l'état des conteneurs de la stack ECHO.
-- **`show-echo-admin.sh`** : Affichage sécurisé dans le terminal des identifiants et des URL d'accès de l'instance pour l'utilisateur.
+- **`show-echo-admin.sh` (v1.5)** : Affichage sécurisé dans le terminal des identifiants et des URL d'accès de l'instance pour l'utilisateur.
 - **`update-echo.sh` (v6.3.1) / `upgrade-echo.sh` (v6.10)** : Scripts pour le tirage des modifications Git, le redémarrage Hot-Reload des conteneurs labellisés `echo.hot-reload=true` (`update-echo.sh`), ou la mise à niveau majeure (`upgrade-echo.sh`). Lorsqu'il est appelé via `/usr/local/bin/rebuild-echo`, `upgrade-echo.sh` impose une double confirmation stricte (`CONFIRMER` puis `DETRUIRE`) avant de purger les volumes et secrets.
 
 ## 3. Dépendances Logiques

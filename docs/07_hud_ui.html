@@ -72,9 +72,8 @@ sequenceDiagram
     <h2>La Context Gauge (Cortex Monitoring)</h2>
 <img src="images/context_gauge_bar.png" alt="Context Gauge Bar" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
     <p>
-      La Context Gauge est l'outil central de pilotage de l'état cognitif. Elle est injectée dans la
-      barre de navigation d'Open WebUI via <code>EchoUI.deploy_context_gauge()</code> et mise à jour
-      à chaque tour de conversation par le Pipe.
+      La Context Gauge est l'outil central de pilotage de l'état cognitif. Elle est affichée en permanence dans la
+      barre de navigation d'Open WebUI et mise à jour automatiquement à chaque tour de conversation.
     </p>
 
     <h3>A. Barre de contexte (tokens)</h3>
@@ -83,37 +82,37 @@ sequenceDiagram
     </p>
     <table>
       <thead>
-        <tr><th>Segment</th><th>Couleur</th><th>Variable source</th><th>Signification</th></tr>
+        <tr><th>Segment</th><th>Couleur</th><th>Rôle</th><th>Signification</th></tr>
       </thead>
       <tbody>
         <tr>
           <td>Cache</td>
-          <td>Violet <code>#8b5cf6</code></td>
-          <td><code>cache_pct</code></td>
+          <td>Violet</td>
+          <td>Historique mis en cache</td>
           <td>Tokens déjà ingérés et mis en cache par Google (économie de coût de ~90 %).</td>
         </tr>
         <tr>
           <td>Prompt actif</td>
-          <td>Vert <code>#10b981</code></td>
-          <td><code>prompt_pct</code></td>
+          <td>Vert</td>
+          <td>Requête entrante</td>
           <td>Charge active du message courant.</td>
         </tr>
         <tr>
           <td>Génération</td>
-          <td>Orange <code>#f59e0b</code></td>
-          <td><code>gen_pct</code></td>
+          <td>Orange</td>
+          <td>Réponse du modèle</td>
           <td>Tokens produits par ECHO lors de ce tour.</td>
         </tr>
         <tr>
           <td>Vide</td>
           <td>Transparent</td>
-          <td>-</td>
+          <td>Capacité disponible</td>
           <td>Espace mémoire de travail restant avant saturation.</td>
         </tr>
       </tbody>
     </table>
     <p>
-      La pilule principale (<code>#echo-nav-context-hud</code>) affiche également un badge de Checkpoint <code>🗜️ #N</code> (<code>#echo-nav-checkpoint-badge</code>) dès qu'un compactage a eu lieu. Au survol de la barre, un tooltip affiche les valeurs absolues : cache, prompt actif,
+      La jauge principale affiche également un badge de Checkpoint <code>🗜️ #N</code> dès qu'un compactage a eu lieu. Au survol de la barre, une infobulle présente les valeurs détaillées : cache, prompt actif,
       génération, total et maximum de la fenêtre contextuelle, ainsi que la ligne <code>🗜️ Checkpoint: #N (M tours)</code> sous le compteur de tokens.
     </p>
     <img src="images/context_tooltip.png" alt="Tooltip de Contexte" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
@@ -126,20 +125,19 @@ sequenceDiagram
     <img src="images/auth_quota_tooltip.png" alt="Tooltip Authentification et Quotas" class="doc-screenshot">
 
     <div class="code-header">Sections AUTHENTIFICATION &amp; QUOTAS</div>
-    <pre><code>🔐 Source       : méthode d'auth active (OAUTH2, API_KEY)
+    <pre><code>🔐 Source       : méthode d'authentification active (OAUTH2, API_KEY)
 👤 Compte       : adresse du compte Google authentifié
 💎 Tier         : niveau d'abonnement Cloud de l'utilisateur
-🏗️ Projet Perso : identifiant du projet Cloud personnel (masqué s'il est identique au 🏢 Tenant ou égal à aicode-consumers)
-🏢 Tenant       : aicode-consumers (routage global Code Assist)
-💳 Crédits IA   : crédits disponibles (google_g1_credits)
-🤖 Modèle CA    : ca_model_id actif (ex: gemini-3.8-flash-high)
-📊 Quota        : pourcentage restant coloré selon les seuils
-⏱️ Quota 5h     : barre de progression + compte à rebours (dans Xh Ym) ou badge Désactivé (si quota_5h_disabled)
-📅 Quota Sem.   : barre de progression + compte à rebours (dans Xj Yh)
-📅 Req/jour     : requêtes quotidiennes restantes (ou N/A)
-⚡ Req/min      : requêtes par minute restantes (ou N/A)
-🔄 Reset        : heure de réinitialisation du quota
-🏷️ Type         : type de quota (ex: CODE_ASSIST)</code></pre>
+🏗️ Projet Perso : identifiant du projet Cloud personnel (masqué s'il est identique au 🌐 Tenant ou égal à aicode-consumers)
+🌐 Tenant       : identifiant du tenant Code Assist actif
+💳 Crédits IA   : crédits disponibles sur le compte
+🤖 Modèle CA    : identifiant du modèle actif (ex: gemini-3.8-flash-high)
+⏱️ Quota 5h     : pourcentage restant coloré + échéance (🔄 dans Xh Ym) ou Désactivé
+📅 Quota Sem.   : pourcentage restant coloré + échéance (🔄 dans Xj Yh)
+📊 Quota        : pourcentage global restant + (🔄 reset) (affiché en repli si les quotas 5h/semaine sont absents)
+📆 Req/jour     : requêtes quotidiennes restantes (affiché uniquement si applicable)
+⚡ Req/min      : requêtes par minute restantes (affiché uniquement si applicable)
+🏷️ Type         : type de quota actif (ex: CODE_ASSIST)</code></pre>
 
 
 
@@ -173,7 +171,7 @@ sequenceDiagram
         </ul>
 
         <h3>2. Signature de <code>deploy_context_gauge()</code> &amp; Rafraîchissement Quotas (<code>echo_ui.py</code> v5.107)</h3>
-        <p>Appelée par <code>echo_orchestrator.py</code>, elle calcule l'anneau SVG via <code>stroke-dashoffset</code> sur <code>quota_fraction</code> (rafraîchi de manière non-bloquante par <code>fetch_available_models()</code> toutes les 10 min dans <code>identity.db</code>, tandis que les quotas 5h et hebdomadaire sont extraits via l'endpoint <code>:retrieveUserQuotaSummary</code> dans <code>echo_auth.py</code> v1.2) :</p>
+        <p>Appelée par <code>echo_orchestrator.py</code> pour injecter <code>#echo-nav-context-hud</code> (segments CSS <code>cache_pct</code> en <code>#8b5cf6</code>, <code>prompt_pct</code> en <code>#10b981</code>, <code>gen_pct</code> en <code>#f59e0b</code> et badge <code>#echo-nav-checkpoint-badge</code>), elle calcule l'anneau SVG via <code>stroke-dashoffset</code> sur <code>quota_fraction</code> (rafraîchi de manière non-bloquante par <code>fetch_available_models()</code> toutes les 10 min dans <code>identity.db</code>, tandis que les quotas 5h et hebdomadaire sont extraits via l'endpoint <code>:retrieveUserQuotaSummary</code> dans <code>echo_auth.py</code> v1.2) :</p>
         <pre><code>deploy_context_gauge(
     events,                        # EchoEvents
     plan_name, credits_val,        # Identité du plan
@@ -182,12 +180,12 @@ sequenceDiagram
     cache_pct, prompt_pct, gen_pct,# Pourcentages
     user_email, user_tier,         # Identité utilisateur
     project_id, auth_sources,      # google_project_id et auth_sources
-    quota_amount, quota_fraction,  # Quota brut et fraction (0.0–1.0)
+    quota_fraction,                # Fraction de quota restante (0.0–1.0)
     quota_reset, quota_type,       # Heure de reset et type (ex: CODE_ASSIST)
     quota_model, quota_rpd_rem,    # CA model_id et Requests per day
     quota_rpd_lim, quota_rpm_rem, quota_rpm_lim,
-    quota_5h_fraction=None, quota_5h_reset="", quota_5h_disabled=False,
-    quota_weekly_fraction=None, quota_weekly_reset="",
+    quota_5h_fraction=None, quota_5h_reset="N/A", quota_5h_disabled=False,
+    quota_weekly_fraction=None, quota_weekly_reset="N/A",
     compaction_count=0, compacted_turns=0
 )</code></pre>
 
@@ -207,7 +205,7 @@ sequenceDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.226.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.226.5 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

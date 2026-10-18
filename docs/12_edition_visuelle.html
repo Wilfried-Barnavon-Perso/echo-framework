@@ -14,7 +14,7 @@
     <h1>12. Édition & Visuel</h1>
 
     <p>
-      Les mots ne suffisent pas toujours pour expliquer un concept ou retravailler un document de grande envergure. ECHO est capable de modifier l'interface visuelle (HUD) de votre écran pour y afficher des diagrammes ou de véritables éditeurs interactifs.
+      Les mots ne suffisent pas toujours pour expliquer un concept ou retravailler un document de grande envergure. ECHO est capable d'enrichir l'interface visuelle de votre écran pour y afficher des diagrammes ou de véritables éditeurs interactifs.
     </p>
 
     <h2>1. Intelligence Visuelle (Schémas et Graphiques)</h2>
@@ -29,29 +29,29 @@
     <h2>2. L'Éditeur ECHO Codex (Texte et Code)</h2>
 <img src="images/codex.png" alt="Codex MP4 to MP3" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
     <p>
-      Le <strong>Codex</strong> est l'éditeur avancé d'ECHO, pensé pour la manipulation de très gros fichiers (code source, longs articles, scripts). Il vous permet d'éditer et de travailler sur des fichiers de très grosse taille.
+      Le <strong>Codex</strong> est l'éditeur avancé d'ECHO, pensé pour la manipulation de fichiers volumineux (code source, longs articles, scripts).
     </p>
     <p>
-      Lorsqu'il est activé, il se déploie à l'écran comme un véritable logiciel de traitement de texte. Il vous offre de multiples avantages :
+      Lorsqu'il est activé, il se déploie à l'écran comme un véritable logiciel de traitement de texte ou d'édition de code. Il vous offre de multiples avantages :
     </p>
     <ul>
       <li><strong>Travail à quatre mains :</strong> L'IA peut modifier une partie spécifique du texte, et vous pouvez aussitôt cliquer dedans pour corriger une phrase à la main, tout cela dans la même fenêtre.</li>
       <li><strong>Machine à remonter le temps :</strong> Le Codex sauvegarde automatiquement l'historique complet de vos versions. Si une modification proposée par l'IA ne vous convient pas, vous pouvez naviguer dans le passé et restaurer la version précédente en un clic.</li>
-      <li><strong>Actions rapides :</strong> Vous disposez de boutons magiques (Raccourcir, Allonger, Optimiser, Commenter) qui commandent directement l'IA pour agir sur le texte que vous avez sélectionné, sans même avoir à lui parler.</li>
+      <li><strong>Actions rapides :</strong> Vous disposez de 8 commandes directes (<em>Raccourcir, Allonger, Commenter, Décommenter, Refactoriser, Corriger, Générer des tests, Optimiser</em>) qui ordonnent à l'IA d'agir sur le bloc de texte ou de code sélectionné, sans avoir à rédiger de consigne dans le chat.</li>
     </ul>
 
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Visual Intelligence (<code>universal_visual_generator.py</code> &amp; <code>echo_visuals.py</code>)</h3>
+        <h3>1. Visual Intelligence (<code>universal_visual_generator.py</code> v5.15 &amp; <code>echo_visuals.py</code> v6.3)</h3>
         <p>Le générateur s'appuie sur le pattern <strong>Data Island</strong>. Il produit la spécification interactive (Mermaid, ECharts, Markmap, D3.js, vis-network, Leaflet) et l'injecte dans le DOM via <code>window.echoRenderVisual</code> avec support natif du zoom, pan et drag.</p>
 
         <h3>2. Architecture ECHO Codex Multi-Workspaces</h3>
         <p>L'éditeur Codex repose sur trois composants synchronisés :</p>
         <ul>
-          <li><strong>Le Moteur Git (<code>echo_codex_git.py</code>) :</strong> Surcouche Python pure autour de <code>dulwich</code> gérant deux espaces de travail distincts (<code>ECHO_CODEX_WORKSPACES</code> : <code>main</code> versionné sous Git et <code>sandbox</code> dédié à l'exécution). Il intègre un contrôle d'état en <strong>O(1) (<code>get_latest_state</code>)</strong>, filtre les répertoires massifs via <code>ECHO_SYNC_EXCLUDE_LIST</code> (<code>node_modules</code>, <code>.venv</code>, etc.) pour prévenir tout gel de l'arborescence UI, et retourne <code>(commit_hash, paths_to_rm)</code> lors d'un <code>delete_file</code> pour purger récursivement SQLite.</li>
-          <li><strong>L'Interface HUD (<code>echo_codex_action.py</code>) :</strong> Injection de <strong>Monaco Editor</strong> propulsée par le protocole <strong>UCTP</strong> (<code>EchoEvents</code>), avec gestion native des dossiers (colonne <code>item_type = file | directory</code> dans <code>echo_resources</code>), lecteur <strong>PDF WYSIWYG</strong> par reconstruction Blob, verrou logiciel anti-Race Condition à la sauvegarde et ping <code>heartbeat</code> déporté via <code>asyncio.to_thread</code>.</li>
-          <li><strong>L'Outil LLM (<code>echo_codex_tool.py</code>) :</strong> Expose les primitives d'édition et de voyage temporel (<code>read_codex</code>, <code>edit_codex</code>, <code>summarize_codex</code> exécuté sur <code>MODEL_APOLLO</code> avec <code>thinking="medium"</code> et <code>maxOutputTokens: 8192</code>, <code>trace_history</code>, <code>restore_codex</code>) ainsi que le trigger <strong><code>open_codex_ui</code></strong> permettant d'ouvrir directement un fichier ciblé (<code>current_file</code>) sur l'écran de l'utilisateur via <code>events.trigger_action()</code> en ancrant <code>message_id</code> sur le message utilisateur immuable (<code>_echo_user_msg_id</code>) pour prévenir tout écrasement asynchrone par le write-back de <code>Chat.svelte:1724</code>.</li>
+          <li><strong>Le Moteur Git (<code>echo_codex_git.py</code> v1.10) :</strong> Surcouche Python pure autour de <code>dulwich</code> gérant deux espaces de travail distincts (<code>ECHO_CODEX_WORKSPACES</code> : <code>main</code> versionné sous Git et <code>sandbox</code> dédié à l'exécution). Il intègre un contrôle d'état en <strong>O(1) (<code>get_latest_state</code>)</strong>, filtre les répertoires massifs via <code>ECHO_SYNC_EXCLUDE_LIST</code> (<code>node_modules</code>, <code>.venv</code>, etc.) pour prévenir tout gel de l'arborescence UI, et retourne <code>(commit_hash, paths_to_rm)</code> lors d'un <code>delete_file</code> pour purger récursivement SQLite.</li>
+          <li><strong>L'Interface HUD (<code>echo_codex_action.py</code> v3.17) :</strong> Injection de <strong>Monaco Editor</strong> propulsée par le protocole <strong>UCTP</strong> (<code>EchoEvents</code>), avec gestion native des dossiers (colonne <code>item_type = file | directory</code> dans <code>echo_resources</code>), lecteur <strong>PDF WYSIWYG</strong> par reconstruction Blob, verrou logiciel anti-Race Condition à la sauvegarde et ping <code>heartbeat</code> déporté via <code>asyncio.to_thread</code>.</li>
+          <li><strong>L'Outil LLM (<code>echo_codex_tool.py</code> v2.15) :</strong> Expose 10 primitives d'édition et de voyage temporel (<code>create_codex</code>, <code>read_codex</code>, <code>edit_codex</code>, <code>delete_codex</code>, <code>list_codex</code>, <code>search_codex</code> incluant le mode <code>trace_history</code>, <code>history_codex</code>, <code>restore_codex</code>, <code>summarize_codex</code> exécuté sur <code>MODEL_APOLLO</code> avec <code>thinking="medium"</code> et <code>maxOutputTokens: 8192</code>) ainsi que le trigger <strong><code>open_codex_ui</code></strong> permettant d'ouvrir directement un fichier ciblé (<code>current_file</code>) sur l'écran de l'utilisateur via <code>events.trigger_action()</code> en ancrant <code>message_id</code> sur le message utilisateur immuable (<code>_echo_user_msg_id</code>) pour prévenir tout écrasement asynchrone par le write-back de <code>Chat.svelte:1724</code>.</li>
         </ul>
       </div>
     </details>
@@ -63,7 +63,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.226.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.226.5 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

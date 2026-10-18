@@ -9,9 +9,9 @@ Ce dossier représente la **Conscience et l'Injection Contextuelle** de l'agent.
 ## 2. Cartographie des Fichiers et Algorithmes
 
 ### `build_environment_domain.py` (Inlet - Priorité 0)
-**Rôle** : Amorçage à froid de l'Environnement ECHO.
+**Rôle** : Amorçage à froid de l'Environnement ECHO (v1.0).
 - **Sémantique** : Filtre Inlet critique (priorité absolue 0). S'exécute avant toute logique applicative ou requête LLM.
-- **Algorithme Clé** : Il est responsable de la création dynamique et de l'injection complète de l'arborescence du Framework (dossiers virtuels Codex, RAG, uploads, n8n_workflows) en distinguant les Domaines Globaux (`get_echo_global_path`) et les Domaines de Session (`get_echo_session_path`) dès la première interaction de l'utilisateur avec l'API WebUI. Il applique également un masquage strict (chmod 0o711) sur le dossier `files` pour empêcher son exploration directe par le LLM au sein de l'environnement isolé (bwrap).
+- **Algorithme Clé** : Il est responsable de la création dynamique et de l'injection complète de l'arborescence du Framework en distinguant les Domaines Globaux (`ECHO_GLOBAL_DOMAINS` via `get_echo_global_path` : `skills`, `files`, `chats`, `n8n_workflow_templates`) et les Domaines de Session (`ECHO_SESSION_DOMAINS` via `get_echo_session_path` : `codex/main`, `codex/sandbox`, `files`, `n8n_workflows`, `dependencies`) dès la première interaction de l'utilisateur avec l'API WebUI. Il applique également un masquage strict (`chmod 0o711`) sur le dossier `files` pour empêcher son exploration directe par le LLM au sein de l'environnement isolé (`bwrap`).
 
 ### `conversation_rag_filter.py` (Outlet - Priorité 100)
 **Rôle** : Pipeline d'Ingestion Conversationnelle Zéro-Latence (v1.14).
@@ -38,8 +38,8 @@ Ce dossier représente la **Conscience et l'Injection Contextuelle** de l'agent.
 - **Algorithme Clé** : Applique un **Bypass Serveur-Side sur Mobile** (inspection du header `User-Agent` court-circuitant toute injection JS sur mobile au profit du fallback CPU immédiat). Sur Desktop, injecte un **HUD d'initialisation WebGPU** (décalé horizontalement à `calc(50% + 125px)` pour ne jamais chevaucher la jauge de contexte) avec rechargement automatique de la SPA en cas de mise à jour du script, gère les **onglets multiples** via des `client_id` UUID et la détection de visibilité (`visibility`), et implémente un **Fallback CPU asynchrone instantané** (`sendIncompatibleAndExit`) rejetant proactivement le matériel incompatible.
 
 ### `tcp_keepalive_filter.py` (Inlet - Priorité 1)
-**Rôle** : Maintien de connexion.
-- **Sémantique** : Filtre Inlet dédié au maintien des sessions (Keep-Alive) sur les connexions WebSocket longues, empêchant le WAF (BunkerWeb) de couper silencieusement la connexion.
+**Rôle** : Maintien du pool de connexions HTTP/TCP Keep-Alive (v1.0).
+- **Sémantique** : Filtre Inlet injectant un `setInterval` JavaScript (`fetch('/health', { method: 'HEAD', cache: 'no-store', keepalive: true })` toutes les 120s) afin de maintenir actif le pool de connexions HTTP/TCP Keep-Alive du navigateur face aux timeouts des proxys inverses et du WAF BunkerWeb (`proxy_read_timeout`).
 
 ### `user_native_context_filter.py` (Inlet - Priorité 10)
 **Rôle** : Grounding Utilisateur & Préférences Contextuelles (v1.1).

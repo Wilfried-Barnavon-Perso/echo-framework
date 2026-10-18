@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Annexes Techniques ECHO v5 : topologie réseau et ports, volumes Docker, schéma SQL complet identity.db et {chat_id}.db, collections Qdrant, valves de configuration, API de référence.">
+  <meta name="description" content="Annexes Techniques ECHO v5 : topologie réseau et ports, volumes Docker, schéma SQL complet identity.db et session.db, collections Qdrant, valves de configuration, API de référence.">
   <title>ECHO v5 - 18. Annexes Techniques</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -44,14 +44,14 @@
         <tr><td>Admin Manager</td><td><code>echo-admin-manager</code></td><td><code>.20</code></td><td><strong>3001</strong></td><td>3001 (ou <code>am.</code> via BunkerWeb)</td></tr>
         <tr><td>Coding Worker (Sandbox)</td><td><code>echo-coding-worker</code></td><td><code>.21</code> (<code>echo-sandbox</code>)</td><td><strong>5000</strong></td><td>Interne (réseau <code>echo-sandbox</code>)</td></tr>
         <tr><td>Browser Worker</td><td><code>echo-browser-worker</code></td><td><code>.22</code></td><td><strong>5002</strong></td><td>Interne uniquement</td></tr>
-        <tr><td>MCP Broker</td><td><code>echo-mcp-broker</code></td><td><code>.23</code></td><td><strong>8000</strong></td><td>Interne uniquement</td></tr>
+        <tr><td>MCP Broker</td><td><code>echo-mcp-broker</code></td><td><code>.23</code></td><td><strong>8000</strong></td><td>8000 (Interne au WAF)</td></tr>
         <tr><td>ECHO Auth Manager (IdP)</td><td><code>echo-auth-manager</code></td><td><code>.24</code></td><td><strong>8000</strong></td><td>Sous-domaine <code>auth.</code> via BunkerWeb</td></tr>
         <tr><td>Download Broker</td><td><code>echo-download-broker</code></td><td><code>.25</code></td><td>Daemon</td><td>Interne uniquement</td></tr>
         <tr><td>N8N Worker (Headless)</td><td><code>echo-n8n-worker</code></td><td><code>.26</code></td><td><strong>5003</strong> (API) / 5678</td><td>Interne uniquement</td></tr>
         <tr><td>Embedding Worker</td><td><code>echo-embedding</code></td><td><code>.30</code></td><td><strong>7997</strong></td><td>WAF (<code>/ws/edge-embed</code>)</td></tr>
         <tr><td>Pont Audio In-Process (STT/TTS)</td><td>In-process WebUI</td><td><code>.100</code></td><td><strong>8080</strong> (<code>/echo/v1/audio</code>)</td><td>Interne (<code>127.0.0.1:8080</code>)</td></tr>
         <tr><td>SSH Tunnel Auth PKCE</td><td>In-process WebUI</td><td><code>.100</code></td><td>8020–8024</td><td>8020–8024 (callback interne 8025–8034)</td></tr>
-        <tr><td>BunkerWeb (WAF )</td><td><code>echo-bunkerweb</code></td><td><code>bw-universe</code></td><td>80 / 443</td><td>80 / 443 (WAN)</td></tr>
+        <tr><td>BunkerWeb (WAF)</td><td><code>bunkerweb</code></td><td><code>bw-universe (.2) / echo-network (.200)</code></td><td>8080 / 8443</td><td>80 / 443 (WAN)</td></tr>
       </tbody>
     </table>
 
@@ -63,7 +63,7 @@
         <tr>
           <td><code>echo-webui-data</code></td>
           <td><code>/app/backend/data</code></td>
-          <td><code>webui.db</code>, <code>identity.db</code> par utilisateur, bases SQLite de session (<code>{chat_id}.db</code>), Codex Git (<code>main</code>/<code>sandbox</code>), Vault fichiers et cache <code>.cache/pip</code>.</td>
+          <td><code>webui.db</code>, <code>identity.db</code> par utilisateur, bases SQLite de session (<code>/users/{uid}/chats/{chat_id}/session.db</code>), Codex Git (<code>main</code>/<code>sandbox</code>), Vault fichiers et cache <code>.cache/pip</code>.</td>
         </tr>
         <tr>
           <td><code>echo-qdrant-data</code></td>
@@ -97,12 +97,12 @@
         </tr>
         <tr>
           <td><code>echo-backups</code></td>
-          <td><code>/opt/ECHO/backups</code></td>
+          <td><code>/backups</code> (sur <code>echo-admin-manager</code>)</td>
           <td>Archives de sauvegarde <code>tar.xz</code> (5 volumes) générées par l'Admin Manager.</td>
         </tr>
         <tr>
           <td><code>bw-data</code> / <code>bw-db-data</code></td>
-          <td><code>/opt/ECHO/bunkerweb</code></td>
+          <td><code>/data</code> (depuis <code>/opt/ECHO/bunkerweb</code>) et <code>/var/lib/mysql</code> (sur <code>bw-db</code>)</td>
           <td>Certificats Let's Encrypt, configurations WAF et base MariaDB 11.4.</td>
         </tr>
       </tbody>
@@ -140,11 +140,11 @@
       </tbody>
     </table>
 
-    <h2>Schéma SQL - <code>{chat_id}.db</code></h2>
+    <h2>Schéma SQL - <code>session.db</code></h2>
 
     <p>
       Base SQLite par session de chat, stockée dans
-      <code>/app/backend/data/users/{uid}/chats/{chat_id}.db</code>.
+      <code>/app/backend/data/users/{uid}/chats/{chat_id}/session.db</code>.
       Gérée par l'instance <code>state_manager</code> de <code>EchoStateManager</code>.
     </p>
 
@@ -220,11 +220,11 @@
       </tbody>
     </table>
 
-    <h3>Tables Complémentaires (<code>call_bridge</code>, <code>rich_payloads</code>, <code>plans</code>, <code>codex_docs</code>, <code>cognitive_threads</code>)</h3>
+    <h3>Tables Complémentaires (<code>call_bridge</code>, <code>rich_payloads</code>, <code>codex_docs</code>, <code>cognitive_threads</code>)</h3>
     <ul>
       <li><strong><code>call_bridge</code> :</strong> Pont entre un <code>call_id</code> d'outil (<code>signature</code>, <code>function_name</code>, <code>args_json</code>) et son résultat au sous-tour suivant.</li>
       <li><strong><code>rich_payloads</code> :</strong> Stocke les parts enrichies (<code>rich_parts_json</code>) indexées par <code>invariant_hash</code>.</li>
-      <li><strong><code>plans</code> &amp; <code>codex_docs</code> :</strong> Tables de suivi utilisées par le <a href="10_planification_execution.html">Planificateur Stratégique</a> et l'<a href="12_edition_visuelle.html">Éditeur Codex</a>.</li>
+      <li><strong><code>codex_docs</code> :</strong> Table de suivi documentaire complémentaire au registre <code>echo_resources</code> (les plans stratégiques et fichiers Codex étant gouvernés par <code>echo_resources</code> et les dépôts Git <code>main</code> / <code>sandbox</code>).</li>
       <li><strong><code>cognitive_threads</code> :</strong> Stocke l'historique des délégations multi-agents (<a href="14_agents_automatisation.html">Conseil Delphi &amp; Sous-Agents</a>) par <code>(sub_sid, step_index)</code>.</li>
     </ul>
 
@@ -236,7 +236,7 @@
       <tbody>
         <tr>
           <td><code>echo_meta_artifacts</code></td>
-          <td><code>COLLECTION_MEMORY</code></td>
+          <td><code>COLLECTION_META_ARTIFACTS</code></td>
           <td>1024 (Harrier-OSS)</td>
           <td>Cosinus</td>
           <td><code>user_id</code></td>
@@ -244,7 +244,7 @@
         </tr>
         <tr>
           <td><code>echo_session_rag</code></td>
-          <td><code>COLLECTION_EPHEMERAL</code></td>
+          <td><code>COLLECTION_SESSION_RAG</code></td>
           <td>1024 (Harrier-OSS)</td>
           <td>Cosinus</td>
           <td><code>user_id + chat_id + slug</code></td>
@@ -341,7 +341,7 @@ Content-Type: application/json</code></pre>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.226.2 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.226.5 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

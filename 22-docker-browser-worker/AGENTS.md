@@ -13,7 +13,7 @@ Fichier monolithique (environ 57Ko) exposant l'API de contrôle du navigateur as
 
 #### A. Pilotage Asynchrone (Playwright)
 - **Sémantique** : Initialise des contextes Playwright (`async_playwright()`). Il crée un onglet par session (`sid`) et isole les cookies et le cache tout en conservant le `chat_id` parent (`session.chat_id`) afin de router les téléchargements (`download`, `save_target`) vers la drop-zone du chat réel (`/app/downloads/<user_id>/<chat_id>/browser`) même lorsque la session est pilotée par un sous-agent (`sub_sid`).
-- **Endpoints d'Action** : Expose des routes REST (`/start_session`, `/action`, `/highlight`, `/vision_capture`, `/screencast/*`, `/reset`) permettant au moteur principal de déclencher des manipulations sur le DOM ciblé.
+- **Endpoints d'Action** : Expose les routes REST FastAPI (`POST /start_session`, `POST /action`, `POST /screencast/start`, `POST /screencast/stop`, `POST /screencast/latest`, `POST /reset` et `GET /health`) permettant au moteur principal de déclencher des manipulations sur le DOM ciblé (la capture visuelle et le tatouage SoM étant exécutés en interne lors de `/start_session` et `/action`).
 
 #### B. Streaming Vidéo Bridé & Rejeu
 - **Sémantique** : Enregistre le flux d'interactions de la page.

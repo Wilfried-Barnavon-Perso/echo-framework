@@ -1,34 +1,27 @@
 [
   {
-    "id": "echo-banner-nomenclature",
+    "id": "echo-banner-capabilities-v2",
     "type": "success",
-    "title": "Nouvelle nomenclature",
-    "content": "ECHO incorpore désormais une nouvelle nomenclature de modèles. Sous le Modèle Prometheus se trouve Gemini 4 Argon.",
+    "title": "Moteur cognitif enrichi",
+    "content": "**Moteur cognitif enrichi** : Écho bénéficie d'une **puissance de raisonnement accrue** et du **compactage automatique** de vos longues conversations *(bêta)*.",
     "dismissible": true,
-    "timestamp": 1729178400
+    "timestamp": 1729242000
   },
   {
-    "id": "echo-banner-prometheus-tokens",
+    "id": "echo-banner-workspace-m365-v2",
+    "type": "info",
+    "title": "Google Workspace & Microsoft 365",
+    "content": "**Google Workspace & Microsoft 365** : Vos outils du quotidien sont désormais connectables. Demandez à Écho de vous guider pour **synchroniser vos agendas et documents** Google Workspace / Microsoft 365, en toute sécurité. Écho peut aussi planifier des **tâches agentiques** et gérer votre **calendrier intégré**.",
+    "dismissible": true,
+    "timestamp": 1729242000
+  },
+  {
+    "id": "echo-banner-mode-guidance-v2",
     "type": "warning",
-    "title": "Consommation Tokens",
-    "content": "Le modèle Prometheus est grand consommateur de token. Le passage en full Prometheus est déconseillé. Utilisez plutôt le mode AUTO-PROM.",
+    "title": "Gestion des modes & quotas",
+    "content": "**Gestion des modes & quotas** : Le mode **AUTO** offre le meilleur équilibre vitesse/quota. Activez **AUTO_PROM** uniquement pour les tâches de conception avancée ou les raisonnements stratégiques. Pour en savoir plus <a href=\"https://docs.echo-ai.eu\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"underline font-semibold\">cliquez ici</a>.",
     "dismissible": true,
-    "timestamp": 1729178400
-  },
-  {
-    "id": "echo-banner-think-levels",
-    "type": "info",
-    "title": "Think Levels",
-    "content": "L'étagement des Think Level de chaque modèle a été revu et adapté à chaque type de tâche, pour une meilleure gestion des quotas de tokens, une rapidité adaptée à la tâche.",
-    "dismissible": true,
-    "timestamp": 1729178400
-  },
-  {
-    "id": "echo-banner-workspace-m365",
-    "type": "info",
-    "title": "Connectivité Workspace & M365",
-    "content": "ECHO est désormais connectable à votre Google Workspace ou à votre compte Microsoft 365, y compris dans leurs versions gratuites. Demandez à Écho de vous guider et échanger des captures d'écran avec elle pour configurer vos comptes.",
-    "dismissible": true,
-    "timestamp": 1729178400
+    "timestamp": 1729242000
   }
 ]
+
