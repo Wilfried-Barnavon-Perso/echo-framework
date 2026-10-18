@@ -19,7 +19,7 @@
     "id": "echo-banner-mode-guidance-v2",
     "type": "warning",
     "title": "Gestion des modes & quotas",
-    "content": "**Gestion des modes & quotas** : Le mode **AUTO** offre le meilleur équilibre vitesse/quota. Activez **AUTO_PROM** uniquement pour les tâches de conception avancée ou les raisonnements stratégiques. Pour en savoir plus <a href=\"https://docs.echo-ai.eu\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"underline font-semibold\">cliquez ici</a>.",
+    "content": "**Gestion des modes & quotas** : Le mode **AUTO** offre le meilleur équilibre vitesse/quota. Activez **AUTO_PROM** uniquement pour les tâches de conception avancée ou les raisonnements stratégiques. Pour en savoir plus <a href=\"https://docs.echo-ai.eu/02_manuel_utilisateur.html#2-selection-du-mode-cognitif\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"underline font-semibold\">cliquez ici</a>.",
     "dismissible": true,
     "timestamp": 1729242000
   }
