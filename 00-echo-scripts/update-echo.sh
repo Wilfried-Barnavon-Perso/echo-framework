@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : update-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 6.3.1
+# VERSION : 6.3.2
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À JOUR RAPIDE (CODE ONLY) + HOT RELOAD
@@ -68,7 +68,7 @@ fi
 
 # --- 3. CONFIG API ---
 echo "🤖 [UPDATE] Configuration Open WebUI..."
-if $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" ps -q open-webui >/dev/null 2>&1; then
+if [ -n "$($DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" ps -q echo-open-webui 2>/dev/null)" ]; then
     /bin/bash "$ECHO_SCRIPTS/config-owui.sh"
 fi
 

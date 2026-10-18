@@ -17,10 +17,10 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 - **`generate_secret()`** : Générateur cryptographique aléatoire de clés de sécurité (incluant `ECHO_SSO_SECRET` pour le Forward Auth hybride).
 
 ### `config-owui.sh`
-**Rôle** : Configuration post-déploiement automatisée de l'interface Open WebUI via son API REST locale (v7.69).
+**Rôle** : Configuration post-déploiement automatisée de l'interface Open WebUI via son API REST locale (v7.71).
 - **`refresh_token()`** : Récupère le jeton JWT d'administration.
-- **`api_purge_all_ghosts()`** : Purge intégralement à froid les `"tools"`, `"functions"` (Filtres, Actions, Pipes) et `"models"` (via `POST /api/v1/models/model/delete`) avant réassemblage afin d'évincer tout artefact ou ancien modèle (`pipe_engine`) obsolète.
-- **`api_upsert()`** : Upsert idempotent unifié des outils, fonctions et du modèle maître unique `echo_orchestrator` (`Écho`, routé sur `POST /api/v1/models/model/update` en cas d'existence).
+- **`api_purge_all_ghosts()`** : Purge intégralement à froid les `"tools"`, `"functions"` (Filtres, Actions, Pipes via `GET /api/v1/$endpoint/`) et `"models"` (listés via `GET /api/v1/models/all` et supprimés via `POST /api/v1/models/model/delete`) avant réassemblage afin d'évincer tout artefact ou ancien modèle (`pipe_engine`) obsolète.
+- **`api_upsert()`** : Upsert idempotent unifié des outils, fonctions et du modèle maître unique `echo_orchestrator` (`Écho`, routé sur `POST /api/v1/models/model/update` en cas d'existence, y compris sur collision `401 MODEL_ID_TAKEN`).
 - **`toggle_state()`** : Active ou désactive des réglages spécifiques dans l'interface OWUI.
 - **Synchronisation des Bannières** : Traitement automatisé de `webui-banners.json` avec normalisation `jq` et injection atomique via `POST /api/v1/configs/banners` déclenchant l'évènement temps-réel `CONFIG_BANNERS_UPDATED`.
 
@@ -38,7 +38,7 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 - **`clean-echo.sh` (v1.3)** : Script automatisé de maintenance système (purge APT, `journalctl --vacuum-size=100M`, et `docker system prune` gradué selon les seuils d'occupation disque : routine 168h, urgence $\ge 85\%$, critique $\ge 90\%$).
 - **`logs-echo.sh` (v1.1) & `ps-echo.sh` (v1.1)** : Utilitaires de diagnostic rapide en ligne de commande pour le suivi temps-réel des journaux Docker Compose (`logs -f --tail=100`) et l'affichage consolidé de l'état des conteneurs de la stack ECHO.
 - **`show-echo-admin.sh` (v1.5)** : Affichage sécurisé dans le terminal des identifiants et des URL d'accès de l'instance pour l'utilisateur.
-- **`update-echo.sh` (v6.3.1) / `upgrade-echo.sh` (v6.10)** : Scripts pour le tirage des modifications Git, le redémarrage Hot-Reload des conteneurs labellisés `echo.hot-reload=true` (`update-echo.sh`), ou la mise à niveau majeure (`upgrade-echo.sh`). Lorsqu'il est appelé via `/usr/local/bin/rebuild-echo`, `upgrade-echo.sh` impose une double confirmation stricte (`CONFIRMER` puis `DETRUIRE`) avant de purger les volumes et secrets.
+- **`update-echo.sh` (v6.3.2) / `upgrade-echo.sh` (v6.10)** : Scripts pour le tirage des modifications Git, le redémarrage Hot-Reload des conteneurs labellisés `echo.hot-reload=true` (`update-echo.sh`), ou la mise à niveau majeure (`upgrade-echo.sh`). Lorsqu'il est appelé via `/usr/local/bin/rebuild-echo`, `upgrade-echo.sh` impose une double confirmation stricte (`CONFIRMER` puis `DETRUIRE`) avant de purger les volumes et secrets.
 
 ## 3. Dépendances Logiques
 - Les scripts sont exécutés majoritairement sur la machine **cible** (Ubuntu), à l'exception du tunnel de synchronisation déclenché depuis l'hôte.

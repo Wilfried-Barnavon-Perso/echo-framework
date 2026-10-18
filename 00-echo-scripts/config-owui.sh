@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.69
+# VERSION : 7.71
 # ==============================================================================
 
 # --- INITIALISATION : CORE ECHO GLOBALS ---
@@ -117,50 +117,55 @@ fi
 # --- 3. IMPORT RESSOURCES (STRATÉGIE DISQUE) ---
 api_upsert() {
     local endpoint="$1"; local id="$2"; local payload_file="$3"; local desc="$4"
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$payload_file")
+    HTTP_CODE=$(curl -sL -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$payload_file")
     
     if [ "$HTTP_CODE" -eq 401 ] && refresh_token; then
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$payload_file")
+        HTTP_CODE=$(curl -sL -o /dev/null -w "%{http_code}" -X POST "$OWUI_URL/api/v1/$endpoint/create" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$payload_file")
     fi
 
     if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
         echo "   ✅ $desc : $id créé."
-    elif [ "$HTTP_CODE" -eq 409 ] || [ "$HTTP_CODE" -eq 400 ]; then
+    elif [ "$HTTP_CODE" -eq 409 ] || [ "$HTTP_CODE" -eq 400 ] || [ "$HTTP_CODE" -eq 422 ] || { [ "$endpoint" == "models" ] && [ "$HTTP_CODE" -eq 401 ]; }; then
         local update_url="$OWUI_URL/api/v1/$endpoint/id/$id/update"
         [ "$endpoint" == "models" ] && update_url="$OWUI_URL/api/v1/models/model/update"
-        UPDATE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$update_url" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$payload_file")
-        [ "$UPDATE_CODE" -eq 401 ] && refresh_token && UPDATE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$update_url" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$payload_file")
+        UPDATE_CODE=$(curl -sL -o /dev/null -w "%{http_code}" -X POST "$update_url" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$payload_file")
+        [ "$UPDATE_CODE" -eq 401 ] && refresh_token && UPDATE_CODE=$(curl -sL -o /dev/null -w "%{http_code}" -X POST "$update_url" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "@$payload_file")
         if [ "$UPDATE_CODE" -eq 200 ]; then echo "   🔄 $desc : $id mis à jour."; else echo "   ❌ Echec $desc $id (HTTP $UPDATE_CODE)."; fi
+    else
+        echo "   ❌ Echec création $desc $id (HTTP $HTTP_CODE)."
     fi
 }
 
 toggle_state() {
     local id="$1"
-    RESP=$(curl -s -X GET "$OWUI_URL/api/v1/functions/id/$id" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
-    [[ "$RESP" == *"expired"* ]] && refresh_token && RESP=$(curl -s -X GET "$OWUI_URL/api/v1/functions/id/$id" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
+    RESP=$(curl -sL -X GET "$OWUI_URL/api/v1/functions/id/$id" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
+    [[ "$RESP" == *"expired"* ]] && refresh_token && RESP=$(curl -sL -X GET "$OWUI_URL/api/v1/functions/id/$id" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
     IS_ACTIVE=$(echo "$RESP" | jq -r '.is_active // empty'); IS_GLOBAL=$(echo "$RESP" | jq -r '.is_global // empty')
-    [ "$IS_GLOBAL" != "true" ] && curl -s -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle/global" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
-    [ "$IS_ACTIVE" != "true" ] && curl -s -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
+    [ "$IS_GLOBAL" != "true" ] && curl -sL -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle/global" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
+    [ "$IS_ACTIVE" != "true" ] && curl -sL -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
 }
 api_purge_all_ghosts() {
     local endpoint="$1"
     local desc="$2"
     
     echo "   🧹 [PURGE] Éradication des $desc existants en base de données..."
+    local list_url="$OWUI_URL/api/v1/$endpoint/"
+    [ "$endpoint" == "models" ] && list_url="$OWUI_URL/api/v1/models/all"
+
     local list_json
-    list_json=$(curl -s -X GET "$OWUI_URL/api/v1/$endpoint/" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
+    list_json=$(curl -sL -X GET "$list_url" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
     
     if [[ "$list_json" == *"detail"* && "$list_json" == *"unauthorized"* ]]; then
         refresh_token
-        list_json=$(curl -s -X GET "$OWUI_URL/api/v1/$endpoint/" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
+        list_json=$(curl -sL -X GET "$list_url" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
     fi
     
     for id in $(echo "$list_json" | jq -r '.[].id // empty'); do
         if [ -n "$id" ]; then
             if [ "$endpoint" == "models" ]; then
-                curl -s -X POST "$OWUI_URL/api/v1/models/model/delete" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "{\"id\": \"$id\"}" > /dev/null
+                curl -sL -X POST "$OWUI_URL/api/v1/models/model/delete" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER -H "Content-Type: application/json" -d "{\"id\": \"$id\"}" > /dev/null
             else
-                curl -s -X DELETE "$OWUI_URL/api/v1/$endpoint/id/$id/delete" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
+                curl -sL -X DELETE "$OWUI_URL/api/v1/$endpoint/id/$id/delete" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
             fi
             echo "      🗑️ Purge : $id"
         fi
