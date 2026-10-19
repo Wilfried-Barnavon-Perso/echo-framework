@@ -1,6 +1,7 @@
-# VERSION : 5.226.18.0
+# VERSION : 5.228.0.1
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.0.1: Import partagé de AuthRequiredError depuis m5_providers et déduplication du message d'erreur.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.18: Hook générique after_list_tools pour l'adaptation des schémas de fournisseurs résidents
 
@@ -17,14 +18,9 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.client.session import ClientSession
 
 from core.security import user_id_var
-from modules.m5_providers import get_service_provider
+from modules.m5_providers import AuthRequiredError, get_service_provider
 
 logger = logging.getLogger(__name__)
-
-
-class AuthRequiredError(Exception):
-    """Levée lorsque des variables d'authentification obligatoires sont manquantes dans le vault."""
-    pass
 
 
 class TolerantClientSession(ClientSession):
@@ -157,10 +153,9 @@ async def _open_transport(stack: AsyncExitStack, user_id: str, service: str, cre
                 if not credentials.get(fid) and not os.environ.get(fid)
             ]
             if missing_fields:
-                instructions = schema_def.get("user_required_instructions", "")
                 raise AuthRequiredError(
                     f"Variables obligatoires manquantes dans l'Identity Vault pour '{service}' : "
-                    f"{', '.join(missing_fields)}. Directives : {instructions}"
+                    f"{', '.join(missing_fields)}."
                 )
 
             args = schema_def.get("args", [])

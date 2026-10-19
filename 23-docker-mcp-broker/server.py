@@ -1,13 +1,14 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 5.226.18.0
+VERSION : 5.228.0.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-10-13
+DATE MAJ : 2026-10-19
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.0.1: Directive PAS exhaustive pour google_workspace (anti-localhost:8001, mode In production).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.14: Interception ciblée AuthRequiredError
 import logging
@@ -86,17 +87,31 @@ SERVICE_SCHEMAS = {
         "name": "Google Workspace MCP (Résident)",
         "command": "workspace-mcp",
         "user_required_instructions": (
-            "Le Modèle DOIT guider l'Utilisateur pour configurer Google Workspace si les identifiants sont manquants ou invalides : "
-            "1. Créer un projet sur Google Cloud Console, activer les APIs (Calendar, Gmail, Drive, etc.) et créer un identifiant OAuth 'Application Web' "
-            "avec l'URI de redirection `https://developers.google.com/oauthplayground`. "
-            "2. Se rendre sur ce lien Playground et cliquer sur l'engrenage (Paramètres) en haut à droite. "
-            "3. Cocher 'Use your own OAuth credentials' et y insérer son Client ID et Client Secret. "
-            "4. Dans 'Input your own scopes', coller `openid https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email "
+            "DIRECTIVES IMPÉRATIVES D'AUTHENTIFICATION GOOGLE WORKSPACE :\n"
+            "1. PROSCRIPTION LOCALE : Le Modèle a l'INTERDICTION STRICTE de proposer ou d'afficher des URLs de redirection locales "
+            "(ex: http://localhost:8001/oauth2callback). L'infrastructure opère dans un conteneur headless isolé inaccessible depuis le navigateur de l'Utilisateur.\n"
+            "2. PRÉREQUIS GOOGLE CLOUD CONSOLE (SI PREMIÈRE CONFIGURATION) :\n"
+            "   a. L'Utilisateur DOIT créer un projet sur Google Cloud Console et activer les APIs requises "
+            "(Calendar, Gmail, Drive, Contacts, Sheets, Docs, Slides, Tasks).\n"
+            "   b. Dans 'Identifiants', créer un ID client OAuth de type 'Application Web' et déclarer impérativement l'URI de redirection autorisée : "
+            "https://developers.google.com/oauthplayground\n"
+            "3. PÉRENNITÉ DU JETON (ANTI-EXPIRATION 7 JOURS) :\n"
+            "   Dans Google Cloud Console > 'Écran de consentement OAuth' (Google Auth Platform > Audience), l'Utilisateur DOIT basculer le statut "
+            "de publication de 'Testing' (Test) à 'In production' (En production). Sans cette action, Google invalide déterministement "
+            "le Refresh Token tous les 7 jours (erreur invalid_grant).\n"
+            "4. GÉNÉRATION / RÉGÉNÉRATION DU REFRESH TOKEN (OAuth Playground) :\n"
+            "   a. L'Utilisateur DOIT accéder à https://developers.google.com/oauthplayground\n"
+            "   b. Ouvrir les paramètres (icône engrenage en haut à droite), cocher 'Use your own OAuth credentials' et renseigner le 'OAuth Client ID' et le 'OAuth Client secret'.\n"
+            "   c. Dans 'Step 1 - Select & authorize APIs' > champ 'Input your own scopes', coller la liste exhaustive suivante :\n"
+            "      openid https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email "
             "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify "
             "https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts https://www.googleapis.com/auth/spreadsheets "
-            "https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/presentations https://www.googleapis.com/auth/tasks`. "
-            "5. Autoriser les APIs, échanger le code contre les tokens, et récupérer le 'Refresh token'. "
-            "6. Enregistrer dans l'Identity Vault sous le service 'google_workspace' les 4 clés exactes suivantes : "
+            "https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/presentations https://www.googleapis.com/auth/tasks\n"
+            "   d. Cliquer sur 'Authorize APIs' et valider l'accès avec le compte Google cible.\n"
+            "   e. Dans 'Step 2 - Exchange authorization code for tokens', cliquer sur 'Exchange authorization code for tokens' et copier la valeur de 'Refresh token'.\n"
+            "5. CONSIGNATION DANS L'IDENTITY VAULT :\n"
+            "   Les 4 clés exactes suivantes DOIVENT être enregistrées dans l'Identity Vault sous le service 'google_workspace' "
+            "(ou mettre à jour 'GOOGLE_OAUTH_REFRESH_TOKEN' s'il s'agit d'un simple renouvellement) : "
             "'USER_GOOGLE_EMAIL', 'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'GOOGLE_OAUTH_REFRESH_TOKEN'."
         ),
         "fields": [

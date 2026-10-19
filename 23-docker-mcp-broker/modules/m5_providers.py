@@ -1,6 +1,7 @@
-# VERSION : 5.226.18.0
+# VERSION : 5.228.0.1
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.0.1: Fail-Closed OAuth2 sur GoogleWorkspaceProvider (prepare_env + bouclier after_tool_call anti-localhost:8001).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.1: Occultation intégrale de _flow_cache dans tools/list et authenticate_account pour zéro fuite en contexte LLM
 """
@@ -26,8 +27,22 @@ logger = logging.getLogger(__name__)
 MCP_CACHE_ROOT = os.environ.get("ECHO_MCP_CACHE_DIR", "/app/mcp_cache")
 
 
+class AuthRequiredError(Exception):
+    """Levée lorsque des variables d'authentification obligatoires sont manquantes ou expirées."""
+    pass
+
+
 class MCPServiceProvider:
     """Interface de base (No-Op) pour les adaptateurs de services MCP."""
+
+    @staticmethod
+    def _make_tool_response(payload: dict, is_error: bool = False) -> dict:
+        text = json.dumps(payload, ensure_ascii=False, indent=2)
+        return {
+            "content": [{"type": "text", "text": text}],
+            "structuredContent": payload,
+            "isError": is_error,
+        }
 
     async def prepare_env(
         self,
@@ -73,6 +88,15 @@ class MCPServiceProvider:
 class GoogleWorkspaceProvider(MCPServiceProvider):
     """Adaptateur OAuth2 pour le serveur résident Google Workspace (`workspace-mcp`)."""
 
+    OAUTH_ERROR_MARKERS = (
+        "localhost:8001",
+        "oauth2callback",
+        "accounts.google.com/o/oauth2",
+        "invalid_grant",
+        "RefreshError",
+        "Token has been expired or revoked",
+    )
+
     async def prepare_env(
         self,
         stack: AsyncExitStack,
@@ -84,22 +108,12 @@ class GoogleWorkspaceProvider(MCPServiceProvider):
         user_email = credentials.get("USER_GOOGLE_EMAIL")
 
         if not (refresh_token and user_email):
-            return
-
-        temp_dir_path = stack.enter_context(tempfile.TemporaryDirectory())
-        safe_email = urllib.parse.quote(user_email, safe="@._-")
-        token_file = os.path.join(temp_dir_path, f"{safe_email}.json")
+            raise AuthRequiredError(
+                "Identifiants Google Workspace incomplets (USER_GOOGLE_EMAIL ou GOOGLE_OAUTH_REFRESH_TOKEN manquant)."
+            )
 
         client_id = credentials.get("GOOGLE_OAUTH_CLIENT_ID", "")
         client_secret = credentials.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
-
-        token_data = {
-            "token": "dummy_if_missing",
-            "refresh_token": refresh_token,
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "client_id": client_id,
-            "client_secret": client_secret,
-        }
 
         try:
             async with httpx.AsyncClient() as client:
@@ -113,37 +127,87 @@ class GoogleWorkspaceProvider(MCPServiceProvider):
                     },
                     timeout=10.0,
                 )
-                if token_resp.status_code == 200:
-                    t_data = token_resp.json()
-                    if "access_token" in t_data:
-                        token_data["token"] = t_data["access_token"]
-                    if "scope" in t_data:
-                        token_data["scopes"] = t_data["scope"].split(" ")
-                    if "expires_in" in t_data:
-                        expiry_dt = datetime.now(timezone.utc) + timedelta(
-                            seconds=int(t_data["expires_in"])
-                        )
-                        token_data["expiry"] = expiry_dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-                else:
-                    try:
-                        err_data = token_resp.json()
-                        logger.warning(
-                            "Google OAuth refresh failed with status %s: %s",
-                            token_resp.status_code,
-                            err_data.get("error", "Unknown"),
-                        )
-                    except Exception:
-                        logger.warning(
-                            "Google OAuth refresh failed with status %s",
-                            token_resp.status_code,
-                        )
         except Exception as ex:
-            logger.warning("Google OAuth refresh exception: %s", ex)
+            logger.warning("Google OAuth refresh network exception: %s", ex)
+            raise AuthRequiredError(
+                f"Échec réseau lors du rafraîchissement du jeton OAuth2 Google Workspace : {ex}"
+            ) from ex
+
+        if token_resp.status_code != 200:
+            err_detail = f"HTTP {token_resp.status_code}"
+            try:
+                err_data = token_resp.json()
+                err_code = err_data.get("error", "unknown_error")
+                err_desc = err_data.get("error_description", "")
+                err_detail = f"{err_code} ({err_desc})" if err_desc else str(err_code)
+            except Exception:
+                pass
+            logger.warning("Google OAuth refresh failed: %s", err_detail)
+            raise AuthRequiredError(
+                f"Authentification Google Workspace invalide ou expirée ({err_detail}). "
+                "Le rafraîchissement automatique OAuth2 a échoué. Les flux d'authentification "
+                "interactive locale (localhost:8001) sont strictement proscrits en environnement conteneurisé."
+            )
+
+        t_data = token_resp.json()
+        access_token = t_data.get("access_token")
+        if not access_token:
+            raise AuthRequiredError(
+                "Réponse OAuth2 Google invalide (aucun access_token retourné). "
+                "Veuillez régénérer GOOGLE_OAUTH_REFRESH_TOKEN."
+            )
+
+        token_data = {
+            "token": access_token,
+            "refresh_token": refresh_token,
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
+        if "scope" in t_data:
+            token_data["scopes"] = t_data["scope"].split(" ")
+        if "expires_in" in t_data:
+            expiry_dt = datetime.now(timezone.utc) + timedelta(
+                seconds=int(t_data["expires_in"])
+            )
+            token_data["expiry"] = expiry_dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+        temp_dir_path = stack.enter_context(tempfile.TemporaryDirectory())
+        safe_email = urllib.parse.quote(user_email, safe="@._-")
+        token_file = os.path.join(temp_dir_path, f"{safe_email}.json")
 
         with open(token_file, "w", encoding="utf-8") as f:
             json.dump(token_data, f)
 
         env["WORKSPACE_MCP_CREDENTIALS_DIR"] = temp_dir_path
+
+    async def after_tool_call(
+        self,
+        user_id: str,
+        tool_name: str,
+        result: dict,
+    ) -> dict:
+        """
+        Bouclier anti-pollution : intercepte toute tentative de `workspace-mcp` d'exposer
+        une URL locale (localhost:8001/oauth2callback) ou une erreur d'expiration OAuth2
+        en cours de session, et lève `AuthRequiredError` pour évincer la session corrompue.
+        """
+        if not isinstance(result, dict):
+            return result
+
+        serialized = json.dumps(result, ensure_ascii=False)
+        if any(marker in serialized for marker in self.OAUTH_ERROR_MARKERS):
+            logger.warning(
+                "Interception d'une fuite d'authentification locale/expirée Google Workspace sur l'outil '%s'.",
+                tool_name,
+            )
+            raise AuthRequiredError(
+                "Authentification Google Workspace invalide ou expirée en cours de session. "
+                "Le flux interactif local (localhost:8001/oauth2callback) émis par workspace-mcp "
+                "a été intercepté et bloqué car il est inaccessible depuis l'hôte."
+            )
+
+        return result
 
 
 class Microsoft365Provider(MCPServiceProvider):
@@ -201,15 +265,6 @@ class Microsoft365Provider(MCPServiceProvider):
         except Exception as e:
             logger.warning("Lecture du cache MSAL impossible (%s): %s", cache_path, e)
             return []
-
-    @staticmethod
-    def _make_tool_response(payload: dict, is_error: bool = False) -> dict:
-        text = json.dumps(payload, ensure_ascii=False, indent=2)
-        return {
-            "content": [{"type": "text", "text": text}],
-            "structuredContent": payload,
-            "isError": is_error,
-        }
 
     async def prepare_env(
         self,
