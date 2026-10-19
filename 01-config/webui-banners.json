@@ -1,11 +1,11 @@
 [
   {
-    "id": "echo-banner-capabilities-v2",
-    "type": "success",
-    "title": "Moteur cognitif enrichi",
-    "content": "**Moteur cognitif enrichi** : Écho bénéficie d'une **puissance de raisonnement accrue** et du **compactage automatique** de vos longues conversations *(bêta)*.",
+    "id": "echo-banner-tasks-incident-20261019",
+    "type": "warning",
+    "title": "Tâches planifiées",
+    "content": "**Tâches planifiées** : Les tâches planifiées ce lundi 19/10/2026 matin n'ont pas été lancées. Bug corrigé, les tâches reprendront comme habituellement.",
     "dismissible": true,
-    "timestamp": 1729242000
+    "timestamp": 1729319700
   },
   {
     "id": "echo-banner-workspace-m365-v2",
