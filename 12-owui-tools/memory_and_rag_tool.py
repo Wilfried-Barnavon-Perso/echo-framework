@@ -1,16 +1,16 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.30
+version: 2.31
 description: ECHO Toolbox pour gestion RAG (Sessions & Codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 2.31: Clarté du statut UI dans update_meta_artifact ciblant explicitement le Méta-Artéfact concerné.
 # 2.30: Paramètre importance obligatoire (Literal["1".."5"]), alignement PACP/PRAC et énonciation impersonnelle stricte.
 # 2.29: Suppression des emojis dans les retours de l'outil delete_session_context_source pour maximiser le signal/bruit.
 # 2.28: Utilisation de ECHO_SUBAGENT_CONTEXT pour l'isolation asynchrone du RAG.
 # 2.27: Isolation du RAG pour les sous-agents (filtrage strict par sub_sid).
-# 2.26: Fix RAG (Purge idempotente pré-indexation, bridage de l'overlap max_chunk).
 
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
@@ -132,7 +132,7 @@ class Tools:
 
         user_id = __user__.get("id")
         chat_id = __metadata__.get("chat_id")
-        await events.status("🧠 Distillation contextuelle et enregistrement dans la base vectorielle...")
+        await events.status(f"🧠 Mémorisation dans le Méta-Artéfact ({artifact_name})...")
         try:
             # Extraction memory_id + tags via LLM
             distilled = await EchoGeminiClient.call_distillation(
