@@ -2,16 +2,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 5.226.18.0
+version: 5.226.18.1
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.1: Attente du verrou de clonage (wait_for_chat_clone) avant l'instanciation de EchoStateManager.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 7.61: Compatibilité avec context_compaction_filter (offset _echo_compacted_user_turns sur tour_conversation et préservation de AEC_context_checkpoint).
 # 7.60: Ajustement sémantique de l'AEC_directive de mise à niveau (notification du passage de l'ancienne à la nouvelle version).
 # 7.59: Injection dynamique de l'AEC_directive d'initialisation de session (PIS) ou de mise à niveau dans rich_parts.
-# 7.58: Correction du fallback ZoneInfo (TypeError sur import pytz as ZoneInfo -> from pytz import timezone).
 
 
 from pydantic import BaseModel, Field
@@ -27,7 +27,7 @@ from datetime import datetime
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_paths import resolve_upload_file_path
+from echo_paths import resolve_upload_file_path, wait_for_chat_clone
 from echo_auth import EchoAuth
 from echo_constants import (
     GOOGLE_API_KEY_REGEX,
@@ -71,6 +71,7 @@ class Filter:
             # Factorisation : Création anticipée du DOMAIN (Vault) Utilisateur-Chat
             state_manager = None
             if chat_id:
+                await wait_for_chat_clone(chat_id)
                 state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
 
             all_files_dict = {}

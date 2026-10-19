@@ -1,10 +1,11 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 5.226.18.0
+# VERSION : 5.226.18.1
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.1: Déploiement et activation des Event Functions (type: event) sans toggle/global.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # --- INITIALISATION : CORE ECHO GLOBALS ---
@@ -46,6 +47,7 @@ TOOLS_DIR="$ECHO_OWUI_TOOLS"
 FILTERS_DIR="$ECHO_OWUI_FILTERS"
 PIPES_DIR="$ECHO_OWUI_PIPES"
 ACTIONS_DIR="$ECHO_OWUI_ACTIONS"
+EVENTS_DIR="$ECHO_OWUI_EVENTS"
 
 echo "🔧 [Config] Démarrage initialisation ECHO dans $ECHO_ROOT..."
 
@@ -141,10 +143,13 @@ api_upsert() {
 
 toggle_state() {
     local id="$1"
+    local desc="$2"
     RESP=$(curl -sL -X GET "$OWUI_URL/api/v1/functions/id/$id" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
     [[ "$RESP" == *"expired"* ]] && refresh_token && RESP=$(curl -sL -X GET "$OWUI_URL/api/v1/functions/id/$id" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER)
     IS_ACTIVE=$(echo "$RESP" | jq -r '.is_active // empty'); IS_GLOBAL=$(echo "$RESP" | jq -r '.is_global // empty')
-    [ "$IS_GLOBAL" != "true" ] && curl -sL -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle/global" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
+    if [ "$desc" != "Event" ]; then
+        [ "$IS_GLOBAL" != "true" ] && curl -sL -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle/global" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
+    fi
     [ "$IS_ACTIVE" != "true" ] && curl -sL -X POST "$OWUI_URL/api/v1/functions/id/$id/toggle" -H "Authorization: Bearer $TOKEN" $EXTRA_HEADER > /dev/null
 }
 api_purge_all_ghosts() {
@@ -177,12 +182,12 @@ api_purge_all_ghosts() {
 
 echo "🔥 Démarrage de la reconstruction système vierge..."
 api_purge_all_ghosts "tools" "Outils"
-api_purge_all_ghosts "functions" "Fonctions (Filtres, Actions, Pipes)"
+api_purge_all_ghosts "functions" "Fonctions (Filtres, Actions, Pipes, Events)"
 api_purge_all_ghosts "models" "Modèles"
 
-for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:functions:Pipe" "functions:functions:Action"; do
+for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:functions:Pipe" "functions:functions:Action" "functions:functions:Event"; do
     IFS=":" read -r DIR_NAME API_ENDPOINT DESC <<< "$DIR_TYPE"
-    case "$DESC" in "Outil") T="$TOOLS_DIR";; "Filtre") T="$FILTERS_DIR";; "Pipe") T="$PIPES_DIR";; "Action") T="$ACTIONS_DIR";; esac
+    case "$DESC" in "Outil") T="$TOOLS_DIR";; "Filtre") T="$FILTERS_DIR";; "Pipe") T="$PIPES_DIR";; "Action") T="$ACTIONS_DIR";; "Event") T="$EVENTS_DIR";; esac
     if [ -d "$T" ]; then
         echo "📂 Traitement $DESC..."
         for file in "$T"/*.py; do
@@ -205,7 +210,7 @@ for DIR_TYPE in "tools:tools:Outil" "functions:functions:Filtre" "functions:func
             
             api_upsert "$API_ENDPOINT" "$ID" "$TMP_JSON" "$DESC"
             if [ "$API_ENDPOINT" != "tools" ]; then
-                toggle_state "$ID"
+                toggle_state "$ID" "$DESC"
             else
                 TMP_ACCESS="/tmp/owui_access_payload_$$.json"
                 echo '{"access_grants":[{"principal_type":"user","principal_id":"*","permission":"read"}]}' > "$TMP_ACCESS"

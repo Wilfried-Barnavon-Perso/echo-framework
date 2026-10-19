@@ -88,7 +88,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement au format XML nat
 - **Purge Vectorielle & SQLite (Asynchrone) :** Élagage temporel (TTL) automatisé des orphelins dans Qdrant et SQLite. L'élagage se fait dorénavant via un thread dédié en arrière-plan (`run_semantic_pruning`) pour ne jamais bloquer l'interface d'administration.
 - **Configuration OWUI :** Script de post-déploiement automatisé des modèles et permissions.
 
-## 7. 🖱️ Actions Interactives (`/opt/ECHO/owui-actions/`)
+## 7. 🖱️ Actions Interactives (`/opt/ECHO/owui-actions/`) & Événements (`/opt/ECHO/owui-events/`)
 
 - **Cockpit de Rejeu :** Interface pour la navigation web.
 - **Print / PDF :** Export des conversations.
@@ -98,6 +98,7 @@ Le vecteur d'état global (AEC) est injecté systématiquement au format XML nat
 - **Réinitialisation Auth :** Purge des tokens OAuth2.
 - **ECHO Codex :** HUD Monaco Editor, file tree, historique Git, restauration de version.
 - **Compacter le contexte de la session (`compact_context_action.py`) :** Compression cognitive sur place (In-Place Checkpointing via `MODEL_APOLLO`) condensant les tours anciens dans `<artifact id="AEC_context_checkpoint">` sans quitter la session courante.
+- **Synchronisation Événementielle du Clonage/Fork (`echo_chat_cloned_event.py` v5.226.18.1) :** Fonction de type `Event` (`15-owui-events/`) interceptant le signal natif `chat.cloned` d'Open WebUI sans dépendance à `webui.db`. Réalise un `sqlite3.Connection.backup()` atomique du `session.db` parent vers la session cible sous verrou mémoire asyncio (`get_chat_clone_lock` / `wait_for_chat_clone`), élague en cas de Fork l'arbre causal (`suture_index`, `message_shadows`, `cognitive_signatures`), les ressources postérieures au point de dérivation et les états obsolètes (`compaction_state` postérieur, `pending_plan_validation`, `aec_directive`, `aec_event`), réaligne le dépôt Git `codex/main` au timestamp du point de fork (`CodexRepo.restore_repo_to_timestamp`), réinitialise `is_embedded = 0` pour l'indexation asynchrone par `conversation_rag_filter.py` et recable les symlinks `files/`.
 
 ## 8. 🏭 Infrastructure d'Exécution
 
@@ -111,7 +112,7 @@ L'infrastructure s'est enrichie pour supporter les flux asynchrones Headless N8N
 - **N8N Worker :** Sous-système Headless (`26-docker-n8n-worker`) encapsulant le moteur N8N (utilisant nativement SQLite via le volume `echo-n8n-data`) et l'API Python de pilotage (Port 5003) interfaçant le LLM avec l'orchestrateur de workflow. L'export de données sur disque s'effectue via le Download Broker (`__ECHO_DOWNLOAD_DIR__`).
 - **[NOUVEAU] In-Process Audio Bridge :** Pont audio in-process (`echo_audio.py` v5.226.18.0 monté sur `/echo/v1/audio`) remplaçant les anciens workers Docker STT/TTS (`.31`/`.32`). Il intègre la transcription vocale haute précision via Gemini `MODEL_ZEPHYR` (sniffing des magic bytes audio WebM, WAV, OGG, FLAC, MP3, MP4/M4A, limite 14 Mo) et la synthèse vocale streaming via Microsoft Edge Read-Aloud (`edge-tts`, voix par défaut `fr-FR-VivienneMultilingualNeural`, vitesse nominale `1.0`, pitch feutré `-2Hz`).
 - **Workers & Logs Centralisés :** Mise en place d'un système de log unifié JSON (`logging.json`) et implémentation d'un **System-wide Health Check Rate-Limiting** sur tous les workers (Embedding, Browser, Python) pour éviter la saturation par les sondes Docker.
-- **UI HUD & Sécurité DOM (`echo_ui.py` & `echo_events.py`) :** Le moteur de rendu (`v5.226.18.0`) implémente un système natif **"OWUI Tools"** avec des optimisations 100% Mobile Natives (unités dvh, anti-zoom iOS, touch targets 44px, anti-scroll du body) et enrichit la jauge de contexte (`deploy_context_gauge`) avec le `Tier` utilisateur, la déduplication du `Project ID` Tenant, les jauges **Quota 5h** et **Quota Semaine**, ainsi que le badge `🗜️ #N` du Checkpoint Cognitif actif. La couche de communication UI (`echo_events.py` v5.226.18.0) émet les toasts via l'événement Socket.IO natif `"notification"` d'Open WebUI et intègre le protocole **UCTP (Universal Chunked Transfer Protocol)** qui fragmente dynamiquement les payloads JS massifs en chunks de 256 Ko (contournant les limites drastiques des WAF/WebSockets) avec injection d'un HUD de transfert non-bloquant (Spinner & Progress Bar). Le système injecte également des modales asynchrones interactives (ex: `window.echoCustomPrompt` enrichies par des boutons 'pills' pour les options) respectant le mode sombre/clair pour ne jamais bloquer l'Event Loop, et sécurise les rendus HTML via `window.echoSanitizeHTML`.
+- **UI HUD & Sécurité DOM (`echo_ui.py` & `echo_events.py`) :** Le moteur de rendu (`v5.226.18.1`) implémente un système natif **"OWUI Tools"** avec des optimisations 100% Mobile Natives (unités dvh, anti-zoom iOS, touch targets 44px, anti-scroll du body), enrichit la jauge de contexte (`deploy_context_gauge`) avec le `Tier` utilisateur, la déduplication du `Project ID` Tenant, les jauges **Quota 5h** et **Quota Semaine**, ainsi que le badge `🗜️ #N` du Checkpoint Cognitif actif, et applique un garde de route SPA (`data-chat-id` + auto-close sur changement d'URL `/c/{id}`) sur `#echo-codex-hud` et `#echo-cognitive-monitor`. La couche de communication UI (`echo_events.py` v5.226.18.1) émet les toasts via l'événement Socket.IO natif `"notification"` d'Open WebUI et intègre le protocole **UCTP (Universal Chunked Transfer Protocol)** qui fragmente dynamiquement les payloads JS massifs en chunks de 256 Ko (contournant les limites drastiques des WAF/WebSockets) avec injection d'un HUD de transfert non-bloquant (Spinner & Progress Bar). Le système injecte également des modales asynchrones interactives (ex: `window.echoCustomPrompt` enrichies par des boutons 'pills' pour les options) respectant le mode sombre/clair pour ne jamais bloquer l'Event Loop, et sécurise les rendus HTML via `window.echoSanitizeHTML`.
 
 ## 9. 🚦 Orchestration Séquentielle (Docker Compose)
 
@@ -152,4 +153,4 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 ---
 ---
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.226.18*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.227.0*

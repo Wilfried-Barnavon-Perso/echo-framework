@@ -1,12 +1,13 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : echo-globals.sh
-# VERSION : 5.226.18.0
+# VERSION : 5.226.18.1
 # AUTEUR : Wilfried BARNAVON
 # ROLE : Centralisation des constantes de chemins pour le framework ECHO
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.1: Ajout de la constante ECHO_OWUI_EVENTS pour le sous-système 15-owui-events.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # Racine principale du framework
@@ -29,6 +30,7 @@ export ECHO_OWUI_TOOLS="$ECHO_ROOT/owui-tools"
 export ECHO_OWUI_FILTERS="$ECHO_ROOT/owui-filters"
 export ECHO_OWUI_PIPES="$ECHO_ROOT/owui-pipes"
 export ECHO_OWUI_ACTIONS="$ECHO_ROOT/owui-actions"
+export ECHO_OWUI_EVENTS="$ECHO_ROOT/owui-events"
 
 # Dossiers Docker (Build Contexts)
 export ECHO_DOCKER_ADMIN="$ECHO_ROOT/docker-admin-manager"

@@ -1,11 +1,12 @@
 """
 title: ECHO Context Compaction Filter
 author: ECHO Framework
-version: 5.226.18.0
+version: 5.226.18.1
 description: Composant système interne : Rejeu des Checkpoints cognitifs et compactage automatique (45% -> 25%).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.1: Attente du verrou de clonage (wait_for_chat_clone) avant l'instanciation de EchoStateManager.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.1: Émission d'un statut UI explicite lors du rejeu d'un Checkpoint cognitif actif sur chaque nouveau tour utilisateur.
 # 1.0: Création du filtre Inlet (priorité 15) de compactage contextuel in-place et rejeu de Checkpoint SQLite.
@@ -22,6 +23,7 @@ from echo_constants import (
     ECHO_COMPACTION_ENABLED_DEFAULT,
     ECHO_COMPACTION_MIN_TURNS_TO_KEEP,
 )
+from echo_paths import wait_for_chat_clone
 from echo_state_manager import EchoStateManager
 from echo_events import EchoEvents
 from echo_core import EchoCompactionEngine
@@ -58,6 +60,7 @@ class Filter:
             if not chat_id or not user_id:
                 return body
 
+            await wait_for_chat_clone(chat_id)
             state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
             system_msgs, all_turns = EchoCompactionEngine.group_messages_into_turns(messages)
             if not all_turns:

@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.226.18.1
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.1: Ajout de restore_repo_to_timestamp pour restaurer l'arbre Git main lors d'un fork intermédiaire.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.10: Application stricte de ECHO_SYNC_EXCLUDE_LIST pour prévenir le gel UI sur les gros dossiers sandbox.
 # 1.9: Modification de delete_file pour retourner le tuple (commit_hash, paths_to_rm) afin d'assurer la purge SQLite côté action.
 # 1.8: Correction de list_files dans main pour inclure correctement les fichiers dans les sous-dossiers.
-# 1.6: Asymétrie de parcours de fichiers (os.listdir vs os.walk) entre main et sandbox.
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
 # desc.
 
@@ -519,6 +519,65 @@ class CodexRepo:
     # =========================================================================
     # ADMINISTRATION
     # =========================================================================
+
+    def restore_repo_to_timestamp(self, cutoff_ts: int) -> dict:
+        """Restaure le dépôt Git 'main' (working tree, index et HEAD) au dernier commit dont commit_time <= cutoff_ts.
+        Retourne {'restored_commit': sha_or_none, 'tracked_files': set_of_rel_paths}."""
+        try:
+            commits = self.get_log(limit=500)
+            if not commits:
+                return {"restored_commit": None, "tracked_files": set()}
+
+            # Sélection du commit le plus récent antérieur ou égal à cutoff_ts
+            target_commit = None
+            for c in commits:
+                if int(c.get("timestamp", 0)) <= int(cutoff_ts):
+                    target_commit = c
+                    break
+
+            # Nettoyage préalable de l'arbre de travail (hors .git)
+            for entry in os.listdir(self.repo_path):
+                if entry == ".git":
+                    continue
+                full_p = os.path.join(self.repo_path, entry)
+                if os.path.isdir(full_p) and not os.path.islink(full_p):
+                    shutil.rmtree(full_p)
+                else:
+                    os.remove(full_p)
+
+            if not target_commit:
+                # Aucun commit antérieur ou égal au point de fork : réinitialisation de l'index et des refs
+                idx_path = self.repo.index_path()
+                if os.path.exists(idx_path):
+                    os.remove(idx_path)
+                for ref in list(self.repo.refs.keys()):
+                    if ref.startswith(b"refs/heads/"):
+                        del self.repo.refs[ref]
+                return {"restored_commit": None, "tracked_files": set()}
+
+            from dulwich.index import build_index_from_tree
+            sha_bytes = target_commit["hash_full"].encode("ascii")
+            commit_obj = self.repo.object_store[sha_bytes]
+
+            # Reconstruction de l'index et du working tree depuis l'arbre du commit cible
+            build_index_from_tree(
+                self.repo_path,
+                self.repo.index_path(),
+                self.repo.object_store,
+                commit_obj.tree,
+            )
+
+            # Réalignement des références Git sur le commit cible
+            for ref in list(self.repo.refs.keys()):
+                if ref.startswith(b"refs/heads/"):
+                    self.repo.refs[ref] = sha_bytes
+            self.repo.refs[b"HEAD"] = sha_bytes
+
+            index = self.repo.open_index()
+            tracked = {f.decode("utf-8") for f in index}
+            return {"restored_commit": target_commit["hash_full"], "tracked_files": tracked}
+        except Exception as e:
+            return {"restored_commit": None, "tracked_files": set(), "error": str(e)}
 
     def reset_all(self) -> bool:
         """Supprime entièrement le dépôt. Irréversible."""

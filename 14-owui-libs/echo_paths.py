@@ -2,17 +2,38 @@
 """
 title: ECHO Echo Paths
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.226.18.1
 description: Résolution des chemins absolus du système.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.1: Ajout du registre de verrous asyncio (_CHAT_CLONE_LOCKS, get_chat_clone_lock, wait_for_chat_clone).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 import os
 import time
 import glob
+import asyncio
 from typing import Optional
 from echo_constants import ECHO_GLOBAL_DOMAINS, ECHO_SESSION_DOMAINS, ECHO_USERS_ROOT, ECHO_UPLOADS_TRANSIT_DIR, ECHO_VERSION_PATH
+
+# Registre en mémoire des verrous asyncio de clonage de session en cours
+_CHAT_CLONE_LOCKS: dict[str, asyncio.Lock] = {}
+
+def get_chat_clone_lock(chat_id: str) -> asyncio.Lock:
+    """Retourne ou crée un verrou asyncio pour synchroniser la création d'un chat cloné."""
+    if chat_id not in _CHAT_CLONE_LOCKS:
+        _CHAT_CLONE_LOCKS[chat_id] = asyncio.Lock()
+    return _CHAT_CLONE_LOCKS[chat_id]
+
+async def wait_for_chat_clone(chat_id: str, timeout: float = 10.0) -> None:
+    """Attend la fin d'un clonage éventuel sur ce chat_id avant l'exécution des filtres Inlet."""
+    lock = _CHAT_CLONE_LOCKS.get(chat_id)
+    if lock and lock.locked():
+        try:
+            await asyncio.wait_for(lock.acquire(), timeout=timeout)
+            lock.release()
+        except Exception:
+            pass
 
 def get_echo_global_path(user_id: str, domain: str) -> str:
     """Retourne le chemin standardisé pour un domaine global (ex: skills)."""

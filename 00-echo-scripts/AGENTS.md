@@ -17,11 +17,11 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 - **`generate_secret()`** : Générateur cryptographique aléatoire de clés de sécurité (incluant `ECHO_SSO_SECRET` pour le Forward Auth hybride).
 
 ### `config-owui.sh`
-**Rôle** : Configuration post-déploiement automatisée de l'interface Open WebUI via son API REST locale (v5.226.18.0).
+**Rôle** : Configuration post-déploiement automatisée de l'interface Open WebUI via son API REST locale (v5.226.18.1).
 - **`refresh_token()`** : Récupère le jeton JWT d'administration.
-- **`api_purge_all_ghosts()`** : Purge intégralement à froid les `"tools"`, `"functions"` (Filtres, Actions, Pipes via `GET /api/v1/$endpoint/`) et `"models"` (listés via `GET /api/v1/models/all` et supprimés via `POST /api/v1/models/model/delete`) avant réassemblage afin d'évincer tout artefact ou ancien modèle (`pipe_engine`) obsolète.
-- **`api_upsert()`** : Upsert idempotent unifié des outils, fonctions et du modèle maître unique `echo_orchestrator` (`Écho`, routé sur `POST /api/v1/models/model/update` en cas d'existence, y compris sur collision `401 MODEL_ID_TAKEN`).
-- **`toggle_state()`** : Active ou désactive des réglages spécifiques dans l'interface OWUI.
+- **`api_purge_all_ghosts()`** : Purge intégralement à froid les `"tools"`, `"functions"` (Filtres, Actions, Pipes, Events via `GET /api/v1/$endpoint/`) et `"models"` (listés via `GET /api/v1/models/all` et supprimés via `POST /api/v1/models/model/delete`) avant réassemblage afin d'évincer tout artefact ou ancien modèle (`pipe_engine`) obsolète.
+- **`api_upsert()`** : Upsert idempotent unifié des outils, fonctions (incluant `functions:functions:Event` depuis `$ECHO_OWUI_EVENTS`) et du modèle maître unique `echo_orchestrator` (`Écho`, routé sur `POST /api/v1/models/model/update` en cas d'existence, y compris sur collision `401 MODEL_ID_TAKEN`).
+- **`toggle_state()`** : Active les fonctions dans l'interface OWUI (`/toggle` pour `is_active`, et `/toggle/global` uniquement lorsque le type diffère de `"Event"`).
 - **Synchronisation des Bannières** : Traitement automatisé de `webui-banners.json` avec normalisation `jq` et injection atomique via `POST /api/v1/configs/banners` déclenchant l'évènement temps-réel `CONFIG_BANNERS_UPDATED`.
 
 ### `sync-echo.sh`
@@ -34,7 +34,7 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 - Le script `disable-bunkerweb.sh` (v5.226.18.0) révoque la proxyfication et expose directement les ports d'Open WebUI et de l'Admin Manager (Port 3001).
 
 ### Utilitaires
-- **`echo-globals.sh` (v5.226.18.0)** : Définition des variables d'environnement globales sourcées par les autres scripts.
+- **`echo-globals.sh` (v5.226.18.1)** : Définition des variables d'environnement globales sourcées par les autres scripts (incluant `ECHO_OWUI_EVENTS="$ECHO_ROOT/owui-events"`).
 - **`clean-echo.sh` (v5.226.18.0)** : Script automatisé de maintenance système (purge APT, `journalctl --vacuum-size=100M`, et `docker system prune` gradué selon les seuils d'occupation disque : routine 168h, urgence $\ge 85\%$, critique $\ge 90\%$).
 - **`logs-echo.sh` (v5.226.18.0) & `ps-echo.sh` (v5.226.18.0)** : Utilitaires de diagnostic rapide en ligne de commande pour le suivi temps-réel des journaux Docker Compose (`logs -f --tail=100`) et l'affichage consolidé de l'état des conteneurs de la stack ECHO.
 - **`show-echo-admin.sh` (v5.226.18.0)** : Affichage sécurisé dans le terminal des identifiants et des URL d'accès de l'instance pour l'utilisateur.

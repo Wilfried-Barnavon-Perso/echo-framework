@@ -29,6 +29,7 @@ gemini_internal_project.txt
 __pycache__/
 *.py[cod]
 venv/
+.venv/
 .pytest_cache/
 
 # --- IDE ---

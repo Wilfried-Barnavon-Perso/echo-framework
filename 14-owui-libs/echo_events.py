@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Events
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.226.18.1
 description: Gestionnaire des événements WebSocket et UI. Intègre le protocole UCTP (Universal Chunked Transfer Protocol).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.1: Vérification de data-chat-id dans le fast-path de trigger_action pour le HUD Codex.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.7: Fix critique UX - Alignement de EchoEvents.toast() sur l'événement Socket.IO natif 'notification' d'Open WebUI (Chat.svelte).
 # 2.6: Fix critique - Timeout asynchrone sur call_execute (anti-hang RPC Socket.IO), et fast-path dans trigger_action si le HUD Codex est déjà actif.
 # 2.5: Fix critique - Injection explicite du `session_id` dans `trigger_action` pour empêcher le crash en boucle de l'Event Caller côté serveur.
-# 2.4: Purge des heuristiques JS et passage à l'injection stricte (`chat_id`, `message_id`, `model_id`) depuis le contexte métier.
 import asyncio
 from typing import Any, Optional
 import uuid
@@ -232,9 +232,10 @@ class EchoEvents:
         js_payload = f"""
         (async () => {{
             try {{
-                // Fast-path ECHO Codex : si le HUD est déjà ouvert dans le DOM et actif,
+                // Fast-path ECHO Codex : si le HUD est déjà ouvert dans le DOM pour CE chat_id et actif,
                 // réveiller directement la boucle existante sans recréer l'action ni réinjecter le DOM.
-                if ('{action_id}' === 'echo_codex_action' && document.getElementById('echo-codex-hud') && typeof window.sendCodexAction === 'function') {{
+                const codexEl = document.getElementById('echo-codex-hud');
+                if ('{action_id}' === 'echo_codex_action' && codexEl && codexEl.getAttribute('data-chat-id') === '{chat_id}' && typeof window.sendCodexAction === 'function') {{
                     const target = window._echoCodexTarget;
                     if (target) {{
                         window.sendCodexAction({{

@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.226.18.1
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.1: Estampillage data-chat-id et auto-fermeture sur changement de route SPA pour les HUDs Codex et Cognitive Monitor.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.107: Affichage du badge et de la ligne de Checkpoint Cognitif actif dans deploy_context_gauge.
 # 5.106: Affichage du Tier, déduplication du Project ID Tenant et intégration des jauges Quota 5h et Quota Semaine dans deploy_context_gauge.
 # 5.105: Alignement du sélecteur de modèle Codex HUD sur la nomenclature cognitive (Apollo, Prometheus, Zephyr).
-# 5.104: Rollback de la factorisation globale (5.102/5.103) suite à des lenteurs massives et instabilités. Retour à la version 5.101 (état validé avant factorisation du clamping).
 
 
 import sys
@@ -1595,6 +1595,7 @@ return new Promise(function(resolve) {{
       // --- HUD Container ---
       const hud = document.createElement('div');
       hud.id = CODEX_ID;
+      hud.setAttribute('data-chat-id', CID);
       hud.style.cssText = `position:fixed; z-index:10001; display:flex; flex-direction:column;
         background:${{bgColor}}; border:1px solid ${{borderColor}}; border-radius:12px;
         box-shadow:0 20px 60px rgba(0,0,0,0.4); font-family:'Segoe UI',system-ui,sans-serif;
@@ -2920,11 +2921,21 @@ return new Promise(function(resolve) {{
         document.head.appendChild(loaderScript);
       }}
 
-      // ===== PING HEARTBEAT =====
-      setInterval(() => {{
+      // ===== PING HEARTBEAT & SPA ROUTE GUARD =====
+      const pingInterval = setInterval(() => {{
+        if (!document.getElementById(CODEX_ID)) {{
+            clearInterval(pingInterval);
+            return;
+        }}
+        if (CID && window.location.pathname.startsWith('/c/') && !window.location.pathname.includes(CID)) {{
+            clearInterval(pingInterval);
+            hud.remove();
+            window.sendCodexAction({{action: 'close'}});
+            return;
+        }}
         if (!document.hidden) {{
             window.sendCodexAction({{action: 'ping', current_file: currentFile}});
-          }}
+        }}
       }}, 5000);
 
       loadMonaco();
@@ -3137,6 +3148,7 @@ return new Promise(function(resolve) {{
             "  // =============== CONSTRUCTION DU HUD ===============\n"
             "  var hud = document.createElement('div');\n"
             "  hud.id = HUD_ID;\n"
+            "  hud.setAttribute('data-chat-id', CID);\n"
             "  hud.style.cssText = 'position:fixed; z-index:10001; display:flex; flex-direction:column;'\n"
             "    + ' background:' + C.bg + '; border:1px solid ' + C.border + '; border-radius:12px;'\n"
             "    + ' box-shadow:0 20px 60px rgba(0,0,0,0.4); font-family:Segoe UI,system-ui,sans-serif;'\n"
@@ -3272,7 +3284,18 @@ return new Promise(function(resolve) {{
             "  };\n"
             "\n"
             "  // Close — resolve pour sortir de la boucle Python\n"
+            "  var routeGuardTimer = setInterval(function() {\n"
+            "    if (!document.getElementById(HUD_ID)) { clearInterval(routeGuardTimer); return; }\n"
+            "    if (CID && window.location.pathname.startsWith('/c/') && !window.location.pathname.includes(CID)) {\n"
+            "      clearInterval(routeGuardTimer);\n"
+            "      if (autoRefreshTimer) clearInterval(autoRefreshTimer);\n"
+            "      hud.remove();\n"
+            "      if (window.echoAgentResolve) window.echoAgentResolve({action: 'close'});\n"
+            "    }\n"
+            "  }, 2000);\n"
+            "\n"
             "  document.getElementById(HUD_ID + '-close').onclick = function() {\n"
+            "    clearInterval(routeGuardTimer);\n"
             "    if (autoRefreshTimer) clearInterval(autoRefreshTimer);\n"
             "    hud.remove();\n"
             "    if (window.echoAgentResolve) window.echoAgentResolve({action: 'close'});\n"
