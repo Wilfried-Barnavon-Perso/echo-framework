@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 5.226.18.0
+version: 5.226.18.1
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.1: Documentation : Harmonisation fonctionnelle et terminologique (PAS/Utilisateur) du docstring de ask_user_input.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.32: Fixation déterministe du modèle sur OWUI_ORCHESTRATOR_MODEL ("echo_orchestrator") et suppression de model_id (zéro rétrocompatibilité).
 # 1.31: Alignement du cache d'outils sur sys.modules["function_echo_orchestrator"].
 # 1.30: Ajout de list_ui_calendar_events, read_ui_calendar_events, update_ui_calendar_event et update_ui_automation.
-# 1.29: Ajout de generationConfig explicite avec thinking medium sur delegate_to_tool_consultant.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -210,12 +210,12 @@ class Tools:
         __event_call__: Any = None
     ) -> dict:
         """
-        Interrompt brièvement l'exécution pour afficher une boîte de dialogue à l'utilisateur.
+        Interrompt brièvement l'exécution pour afficher une boîte de dialogue à l'Utilisateur.
         Permet de demander une information (ex: Clé API) via 'text', ou une approbation (Oui/Non) via 'confirm'.
 
-        :param question: La question ou le message à afficher à l'utilisateur pour lui demander une saisie ou une confirmation.
+        :param question: La question ou le message à afficher à l'Utilisateur pour lui demander une saisie ou une confirmation.
         :param input_type: Type de demande : 'text' (pour demander de taper un texte) ou 'confirm' (pour un simple choix Oui/Non).
-        :param options: Liste optionnelle de suggestions (réponses prédéfinies). Génère des boutons/pilules cliquables dans l'interface que l'utilisateur peut sélectionner directement. L'utilisateur pourra choisir ou taper librement.
+        :param options: Liste optionnelle de suggestions (réponses prédéfinies) affichées sous forme de boutons interactifs dans l'interface. L'Utilisateur peut sélectionner une option ou effectuer une saisie libre.
         :param timeout_seconds: Délai maximum en secondes avant l'annulation (uniquement pour 'text'). Par défaut 5 minutes.
         """
         if not __user__:

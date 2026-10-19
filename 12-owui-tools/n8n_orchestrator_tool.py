@@ -1,16 +1,16 @@
 """
 title: ECHO N8N Orchestrator
 author: ECHO
-version: 5.226.18.0
+version: 5.226.18.1
 description: Outil agentique de cycle de vie et d'exécution N8N (Phase 2 & 3). Refactorisation institutionnelle et N8N Grapher.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.1: Documentation : Harmonisation impersonnelle (PAS) du docstring de run_n8n_oneshot_workflow.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.18: Nomenclature : Alignement de la délégation N8N Grapher sur MODEL_PROMETHEUS.
 # 1.17: Documentation : Ajout des directives d'usage de la macro __ECHO_DOWNLOAD_DIR__ et obligation de validation One-Shot avant déploiement.
 # 1.16: Correction : Protection contre la valeur NULL (NoneType) du statut lors de la suppression d'un workflow en base SQLite.
-# 1.15: Refinement : MAJ docstrings pour incitation au N8N Grapher et correction casse.
 
 import sys
 import orjson as json
@@ -364,7 +364,7 @@ class Tools:
         `__ECHO_DOWNLOAD_DIR__/nom_du_fichier.ext`. Le système gère automatiquement le renommage, la sécurisation et l'ingestion asynchrone.
         
         :param n8n_workflow_id: L'UUID retourné par prepare_n8n_workflow.
-        :param sync: Si True, l'agent attend (bloquant) la fin du processus et reçoit stdout/stderr. Si False (par défaut), lance en tâche de fond (Fire&Forget). Utilisez sync=False pour le scraping, les tâches longues, ou quand il y a de la récursivité.
+        :param sync: Si True, le Modèle attend (bloquant) la fin du processus et reçoit stdout/stderr. Si False (par défaut), lance en tâche de fond (Fire&Forget). Définir sync sur False pour le scraping, les tâches longues ou les cas de récursivité.
         :param parameters_override: Optionnel. Dictionnaire pour surcharger dynamiquement des paramètres.
         """
         uid = __user__.get("id", "system") if __user__ else "system"
