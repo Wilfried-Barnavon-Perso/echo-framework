@@ -1,10 +1,13 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : echo-globals.sh
-# VERSION : 1.0
+# VERSION : 5.226.18.0
 # AUTEUR : Wilfried BARNAVON
 # ROLE : Centralisation des constantes de chemins pour le framework ECHO
 # ==============================================================================
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # Racine principale du framework
 export ECHO_ROOT="/opt/ECHO"

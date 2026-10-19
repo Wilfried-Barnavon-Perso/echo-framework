@@ -1,16 +1,16 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 11.43
+version: 5.226.18.0
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 11.43: Séparation stricte entre chat_id (persistance SQLite/Vault) et browser_session_id (isolation Playwright par sub_sid) pour empêcher la création de dossiers chats/<sub_sid> orphelins.
 # 11.42: Ajustement du thinking level de analyze_web_page à medium.
 # 11.41: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 11.40: Fix de la compatibilité API (camelCase) pour l'injection du fichier téléchargé et ajout explicite de systemInstruction pour contrer le stripping des thoughts.
-# 11.39: Rétablissement de la grille de vision spatiale fine à 48px.
 
 import os
 import time

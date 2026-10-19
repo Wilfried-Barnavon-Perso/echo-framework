@@ -1,11 +1,12 @@
 """
 title: ECHO User Native Context Filter
 author: ECHO Framework
-version: 1.1
+version: 5.226.18.0
 description: Composant système interne : Paramétrages personnels du contexte.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.1: Ajout de la UserValve ENABLE_AUTO_COMPACTION (False par défaut) pour le compactage contextuel automatique.
 # 1.0: Création du filtre pour déléguer les UserValves et invisibiliser le New Context Filter.
 

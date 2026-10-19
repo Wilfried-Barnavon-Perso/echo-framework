@@ -1,11 +1,15 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 1.14 (Interception ciblée AuthRequiredError)
+VERSION : 5.226.18.0
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-10-13
 ================================================================================
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 1.14: Interception ciblée AuthRequiredError
 import logging
 import uvicorn
 from starlette.requests import Request

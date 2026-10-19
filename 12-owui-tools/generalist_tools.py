@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.32
+version: 5.226.18.0
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.32: Fixation déterministe du modèle sur OWUI_ORCHESTRATOR_MODEL ("echo_orchestrator") et suppression de model_id (zéro rétrocompatibilité).
 # 1.31: Alignement du cache d'outils sur sys.modules["function_echo_orchestrator"].
 # 1.30: Ajout de list_ui_calendar_events, read_ui_calendar_events, update_ui_calendar_event et update_ui_automation.
 # 1.29: Ajout de generationConfig explicite avec thinking medium sur delegate_to_tool_consultant.
-# 1.28: Fiabilisation de delegate_to_tool_consultant en sous-agent (résolution chat_id depuis __metadata__, filtrage BLACKLIST/Headless et call_cascade).
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 

@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO EMBEDDING WORKER (Llama.cpp / GGUF)
-VERSION : 2.4 (Statuts Edge)
+VERSION : 5.226.18.0
 AUTEUR : Wilfried BARNAVON
 DATE : 2026-09-02
 
@@ -9,16 +9,15 @@ ROLE : Serveur d'embedding texte compatible OpenAI (Harrier-OSS GGUF)
        Multilingue, dimensions natives, 8192 tokens max.
        Support de l'Edge Embedding (WebGPU) via WebSocket Proxy.
 
-CHANGELOG :
-  1.5 : Support Edge Embedding WebGPU (WebSocket proxy & Fallback).
-  1.6 : Correction critique : passage au CLS Token Pooling (index 0) au lieu du Last-Token.
-  2.0 : Migration majeure vers llama.cpp (GGUF) pour réduire l'empreinte RAM. Suppression de PyTorch.
-  2.1 : Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
-  2.2 : Rate-Limit Healthcheck.
-  2.3 : Suppression de la propriété 'dim' hardcodée dans le /health pour permettre la dimension dynamique selon le modèle.
-  2.4 : Exposition des statuts connecting et incompatible pour le filtre Edge.
 ================================================================================
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 1.5: Support Edge Embedding WebGPU (WebSocket proxy & Fallback).
+# 1.6: Correction critique : passage au CLS Token Pooling (index 0) au lieu du Last-Token.
+# 2.0: Migration majeure vers llama.cpp (GGUF) pour réduire l'empreinte RAM. Suppression de PyTorch.
+# 2.1: Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
 
 import os
 import logging
@@ -78,7 +77,7 @@ logging.getLogger("uvicorn.access").addFilter(RateLimitHealthCheckFilter())
 app = FastAPI(
     title="ECHO Harrier Embedding Worker",
     description="Worker souverain pour embeddings texte multilingues (Harrier-OSS) & Edge WebGPU",
-    version="1.5"
+    version="5.226.18.0"
 )
 
 # Verrou asynchrone global pour sérialiser l'inférence

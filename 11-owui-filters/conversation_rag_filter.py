@@ -1,17 +1,16 @@
 """
 title: ECHO Session RAG Conversation Filter
 author: ECHO Framework
-version: 1.14
+version: 5.226.18.0
 description: Composant système interne : ECHO Session RAG Conversation Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.13: Résolution Fork Assistant : Utilisation de l'ID du message assistant pour garantir l'indexation lors d'une régénération.
 # 1.11: Résolution Fork Bomb (Branching) : Itération à rebours O(1) via SQLite is_embedded.
 # 1.10: Self-Healing RAG Filter (auto-réparation avec last_rag_message_id).
 # 1.9: Normalisation globale de la priorité d'exécution (déplacement vers Valves).
-# 1.8: Migration de ENABLE_CONVERSATION_RAG vers les Valves globales.
-# 1.7: Nettoyage du code mort (suppression de la Valve WINDOW_SIZE devenue obsolète avec la V1.6).
 
 from typing import Optional, Any
 from pydantic import BaseModel, Field

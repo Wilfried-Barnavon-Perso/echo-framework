@@ -1,37 +1,19 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 3.7 (Hotfix NameError & Flake8)
+VERSION : 5.226.18.0
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-10-07
 
-CHANGELOG 3.7 :
-- Hotfix NameError : Déplacement de la purge ECHO Monitor et création du fichier payload avant bwrap.
-- Fix Flake8 : Suppression du préfixe f-string inutile.
-CHANGELOG 3.6 :
-- Baisse de la troncature Anti-OOM (via paramètre dynamique max_output_length ou 131Ko) pour protéger le contexte LLM.
-CHANGELOG 3.5 :
-- Implémentation du Passe-Plat multiplexé (Frontend vers Sandbox) avec double purge de sécurité du fichier .echo_ui_payload.json
-CHANGELOG 3.4 :
-- Fix NameError critique : remplacement de json.loads par orjson.loads pour le Monitor Payload.
-CHANGELOG 3.3 :
-- Implémentation du Multiplexage (Multi-fenêtrage JSONL) pour ECHO Monitor.
-- Ajout d'une double purge de sécurité (Pre-Run / Post-Run) du fichier .echo_monitor.jsonl pour isoler les sandbox entre deux exécutions.
-CHANGELOG 3.2 :
-- Ajout du montage de /echo_libs_sandbox et /sandbox-agent-readme.txt pour l'utilisation d'ECHO Monitor.
-CHANGELOG 3.1 :
-- Alignement sémantique des montages Bwrap sur /sandbox, /main et /files.
-CHANGELOG 3.0 :
-- Refonte majeure : Transformation du Python Worker en Code Worker multi-langage (Python 3.14 + NodeJS 22).
-- Le script n'est plus transmis à la volée, mais exécuté depuis un fichier physique préalablement enregistré dans la Sandbox du Codex.
-- Intégration d'un Pre-execution Linting (py_compile, node -c) pour rejeter immédiatement les erreurs de syntaxe.
-CHANGELOG 2.8 :
-- Renommage de /inputs vers /ro_user_files (plus sémantique).
-- Ajout du montage du dépôt Codex en lecture seule vers /ro_user_edits pour permettre au script d'exécuter le code généré.
-CHANGELOG 2.7 :
-- Remplacement du tmpfs en RAM par un bind-mount physique vers `.tmp` dans le workspace pour prévenir les attaques de type OOM-DoS (Saturation RAM).
 ================================================================================
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 3.7: Hotfix NameError : Déplacement de la purge ECHO Monitor et création du fichier payload avant bwrap. Fix Flake8 : Suppression du préfixe f-string inutile.
+# 3.6: Baisse de la troncature Anti-OOM (via paramètre dynamique max_output_length ou 131Ko) pour protéger le contexte LLM.
+# 3.5: Implémentation du Passe-Plat multiplexé (Frontend vers Sandbox) avec double purge de sécurité du fichier .echo_ui_payload.json
+# 3.4: Fix NameError critique : remplacement de json.loads par orjson.loads pour le Monitor Payload.
 
 import logging
 import logging.config

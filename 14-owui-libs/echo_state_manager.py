@@ -2,14 +2,16 @@
 """
 title: ECHO Echo State Manager
 author: Wilfried BARNAVON
-version: 1.4
+version: 5.226.18.0
 description: Gestionnaire d'état SQLite et RAG.
+"""
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.4: Délégation de la création d'environnement à un filtre Inlet WebUI.
 # 1.3: Résolution du deadlock de sauvegarde du contexte en permettant l'injection de connexion dans save_session_setting.
 # 1.2: Factorisation du KV session : Remplacement des tables redondantes (session_state, context_stats) par le registre unifié echo_settings.
 # 1.1: Correction du get_agy_endpoint pour fallback sur l'URL de secours (1) au lieu de 0 en cas de verrouillage global.
-"""
 import os
 import time
 import sqlite3

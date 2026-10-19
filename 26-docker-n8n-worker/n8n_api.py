@@ -2,69 +2,16 @@
 """
 ================================================================================
 MODULE : ECHO N8N WORKER API
-VERSION : 2.18 (Rate-Limit Healthcheck)
---- CHANGELOG 2.17 ---
-- Fix : Ajout d'un filtre de logs (RateLimitHealthCheckFilter) limitant l'affichage des requêtes /health à 1/5min.
---- CHANGELOG 2.16 ---
-- Fix : Écriture systématique d'un deployment_report.json dans chat_dir après
-  chaque appel /deploy (succès, warning, erreur). Alimente le Download Broker
-  pour émission d'AEC au modèle.
-- Fix : Ajout de "settings": {} si absent du payload (requis par baseWorkflowShape).
-- Fix : Timeout explicite sur delete_workflow (15s) et prune_workflows (30s).
-- Refactor : Import subprocess supprimé (inutilisé), random remonté en tête.
---- CHANGELOG 2.15 ---
-- Fix : Séquence de déploiement démon corrigée (bug "request/body/active is read-only").
-  - Étape 1 : POST /api/v1/workflows SANS le champ "active" (CreateWorkflowDto N8N v2.x).
-  - Étape 2 : POST /api/v1/workflows/{id}/activate (alias publishWorkflow v2.34.6).
-  - Timeout=30.0 sur httpx.AsyncClient. Retour "warning" si activation échouée.
---- CHANGELOG 2.14 ---
-- Fix : L'extraction de la clé API après création ciblait `apiKey`, qui est une version masquée (redacted) par N8N. Le script extrait désormais le secret brut via `rawApiKey` (cf. `api-keys.controller.ts` L59), résolvant l'erreur de déploiement `401 Unauthorized` (`'X-N8N-API-KEY' header required`).
---- CHANGELOG 2.13 ---
-- Fix : Correction de l'extraction de la liste des clés existantes. Le service N8N renvoie `{ "items": [...] }` qui est wrappé en `{ "data": { "items": [...] } }`. Le parseur extrait maintenant correctement les `items` pour les purger, évitant l'erreur SQLite `UNIQUE constraint failed`.
---- CHANGELOG 2.12 ---
-- Fix : Prise en compte du wrapper `{"data": ...}` systématique de l'API REST N8N (vérifié dans `response-helper.ts` L42-46).
-  - `GET /rest/api-keys` retourne `{"data": [...]}` : extraction via `.get("data")` puis vérification récursive.
-  - `GET /rest/api-keys/scopes` retourne `{"data": [...]}` : extraction du tableau nu via `.get("data")`.
---- CHANGELOG 2.11 ---
-- Fix : L'API Key est désormais générée dynamiquement avec les scopes stricts obtenus via `GET /rest/api-keys/scopes`. Ceci résout l'erreur `400 Invalid scopes for user role` causée par des restrictions de rôles inhérentes à N8N Community Edition.
---- CHANGELOG 2.7 ---
-- Fix : Application de la totalité exhaustive des 86 scopes possibles (Mapping 1:1 avec `OWNER_API_KEY_SCOPES`) pour éviter l'erreur `400 Invalid scopes for user role` en Community Edition.
---- CHANGELOG 2.6 ---
-- Fix : Correction complète de `get_or_create_n8n_api_key()` :
-  - Ajout du champ obligatoire `scopes` (tableau de permissions Owner) dans le payload POST /rest/api-keys.
-  - Correction de `expiresAt` : secondes UNIX (cohérent avec `Date.now()/1000` côté N8N) au lieu de millisecondes.
-  - Parsing robuste de GET /rest/api-keys : supporte `{data:[]}`, `{items:[]}`, et liste directe.
-  - Extraction robuste de la clé API post-création : supporte `{data:{apiKey:...}}` et `{apiKey:...}`.
-  - Log de la valeur `scopes` retenue pour diagnostic.
---- CHANGELOG 2.5 ---
-- Fix : Ajout du champ obligatoire `expiresAt` (timestamp UNIX en ms) dans le payload de création de clé d'API, exigé par N8N v2.8.4+.
---- CHANGELOG 2.4 ---
-- Fix : Ajout des valeurs réelles dans le tableau `scopes` (`workflow:create`, `workflow:read`, etc.) car l'API N8N v2.8.4+ refuse les tableaux vides (`too_small`, minimum: 1).
---- CHANGELOG 2.3 ---
-- Fix : Ajout du champ obligatoire `scopes` (tableau vide par défaut) dans le payload de création de clé d'API pour contourner la validation stricte de l'API N8N v2.8.4+.
---- CHANGELOG 2.2 ---
-- Fix : Modification du payload de /rest/login pour s'adapter à l'API N8N v1+ (`email` remplacé par `emailOrLdapLoginId`).
---- CHANGELOG 2.1 ---
-- Fix : Correction de l'authentification (Extraction du cookie depuis le Bootstrapping Endpoint /setup) et ajout de debug approfondi.
---- CHANGELOG 2.0 ---
-- Feature : Auto-configuration (Service Account) de l'API N8N pour contourner l'obligation d'authentification REST (génération et injection dynamique de X-N8N-API-KEY).
---- CHANGELOG 1.9 ---
-- Feature : Ajout de l'endpoint /docs pour exposer la documentation d'architecture N8N (pour l'Agent Expert).
---- CHANGELOG 1.8 ---
-- Fix : Injection du champ "name" obligatoire pour valider le schéma SQLite (NOT NULL constraint failed) lors des déploiements et exécutions.
-- Fix : Ajout de N8N_USER_FOLDER pour isoler les exécutions CLI et éviter les conflits SQLITE_BUSY.
---- CHANGELOG 1.6 ---
-- Fix : Remplacement de l'exécution directe (`--file`) dépréciée par un pipeline d'import préalable (`import:workflow`).
---- CHANGELOG 1.4 ---
-- Feature : Ajout de l'endpoint /deploy pour l'orchestration des Démons persistants dans N8N via API REST.
-- Refactor : L'endpoint DELETE /workflow/{workflow_id} stoppe désormais proprement les Triggers via l'API REST N8N avant la purge SQL.
---- CHANGELOG 1.3 ---
---- CHANGELOG 1.2 ---
-- Feature : Endpoint DELETE /workflow/{workflow_id} pour tuer les process N8N en vol et purger la base de données.
---- CHANGELOG 1.1 ---
-- Feature : Ajout du endpoint /prune (Garbage Collection par Whitelist) avec accès direct à la base SQLite N8N pour purger les staticData orphelines.
+VERSION : 5.226.18.0
 ================================================================================
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 2.18: Rate-Limit Healthcheck
+# 2.17: Fix : Ajout d'un filtre de logs (RateLimitHealthCheckFilter) limitant l'affichage des requêtes /health à 1/5min.
+# 2.16: Fix : Écriture systématique d'un deployment_report.json dans chat_dir après chaque appel /deploy (succès, warning, erreur). Alimente le Download Broker pour émission d'AEC au modèle. Fix : Ajout de "settings": {} si absent du payload (requis par baseWorkflowShape). Fix : Timeout explicite sur delete_workflow (15s) et prune_workflows (30s). Refactor : Import subprocess supprimé (inutilisé), random remonté en tête.
+# 2.15: Fix : Séquence de déploiement démon corrigée (bug "request/body/active is read-only"). Étape 1 : POST /api/v1/workflows SANS le champ "active" (CreateWorkflowDto N8N v2.x). Étape 2 : POST /api/v1/workflows/{id}/activate (alias publishWorkflow v2.34.6). Timeout=30.0 sur httpx.AsyncClient. Retour "warning" si activation échouée.
 import os
 import json
 import uuid

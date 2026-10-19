@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Auth
 author: Wilfried BARNAVON
-version: 1.2
+version: 5.226.18.0
 description: Gestion de l'authentification et OAuth2.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.2: Extraction des quotas 5h et semaine (retrieveUserQuotaSummary), correction Protobuf v3 (0.0) dans fetchAvailableModels et refresh OAuth2 proactif dans refresh_quota_if_needed.
 # 1.1: Restauration de l'usage d'AuthService pour le support PKCE et API keys.
 import os

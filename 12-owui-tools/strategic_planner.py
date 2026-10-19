@@ -1,17 +1,16 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 1.14
+version: 5.226.18.0
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.14: Sanctuarisation du thinkingLevel "high" sur build_plan et analyze_plan.
 # 1.13: Refonte UX complète (zéro émoji), statut "proposed" par défaut, retrait des modales build/update, et ajout de l'outil analyze_plan.
 # 1.11: Affichage des instructions de pointage dans l'évènement UI de update_tasks.
 # 1.9: Création de process_plan, modale optionnelle, verrouillage frontend de update_plan contre les démarrages illicites.
-# 1.6: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 1.4: Registre Unifié V2 — Plans stockés dans le Codex (Git) au lieu du dossier plans/.
 
 import sys
 import orjson as json

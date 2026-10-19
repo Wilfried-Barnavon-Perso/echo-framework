@@ -1,9 +1,12 @@
 """
 title: Jobs Omnisearch MCP Module
-version: 1.3
-description: 1.3: Alignement de l'UA furtif sur la politique globale (Chrome 123).
-             1.1: Fix APEC job details extraction by parsing HTML via BeautifulSoup instead of deprecated JSON fields.
+version: 5.226.18.0
+description: Module MCP Omnisearch Jobs.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 1.1: Fix APEC job details extraction by parsing HTML via BeautifulSoup instead of deprecated JSON fields.
 import asyncio
 import random
 import logging

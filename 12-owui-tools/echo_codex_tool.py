@@ -1,15 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 2.15
+version: 5.226.18.0
 description: Permet au modèle de manipuler un espace de travail virtuel et asynchrone (Codex) avec versioning Git invisible, et accès natif à Python/Bash sécurisés.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.15: Alignement du fallback model_id sur echo_orchestrator dans open_codex_ui.
 # 2.14: Remplacement de la distillation par MODEL_APOLLO (thinking: medium) dans summarize_codex pour fiabiliser la synthèse.
 # 2.13: Fix critique - Levée du blocage du 1er tour et ancrage déterministe de l'action sur le message utilisateur immuable (user_msg_id) pour éliminer le stale write-back (Chat.svelte:1724) et fiabiliser la réouverture du HUD.
 # 2.12: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
-# 2.11: Fix - Blocage de l'outil `open_codex_ui` au premier tour (vérification __messages__) et ajout de la règle de parcimonie LLM.
 
 # ECHO CONFIG NAME : ECHO Codex
 

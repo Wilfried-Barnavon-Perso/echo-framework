@@ -1,16 +1,16 @@
 """
 title: ECHO Maps Grounding
 author: Wilfried BARNAVON
-version: 13.8
+version: 5.226.18.0
 description: Composant système interne : ECHO Maps Grounding.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 13.8: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 13.6: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
 # 13.5: Nettoyage du code : suppression des imports inutilisés (PEP8).
 # 13.4: Fix - Intégration de TEMP_DEFAULT et TOP_P_DEFAULT dans generationConfig.
-# 13.3: Ajout argument optionnel print_map et lecture de _echo_suppress_map_ui pour blocage du rendu UI.
 
 import sys
 from typing import Any, Tuple, Union

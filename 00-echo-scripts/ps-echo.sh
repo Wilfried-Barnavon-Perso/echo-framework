@@ -1,11 +1,14 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : ps-echo.sh
-# VERSION : 1.1
+# VERSION : 5.226.18.0
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : Afficher l'état consolidé de tous les conteneurs de la stack ECHO
 # ==============================================================================
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 ECHO_ROOT="/opt/ECHO"
 GLOBALS_FILE="$ECHO_ROOT/echo-scripts/echo-globals.sh"

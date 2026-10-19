@@ -1,16 +1,16 @@
 """
 title: ECHO Identity Vault Tool
 author: ECHO
-version: 1.9
+version: 5.226.18.0
 description: Outil permettant à l'Agent de gérer le Identity Vault (ajout/suppression de serveurs distants ou N8N).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.9: Remplacement de auth_failure_instructions par user_required_instructions et correction Flake8.
 # 1.8: Filtrage croisé de configured_services et forçage sémantique du paramètre 'all'.
 # 1.7: Refonte JSON de list_identities_services.
 # 1.6: Remplacement de la vérification __event_call__ par ECHO_SUBAGENT_CONTEXT pour l'interdiction Headless.
-# 1.4: Refonte list_identities (tolérance aux fautes, import json global).
 import sys
 import json
 from typing import Any, Literal

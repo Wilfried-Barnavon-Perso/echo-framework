@@ -1,11 +1,12 @@
 """
 title: ECHO Context Compaction Filter
 author: ECHO Framework
-version: 1.1
+version: 5.226.18.0
 description: Composant système interne : Rejeu des Checkpoints cognitifs et compactage automatique (45% -> 25%).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.1: Émission d'un statut UI explicite lors du rejeu d'un Checkpoint cognitif actif sur chaque nouveau tour utilisateur.
 # 1.0: Création du filtre Inlet (priorité 15) de compactage contextuel in-place et rejeu de Checkpoint SQLite.
 

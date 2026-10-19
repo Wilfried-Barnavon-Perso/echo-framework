@@ -1,11 +1,12 @@
 """
 title: ECHO Resource Registry
 author: Wilfried BARNAVON
-version: 1.9
+version: 5.226.18.0
 description: Composant système interne : ECHO Resource Registry.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.0: Outil de consultation du registre unifié des ressources (echo_resources).
 # Permet au modèle de requêter l'état complet des fichiers, plans, documents Codex
 # et pages web de la session.

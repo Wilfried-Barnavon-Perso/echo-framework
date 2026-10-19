@@ -2,16 +2,16 @@
 title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
-version: 1.26
+version: 5.226.18.0
 description: Composant système interne : Edge Embedding Bridge Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.26: Ajustement du HUD WebGPU (Décalage horizontal à calc(50% + 125px) pour éviter le chevauchement avec la barre de contexte).
 # 1.25: Fix HUD WebGPU (Saut de position lors du clignotement) via CSS scale indépendant.
 # 1.24: Optimisation (Bypass Serveur-Side) empêchant l'injection JS sur mobile et purge du code mort associé.
 # 1.23: Désactivation totale de WebGPU sur mobile (Fallback CPU immédiat).
-# 1.22: Fix bypass timeout. Support du statut connecting et timeout unknown à 5s.
 
 import asyncio
 from pydantic import BaseModel, Field
@@ -86,7 +86,7 @@ class Filter:
         # 2. HUD Echo discret (en bas à droite)
         # 3. Import Transformers.js
         # 4. Connexion WSS
-        SCRIPT_VERSION = "1.26"
+        SCRIPT_VERSION = "5.226.18.0"
         
         # --- SYNCHRONISATION DYNAMIQUE DU MODÈLE (CPU -> GPU) ---
         import httpx

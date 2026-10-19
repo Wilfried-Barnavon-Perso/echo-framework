@@ -1,15 +1,17 @@
 # ==============================================================================
 # ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
-# VERSION : 1.35
+# VERSION : 5.226.18.0
 # ==============================================================================
-#                  1.35: Alignement IPAM suite au passage en pont audio in-process (retrait .31/.32).
-#                  1.34: Ajout de MULTISITE="yes" pour bw-scheduler (évite www.example.com).
-#                  1.33: Fix conflit Nginx: migration des variables globales vers x-bw-config.
-#                  1.32: Surcharge de max_allowed_packet à 128M pour bw-db.
-#                  1.31: Élargissement de l'API_WHITELIST_IP à 10.0.0.0/8.
 # ==============================================================================
 # Architecture Robuste (MariaDB Backend, Shared Config via Anchors)
 # ==============================================================================
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 1.35: Alignement IPAM suite au passage en pont audio in-process (retrait .31/.32).
+# 1.34: Ajout de MULTISITE="yes" pour bw-scheduler (évite www.example.com).
+# 1.33: Fix conflit Nginx: migration des variables globales vers x-bw-config.
+# 1.32: Surcharge de max_allowed_packet à 128M pour bw-db.
 
 # ==============================================================================
 # 🗺️ DOMAIN-DRIVEN IPAM (PLAN D'ADRESSAGE IP STATIQUE)

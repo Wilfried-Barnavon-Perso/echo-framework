@@ -1,18 +1,16 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 7.10
+version: 5.226.18.0
 description: Composant système interne : ECHO Code Executor (Python & Node.js).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 7.10: Implémentation du Supervisor Pattern & JS Heartbeat (fermeture/crash automatique).
 # 7.9: Implémentation du Bidi Polling asynchrone (Temps Réel UI<->Sandbox) et outil kill_sandbox_execution.
 # 7.8: Injection dynamique de la constante ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS au worker pour l'anti-OOM.
 # 7.7: Implémentation du canal passe-plat descendant asynchrone via `fetch_ui_payload` (UI -> Sandbox) sans impact LLM.
-# 7.6: Encapsulation du code JS (ECHO Monitor) en IIFE asynchrone pour isolation (correction return global via eval).
-# 7.5: Fix Monitor - Injection de EchoUI.get_floating_monitor_js() (fonction absente côté navigateur), sérialisation JSON des paramètres JS.
-# 7.3: Allègement de la docstring via intégration de la documentation /sandbox-agent-readme.txt.
 
 # ECHO CONFIG NAME : ECHO Code Sandbox
 

@@ -8,7 +8,7 @@ Ce dossier contient le service **ECHO Download Broker**. C'est un démon asynchr
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `download_broker.py` (v1.0)
+### `download_broker.py` (v5.226.18.0)
 Démon Python asynchrone exécutant une boucle de scrutation (`asyncio.sleep(3)`).
 - **Garbage Collection des Branches Mortes** : Parcourt `/app/downloads/{uid}/{cid}` et supprime immédiatement (`shutil.rmtree`) tout répertoire de téléchargement dont le dossier de chat correspondant n'existe plus dans le Vault (`/app/backend/data/users/{uid}/chats/{cid}`).
 - **Collecte des Flux N8N (`/n8n/{wf_id}/`) & Browser (`/browser/`)** :

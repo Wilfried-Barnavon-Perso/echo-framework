@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.90
+version: 5.226.18.0
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.90: Définition canonique de OWUI_ORCHESTRATOR_MODEL ("echo_orchestrator") pour le modèle maître Open WebUI des tâches planifiées.
 # 5.89: Ajout des constantes de compactage contextuel in-place (ECHO_COMPACTION_*, CONTEXT_COMPACTION_*) pilotées par MODEL_APOLLO (32768 tokens).
 # 5.88: Alignement documentaire interne sur echo_orchestrator.
 # 5.87: Mise à jour des modèles ECHO ZEPHYR et ECHO DISTILLATION vers Gemini 3.5 Flash-Lite.
-# 5.86: Alignement des User-Agents (ECHO_AGY_USER_AGENT, ECHO_USER_AGENT) et de ECHO_CLIENT_METADATA sur Antigravity Desktop v2.24.0 (cl=1000335682).
 
 
 import os

@@ -1,8 +1,11 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 7.71
+# VERSION : 5.226.18.0
 # ==============================================================================
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # --- INITIALISATION : CORE ECHO GLOBALS ---
 ECHO_ROOT="/opt/ECHO"

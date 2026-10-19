@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.42
+version: 5.226.18.0
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.42: Sanctuarisation thinkingLevel "high" sur synthèse Delphi et critique, consolidation sur MODEL_APOLLO (medium).
 # 5.41: Résolution robuste de chat_id avec fallback sur __metadata__ pour la propagation aux sous-agents.
 # 5.40: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 5.38: Mise à jour de la docstring de forge_skill pour recommander l'usage de search_skill en amont.
-# 5.37: Ajout des outils read_skill et search_skill pour la consultation et la découverte sémantique.
 
 import sys
 import orjson as json

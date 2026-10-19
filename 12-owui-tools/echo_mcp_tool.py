@@ -1,9 +1,12 @@
 """
 title: ECHO Universal MCP Tool
 author: ECHO
-version: 2.6
+version: 5.226.18.0
 description: Outil universel permettant au Modèle d'interroger et d'exécuter des requêtes sur l'infrastructure MCP via un routage dynamique.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 import sys
 import json
 import httpx

@@ -1,22 +1,19 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : disable-bunkerweb.sh
-# VERSION : 2.5
+# VERSION : 5.226.18.0
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Désactivation de la couche de sécurité BunkerWeb (Secure Edge)
 #        et retour au mode d'accès local direct (HTTP).
-# CHANGELOG 2.5 : Prévention du crash getwd() via un `cd $ECHO_ROOT` forcé.
-# CHANGELOG 2.4 : Ajout de l'option opt-in --purge pour détruire la BDD et le dossier complet. Le comportement par défaut devient conservateur.
-# CHANGELOG 2.3 : Ajout de la purge du cache physique Let's Encrypt (évite le Split-Brain).
-# CHANGELOG 2.2 : Ajout de la purge systématique du volume de base de données bw-db.
-# CHANGELOG 2.1 : Correction du grep pour le parsing de echo-open-webui.
-# CHANGELOG 2.0 : set -euo pipefail.
-#                 CORRECTION CRITIQUE : suppression du "docker rm -f $(docker ps -a)"
-#                 global qui détruisait TOUS les conteneurs de la machine.
-#                 Arrêt ciblé via label com.docker.compose.project=echo uniquement.
-#                 Idempotence : vérifie que BunkerWeb tourne avant de tenter l'arrêt.
 # ==============================================================================
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 2.5: Prévention du crash getwd() via un `cd $ECHO_ROOT` forcé.
+# 2.4: Ajout de l'option opt-in --purge pour détruire la BDD et le dossier complet. Le comportement par défaut devient conservateur.
+# 2.3: Ajout de la purge du cache physique Let's Encrypt (évite le Split-Brain).
+# 2.2: Ajout de la purge systématique du volume de base de données bw-db.
 
 set -euo pipefail
 

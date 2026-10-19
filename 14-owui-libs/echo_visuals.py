@@ -1,11 +1,12 @@
 """
 title: ECHO Visuals Engine Configuration
 author: Wilfried BARNAVON
-version: 6.3
+version: 5.226.18.0
 description: Composant système interne : ECHO Visuals Engine Configuration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 6.3: Optimisation du dimensionnement des conteneurs (hauteurs fixes) et correctifs Layout (Cytoscape, Astro).
 # 6.2: Correction erreur Cross-Origin markmap (Désactivation loadJS/loadCSS instables en iframe).
 # 6.1: Intégration du moteur cartographique géographique Leaflet (OpenStreetMap).

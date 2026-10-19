@@ -1,11 +1,12 @@
 """
 title: ECHO Context Gauge
 author: Wilfried BARNAVON
-version: 3.6
+version: 5.226.18.0
 description: Composant système interne : ECHO Context Gauge.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 3.6: Alignement sur la nomenclature cognitive (MODEL_PROMETHEUS).
 # 3.5: Migration SQL : Lecture des métriques depuis le registre KV unifié echo_settings au lieu de la table dédiée context_stats.
 # 3.3: Bascule des seuils cognitifs (WARNING/CRITICAL) sur les constantes définies dans echo_constants.py.

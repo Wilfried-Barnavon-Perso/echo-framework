@@ -1,15 +1,17 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : enable-bunkerweb.sh
-# VERSION : 4.2
+# VERSION : 5.226.18.0
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Activation de la couche de sécurité BunkerWeb (Secure Edge).
-# CHANGELOG 4.2 : Sécurisation de la création IPAM dynamique pour echo-network et echo-sandbox.
-# CHANGELOG 4.1 : Correction du grep pour le parsing de echo-open-webui.
-# CHANGELOG 4.0 : set -euo pipefail, idempotence (détection BW déjà actif),
-#                 validation format domaine, meilleur feedback post-déploiement.
 # ==============================================================================
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 4.2: Sécurisation de la création IPAM dynamique pour echo-network et echo-sandbox.
+# 4.1: Correction du grep pour le parsing de echo-open-webui.
+# 4.0: set -euo pipefail, idempotence (détection BW déjà actif),
 
 set -euo pipefail
 

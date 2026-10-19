@@ -8,7 +8,7 @@ Ce dossier contient le sous-système **Headless N8N Worker**. Il s'agit d'un con
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `n8n_api.py` (v2.18)
+### `n8n_api.py` (v5.226.18.0)
 Le contrôleur Python (FastAPI).
 - **Sémantique** : Il agit comme une couche d'abstraction (middleware) entre l'outil `n8n_orchestrator_tool.py` exécuté par l'agent et l'API/CLI interne de n8n.
 - **Auto-Configuration du Service Account (`get_or_create_n8n_api_key`)** : S'authentifie sur `/rest/login` (`emailOrLdapLoginId: "system@echo.local"`), interroge dynamiquement les scopes autorisés via `GET /rest/api-keys/scopes` (compatibilité N8N v2.8.4+ Community Edition), génère la clé maîtresse et extrait le secret non masqué via `rawApiKey`.

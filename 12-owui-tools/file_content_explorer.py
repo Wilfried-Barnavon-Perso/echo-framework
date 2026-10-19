@@ -1,16 +1,16 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.109.32
+version: 5.226.18.0
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.109.32: Fix thinking medium explicite sur semantic_probe et read_multimedia_file (MODEL_APOLLO).
 # 5.109.31: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 5.109.30: Intégration de l'accès aux espaces Codex (main/sandbox) via _resolve_extended_file_path et mise à jour des docstrings.
 # 5.109.29: Fix read_raw_file_content (numérotation factice sur offset et troncature silencieuse).
-# 5.109.27: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
 
 import os
 import sys

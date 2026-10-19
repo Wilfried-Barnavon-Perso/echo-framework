@@ -1,12 +1,15 @@
 """
 title: ECHO PKCE Callback Server
 author: Wilfried BARNAVON
-version: 1.0
+version: 5.226.18.0
 description: Serveur de callback OAuth2 asyncio TCP pour le flow PKCE ECHO.
              Extrait et isolé depuis echo_auth.py.
              Écoute sur localhost:{port} — accessible uniquement via tunnel SSH.
              Place le code reçu dans une asyncio.Queue pour le pipe background task.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 import asyncio
 import logging

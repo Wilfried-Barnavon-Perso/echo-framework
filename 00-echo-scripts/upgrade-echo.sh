@@ -1,12 +1,15 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : upgrade-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 6.10
+# VERSION : 5.226.18.0
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
-# CHANGELOG 6.10 : Implémentation d'une double vérification biométrique/stricte pour la commande destructrice rebuild-echo.
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
 # ==============================================================================
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 6.10: Implémentation d'une double vérification biométrique/stricte pour la commande destructrice rebuild-echo.
 
 # --- INITIALISATION : CORE ECHO GLOBALS ---
 ECHO_ROOT="/opt/ECHO"

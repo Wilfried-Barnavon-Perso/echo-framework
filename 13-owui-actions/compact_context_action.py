@@ -1,12 +1,13 @@
 """
 title: Compacter le contexte de la session
 author: ECHO Framework
-version: 1.1
+version: 5.226.18.0
 description: Condense l'historique ancien de la session dans un Checkpoint cognitif sur place (via MODEL_APOLLO) sans quitter la conversation.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik00IDE0aDZ2NiIvPjxwYXRoIGQ9Ik0yMCAxMGgtNnY0Ii8+PHBhdGggZD0ibTE0IDEwIDctNyIvPjxwYXRoIGQ9Im0zIDIxIDctNyIvPjxwYXRoIGQ9Ik00IDRoNnY2Ii8+PHBhdGggZD0iTTIwIDIwaC02di02Ii8+PHBhdGggZD0ibTEwIDEwLTctNyIvPjxwYXRoIGQ9Im0xNCAxNCA3IDciLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.1: Ajout du diagnostic pré-compactage systématique (modale d'état même si <= 4 tours), du HUD visuel de progression centré et de la mise à jour live de la jauge de contexte.
 # 1.0: Création de l'action de compactage contextuel in-place (remplace resume_in_new_chat_action.py).
 

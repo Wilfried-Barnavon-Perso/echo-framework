@@ -1,4 +1,8 @@
-# VERSION : 1.1 (Occultation intégrale de _flow_cache dans tools/list et authenticate_account pour zéro fuite en contexte LLM)
+# VERSION : 5.226.18.0
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 1.1: Occultation intégrale de _flow_cache dans tools/list et authenticate_account pour zéro fuite en contexte LLM
 """
 ECHO MCP Broker - Adaptateurs de cycle de vie spécifiques aux fournisseurs MCP résidents.
 Isole la logique d'authentification et de préparation d'environnement (Microsoft 365 MSAL,

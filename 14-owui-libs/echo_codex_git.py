@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 1.10
+version: 5.226.18.0
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.10: Application stricte de ECHO_SYNC_EXCLUDE_LIST pour prévenir le gel UI sur les gros dossiers sandbox.
 # 1.9: Modification de delete_file pour retourner le tuple (commit_hash, paths_to_rm) afin d'assurer la purge SQLite côté action.
 # 1.8: Correction de list_files dans main pour inclure correctement les fichiers dans les sous-dossiers.
 # 1.6: Asymétrie de parcours de fichiers (os.listdir vs os.walk) entre main et sandbox.
-# 1.5: Prise en charge des dossiers de workspaces isolés (main/sandbox).
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
 # desc.
 

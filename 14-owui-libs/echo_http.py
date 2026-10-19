@@ -2,9 +2,12 @@
 """
 title: ECHO Echo Http
 author: Wilfried BARNAVON
-version: 1.1
+version: 5.226.18.0
 description: Client HTTP bas niveau (H2). Utilisation de l'UA furtif global.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 import httpx
 import time
 from typing import Dict, Optional

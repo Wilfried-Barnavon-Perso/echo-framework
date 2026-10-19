@@ -1,11 +1,12 @@
 """
 title: ECHO Skills Manager
 author: ECHO Framework
-version: 1.5
+version: 5.226.18.0
 description: Composant système interne : ECHO Skills Manager.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.4: Ajout de la fonction delete_skill (suppression physique de dossier).
 # 1.3: Alignement avec le Hotfix Core 6.9.
 

@@ -2,16 +2,16 @@
 """
 title: ECHO AEC Manager
 author: Wilfried BARNAVON
-version: 2.5
+version: 5.226.18.0
 description: Composant système interne : ECHO AEC Manager.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.5: Ajout de render_context_checkpoint pour l'encapsulation XML déterministe de <artifact id="AEC_context_checkpoint">.
 # 2.4: Ajout de render_directive pour le formatage XML natif des directives système ponctuelles (PIS et mise à niveau).
 # 2.3: Ajout de drain_pending_directives (transaction atomique), purge_orphaned_events et status optionnel dans record_event.
 # 2.2: Rendu spécifique de <artifact id="AEC_directive"> pour les types aec_directive.
-# 2.1: Refonte totale de render_system_events pour supporter le XML natif et migration globale vers <artifact>.
 
 import time
 import sqlite3

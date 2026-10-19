@@ -1,16 +1,16 @@
 """
 title: ECHO App Drawer Filter
 author: Wilfried BARNAVON
-version: 1.11
+version: 5.226.18.0
 description: Composant système interne : ECHO App Drawer Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.11: Correction du ciblage DOM pendant la génération du modèle (boucle pipe) pour cibler le message complet.
 # 1.10: Différenciation du seuil tactile (15px) vs souris (3px) pour empêcher l'hyper-sensibilité mobile.
 # 1.9: Implémentation HUD Mobile (Drag tactile, persistance, clamping anti-débordement).
 # 1.8: Historique ajusté.
-# 1.7: Normalisation globale de la priorité d'exécution (déplacement vers Valves).
 
 import logging
 from pydantic import BaseModel, Field

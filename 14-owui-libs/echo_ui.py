@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.107
+version: 5.226.18.0
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.107: Affichage du badge et de la ligne de Checkpoint Cognitif actif dans deploy_context_gauge.
 # 5.106: Affichage du Tier, déduplication du Project ID Tenant et intégration des jauges Quota 5h et Quota Semaine dans deploy_context_gauge.
 # 5.105: Alignement du sélecteur de modèle Codex HUD sur la nomenclature cognitive (Apollo, Prometheus, Zephyr).
 # 5.104: Rollback de la factorisation globale (5.102/5.103) suite à des lenteurs massives et instabilités. Retour à la version 5.101 (état validé avant factorisation du clamping).
-# 5.101: Fix Identity Vault - Injection de EchoUI.get_floating_window_class_js() dans _generate_identity_vault_js (TypeError: window.EchoFloatingWindow is not a constructor hors chargement préalable du Monitor).
 
 
 import sys

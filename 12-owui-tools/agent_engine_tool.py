@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.28
+version: 5.226.18.0
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.28: Alignement du cache d'outils sur sys.modules["function_echo_orchestrator"].
 # 1.27: Bascule de la synthèse d'agent vers MODEL_APOLLO (medium) au lieu de MODEL_DISTILLATION.
 # 1.26: Résolution robuste de chat_id depuis __metadata__ et propagation de __metadata__ dans infra_kwargs des sous-agents.
 # 1.25: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
-# 1.24: Injection des sub_tools_names dans ECHO_SUBAGENT_CONTEXT pour permettre le filtrage dynamique par les outils internes (ex: Tool Consultant).
 
 import sys
 import uuid

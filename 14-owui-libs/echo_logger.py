@@ -2,9 +2,12 @@
 """
 title: ECHO Echo Logger
 author: Wilfried BARNAVON
-version: 1.0
+version: 5.226.18.0
 description: Système de journalisation et télémétrie.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 import os
 from datetime import datetime
 from typing import Any, Dict

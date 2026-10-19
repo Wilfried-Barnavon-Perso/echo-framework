@@ -2,12 +2,12 @@
 ECHO Ingestion Pipeline
 Gestion unifiée, asynchrone et Zéro-RAM de l'ingestion des fichiers (CAS 1, 2, 3, 4).
 Factorisé à partir de new_context_filter.py pour permettre le traitement en arrière-plan.
-Version: 1.5 (Correction de l'instruction système du smart_context pour guider vers semantic_probe sur les binaires)
-version: 1.3
+version: 5.226.18.0
 description: Composant du système ECHO : Echo Ingestion.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.3: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.2: SSOT AEC : Remplacement du hardcoding XML par EchoAEC.render_smart_context.
 

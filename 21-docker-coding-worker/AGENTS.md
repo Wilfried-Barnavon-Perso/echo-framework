@@ -8,7 +8,7 @@ Ce dossier contient le code source de l'**API d'Exécution Multi-Langages Sécur
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `worker_api.py` (v3.7)
+### `worker_api.py` (v5.226.18.0)
 Fichier monolithique exposant une API Flask très légère.
 - **Sémantique** : Le serveur écoute sur le port **5000** et expose les endpoints HTTP `/execute`, `/kill`, `/poll_monitor` et `/update_payload`.
 - **Exécution depuis le Codex Sandbox & Pre-execution Linting** : Le script est exécuté depuis un fichier physique préalablement enregistré dans l'espace `sandbox` du Codex, après validation syntaxique immédiate (`py_compile` pour Python, `node -c` pour Node.js). La sortie textuelle est bornée dynamiquement par `max_output_length` (131 Ko par défaut, protection anti-OOM LLM).

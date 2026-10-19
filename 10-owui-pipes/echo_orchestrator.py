@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 192.88
+version: 5.226.18.0
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 192.88: Transmission des métriques de Checkpoint Cognitif actif (compaction_count, compacted_turns) à EchoUI.deploy_context_gauge.
 # 192.87: Support de <artifact id="AEC_context_checkpoint"> sur le message pivot (préservation bit-perfect du shadow et séparation PGCU).
 # 192.86: Renommage du composant en echo_orchestrator.py (Écho / ECHO - Orchestrateur).
 # 192.85: Affichage du modèle technique lors du transfert cognitif (_get_ui_display) dans le statut UI.
-# 192.84: Réactivation du rafraîchissement asynchrone des quotas OAuth2 et affichage HUD des quotas 5h et hebdomadaire.
 
 
 # ==============================================================================

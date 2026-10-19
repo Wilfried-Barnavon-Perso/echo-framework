@@ -2,9 +2,12 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - MEMORY CONSOLIDATION (LVL1 -> LVL2)
-VERSION : 5.136
+VERSION : 5.226.18.0
 ================================================================================
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 from collections import Counter
 import math
 import time

@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 1.13
+version: 5.226.18.0
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.13: Filtrage strict des parts de pensée native (thought=True) et journalisation des erreurs dans call_distillation.
 # 1.12: Harmonisation du message UI lors des retries ("⛓️💥 Reconnexion au modèle, tentative...").
 # 1.11: Utilisation factorisée de get_descending_cascade et get_generation_config (thinkingLevel="high" sur cascade 429).
 # 1.10: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
-# 1.9: Tolérance de lecture snake_case/camelCase (functionDeclarations) pour la sécurisation des schémas d'outils.
 import time
 import random
 import hashlib

@@ -1,11 +1,12 @@
 """
 title: ECHO Universal API Client
 author: Wilfried BARNAVON
-version: 1.9
+version: 5.226.18.0
 description: Composant système interne : ECHO Universal API Client.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.8: Switched complex objects to JSON strings to avoid 400 errors with strict Gemini REST schemas.
 # 1.9: Troncature anti-OOM (131K chars) et prévention via Docstring.
 # 1.6: Ajout des arguments manquant (__metadata__, __user__) dans l'interface pour garantir l'injection.

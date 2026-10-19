@@ -2,9 +2,12 @@
 """
 title: ECHO Echo Paths
 author: Wilfried BARNAVON
-version: 1.0
+version: 5.226.18.0
 description: Résolution des chemins absolus du système.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 import os
 import time
 import glob

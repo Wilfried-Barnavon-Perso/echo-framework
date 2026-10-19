@@ -1,9 +1,12 @@
 """
 title: ECHO Delegate to Data Broker
 author: ECHO
-version: 1.6
+version: 5.226.18.0
 description: Délégation de collecte de données externes structurées au Data Broker autonome.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 from pydantic import BaseModel, Field
 from typing import Any
 import sys

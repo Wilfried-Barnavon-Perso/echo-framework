@@ -2,11 +2,12 @@
 title: ECHO TCP Keep-Alive Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
-version: 1.0
+version: 5.226.18.0
 description: Composant système interne : Protection SPA contre le WAF (SvelteKit HTTP Keep-Alive).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.0: Création du filtre pour contrer le bug de hard reload (Tab Discarding / TCP timeout) de SvelteKit.
 
 from pydantic import BaseModel, Field

@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Events
 author: Wilfried BARNAVON
-version: 2.7
+version: 5.226.18.0
 description: Gestionnaire des événements WebSocket et UI. Intègre le protocole UCTP (Universal Chunked Transfer Protocol).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.7: Fix critique UX - Alignement de EchoEvents.toast() sur l'événement Socket.IO natif 'notification' d'Open WebUI (Chat.svelte).
 # 2.6: Fix critique - Timeout asynchrone sur call_execute (anti-hang RPC Socket.IO), et fast-path dans trigger_action si le HUD Codex est déjà actif.
 # 2.5: Fix critique - Injection explicite du `session_id` dans `trigger_action` pour empêcher le crash en boucle de l'Event Caller côté serveur.

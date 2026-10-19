@@ -1,21 +1,16 @@
 """
 title: ECHO N8N Orchestrator
 author: ECHO
-version: 1.18
+version: 5.226.18.0
 description: Outil agentique de cycle de vie et d'exécution N8N (Phase 2 & 3). Refactorisation institutionnelle et N8N Grapher.
---- CHANGELOG 1.18 ---
-- Nomenclature : Alignement de la délégation N8N Grapher sur MODEL_PROMETHEUS.
---- CHANGELOG 1.17 ---
-- Documentation : Ajout des directives d'usage de la macro __ECHO_DOWNLOAD_DIR__ et obligation de validation One-Shot avant déploiement.
---- CHANGELOG 1.16 ---
-- Correction : Protection contre la valeur NULL (NoneType) du statut lors de la suppression d'un workflow en base SQLite.
---- CHANGELOG 1.15 ---
-- Refinement : MAJ docstrings pour incitation au N8N Grapher et correction casse.
---- CHANGELOG 1.14 ---
-- Refactorisation : Éradication de l'anti-pattern _wrap, utilisation stricte de wrap_tool_output.
-- Limite : Baisse de la taille de sortie autorisée à 8Ko (8192 octets) en mode Sandbox Synchrone (OOM Protection).
-- Feature : Intégration de l'agent délégué (N8N Grapher) avec Règle 0 (Documentation requise).
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 1.18: Nomenclature : Alignement de la délégation N8N Grapher sur MODEL_PROMETHEUS.
+# 1.17: Documentation : Ajout des directives d'usage de la macro __ECHO_DOWNLOAD_DIR__ et obligation de validation One-Shot avant déploiement.
+# 1.16: Correction : Protection contre la valeur NULL (NoneType) du statut lors de la suppression d'un workflow en base SQLite.
+# 1.15: Refinement : MAJ docstrings pour incitation au N8N Grapher et correction casse.
 
 import sys
 import orjson as json

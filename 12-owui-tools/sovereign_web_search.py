@@ -1,16 +1,16 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 1.21
+version: 5.226.18.0
 description: Composant système interne : ECHO Sovereign Web Search.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.21: Fermeture explicite de la session navigateur Playwright (reset_session) en fin de delegate_deep_research.
 # 1.20: Résolution robuste de chat_id avec fallback sur __metadata__ dans delegate_deep_research.
 # 1.19: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.17: Optim - Ajout de la priorisation des informations récentes via consignes et utilisation proactive de time_range.
-# 1.16: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 import httpx
 import sys

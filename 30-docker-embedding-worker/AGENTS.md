@@ -8,7 +8,7 @@ Ce dossier contient le service d'**Embedding Worker**. C'est un microservice sp�
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `app.py` (v2.4)
+### `app.py` (v5.226.18.0)
 Fichier Python (FastAPI) hébergeant le service de vectorisation et le concentrateur WebSocket Edge.
 - **Hub WebSocket Edge Embedding (`/ws/edge-embed`) & Fallback CPU (`llama.cpp` GGUF)** : Maintient le registre `active_edge_clients` (indexé par `user_id` et `client_id` avec statuts `connecting`, `active`, `incompatible`) et route prioritairement les requêtes de vectorisation vers le navigateur Desktop via des `asyncio.Future` (`pending_edge_requests`). Si aucun client WebGPU actif n'est disponible ou en cas de déconnexion/incompatibilité, bascule instantanément sur l'inférence CPU locale via `llama-cpp-python` (`microsoft/Harrier-OSS-v1-0.6B`, `harrier-oss-v1-0.6b.f16.gguf` dans `stack-echo.yml`, `MAX_LENGTH=4096`) avec **CLS Token Pooling (index 0)** et normalisation L2.
 - **API Compatible OpenAI (`/v1/embeddings` & `/health`)** : Expose des endpoints HTTP compatibles OpenAI (1024 dimensions), sérialise l'inférence CPU par un `asyncio.Lock()`, expose l'état Edge par utilisateur dans `/health`, et limite les logs de healthcheck via `RateLimitHealthCheckFilter` (1/5min).

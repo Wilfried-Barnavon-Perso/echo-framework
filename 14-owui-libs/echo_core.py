@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 1.11
+version: 5.226.18.0
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.11: Ajout de progress_callback dans EchoCompactionEngine.execute_compaction pour le pilotage temps-réel du HUD de progression.
 # 1.10: Ajout de EchoCompactionEngine pour le compactage contextuel in-place (auto et manuel) via MODEL_APOLLO.
 # 1.9: Renommage souverain des modèles cognitifs (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS) et politique AUTO_PROM.
 # 1.8: Correction d'un bug majeur (dict copy sur scalaires) dans unbox_tool_output et extraction de payload.
-# 1.7: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations).
 import re
 import time
 from datetime import datetime, timezone

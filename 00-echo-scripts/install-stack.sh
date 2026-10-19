@@ -1,21 +1,18 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.33
+# VERSION : 5.226.18.0
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
-# CHANGELOG 6.33 : Mise à jour du chemin de build pour l'image parente docker-python-base.
-# CHANGELOG 6.32 : Utilisation des variables d'environnement ECHO_NET_MAIN_PREFIX pour la création dynamique des sous-réseaux IPAM.
-# CHANGELOG 6.31 : Assignation de sous-réseaux statiques pour echo-network (10.20.40.0/24) et echo-sandbox (10.20.50.0/24).
-# CHANGELOG 6.30 : Correction du parsing yq/grep pour cibler le service echo-open-webui.
-# CHANGELOG 6.29 : Implémentation du verrou mensuel (throttle) sur le pull des images de base (:latest).
-# CHANGELOG 6.28 : Limitation du parallélisme Docker Compose et Hot Reload (OOM Killer).
-# CHANGELOG 6.27 : Redémarrage parallèle des services Python lors du Hot Reload.
-# CHANGELOG 6.26 : Centralisation du cron de nettoyage Docker et ajustement des logs à 10 Mo.
-# CHANGELOG 6.25 : Ajout de ensure_docker_autosafety() pour rotation logs globale (idempotent).
-# CHANGELOG 6.24 : Génération dynamique de ECHO_SSO_SECRET pour le Forward Auth hybride.
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
 # ==============================================================================
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 6.33: Mise à jour du chemin de build pour l'image parente docker-python-base.
+# 6.32: Utilisation des variables d'environnement ECHO_NET_MAIN_PREFIX pour la création dynamique des sous-réseaux IPAM.
+# 6.31: Assignation de sous-réseaux statiques pour echo-network (10.20.40.0/24) et echo-sandbox (10.20.50.0/24).
+# 6.30: Correction du parsing yq/grep pour cibler le service echo-open-webui.
 
 set -e # Arrêt en cas d'erreur critique
 

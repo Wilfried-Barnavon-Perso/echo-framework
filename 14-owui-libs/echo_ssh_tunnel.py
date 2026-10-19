@@ -1,11 +1,12 @@
 """
 title: ECHO SSH Tunnel Server
 author: Wilfried BARNAVON
-version: 1.1
+version: 5.226.18.0
 description: Serveur SSH ephemere (asyncssh) pour le flow OAuth2 PKCE ECHO.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.0: Allocation dynamique dans une plage unique (bug : callback expose).
 # 1.1: Separation en deux plages : ssh_range (Docker-expose) et
 # callback_range (interne uniquement). Le port callback n'est

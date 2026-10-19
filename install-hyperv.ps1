@@ -1,7 +1,7 @@
 # ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# VERSION : 5.210.0
+# VERSION : 5.226.18.0
 # DATE    : 2026-09-24
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
@@ -30,6 +30,9 @@
 #    - Lance install-stack.sh.
 # 5. HYPER-V : Crée et lance la VM.
 # ==============================================================================
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # --- FONCTION UTILITAIRE : PAUSE SUR ERREUR ---
 $SwitchName = "Bridge LAN" # /!\ Vérifiez le nom de votre switch Hyper-V
@@ -58,7 +61,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.210.0"
+$SCRIPT_VERSION = "5.226.18.0"
 $ScriptDir = $PSScriptRoot
 Set-Location -Path $ScriptDir
 $VersionFile = "$ScriptDir\VERSION"
