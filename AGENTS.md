@@ -124,11 +124,11 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 
 ## 10. 🔢 Stratégie de Versioning (`VERSIONING.md`)
 
-- **Workflow en 3 Temps :**
-  1. *Alignement préalable* : Lors d'une retouche, si `Global[0..2] > Composant[0..2]`, le composant est aligné sur la version globale avec son 4ème champ à zéro (`<VERSION_GLOBALE>.0`).
-  2. *Incrément itératif* : Chaque modification apportée au composant incrémente son 4ème champ (`+1` par changement ; 7 changements = +7), avec mise à jour du champ `version:` et synchronisation dans le `AGENTS.md` local, SANS ajout de ligne dans le bloc d'historique.
-  3. *Mise à jour globale finale ("Enfin")* : À la fin du cycle (demande/session), consignation en une courte ligne de la synthèse des modifications dans le bloc `# Historique des versions :` du composant (incrément du 3ème champ, max 5 entrées FIFO), puis bump du fichier `VERSION` (`5.Y.Z`, Patch/Mineur) et synchronisation de `README.md`, du pied de page de `AGENTS.md` racine et des 21 fichiers `docs/*.html`.
-- **Périmètre Unifié (`GLOBAL.N`) :** Concerne tous les composants (modules Open WebUI, services Docker, scripts `.sh`/`.ps1`/`.js` et manifestes `.yml`), à l'exclusion stricte des `Dockerfile` (préservation du cache BuildKit).
+- **Workflow Séquentiel en 3 Temps (`A.B.C.X` ➔ `VERSION` `A.B.C+1` / `A.B+1.0`) :**
+  1. *Héritage initial (`.0`)* : Lorsqu'un composant est touché, si ses 3 premiers segments sont antérieurs à la version globale (`Global[0..2] > Composant[0..2]`), il hérite d'abord de la version globale avec son 4ème segment initialisé à zéro (`A.B.C.0`) avant d'appliquer ses modifications.
+  2. *Incrément par passe d'édition / debug (`.X`)* : Le 4ème segment s'incrémente (`+1`) lors de la passe initiale de modification (`A.B.C.1`), puis de `+1` à chaque reprise sur test non concluant de l'agent ou aller-retour de débogage avec l'Utilisateur (ex: 7 passes ➔ `A.B.C.7`). À chaque incrément, l'en-tête du composant ainsi que les fichiers `AGENTS.md` (du sous-dossier local **et** racine s'il y figure) sont mis à jour, **sans** ajouter d'entrée dans le bloc `# Historique des versions :`.
+  3. *Scellement final ("Enfin")* : Une fois le travail achevé et validé, les composants modifiés **restent à leur version atteinte `A.B.C.X`** et consignent en tête de leur bloc `# Historique des versions :` une unique ligne `# A.B.C.X: <synthèse concise>` (plafond strict de 5 entrées FIFO). **Ensuite**, la version globale dans `VERSION` est incrémentée en `A.B.(C+1)` (Patch) ou `A.(B+1).0` (Mineur) — rendant automatiquement `Global[0..2] > Composant[0..2]` pour le cycle suivant — et répercutée dans `README.md`, le pied de page de `AGENTS.md` racine et les pieds de page des 21 fichiers `docs/*.html`.
+- **Périmètre Unifié (`A.B.C.X`) :** Concerne tous les composants (modules Open WebUI, services Docker, scripts `.sh`/`.ps1`/`.js` et manifestes `.yml`), à l'exclusion stricte des `Dockerfile` (préservation du cache BuildKit).
 
 ## 11. 🔐 Authentification Antigravity 2.1
 
