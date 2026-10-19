@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.89
+version: 5.90
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.90: Définition canonique de OWUI_ORCHESTRATOR_MODEL ("echo_orchestrator") pour le modèle maître Open WebUI des tâches planifiées.
 # 5.89: Ajout des constantes de compactage contextuel in-place (ECHO_COMPACTION_*, CONTEXT_COMPACTION_*) pilotées par MODEL_APOLLO (32768 tokens).
 # 5.88: Alignement documentaire interne sur echo_orchestrator.
 # 5.87: Mise à jour des modèles ECHO ZEPHYR et ECHO DISTILLATION vers Gemini 3.5 Flash-Lite.
 # 5.86: Alignement des User-Agents (ECHO_AGY_USER_AGENT, ECHO_USER_AGENT) et de ECHO_CLIENT_METADATA sur Antigravity Desktop v2.24.0 (cl=1000335682).
-# 5.85: Passage PROMETHEUS en "gemini-4-argon". Factorisation de get_descending_cascade et forçage thinkingLevel="high" sur repli 429 dans get_generation_config.
 
 
 import os
@@ -304,6 +304,10 @@ MODEL_PROMETHEUS          = "MODEL_PROMETHEUS"
 MODEL_APOLLO        = "MODEL_APOLLO"
 MODEL_ZEPHYR         = "MODEL_ZEPHYR"
 MODEL_DISTILLATION = "MODEL_DISTILLATION"
+
+# Modèle Maître d'orchestration dans Open WebUI (Pipe maître ECHO)
+# Distinct des modèles cognitifs LLM (ECHO_MODELS_REGISTRY) : identifiant d'enregistrement du pipe dans Open WebUI.
+OWUI_ORCHESTRATOR_MODEL   = "echo_orchestrator"
 
 ECHO_SAFETY_SETTINGS = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},

@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 1.31
+version: 1.32
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 1.32: Fixation déterministe du modèle sur OWUI_ORCHESTRATOR_MODEL ("echo_orchestrator") et suppression de model_id (zéro rétrocompatibilité).
 # 1.31: Alignement du cache d'outils sur sys.modules["function_echo_orchestrator"].
 # 1.30: Ajout de list_ui_calendar_events, read_ui_calendar_events, update_ui_calendar_event et update_ui_automation.
 # 1.29: Ajout de generationConfig explicite avec thinking medium sur delegate_to_tool_consultant.
 # 1.28: Fiabilisation de delegate_to_tool_consultant en sous-agent (résolution chat_id depuis __metadata__, filtrage BLACKLIST/Headless et call_cascade).
-# 1.27: Ajout de read_ui_automations pour l'inspection complète des tâches CRON.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -25,7 +25,7 @@ from typing import Any
 sys.path.append("/app/backend/echo_libs")
 from echo_core import wrap_tool_output
 from echo_events import EchoEvents
-from echo_constants import ECHO_MAX_WAIT_TIMER, get_generation_config
+from echo_constants import ECHO_MAX_WAIT_TIMER, get_generation_config, OWUI_ORCHESTRATOR_MODEL
 from echo_ui import EchoUI
 from echo_gemini_client import EchoGeminiClient
 from echo_prompts import SYS_ORCHESTRATOR_CONSULTANT
@@ -468,7 +468,24 @@ class Tools:
                 log.error(f"ECHO: Failed to create target folder '{target_folder_name}' - {e}")
                 folder_id = None
             
-        return await safe_owui_call(_owui_create_auto, name=name, prompt=prompt, rrule=rrule, folder_id=folder_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
+        call_metadata = dict(__metadata__ or {})
+        call_metadata["model_id"] = OWUI_ORCHESTRATOR_MODEL
+        if isinstance(call_metadata.get("model"), dict):
+            call_metadata["model"] = dict(call_metadata["model"], id=OWUI_ORCHESTRATOR_MODEL)
+        else:
+            call_metadata["model"] = {"id": OWUI_ORCHESTRATOR_MODEL}
+
+        return await safe_owui_call(
+            _owui_create_auto,
+            name=name,
+            prompt=prompt,
+            rrule=rrule,
+            folder_id=folder_id,
+            model_id=OWUI_ORCHESTRATOR_MODEL,
+            __request__=__request__,
+            __user__=__user__,
+            __metadata__=call_metadata
+        )
 
     async def update_ui_automation(
         self,
@@ -476,7 +493,6 @@ class Tools:
         name: str = None,
         prompt: str = None,
         rrule: str = None,
-        model_id: str = None,
         target_folder_name: str = None,
         __request__ = None,
         __user__: dict = {},
@@ -486,6 +502,7 @@ class Tools:
         CRON Cognitif : Le Modèle DOIT utiliser cet outil pour modifier une tâche de fond automatisée (CRON) existante dans l'Interface Utilisateur.
         Seuls les champs explicitement fournis sont modifiés ; les champs omis conservent leur valeur actuelle.
         Si 'target_folder_name' est spécifié, la tâche sera rattachée à ce dossier (créé automatiquement s'il n'existe pas).
+        Le modèle d'exécution de la tâche est invariablement fixé et verrouillé sur l'Orchestrateur maître Open WebUI (echo_orchestrator).
 
         RÈGLES STRICTES DE SYNTAXE RRULE :
         L'argument rrule DOIT être une chaîne iCalendar valide. Si 'COUNT' est spécifié, 'DTSTART' est OBLIGATOIRE.
@@ -499,7 +516,6 @@ class Tools:
         :param name: Nouveau nom descriptif de l'automatisation (optionnel).
         :param prompt: Nouvelles instructions/prompt exécutées à chaque déclenchement (optionnel).
         :param rrule: Nouvelle périodicité au format RRULE iCalendar (optionnel).
-        :param model_id: Identifiant du modèle cible à exécuter (optionnel).
         :param target_folder_name: Nom du dossier cible pour les chats générés (optionnel, conserve le dossier actuel si omis).
         """
         user_id = __user__.get("id")
@@ -520,17 +536,24 @@ class Tools:
                     log.error(f"ECHO: Failed to create target folder '{target_folder_name}' - {e}")
                     folder_id = ""
 
+        call_metadata = dict(__metadata__ or {})
+        call_metadata["model_id"] = OWUI_ORCHESTRATOR_MODEL
+        if isinstance(call_metadata.get("model"), dict):
+            call_metadata["model"] = dict(call_metadata["model"], id=OWUI_ORCHESTRATOR_MODEL)
+        else:
+            call_metadata["model"] = {"id": OWUI_ORCHESTRATOR_MODEL}
+
         return await safe_owui_call(
             _owui_update_auto,
             automation_id=automation_id,
             name=name,
             prompt=prompt,
             rrule=rrule,
-            model_id=model_id,
+            model_id=OWUI_ORCHESTRATOR_MODEL,
             folder_id=folder_id,
             __request__=__request__,
             __user__=__user__,
-            __metadata__=__metadata__
+            __metadata__=call_metadata
         )
 
     async def delete_ui_automation(self, automation_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
