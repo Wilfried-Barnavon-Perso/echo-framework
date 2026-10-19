@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.227.0.1
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.227.0.1: Fiabilisation de EchoCompactionEngine (regex ALL_AEC_PATTERN multi-attributs, désambiguïsation par index attendu dans resolve_active_window, mise à l'échelle télémétrique dans find_split_index et extraction des outils Open WebUI m['output']).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.11: Ajout de progress_callback dans EchoCompactionEngine.execute_compaction pour le pilotage temps-réel du HUD de progression.
 # 1.10: Ajout de EchoCompactionEngine pour le compactage contextuel in-place (auto et manuel) via MODEL_APOLLO.
 # 1.9: Renommage souverain des modèles cognitifs (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS) et politique AUTO_PROM.
-# 1.8: Correction d'un bug majeur (dict copy sur scalaires) dans unbox_tool_output et extraction de payload.
 import re
 import time
 from datetime import datetime, timezone
@@ -411,7 +411,7 @@ class EchoCompactionEngine:
         r'<artifact id="AEC_context_checkpoint"[^>]*>.*?</artifact>\s*',
         re.DOTALL,
     )
-    ALL_AEC_PATTERN = re.compile(r'<artifact id="AEC_[^"]*">.*?</artifact>\s*', re.DOTALL)
+    ALL_AEC_PATTERN = re.compile(r'<artifact id="AEC_[^"]*"[^>]*>.*?</artifact>\s*', re.DOTALL)
 
     @classmethod
     def strip_checkpoint_tag(cls, text: str) -> Tuple[Optional[str], str]:
@@ -512,16 +512,29 @@ class EchoCompactionEngine:
 
         target_id = state.get("pivot_msg_id")
         target_hash = state.get("pivot_hash")
+        expected_idx = max(1, int(state.get("compacted_turns", 1)))
         pivot_turn_idx = -1
 
-        for idx, turn in enumerate(turns):
-            m_id, m_hash = cls.compute_turn_signature(turn)
-            if target_id and m_id and m_id == target_id:
-                pivot_turn_idx = idx
-                break
-            if target_hash and m_hash == target_hash:
-                pivot_turn_idx = idx
-                break
+        signatures = [cls.compute_turn_signature(turn) for turn in turns]
+
+        # 1. Priorité absolue à l'identifiant de message s'il est présent dans le payload
+        if target_id:
+            for idx, (m_id, _) in enumerate(signatures):
+                if m_id and m_id == target_id:
+                    pivot_turn_idx = idx
+                    break
+
+        # 2. Fallback sur le hash de contenu (cas Inlet où Open WebUI a purgé 'id'),
+        # désambiguïsé par proximité avec l'index attendu `compacted_turns`.
+        if pivot_turn_idx == -1 and target_hash:
+            hash_matches = [
+                idx for idx, (_, m_hash) in enumerate(signatures)
+                if idx > 0 and m_hash == target_hash
+            ]
+            if hash_matches:
+                pivot_turn_idx = min(hash_matches, key=lambda idx: abs(idx - expected_idx))
+            elif signatures and signatures[0][1] == target_hash:
+                pivot_turn_idx = 0
 
         if pivot_turn_idx <= 0:
             if pivot_turn_idx == -1:
@@ -561,6 +574,7 @@ class EchoCompactionEngine:
         target_tokens: int,
         min_turns_to_keep: int,
         force_manual: bool = False,
+        active_tokens: int = 0,
     ) -> int:
         """
         Détermine l'index de coupe `split_idx` dans `active_turns` :
@@ -572,18 +586,26 @@ class EchoCompactionEngine:
             return 0
 
         max_split = total_turns - min_turns_to_keep
+        turn_sizes = [estimate_token_size(t) for t in active_turns]
+        heuristic_total = sum(turn_sizes)
+
+        if active_tokens > heuristic_total > 0:
+            effective_target = min(target_tokens, max(1, int(heuristic_total * (target_tokens / active_tokens))))
+        else:
+            effective_target = target_tokens
+
         accumulated_tokens = 0
         split_idx = max_split
 
         for i in range(total_turns - 1, -1, -1):
-            turn_tokens = estimate_token_size(active_turns[i])
-            if accumulated_tokens + turn_tokens > target_tokens:
+            turn_tokens = turn_sizes[i]
+            if accumulated_tokens + turn_tokens > effective_target:
                 split_idx = min(i + 1, max_split)
                 break
             accumulated_tokens += turn_tokens
         else:
-            # Tout `active_turns` tient sous `target_tokens` (25%)
-            if force_manual:
+            # Tout `active_turns` tient sous `effective_target`
+            if force_manual or active_tokens > target_tokens:
                 split_idx = max_split
             else:
                 return 0
@@ -608,14 +630,31 @@ class EchoCompactionEngine:
                 file_suffix = f" [Fichiers joints : {', '.join(file_names)}]" if file_names else ""
 
                 tool_calls = m.get("tool_calls") or []
-                tc_summary = ""
-                if tool_calls:
-                    tc_names = [
-                        tc.get("function", {}).get("name", "unknown")
-                        for tc in tool_calls
-                        if isinstance(tc, dict)
-                    ]
-                    tc_summary = f"\n[Appels d'outils déclenchés : {', '.join(tc_names)}]"
+                tc_names = [
+                    tc.get("function", {}).get("name", "unknown")
+                    for tc in tool_calls
+                    if isinstance(tc, dict)
+                ]
+                output_items = m.get("output") if isinstance(m.get("output"), list) else []
+                extra_tool_outputs = []
+                for item in output_items:
+                    if not isinstance(item, dict):
+                        continue
+                    item_type = item.get("type")
+                    if item_type == "function_call" and item.get("name"):
+                        if item["name"] not in tc_names:
+                            tc_names.append(item["name"])
+                    elif item_type == "function_call_output":
+                        out_parts = item.get("output") if isinstance(item.get("output"), list) else []
+                        for op in out_parts:
+                            if isinstance(op, dict) and op.get("type") == "input_text" and op.get("text"):
+                                clean_op = cls.B64_PATTERN.sub("[MÉDIA BASE64 MASQUÉ]", str(op["text"])).strip()
+                                if clean_op:
+                                    extra_tool_outputs.append(clean_op)
+
+                tc_summary = f"\n[Appels d'outils déclenchés : {', '.join(tc_names)}]" if tc_names else ""
+                if extra_tool_outputs:
+                    tc_summary += "\n[Résultats d'outils]:\n" + "\n".join(extra_tool_outputs)
 
                 if txt or file_suffix or tc_summary:
                     turn_lines.append(f"[{role}]{file_suffix}:\n{txt}{tc_summary}".strip())
@@ -672,6 +711,7 @@ class EchoCompactionEngine:
             return None
 
         active_turns, prev_state, already_evicted_count = cls.resolve_active_window(state_manager, all_turns)
+        tokens_before = cls.estimate_active_tokens(active_turns, prev_state, state_manager)
         target_tokens = int(ECHO_MAX_CONTEXT_SIZE * CONTEXT_COMPACTION_TARGET_RATIO)
 
         split_idx = cls.find_split_index(
@@ -679,6 +719,7 @@ class EchoCompactionEngine:
             target_tokens=target_tokens,
             min_turns_to_keep=ECHO_COMPACTION_MIN_TURNS_TO_KEEP,
             force_manual=force_manual,
+            active_tokens=tokens_before,
         )
         if split_idx <= 0:
             return None
@@ -733,8 +774,13 @@ class EchoCompactionEngine:
         )
 
         pivot_id, pivot_hash = cls.compute_turn_signature(remaining_turns[0])
-        tokens_before = cls.estimate_active_tokens(active_turns, prev_state, state_manager)
-        tokens_after = estimate_token_size([m for t in remaining_turns for m in t]) + estimate_token_size(summary_xml)
+        heuristic_before = estimate_token_size([m for t in active_turns for m in t])
+        heuristic_remaining = estimate_token_size([m for t in remaining_turns for m in t])
+        if tokens_before > heuristic_before > 0:
+            scaled_remaining = int(tokens_before * (heuristic_remaining / heuristic_before))
+            tokens_after = scaled_remaining + estimate_token_size(summary_xml)
+        else:
+            tokens_after = heuristic_remaining + estimate_token_size(summary_xml)
 
         new_state = {
             "pivot_msg_id": pivot_id,

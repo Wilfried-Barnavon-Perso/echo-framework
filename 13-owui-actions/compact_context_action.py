@@ -1,12 +1,13 @@
 """
 title: Compacter le contexte de la session
 author: ECHO Framework
-version: 5.226.18.0
+version: 5.227.0.1
 description: Condense l'historique ancien de la session dans un Checkpoint cognitif sur place (via MODEL_APOLLO) sans quitter la conversation.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik00IDE0aDZ2NiIvPjxwYXRoIGQ9Ik0yMCAxMGgtNnY0Ii8+PHBhdGggZD0ibTE0IDEwIDctNyIvPjxwYXRoIGQ9Im0zIDIxIDctNyIvPjxwYXRoIGQ9Ik00IDRoNnY2Ii8+PHBhdGggZD0iTTIwIDIwaC02di02Ii8+PHBhdGggZD0ibTEwIDEwLTctNyIvPjxwYXRoIGQ9Im0xNCAxNCA3IDciLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.227.0.1: Hydratation complète de la branche active depuis Chats.get_chat_by_id (_load_full_branch_messages) et passage de active_tokens à find_split_index.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.1: Ajout du diagnostic pré-compactage systématique (modale d'état même si <= 4 tours), du HUD visuel de progression centré et de la mise à jour live de la jauge de contexte.
 # 1.0: Création de l'action de compactage contextuel in-place (remplace resume_in_new_chat_action.py).
@@ -15,7 +16,7 @@ import sys
 import asyncio
 import logging
 import orjson as std_json
-from typing import Optional, Any
+from typing import Optional, Any, List, Dict
 from pydantic import BaseModel, Field
 
 sys.path.append("/app/backend/echo_libs")
@@ -43,6 +44,50 @@ class Action:
     def __init__(self):
         self.valves = self.Valves()
 
+    @staticmethod
+    async def _load_full_branch_messages(chat_id: str, fallback_messages: List[Dict]) -> List[Dict]:
+        """
+        Charge prioritairement la branche active complète depuis Chats (webui.db) jusqu'à currentId
+        afin de préserver 'id', 'files', 'output' et 'tool_calls' (omis par Chat.svelte:chatActionHandler).
+        Repli transparent sur fallback_messages si Chats est indisponible.
+        """
+        if not Chats or not chat_id:
+            return fallback_messages
+        try:
+            chat_obj = Chats.get_chat_by_id(chat_id)
+            if asyncio.iscoroutine(chat_obj):
+                chat_obj = await chat_obj
+            if not chat_obj or not hasattr(chat_obj, "chat") or not isinstance(chat_obj.chat, dict):
+                return fallback_messages
+
+            chat_dict = chat_obj.chat
+            history = chat_dict.get("history") if isinstance(chat_dict.get("history"), dict) else {}
+            messages_map = history.get("messages") if isinstance(history.get("messages"), dict) else {}
+            current_id = history.get("currentId")
+
+            if messages_map and current_id and current_id in messages_map:
+                chain = []
+                visited = set()
+                curr = current_id
+                while curr and curr in messages_map and curr not in visited:
+                    visited.add(curr)
+                    msg_node = messages_map[curr]
+                    if isinstance(msg_node, dict):
+                        chain.append({**msg_node, "id": msg_node.get("id") or curr})
+                        curr = msg_node.get("parentId")
+                    else:
+                        break
+                chain.reverse()
+                if chain:
+                    return chain
+
+            db_msgs = chat_dict.get("messages")
+            if isinstance(db_msgs, list) and db_msgs:
+                return db_msgs
+        except Exception as e:
+            logger.warning(f"[ECHO-COMPACT-ACTION] Fallback Chats.get_chat_by_id échoué : {e}")
+        return fallback_messages
+
     async def action(
         self,
         body: dict,
@@ -61,15 +106,7 @@ class Action:
             await events.toast("❌ Compactage impossible : Identifiants de session manquants.", "error")
             return None
 
-        if not messages and Chats:
-            try:
-                chat_obj = Chats.get_chat_by_id(chat_id)
-                if asyncio.iscoroutine(chat_obj):
-                    chat_obj = await chat_obj
-                if chat_obj and hasattr(chat_obj, "chat") and isinstance(chat_obj.chat, dict):
-                    messages = chat_obj.chat.get("messages") or []
-            except Exception as e:
-                logger.warning(f"[ECHO-COMPACT-ACTION] Fallback Chats.get_chat_by_id échoué : {e}")
+        messages = await self._load_full_branch_messages(chat_id, messages)
 
         state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
         _, all_turns = EchoCompactionEngine.group_messages_into_turns(messages)
@@ -88,6 +125,7 @@ class Action:
             target_tokens=target_tokens,
             min_turns_to_keep=ECHO_COMPACTION_MIN_TURNS_TO_KEEP,
             force_manual=True,
+            active_tokens=active_tokens,
         )
 
         # Cas 1 : Fenêtre active déjà minimale (<= 4 tours actifs) -> Affichage d'un diagnostic clair
