@@ -6,8 +6,7 @@ description: Outil agentique de cycle de vie et d'exécution N8N (Phase 2 & 3). 
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.226.18.1: Documentation : Harmonisation impersonnelle (PAS) du docstring de run_n8n_oneshot_workflow.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 5.226.18.1: Alignement global ECHO et harmonisation impersonnelle (PAS) du docstring de run_n8n_oneshot_workflow.
 # 1.18: Nomenclature : Alignement de la délégation N8N Grapher sur MODEL_PROMETHEUS.
 # 1.17: Documentation : Ajout des directives d'usage de la macro __ECHO_DOWNLOAD_DIR__ et obligation de validation One-Shot avant déploiement.
 # 1.16: Correction : Protection contre la valeur NULL (NoneType) du statut lors de la suppression d'un workflow en base SQLite.

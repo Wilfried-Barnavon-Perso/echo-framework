@@ -123,8 +123,11 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 
 ## 10. 🔢 Stratégie de Versioning (`VERSIONING.md`)
 
-- **Version Globale :** Fichier `VERSION` (SemVer `5.Y.Z`, ex: `5.226.18`), synchronisée dans `README.md`, le pied de page de `AGENTS.md` et les 21 fichiers `docs/*.html`.
-- **Versioning Unifié des Composants (`GLOBAL.N`) :** Tous les composants (modules Open WebUI, services Docker, scripts `.sh`/`.ps1`/`.js` et manifestes `.yml`, à l'exclusion stricte des `Dockerfile` pour préserver le cache BuildKit) suivent le format à 4 segments `<VERSION_GLOBALE>.<N>` : initialisation à `5.Y.Z.0` sur la passe courante, puis incrément `.1`, `.2` à chaque modification dans la même passe, avec bloc `# Historique des versions :` plafonné aux **5 dernières entrées** et synchronisation de la référence dans le fichier `AGENTS.md` local.
+- **Workflow en 3 Temps :**
+  1. *Alignement préalable* : Lors d'une retouche, si `Global[0..2] > Composant[0..2]`, le composant est aligné sur la version globale avec son 4ème champ à zéro (`<VERSION_GLOBALE>.0`).
+  2. *Incrément itératif* : Chaque modification apportée au composant incrémente son 4ème champ (`+1` par changement ; 7 changements = +7), avec mise à jour du champ `version:` et synchronisation dans le `AGENTS.md` local, SANS ajout de ligne dans le bloc d'historique.
+  3. *Mise à jour globale finale ("Enfin")* : À la fin du cycle (demande/session), consignation en une courte ligne de la synthèse des modifications dans le bloc `# Historique des versions :` du composant (incrément du 3ème champ, max 5 entrées FIFO), puis bump du fichier `VERSION` (`5.Y.Z`, Patch/Mineur) et synchronisation de `README.md`, du pied de page de `AGENTS.md` racine et des 21 fichiers `docs/*.html`.
+- **Périmètre Unifié (`GLOBAL.N`) :** Concerne tous les composants (modules Open WebUI, services Docker, scripts `.sh`/`.ps1`/`.js` et manifestes `.yml`), à l'exclusion stricte des `Dockerfile` (préservation du cache BuildKit).
 
 ## 11. 🔐 Authentification Antigravity 2.1
 
