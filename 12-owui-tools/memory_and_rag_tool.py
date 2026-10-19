@@ -1,16 +1,16 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.228.0.1
 description: ECHO Toolbox pour gestion RAG (Sessions & Codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.0.1: Précision d'usage de search_sessions_context par un sous-agent pour distillation en phase prospective.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.31: Clarté du statut UI dans update_meta_artifact ciblant explicitement le Méta-Artéfact concerné.
 # 2.30: Paramètre importance obligatoire (Literal["1".."5"]), alignement PACP/PRAC et énonciation impersonnelle stricte.
 # 2.29: Suppression des emojis dans les retours de l'outil delete_session_context_source pour maximiser le signal/bruit.
-# 2.28: Utilisation de ECHO_SUBAGENT_CONTEXT pour l'isolation asynchrone du RAG.
 
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
@@ -511,6 +511,7 @@ class Tools:
     ) -> dict:
         """
         Interface d'exploration de la mémoire vectorielle de travail (RAG).
+        En phase prospective, l'outil est destiné à être exécuté par un Sous-Agent pour distillation, si disponible.
         Mode sémantique (query défini) : Extraction de fragments textuels complets.
         Mode index (query omis) : Cartographie des sources indexées (aperçu 60 chars).
 
