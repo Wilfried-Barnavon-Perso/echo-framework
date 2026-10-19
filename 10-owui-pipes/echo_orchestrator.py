@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.227.1.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.227.1.1: Suppression des références au compactage in-place (AEC_context_checkpoint, EchoCompactionEngine) et renvoi vers l'action de migration de session.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 192.88: Transmission des métriques de Checkpoint Cognitif actif (compaction_count, compacted_turns) à EchoUI.deploy_context_gauge.
 # 192.87: Support de <artifact id="AEC_context_checkpoint"> sur le message pivot (préservation bit-perfect du shadow et séparation PGCU).
 # 192.86: Renommage du composant en echo_orchestrator.py (Écho / ECHO - Orchestrateur).
-# 192.85: Affichage du modèle technique lors du transfert cognitif (_get_ui_display) dans le statut UI.
 
 
 # ==============================================================================
@@ -257,11 +257,6 @@ class Orchestrator:
                 i += 1; continue
 
             # --- PRIORITÉ 1 : SHADOW BIT-PERFECT (ID + TIMESTAMP) ---
-            checkpoint_xml_on_msg = None
-            if role == "user" and isinstance(content, str) and '<artifact id="AEC_context_checkpoint"' in content:
-                from echo_core import EchoCompactionEngine
-                checkpoint_xml_on_msg, content = EchoCompactionEngine.strip_checkpoint_tag(content)
-
             if msg_id and updated_at:
                 shadow_data = self.user_data_manager.get_shadow(msg_id, updated_at)
                 if shadow_data:
@@ -274,15 +269,6 @@ class Orchestrator:
                         i += 1; continue
                     else:
                         # Shadow Classique (Parts uniquement)
-                        if checkpoint_xml_on_msg and isinstance(shadow_data, list):
-                            first_txt = shadow_data[0].get("text", "") if shadow_data and isinstance(shadow_data[0], dict) else ""
-                            if checkpoint_xml_on_msg not in first_txt:
-                                cleaned_shadow = [
-                                    p for p in shadow_data
-                                    if not (isinstance(p, dict) and '<artifact id="AEC_context_checkpoint"' in str(p.get("text", "")))
-                                ]
-                                shadow_data = [{"text": checkpoint_xml_on_msg + "\n\n"}] + cleaned_shadow
-                                self.user_data_manager.save_shadow(msg_id, updated_at, shadow_data, chat_id, role)
                         role_gemini = "model" if role in ["assistant", "model"] else "user"
                         final_contents.append({"role": role_gemini, "parts": shadow_data})
                         inv_hash = self.user_data_manager.calculate_invariant(role, shadow_data)
@@ -323,8 +309,6 @@ class Orchestrator:
                         for p in restored_parts:
                             if "text" in p:
                                 p["text"] = f"<REQUETE_UTILISATEUR>\n{p['text']}\n</REQUETE_UTILISATEUR>"
-                        if checkpoint_xml_on_msg:
-                            restored_parts = [{"text": checkpoint_xml_on_msg + "\n\n"}] + restored_parts
                 else:
                     # Assistant
                     tool_calls = m.get("tool_calls", [])
@@ -396,7 +380,7 @@ class Orchestrator:
             max_tokens = getattr(self.valves, "MAX_CONTEXT_SIZE", ECHO_MAX_CONTEXT_SIZE)
 
             if size > max_tokens * CONTEXT_WARNING_THRESHOLD:
-                await events.toast("⚠️ Approche de la limite contextuelle. Compactage recommandé (Action 'Compacter le contexte de la session' ou UserValve Auto-Compaction).", "warning", "ECHO V5")
+                await events.toast("⚠️ Approche de la limite contextuelle. Migration de session recommandée (Action 'Poursuivre dans une nouvelle conversation').", "warning", "ECHO V5")
 
             if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
                 system_parts = final_contents[0] if final_contents and final_contents[0].get("role") == "system" else None
@@ -1431,11 +1415,6 @@ class Pipe:
             prompt_pct = min(100, (active_p_t / max_t) * 100)
             gen_pct = min(100, (g_t / max_t) * 100)
 
-            from echo_core import EchoCompactionEngine
-            _cp_state = EchoCompactionEngine.get_compaction_state(orch.user_data_manager.state_manager) if chat_id else None
-            _cp_count = int(_cp_state.get("compaction_count", 0)) if _cp_state else 0
-            _cp_turns = int(_cp_state.get("compacted_turns", 0)) if _cp_state else 0
-
             await EchoUI.deploy_context_gauge(
                 events=events, plan_name=plan_name, credits_val=credits_val, quota_str=quota_str,
                 c_t=c_t, active_p_t=active_p_t, g_t=g_t, max_t=max_t,
@@ -1448,7 +1427,6 @@ class Pipe:
                 quota_rpm_rem=q_rpm_rem, quota_rpm_lim=q_rpm_lim,
                 quota_5h_fraction=q5_frac, quota_5h_reset=q5_reset, quota_5h_disabled=q5_disabled,
                 quota_weekly_fraction=qw_frac, quota_weekly_reset=qw_reset,
-                compaction_count=_cp_count, compacted_turns=_cp_turns,
             )
 
         if cumulative_usage_stats.get("totalTokenCount", 0) > 0:

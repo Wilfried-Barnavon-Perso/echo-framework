@@ -112,8 +112,8 @@ sequenceDiagram
       </tbody>
     </table>
     <p>
-      La jauge principale affiche également un badge de Checkpoint <code>🗜️ #N</code> dès qu'un compactage a eu lieu. Au survol de la barre, une infobulle présente les valeurs détaillées : cache, prompt actif,
-      génération, total et maximum de la fenêtre contextuelle, ainsi que la ligne <code>🗜️ Checkpoint: #N (M tours)</code> sous le compteur de tokens.
+      Au survol de la barre principale, une infobulle présente les valeurs détaillées : tokens en cache, prompt actif,
+      génération, total et capacité maximale de la fenêtre contextuelle.
     </p>
     <img src="images/context_tooltip.png" alt="Tooltip de Contexte" style="max-width: 100%; border-radius: 8px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3); margin: 2rem auto; display: block; border: 1px solid #334155;">
     <h3>B. Icône Quota et Infobulle d'Authentification</h3>
@@ -170,8 +170,8 @@ sequenceDiagram
           <li><strong>Fenêtrage &amp; Rendu :</strong> L'Identity Vault hérite de la classe unifiée <code>EchoFloatingWindow</code>, tandis que le Cognitive Monitor conserve une architecture dédiée pour éviter les lenteurs DOM. Le Sandbox Monitor exploite le multiplexage JSONL via UCTP (<code>emit_execute</code> dans une <code>iframe srcdoc</code>) avec accélération GPU (<code>translate3d</code>), zoom <code>Ctrl+Molette</code> jusqu'à 15×, synchronisation d'URL en direct (<code>echoWebPlayerUpdate</code>) et icônes vectorielles légères (<code>ECHO_ICONS</code>).</li>
         </ul>
 
-        <h3>2. Signature de <code>deploy_context_gauge()</code> &amp; Rafraîchissement Quotas (<code>echo_ui.py</code> v5.107)</h3>
-        <p>Appelée par <code>echo_orchestrator.py</code> pour injecter <code>#echo-nav-context-hud</code> (segments CSS <code>cache_pct</code> en <code>#8b5cf6</code>, <code>prompt_pct</code> en <code>#10b981</code>, <code>gen_pct</code> en <code>#f59e0b</code> et badge <code>#echo-nav-checkpoint-badge</code>), elle calcule l'anneau SVG via <code>stroke-dashoffset</code> sur <code>quota_fraction</code> (rafraîchi de manière non-bloquante par <code>fetch_available_models()</code> toutes les 10 min dans <code>identity.db</code>, tandis que les quotas 5h et hebdomadaire sont extraits via l'endpoint <code>:retrieveUserQuotaSummary</code> dans <code>echo_auth.py</code> v1.2) :</p>
+        <h3>2. Signature de <code>deploy_context_gauge()</code> &amp; Rafraîchissement Quotas (<code>echo_ui.py</code> v5.227.1.1)</h3>
+        <p>Appelée par <code>echo_orchestrator.py</code> pour injecter <code>#echo-nav-context-hud</code> (segments CSS <code>cache_pct</code> en <code>#8b5cf6</code>, <code>prompt_pct</code> en <code>#10b981</code> et <code>gen_pct</code> en <code>#f59e0b</code>), elle calcule l'anneau SVG via <code>stroke-dashoffset</code> sur <code>quota_fraction</code> (rafraîchi de manière non-bloquante par <code>fetch_available_models()</code> toutes les 10 min dans <code>identity.db</code>, tandis que les quotas 5h et hebdomadaire sont extraits via l'endpoint <code>:retrieveUserQuotaSummary</code> dans <code>echo_auth.py</code> v5.226.18.0) :</p>
         <pre><code>deploy_context_gauge(
     events,                        # EchoEvents
     plan_name, credits_val,        # Identité du plan
@@ -185,8 +185,7 @@ sequenceDiagram
     quota_model, quota_rpd_rem,    # CA model_id et Requests per day
     quota_rpd_lim, quota_rpm_rem, quota_rpm_lim,
     quota_5h_fraction=None, quota_5h_reset="N/A", quota_5h_disabled=False,
-    quota_weekly_fraction=None, quota_weekly_reset="N/A",
-    compaction_count=0, compacted_turns=0
+    quota_weekly_fraction=None, quota_weekly_reset="N/A"
 )</code></pre>
 
         <h3>3. Caractéristiques Techniques (ECHO Codex, Agent Monitor &amp; Mobile First)</h3>
@@ -205,7 +204,7 @@ sequenceDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.227.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.228.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

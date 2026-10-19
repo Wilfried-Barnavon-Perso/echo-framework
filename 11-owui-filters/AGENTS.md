@@ -19,14 +19,9 @@ Ce dossier représente la **Conscience et l'Injection Contextuelle** de l'agent.
 - **Algorithme Clé** : Implémente l'**Upsert Idempotent Zéro-Latence** avec itération à rebours **O(1)** (anti-Fork Bomb lors du branching) en interrogeant `EchoStateManager.is_message_embedded()` (flag booléen `is_embedded` dans SQLite) *avant* toute communication avec Qdrant, et utilise l'ID du message assistant pour garantir l'indexation lors d'une régénération. Il intègre une gestion anti-zombie explicite des erreurs asynchrones via un callback (pour absorber `asyncio.CancelledError`), utilise un `unique_seed` pour éviter les doublons et bloque fermement les payloads Base64 (images).
 
 ### `new_context_filter.py` (Inlet - Priorité 20)
-**Rôle** : Smart Context RAG Injector (v5.226.18.1).
+**Rôle** : Smart Context RAG Injector (v5.227.1.1).
 - **Sémantique** : Intercepte la requête entrante, attend la libération d'un éventuel verrou de clonage de session (`await wait_for_chat_clone(chat_id)`), orchestre l'ingestion des fichiers attachés (`echo_ingestion.py`) et interroge Qdrant pour récupérer les souvenirs persistants.
-- **Algorithme Clé** : Fusion sémantique qui préserve le score `memory_importance`. Assemble le `current_user_multipart_payload` selon l'ordre strict PGCU, sépare `<artifact id="AEC_context_checkpoint">` de `<REQUETE_UTILISATEUR>`, compense `tour_conversation` via l'offset `_echo_compacted_user_turns` fourni par `context_compaction_filter.py`, et injecte les mémoires, la directive dynamique d'initialisation de session (PIS) ou de montée de version (`<artifact id="AEC_directive">` demandant de notifier succinctement le passage de `last_version` à `version`, persistée via `last_framework_version` dans `echo_settings`), ainsi que les événements système dans la structure **XML native et modulaire** (`EchoAEC`, `<artifact id="AEC_smart_context">`, `<artifact id="AEC_evenement_systeme">`) en associant des `source_id` pour la traçabilité. Intègre un fallback `from pytz import timezone` en cas d'absence de `ZoneInfo`.
-
-### `context_compaction_filter.py` (Inlet - Priorité 15)
-**Rôle** : Rejeu des Checkpoints Cognitifs et Compactage Automatique In-Place (v5.226.18.1).
-- **Sémantique** : S'exécute entre `user_native_context_filter.py` (priorité 10) et `new_context_filter.py` (priorité 20), et attend la fin d'un éventuel clonage asynchrone (`await wait_for_chat_clone(chat_id)`) avant d'ouvrir `session.db`.
-- **Algorithme Clé** : Rejoue systématiquement tout Checkpoint actif (`compaction_state` dans `echo_settings` de `session.db`) en tronquant les tours antérieurs au `pivot_msg_id`, en injectant `<artifact id="AEC_context_checkpoint">` en tête du message pivot, en renseignant `_echo_compacted_user_turns` / `_echo_active_pivot_msg_id` dans `body["metadata"]` et en émettant le statut UI `🗜️ Checkpoint Cognitif #{cp_num} actif ({evicted_count} tours condensés)`. Si la `UserValve` `ENABLE_AUTO_COMPACTION` est activée, que la fenêtre comporte plus de `ECHO_COMPACTION_MIN_TURNS_TO_KEEP` (`2`) tours et que les tokens actifs atteignent `45%` (`CONTEXT_COMPACTION_TRIGGER_RATIO = 0.45`, soit `450 000` tokens), invoque `EchoCompactionEngine.execute_compaction()` via `MODEL_APOLLO` (`max_tokens=32768`) pour redescendre à `25%` (`CONTEXT_COMPACTION_TARGET_RATIO = 0.25`, soit `250 000` tokens).
+- **Algorithme Clé** : Fusion sémantique qui préserve le score `memory_importance`. Assemble le `current_user_multipart_payload` selon l'ordre strict PGCU, et injecte les mémoires, la directive dynamique d'initialisation de session (PIS) ou de montée de version (`<artifact id="AEC_directive">` demandant de notifier succinctement le passage de `last_version` à `version`, persistée via `last_framework_version` dans `echo_settings`), ainsi que les événements système dans la structure **XML native et modulaire** (`EchoAEC`, `<artifact id="AEC_smart_context">`, `<artifact id="AEC_evenement_systeme">`) en associant des `source_id` pour la traçabilité. Intègre un fallback `from pytz import timezone` en cas d'absence de `ZoneInfo`.
 
 ### `app_drawer_filter.py` (Inlet - Priorité 1000)
 **Rôle** : Interface Homme-Machine Flottante (v5.226.18.0).
@@ -42,8 +37,8 @@ Ce dossier représente la **Conscience et l'Injection Contextuelle** de l'agent.
 - **Sémantique** : Filtre Inlet injectant un `setInterval` JavaScript (`fetch('/health', { method: 'HEAD', cache: 'no-store', keepalive: true })` toutes les 120s) afin de maintenir actif le pool de connexions HTTP/TCP Keep-Alive du navigateur face aux timeouts des proxys inverses et du WAF BunkerWeb (`proxy_read_timeout`).
 
 ### `user_native_context_filter.py` (Inlet - Priorité 10)
-**Rôle** : Grounding Utilisateur & Préférences Contextuelles (v5.226.18.0).
-- **Sémantique** : Injecte silencieusement dans `body["metadata"]` les préférences de partage du nom (`ENABLE_USER_NAME`), la surcharge de localisation (`OVERRIDE_LOCATION`) et l'état d'activation du compactage contextuel automatique (`ENABLE_AUTO_COMPACTION`, désactivé par défaut via `ECHO_COMPACTION_ENABLED_DEFAULT = False`).
+**Rôle** : Grounding Utilisateur & Préférences Contextuelles (v5.227.1.1).
+- **Sémantique** : Injecte silencieusement dans `body["metadata"]` les préférences de partage du nom (`ENABLE_USER_NAME`) et la surcharge de localisation (`OVERRIDE_LOCATION`).
 
 ## 3. Dépendances Logiques
 - Ces filtres interagissent nativement avec le moteur de base de données Qdrant et SQLite.

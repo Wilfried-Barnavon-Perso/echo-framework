@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.227.0.1
+version: 5.227.1.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.227.1.1: Suppression des constantes de compactage in-place (ECHO_COMPACTION_*, CONTEXT_COMPACTION_*).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.90: Définition canonique de OWUI_ORCHESTRATOR_MODEL ("echo_orchestrator") pour le modèle maître Open WebUI des tâches planifiées.
 # 5.89: Ajout des constantes de compactage contextuel in-place (ECHO_COMPACTION_*, CONTEXT_COMPACTION_*) pilotées par MODEL_APOLLO (32768 tokens).
 # 5.88: Alignement documentaire interne sur echo_orchestrator.
-# 5.87: Mise à jour des modèles ECHO ZEPHYR et ECHO DISTILLATION vers Gemini 3.5 Flash-Lite.
 
 
 import os
@@ -727,14 +727,6 @@ MIME_MAPPING_BIN = {
 # ==============================================================================
 # 9. SEUILS COGNITIFS ET DÉFENSE PASSIVE (V5)
 # ==============================================================================
-# --- COMPACTAGE DE CONTEXTE IN-PLACE (CHECKPOINTING) ---
-ECHO_COMPACTION_ENABLED_DEFAULT: bool = False          # UserValve ENABLE_AUTO_COMPACTION désactivée par défaut
-CONTEXT_COMPACTION_TRIGGER_RATIO: float = 0.45         # 45% de ECHO_MAX_CONTEXT_SIZE (~471 859 tokens) : Déclenchement auto
-CONTEXT_COMPACTION_TARGET_RATIO: float = 0.25          # 25% de ECHO_MAX_CONTEXT_SIZE (262 144 tokens) : Cible post-compactage
-ECHO_COMPACTION_MIN_TURNS_TO_KEEP: int = 2             # Minimum de tours complets conservés dans la queue active
-ECHO_COMPACTION_MODEL: str = MODEL_APOLLO              # Modèle de synthèse haute capacité (Gemini 3.8 Flash, thinkingLevel="high", fenêtre 1M)
-ECHO_COMPACTION_MAX_OUTPUT_TOKENS: int = 32768         # Plafond de sortie du Checkpoint (inclut thoughtsTokenCount + synthèse Markdown)
-
 # Seuils de saturation pour l'outil context_gauge (déclencheurs d'escalade)
 CONTEXT_LOAD_WARNING_THRESHOLD = 40.0
 CONTEXT_LOAD_CRITICAL_THRESHOLD = 60.0

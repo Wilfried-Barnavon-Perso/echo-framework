@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Events
 author: Wilfried BARNAVON
-version: 5.226.18.1
+version: 5.227.1.1
 description: Gestionnaire des événements WebSocket et UI. Intègre le protocole UCTP (Universal Chunked Transfer Protocol).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.227.1.1: Durcissement de EchoEvents.confirm contre les retours d'erreur dict de l'Event Caller.
 # 5.226.18.1: Vérification de data-chat-id dans le fast-path de trigger_action pour le HUD Codex.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.7: Fix critique UX - Alignement de EchoEvents.toast() sur l'événement Socket.IO natif 'notification' d'Open WebUI (Chat.svelte).
 # 2.6: Fix critique - Timeout asynchrone sur call_execute (anti-hang RPC Socket.IO), et fast-path dans trigger_action si le HUD Codex est déjà actif.
-# 2.5: Fix critique - Injection explicite du `session_id` dans `trigger_action` pour empêcher le crash en boucle de l'Event Caller côté serveur.
 import asyncio
 from typing import Any, Optional
 import uuid
@@ -50,7 +50,9 @@ class EchoEvents:
 
     async def confirm(self, title: str, message: str) -> bool:
         res = await self.call("confirmation", {"title": title, "message": message})
-        return bool(res)
+        if isinstance(res, dict) and "error" in res:
+            return False
+        return res is True
 
     async def emit_execute(self, code_str: str):
         """ Émet et exécute du JS avec fragmentation automatique Python -> JS (UCTP) """

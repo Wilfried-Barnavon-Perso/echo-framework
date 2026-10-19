@@ -1,11 +1,11 @@
 <div align="center">
   <img src="docs/logo-echo-full.png" alt="ECHO Framework Logo" width="350">
   
-  # 🧠 ECHO Framework v5.227.1
+  # 🧠 ECHO Framework v5.228.0
   
   **The Sovereign Intelligence Orchestrator**
   
-  [![Version](https://img.shields.io/badge/version-5.227.1-blue.svg)](#)
+  [![Version](https://img.shields.io/badge/version-5.228.0-blue.svg)](#)
   [![Open WebUI](https://img.shields.io/badge/Powered%20by-Open%20WebUI-4CAF50.svg)](#)
   [![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-F9AB00.svg)](#)
   [![License](https://img.shields.io/badge/license-Apache%202.0-purple.svg)](#)
@@ -37,7 +37,7 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
 │                          CORTEX (OPEN WEBUI)                            │
 │   • Echo Orchestrator : routage cognitif, suture SQLite bit-perfect     │
 │   • SSOT Registry : gouvernance unifiée (PROMETHEUS, APOLLO, ZEPHYR)    │
-│   • Filtres & Contexte : Compaction In-Place, Smart Context, AEC XML    │
+│   • Filtres & Contexte : Migration Session, Smart Context, AEC XML      │
 │   • HUD & UI Engine : interfaces dynamiques et réactives sur mobile     │
 └──────────────────┬───────────────────────────────────┬──────────────────┘
                    │                                   │
@@ -58,7 +58,7 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
 
 - 🔒 **Souveraineté & Sécurité Périmétrique** : Vos bases vectorielles (Qdrant), votre historique de session (SQLite) et vos fichiers (Codex) restent confinés localement sur des réseaux Docker isolés. L'accès est protégé par **ECHO Auth** (IdP natif avec MFA/TOTP et SSO) placé derrière un reverse-proxy WAF **BunkerWeb**, et supervisé par un **Admin Manager** dédié (monitoring temps réel et sauvegardes automatisées sur NAS / Cloud).
 - 🧠 **Mémoire Biomimétique & Edge Bridge** : Fini l'amnésie des LLMs. Calquée sur la mémoire humaine, l'architecture hiérarchise les souvenirs selon leur importance et consolide automatiquement les apprentissages récurrents. L'indexation vectorielle s'appuie sur un **Edge Embedding Bridge** exploitant l'accélération matérielle (`WebGPU` / `WASM`) du navigateur client, relayé côté serveur par le modèle local **Harrier-OSS-v1-0.6B** sous `llama.cpp`.
-- 🪢 **Suture Sémantique (Bit-perfect) & Compactage sur Place** : L'**Echo Orchestrator** garantit une continuité de session chirurgicale et pilote dynamiquement l'escalade cognitive entre les modèles (`PROMETHEUS`, `APOLLO`, `ZEPHYR`) avec bascule instantanée (Circuit Breaker OAuth2 en HTTP/2). Lorsque la conversation s'allonge, le **Compactage Contextuel sur Place** synthétise l'historique ancien dans un Checkpoint cognitif sans jamais quitter la discussion.
+- 🪢 **Suture Sémantique (Bit-perfect) & Continuité de Session** : L'**Echo Orchestrator** garantit une continuité de session chirurgicale et pilote dynamiquement l'escalade cognitive entre les modèles (`PROMETHEUS`, `APOLLO`, `ZEPHYR`) avec bascule instantanée (Circuit Breaker OAuth2 en HTTP/2). Lorsque la conversation s'allonge, l'action **Poursuivre dans une nouvelle conversation** distille le contexte en deux passes et transfère automatiquement vos fichiers, votre Codex Git et la mémoire vectorielle de session vers une discussion neuve.
 - 🔐 **Identity Vault & Sécurité Applicative** : Coffre-fort de secrets intégré permettant de connecter des services tiers, des workflows N8N ou des serveurs Model Context Protocol (MCP) sans jamais exposer vos clés en clair au modèle.
 - 🛠️ **Sovereign Toolbox & Workers Dédiés** :
   - **ECHO N8N Orchestrator** : Conception, test en Sandbox et déploiement de workflows d'automatisation autonomes directement pilotés par l'IA.

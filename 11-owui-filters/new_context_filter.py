@@ -2,16 +2,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 5.226.18.1
+version: 5.227.1.1
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.227.1.1: Suppression de l'extraction de AEC_context_checkpoint et de l'offset _echo_compacted_user_turns.
 # 5.226.18.1: Attente du verrou de clonage (wait_for_chat_clone) avant l'instanciation de EchoStateManager.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 7.61: Compatibilité avec context_compaction_filter (offset _echo_compacted_user_turns sur tour_conversation et préservation de AEC_context_checkpoint).
 # 7.60: Ajustement sémantique de l'AEC_directive de mise à niveau (notification du passage de l'ancienne à la nouvelle version).
-# 7.59: Injection dynamique de l'AEC_directive d'initialisation de session (PIS) ou de mise à niveau dans rich_parts.
 
 
 from pydantic import BaseModel, Field
@@ -226,7 +226,6 @@ class Filter:
 
             idx = -1
             current_user_multipart_payload = []  # Payload hybride courant (texte + inline_data)
-            extracted_checkpoint_xml = None
             for i in range(len(msgs)-1, -1, -1):
                 if msgs[i].get("role") == "user":
                     idx = i
@@ -241,11 +240,6 @@ class Filter:
                                     pass
                                 elif p.get("type") == "text":
                                     txt_val = p.get("text", "")
-                                    if '<artifact id="AEC_context_checkpoint"' in txt_val:
-                                        from echo_core import EchoCompactionEngine
-                                        cp_xml, txt_val = EchoCompactionEngine.strip_checkpoint_tag(txt_val)
-                                        if cp_xml:
-                                            extracted_checkpoint_xml = cp_xml
                                     if txt_val.strip():
                                         current_user_multipart_payload.append({"text": f"<REQUETE_UTILISATEUR>\n{txt_val}\n</REQUETE_UTILISATEUR>"})
                                 else:
@@ -254,11 +248,6 @@ class Filter:
                                     current_user_multipart_payload.append(p)
                     else:
                         txt_val = str(orig_content or "")
-                        if '<artifact id="AEC_context_checkpoint"' in txt_val:
-                            from echo_core import EchoCompactionEngine
-                            cp_xml, txt_val = EchoCompactionEngine.strip_checkpoint_tag(txt_val)
-                            if cp_xml:
-                                extracted_checkpoint_xml = cp_xml
                         if txt_val.strip():
                             current_user_multipart_payload.append({"text": f"<REQUETE_UTILISATEUR>\n{txt_val}\n</REQUETE_UTILISATEUR>"})
                     break
@@ -273,8 +262,7 @@ class Filter:
                 u_loc = meta.get("_echo_override_location", "")
                 final_loc = u_loc if u_loc else sys_loc
 
-                compacted_offset = int(body.get("metadata", {}).get("_echo_compacted_user_turns", 0))
-                tour_conversation = compacted_offset + sum(1 for m in msgs if m.get("role") == "user")
+                tour_conversation = sum(1 for m in msgs if m.get("role") == "user")
 
                 # === AEC : Méta-données brutes ===
                 date_heure = meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu")
@@ -293,8 +281,6 @@ class Filter:
                 from echo_aec import EchoAEC
 
                 rich_parts = []
-                if extracted_checkpoint_xml:
-                    rich_parts.append({"text": extracted_checkpoint_xml + "\n\n"})
                 rich_parts.append({"text": EchoAEC.render_model_context(model_id, model_origin, version)})
                 rich_parts.append({"text": EchoAEC.render_identity_context(display_name)})
                 rich_parts.append({"text": EchoAEC.render_time_context(date_heure, timezone, tour_conversation)})

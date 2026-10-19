@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 5.226.18.0
+# VERSION : 5.227.1.1
 # ==============================================================================
 #                  inventés par la syntaxe officielle BunkerWeb (REVERSE_PROXY_AUTH_REQUEST*).
 #                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
@@ -37,11 +37,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.227.1.1: Open WebUI : Maintien de ENABLE_CONTEXT_COMPACTION=false pour protéger la Suture Bit-Perfect ECHO.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 9.83: Open WebUI : Désactivation forcée de ENABLE_CONTEXT_COMPACTION=false au profit du moteur de Checkpoint ECHO.
+# 9.83: Open WebUI : Désactivation forcée de ENABLE_CONTEXT_COMPACTION=false.
 # 9.82: BunkerWeb : Ajustement de MAX_CLIENT_SIZE de 500m à 4096m sur echo-open-webui.
 # 9.81: BunkerWeb : Suppression de la mention (WAF) dans le template de retour HTML 403 Forbidden.
-# 9.80: Docker Compose : Création du volume externe echo-mcp-cache (/app/mcp_cache) sur echo-mcp-broker et montage de echo-n8n-data et echo-mcp-cache dans echo-admin-manager.
 
 services:
 

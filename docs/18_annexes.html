@@ -214,7 +214,7 @@
     <table>
       <thead><tr><th>Colonne</th><th>Type</th><th>Description</th></tr></thead>
       <tbody>
-        <tr><td><code>key</code></td><td>TEXT PK</td><td>Clé de réglage (<code>last_model_id</code>, <code>turn_origin_model</code>, <code>last_framework_version</code>, <code>context_stats</code>, <code>compaction_state</code>, <code>aec_tier_*</code>, <code>model_policy</code>).</td></tr>
+        <tr><td><code>key</code></td><td>TEXT PK</td><td>Clé de réglage (<code>last_model_id</code>, <code>turn_origin_model</code>, <code>last_framework_version</code>, <code>context_stats</code>, <code>aec_tier_*</code>, <code>model_policy</code>).</td></tr>
         <tr><td><code>value</code></td><td>TEXT NOT NULL</td><td>Valeur sérialisée (remplace les anciennes tables <code>session_state</code> et <code>context_stats</code>).</td></tr>
         <tr><td><code>updated_at</code></td><td>INT NOT NULL</td><td>Timestamp de dernière mise à jour.</td></tr>
       </tbody>
@@ -271,12 +271,12 @@
         <tr><td><code>ECHO_RETRY_MULTIPLIER</code></td><td>1,5</td><td>Client Gemini</td><td>Multiplicateur du backoff exponentiel.</td></tr>
         <tr><td><code>ECHO_RETRY_JITTER_MIN/MAX</code></td><td>0,7 / 1,3</td><td>Client Gemini</td><td>Plage de jitter aléatoire pour éviter les tempêtes de retry.</td></tr>
         <tr><td><code>AEC_REMINDERS</code></td><td>22k / 34k / 55k / 88k / 120k</td><td>Echo Orchestrator</td><td>Paliers de tokens et outils déclenchant les rappels cognitifs multi-axes (<code>efficiency</code>, <code>strategy</code>, <code>alignment</code>, <code>factuality</code>, <code>kernel</code>, <code>context_hygiene</code>).</td></tr>
-        <tr><td><code>ECHO_COMPACTION_ENABLED_DEFAULT</code></td><td><code>False</code></td><td>Compaction</td><td>État par défaut de la valve d'auto-compaction contextuelle (<code>ENABLE_AUTO_COMPACTION</code>).</td></tr>
-        <tr><td><code>CONTEXT_COMPACTION_TRIGGER_RATIO</code></td><td><code>0.45</code></td><td>Compaction</td><td>Ratio de charge de <code>ECHO_MAX_CONTEXT_SIZE</code> (45 %) déclenchant le compactage contextuel in-place.</td></tr>
-        <tr><td><code>CONTEXT_COMPACTION_TARGET_RATIO</code></td><td><code>0.25</code></td><td>Compaction</td><td>Ratio cible de fenêtre récente conservée (25 %) après élagage et synthèse du Checkpoint.</td></tr>
-        <tr><td><code>ECHO_COMPACTION_MIN_TURNS_TO_KEEP</code></td><td><code>2</code></td><td>Compaction</td><td>Nombre minimal de tours complets récents préservés intacts lors du compactage.</td></tr>
-        <tr><td><code>ECHO_COMPACTION_MODEL</code></td><td><code>MODEL_APOLLO</code></td><td>Compaction</td><td>Modèle cognitif sollicité par <code>EchoCompactionEngine</code> pour la consolidation téléscopique.</td></tr>
-        <tr><td><code>ECHO_COMPACTION_MAX_OUTPUT_TOKENS</code></td><td><code>32768</code></td><td>Compaction</td><td>Budget maximal de tokens de sortie alloué à la génération du Checkpoint cognitif.</td></tr>
+        <tr><td><code>ECHO_MAX_CONTEXT_SIZE</code></td><td><code>1 048 576</code></td><td>Cortex / UI</td><td>Capacité maximale unifiée de la fenêtre de contexte Gemini (2^20 tokens).</td></tr>
+        <tr><td><code>CONTEXT_WARNING_THRESHOLD</code></td><td><code>0.80</code></td><td>Echo Orchestrator</td><td>Seuil de remplissage (80 %) déclenchant le toast d'alerte de migration de session.</td></tr>
+        <tr><td><code>CONTEXT_LOAD_WARNING_THRESHOLD</code></td><td><code>40</code></td><td>Context Gauge</td><td>Pourcentage de charge contextuelle déclenchant le premier palier d'escalade cognitive.</td></tr>
+        <tr><td><code>CONTEXT_LOAD_CRITICAL_THRESHOLD</code></td><td><code>60</code></td><td>Context Gauge</td><td>Pourcentage de charge critique recommandant l'escalade vers <code>MODEL_PROMETHEUS</code> ou la migration.</td></tr>
+        <tr><td><code>ECHO_TOOLS_CACHE_MAX_SIZE</code></td><td><code>100</code></td><td>Echo Orchestrator</td><td>Nombre maximal d'entrées conservées en mémoire dans le cache de schémas d'outils (<code>_TOOLS_CACHE</code>).</td></tr>
+        <tr><td><code>PRUNE_CONTENT_THRESHOLD</code></td><td><code>60 000</code></td><td>Browser Worker</td><td>Seuil de caractères déclenchant l'élagage contextuel proactif des pages web (Proactive Context Pruning).</td></tr>
         <tr><td><code>PKCE_CALLBACK_TIMEOUT</code></td><td>300 s</td><td>Auth PKCE</td><td>Délai maximal accordé à l'utilisateur pour valider l'autorisation OAuth2.</td></tr>
         <tr><td><code>GOOGLE_OAUTH_TOKEN_LIFETIME</code></td><td>3 300 s</td><td>Auth PKCE</td><td>Durée proactive de rafraîchissement du token OAuth2 (55 min).</td></tr>
         <tr><td><code>ECHO_AUDIO_DEFAULT_TTS_VOICE</code></td><td><code>fr-FR-VivienneMultilingualNeural</code></td><td>Pont Audio</td><td>Voix neuronale multilingue par défaut de la synthèse vocale Edge TTS.</td></tr>
@@ -341,7 +341,7 @@ Content-Type: application/json</code></pre>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.227.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.228.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
