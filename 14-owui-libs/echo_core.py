@@ -2,7 +2,7 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 5.227.0.1
+version: 5.227.0.2
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -544,28 +544,88 @@ class EchoCompactionEngine:
         return turns[pivot_turn_idx:], state, pivot_turn_idx
 
     @classmethod
+    def estimate_turn_tokens(cls, turn: List[Dict]) -> int:
+        """
+        Estime le poids en tokens d'un tour sur son seul contenu utile dédupliqué
+        (sans double comptage entre m['content'] et m['output'], ni sérialisation des métadonnées webui.db m['files']).
+        """
+        total = 0
+        for m in turn:
+            content = m.get("content", "")
+            if isinstance(content, list):
+                txt_parts = []
+                for p in content:
+                    if not isinstance(p, dict):
+                        continue
+                    if "text" in p and p["text"]:
+                        txt_parts.append(str(p["text"]))
+                    elif p.get("type") == "image_url" or "inlineData" in p or "inline_data" in p:
+                        total += estimate_token_size(p)
+                raw_str = "\n".join(txt_parts)
+            else:
+                raw_str = str(content or "")
+
+            b64_matches = cls.B64_PATTERN.findall(raw_str)
+            total += len(b64_matches) * 258
+            clean_str = cls.B64_PATTERN.sub("", raw_str)
+            total += len(clean_str) // CHARS_PER_TOKEN
+
+            has_inline_tools = '<details type="tool_calls"' in raw_str
+            has_inline_reasoning = '<details type="reasoning"' in raw_str
+
+            if not has_inline_tools:
+                for tc in m.get("tool_calls") or []:
+                    if isinstance(tc, dict):
+                        total += len(str(tc.get("function", {}))) // CHARS_PER_TOKEN
+
+            for item in m.get("output") or []:
+                if not isinstance(item, dict):
+                    continue
+                item_type = item.get("type")
+                if not has_inline_tools and item_type == "function_call":
+                    total += len(str(item.get("arguments", ""))) // CHARS_PER_TOKEN
+                elif not has_inline_tools and item_type == "function_call_output":
+                    for op in item.get("output") or []:
+                        if isinstance(op, dict) and op.get("text"):
+                            op_str = str(op["text"])
+                            total += len(cls.B64_PATTERN.findall(op_str)) * 258
+                            total += len(cls.B64_PATTERN.sub("", op_str)) // CHARS_PER_TOKEN
+                elif not has_inline_reasoning and item_type == "reasoning":
+                    r_txt = str(item.get("summary") or item.get("content") or "")
+                    total += len(r_txt) // CHARS_PER_TOKEN
+
+        return max(1, total)
+
+    @classmethod
     def estimate_active_tokens(
         cls,
         active_turns: List[List[Dict]],
         active_state: Optional[Dict],
         state_manager: EchoStateManager,
     ) -> int:
-        """Estime le nombre de tokens actifs (max entre heuristique et télémétrie Gemini récente)."""
-        flat_msgs = [m for t in active_turns for m in t]
-        heuristic_tokens = estimate_token_size(flat_msgs)
-        if active_state and active_state.get("summary_xml"):
-            heuristic_tokens += estimate_token_size(active_state["summary_xml"])
-
+        """
+        Estime le nombre de tokens actifs en priorisant la télémétrie réelle Gemini (context_stats)
+        alignée sur get_context_load et la jauge HUD, avec repli sur l'heuristique dédupliquée.
+        """
         stats_raw = state_manager.get_session_setting("context_stats")
         telemetry_tokens = 0
         if stats_raw:
             try:
                 stats = std_json.loads(stats_raw)
-                telemetry_tokens = int(stats.get("promptTokenCount", 0))
+                telemetry_tokens = int(stats.get("totalTokenCount") or stats.get("promptTokenCount") or 0)
             except Exception:
                 telemetry_tokens = 0
 
-        return max(heuristic_tokens, telemetry_tokens)
+        if telemetry_tokens > 0:
+            pending_user_tokens = 0
+            if active_turns and len(active_turns[-1]) == 1 and active_turns[-1][0].get("role") == "user":
+                pending_user_tokens = cls.estimate_turn_tokens(active_turns[-1])
+            return telemetry_tokens + pending_user_tokens
+
+        heuristic_tokens = sum(cls.estimate_turn_tokens(t) for t in active_turns)
+        if active_state and active_state.get("summary_xml"):
+            heuristic_tokens += estimate_token_size(active_state["summary_xml"])
+        return heuristic_tokens
 
     @classmethod
     def find_split_index(
@@ -586,11 +646,11 @@ class EchoCompactionEngine:
             return 0
 
         max_split = total_turns - min_turns_to_keep
-        turn_sizes = [estimate_token_size(t) for t in active_turns]
+        turn_sizes = [cls.estimate_turn_tokens(t) for t in active_turns]
         heuristic_total = sum(turn_sizes)
 
-        if active_tokens > heuristic_total > 0:
-            effective_target = min(target_tokens, max(1, int(heuristic_total * (target_tokens / active_tokens))))
+        if active_tokens > 0 and heuristic_total > 0:
+            effective_target = max(1, int(heuristic_total * (target_tokens / active_tokens)))
         else:
             effective_target = target_tokens
 
@@ -774,9 +834,9 @@ class EchoCompactionEngine:
         )
 
         pivot_id, pivot_hash = cls.compute_turn_signature(remaining_turns[0])
-        heuristic_before = estimate_token_size([m for t in active_turns for m in t])
-        heuristic_remaining = estimate_token_size([m for t in remaining_turns for m in t])
-        if tokens_before > heuristic_before > 0:
+        heuristic_before = sum(cls.estimate_turn_tokens(t) for t in active_turns)
+        heuristic_remaining = sum(cls.estimate_turn_tokens(t) for t in remaining_turns)
+        if tokens_before > 0 and heuristic_before > 0:
             scaled_remaining = int(tokens_before * (heuristic_remaining / heuristic_before))
             tokens_after = scaled_remaining + estimate_token_size(summary_xml)
         else:

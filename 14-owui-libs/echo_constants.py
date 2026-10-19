@@ -1,7 +1,7 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.226.18.0
+version: 5.227.0.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -727,15 +727,10 @@ MIME_MAPPING_BIN = {
 # ==============================================================================
 # 9. SEUILS COGNITIFS ET DÉFENSE PASSIVE (V5)
 # ==============================================================================
-CHARS_PER_TOKEN = 4
-ECHO_MAX_CONTEXT_SIZE = 1000000  # Limite technique 1M (on peut cibler plus bas si Gemini Flash/Pro a des limites strictes pour ECHO)
-CONTEXT_WARNING_THRESHOLD = 0.80  # 80% : Toast d'alerte jaune (Compactage de session conseillé)
-CONTEXT_TRUNCATE_THRESHOLD = 0.90 # 90% : Troncature silencieuse
-
 # --- COMPACTAGE DE CONTEXTE IN-PLACE (CHECKPOINTING) ---
 ECHO_COMPACTION_ENABLED_DEFAULT: bool = False          # UserValve ENABLE_AUTO_COMPACTION désactivée par défaut
-CONTEXT_COMPACTION_TRIGGER_RATIO: float = 0.45         # 45% de ECHO_MAX_CONTEXT_SIZE (450 000 tokens) : Déclenchement auto
-CONTEXT_COMPACTION_TARGET_RATIO: float = 0.25          # 25% de ECHO_MAX_CONTEXT_SIZE (250 000 tokens) : Cible post-compactage
+CONTEXT_COMPACTION_TRIGGER_RATIO: float = 0.45         # 45% de ECHO_MAX_CONTEXT_SIZE (~471 859 tokens) : Déclenchement auto
+CONTEXT_COMPACTION_TARGET_RATIO: float = 0.25          # 25% de ECHO_MAX_CONTEXT_SIZE (262 144 tokens) : Cible post-compactage
 ECHO_COMPACTION_MIN_TURNS_TO_KEEP: int = 2             # Minimum de tours complets conservés dans la queue active
 ECHO_COMPACTION_MODEL: str = MODEL_APOLLO              # Modèle de synthèse haute capacité (Gemini 3.8 Flash, thinkingLevel="high", fenêtre 1M)
 ECHO_COMPACTION_MAX_OUTPUT_TOKENS: int = 32768         # Plafond de sortie du Checkpoint (inclut thoughtsTokenCount + synthèse Markdown)
