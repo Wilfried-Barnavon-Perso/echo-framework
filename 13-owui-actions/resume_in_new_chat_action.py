@@ -1,18 +1,17 @@
-# -*- coding: utf-8 -*-
 """
 title: Résume et Transfert vers un nouveau chat
 author: ECHO Framework
-version: 5.228.0.1
+version: 5.228.1.1
 description: Migre le contexte de travail saturé vers une nouvelle conversation optimisée (clonage Workspace).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxsaW5lIHgxPSI0IiB5MT0iNCIgeDI9IjQiIHkyPSIyMCIvPjxsaW5lIHgxPSI4IiB5MT0iMTIiIHgyPSIxNiIgeTI9IjEyIi8+PHBvbHlsaW5lIHBvaW50cz0iMTIgOCAxNiAxMiAxMiAxNiIvPjxsaW5lIHgxPSIyMCIgeTE9IjQiIHgyPSIyMCIgeTI9IjIwIi8+PC9zdmc+
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.1.1: Suppression de l'en-tête de codage UTF-8 obsolète pour alignement sur extract_frontmatter OWUI (affichage icône).
 # 5.228.0.1: Intégration de l'icône SVG base64 borne à borne (|->|) pour le bouton d'action.
 # 5.227.1.1: Réintroduction et modernisation de l'action de migration de session (extraction complète de branche, backup SQLite atomique via echo_session_clone, pagination Qdrant COLLECTION_SESSION_RAG et timeouts RPC).
 # 1.12: Injection de la requête racine (RAG macro-objectif) et ajout de la routine de reprise obligatoire (Onboarding cognitif).
 # 1.11: Renommage de l'action et augmentation de l'historique de distillation à 80 messages.
-# 1.9: Correction extraction des messages (compatibilité OWUI v0.3+), nettoyage de la clé redondante, cohérence ID HUD.
 
 import asyncio
 import inspect
