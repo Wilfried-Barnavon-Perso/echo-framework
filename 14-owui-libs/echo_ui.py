@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.227.1.1
+version: 5.228.2.1
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.2.1: Fiabilisation du HUD Codex (file d'attente RPC avec auto-reconnect post-standby, verrou anti-double création + Créer, import DOM/PDF binaire, détection d'extension et purge de surrogates UTF-16).
 # 5.227.1.1: Suppression du badge et de la ligne de Checkpoint Cognitif dans deploy_context_gauge.
 # 5.226.18.1: Estampillage data-chat-id et auto-fermeture sur changement de route SPA pour les HUDs Codex et Cognitive Monitor.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.107: Affichage du badge et de la ligne de Checkpoint Cognitif actif dans deploy_context_gauge.
-# 5.106: Affichage du Tier, déduplication du Project ID Tenant et intégration des jauges Quota 5h et Quota Semaine dans deploy_context_gauge.
 
 
 import sys
@@ -1466,7 +1466,9 @@ return new Promise(function(resolve) {{
             quick_actions_json: str,
             workspaces_json: str,
             current_workspace: str,
-            chat_id: str) -> str:
+            chat_id: str,
+            message_id: str = "",
+            model_id: str = "echo_orchestrator") -> str:
         """Génère le script JS complet du HUD Monaco Codex.
         Injection via __event_call__({type: 'execute', data: {code: ...}})."""
         return f"""
@@ -1474,8 +1476,19 @@ return new Promise(function(resolve) {{
       const CODEX_ID = 'echo-codex-hud';
       {EchoUI.get_mobile_guard_js("echo-codex-hud")}
       const CID = '{chat_id}';
+      const MID = '{message_id}';
+      const MODEL_ID = '{model_id}';
       const STATE_KEY = 'echo_codex_' + CID;
       const MONACO_CDN = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min';
+
+      if (window._echoCodexPingInterval) {{
+        clearInterval(window._echoCodexPingInterval);
+        window._echoCodexPingInterval = null;
+      }}
+      if (window._echoCodexVisHandler) {{
+        document.removeEventListener('visibilitychange', window._echoCodexVisHandler);
+        window._echoCodexVisHandler = null;
+      }}
 
       let existingHud = document.getElementById(CODEX_ID);
       if (existingHud) {{ existingHud.remove(); }}
@@ -1494,6 +1507,28 @@ return new Promise(function(resolve) {{
         yaml:'.yaml', toml:'.toml', ini:'.ini', markdown:'.md', plaintext:'.txt',
         sql:'.sql', r:'.r', lua:'.lua', perl:'.pl', dockerfile:'.dockerfile',
       }};
+      const EXT_TO_LANG = {{
+        '.py':'python', '.js':'javascript', '.jsx':'javascript', '.ts':'typescript', '.tsx':'typescript',
+        '.c':'c', '.h':'c', '.cpp':'cpp', '.hpp':'cpp', '.java':'java', '.go':'go', '.rs':'rust',
+        '.rb':'ruby', '.php':'php', '.swift':'swift', '.kt':'kotlin', '.cs':'csharp', '.vb':'vb',
+        '.sh':'shell', '.bash':'shell', '.ps1':'powershell', '.bat':'bat', '.cmd':'bat',
+        '.html':'html', '.htm':'html', '.css':'css', '.json':'json', '.xml':'xml', '.svg':'xml',
+        '.yaml':'yaml', '.yml':'yaml', '.toml':'toml', '.ini':'ini', '.md':'markdown', '.txt':'plaintext',
+        '.sql':'sql', '.r':'r', '.lua':'lua', '.pl':'perl', '.dockerfile':'dockerfile', '.pdf':'pdf'
+      }};
+      function detectFileLang(filename) {{
+        if (!filename) return 'plaintext';
+        const found = files.find(f => f.filename === filename);
+        if (found && found.lang && found.lang !== 'folder') return found.lang;
+        const lower = filename.toLowerCase();
+        if (lower.endsWith('dockerfile')) return 'dockerfile';
+        const dotIdx = lower.lastIndexOf('.');
+        if (dotIdx !== -1) {{
+          const ext = lower.substring(dotIdx);
+          if (EXT_TO_LANG[ext]) return EXT_TO_LANG[ext];
+        }}
+        return 'plaintext';
+      }}
       let targetFileOverride = null;
       if (window._echoCodexTarget) {{
           currentWorkspace = window._echoCodexTarget.workspace || currentWorkspace;
@@ -1509,8 +1544,10 @@ return new Promise(function(resolve) {{
           }}, 100);
           window._echoCodexTarget = null;
       }}
-      let currentFile = targetFileOverride || (files.length > 0 ? files[0].filename : null);
+      const firstFileEntry = files.find(f => f.type !== 'directory');
+      let currentFile = targetFileOverride || (firstFileEntry ? firstFileEntry.filename : null);
       let editor = null;
+      let pendingContent = null;
       let diffEditor = null;
       let isDiffMode = false;
       let isHistoryMode = false;
@@ -1525,18 +1562,106 @@ return new Promise(function(resolve) {{
       let markedLoaded = false;
       let previewDebounceTimer = null;
 
-      // --- COMMUNICATION PROXY (Race Condition Guard) ---
-      window.sendCodexAction = function(payload) {{
+      // --- COMMUNICATION PROXY & AUTO-RECONNECT RPC (Standby Resilience) ---
+      let actionQueue = [];
+      let inFlightPayload = null;
+      let inFlightWatchdog = null;
+      let waitResolveTimer = null;
+      let isReconnecting = false;
+
+      async function reconnectCodexBackend() {{
+        if (isReconnecting || !document.getElementById(CODEX_ID)) return;
+        isReconnecting = true;
+        if (typeof updateStatus === 'function') updateStatus('🔄 Reconnexion au Codex...');
+        try {{
+          const token = localStorage.token ? localStorage.token.replace(/^"|"$/g, '') : '';
+          let msgId = MID;
+          if (!msgId) {{
+            const msgs = document.querySelectorAll('[id^="message-"]');
+            for (let i = msgs.length - 1; i >= 0; i--) {{
+              const rawId = msgs[i].id.replace(/^message-/, '');
+              if (rawId && !rawId.includes('input') && !rawId.includes('edit') && !rawId.includes('feedback')) {{
+                msgId = rawId;
+                break;
+              }}
+            }}
+          }}
+          await fetch('/api/chat/actions/echo_codex_action', {{
+            method: 'POST',
+            headers: {{
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${{token}}`
+            }},
+            body: JSON.stringify({{
+              chat_id: CID,
+              model: MODEL_ID || 'echo_orchestrator',
+              id: msgId || 'codex-reconnect',
+              session_id: '',
+              messages: [],
+              reconnect_only: true,
+              workspace: currentWorkspace
+            }})
+          }});
+        }} catch (e) {{
+          console.error('[ECHO Codex] Reconnect error:', e);
+        }} finally {{
+          setTimeout(() => {{ isReconnecting = false; }}, 2500);
+        }}
+      }}
+
+      function flushCodexQueue() {{
+        if (actionQueue.length === 0) return;
         if (typeof window.echoCodexResolve === 'function') {{
+          if (waitResolveTimer) {{ clearTimeout(waitResolveTimer); waitResolveTimer = null; }}
           const resolveFn = window.echoCodexResolve;
-          window.echoCodexResolve = null; // Verrouille immédiatement
+          window.echoCodexResolve = null;
+          const payload = actionQueue.shift();
+          inFlightPayload = payload;
           resolveFn(payload);
+
+          if (inFlightWatchdog) clearTimeout(inFlightWatchdog);
+          if (payload && payload.action !== 'close' && payload.action !== 'ai_edit') {{
+            inFlightWatchdog = setTimeout(() => {{
+              if (typeof window.echoCodexResolve !== 'function') {{
+                if (inFlightPayload && inFlightPayload.action !== 'ping') {{
+                  actionQueue.unshift(inFlightPayload);
+                }} else if (currentFile) {{
+                  actionQueue.push({{ action: 'load_file', filename: currentFile }});
+                }}
+                inFlightPayload = null;
+                reconnectCodexBackend();
+              }}
+            }}, 2000);
+          }}
         }} else {{
-          // Retry dans 50ms pour les actions vitales, ignore les pings
-          if (payload && payload.action !== 'ping') {{
-             setTimeout(() => window.sendCodexAction(payload), 50);
+          if (!waitResolveTimer) {{
+            waitResolveTimer = setTimeout(() => {{
+              waitResolveTimer = null;
+              if (typeof window.echoCodexResolve !== 'function' && actionQueue.length > 0) {{
+                reconnectCodexBackend();
+              }}
+            }}, 1000);
           }}
         }}
+      }}
+
+      window._echoCodexOnReady = function() {{
+        if (inFlightWatchdog) {{ clearTimeout(inFlightWatchdog); inFlightWatchdog = null; }}
+        if (waitResolveTimer) {{ clearTimeout(waitResolveTimer); waitResolveTimer = null; }}
+        inFlightPayload = null;
+        isReconnecting = false;
+        flushCodexQueue();
+      }};
+
+      window.sendCodexAction = function(payload) {{
+        if (!payload) return;
+        if (payload.action === 'ping') {{
+          if (actionQueue.length > 0 || inFlightPayload) return;
+        }} else {{
+          actionQueue = actionQueue.filter(p => p.action !== 'ping');
+        }}
+        actionQueue.push(payload);
+        flushCodexQueue();
       }};
 
       // --- Restore position ---
@@ -2062,20 +2187,30 @@ return new Promise(function(resolve) {{
           newBtn.textContent = '';
           const input = document.createElement('input');
           input.type = 'text';
-          input.placeholder = 'ex: src/main.py';
+          input.placeholder = 'ex: src/main.py ou dossier/';
           input.style.cssText = `width:100%; background:rgba(0,0,0,0.2); border:1px solid ${{borderColor}}; color:${{textColor}}; padding:4px 6px; border-radius:4px; font-size:12px; outline:none; font-family:monospace;`;
 
+          let isSubmitted = false;
           const submitFile = () => {{
+            if (isSubmitted) return;
+            isSubmitted = true;
             const name = input.value.trim();
-            if (name) window.sendCodexAction({{action:'new_file', filename:name}});
-            else renderFileTree();
+            if (name) {{
+              updateStatus('Création de ' + name + '...');
+              window.sendCodexAction({{action:'new_file', filename:name}});
+            }} else {{
+              renderFileTree();
+            }}
           }};
 
           input.onkeydown = (e) => {{
-            if (e.key === 'Enter') submitFile();
-            if (e.key === 'Escape') renderFileTree();
+            e.stopPropagation();
+            if (e.key === 'Enter') {{ e.preventDefault(); submitFile(); }}
+            if (e.key === 'Escape') {{ e.preventDefault(); isSubmitted = true; renderFileTree(); }}
           }};
-          input.onblur = () => submitFile();
+          input.onblur = () => {{
+            if (!isSubmitted) submitFile();
+          }};
 
           newBtn.appendChild(input);
           input.focus();
@@ -2141,7 +2276,7 @@ return new Promise(function(resolve) {{
           content: editor.getValue(),
           selection: selection || null,
           filename: currentFile,
-          language: files.find(f => f.filename === currentFile)?.lang || 'plaintext',
+          language: detectFileLang(currentFile),
           model: modelSelect ? modelSelect.value : 'MODEL_APOLLO',
         }});
       }}
@@ -2222,21 +2357,42 @@ return new Promise(function(resolve) {{
       }};
 
       // Import (PC → Codex)
+      const importInput = document.createElement('input');
+      importInput.type = 'file';
+      importInput.multiple = true;
+      importInput.style.display = 'none';
+      hud.appendChild(importInput);
+      importInput.onchange = async () => {{
+        if (!importInput.files || importInput.files.length === 0) return;
+        const filesData = [];
+        updateStatus('📂 Lecture de ' + importInput.files.length + ' fichier(s)...');
+        for (const file of importInput.files) {{
+          try {{
+            let contentStr = '';
+            if (file.name.toLowerCase().endsWith('.pdf')) {{
+              const buf = await file.arrayBuffer();
+              const bytes = new Uint8Array(buf);
+              const chunks = [];
+              for (let i = 0; i < bytes.length; i += 8192) {{
+                chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, i + 8192)));
+              }}
+              contentStr = chunks.join('');
+            }} else {{
+              contentStr = await file.text();
+            }}
+            filesData.push({{filename: file.name, content: contentStr}});
+          }} catch (err) {{
+            console.error('[ECHO Codex] File read error:', err);
+          }}
+        }}
+        if (filesData.length > 0) {{
+          updateStatus('📂 Importation de ' + filesData.length + ' fichier(s)...');
+          window.sendCodexAction({{action:'upload', files: filesData}});
+        }}
+      }};
       document.getElementById(CODEX_ID + '-import').onclick = () => {{
-        const inp = document.createElement('input');
-        inp.type = 'file';
-        inp.multiple = true;
-        inp.onchange = async () => {{
-          const filesData = [];
-          for (const file of inp.files) {{
-            const text = await file.text();
-            filesData.push({{filename: file.name, content: text}});
-          }}
-          if (filesData.length > 0) {{
-            window.sendCodexAction({{action:'upload', files: filesData}});
-          }}
-        }};
-        inp.click();
+        importInput.value = '';
+        importInput.click();
       }};
 
       // Export (Codex → PC)
@@ -2306,7 +2462,7 @@ return new Promise(function(resolve) {{
       if (previewCopyBtn) {{
         previewCopyBtn.onclick = () => {{
           if (!currentFile) return;
-          const lang = files.find(f => f.filename === currentFile)?.lang;
+          const lang = detectFileLang(currentFile);
           const content = editor ? editor.getValue() : '';
 
           if (lang === 'markdown') {{
@@ -2371,7 +2527,7 @@ return new Promise(function(resolve) {{
             action: 'save',
             filename: currentFile,
             content: editor.getValue(),
-            language: files.find(f => f.filename === currentFile)?.lang || 'plaintext'
+            language: detectFileLang(currentFile)
           }});
           
           modified = false;
@@ -2392,13 +2548,13 @@ return new Promise(function(resolve) {{
 
       window.echoCodexNotify = (type, msg) => {{
         hideButtonSpinner();
-        if (type === 'saved') {{ updateStatus('\ud83d\udcbe Sauvegard\u00e9 \u2022 ' + msg); modified = false; renderFileTree(); }}
+        if (type === 'saved') {{ updateStatus('💾 Sauvegardé • ' + msg); modified = false; renderFileTree(); }}
         else if (type === 'committed') {{
-          updateStatus('\u2705 Commit\u00e9 \u2022 ' + msg); exitDiffMode();
+          updateStatus('✅ Commité • ' + msg); exitDiffMode();
           modified = false; renderFileTree();
           // Reload géré côté Python (push echoCodexSetContent)
         }}
-        else if (type === 'restored') {{ updateStatus('\u2934\ufe0f Restaur\u00e9 \u2022 ' + msg); exitHistoryMode(); }}
+        else if (type === 'restored') {{ updateStatus('⤴️ Restauré • ' + msg); exitHistoryMode(); }}
         else {{ updateStatus(msg); }}
       }};
 
@@ -2427,8 +2583,8 @@ return new Promise(function(resolve) {{
           automaticLayout: true, minimap: {{enabled: false}},
           accessibilitySupport: 'off'
         }});
-        const originalModel = monaco.editor.createModel(editor ? editor.getValue() : '', files.find(f=>f.filename===currentFile)?.lang||'plaintext');
-        const modifiedModel = monaco.editor.createModel(modifiedContent, files.find(f=>f.filename===currentFile)?.lang||'plaintext');
+        const originalModel = monaco.editor.createModel(editor ? editor.getValue() : '', detectFileLang(currentFile));
+        const modifiedModel = monaco.editor.createModel(modifiedContent, detectFileLang(currentFile));
         diffEditor.setModel({{ original: originalModel, modified: modifiedModel }});
         document.getElementById(CODEX_ID + '-diff-bar').style.display = 'flex';
         aiPanel.style.display = 'none';
@@ -2480,29 +2636,32 @@ return new Promise(function(resolve) {{
 
       // Chargement de contenu depuis le backend Python
       window.echoCodexSetContent = (content, filename) => {{
-        if (editor) {{
-          const lang = files.find(f => f.filename === filename)?.lang || 'plaintext';
-          const model = monaco.editor.createModel(content, lang);
-          editor.setModel(model);
-          editor.onDidChangeModelContent(() => {{
-            modified = true; renderFileTree(); updateSaveButton();
-            if (previewOpen) {{
-              clearTimeout(previewDebounceTimer);
-              previewDebounceTimer = setTimeout(updatePreview, 400);
-            }}
-          }});
-          modified = false;
-          // Mettre à jour le sélecteur de langage
-          const langSelect = document.getElementById(CODEX_ID + '-lang');
-          if (langSelect) langSelect.value = lang;
-          updateStatus(filename + ' \u2022 charg\u00e9');
-          // Preview : mise à jour du bouton et du rendu
-          updatePreviewButton();
-          if (previewOpen && !PREVIEW_LANGS.includes(lang)) {{
-            togglePreview(false);
-          }} else if (previewOpen) {{
-            updatePreview();
+        if (!editor) {{
+          pendingContent = {{ content: content ?? '', filename: filename ?? '' }};
+          return;
+        }}
+        const lang = detectFileLang(filename);
+        const model = monaco.editor.createModel(content ?? '', lang);
+        editor.setModel(model);
+        editor.onDidChangeModelContent(() => {{
+          modified = true; renderFileTree(); updateSaveButton();
+          if (previewOpen) {{
+            clearTimeout(previewDebounceTimer);
+            previewDebounceTimer = setTimeout(updatePreview, 400);
           }}
+        }});
+        modified = false;
+        updateSaveButton();
+        // Mettre à jour le sélecteur de langage
+        const langSelect = document.getElementById(CODEX_ID + '-lang');
+        if (langSelect) langSelect.value = lang;
+        updateStatus(filename ? (filename + ' \u2022 charg\u00e9') : 'Pr\u00eat');
+        // Preview : mise à jour du bouton et du rendu
+        updatePreviewButton();
+        if (previewOpen && !PREVIEW_LANGS.includes(lang)) {{
+          togglePreview(false);
+        }} else if (previewOpen) {{
+          updatePreview();
         }}
       }};
 
@@ -2563,7 +2722,7 @@ return new Promise(function(resolve) {{
 
       function getPreviewLang() {{
         if (!currentFile) return null;
-        const lang = files.find(f => f.filename === currentFile)?.lang || 'plaintext';
+        const lang = detectFileLang(currentFile);
         return PREVIEW_LANGS.includes(lang) ? lang : null;
       }}
 
@@ -2829,7 +2988,7 @@ return new Promise(function(resolve) {{
       // ===== MONACO LOADER =====
       function initEditor() {{
         editorWrap.innerHTML = '';
-        const lang = files.find(f => f.filename === currentFile)?.lang || 'plaintext';
+        const lang = detectFileLang(currentFile);
         editor = monaco.editor.create(editorWrap, {{
           value: '', language: lang, theme: theme,
           automaticLayout: true, minimap: {{enabled: true}},
@@ -2881,16 +3040,14 @@ return new Promise(function(resolve) {{
           if (previewOpen) updatePreview();
         }};
 
-        // Demande de chargement initial asynchrone (Pull)
-        const checkReady = setInterval(() => {{
-          if (typeof window.echoCodexResolve === 'function') {{
-            clearInterval(checkReady);
-            if (currentFile) {{
-              updateStatus(currentFile + ' \u2022 chargement...');
-              window.sendCodexAction({{action:'load_file', filename: currentFile}});
-            }}
-          }}
-        }}, 50);
+        if (pendingContent) {{
+          const pc = pendingContent;
+          pendingContent = null;
+          window.echoCodexSetContent(pc.content, pc.filename);
+        }} else if (currentFile) {{
+          updateStatus(currentFile + ' \u2022 chargement...');
+          window.sendCodexAction({{action:'load_file', filename: currentFile}});
+        }}
       }}
 
       function loadMonaco() {{
@@ -2907,7 +3064,18 @@ return new Promise(function(resolve) {{
         document.head.appendChild(loaderScript);
       }}
 
-      // ===== PING HEARTBEAT & SPA ROUTE GUARD =====
+      // ===== PING HEARTBEAT, VISIBILITY WAKEUP & SPA ROUTE GUARD =====
+      window._echoCodexVisHandler = () => {{
+        if (!document.getElementById(CODEX_ID)) {{
+          document.removeEventListener('visibilitychange', window._echoCodexVisHandler);
+          return;
+        }}
+        if (!document.hidden) {{
+          window.sendCodexAction({{action: 'ping', current_file: currentFile}});
+        }}
+      }};
+      document.addEventListener('visibilitychange', window._echoCodexVisHandler);
+
       const pingInterval = setInterval(() => {{
         if (!document.getElementById(CODEX_ID)) {{
             clearInterval(pingInterval);
@@ -2923,6 +3091,7 @@ return new Promise(function(resolve) {{
             window.sendCodexAction({{action: 'ping', current_file: currentFile}});
         }}
       }}, 5000);
+      window._echoCodexPingInterval = pingInterval;
 
       loadMonaco();
     }})();

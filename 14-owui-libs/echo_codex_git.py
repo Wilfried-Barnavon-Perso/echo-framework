@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 5.226.18.1
+version: 5.228.2.1
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.2.1: Protection os.path.isfile dans read_file contre IsADirectoryError et découverte des dossiers physiques vides dans list_directory (workspace main).
 # 5.226.18.1: Ajout de restore_repo_to_timestamp pour restaurer l'arbre Git main lors d'un fork intermédiaire.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.10: Application stricte de ECHO_SYNC_EXCLUDE_LIST pour prévenir le gel UI sur les gros dossiers sandbox.
 # 1.9: Modification de delete_file pour retourner le tuple (commit_hash, paths_to_rm) afin d'assurer la purge SQLite côté action.
-# 1.8: Correction de list_files dans main pour inclure correctement les fichiers dans les sous-dossiers.
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
 # desc.
 
@@ -98,7 +98,7 @@ class CodexRepo:
         """Lit un fichier. Retourne {content, total_lines, range} ou None."""
         safe_name = self._secure_path(filename)
         filepath = os.path.join(self.repo_path, safe_name)
-        if not os.path.exists(filepath):
+        if not os.path.isfile(filepath):
             return None
 
         with open(filepath, "r", encoding="utf-8", errors="replace") as f:
@@ -318,6 +318,29 @@ class CodexRepo:
                             "size_bytes": 0,
                             "mtime": mtime,
                         })
+
+            # Inclure également les dossiers physiques vides créés via l'UI (non indexés par Git)
+            try:
+                for entry in os.scandir(target_abs_path):
+                    if not entry.is_dir() or entry.name.startswith(".") or entry.name in ECHO_SYNC_EXCLUDE_LIST:
+                        continue
+                    immediate_dir = prefix + entry.name
+                    if immediate_dir not in dirs_found:
+                        dirs_found.add(immediate_dir)
+                        try:
+                            mtime = entry.stat().st_mtime
+                        except Exception:
+                            mtime = 0
+                        files.append({
+                            "filename": immediate_dir,
+                            "type": "directory",
+                            "lang": "folder",
+                            "lines": 0,
+                            "size_bytes": 0,
+                            "mtime": mtime,
+                        })
+            except Exception:
+                pass
 
         return sorted(files, key=lambda x: x["mtime"], reverse=True)
 

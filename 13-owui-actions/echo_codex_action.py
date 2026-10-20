@@ -1,19 +1,21 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.228.2.1
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.2.1: Résilience post-standby (ré-attachement Socket.IO dynamique _resolve_live_events, éviction par loop_id), isolation asyncio.to_thread/try-except et chargement immédiat à l'import.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 3.17: Prise en charge de la fermeture propre et fiabilisation de la boucle RPC long-polling.
 # 3.16: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 3.15: Fix du gel de l'UI lors du basculement de workspace via encapsulation asynchrone robuste (try-except global et asyncio.to_thread).
-# 3.14: Prise en charge du paramètre optionnel `current_file` lors de l'événement `switch_workspace` pour permettre le ciblage direct d'un fichier via le trigger LLM `open_codex_ui`.
 
 import sys
+import uuid
+import asyncio
 import orjson as json
 import logging
 from typing import Optional
@@ -37,6 +39,9 @@ from echo_constants import (
 
 logger = logging.getLogger(__name__)
 
+# Registre des boucles RPC actives par (user_id, chat_id) pour évincer proprement les anciennes boucles
+_ACTIVE_CODEX_LOOPS: dict[tuple[str, str], str] = {}
+
 
 class Action:
     class Valves(BaseModel):
@@ -48,6 +53,48 @@ class Action:
 
     def __init__(self):
         self.valves = self.Valves()
+
+    async def _resolve_live_events(
+        self, uid: str, cid: str, mid: str
+    ) -> Optional[tuple[EchoEvents, str]]:
+        """Résout dynamiquement la session Socket.IO active de l'utilisateur possédant le HUD Codex ouvert."""
+        try:
+            from open_webui.socket.main import (
+                get_session_ids_by_user_id,
+                SESSION_POOL,
+                get_event_call,
+                get_event_emitter,
+            )
+            sids = get_session_ids_by_user_id(uid)
+            if not sids:
+                return None
+
+            sids_sorted = sorted(
+                sids,
+                key=lambda s: (SESSION_POOL.get(s) or {}).get("last_seen_at", 0),
+                reverse=True,
+            )
+            probe_js = (
+                f"const el = document.getElementById('echo-codex-hud');"
+                f"return (el && el.getAttribute('data-chat-id') === '{cid}') "
+                f"? (document.getElementById('echo-codex-hud-workspace')?.value || 'main') : false;"
+            )
+            for sid in sids_sorted:
+                req_info = {
+                    "chat_id": cid,
+                    "message_id": mid,
+                    "session_id": sid,
+                    "user_id": uid,
+                }
+                caller = await get_event_call(req_info)
+                emitter = await get_event_emitter(req_info)
+                candidate_events = EchoEvents(emitter, caller)
+                ws = await candidate_events.call_execute(probe_js, timeout=3.0)
+                if isinstance(ws, str) and ws:
+                    return candidate_events, ws
+        except Exception as e:
+            logger.debug(f"[ECHO Codex] _resolve_live_events error: {e}")
+        return None
 
     async def action(
         self,
@@ -66,34 +113,56 @@ class Action:
         if not cid:
             return None
 
+        mid = body.get("id") or __metadata__.get("message_id") or ""
+        model_id = body.get("model") or __metadata__.get("model_id") or "echo_orchestrator"
+        reconnect_only = bool(body.get("reconnect_only"))
+
         # Initialisation du repo et du state manager
-        current_workspace = "main"
+        current_workspace = body.get("workspace") or "main"
+        if current_workspace not in ECHO_CODEX_WORKSPACES:
+            current_workspace = "main"
+
+        if reconnect_only or not body.get("session_id"):
+            resolved = await self._resolve_live_events(uid, cid, mid)
+            if resolved:
+                events, detected_ws = resolved
+                if not body.get("workspace") and detected_ws in ECHO_CODEX_WORKSPACES:
+                    current_workspace = detected_ws
+            elif reconnect_only:
+                return {"status": "no_active_hud"}
+
         repo = CodexRepo(uid, cid, workspace=current_workspace)
         state = EchoStateManager(user_id=uid, chat_id=cid)
-        files = repo.list_files()
+        files = await asyncio.to_thread(repo.list_files)
 
         # Index de navigation historique par fichier : {filename:
         # [commit_list], idx}
         history_nav = {}
 
-
-
-        # 1. Injection du HUD Monaco
         files_json = json.dumps(files).decode("utf-8")
-        quick_actions_json = json.dumps(CODEX_QUICK_ACTIONS).decode("utf-8")
-        workspaces_json = json.dumps(ECHO_CODEX_WORKSPACES).decode("utf-8")
-        hud_js = EchoUI._generate_codex_js(
-            files_json,
-            quick_actions_json,
-            workspaces_json,
-            current_workspace,
-            cid)
-        await events.call_execute(hud_js)
-        await events.status("HUD Codex injecté.", done=True, hidden=True)
+
+        # 1. Injection du HUD Monaco (sauf en cas de reconnexion transparente post-standby)
+        if not reconnect_only:
+            quick_actions_json = json.dumps(CODEX_QUICK_ACTIONS).decode("utf-8")
+            workspaces_json = json.dumps(ECHO_CODEX_WORKSPACES).decode("utf-8")
+            hud_js = EchoUI._generate_codex_js(
+                files_json,
+                quick_actions_json,
+                workspaces_json,
+                current_workspace,
+                cid,
+                mid,
+                model_id,
+            )
+            await events.call_execute(hud_js)
+            await events.status("HUD Codex injecté.", done=True, hidden=True)
+
+        loop_id = uuid.uuid4().hex
+        _ACTIVE_CODEX_LOOPS[(uid, cid)] = loop_id
 
         # 2. Définition de la boucle événementielle bidirectionnelle (Détachée)
         async def background_loop():
-            nonlocal files_json, current_workspace, repo
+            nonlocal files_json, current_workspace, repo, events
 
             async def _refresh_tree():
                 updated_files = await asyncio.to_thread(repo.list_files)
@@ -124,15 +193,35 @@ class Action:
 
             try:
                 current_state = await asyncio.to_thread(repo.get_latest_state)
-                while True:
-                    wait_code = "return new Promise(r => window.echoCodexResolve = r);"
+                while _ACTIVE_CODEX_LOOPS.get((uid, cid)) == loop_id:
+                    wait_code = (
+                        "return new Promise(r => {"
+                        " window.echoCodexResolve = r;"
+                        " if (typeof window._echoCodexOnReady === 'function') window._echoCodexOnReady();"
+                        "});"
+                    )
                     response = await events.call_execute(wait_code)
 
-                    if not response or not isinstance(response, dict):
+                    if _ACTIVE_CODEX_LOOPS.get((uid, cid)) != loop_id:
                         break
-                        
-                    if response.get("error"):
-                        # Si l'event_caller est déconnecté ou erreur, on sort pour éviter une boucle CPU
+
+                    if not response or not isinstance(response, dict) or response.get("error"):
+                        # Tentative de ré-attachement à la nouvelle session Socket.IO après standby
+                        rebound = False
+                        for _ in range(3):
+                            await asyncio.sleep(2.0)
+                            if _ACTIVE_CODEX_LOOPS.get((uid, cid)) != loop_id:
+                                break
+                            resolved = await self._resolve_live_events(uid, cid, mid)
+                            if resolved:
+                                events, detected_ws = resolved
+                                if detected_ws in ECHO_CODEX_WORKSPACES and detected_ws != current_workspace:
+                                    current_workspace = detected_ws
+                                    repo = CodexRepo(uid, cid, workspace=current_workspace)
+                                rebound = True
+                                break
+                        if rebound:
+                            continue
                         break
 
                     action_type = response.get("action")
@@ -270,53 +359,63 @@ class Action:
                         if not filename or not content:
                             continue
 
-                        msg = f"AI: {instruction[:60]}"
-                        commit_hash = repo.commit_file(filename, content, msg)
-                        line_count = content.count("\n") + 1
+                        try:
+                            msg = f"AI: {instruction[:60]}"
+                            commit_hash = await asyncio.to_thread(repo.commit_file, filename, content, msg)
+                            current_state = await asyncio.to_thread(repo.get_latest_state)
+                            line_count = content.count("\n") + 1
 
-                        _sync_registry(filename, commit_hash, msg, line_count, lang)
+                            _sync_registry(filename, commit_hash, msg, line_count, lang)
 
-                        notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('committed', '{commit_hash[:7]}');"
-                        await events.call_execute(notify_code)
+                            notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('committed', '{commit_hash[:7]}');"
+                            await events.call_execute(notify_code)
 
-                        # Recharger le fichier dans l'éÉditeur
-                        result = repo.read_file(filename)
-                        file_content = result["content"] if result else ""
-                        escaped = json.dumps(file_content).decode("utf-8")
-                        escaped_name = json.dumps(filename).decode("utf-8")
-                        load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
-                        await events.call_execute(load_code)
-
-                    # ---- REJETER DIFF ----
-                    elif action_type == "reject_diff":
-                        revert_code = "if(window.echoCodexRevertDiff) window.echoCodexRevertDiff();"
-                        await events.call_execute(revert_code)
-
-                        # Recharger le fichier original dans l'éÉditeur
-                        filename = response.get("filename", "")
-                        if filename:
-                            result = repo.read_file(filename)
+                            # Recharger le fichier dans l'éditeur
+                            result = await asyncio.to_thread(repo.read_file, filename)
                             file_content = result["content"] if result else ""
                             escaped = json.dumps(file_content).decode("utf-8")
                             escaped_name = json.dumps(filename).decode("utf-8")
                             load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
                             await events.call_execute(load_code)
+                        except Exception as e:
+                            await _notify_error(e)
+
+                    # ---- REJETER DIFF ----
+                    elif action_type == "reject_diff":
+                        try:
+                            revert_code = "if(window.echoCodexRevertDiff) window.echoCodexRevertDiff();"
+                            await events.call_execute(revert_code)
+
+                            # Recharger le fichier original dans l'éditeur
+                            filename = response.get("filename", "")
+                            if filename:
+                                result = await asyncio.to_thread(repo.read_file, filename)
+                                file_content = result["content"] if result else ""
+                                escaped = json.dumps(file_content).decode("utf-8")
+                                escaped_name = json.dumps(filename).decode("utf-8")
+                                load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
+                                await events.call_execute(load_code)
+                        except Exception as e:
+                            await _notify_error(e)
 
                     # ---- REFRESH (🔄 dans le header) ----
                     elif action_type == "refresh":
-                        await _refresh_tree()
-                        # Recharger le fichier courant si spécifié
-                        filename = response.get("filename", "")
-                        if filename:
-                            result = repo.read_file(filename)
-                            if result:
-                                escaped = json.dumps(
-                                    result["content"]).decode("utf-8")
-                                escaped_name = json.dumps(
-                                    filename).decode("utf-8")
-                                load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
-                                await events.call_execute(load_code)
-                        await events.status("🔄 Actualisé.", done=True)
+                        try:
+                            await _refresh_tree()
+                            # Recharger le fichier courant si spécifié
+                            filename = response.get("filename", "")
+                            if filename:
+                                result = await asyncio.to_thread(repo.read_file, filename)
+                                if result:
+                                    escaped = json.dumps(
+                                        result["content"]).decode("utf-8")
+                                    escaped_name = json.dumps(
+                                        filename).decode("utf-8")
+                                    load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
+                                    await events.call_execute(load_code)
+                            await events.status("🔄 Actualisé.", done=True)
+                        except Exception as e:
+                            await _notify_error(e)
 
                     # ---- UPLOAD (PC → Codex) ----
                     elif action_type == "upload":
@@ -332,36 +431,69 @@ class Action:
                         if not files_list:
                             continue
 
-                        for f in files_list:
-                            filename = f.get("filename", "")
-                            content = f.get("content", "")
-                            if not filename:
-                                continue
+                        try:
+                            last_uploaded_name = None
+                            last_uploaded_content = ""
+                            commit_hash = ""
+                            for f in files_list:
+                                filename = f.get("filename", "")
+                                content = f.get("content", "")
+                                if not filename:
+                                    continue
 
-                            lang = CodexRepo.detect_language(filename)
-                            commit_hash = repo.commit_file(
-                                filename, content, f"Import {filename}")
-                            line_count = content.count("\n") + 1
+                                lang = CodexRepo.detect_language(filename)
+                                commit_hash = await asyncio.to_thread(
+                                    repo.commit_file, filename, content, f"Import {filename}"
+                                )
+                                line_count = content.count("\n") + 1
+                                last_uploaded_name = filename
+                                last_uploaded_content = content
 
-                            if current_workspace != "sandbox":
-                                _sync_registry(filename, commit_hash, f"Import {filename}", line_count, lang)
+                                if current_workspace != "sandbox":
+                                    _sync_registry(filename, commit_hash, f"Import {filename}", line_count, lang)
 
-                        # Refresh file tree
-                        await _refresh_tree()
-                        if len(files_list) == 1:
-                            await events.status(f"📂 {files_list[0]['filename']} importé (commit {commit_hash[:7]}).", done=True)
-                        else:
-                            await events.status(f"📂 {len(files_list)} fichiers importés.", done=True)
+                            current_state = await asyncio.to_thread(repo.get_latest_state)
+                            updated_files = await asyncio.to_thread(repo.list_files)
+                            files_json = json.dumps(updated_files).decode("utf-8")
+
+                            if last_uploaded_name:
+                                escaped_name = json.dumps(last_uploaded_name).decode("utf-8")
+                                escaped_content = json.dumps(last_uploaded_content).decode("utf-8")
+                                status_msg = json.dumps(
+                                    f"📂 {last_uploaded_name} importé ({commit_hash[:7]})"
+                                    if len(files_list) == 1
+                                    else f"📂 {len(files_list)} fichiers importés ({commit_hash[:7]})"
+                                ).decode("utf-8")
+                                upload_js = (
+                                    f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
+                                    f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
+                                    f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
+                                    f"if(window.echoCodexNotify) window.echoCodexNotify('info', {status_msg});"
+                                )
+                                await events.call_execute(upload_js)
+                            else:
+                                await _refresh_tree()
+
+                            if len(files_list) == 1 and last_uploaded_name:
+                                await events.status(f"📂 {last_uploaded_name} importé (commit {commit_hash[:7]}).", done=True)
+                            else:
+                                await events.status(f"📂 {len(files_list)} fichiers importés.", done=True)
+                        except Exception as e:
+                            await _notify_error(e)
 
                     # ---- DOWNLOAD (Codex → PC) ----
                     elif action_type == "download":
-                        filename = response.get("filename", "")
-                        result = repo.read_file(filename)
-                        if result:
-                            escaped = json.dumps(
-                                result["content"]).decode("utf-8")
-                            dl_code = f"if(window.echoCodexDownload) window.echoCodexDownload('{filename}', {escaped});"
-                            await events.call_execute(dl_code)
+                        try:
+                            filename = response.get("filename", "")
+                            result = await asyncio.to_thread(repo.read_file, filename)
+                            if result:
+                                escaped = json.dumps(
+                                    result["content"]).decode("utf-8")
+                                escaped_name = json.dumps(filename).decode("utf-8")
+                                dl_code = f"if(window.echoCodexDownload) window.echoCodexDownload({escaped_name}, {escaped});"
+                                await events.call_execute(dl_code)
+                        except Exception as e:
+                            await _notify_error(e)
 
                     # ---- NAVIGATION HISTORIQUE ◀ ----
                     elif action_type == "history_prev":
@@ -369,33 +501,37 @@ class Action:
                         if not filename:
                             continue
 
-                        # Initialiser l'index de navigation si nécessaire
-                        if filename not in history_nav:
-                            commits = repo.get_file_history_index(filename)
-                            if not commits:
-                                continue
-                            history_nav[filename] = {
-                                "commits": commits, "idx": len(commits) - 1}
+                        try:
+                            # Initialiser l'index de navigation si nécessaire
+                            if filename not in history_nav:
+                                commits = await asyncio.to_thread(repo.get_file_history_index, filename)
+                                if not commits:
+                                    continue
+                                history_nav[filename] = {
+                                    "commits": commits, "idx": len(commits) - 1}
 
-                        nav = history_nav[filename]
-                        if nav["idx"] > 0:
-                            nav["idx"] -= 1
+                            nav = history_nav[filename]
+                            if nav["idx"] > 0:
+                                nav["idx"] -= 1
 
-                        commit_entry = nav["commits"][nav["idx"]]
-                        content = repo.get_file_at_commit(
-                            filename, commit_entry["hash_full"])
-                        if content is not None:
-                            info_json = json.dumps({
-                                "hash": commit_entry["hash"],
-                                "message": commit_entry["message"],
-                                "timestamp": commit_entry["timestamp"],
-                            }).decode("utf-8")
-                            escaped = json.dumps(content).decode("utf-8")
-                            load_code = (
-                                f"if(window.echoCodexLoadVersion) "
-                                f"window.echoCodexLoadVersion({escaped}, {info_json}, {nav['idx']}, {len(nav['commits'])});"
+                            commit_entry = nav["commits"][nav["idx"]]
+                            content = await asyncio.to_thread(
+                                repo.get_file_at_commit, filename, commit_entry["hash_full"]
                             )
-                            await events.call_execute(load_code)
+                            if content is not None:
+                                info_json = json.dumps({
+                                    "hash": commit_entry["hash"],
+                                    "message": commit_entry["message"],
+                                    "timestamp": commit_entry["timestamp"],
+                                }).decode("utf-8")
+                                escaped = json.dumps(content).decode("utf-8")
+                                load_code = (
+                                    f"if(window.echoCodexLoadVersion) "
+                                    f"window.echoCodexLoadVersion({escaped}, {info_json}, {nav['idx']}, {len(nav['commits'])});"
+                                )
+                                await events.call_execute(load_code)
+                        except Exception as e:
+                            await _notify_error(e)
 
                     # ---- NAVIGATION HISTORIQUE ▶ ----
                     elif action_type == "history_next":
@@ -403,25 +539,29 @@ class Action:
                         if not filename or filename not in history_nav:
                             continue
 
-                        nav = history_nav[filename]
-                        if nav["idx"] < len(nav["commits"]) - 1:
-                            nav["idx"] += 1
+                        try:
+                            nav = history_nav[filename]
+                            if nav["idx"] < len(nav["commits"]) - 1:
+                                nav["idx"] += 1
 
-                        commit_entry = nav["commits"][nav["idx"]]
-                        content = repo.get_file_at_commit(
-                            filename, commit_entry["hash_full"])
-                        if content is not None:
-                            info_json = json.dumps({
-                                "hash": commit_entry["hash"],
-                                "message": commit_entry["message"],
-                                "timestamp": commit_entry["timestamp"],
-                            }).decode("utf-8")
-                            escaped = json.dumps(content).decode("utf-8")
-                            load_code = (
-                                f"if(window.echoCodexLoadVersion) "
-                                f"window.echoCodexLoadVersion({escaped}, {info_json}, {nav['idx']}, {len(nav['commits'])});"
+                            commit_entry = nav["commits"][nav["idx"]]
+                            content = await asyncio.to_thread(
+                                repo.get_file_at_commit, filename, commit_entry["hash_full"]
                             )
-                            await events.call_execute(load_code)
+                            if content is not None:
+                                info_json = json.dumps({
+                                    "hash": commit_entry["hash"],
+                                    "message": commit_entry["message"],
+                                    "timestamp": commit_entry["timestamp"],
+                                }).decode("utf-8")
+                                escaped = json.dumps(content).decode("utf-8")
+                                load_code = (
+                                    f"if(window.echoCodexLoadVersion) "
+                                    f"window.echoCodexLoadVersion({escaped}, {info_json}, {nav['idx']}, {len(nav['commits'])});"
+                                )
+                                await events.call_execute(load_code)
+                        except Exception as e:
+                            await _notify_error(e)
 
                     # ---- RESTAURER VERSION HISTORIQUE ----
                     elif action_type == "history_restore":
@@ -431,18 +571,22 @@ class Action:
                         if not filename or not content:
                             continue
 
-                        lang = CodexRepo.detect_language(filename)
-                        msg = f"Restore from {source_hash}"
-                        commit_hash = repo.commit_file(filename, content, msg)
-                        line_count = content.count("\n") + 1
+                        try:
+                            lang = CodexRepo.detect_language(filename)
+                            msg = f"Restore from {source_hash}"
+                            commit_hash = await asyncio.to_thread(repo.commit_file, filename, content, msg)
+                            current_state = await asyncio.to_thread(repo.get_latest_state)
+                            line_count = content.count("\n") + 1
 
-                        _sync_registry(filename, commit_hash, msg, line_count, lang)
+                            _sync_registry(filename, commit_hash, msg, line_count, lang)
 
-                        # Purge navigation historique
-                        history_nav.pop(filename, None)
+                            # Purge navigation historique
+                            history_nav.pop(filename, None)
 
-                        notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('restored', '{commit_hash[:7]}');"
-                        await events.call_execute(notify_code)
+                            notify_code = f"if(window.echoCodexNotify) window.echoCodexNotify('restored', '{commit_hash[:7]}');"
+                            await events.call_execute(notify_code)
+                        except Exception as e:
+                            await _notify_error(e)
 
                     # ---- SORTIR DE L'HISTORIQUE ----
                     elif action_type == "history_exit":
@@ -454,16 +598,19 @@ class Action:
 
                     # ---- RESET ALL ----
                     elif action_type == "reset":
-                        file_count = len(repo.list_files())
-                        # La confirmation est gérée côté JS (confirm dialog)
-                        repo.reset_all()
-                        if current_workspace != "sandbox":
-                            state.clear_resources_by_type('codex')
-                        history_nav.clear()
+                        try:
+                            file_count = len(await asyncio.to_thread(repo.list_files))
+                            # La confirmation est gérée côté JS (confirm dialog)
+                            await asyncio.to_thread(repo.reset_all)
+                            if current_workspace != "sandbox":
+                                state.clear_resources_by_type('codex')
+                            history_nav.clear()
 
-                        reset_code = "if(window.echoCodexReset) window.echoCodexReset();"
-                        await events.call_execute(reset_code)
-                        await events.toast(f"🗑️ Workspace '{current_workspace}' réinitialisé ({file_count} éléments supprimés).", "success")
+                            reset_code = "if(window.echoCodexReset) window.echoCodexReset();"
+                            await events.call_execute(reset_code)
+                            await events.toast(f"🗑️ Workspace '{current_workspace}' réinitialisé ({file_count} éléments supprimés).", "success")
+                        except Exception as e:
+                            await _notify_error(e)
                         break
 
                     # ---- NOUVEAU FICHIER / DOSSIER ----
@@ -473,23 +620,27 @@ class Action:
                             continue
 
                         is_dir = filename.endswith("/")
+                        clean_name = filename.strip("/")
+                        if not clean_name:
+                            continue
 
                         try:
                             if is_dir:
-                                repo.create_directory(filename)
+                                await asyncio.to_thread(repo.create_directory, clean_name)
                                 commit_hash = "Dossier"
                             else:
-                                commit_hash = repo.commit_file(
-                                    filename, "", f"Create {filename}")
-                                lang = CodexRepo.detect_language(filename)
-                                _sync_registry(filename, commit_hash, f"Create {filename}", 0, lang)
+                                commit_hash = await asyncio.to_thread(
+                                    repo.commit_file, clean_name, "", f"Create {clean_name}"
+                                )
+                                lang = CodexRepo.detect_language(clean_name)
+                                _sync_registry(clean_name, commit_hash, f"Create {clean_name}", 0, lang)
 
-                            updated_files = repo.list_files()
+                            current_state = await asyncio.to_thread(repo.get_latest_state)
+                            updated_files = await asyncio.to_thread(repo.list_files)
                             files_json = json.dumps(
                                 updated_files).decode("utf-8")
                             escaped_content = json.dumps("").decode("utf-8")
-                            escaped_name = json.dumps(
-                                filename.strip("/")).decode("utf-8")
+                            escaped_name = json.dumps(clean_name).decode("utf-8")
 
                             refresh_code = ""
                             if not is_dir:
@@ -501,6 +652,9 @@ class Action:
 
                             if not is_dir:
                                 refresh_code += f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
+                            else:
+                                status_msg = json.dumps(f"📁 Dossier {clean_name} créé").decode("utf-8")
+                                refresh_code += f"if(window.echoCodexNotify) window.echoCodexNotify('info', {status_msg});"
 
                             await events.call_execute(refresh_code)
 
@@ -509,15 +663,18 @@ class Action:
                             continue
                     # ---- CHARGEMENT DYNAMIQUE DOSSIER (Lazy Loading) ----
                     elif action_type == "load_directory":
-                        target_dir = response.get("path", "")
-                        
-                        # Récupère uniquement la profondeur 1 via le moteur Git
-                        dir_content = await asyncio.to_thread(repo.list_directory, target_dir)
-                        dir_json = json.dumps(dir_content).decode("utf-8") if isinstance(json.dumps(dir_content), bytes) else json.dumps(dir_content)
-                        
-                        # Demande au frontend de greffer ces nœuds sur le parent
-                        append_code = f"if(window.echoCodexAppendNodes) window.echoCodexAppendNodes('{target_dir}', {dir_json});"
-                        await events.call_execute(append_code)
+                        try:
+                            target_dir = response.get("path", "")
+                            
+                            # Récupère uniquement la profondeur 1 via le moteur Git
+                            dir_content = await asyncio.to_thread(repo.list_directory, target_dir)
+                            dir_json = json.dumps(dir_content).decode("utf-8") if isinstance(json.dumps(dir_content), bytes) else json.dumps(dir_content)
+                            
+                            # Demande au frontend de greffer ces nœuds sur le parent
+                            append_code = f"if(window.echoCodexAppendNodes) window.echoCodexAppendNodes('{target_dir}', {dir_json});"
+                            await events.call_execute(append_code)
+                        except Exception as e:
+                            await _notify_error(e)
 
                     # ---- CHARGEMENT CONTENU FICHIER ----
                     elif action_type == "load_file":
@@ -525,14 +682,19 @@ class Action:
                         if not filename:
                             continue
 
-                        result = repo.read_file(filename)
-                        content = result["content"] if result else ""
-                        
-                        escaped = json.dumps(content).decode("utf-8")
-                        escaped_name = json.dumps(filename).decode("utf-8")
-                        load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
-                        
-                        await events.call_execute(load_code)
+                        try:
+                            result = await asyncio.to_thread(repo.read_file, filename)
+                            if result is None:
+                                continue
+                            content = result["content"]
+                            
+                            escaped = json.dumps(content).decode("utf-8")
+                            escaped_name = json.dumps(filename).decode("utf-8")
+                            load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
+                            
+                            await events.call_execute(load_code)
+                        except Exception as e:
+                            await _notify_error(e)
 
                     # ---- SUPPRESSION FICHIER ----
                     elif action_type == "delete_file":
@@ -542,8 +704,9 @@ class Action:
                             continue
 
                         try:
-                            delete_result = repo.delete_file(
-                                filename, f"Delete {filename}")
+                            delete_result = await asyncio.to_thread(
+                                repo.delete_file, filename, f"Delete {filename}"
+                            )
                         except Exception as e:
                             await _notify_error(e)
                             continue
@@ -553,20 +716,21 @@ class Action:
                                 for path in paths_to_rm:
                                     state.delete_resource(path)
 
-                        updated_files = repo.list_files()
+                        current_state = await asyncio.to_thread(repo.get_latest_state)
+                        updated_files = await asyncio.to_thread(repo.list_files)
                         files_json = json.dumps(updated_files).decode("utf-8")
                         refresh_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
                         await events.call_execute(refresh_code)
 
                         # Si le fichier supprimé était ouvert, charger le
                         # premier fichier restant
-                        if filename == current_file:
+                        if filename == current_file or current_file.startswith(filename + "/"):
                             if updated_files:
                                 first_entry = next((f for f in updated_files if f.get("type") != "directory"), None)
                                 if first_entry:
                                     first = first_entry["filename"]
                                     first_escaped = json.dumps(first).decode("utf-8")
-                                    result = repo.read_file(first)
+                                    result = await asyncio.to_thread(repo.read_file, first)
                                     content = result["content"] if result else ""
                                     escaped_content = json.dumps(content).decode("utf-8")
                                     switch_code = f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({first_escaped}); if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {first_escaped});"
@@ -590,15 +754,17 @@ class Action:
                             continue
 
                         try:
-                            commit_hash = repo.rename_file(
-                                old_name, new_name, f"Rename {old_name} → {new_name}")
+                            commit_hash = await asyncio.to_thread(
+                                repo.rename_file, old_name, new_name, f"Rename {old_name} → {new_name}"
+                            )
                         except Exception as e:
                             await _notify_error(e)
                             continue
                         if commit_hash:
-                            updated_files = repo.list_files()
+                            current_state = await asyncio.to_thread(repo.get_latest_state)
+                            updated_files = await asyncio.to_thread(repo.list_files)
                             is_dir = any(f["filename"] == new_name and f.get("type") == "directory" for f in updated_files)
-                            result = None if is_dir else repo.read_file(new_name)
+                            result = None if is_dir else await asyncio.to_thread(repo.read_file, new_name)
 
                             # Mettre à jour le registre codex (supprimer
                             # ancien, créer nouveau)
@@ -615,7 +781,7 @@ class Action:
                             if is_dir:
                                 if current_file.startswith(old_name + "/"):
                                     new_current_file = new_name + current_file[len(old_name):]
-                                    result = repo.read_file(new_current_file)
+                                    result = await asyncio.to_thread(repo.read_file, new_current_file)
                                     content = result["content"] if result else ""
                                     escaped_name = json.dumps(new_current_file).decode("utf-8")
                                     escaped_content = json.dumps(content).decode("utf-8")
@@ -639,15 +805,17 @@ class Action:
                                 )
                             await events.call_execute(combined)
                             await events.status(f"✏️ Renommé : {old_name} → {new_name} ({commit_hash[:7]})", done=True)
-                    else:
-                            notify_code = "if(window.echoCodexNotify) window.echoCodexNotify('error', 'Renommage \u00e9échoué\u00e9');"
+                        else:
+                            notify_code = "if(window.echoCodexNotify) window.echoCodexNotify('error', 'Renommage \u00e9chou\u00e9');"
                             await events.call_execute(notify_code)
 
             except Exception as e:
                 logger.error(f"[ECHO Codex] Erreur background_loop: {e}")
+            finally:
+                if _ACTIVE_CODEX_LOOPS.get((uid, cid)) == loop_id:
+                    _ACTIVE_CODEX_LOOPS.pop((uid, cid), None)
 
         # 3. Lancement de la tâche de fond
-        import asyncio
         asyncio.create_task(background_loop())
 
         # 4. Libération immédiate de la requête HTTP

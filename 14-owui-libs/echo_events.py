@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Events
 author: Wilfried BARNAVON
-version: 5.227.1.1
+version: 5.228.2.1
 description: Gestionnaire des événements WebSocket et UI. Intègre le protocole UCTP (Universal Chunked Transfer Protocol).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.2.1: Vérification de la vivacité de window.echoCodexResolve dans le fast-path de trigger_action pour ré-amorcer le HUD Codex après standby.
 # 5.227.1.1: Durcissement de EchoEvents.confirm contre les retours d'erreur dict de l'Event Caller.
 # 5.226.18.1: Vérification de data-chat-id dans le fast-path de trigger_action pour le HUD Codex.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.7: Fix critique UX - Alignement de EchoEvents.toast() sur l'événement Socket.IO natif 'notification' d'Open WebUI (Chat.svelte).
-# 2.6: Fix critique - Timeout asynchrone sur call_execute (anti-hang RPC Socket.IO), et fast-path dans trigger_action si le HUD Codex est déjà actif.
 import asyncio
 from typing import Any, Optional
 import uuid
@@ -234,10 +234,10 @@ class EchoEvents:
         js_payload = f"""
         (async () => {{
             try {{
-                // Fast-path ECHO Codex : si le HUD est déjà ouvert dans le DOM pour CE chat_id et actif,
+                // Fast-path ECHO Codex : si le HUD est déjà ouvert dans le DOM pour CE chat_id et que sa boucle RPC est active,
                 // réveiller directement la boucle existante sans recréer l'action ni réinjecter le DOM.
                 const codexEl = document.getElementById('echo-codex-hud');
-                if ('{action_id}' === 'echo_codex_action' && codexEl && codexEl.getAttribute('data-chat-id') === '{chat_id}' && typeof window.sendCodexAction === 'function') {{
+                if ('{action_id}' === 'echo_codex_action' && codexEl && codexEl.getAttribute('data-chat-id') === '{chat_id}' && typeof window.sendCodexAction === 'function' && typeof window.echoCodexResolve === 'function') {{
                     const target = window._echoCodexTarget;
                     if (target) {{
                         window.sendCodexAction({{
