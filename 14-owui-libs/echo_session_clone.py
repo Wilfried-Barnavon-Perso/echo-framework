@@ -1,16 +1,16 @@
-# -*- coding: utf-8 -*-
 """
 title: ECHO Session Clone & Migration Engine
 author: Wilfried BARNAVON
-version: 5.227.1.1
+version: 5.228.4.1
 description: Moteur partagé de duplication atomique des conteneurs de session ECHO (Clone, Fork et Migration).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.4.1: Mise à jour de echo_resources.name, réinitialisation du statut N8N deployed_as_*, purge de last_model_id, réécriture du frontmatter chat_id des plans Codex et pré-marquage is_embedded=1 des messages initiaux lors d'une migration.
 # 5.227.1.1: Création du module partagé de duplication atomique de session (clone, fork et migration).
 
 from contextlib import closing
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 import logging
 import os
 import shutil
@@ -52,6 +52,10 @@ def reassign_session_ids(cur: sqlite3.Cursor, orig_cid: str, new_cid: str) -> No
             (orig_id_marker, new_id_marker, f"%{orig_id_marker}%"),
         )
         cur.execute(
+            "UPDATE echo_resources SET name = REPLACE(name, ?, ?) WHERE name LIKE ?",
+            (orig_id_marker, new_id_marker, f"%{orig_id_marker}%"),
+        )
+        cur.execute(
             "UPDATE echo_resources SET storage_path = REPLACE(storage_path, ?, ?) WHERE storage_path LIKE ?",
             (orig_id_marker, new_id_marker, f"%{orig_id_marker}%"),
         )
@@ -76,6 +80,14 @@ def reassign_session_ids(cur: sqlite3.Cursor, orig_cid: str, new_cid: str) -> No
             )
         except Exception:
             pass
+
+    try:
+        cur.execute(
+            "UPDATE echo_resources SET status = 'ready' "
+            "WHERE resource_type = 'n8n_workflow' AND status LIKE 'deployed_as_%'"
+        )
+    except Exception:
+        pass
 
 
 def purge_conversational_state(cur: sqlite3.Cursor) -> None:
@@ -103,7 +115,7 @@ def purge_conversational_state(cur: sqlite3.Cursor) -> None:
 
     try:
         cur.execute(
-            "DELETE FROM echo_settings WHERE key IN ('context_stats', 'last_active_model', 'turn_origin_model', 'compaction_state') "
+            "DELETE FROM echo_settings WHERE key IN ('context_stats', 'last_model_id', 'last_active_model', 'turn_origin_model', 'compaction_state') "
             "OR key LIKE 'aec_tier_%' OR key LIKE 'cascade_%'"
         )
     except Exception:
@@ -297,6 +309,29 @@ def rename_cloned_files(files_dir: str, orig_cid: str, new_cid: str) -> None:
                 pass
 
 
+def rewrite_codex_plan_frontmatter(codex_dir: str, orig_cid: str, new_cid: str) -> None:
+    """Met à jour chat_id dans le frontmatter YAML des plans du Codex."""
+    main_dir = os.path.join(codex_dir, "main")
+    if not os.path.exists(main_dir):
+        return
+    old_line = f"chat_id: {orig_cid}"
+    new_line = f"chat_id: {new_cid}"
+    for entry in os.listdir(main_dir):
+        if not entry.endswith(".md"):
+            continue
+        fp = os.path.join(main_dir, entry)
+        if not os.path.isfile(fp):
+            continue
+        try:
+            with open(fp, "r", encoding="utf-8") as f:
+                content = f.read()
+            if old_line in content:
+                with open(fp, "w", encoding="utf-8") as f:
+                    f.write(content.replace(old_line, new_line, 1))
+        except Exception:
+            pass
+
+
 def duplicate_session_domains(user_id: str, orig_cid: str, new_cid: str) -> None:
     """Duplique physiquement les répertoires annexes (files, codex, n8n_workflows, dependencies) avec réécriture des symlinks et fichiers."""
     for domain in ("files", "codex", "n8n_workflows", "dependencies"):
@@ -307,6 +342,8 @@ def duplicate_session_domains(user_id: str, orig_cid: str, new_cid: str) -> None
             rewrite_symlinks(d_dom, orig_cid, new_cid)
             if domain == "files":
                 rename_cloned_files(d_dom, orig_cid, new_cid)
+            elif domain == "codex":
+                rewrite_codex_plan_frontmatter(d_dom, orig_cid, new_cid)
 
 
 def align_codex_git_to_cutoff(
@@ -390,7 +427,12 @@ def sync_cloned_session(
         align_codex_git_to_cutoff(user_id, new_cid, cutoff_ts, new_db)
 
 
-def sync_resumed_session(user_id: str, orig_cid: str, new_cid: str) -> None:
+def sync_resumed_session(
+    user_id: str,
+    orig_cid: str,
+    new_cid: str,
+    initial_embedded_msg_ids: Optional[List[str]] = None,
+) -> None:
     """Duplique le conteneur de session pour une migration vers une nouvelle conversation (purge l'historique conversationnel et préserve les ressources)."""
     orig_db = get_echo_session_path(user_id, orig_cid, "db")
     new_db = get_echo_session_path(user_id, new_cid, "db")
@@ -401,7 +443,25 @@ def sync_resumed_session(user_id: str, orig_cid: str, new_cid: str) -> None:
             cur = conn.cursor()
             reassign_session_ids(cur, orig_cid, new_cid)
             purge_conversational_state(cur)
+            if initial_embedded_msg_ids:
+                for mid in initial_embedded_msg_ids:
+                    if mid:
+                        cur.execute(
+                            "INSERT OR REPLACE INTO message_shadows (message_id, chat_id, role, full_parts_json, updated_at, is_embedded) "
+                            "VALUES (?, ?, 'assistant', '[]', 0, 1)",
+                            (mid, new_cid),
+                        )
             conn.commit()
+    elif initial_embedded_msg_ids:
+        try:
+            from echo_state_manager import EchoStateManager
+
+            state_mgr = EchoStateManager(user_id=user_id, chat_id=new_cid)
+            for mid in initial_embedded_msg_ids:
+                if mid:
+                    state_mgr.mark_message_embedded(mid)
+        except Exception:
+            pass
 
     duplicate_session_domains(user_id, orig_cid, new_cid)
 

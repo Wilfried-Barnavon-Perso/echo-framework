@@ -1,17 +1,17 @@
 """
 title: Résume et Transfert vers un nouveau chat
 author: ECHO Framework
-version: 5.228.1.1
+version: 5.228.4.2
 description: Migre le contexte de travail saturé vers une nouvelle conversation optimisée (clonage Workspace).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxsaW5lIHgxPSI0IiB5MT0iNCIgeDI9IjQiIHkyPSIyMCIvPjxsaW5lIHgxPSI4IiB5MT0iMTIiIHgyPSIxNiIgeTI9IjEyIi8+PHBvbHlsaW5lIHBvaW50cz0iMTIgOCAxNiAxMiAxMiAxNiIvPjxsaW5lIHgxPSIyMCIgeTE9IjQiIHgyPSIyMCIgeTI9IjIwIi8+PC9zdmc+
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.4.2: Support asynchrone des routines Chats (_call_owui), purge des blocs <details type="reasoning"> avant troncature, ancrage utilisateur racine pour le Session RAG, synchronisation atomique sous clone_lock et redirection window.location.replace.
 # 5.228.1.1: Suppression de l'en-tête de codage UTF-8 obsolète pour alignement sur extract_frontmatter OWUI (affichage icône).
 # 5.228.0.1: Intégration de l'icône SVG base64 borne à borne (|->|) pour le bouton d'action.
 # 5.227.1.1: Réintroduction et modernisation de l'action de migration de session (extraction complète de branche, backup SQLite atomique via echo_session_clone, pagination Qdrant COLLECTION_SESSION_RAG et timeouts RPC).
 # 1.12: Injection de la requête racine (RAG macro-objectif) et ajout de la routine de reprise obligatoire (Onboarding cognitif).
-# 1.11: Renommage de l'action et augmentation de l'historique de distillation à 80 messages.
 
 import asyncio
 import inspect
@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 sys.path.append("/app/backend/echo_libs")
 from echo_constants import OWUI_ORCHESTRATOR_MODEL
+from echo_core import split_thought_process
 from echo_events import EchoEvents
 from echo_gemini_client import EchoGeminiClient
 from echo_paths import get_chat_clone_lock, get_echo_session_path
@@ -45,6 +46,10 @@ logger = logging.getLogger("ECHO-RESUME-ACTION")
 
 _AEC_TAG_RE = re.compile(r"<artifact\b[^>]*>.*?</artifact>", flags=re.DOTALL)
 _REQ_TAG_RE = re.compile(r"</?REQUETE_UTILISATEUR>", flags=re.DOTALL)
+_REASONING_DETAILS_RE = re.compile(
+    r"<details\b[^>]*\btype=[\"']reasoning[\"'][^>]*>.*?</details>",
+    flags=re.DOTALL | re.IGNORECASE,
+)
 
 
 class Action:
@@ -55,6 +60,14 @@ class Action:
         self.valves = self.Valves()
 
     @staticmethod
+    async def _call_owui(func, *args, **kwargs) -> Any:
+        """Exécute une routine publiée d'Open WebUI en supportant transparentement sync et async."""
+        res = func(*args, **kwargs)
+        if inspect.isawaitable(res):
+            return await res
+        return res
+
+    @staticmethod
     async def _load_chat_and_branch(
         chat_id: str, fallback_messages: List[Dict]
     ) -> Tuple[Any, List[Dict]]:
@@ -62,9 +75,7 @@ class Action:
         if not Chats or not chat_id:
             return None, fallback_messages
         try:
-            chat_obj = await asyncio.to_thread(Chats.get_chat_by_id, chat_id)
-            if asyncio.iscoroutine(chat_obj):
-                chat_obj = await chat_obj
+            chat_obj = await Action._call_owui(Chats.get_chat_by_id, chat_id)
             if (
                 not chat_obj
                 or not hasattr(chat_obj, "chat")
@@ -83,7 +94,7 @@ class Action:
                 if isinstance(history.get("messages"), dict)
                 else {}
             )
-            current_id = history.get("currentId")
+            current_id = getattr(chat_obj, "current_message_id", None) or history.get("currentId")
 
             if messages_map and current_id and current_id in messages_map:
                 chain = []
@@ -113,7 +124,7 @@ class Action:
 
     @staticmethod
     def _extract_message_text_and_meta(m: Dict, max_raw_scan: int) -> Tuple[str, str]:
-        """Extrait et nettoie le texte d'un message (après pré-troncature pour protéger la boucle d'événements)."""
+        """Extrait et nettoie le texte d'un message (après purge du bloc reasoning et pré-troncature)."""
         content = m.get("content", "")
         if isinstance(content, list):
             parts_txt = []
@@ -126,13 +137,26 @@ class Action:
         else:
             raw_text = str(content or "")
 
-        # Pré-troncature avant regex pour éviter tout blocage CPU sur des payloads massifs
+        outputs = m.get("output")
+        if not raw_text.strip() and isinstance(outputs, list):
+            msg_parts = []
+            for item in outputs:
+                if isinstance(item, dict) and item.get("type") == "message":
+                    for part in item.get("content") or []:
+                        if isinstance(part, dict) and part.get("text") is not None:
+                            msg_parts.append(str(part.get("text")))
+            if msg_parts:
+                raw_text = "\n".join(msg_parts)
+
+        # Purge des blocs de pensée (<think>/<thought> et <details type="reasoning">) pour préserver la réponse utile
+        raw_text, _ = split_thought_process(raw_text)
+        raw_text = _REASONING_DETAILS_RE.sub("", raw_text)
+        # Pré-troncature avant regex AEC pour éviter tout blocage CPU sur des payloads massifs
         clipped = raw_text[:max_raw_scan]
         cleaned = _AEC_TAG_RE.sub("", clipped)
         cleaned = _REQ_TAG_RE.sub("", cleaned).strip()
 
         # Ajout synthétique des sorties d'outils stockées dans m["output"] (format natif OWUI)
-        outputs = m.get("output")
         if isinstance(outputs, list):
             tool_snippets = []
             for item in outputs:
@@ -140,6 +164,14 @@ class Action:
                     out_val = item.get("output")
                     if isinstance(out_val, str) and out_val.strip():
                         tool_snippets.append(out_val.strip()[:1500])
+                    elif isinstance(out_val, list):
+                        parts_str = "".join(
+                            str(p.get("text", ""))
+                            for p in out_val
+                            if isinstance(p, dict) and p.get("type") != "input_image"
+                        ).strip()
+                        if parts_str:
+                            tool_snippets.append(parts_str[:1500])
             if tool_snippets:
                 cleaned = (
                     f"{cleaned}\n[Résultats Outils : {' | '.join(tool_snippets)}]"
@@ -179,14 +211,15 @@ class Action:
 
         return "\n\n".join(full_chunks), "\n\n".join(recent_chunks)
 
-    @staticmethod
-    def _insert_new_chat_sync(
+    @classmethod
+    async def _insert_new_chat(
+        cls,
         user_id: str,
         pre_generated_id: str,
         new_chat_payload: dict,
         folder_id: Optional[str] = None,
     ) -> Tuple[Optional[str], Any]:
-        """Insère la nouvelle conversation dans webui.db en s'adaptant à la signature de Chats.insert_new_chat."""
+        """Insère la nouvelle conversation via la routine publiée Chats.insert_new_chat."""
         try:
             form_kwargs = {"chat": new_chat_payload}
             if folder_id and hasattr(ChatForm, "model_fields") and "folder_id" in ChatForm.model_fields:
@@ -207,9 +240,9 @@ class Action:
             )
         ]
         if len(params) >= 3:
-            res = Chats.insert_new_chat(pre_generated_id, user_id, form)
+            res = await cls._call_owui(Chats.insert_new_chat, pre_generated_id, user_id, form)
         else:
-            res = Chats.insert_new_chat(user_id, form)
+            res = await cls._call_owui(Chats.insert_new_chat, user_id, form)
 
         return pre_generated_id, res
 
@@ -217,15 +250,15 @@ class Action:
         self,
         body: dict,
         __user__: Optional[dict] = None,
-        __metadata__: Optional[dict] = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None,
         **kwargs,
     ) -> Optional[dict]:
         events = EchoEvents(__event_emitter__, __event_call__)
 
-        old_chat_id = body.get("chat_id") or (__metadata__ or {}).get("chat_id")
+        old_chat_id = body.get("chat_id")
         user_id = (__user__ or {}).get("id")
+        distill_meta = {"chat_id": old_chat_id}
 
         if not old_chat_id or not user_id:
             await events.toast(
@@ -315,9 +348,8 @@ class Action:
             res_global = await EchoGeminiClient.call_distillation(
                 prompt=prompt_global,
                 __user__=__user__ or {"id": user_id},
-                __metadata__=__metadata__ or {"chat_id": old_chat_id},
+                __metadata__=distill_meta,
                 is_json=False,
-                max_tokens=2048,
             )
             if isinstance(res_global, str):
                 distilled_global = res_global.strip()
@@ -332,9 +364,8 @@ class Action:
             res_recent = await EchoGeminiClient.call_distillation(
                 prompt=prompt_recent,
                 __user__=__user__ or {"id": user_id},
-                __metadata__=__metadata__ or {"chat_id": old_chat_id},
+                __metadata__=distill_meta,
                 is_json=False,
-                max_tokens=4096,
             )
             if isinstance(res_recent, str):
                 distilled_recent = res_recent.strip()
@@ -368,9 +399,12 @@ class Action:
         new_title = f"[Suite] {old_title}"
         old_folder_id = getattr(old_chat, "folder_id", None) if old_chat else None
 
-        old_models = None
-        if old_chat and hasattr(old_chat, "chat") and isinstance(old_chat.chat, dict):
-            old_models = old_chat.chat.get("models")
+        old_chat_dict = (
+            old_chat.chat
+            if (old_chat and hasattr(old_chat, "chat") and isinstance(old_chat.chat, dict))
+            else {}
+        )
+        old_models = old_chat_dict.get("models")
         if not old_models or not isinstance(old_models, list):
             old_models = [OWUI_ORCHESTRATOR_MODEL]
 
@@ -386,11 +420,20 @@ class Action:
         )
         new_content = f"**Session migrée et distillée.**\n\n*Résumé cognitif :*\n{distilled_summary}{routine_reprise}"
 
-        message_id = str(uuid.uuid4())
+        user_msg_id = str(uuid.uuid4())
+        assistant_msg_id = str(uuid.uuid4())
         now_sec = int(time.time())
-        assistant_msg = {
-            "id": message_id,
+        user_root_msg = {
+            "id": user_msg_id,
             "parentId": None,
+            "childrenIds": [assistant_msg_id],
+            "role": "user",
+            "content": f"🔄 [Système ECHO] Migration et distillation du contexte de la session précédente ({old_title}).",
+            "timestamp": now_sec - 1,
+        }
+        assistant_msg = {
+            "id": assistant_msg_id,
+            "parentId": user_msg_id,
             "childrenIds": [],
             "role": "assistant",
             "content": new_content,
@@ -402,27 +445,27 @@ class Action:
         new_chat_payload = {
             "title": new_title,
             "models": old_models,
+            "params": old_chat_dict.get("params", {}),
+            "files": old_chat_dict.get("files", []),
             "timestamp": now_sec * 1000,
             "history": {
-                "currentId": message_id,
+                "currentId": assistant_msg_id,
                 "messages": {
-                    message_id: assistant_msg,
+                    user_msg_id: user_root_msg,
+                    assistant_msg_id: assistant_msg,
                 },
             },
-            "messages": [assistant_msg],
+            "messages": [user_root_msg, assistant_msg],
         }
 
         pre_generated_id = str(uuid.uuid4())
         try:
-            _, created_chat = await asyncio.to_thread(
-                self._insert_new_chat_sync,
+            _, created_chat = await self._insert_new_chat(
                 user_id,
                 pre_generated_id,
                 new_chat_payload,
                 old_folder_id,
             )
-            if asyncio.iscoroutine(created_chat):
-                created_chat = await created_chat
         except Exception as e:
             logger.error(f"[ECHO-RESUME-ACTION] Erreur critique insert_new_chat: {e}")
             await remove_hud()
@@ -443,14 +486,25 @@ class Action:
             )
             return None
 
-        # 4. Duplication atomique du conteneur de session ECHO (Vault, Codex Git, SQLite)
+        # 4. Duplication atomique du conteneur de session ECHO et de la mémoire vectorielle sous verrou
         await update_hud(75, "📁 Duplication de l'Espace Personnel et de la Base SQLite...")
         clone_lock = get_chat_clone_lock(new_chat_id)
         try:
             async with clone_lock:
                 await asyncio.to_thread(
-                    sync_resumed_session, user_id, old_chat_id, new_chat_id
+                    sync_resumed_session,
+                    user_id,
+                    old_chat_id,
+                    new_chat_id,
+                    [user_msg_id, assistant_msg_id],
                 )
+                await update_hud(90, "🧠 Clonage de la Mémoire Vectorielle de Session...")
+                try:
+                    await duplicate_session_rag(user_id, old_chat_id, new_chat_id)
+                except Exception as rag_err:
+                    logger.warning(
+                        f"[ECHO-RESUME-ACTION] Avertissement clonage Qdrant SESSION_RAG : {rag_err}"
+                    )
         except Exception as e:
             logger.error(f"[ECHO-RESUME-ACTION] Erreur duplication conteneur: {e}")
             try:
@@ -460,7 +514,7 @@ class Action:
                 if os.path.exists(new_session_dir):
                     shutil.rmtree(new_session_dir, ignore_errors=True)
                 if hasattr(Chats, "delete_chat_by_id_and_user_id"):
-                    await asyncio.to_thread(
+                    await self._call_owui(
                         Chats.delete_chat_by_id_and_user_id, new_chat_id, user_id
                     )
             except Exception:
@@ -472,15 +526,6 @@ class Action:
             )
             return None
 
-        # 5. Clonage paginé de la mémoire vectorielle de session (COLLECTION_SESSION_RAG uniquement)
-        await update_hud(90, "🧠 Clonage de la Mémoire Vectorielle de Session...")
-        try:
-            await duplicate_session_rag(user_id, old_chat_id, new_chat_id)
-        except Exception as e:
-            logger.warning(
-                f"[ECHO-RESUME-ACTION] Avertissement clonage Qdrant SESSION_RAG : {e}"
-            )
-
         # 6. Téléportation vers la nouvelle conversation
         await update_hud(100, "✅ Téléportation vers la nouvelle session...")
         await asyncio.sleep(0.8)
@@ -488,7 +533,7 @@ class Action:
             cleanup_js = (
                 "const h = document.getElementById('echo-migration-hud'); "
                 "if(h) h.remove(); "
-                f"window.location.href = '/c/{new_chat_id}';"
+                f"window.location.replace('/c/{new_chat_id}');"
             )
             await events.call_execute(cleanup_js, timeout=15.0)
 
