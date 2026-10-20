@@ -2,11 +2,12 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - FLASK ROUTES
-VERSION : 5.226.18.0
+VERSION : 5.228.0.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.0.1: Ajout du calcul et de l'exposition de la taille du profil utilisateur (profile_size_bytes, profile_size_fmt) dans /api/user_stats.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 import configparser
 import datetime
@@ -54,6 +55,8 @@ from core.config import (
     psutil,
 )
 from core.utils import (
+    _format_bytes,
+    _get_tree_size,
     get_cpu_model_name,
     get_dir_stats,
     get_echo_version,
@@ -165,8 +168,19 @@ def user_stats():
         with sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True) as conn:
             users = conn.execute("SELECT id, name, email, role FROM user ORDER BY name ASC").fetchall()
             for u in users:
-                count = conn.execute("SELECT COUNT(id) FROM chat WHERE user_id = ?", (u[0],)).fetchone()[0]
-                data.append({"id": u[0], "name": u[1], "email": u[2], "role": u[3], "chat_count": count})
+                user_id = str(u[0])
+                count = conn.execute("SELECT COUNT(id) FROM chat WHERE user_id = ?", (user_id,)).fetchone()[0]
+                user_dir = os.path.join(ECHO_USERS_ROOT, user_id)
+                size_bytes = _get_tree_size(user_dir) if os.path.isdir(user_dir) else 0
+                data.append({
+                    "id": u[0],
+                    "name": u[1],
+                    "email": u[2],
+                    "role": u[3],
+                    "chat_count": count,
+                    "profile_size_bytes": size_bytes,
+                    "profile_size_fmt": _format_bytes(size_bytes),
+                })
     except Exception: pass
     return jsonify(data)
 
