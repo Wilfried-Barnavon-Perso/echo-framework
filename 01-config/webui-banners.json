@@ -1,19 +1,11 @@
 [
   {
-    "id": "echo-banner-tasks-incident-20261019",
+    "id": "echo-banner-update-snapshot-20261020",
     "type": "warning",
-    "title": "Tâches planifiées",
-    "content": "**Tâches planifiées** : Les tâches planifiées ce lundi 19/10/2026 matin n'ont pas été lancées. Bug corrigé, les tâches reprendront comme habituellement.",
+    "title": "Mise à jour sous snapshot",
+    "content": "**Mise à jour sous snapshot** : Mise à jour en cours sous snapshot. Rollback possible, avec perte de votre travail actuel. Le travail mené avant cet avertissement ne sera pas perdu.",
     "dismissible": true,
-    "timestamp": 1729319700
-  },
-  {
-    "id": "echo-banner-workspace-m365-v2",
-    "type": "info",
-    "title": "Google Workspace & Microsoft 365",
-    "content": "**Google Workspace & Microsoft 365** : Vos outils du quotidien sont désormais connectables. Demandez à Écho de vous guider pour **synchroniser vos agendas et documents** Google Workspace / Microsoft 365, en toute sécurité. Écho peut aussi planifier des **tâches agentiques** et gérer votre **calendrier intégré**.",
-    "dismissible": true,
-    "timestamp": 1729242000
+    "timestamp": 1729427000
   },
   {
     "id": "echo-banner-mode-guidance-v2",
