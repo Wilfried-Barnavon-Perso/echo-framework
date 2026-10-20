@@ -171,7 +171,7 @@ sequenceDiagram
         </ul>
 
         <h3>2. Signature de <code>deploy_context_gauge()</code> &amp; Rafraîchissement Quotas (<code>echo_ui.py</code> v5.227.1.1)</h3>
-        <p>Appelée par <code>echo_orchestrator.py</code> pour injecter <code>#echo-nav-context-hud</code> (segments CSS <code>cache_pct</code> en <code>#8b5cf6</code>, <code>prompt_pct</code> en <code>#10b981</code> et <code>gen_pct</code> en <code>#f59e0b</code>), elle calcule l'anneau SVG via <code>stroke-dashoffset</code> sur <code>quota_fraction</code> (rafraîchi de manière non-bloquante par <code>fetch_available_models()</code> toutes les 10 min dans <code>identity.db</code>, tandis que les quotas 5h et hebdomadaire sont extraits via l'endpoint <code>:retrieveUserQuotaSummary</code> dans <code>echo_auth.py</code> v5.226.18.0) :</p>
+        <p>Appelée par <code>echo_orchestrator.py</code> pour injecter <code>#echo-nav-context-hud</code> (segments CSS <code>cache_pct</code> en <code>#8b5cf6</code>, <code>prompt_pct</code> en <code>#10b981</code> et <code>gen_pct</code> en <code>#f59e0b</code>), elle calcule l'anneau SVG via <code>stroke-dashoffset</code> sur <code>quota_fraction</code> (rafraîchi de manière non-bloquante par <code>fetch_available_models()</code> toutes les 10 min dans <code>identity.db</code>, tandis que les quotas 5h et hebdomadaire sont extraits via l'endpoint <code>:retrieveUserQuotaSummary</code> dans <code>echo_auth.py</code> v5.228.3.2) :</p>
         <pre><code>deploy_context_gauge(
     events,                        # EchoEvents
     plan_name, credits_val,        # Identité du plan
@@ -204,7 +204,7 @@ sequenceDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.228.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.228.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

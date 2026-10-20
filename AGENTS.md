@@ -132,7 +132,7 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 ## 11. 🔐 Authentification Antigravity 2.1
 
 - **Multi-Provider :** OAuth2 > Clé Primaire > Clé Secondaire.
-- **OAuth2 PKCE :** Flow Authorization Code via tunnel SSH éphémère (Ports 8020-8024), rafraîchissement proactif du token dans `refresh_quota_if_needed()`, et extraction des quotas glissants **5h et Hebdomadaire** via `:retrieveUserQuotaSummary` (`echo_auth.py` v5.226.18.0, identité réseau Antigravity `2.24.0`).
+- **OAuth2 PKCE :** Flow Authorization Code via tunnel SSH éphémère (Ports 8020-8024), rafraîchissement proactif du token dans `refresh_quota_if_needed()`, et extraction des quotas glissants **5h et Hebdomadaire** via `:retrieveUserQuotaSummary` (`echo_auth.py` v5.228.3.2, identité réseau Antigravity `2.24.0`).
 
 ## 12. 📜 Standards de Développement (Rigueur Absolue)
 
@@ -152,4 +152,4 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 ---
 ---
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.228.3*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.228.4*

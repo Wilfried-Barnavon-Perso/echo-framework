@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Auth
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.228.3.2
 description: Gestion de l'authentification et OAuth2.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.3.2: Traçabilité typée des erreurs réseau httpx, verrouillage Circuit Breaker sur RequestError, Auto-Heal unlock_agy_endpoint sur 200 OK et ciblage prioritaire Gemini dans le fallback fetch_available_models.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.2: Extraction des quotas 5h et semaine (retrieveUserQuotaSummary), correction Protobuf v3 (0.0) dans fetchAvailableModels et refresh OAuth2 proactif dans refresh_quota_if_needed.
 # 1.1: Restauration de l'usage d'AuthService pour le support PKCE et API keys.
@@ -143,7 +144,7 @@ class EchoAuth:
                     self.save_api_key("google_oauth2_last_refresh", str(time.time()), user_id)
                     return new_access_token
         except Exception as e:
-            print(f"[EchoAuth] Erreur Refresh OAuth2: {e}")
+            print(f"[EchoAuth] Erreur Refresh OAuth2: {type(e).__name__}: {str(e) or repr(e)}")
         return None
 
     def save_api_key(self, key_name: str, value: str, user_id: str = None):
@@ -809,8 +810,13 @@ class AuthService:
                         if not g1_found:
                             self.echo_auth.save_api_key("google_g1_credits", "0")
 
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[AuthService] Erreur HealthCheck ({base_url}): {type(e).__name__}: {str(e) or repr(e)}")
+                if isinstance(e, httpx.RequestError):
+                    from datetime import datetime, timedelta, timezone
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+                    state_mgr.lock_agy_endpoint(idx, reset)
+                    continue
 
             
 
@@ -843,6 +849,7 @@ class AuthService:
                 if q_resp.status_code == 200:
 
                     data     = q_resp.json()
+                    state_mgr.unlock_agy_endpoint(idx)
 
                     # Structure Protobuf JSON de retrieveUserQuotaSummary :
                     # { groups: [ { displayName, description, buckets: [ { bucketId, window, remainingFraction, resetTime, disabled, description } ] } ] }
@@ -965,9 +972,13 @@ class AuthService:
 
             except Exception as e:
 
-                print(f"[AuthService] Erreur récupération quota: {e}")
+                print(f"[AuthService] Erreur récupération quota ({base_url}): {type(e).__name__}: {str(e) or repr(e)}")
 
-                pass
+                if isinstance(e, httpx.RequestError):
+                    from datetime import datetime, timedelta, timezone
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+                    state_mgr.lock_agy_endpoint(idx, reset)
+                    continue
 
 
 
@@ -1034,6 +1045,7 @@ class AuthService:
                 if resp.status_code == 200:
 
                     raw = resp.json()
+                    state_mgr.unlock_agy_endpoint(idx)
 
                     print(f"[AuthService] fetchAvailableModels raw response: {str(raw)[:300]}")
 
@@ -1099,7 +1111,11 @@ class AuthService:
                         # Fallback legacy uniquement si retrieveUserQuotaSummary n'a pas déjà renseigné google_quota_summary
                         if not self.echo_auth.get_auth_data("google_quota_summary"):
 
-                            first_qi = next(iter(quota_map.values()))
+                            gemini_qis = [
+                                v for k, v in quota_map.items()
+                                if k.lower().startswith("gemini")
+                            ]
+                            first_qi = gemini_qis[0] if gemini_qis else next(iter(quota_map.values()))
 
                             self.echo_auth.save_api_key("google_quota_fraction",   str(first_qi["remainingFraction"]))
 
@@ -1115,9 +1131,12 @@ class AuthService:
 
             except Exception as e:
 
-                print(f"[AuthService] Erreur fetch_available_models: {e}")
+                print(f"[AuthService] Erreur fetch_available_models ({base_url}): {type(e).__name__}: {str(e) or repr(e)}")
 
-                pass
+                if isinstance(e, httpx.RequestError):
+                    from datetime import datetime, timedelta, timezone
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+                    state_mgr.lock_agy_endpoint(idx, reset)
 
         return []
 
@@ -1289,6 +1308,7 @@ class AuthService:
                 if resp.status_code == 200:
 
                     data       = resp.json()
+                    state_mgr.unlock_agy_endpoint(idx)
 
                     project_id = _extract_project_id(data)
 
@@ -1406,9 +1426,12 @@ class AuthService:
 
             except Exception as e:
 
-                print(f"[AuthService] Erreur Provisioning Critique: {e}")
+                print(f"[AuthService] Erreur Provisioning Critique ({base_url}): {type(e).__name__}: {str(e) or repr(e)}")
 
-                pass
+                if isinstance(e, httpx.RequestError):
+                    from datetime import datetime, timedelta, timezone
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+                    state_mgr.lock_agy_endpoint(idx, reset)
 
 
 
