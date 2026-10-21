@@ -1,15 +1,17 @@
 """
 title: Jobs Omnisearch MCP Module
-version: 5.228.9.2
+version: 5.228.9.3
 description: Module MCP Omnisearch Jobs avec filtrage dynamique de séniorité, France Travail et WTTJ.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.9.3: Persistance atomique du jeton OAuth2 France Travail sur le volume echo-mcp-cache.
 # 5.228.9.2: Intégration de France Travail (OAuth2 v2) et Welcome to the Jungle (WTTJ).
 # 5.228.9.1: Ajout du filtrage de séniorité LinkedIn (f_E), résolution sémantique et standardisation PAS des docstrings.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.1: Fix APEC job details extraction by parsing HTML via BeautifulSoup instead of deprecated JSON fields.
 import asyncio
+import json
 import logging
 import os
 import random
@@ -278,17 +280,58 @@ async def _details_apec(job_id: str) -> str:
 # ==========================================
 # FRANCE TRAVAIL (OAUTH2 & OFFRES V2)
 # ==========================================
+MCP_CACHE_ROOT = os.environ.get("ECHO_MCP_CACHE_DIR", "/app/mcp_cache")
+FT_CACHE_DIR = os.path.join(MCP_CACHE_ROOT, "jobs_omnisearch")
+FT_CACHE_FILE = os.path.join(FT_CACHE_DIR, "ft_token.json")
+
 _FT_TOKEN_CACHE = {
     "access_token": None,
     "expires_at": 0.0,
 }
 
 
-async def _get_france_travail_token(client: httpx.AsyncClient) -> Optional[str]:
-    """Obtient ou réutilise un jeton OAuth2 Client Credentials pour France Travail."""
+def _load_cached_ft_token() -> Optional[str]:
+    """Charge le jeton persistant depuis le volume echo-mcp-cache si encore valide."""
     now = time.time()
+    # 1. Vérification en RAM
     if _FT_TOKEN_CACHE["access_token"] and now < (_FT_TOKEN_CACHE["expires_at"] - 60):
         return _FT_TOKEN_CACHE["access_token"]
+
+    # 2. Vérification sur le volume disque echo-mcp-cache
+    if os.path.isfile(FT_CACHE_FILE):
+        try:
+            with open(FT_CACHE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            token = data.get("access_token")
+            expires_at = float(data.get("expires_at", 0.0))
+            if token and now < (expires_at - 60):
+                _FT_TOKEN_CACHE["access_token"] = token
+                _FT_TOKEN_CACHE["expires_at"] = expires_at
+                return token
+        except Exception as e:
+            logger.warning(f"Lecture du cache disque France Travail ignorée : {e}")
+    return None
+
+
+def _save_cached_ft_token(token: str, expires_at: float) -> None:
+    """Enregistre le jeton en RAM et sur le volume disque echo-mcp-cache."""
+    _FT_TOKEN_CACHE["access_token"] = token
+    _FT_TOKEN_CACHE["expires_at"] = expires_at
+    try:
+        os.makedirs(FT_CACHE_DIR, exist_ok=True)
+        temp_file = f"{FT_CACHE_FILE}.tmp.{os.getpid()}"
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump({"access_token": token, "expires_at": expires_at}, f)
+        os.replace(temp_file, FT_CACHE_FILE)
+    except Exception as e:
+        logger.warning(f"Écriture du cache disque France Travail ignorée : {e}")
+
+
+async def _get_france_travail_token(client: httpx.AsyncClient) -> Optional[str]:
+    """Obtient ou réutilise un jeton OAuth2 Client Credentials pour France Travail."""
+    cached_token = _load_cached_ft_token()
+    if cached_token:
+        return cached_token
 
     client_id = os.environ.get("FRANCE_TRAVAIL_CLIENT_ID", "").strip()
     client_secret = os.environ.get("FRANCE_TRAVAIL_CLIENT_SECRET", "").strip()
@@ -305,14 +348,14 @@ async def _get_france_travail_token(client: httpx.AsyncClient) -> Optional[str]:
     }
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
+    now = time.time()
     try:
         resp = await client.post(token_url, data=data, headers=headers, timeout=15.0)
         resp.raise_for_status()
         payload = resp.json()
         token = payload.get("access_token")
         expires_in = int(payload.get("expires_in", 1499))
-        _FT_TOKEN_CACHE["access_token"] = token
-        _FT_TOKEN_CACHE["expires_at"] = now + expires_in
+        _save_cached_ft_token(token, now + expires_in)
         return token
     except Exception as e:
         logger.error(f"Échec d'authentification OAuth2 France Travail : {e}")
