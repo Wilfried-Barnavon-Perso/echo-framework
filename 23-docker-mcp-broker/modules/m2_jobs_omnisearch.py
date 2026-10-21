@@ -1,10 +1,11 @@
 """
 title: Jobs Omnisearch MCP Module
-version: 5.226.18.0
-description: Module MCP Omnisearch Jobs.
+version: 5.228.9.1
+description: Module MCP Omnisearch Jobs avec filtrage dynamique de séniorité.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.9.1: Ajout du filtrage de séniorité LinkedIn (f_E), résolution sémantique et standardisation PAS des docstrings.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.1: Fix APEC job details extraction by parsing HTML via BeautifulSoup instead of deprecated JSON fields.
 import asyncio
@@ -14,7 +15,10 @@ import re
 from typing import Optional
 import httpx
 from bs4 import BeautifulSoup
-from mcp.server import MCPServer
+try:
+    from mcp.server import MCPServer
+except ImportError:
+    from mcp.server.fastmcp import FastMCP as MCPServer
 
 logger = logging.getLogger(__name__)
 
@@ -60,15 +64,60 @@ async def _fetch_with_retry(client: httpx.AsyncClient, method: str, url: str, **
             raise
 
 # ==========================================
-# LINKEDIN EXTRACTOR
+# LINKEDIN EXTRACTOR & SENIORITY RESOLUTION
 # ==========================================
-async def _search_linkedin(keywords: str, location: str, limit: int) -> list:
+LINKEDIN_SENIORITY_MAP = {
+    "internship": "1",
+    "stage": "1",
+    "entry": "2",
+    "junior": "2",
+    "associate": "3",
+    "confirme": "3",
+    "mid_senior": "4",
+    "senior": "4",
+    "director": "5",
+    "directeur": "5",
+    "executive": "6",
+    "dirigeant": "6",
+    "executive_search": "5,6",
+    "management": "5,6",
+}
+
+
+def _resolve_linkedin_seniority(seniority: Optional[str]) -> Optional[str]:
+    """Résout et normalise les filtres de séniorité vers les codes internes LinkedIn f_E."""
+    if not seniority:
+        return None
+    tokens = [t.strip().lower() for t in seniority.split(",") if t.strip()]
+    resolved_codes = set()
+    for token in tokens:
+        if token in LINKEDIN_SENIORITY_MAP:
+            for code in LINKEDIN_SENIORITY_MAP[token].split(","):
+                resolved_codes.add(code)
+        elif token.isdigit() and token in {"1", "2", "3", "4", "5", "6"}:
+            resolved_codes.add(token)
+    return ",".join(sorted(resolved_codes)) if resolved_codes else None
+
+
+async def _search_linkedin(
+    keywords: str,
+    location: str,
+    limit: int,
+    seniority: Optional[str] = None
+) -> list:
     results = []
     LINKEDIN_BASE = "https://www.linkedin.com"
     JOBS_API = f"{LINKEDIN_BASE}/jobs-guest/jobs/api"
     params = {}
-    if keywords: params['keywords'] = keywords
-    if location: params['location'] = location
+    if keywords:
+        params['keywords'] = keywords
+    if location:
+        params['location'] = location
+
+    if seniority:
+        f_e = _resolve_linkedin_seniority(seniority)
+        if f_e:
+            params['f_E'] = f_e
 
     start = 0
     chunk_size = 25
@@ -227,58 +276,87 @@ async def _details_apec(job_id: str) -> str:
 # MAIN ROUTER
 # ==========================================
 def setup_jobs_omnisearch_mcp(mcp: MCPServer):
-    
+
     @mcp.tool()
     async def search_jobs(
         keywords: Optional[str] = None,
         location: Optional[str] = None,
         sources: list[str] = ["all"],
+        seniority: Optional[str] = None,
         limit: int = 10
     ) -> str:
         """
-        Search for public job postings across LinkedIn and APEC.
-        Sources can be a list of strings: ["linkedin", "apec"] or ["all"].
-        Returns a formatted Markdown list of consolidated job results.
+        Recherche des offres d'emploi publiques agrégées sur plusieurs plateformes (LinkedIn, APEC).
+
+        Le Modèle DOIT fournir au moins un mot-clé ('keywords') ou une localisation géographique ('location').
+        Par défaut, la recherche couvre l'ensemble des sources disponibles sans restriction de séniorité.
+
+        :param keywords: Mots-clés de recherche (intitulé, compétences, technologies).
+                          Optionnel si 'location' est renseigné.
+        :param location: Zone géographique cible (ville, département, pays). Optionnel si 'keywords' est renseigné.
+        :param sources: Liste des plateformes cibles à interroger.
+                        Valeurs acceptées : ["linkedin"], ["apec"], ou ["all"] (défaut).
+        :param seniority: Filtre de séniorité et niveau hiérarchique (supporté sur LinkedIn via le paramètre f_E).
+                          Valeurs textuelles acceptées :
+                          - 'internship' ou 'stage' : Stage / Alternance (code 1)
+                          - 'entry' ou 'junior' : Débutant / Junior (code 2)
+                          - 'associate' ou 'confirme' : Confirmé / Intermédiaire (code 3)
+                          - 'mid_senior' ou 'senior' : Expérimenté / Senior (code 4)
+                          - 'director' ou 'directeur' : Direction / Directeur (code 5)
+                          - 'executive' ou 'dirigeant' : Cadre dirigeant / C-Level / VP / DG (code 6)
+                          - 'executive_search' : Regroupe 'director' et 'executive' (codes 5,6)
+                          Accepte également des valeurs directes ou combinées séparées par une virgule
+                          (ex: 'director,executive' ou '5,6').
+                          Si omis ou None, aucun filtre de séniorité n'est appliqué (recherche ouverte par défaut).
+        :param limit: Nombre maximal de résultats à extraire par source (défaut: 10).
+        :return: Liste formatée en Markdown des offres trouvées avec ID, titre, entreprise, localisation et URL.
         """
         if not keywords and not location:
-            return "Error: You must provide either keywords or a location to search."
-            
+            return "Erreur: Le Modèle DOIT fournir au moins un mot-clé ('keywords') ou un lieu ('location')."
+
         sources_to_run = [s.lower() for s in sources]
         if "all" in sources_to_run:
             sources_to_run = ["linkedin", "apec"]
-            
+
         tasks = []
         if "linkedin" in sources_to_run:
-            tasks.append(_search_linkedin(keywords or "", location or "", limit))
+            tasks.append(_search_linkedin(keywords or "", location or "", limit, seniority=seniority))
         if "apec" in sources_to_run:
             tasks.append(_search_apec(keywords or "", location or "", limit))
-            
+
         if not tasks:
-            return "Error: Invalid source selected."
-            
+            return "Erreur: Aucune source valide sélectionnée."
+
         results_groups = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         all_results = []
         for res in results_groups:
             if isinstance(res, list):
                 all_results.extend(res)
             elif isinstance(res, Exception):
                 logger.error(f"Job search task failed: {res}")
-                
+
         if not all_results:
-            return "No jobs found across the selected platforms."
-            
-        formatted = f"Found {len(all_results)} jobs:\n\n"
+            return "Aucune offre trouvée sur les plateformes sélectionnées."
+
+        formatted = f"Offres d'emploi trouvées ({len(all_results)}) :\n\n"
         for r in all_results:
-            formatted += f"- **[{r['source'].upper()}]** {r['title']} @ {r['company']} ({r['location']})\n  ID: `{r['id']}`\n  URL: {r['url']}\n"
-            
+            formatted += (
+                f"- **[{r['source'].upper()}]** {r['title']} @ {r['company']} ({r['location']})\n"
+                f"  ID: `{r['id']}`\n"
+                f"  URL: {r['url']}\n"
+            )
+
         return formatted
 
     @mcp.tool()
     async def get_job_details(job_id: str, source: str) -> str:
         """
-        Get the full text description of a specific job posting by its ID and source.
-        Valid sources: 'linkedin', 'apec'.
+        Extrait le descriptif textuel exhaustif d'une offre d'emploi ciblée via son identifiant unique et sa source.
+
+        :param job_id: Identifiant unique de l'offre extrait préalablement via 'search_jobs'.
+        :param source: Plateforme d'origine de l'offre. Valeurs strictes : 'linkedin' ou 'apec'.
+        :return: Texte brut nettoyé de la description complète du poste, profil recherché et détails entreprise.
         """
         src = source.lower()
         if src == "linkedin":
@@ -286,4 +364,4 @@ def setup_jobs_omnisearch_mcp(mcp: MCPServer):
         elif src == "apec":
             return await _details_apec(job_id)
         else:
-            return f"Error: Unknown source '{source}'."
+            return f"Erreur: Source inconnue '{source}'. Valeurs autorisées : 'linkedin', 'apec'."
