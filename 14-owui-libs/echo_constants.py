@@ -1,7 +1,7 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.228.8.2
+version: 5.228.9.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -283,7 +283,7 @@ ECHO_MODELS_REGISTRY = {
             "temperature": 1.0,
             "topP": 0.9,
             "maxOutputTokens": 65535,
-            "thinkingConfig": {"thinkingLevel": "medium"}
+            "thinkingConfig": {"thinkingLevel": "high"}
         }
     },
     "MODEL_DISTILLATION": {
