@@ -1,17 +1,17 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 5.228.2.1
+version: 5.228.6.2
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.6.2: Bascule de l'import UI sur la librairie dédiée echo_codex_ui (EchoCodexUI).
 # 5.228.2.1: Résilience post-standby (ré-attachement Socket.IO dynamique _resolve_live_events, éviction par loop_id), isolation asyncio.to_thread/try-except et chargement immédiat à l'import.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 3.17: Prise en charge de la fermeture propre et fiabilisation de la boucle RPC long-polling.
 # 3.16: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
-# 3.15: Fix du gel de l'UI lors du basculement de workspace via encapsulation asynchrone robuste (try-except global et asyncio.to_thread).
 
 import sys
 import uuid
@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 # Ajout dynamique du chemin pour les libs ECHO avant l'import
 sys.path.append("/app/backend/echo_libs")
 
-from echo_ui import EchoUI
+from echo_codex_ui import EchoCodexUI
 from echo_codex_git import CodexRepo
 from echo_state_manager import EchoStateManager
 from echo_gemini_client import EchoGeminiClient
@@ -145,7 +145,7 @@ class Action:
         if not reconnect_only:
             quick_actions_json = json.dumps(CODEX_QUICK_ACTIONS).decode("utf-8")
             workspaces_json = json.dumps(ECHO_CODEX_WORKSPACES).decode("utf-8")
-            hud_js = EchoUI._generate_codex_js(
+            hud_js = EchoCodexUI._generate_codex_js(
                 files_json,
                 quick_actions_json,
                 workspaces_json,
