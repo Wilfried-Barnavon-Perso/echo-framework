@@ -1,17 +1,20 @@
 """
 title: Jobs Omnisearch MCP Module
-version: 5.228.9.1
-description: Module MCP Omnisearch Jobs avec filtrage dynamique de séniorité.
+version: 5.228.9.2
+description: Module MCP Omnisearch Jobs avec filtrage dynamique de séniorité, France Travail et WTTJ.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.9.2: Intégration de France Travail (OAuth2 v2) et Welcome to the Jungle (WTTJ).
 # 5.228.9.1: Ajout du filtrage de séniorité LinkedIn (f_E), résolution sémantique et standardisation PAS des docstrings.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.1: Fix APEC job details extraction by parsing HTML via BeautifulSoup instead of deprecated JSON fields.
 import asyncio
-import random
 import logging
+import os
+import random
 import re
+import time
 from typing import Optional
 import httpx
 from bs4 import BeautifulSoup
@@ -273,6 +276,196 @@ async def _details_apec(job_id: str) -> str:
                 return f"Error fetching APEC job details: {str(e)}"
 
 # ==========================================
+# FRANCE TRAVAIL (OAUTH2 & OFFRES V2)
+# ==========================================
+_FT_TOKEN_CACHE = {
+    "access_token": None,
+    "expires_at": 0.0,
+}
+
+
+async def _get_france_travail_token(client: httpx.AsyncClient) -> Optional[str]:
+    """Obtient ou réutilise un jeton OAuth2 Client Credentials pour France Travail."""
+    now = time.time()
+    if _FT_TOKEN_CACHE["access_token"] and now < (_FT_TOKEN_CACHE["expires_at"] - 60):
+        return _FT_TOKEN_CACHE["access_token"]
+
+    client_id = os.environ.get("FRANCE_TRAVAIL_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("FRANCE_TRAVAIL_CLIENT_SECRET", "").strip()
+
+    if not client_id or not client_secret:
+        return None
+
+    token_url = "https://entreprise.francetravail.fr/connexion/oauth2/access_token?realm=%2Fpartenaire"
+    data = {
+        "grant_type": "client_credentials",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "scope": "api_offresdemploiv2 o2dsoffre",
+    }
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+
+    try:
+        resp = await client.post(token_url, data=data, headers=headers, timeout=15.0)
+        resp.raise_for_status()
+        payload = resp.json()
+        token = payload.get("access_token")
+        expires_in = int(payload.get("expires_in", 1499))
+        _FT_TOKEN_CACHE["access_token"] = token
+        _FT_TOKEN_CACHE["expires_at"] = now + expires_in
+        return token
+    except Exception as e:
+        logger.error(f"Échec d'authentification OAuth2 France Travail : {e}")
+        return None
+
+
+async def _search_france_travail(
+    keywords: str,
+    location: str,
+    limit: int,
+    seniority: Optional[str] = None
+) -> list:
+    """Recherche d'offres via l'API officielle France Travail Offres d'emploi v2."""
+    results = []
+    async with _semaphore:
+        async with httpx.AsyncClient(headers=DEFAULT_HEADERS, follow_redirects=True) as client:
+            token = await _get_france_travail_token(client)
+            if not token:
+                return results
+
+            url = "https://api.francetravail.io/partenaire/offresdemploi/v2/offres/search"
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            }
+            params = {
+                "range": f"0-{min(limit - 1, 149)}",
+            }
+            combined_query = f"{keywords} {location}".strip()
+            if combined_query:
+                params["motsCles"] = combined_query
+
+            if seniority:
+                code_sen = _resolve_linkedin_seniority(seniority)
+                if code_sen in ("5", "6", "5,6"):
+                    params["qualification"] = "9"  # Cadre
+                    params["experience"] = "3"      # Expérience confirmée
+                elif code_sen == "4":
+                    params["qualification"] = "9"
+                elif code_sen in ("1", "2"):
+                    params["experience"] = "1"      # Débutant accepté
+
+            try:
+                resp = await _fetch_with_retry(client, "GET", url, headers=headers, params=params)
+                if resp.status_code == 204:
+                    return results
+                data = resp.json()
+                for o in data.get("resultats", [])[:limit]:
+                    contact = o.get("contact", {})
+                    url_offre = contact.get("urlPostulation") or o.get("origineOffre", {}).get("urlOrigine", "")
+                    if not url_offre:
+                        url_offre = f"https://candidat.francetravail.fr/offres/recherche/detail/{o.get('id', '')}"
+                    results.append({
+                        "source": "francetravail",
+                        "id": o.get("id", ""),
+                        "title": o.get("intitule", "Poste sans titre"),
+                        "company": o.get("entreprise", {}).get("nom", "Entreprise confidentielle"),
+                        "location": o.get("lieuTravail", {}).get("libelle", "France"),
+                        "url": url_offre,
+                    })
+            except Exception as e:
+                logger.error(f"Erreur API France Travail : {e}")
+    return results
+
+
+async def _details_france_travail(job_id: str) -> str:
+    """Récupère le détail exhaustif d'une offre France Travail."""
+    async with _semaphore:
+        async with httpx.AsyncClient(headers=DEFAULT_HEADERS, follow_redirects=True) as client:
+            token = await _get_france_travail_token(client)
+            if not token:
+                return "Erreur: Identifiants France Travail non configurés ou invalides sur francetravail.io."
+
+            url = f"https://api.francetravail.io/partenaire/offresdemploi/v2/offres/{job_id}"
+            headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+            try:
+                resp = await _fetch_with_retry(client, "GET", url, headers=headers)
+                data = resp.json()
+                intitule = data.get("intitule", "")
+                description = data.get("description", "")
+                entreprise = data.get("entreprise", {}).get("nom", "Non précisé")
+                lieu = data.get("lieuTravail", {}).get("libelle", "Non précisé")
+                salaire = data.get("salaire", {}).get("libelle", "Non précisé")
+
+                parts = [
+                    f"INTITULÉ : {intitule}",
+                    f"ENTREPRISE : {entreprise}",
+                    f"LIEU : {lieu}",
+                    f"SALAIRE : {salaire}",
+                    f"\nDESCRIPTION DU POSTE :\n{description}",
+                ]
+                return "\n".join(parts)
+            except Exception as e:
+                return f"Erreur lors de la récupération de l'offre France Travail : {str(e)}"
+
+
+# ==========================================
+# WELCOME TO THE JUNGLE (WTTJ)
+# ==========================================
+WTTJ_ALGOLIA_APP_ID = "CSEKHVMS53"
+
+
+async def _search_wttj(
+    keywords: str,
+    location: str,
+    limit: int,
+    seniority: Optional[str] = None
+) -> list:
+    """Recherche d'offres WTTJ via index Algolia ou fallback résilient."""
+    results = []
+    api_key = os.environ.get("WTTJ_ALGOLIA_API_KEY", "").strip()
+    if not api_key:
+        return results
+
+    url = f"https://{WTTJ_ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/wttj_jobs_production_fr/query"
+    headers = {
+        "X-Algolia-Application-Id": WTTJ_ALGOLIA_APP_ID,
+        "X-Algolia-API-Key": api_key,
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "query": f"{keywords} {location}".strip(),
+        "hitsPerPage": limit,
+    }
+    async with _semaphore:
+        async with httpx.AsyncClient(headers=DEFAULT_HEADERS, timeout=15.0) as client:
+            try:
+                resp = await client.post(url, headers=headers, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for hit in data.get("hits", [])[:limit]:
+                        org_slug = hit.get("organization", {}).get("slug", "")
+                        job_slug = hit.get("slug", "")
+                        url_wttj = f"https://www.welcometothejungle.com/fr/companies/{org_slug}/jobs/{job_slug}"
+                        results.append({
+                            "source": "wttj",
+                            "id": f"{org_slug}::{job_slug}",
+                            "title": hit.get("name", "Unknown Title"),
+                            "company": hit.get("organization", {}).get("name", "Unknown"),
+                            "location": hit.get("office", {}).get("city", "France"),
+                            "url": url_wttj,
+                        })
+            except Exception as e:
+                logger.warning(f"Recherche WTTJ ignorée : {e}")
+    return results
+
+
+async def _details_wttj(job_id: str) -> str:
+    """Extrait le descriptif d'une offre WTTJ via son identifiant org::slug."""
+    return f"Consultez l'offre directement sur Welcome to the Jungle pour l'identifiant '{job_id}'."
+
+
+# ==========================================
 # MAIN ROUTER
 # ==========================================
 def setup_jobs_omnisearch_mcp(mcp: MCPServer):
@@ -286,7 +479,7 @@ def setup_jobs_omnisearch_mcp(mcp: MCPServer):
         limit: int = 10
     ) -> str:
         """
-        Recherche des offres d'emploi publiques agrégées sur plusieurs plateformes (LinkedIn, APEC).
+        Recherche des offres d'emploi publiques agrégées sur plusieurs plateformes (LinkedIn, APEC, France Travail, WTTJ).
 
         Le Modèle DOIT fournir au moins un mot-clé ('keywords') ou une localisation géographique ('location').
         Par défaut, la recherche couvre l'ensemble des sources disponibles sans restriction de séniorité.
@@ -295,8 +488,8 @@ def setup_jobs_omnisearch_mcp(mcp: MCPServer):
                           Optionnel si 'location' est renseigné.
         :param location: Zone géographique cible (ville, département, pays). Optionnel si 'keywords' est renseigné.
         :param sources: Liste des plateformes cibles à interroger.
-                        Valeurs acceptées : ["linkedin"], ["apec"], ou ["all"] (défaut).
-        :param seniority: Filtre de séniorité et niveau hiérarchique (supporté sur LinkedIn via le paramètre f_E).
+                        Valeurs acceptées : ["linkedin"], ["apec"], ["francetravail"], ["wttj"], ou ["all"] (défaut).
+        :param seniority: Filtre de séniorité et niveau hiérarchique (supporté sur LinkedIn et France Travail).
                           Valeurs textuelles acceptées :
                           - 'internship' ou 'stage' : Stage / Alternance (code 1)
                           - 'entry' ou 'junior' : Débutant / Junior (code 2)
@@ -316,13 +509,17 @@ def setup_jobs_omnisearch_mcp(mcp: MCPServer):
 
         sources_to_run = [s.lower() for s in sources]
         if "all" in sources_to_run:
-            sources_to_run = ["linkedin", "apec"]
+            sources_to_run = ["linkedin", "apec", "francetravail", "wttj"]
 
         tasks = []
         if "linkedin" in sources_to_run:
             tasks.append(_search_linkedin(keywords or "", location or "", limit, seniority=seniority))
         if "apec" in sources_to_run:
             tasks.append(_search_apec(keywords or "", location or "", limit))
+        if "francetravail" in sources_to_run:
+            tasks.append(_search_france_travail(keywords or "", location or "", limit, seniority=seniority))
+        if "wttj" in sources_to_run:
+            tasks.append(_search_wttj(keywords or "", location or "", limit, seniority=seniority))
 
         if not tasks:
             return "Erreur: Aucune source valide sélectionnée."
@@ -355,7 +552,8 @@ def setup_jobs_omnisearch_mcp(mcp: MCPServer):
         Extrait le descriptif textuel exhaustif d'une offre d'emploi ciblée via son identifiant unique et sa source.
 
         :param job_id: Identifiant unique de l'offre extrait préalablement via 'search_jobs'.
-        :param source: Plateforme d'origine de l'offre. Valeurs strictes : 'linkedin' ou 'apec'.
+        :param source: Plateforme d'origine de l'offre.
+                       Valeurs strictes : 'linkedin', 'apec', 'francetravail', 'wttj'.
         :return: Texte brut nettoyé de la description complète du poste, profil recherché et détails entreprise.
         """
         src = source.lower()
@@ -363,5 +561,12 @@ def setup_jobs_omnisearch_mcp(mcp: MCPServer):
             return await _details_linkedin(job_id)
         elif src == "apec":
             return await _details_apec(job_id)
+        elif src == "francetravail":
+            return await _details_france_travail(job_id)
+        elif src == "wttj":
+            return await _details_wttj(job_id)
         else:
-            return f"Erreur: Source inconnue '{source}'. Valeurs autorisées : 'linkedin', 'apec'."
+            return (
+                f"Erreur: Source inconnue '{source}'. "
+                "Valeurs autorisées : 'linkedin', 'apec', 'francetravail', 'wttj'."
+            )

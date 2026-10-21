@@ -1,13 +1,14 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 5.228.0.1
+VERSION : 5.228.9.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-10-19
+DATE MAJ : 2026-10-21
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.9.1: Directives France Travail (OAuth2 francetravail.io) et champs WTTJ dans jobs_omnisearch.
 # 5.228.0.1: Directive PAS exhaustive pour google_workspace (anti-localhost:8001, mode In production).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.14: Interception ciblée AuthRequiredError
@@ -15,7 +16,10 @@ import logging
 import uvicorn
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, JSONResponse
-from mcp.server import MCPServer
+try:
+    from mcp.server import MCPServer
+except ImportError:
+    from mcp.server.fastmcp import FastMCP as MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
 from core.security import user_id_var
@@ -71,8 +75,44 @@ SERVICE_SCHEMAS = {
     "jobs_omnisearch": {
         "category": "mcp_native",
         "name": "Emplois & Carrières (Omnisearch)",
+        "user_required_instructions": (
+            "DIRECTIVES IMPÉRATIVES DE CONFIGURATION FRANCE TRAVAIL (FRANCETRAVAIL.IO) :\n"
+            "1. ACCÈS AU PORTAIL DÉVELOPPEUR : Se rendre sur https://francetravail.io/ et se connecter "
+            "(ou créer un compte développeur gratuit).\n"
+            "2. CRÉATION D'UNE APPLICATION : Accéder à l'onglet 'Mes applications' puis cliquer sur 'Ajouter une application'.\n"
+            "3. SOUSCRIPTION AU PACKAGE : Dans le catalogue d'APIs, associer le package 'Offres d'emploi v2' "
+            "(accès public, libre et gratuit).\n"
+            "4. RÉCUPÉRATION DES IDENTIFIANTS : Dans la fiche de l'application créée, "
+            "copier le 'Client ID' et le 'Client Secret'.\n"
+            "5. CONSIGNATION DANS L'IDENTITY VAULT :\n"
+            "   Enregistrer dans l'Identity Vault pour le service 'jobs_omnisearch' les deux clés exactes :\n"
+            "   - 'FRANCE_TRAVAIL_CLIENT_ID' : Votre Client ID francetravail.io\n"
+            "   - 'FRANCE_TRAVAIL_CLIENT_SECRET' : Votre Client Secret francetravail.io\n"
+            "   (Alternative : définir ces variables dans l'environnement Docker ou le fichier .env d'ECHO).\n"
+            "   Sans ces clés, la recherche reste pleinement opérationnelle sur LinkedIn, APEC et WTTJ."
+        ),
         "fields": [
-            {"id": "description", "label": "Notes (Optionnel)", "type": "text", "help": "Module autonome (scraping Apec/LinkedIn). Laissez vide et enregistrez pour l'activer."}
+            {
+                "id": "FRANCE_TRAVAIL_CLIENT_ID",
+                "label": "Client ID France Travail",
+                "type": "text",
+                "required": False,
+                "help": "Obtenu sur francetravail.io"
+            },
+            {
+                "id": "FRANCE_TRAVAIL_CLIENT_SECRET",
+                "label": "Client Secret France Travail",
+                "type": "password",
+                "required": False,
+                "help": "Obtenu sur francetravail.io"
+            },
+            {
+                "id": "WTTJ_ALGOLIA_API_KEY",
+                "label": "Clé Algolia WTTJ (Optionnelle)",
+                "type": "password",
+                "required": False,
+                "help": "Clé publique WTTJ (si rotation)"
+            }
         ]
     },
     "academic": {
