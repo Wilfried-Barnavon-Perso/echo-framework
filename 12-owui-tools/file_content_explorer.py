@@ -1,16 +1,16 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.228.7.1
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.7.1: Factorisation de la détection textuelle via is_text_mime (echo_constants).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.109.32: Fix thinking medium explicite sur semantic_probe et read_multimedia_file (MODEL_APOLLO).
 # 5.109.31: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 5.109.30: Intégration de l'accès aux espaces Codex (main/sandbox) via _resolve_extended_file_path et mise à jour des docstrings.
-# 5.109.29: Fix read_raw_file_content (numérotation factice sur offset et troncature silencieuse).
 
 import os
 import sys
@@ -32,7 +32,7 @@ from echo_gemini_client import EchoGeminiClient
 from echo_http import get_stealth_headers
 from echo_ui import EchoUI
 from echo_constants import (
-    ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, ECHO_API_KEY_RETRIES,
+    ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, is_text_mime, ECHO_API_KEY_RETRIES,
     ECHO_API_MAX_RETRIES, get_generation_config
 )
 from echo_prompts import SYS_EXPLORE_SENSORY, SYS_EXPLORER_PROBE
@@ -110,7 +110,7 @@ class Tools:
             new_offset = byte_offset
             mime, _ = get_gemini_mime(fpath)
             ext = os.path.splitext(fpath)[1].lower()
-            is_text = "text/" in mime or "application/json" in mime or "xml" in mime or ext in [".md", ".csv"] # Fallback
+            is_text = is_text_mime(mime, ext)
 
             warning_msg = ""
             if output_mode == "text" and not is_text:

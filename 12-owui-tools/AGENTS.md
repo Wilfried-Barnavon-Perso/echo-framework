@@ -30,7 +30,7 @@ Ce dossier constitue **l'Arsenal** du modèle. Il contient l'ensemble des Outils
 - **`sovereign_web_search.py` (v5.226.18.0)** : Outil de recherche web souveraine (SearXNG / DuckDuckGo) avec capacité de délégation récursive (`delegate_deep_research`) et fermeture explicite de la session Playwright (`reset_session`) en fin de mission en complément de la purge SQLite du thread éphémère.
 
 ### Exploration Locale
-- **`file_content_explorer.py` (v5.226.18.0)** : Sondage sémantique (`MODEL_APOLLO`, `thinking="medium"`), lecture brute (RAW) et Base64 des fichiers locaux. Intègre l'accès direct aux espaces Codex (`main`/`sandbox`) via la résolution étendue des chemins (`_resolve_extended_file_path`) et une sécurité stricte de taille maximale pour l'injection LLM (`MAX_MULTIMODAL_SIZE_KB`).
+- **`file_content_explorer.py` (v5.228.7.1)** : Sondage sémantique (`MODEL_APOLLO`, `thinking="medium"`), lecture brute (RAW) et Base64 des fichiers locaux s'appuyant sur `is_text_mime` (`echo_constants.py`). Intègre l'accès direct aux espaces Codex (`main`/`sandbox`) via la résolution étendue des chemins (`_resolve_extended_file_path`) et une sécurité stricte de taille maximale pour l'injection LLM (`MAX_MULTIMODAL_SIZE_KB`).
 - **`query_registry_tool.py` (v5.226.18.0)** : Outil obligatoire (`query_registry`) avant toute modification de fichier. Permet au modèle d'interroger le registre unifié SQLite, incluant le `FILE_INGESTION_STATUS`.
 
 ### Utilitaires Spécialisés

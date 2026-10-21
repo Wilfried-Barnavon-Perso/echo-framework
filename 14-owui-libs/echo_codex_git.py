@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 5.228.2.1
+version: 5.228.7.2
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.7.2: Support binaire sans perte (latin-1 bijection) dans read_file, commit_file, get_file_at_commit et list_directory via is_binary_file (echo_constants).
 # 5.228.2.1: Protection os.path.isfile dans read_file contre IsADirectoryError et découverte des dossiers physiques vides dans list_directory (workspace main).
 # 5.226.18.1: Ajout de restore_repo_to_timestamp pour restaurer l'arbre Git main lors d'un fork intermédiaire.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.10: Application stricte de ECHO_SYNC_EXCLUDE_LIST pour prévenir le gel UI sur les gros dossiers sandbox.
-# 1.9: Modification de delete_file pour retourner le tuple (commit_hash, paths_to_rm) afin d'assurer la purge SQLite côté action.
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
 # desc.
 
@@ -23,14 +23,13 @@ from dulwich.repo import Repo
 from dulwich.objects import Tree
 from dulwich import porcelain
 
-from echo_constants import CODEX_LANG_MAP, CODEX_DEFAULT_LANG, ECHO_SYNC_EXCLUDE_LIST
+from echo_constants import (
+    CODEX_LANG_MAP,
+    CODEX_DEFAULT_LANG,
+    ECHO_SYNC_EXCLUDE_LIST,
+    is_binary_file,
+)
 from echo_paths import get_echo_session_path
-
-# Mapping inversé langage Monaco → extension (première extension trouvée)
-CODEX_LANG_TO_EXT: dict[str, str] = {}
-for _ext, _lang in CODEX_LANG_MAP.items():
-    if _lang not in CODEX_LANG_TO_EXT:
-        CODEX_LANG_TO_EXT[_lang] = _ext
 
 
 class CodexRepo:
@@ -74,14 +73,23 @@ class CodexRepo:
         os.makedirs(dirpath, exist_ok=True)
 
     def commit_file(self, filename: str, content: str, message: str,
-                    author: str = "ECHO Codex") -> Optional[str]:
+                    author: str = "ECHO Codex", is_binary: Optional[bool] = None) -> Optional[str]:
         """Crée ou met à jour un fichier, avec création automatique des sous-dossiers. Retourne le hash du commit."""
         safe_name = self._secure_path(filename)
         filepath = os.path.join(self.repo_path, safe_name)
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(content)
+        if is_binary is None:
+            raw_probe = content.encode("latin-1", errors="ignore")[:8192] if isinstance(content, str) else None
+            is_binary, _ = is_binary_file(filepath, raw_probe)
+
+        if is_binary:
+            raw_bytes = content.encode("latin-1") if isinstance(content, str) else content
+            with open(filepath, "wb") as f:
+                f.write(raw_bytes)
+        else:
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(content)
 
         porcelain.add(self.repo_path, paths=[safe_name])
         commit_sha = porcelain.commit(
@@ -95,15 +103,28 @@ class CodexRepo:
 
     def read_file(self, filename: str, start_line: int = None,
                   end_line: int = None) -> Optional[dict]:
-        """Lit un fichier. Retourne {content, total_lines, range} ou None."""
+        """Lit un fichier. Retourne {content, total_lines, range, is_binary, mime, size_bytes} ou None."""
         safe_name = self._secure_path(filename)
         filepath = os.path.join(self.repo_path, safe_name)
         if not os.path.isfile(filepath):
             return None
 
-        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
+        with open(filepath, "rb") as f:
+            raw_bytes = f.read()
 
+        is_bin, mime = is_binary_file(filepath, raw_bytes)
+        if is_bin:
+            return {
+                "content": raw_bytes.decode("latin-1"),
+                "total_lines": (len(raw_bytes) + 15) // 16,
+                "range": None,
+                "is_binary": True,
+                "mime": mime,
+                "size_bytes": len(raw_bytes),
+            }
+
+        text_content = raw_bytes.decode("utf-8", errors="replace")
+        lines = text_content.splitlines(True)
         total = len(lines)
 
         if start_line is not None and end_line is not None:
@@ -114,11 +135,20 @@ class CodexRepo:
             return {
                 "content": content,
                 "total_lines": total,
-                "range": [
-                    s + 1,
-                    e]}
+                "range": [s + 1, e],
+                "is_binary": False,
+                "mime": mime,
+                "size_bytes": len(raw_bytes),
+            }
 
-        return {"content": "".join(lines), "total_lines": total, "range": None}
+        return {
+            "content": text_content,
+            "total_lines": total,
+            "range": None,
+            "is_binary": False,
+            "mime": mime,
+            "size_bytes": len(raw_bytes),
+        }
 
     def delete_file(self, path: str, message: str) -> Optional[tuple[str, list[str]]]:
         """Supprime un fichier ou un dossier vide et commit. Retourne le (hash, liste_fichiers_supprimes) ou None."""
@@ -236,10 +266,15 @@ class CodexRepo:
                     mtime = 0
 
                 line_count = 0
+                is_bin = False
                 if not is_dir:
                     try:
-                        with open(entry.path, "r", encoding="utf-8", errors="replace") as fh:
-                            line_count = sum(1 for _ in fh)
+                        is_bin, _ = is_binary_file(entry.path)
+                        if is_bin:
+                            line_count = (size + 15) // 16
+                        else:
+                            with open(entry.path, "r", encoding="utf-8", errors="replace") as fh:
+                                line_count = sum(1 for _ in fh)
                     except Exception:
                         pass
 
@@ -250,6 +285,7 @@ class CodexRepo:
                     "lines": line_count,
                     "size_bytes": size,
                     "mtime": mtime,
+                    "is_binary": is_bin,
                 })
         else:
             # Workspace MAIN (tracké Git)
@@ -281,11 +317,16 @@ class CodexRepo:
                     filepath = os.path.join(self.repo_path, tracked_file)
                     if not os.path.isfile(filepath):
                         continue
+                    is_bin = False
                     try:
-                        with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
-                            line_count = sum(1 for _ in fh)
                         size = os.path.getsize(filepath)
                         mtime = os.path.getmtime(filepath)
+                        is_bin, _ = is_binary_file(filepath)
+                        if is_bin:
+                            line_count = (size + 15) // 16
+                        else:
+                            with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
+                                line_count = sum(1 for _ in fh)
                     except BaseException:
                         line_count = 0
                         size = 0
@@ -298,6 +339,7 @@ class CodexRepo:
                         "lines": line_count,
                         "size_bytes": size,
                         "mtime": mtime,
+                        "is_binary": is_bin,
                     })
                 else:
                     # Dossier immédiat
@@ -527,6 +569,9 @@ class CodexRepo:
             for item in tree.items():
                 if item.path.decode("utf-8") == safe_name:
                     blob = self.repo.object_store[item.sha]
+                    is_bin, _ = is_binary_file(safe_name, blob.data)
+                    if is_bin:
+                        return blob.data.decode("latin-1")
                     return blob.data.decode("utf-8", errors="replace")
         except Exception:
             pass

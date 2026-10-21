@@ -1,25 +1,28 @@
 """
 title: ECHO Codex UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.228.6.2
-description: Composant système interne : Moteur de rendu HUD Monaco pour ECHO Codex.
+version: 5.228.7.2
+description: Composant système interne : Moteur de rendu HUD Monaco et Éditeur Hexadécimal pour ECHO Codex.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.7.2: Inversion des icônes Importer/Exporter, éditeur hexadécimal virtualisé sur fichiers binaires, PREVIEW_REGISTRY extensible avec auto-ouverture débrayable et factorisation SSOT des langages.
 # 5.228.6.2: Extraction et factorisation du moteur HUD Monaco Codex depuis echo_ui.py vers echo_codex_ui.py (EchoCodexUI héritant de EchoUI).
 
 
 import sys
+import orjson as std_json
 
 # Importations ECHO Standard
 if "/app/backend/echo_libs" not in sys.path:
     sys.path.append("/app/backend/echo_libs")
 
+from echo_constants import CODEX_LANG_MAP, CODEX_LANG_TO_EXT
 from echo_ui import EchoUI
 
 
 class EchoCodexUI(EchoUI):
-    """Moteur de pilotage HUD Monaco Editor pour ECHO Codex, héritant des primitives EchoUI."""
+    """Moteur de pilotage HUD Monaco Editor & Hex Editor pour ECHO Codex, héritant des primitives EchoUI."""
 
     @classmethod
     def _generate_codex_js(
@@ -33,6 +36,8 @@ class EchoCodexUI(EchoUI):
             model_id: str = "echo_orchestrator") -> str:
         """Génère le script JS complet du HUD Monaco Codex.
         Injection via __event_call__({type: 'execute', data: {code: ...}})."""
+        lang_to_ext_json = std_json.dumps(CODEX_LANG_TO_EXT).decode("utf-8")
+        ext_to_lang_json = std_json.dumps(CODEX_LANG_MAP).decode("utf-8")
         return f"""
     (function() {{
       const CODEX_ID = 'echo-codex-hud';
@@ -60,24 +65,10 @@ class EchoCodexUI(EchoUI):
       const quickActions = {quick_actions_json};
       const workspaces = {workspaces_json};
       let currentWorkspace = '{current_workspace}';
-      // Mapping langage Monaco → extension (pour rename)
-      const LANG_TO_EXT = {{
-        python:'.py', javascript:'.js', typescript:'.ts', c:'.c', cpp:'.cpp',
-        java:'.java', go:'.go', rust:'.rs', ruby:'.rb', php:'.php', swift:'.swift',
-        kotlin:'.kt', csharp:'.cs', vb:'.vb', shell:'.sh', powershell:'.ps1',
-        bat:'.bat', html:'.html', css:'.css', json:'.json', xml:'.xml',
-        yaml:'.yaml', toml:'.toml', ini:'.ini', markdown:'.md', plaintext:'.txt',
-        sql:'.sql', r:'.r', lua:'.lua', perl:'.pl', dockerfile:'.dockerfile',
-      }};
-      const EXT_TO_LANG = {{
-        '.py':'python', '.js':'javascript', '.jsx':'javascript', '.ts':'typescript', '.tsx':'typescript',
-        '.c':'c', '.h':'c', '.cpp':'cpp', '.hpp':'cpp', '.java':'java', '.go':'go', '.rs':'rust',
-        '.rb':'ruby', '.php':'php', '.swift':'swift', '.kt':'kotlin', '.cs':'csharp', '.vb':'vb',
-        '.sh':'shell', '.bash':'shell', '.ps1':'powershell', '.bat':'bat', '.cmd':'bat',
-        '.html':'html', '.htm':'html', '.css':'css', '.json':'json', '.xml':'xml', '.svg':'xml',
-        '.yaml':'yaml', '.yml':'yaml', '.toml':'toml', '.ini':'ini', '.md':'markdown', '.txt':'plaintext',
-        '.sql':'sql', '.r':'r', '.lua':'lua', '.pl':'perl', '.dockerfile':'dockerfile', '.pdf':'pdf'
-      }};
+      // Mapping langage Monaco ↔ extension (injecté depuis echo_constants SSOT)
+      const LANG_TO_EXT = {lang_to_ext_json};
+      const EXT_TO_LANG = {ext_to_lang_json};
+      const BINARY_EXTS = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.heic', '.heif', '.tiff', '.zip', '.tar', '.gz', '.7z', '.wasm', '.bin', '.exe', '.dll', '.so', '.dylib', '.sqlite', '.db', '.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a', '.opus', '.mp4', '.webm', '.mov', '.avi', '.woff', '.woff2', '.ttf', '.otf', '.docx', '.xlsx', '.pptx']);
       function detectFileLang(filename) {{
         if (!filename) return 'plaintext';
         const found = files.find(f => f.filename === filename);
@@ -90,6 +81,23 @@ class EchoCodexUI(EchoUI):
           if (EXT_TO_LANG[ext]) return EXT_TO_LANG[ext];
         }}
         return 'plaintext';
+      }}
+      function detectIsBinary(content, filename, explicitFlag) {{
+        if (explicitFlag === true || explicitFlag === false) return explicitFlag;
+        if (filename) {{
+          const found = files.find(f => f.filename === filename);
+          if (found && typeof found.is_binary === 'boolean') return found.is_binary;
+          const lower = filename.toLowerCase();
+          const dotIdx = lower.lastIndexOf('.');
+          if (dotIdx !== -1 && BINARY_EXTS.has(lower.substring(dotIdx))) return true;
+        }}
+        if (typeof content === 'string' && content.length > 0) {{
+          const checkLen = Math.min(content.length, 4096);
+          for (let i = 0; i < checkLen; i++) {{
+            if (content.charCodeAt(i) === 0) return true;
+          }}
+        }}
+        return false;
       }}
       let targetFileOverride = null;
       if (window._echoCodexTarget) {{
@@ -117,10 +125,14 @@ class EchoCodexUI(EchoUI):
       let lastInstruction = '';
       let lastModel = 'MODEL_APOLLO';
       let modified = false;
+      let isCurrentBinary = false;
+      let hexBytes = null;
+      let selectedHexOffset = 0;
+      let hexEditArea = 'hex';
+      let hexHighNibble = true;
       let previewOpen = false;
       let editorRatio = 33;
       let previewRatio = 67;
-      const PREVIEW_LANGS = ['markdown', 'html', 'css', 'xml', 'pdf'];
       let markedLoaded = false;
       let previewDebounceTimer = null;
 
@@ -288,8 +300,8 @@ class EchoCodexUI(EchoUI):
         <span style="flex:1;"></span>
         <select id="${{CODEX_ID}}-lang" style="background:transparent; border:1px solid ${{borderColor}};
           color:${{textColor}}; padding:2px 6px; border-radius:4px; font-size:12px;"></select>
-        <button id="${{CODEX_ID}}-import" title="Importer (PC → Codex)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='17 8 12 3 7 8'/><line x1='12' y1='3' x2='12' y2='15'/></svg></button>
-        <button id="${{CODEX_ID}}-export" title="Exporter (Codex → PC)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' y1='15' x2='12' y2='3'/></svg></button>
+        <button id="${{CODEX_ID}}-import" title="Importer (PC → Codex)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' y1='15' x2='12' y2='3'/></svg></button>
+        <button id="${{CODEX_ID}}-export" title="Exporter (Codex → PC)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='17 8 12 3 7 8'/><line x1='12' y1='3' x2='12' y2='15'/></svg></button>
         <button id="${{CODEX_ID}}-copy" title="Copier" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/></svg></button>
         <button id="${{CODEX_ID}}-refresh" title="Actualiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/></svg></button>
         <button id="${{CODEX_ID}}-save" title="Sauvegarder (Ctrl+S)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1; opacity:0.3; transition:opacity 0.2s;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z'/><polyline points='17 21 17 13 7 13 7 21'/><polyline points='7 3 7 8 15 8'/></svg></button>
@@ -320,7 +332,36 @@ class EchoCodexUI(EchoUI):
       // Editor container
       const editorWrap = document.createElement('div');
       editorWrap.id = CODEX_ID + '-editor';
-      editorWrap.style.cssText = `flex:${{previewOpen ? editorRatio : 100}} 1 0%; overflow:hidden; position:relative; min-width:0;`;
+      editorWrap.style.cssText = `flex:${{previewOpen ? editorRatio : 100}} 1 0%; overflow:hidden; position:relative; min-width:0; display:flex; flex-direction:column;`;
+
+      const monacoWrap = document.createElement('div');
+      monacoWrap.id = CODEX_ID + '-monaco';
+      monacoWrap.style.cssText = 'flex:1; width:100%; height:100%; overflow:hidden; position:relative;';
+
+      const hexWrap = document.createElement('div');
+      hexWrap.id = CODEX_ID + '-hex';
+      hexWrap.tabIndex = 0;
+      hexWrap.style.cssText = `display:none; flex:1; width:100%; height:100%; flex-direction:column; overflow:hidden; background:${{bgColor}}; color:${{textColor}}; font-family:'Cascadia Code','Fira Code',Consolas,monospace; font-size:12px; outline:none; user-select:none;`;
+      hexWrap.innerHTML = `
+        <div style="display:flex; align-items:center; padding:6px 12px; background:${{sidebarBg}}; border-bottom:1px solid ${{borderColor}}; font-size:11px; color:${{isDark ? '#a6adc8' : '#666'}}; font-weight:600; flex-shrink:0; gap:12px;">
+          <span style="width:76px;">OFFSET</span>
+          <span style="width:336px; letter-spacing:0.5px;">00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F</span>
+          <span style="flex:1;">ASCII</span>
+          <button id="${{CODEX_ID}}-hex-insert" title="Insérer un octet (0x00) après l'offset" style="background:transparent; border:1px solid ${{borderColor}}; color:${{textColor}}; border-radius:4px; padding:1px 6px; font-size:11px; cursor:pointer;">+ Octet</button>
+          <button id="${{CODEX_ID}}-hex-delete" title="Supprimer l'octet sélectionné" style="background:transparent; border:1px solid ${{borderColor}}; color:#f38ba8; border-radius:4px; padding:1px 6px; font-size:11px; cursor:pointer;">- Octet</button>
+        </div>
+        <div id="${{CODEX_ID}}-hex-scroll" style="flex:1; overflow-y:auto; overflow-x:auto; position:relative; padding:0;">
+          <div id="${{CODEX_ID}}-hex-spacer" style="position:relative; width:100%;">
+            <div id="${{CODEX_ID}}-hex-rows" style="position:absolute; left:0; right:0; top:0;"></div>
+          </div>
+        </div>
+        <div id="${{CODEX_ID}}-hex-inspector" style="display:flex; align-items:center; gap:14px; padding:5px 12px; background:${{sidebarBg}}; border-top:1px solid ${{borderColor}}; font-size:11px; color:${{isDark ? '#cba6f7' : '#555'}}; flex-shrink:0; flex-wrap:wrap;">
+          <span id="${{CODEX_ID}}-hex-inspector-info">Éditeur Hexadécimal</span>
+        </div>
+      `;
+
+      editorWrap.appendChild(monacoWrap);
+      editorWrap.appendChild(hexWrap);
 
       // Splitter (entre éditeur et preview)
       const splitter = document.createElement('div');
@@ -930,17 +971,20 @@ class EchoCodexUI(EchoUI):
         updateStatus('📂 Lecture de ' + importInput.files.length + ' fichier(s)...');
         for (const file of importInput.files) {{
           try {{
-            let contentStr = '';
-            if (file.name.toLowerCase().endsWith('.pdf')) {{
-              const buf = await file.arrayBuffer();
-              const bytes = new Uint8Array(buf);
-              const chunks = [];
-              for (let i = 0; i < bytes.length; i += 8192) {{
-                chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, i + 8192)));
+            const buf = await file.arrayBuffer();
+            const bytes = new Uint8Array(buf);
+            let isBin = detectIsBinary(null, file.name);
+            if (!isBin) {{
+              const checkLen = Math.min(bytes.length, 8192);
+              for (let i = 0; i < checkLen; i++) {{
+                if (bytes[i] === 0) {{ isBin = true; break; }}
               }}
-              contentStr = chunks.join('');
+            }}
+            let contentStr = '';
+            if (isBin) {{
+              contentStr = bytesToLatin1(bytes);
             }} else {{
-              contentStr = await file.text();
+              contentStr = new TextDecoder('utf-8').decode(bytes);
             }}
             filesData.push({{filename: file.name, content: contentStr}});
           }} catch (err) {{
@@ -961,6 +1005,324 @@ class EchoCodexUI(EchoUI):
       document.getElementById(CODEX_ID + '-export').onclick = () => {{
         if (currentFile) window.sendCodexAction({{action:'download', filename:currentFile}});
       }};
+
+      // ===== HEXADECIMAL EDITOR ENGINE =====
+      const HEX_BYTES_PER_ROW = 16;
+      const HEX_ROW_HEIGHT = 20;
+
+      function bytesToLatin1(u8) {{
+        const chunks = [];
+        for (let i = 0; i < u8.length; i += 8192) {{
+          chunks.push(String.fromCharCode.apply(null, u8.subarray(i, i + 8192)));
+        }}
+        return chunks.join('');
+      }}
+
+      function latin1ToBytes(str) {{
+        const s = str || '';
+        const out = new Uint8Array(s.length);
+        for (let i = 0; i < s.length; i++) {{
+          out[i] = s.charCodeAt(i) & 0xff;
+        }}
+        return out;
+      }}
+
+      function formatHexDumpText(u8) {{
+        if (!u8 || u8.length === 0) return '';
+        const lines = [];
+        for (let rowOff = 0; rowOff < u8.length; rowOff += HEX_BYTES_PER_ROW) {{
+          const offHex = rowOff.toString(16).toUpperCase().padStart(8, '0');
+          const hexParts = [];
+          let asciiPart = '';
+          for (let col = 0; col < HEX_BYTES_PER_ROW; col++) {{
+            const idx = rowOff + col;
+            if (idx < u8.length) {{
+              const b = u8[idx];
+              hexParts.push(b.toString(16).toUpperCase().padStart(2, '0'));
+              asciiPart += (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.';
+            }} else {{
+              hexParts.push('  ');
+              asciiPart += ' ';
+            }}
+          }}
+          lines.push(offHex + '  ' + hexParts.slice(0, 8).join(' ') + '  ' + hexParts.slice(8).join(' ') + '  |' + asciiPart + '|');
+        }}
+        return lines.join('\\n');
+      }}
+
+      function getActiveContent() {{
+        if (isCurrentBinary && hexBytes) {{
+          return bytesToLatin1(hexBytes);
+        }}
+        return editor ? editor.getValue() : '';
+      }}
+
+      function updateHexInspector() {{
+        const infoEl = document.getElementById(CODEX_ID + '-hex-inspector-info');
+        if (!infoEl) return;
+        if (!hexBytes || hexBytes.length === 0) {{
+          infoEl.textContent = 'Fichier binaire vide (0 octet)';
+          return;
+        }}
+        const off = Math.max(0, Math.min(selectedHexOffset, hexBytes.length - 1));
+        const u8 = hexBytes[off];
+        const i8 = u8 > 127 ? u8 - 256 : u8;
+        const binStr = u8.toString(2).padStart(8, '0');
+        let u16 = 'N/A';
+        if (off + 1 < hexBytes.length) {{
+          u16 = (hexBytes[off] | (hexBytes[off + 1] << 8)).toString();
+        }}
+        infoEl.textContent = `Offset: 0x${{off.toString(16).toUpperCase().padStart(8, '0')}} (${{off}} / ${{hexBytes.length}} octets) | UInt8: ${{u8}} | Int8: ${{i8}} | UInt16LE: ${{u16}} | Bin: ${{binStr}}`;
+      }}
+
+      function renderHexRows() {{
+        const scrollEl = document.getElementById(CODEX_ID + '-hex-scroll');
+        const spacerEl = document.getElementById(CODEX_ID + '-hex-spacer');
+        const rowsEl = document.getElementById(CODEX_ID + '-hex-rows');
+        if (!scrollEl || !spacerEl || !rowsEl || !hexBytes) return;
+
+        const totalRows = Math.max(1, Math.ceil(hexBytes.length / HEX_BYTES_PER_ROW));
+        spacerEl.style.height = (totalRows * HEX_ROW_HEIGHT + 16) + 'px';
+
+        const scrollTop = scrollEl.scrollTop;
+        const viewHeight = scrollEl.clientHeight || 500;
+        const firstRow = Math.max(0, Math.floor(scrollTop / HEX_ROW_HEIGHT) - 5);
+        const visibleCount = Math.ceil(viewHeight / HEX_ROW_HEIGHT) + 15;
+        const lastRow = Math.min(totalRows - 1, firstRow + visibleCount);
+
+        rowsEl.style.top = (firstRow * HEX_ROW_HEIGHT) + 'px';
+        let html = '';
+
+        for (let r = firstRow; r <= lastRow; r++) {{
+          const rowOffset = r * HEX_BYTES_PER_ROW;
+          const offStr = rowOffset.toString(16).toUpperCase().padStart(8, '0');
+          let hexCells = '';
+          let asciiCells = '';
+
+          for (let c = 0; c < HEX_BYTES_PER_ROW; c++) {{
+            const idx = rowOffset + c;
+            const sepSpace = (c === 7) ? 'margin-right:8px;' : '';
+            if (idx < hexBytes.length) {{
+              const b = hexBytes[idx];
+              const hexVal = b.toString(16).toUpperCase().padStart(2, '0');
+              const isSel = (idx === selectedHexOffset);
+              const hexBg = isSel ? (hexEditArea === 'hex' ? accentColor : 'rgba(137,180,250,0.28)') : 'transparent';
+              const hexFg = isSel && hexEditArea === 'hex' ? (isDark ? '#11111b' : '#ffffff') : (b === 0 ? (isDark ? '#585b70' : '#9ca0b0') : textColor);
+              const ascBg = isSel ? (hexEditArea === 'ascii' ? accentColor : 'rgba(137,180,250,0.28)') : 'transparent';
+              const ascFg = isSel && hexEditArea === 'ascii' ? (isDark ? '#11111b' : '#ffffff') : ((b >= 32 && b <= 126) ? textColor : (isDark ? '#585b70' : '#9ca0b0'));
+              const ch = (b >= 32 && b <= 126)
+                ? String.fromCharCode(b).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                : '.';
+
+              hexCells += `<span data-offset="${{idx}}" data-area="hex" style="display:inline-block; width:20px; text-align:center; border-radius:3px; cursor:pointer; ${{sepSpace}} background:${{hexBg}}; color:${{hexFg}}; font-weight:${{isSel ? '700' : '400'}};">${{hexVal}}</span>`;
+              asciiCells += `<span data-offset="${{idx}}" data-area="ascii" style="display:inline-block; width:9.6px; text-align:center; border-radius:2px; cursor:pointer; background:${{ascBg}}; color:${{ascFg}}; font-weight:${{isSel ? '700' : '400'}};">${{ch}}</span>`;
+            }} else {{
+              hexCells += `<span style="display:inline-block; width:20px; ${{sepSpace}}">&nbsp;&nbsp;</span>`;
+              asciiCells += `<span style="display:inline-block; width:9.6px;">&nbsp;</span>`;
+            }}
+          }}
+
+          html += `<div style="display:flex; align-items:center; height:${{HEX_ROW_HEIGHT}}px; padding:0 12px; gap:16px; white-space:pre;">` +
+            `<span style="width:76px; flex-shrink:0; color:${{isDark ? '#7f849c' : '#6c6f85'}};">${{offStr}}</span>` +
+            `<div style="display:flex; width:336px; flex-shrink:0;">${{hexCells}}</div>` +
+            `<div style="display:flex; padding-left:10px; border-left:1px solid ${{borderColor}};">${{asciiCells}}</div>` +
+            `</div>`;
+        }}
+
+        rowsEl.innerHTML = html;
+        updateHexInspector();
+      }}
+
+      function ensureHexOffsetVisible() {{
+        const scrollEl = document.getElementById(CODEX_ID + '-hex-scroll');
+        if (!scrollEl || !hexBytes || hexBytes.length === 0) return;
+        const row = Math.floor(selectedHexOffset / HEX_BYTES_PER_ROW);
+        const rowTop = row * HEX_ROW_HEIGHT;
+        const rowBottom = rowTop + HEX_ROW_HEIGHT;
+        if (rowTop < scrollEl.scrollTop) {{
+          scrollEl.scrollTop = rowTop;
+        }} else if (rowBottom > scrollEl.scrollTop + scrollEl.clientHeight) {{
+          scrollEl.scrollTop = rowBottom - scrollEl.clientHeight;
+        }}
+      }}
+
+      function initHexEditorEvents() {{
+        const scrollEl = document.getElementById(CODEX_ID + '-hex-scroll');
+        const rowsEl = document.getElementById(CODEX_ID + '-hex-rows');
+        const insBtn = document.getElementById(CODEX_ID + '-hex-insert');
+        const delBtn = document.getElementById(CODEX_ID + '-hex-delete');
+        if (!scrollEl || !rowsEl) return;
+
+        scrollEl.addEventListener('scroll', () => renderHexRows());
+
+        rowsEl.addEventListener('mousedown', (e) => {{
+          const cell = e.target.closest('[data-offset]');
+          if (!cell) return;
+          selectedHexOffset = parseInt(cell.dataset.offset, 10) || 0;
+          hexEditArea = cell.dataset.area || 'hex';
+          hexHighNibble = true;
+          hexWrap.focus();
+          renderHexRows();
+        }});
+
+        if (insBtn) {{
+          insBtn.onclick = () => {{
+            if (!isCurrentBinary || isHistoryMode) return;
+            const cur = hexBytes || new Uint8Array(0);
+            const next = new Uint8Array(cur.length + 1);
+            const pos = cur.length === 0 ? 0 : Math.min(selectedHexOffset + 1, cur.length);
+            next.set(cur.subarray(0, pos), 0);
+            next[pos] = 0;
+            next.set(cur.subarray(pos), pos + 1);
+            hexBytes = next;
+            selectedHexOffset = pos;
+            hexHighNibble = true;
+            modified = true;
+            renderFileTree();
+            updateSaveButton();
+            renderHexRows();
+            if (previewOpen) {{
+              clearTimeout(previewDebounceTimer);
+              previewDebounceTimer = setTimeout(updatePreview, 400);
+            }}
+          }};
+        }}
+
+        if (delBtn) {{
+          delBtn.onclick = () => {{
+            if (!isCurrentBinary || isHistoryMode || !hexBytes || hexBytes.length === 0) return;
+            const cur = hexBytes;
+            const pos = Math.max(0, Math.min(selectedHexOffset, cur.length - 1));
+            const next = new Uint8Array(cur.length - 1);
+            next.set(cur.subarray(0, pos), 0);
+            next.set(cur.subarray(pos + 1), pos);
+            hexBytes = next;
+            selectedHexOffset = Math.max(0, Math.min(pos, next.length - 1));
+            hexHighNibble = true;
+            modified = true;
+            renderFileTree();
+            updateSaveButton();
+            renderHexRows();
+            if (previewOpen) {{
+              clearTimeout(previewDebounceTimer);
+              previewDebounceTimer = setTimeout(updatePreview, 400);
+            }}
+          }};
+        }}
+
+        hexWrap.addEventListener('keydown', (e) => {{
+          if (!isCurrentBinary || !hexBytes) return;
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {{
+            e.preventDefault();
+            doSave();
+            return;
+          }}
+          if (e.key === 'Tab') {{
+            e.preventDefault();
+            hexEditArea = (hexEditArea === 'hex') ? 'ascii' : 'hex';
+            hexHighNibble = true;
+            renderHexRows();
+            return;
+          }}
+          if (hexBytes.length === 0) return;
+
+          if (e.key === 'ArrowRight') {{
+            e.preventDefault();
+            selectedHexOffset = Math.min(hexBytes.length - 1, selectedHexOffset + 1);
+            hexHighNibble = true;
+            ensureHexOffsetVisible();
+            renderHexRows();
+            return;
+          }}
+          if (e.key === 'ArrowLeft') {{
+            e.preventDefault();
+            selectedHexOffset = Math.max(0, selectedHexOffset - 1);
+            hexHighNibble = true;
+            ensureHexOffsetVisible();
+            renderHexRows();
+            return;
+          }}
+          if (e.key === 'ArrowDown') {{
+            e.preventDefault();
+            selectedHexOffset = Math.min(hexBytes.length - 1, selectedHexOffset + HEX_BYTES_PER_ROW);
+            hexHighNibble = true;
+            ensureHexOffsetVisible();
+            renderHexRows();
+            return;
+          }}
+          if (e.key === 'ArrowUp') {{
+            e.preventDefault();
+            selectedHexOffset = Math.max(0, selectedHexOffset - HEX_BYTES_PER_ROW);
+            hexHighNibble = true;
+            ensureHexOffsetVisible();
+            renderHexRows();
+            return;
+          }}
+
+          if (isHistoryMode || e.ctrlKey || e.metaKey || e.altKey) return;
+
+          if (hexEditArea === 'hex') {{
+            if (/^[0-9a-fA-F]$/.test(e.key)) {{
+              e.preventDefault();
+              const nibble = parseInt(e.key, 16);
+              if (hexHighNibble) {{
+                hexBytes[selectedHexOffset] = (nibble << 4) | (hexBytes[selectedHexOffset] & 0x0f);
+                hexHighNibble = false;
+              }} else {{
+                hexBytes[selectedHexOffset] = (hexBytes[selectedHexOffset] & 0xf0) | nibble;
+                hexHighNibble = true;
+                if (selectedHexOffset < hexBytes.length - 1) selectedHexOffset++;
+                ensureHexOffsetVisible();
+              }}
+              modified = true;
+              renderFileTree();
+              updateSaveButton();
+              renderHexRows();
+              if (previewOpen) {{
+                clearTimeout(previewDebounceTimer);
+                previewDebounceTimer = setTimeout(updatePreview, 400);
+              }}
+            }}
+          }} else if (hexEditArea === 'ascii') {{
+            if (e.key.length === 1) {{
+              e.preventDefault();
+              hexBytes[selectedHexOffset] = e.key.charCodeAt(0) & 0xff;
+              if (selectedHexOffset < hexBytes.length - 1) selectedHexOffset++;
+              ensureHexOffsetVisible();
+              modified = true;
+              renderFileTree();
+              updateSaveButton();
+              renderHexRows();
+              if (previewOpen) {{
+                clearTimeout(previewDebounceTimer);
+                previewDebounceTimer = setTimeout(updatePreview, 400);
+              }}
+            }}
+          }}
+        }});
+      }}
+      initHexEditorEvents();
+
+      function setBinaryEditorMode(isBin, rawContent) {{
+        isCurrentBinary = !!isBin;
+        const langSelect = document.getElementById(CODEX_ID + '-lang');
+        if (isCurrentBinary) {{
+          monacoWrap.style.display = 'none';
+          hexWrap.style.display = 'flex';
+          aiPanel.style.display = 'none';
+          if (langSelect) langSelect.disabled = true;
+          hexBytes = latin1ToBytes(rawContent ?? '');
+          selectedHexOffset = 0;
+          hexHighNibble = true;
+          setTimeout(() => renderHexRows(), 0);
+        }} else {{
+          hexWrap.style.display = 'none';
+          monacoWrap.style.display = 'block';
+          if (!isDiffMode) aiPanel.style.display = 'flex';
+          if (langSelect) langSelect.disabled = false;
+          hexBytes = null;
+        }}
+      }}
 
       // ===== CLIPBOARD UTILS =====
       function copyPlainText(text) {{
@@ -1016,6 +1378,10 @@ class EchoCodexUI(EchoUI):
 
       // ===== COPY BINDINGS =====
       document.getElementById(CODEX_ID + '-copy').onclick = () => {{
+        if (isCurrentBinary && hexBytes) {{
+          copyPlainText(formatHexDumpText(hexBytes));
+          return;
+        }}
         if (!editor) return;
         copyPlainText(editor.getValue());
       }};
@@ -1025,7 +1391,7 @@ class EchoCodexUI(EchoUI):
         previewCopyBtn.onclick = () => {{
           if (!currentFile) return;
           const lang = detectFileLang(currentFile);
-          const content = editor ? editor.getValue() : '';
+          const content = getActiveContent();
 
           if (lang === 'markdown') {{
             const container = document.getElementById(CODEX_ID + '-preview-content');
@@ -1084,12 +1450,13 @@ class EchoCodexUI(EchoUI):
 
       // Ctrl+S
       function doSave() {{
-        if (currentFile && editor) {{
+        if (currentFile && (editor || isCurrentBinary)) {{
           window.sendCodexAction({{
             action: 'save',
             filename: currentFile,
-            content: editor.getValue(),
-            language: detectFileLang(currentFile)
+            content: getActiveContent(),
+            language: detectFileLang(currentFile),
+            is_binary: isCurrentBinary
           }});
           
           modified = false;
@@ -1139,8 +1506,10 @@ class EchoCodexUI(EchoUI):
         // Masquer le preview pendant le diff
         document.getElementById(CODEX_ID + '-preview').style.display = 'none';
         document.getElementById(CODEX_ID + '-splitter').style.display = 'none';
-        editorWrap.innerHTML = '';
-        diffEditor = monaco.editor.createDiffEditor(editorWrap, {{
+        hexWrap.style.display = 'none';
+        monacoWrap.style.display = 'block';
+        monacoWrap.innerHTML = '';
+        diffEditor = monaco.editor.createDiffEditor(monacoWrap, {{
           theme: theme, readOnly: false, renderSideBySide: true,
           automaticLayout: true, minimap: {{enabled: false}},
           accessibilitySupport: 'off'
@@ -1163,7 +1532,7 @@ class EchoCodexUI(EchoUI):
         isDiffMode = false;
         diffEditor = null;
         document.getElementById(CODEX_ID + '-diff-bar').style.display = 'none';
-        aiPanel.style.display = 'flex';
+        aiPanel.style.display = isCurrentBinary ? 'none' : 'flex';
         initEditor();
         // Restaurer la sélection modèle après réaffichage du panel
         window.echoCodexSetModel(lastModel);
@@ -1181,8 +1550,13 @@ class EchoCodexUI(EchoUI):
         renderFileTree();
       }};
 
-      window.echoCodexDownload = (name, content) => {{
-        const blob = new Blob([content], {{type: 'text/plain'}});
+      window.echoCodexDownload = (name, content, isBinary) => {{
+        let blob;
+        if (detectIsBinary(content, name, isBinary)) {{
+          blob = new Blob([latin1ToBytes(content)], {{type: 'application/octet-stream'}});
+        }} else {{
+          blob = new Blob([content], {{type: 'text/plain;charset=utf-8'}});
+        }}
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = name;
@@ -1197,40 +1571,63 @@ class EchoCodexUI(EchoUI):
       }};
 
       // Chargement de contenu depuis le backend Python
-      window.echoCodexSetContent = (content, filename) => {{
+      window.echoCodexSetContent = (content, filename, isBinary) => {{
         if (!editor) {{
-          pendingContent = {{ content: content ?? '', filename: filename ?? '' }};
+          pendingContent = {{ content: content ?? '', filename: filename ?? '', isBinary: isBinary }};
           return;
         }}
         const lang = detectFileLang(filename);
-        const model = monaco.editor.createModel(content ?? '', lang);
-        editor.setModel(model);
-        editor.onDidChangeModelContent(() => {{
-          modified = true; renderFileTree(); updateSaveButton();
-          if (previewOpen) {{
-            clearTimeout(previewDebounceTimer);
-            previewDebounceTimer = setTimeout(updatePreview, 400);
-          }}
-        }});
+        const isBin = detectIsBinary(content, filename, isBinary);
+        setBinaryEditorMode(isBin, content ?? '');
+
+        if (!isBin) {{
+          const model = monaco.editor.createModel(content ?? '', lang);
+          editor.setModel(model);
+          editor.onDidChangeModelContent(() => {{
+            modified = true; renderFileTree(); updateSaveButton();
+            if (previewOpen) {{
+              clearTimeout(previewDebounceTimer);
+              previewDebounceTimer = setTimeout(updatePreview, 400);
+            }}
+          }});
+        }}
         modified = false;
         updateSaveButton();
         // Mettre à jour le sélecteur de langage
         const langSelect = document.getElementById(CODEX_ID + '-lang');
-        if (langSelect) langSelect.value = lang;
-        updateStatus(filename ? (filename + ' \u2022 charg\u00e9') : 'Pr\u00eat');
-        // Preview : mise à jour du bouton et du rendu
+        if (langSelect) {{
+          let opt = Array.from(langSelect.options).find(o => o.value === lang);
+          if (!opt && lang) {{
+            opt = document.createElement('option');
+            opt.value = lang;
+            opt.textContent = lang;
+            langSelect.appendChild(opt);
+          }}
+          langSelect.value = lang;
+        }}
+        updateStatus(filename ? (filename + (isBin ? ' • HEX' : '') + ' \u2022 charg\u00e9') : 'Pr\u00eat');
+        // Preview : ouverture automatique si le fichier est éligible au registre de preview (Option 2.A),
+        // tout en restant désactivable/activable manuellement via le bouton 👁️
         updatePreviewButton();
-        if (previewOpen && !PREVIEW_LANGS.includes(lang)) {{
-          togglePreview(false);
+        if (getPreviewSpec(lang)) {{
+          if (!previewOpen) {{
+            togglePreview(true);
+          }} else {{
+            updatePreview();
+          }}
         }} else if (previewOpen) {{
-          updatePreview();
+          togglePreview(false);
         }}
       }};
 
       window.echoCodexLoadVersion = (content, info, idx, total) => {{
         isHistoryMode = true;
         historyContent = content;
-        if (editor) {{
+        if (isCurrentBinary) {{
+          hexBytes = latin1ToBytes(content ?? '');
+          selectedHexOffset = 0;
+          renderHexRows();
+        }} else if (editor) {{
           editor.setValue(content);
           editor.updateOptions({{readOnly: true}});
         }}
@@ -1252,7 +1649,7 @@ class EchoCodexUI(EchoUI):
         updateStatus(currentFile ? currentFile + ' \u2022 HEAD' : 'Pr\u00eat');
       }}
 
-      // ===== PREVIEW PANEL =====
+      // ===== PREVIEW PANEL & DECLARATIVE PREVIEW REGISTRY =====
 
       // Styles prose pour le rendu Markdown
       if (!document.getElementById(CODEX_ID + '-prose-styles')) {{
@@ -1282,21 +1679,36 @@ class EchoCodexUI(EchoUI):
         document.head.appendChild(_ps);
       }}
 
+      const PREVIEW_REGISTRY = {{
+        markdown: {{ label: 'Markdown Preview', printable: true, copyable: true, render: (c, el) => renderMarkdown(c, el) }},
+        html:     {{ label: 'HTML Preview',     printable: true, copyable: true, render: (c, el) => renderHTML(c, el) }},
+        css:      {{ label: 'CSS Preview',      printable: false, copyable: true, render: (c, el) => renderCSS(c, el) }},
+        xml:      {{ label: 'SVG Preview',      printable: false, copyable: true, render: (c, el) => renderSVG(c, el) }},
+        pdf:      {{ label: 'PDF Preview',      printable: false, copyable: false, render: (c, el) => renderPDF(c, el) }},
+        image:    {{ label: 'Image Preview',    printable: false, copyable: false, render: (c, el) => renderImage(c, el) }}
+      }};
+
+      function getPreviewSpec(langOverride) {{
+        const lang = langOverride || (currentFile ? detectFileLang(currentFile) : null);
+        return (lang && PREVIEW_REGISTRY[lang]) ? PREVIEW_REGISTRY[lang] : null;
+      }}
+
       function getPreviewLang() {{
         if (!currentFile) return null;
         const lang = detectFileLang(currentFile);
-        return PREVIEW_LANGS.includes(lang) ? lang : null;
+        return PREVIEW_REGISTRY[lang] ? lang : null;
       }}
 
       function updatePreviewButton() {{
         const btn = document.getElementById(CODEX_ID + '-preview-toggle');
         if (!btn) return;
         const lang = getPreviewLang();
-        if (lang) {{
+        const spec = getPreviewSpec(lang);
+        if (spec) {{
           btn.disabled = false;
           btn.style.opacity = previewOpen ? '1' : '0.6';
           btn.style.color = previewOpen ? accentColor : textColor;
-          btn.title = 'Pr\u00e9visualisation ' + lang.toUpperCase();
+          btn.title = spec.label + (previewOpen ? ' (Actif - cliquer pour masquer)' : ' (Inactif - cliquer pour afficher)');
         }} else {{
           btn.disabled = true;
           btn.style.opacity = '0.25';
@@ -1312,7 +1724,7 @@ class EchoCodexUI(EchoUI):
 
         previewOpen = forceState !== undefined ? forceState : !previewOpen;
 
-        if (previewOpen && !getPreviewLang()) {{
+        if (previewOpen && !getPreviewSpec()) {{
           previewOpen = false;
           return;
         }}
@@ -1334,34 +1746,21 @@ class EchoCodexUI(EchoUI):
 
       function updatePreview() {{
         const lang = getPreviewLang();
-        if (!lang || !previewOpen) return;
+        const spec = getPreviewSpec(lang);
+        if (!spec || !previewOpen) return;
 
-        const content = editor ? editor.getValue() : '';
+        const content = getActiveContent();
         const container = document.getElementById(CODEX_ID + '-preview-content');
         const label = document.getElementById(CODEX_ID + '-preview-label');
         const printBtn = document.getElementById(CODEX_ID + '-preview-print');
         const copyBtn = document.getElementById(CODEX_ID + '-preview-copy');
         if (!container) return;
 
-        if (printBtn) printBtn.style.display = (lang === 'markdown' || lang === 'html') ? 'flex' : 'none';
-        if (copyBtn) copyBtn.style.display = PREVIEW_LANGS.includes(lang) ? 'flex' : 'none';
+        if (label) label.textContent = spec.label;
+        if (printBtn) printBtn.style.display = spec.printable ? 'flex' : 'none';
+        if (copyBtn) copyBtn.style.display = spec.copyable ? 'flex' : 'none';
 
-        if (lang === 'markdown') {{
-          if (label) label.textContent = 'Markdown Preview';
-          renderMarkdown(content, container);
-        }} else if (lang === 'html') {{
-          if (label) label.textContent = 'HTML Preview';
-          renderHTML(content, container);
-        }} else if (lang === 'css') {{
-          if (label) label.textContent = 'CSS Preview';
-          renderCSS(content, container);
-        }} else if (lang === 'xml') {{
-          if (label) label.textContent = 'SVG Preview';
-          renderSVG(content, container);
-        }} else if (lang === 'pdf') {{
-          if (label) label.textContent = 'PDF Preview';
-          renderPDF(content, container);
-        }}
+        spec.render(content, container);
       }}
 
       function renderMarkdown(content, container) {{
@@ -1428,10 +1827,7 @@ class EchoCodexUI(EchoUI):
       function renderPDF(content, container) {{
         container.style.padding = '0';
         try {{
-          const bytes = new Uint8Array(content.length);
-          for (let i = 0; i < content.length; i++) {{
-              bytes[i] = content.charCodeAt(i) & 0xff;
-          }}
+          const bytes = latin1ToBytes(content);
           const blob = new Blob([bytes], {{ type: 'application/pdf' }});
           const url = URL.createObjectURL(blob);
           
@@ -1450,6 +1846,22 @@ class EchoCodexUI(EchoUI):
           container.appendChild(iframe);
         }} catch (e) {{
           container.innerHTML = '<div style="color:#f38ba8; padding:12px;">\u274c Erreur lors du rendu du PDF (encodage invalide)</div>';
+        }}
+      }}
+
+      function renderImage(content, container) {{
+        container.style.padding = '12px';
+        try {{
+          const bytes = latin1ToBytes(content);
+          const ext = currentFile ? currentFile.substring(currentFile.lastIndexOf('.')).toLowerCase() : '.png';
+          const mimeMap = {{ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.bmp': 'image/bmp', '.ico': 'image/x-icon' }};
+          const blob = new Blob([bytes], {{ type: mimeMap[ext] || 'image/png' }});
+          const url = URL.createObjectURL(blob);
+          const oldImg = container.querySelector('img[data-blob]');
+          if (oldImg && oldImg.src.startsWith('blob:')) URL.revokeObjectURL(oldImg.src);
+          container.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;"><img data-blob="1" src="${{url}}" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:4px;" /></div>`;
+        }} catch (e) {{
+          container.innerHTML = '<div style="color:#f38ba8; padding:12px;">\u274c Erreur lors du rendu de l\u2019image</div>';
         }}
       }}
 
@@ -1549,9 +1961,9 @@ class EchoCodexUI(EchoUI):
 
       // ===== MONACO LOADER =====
       function initEditor() {{
-        editorWrap.innerHTML = '';
+        monacoWrap.innerHTML = '';
         const lang = detectFileLang(currentFile);
-        editor = monaco.editor.create(editorWrap, {{
+        editor = monaco.editor.create(monacoWrap, {{
           value: '', language: lang, theme: theme,
           automaticLayout: true, minimap: {{enabled: true}},
           fontSize: 13, lineNumbers: 'on', wordWrap: 'on',
@@ -1605,7 +2017,7 @@ class EchoCodexUI(EchoUI):
         if (pendingContent) {{
           const pc = pendingContent;
           pendingContent = null;
-          window.echoCodexSetContent(pc.content, pc.filename);
+          window.echoCodexSetContent(pc.content, pc.filename, pc.isBinary);
         }} else if (currentFile) {{
           updateStatus(currentFile + ' \u2022 chargement...');
           window.sendCodexAction({{action:'load_file', filename: currentFile}});

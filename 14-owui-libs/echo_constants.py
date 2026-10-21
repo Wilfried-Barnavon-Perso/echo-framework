@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.228.5.1
+version: 5.228.7.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.7.1: Factorisation SSOT de CODEX_LANG_TO_EXT, is_text_mime et is_binary_file pour le support binaire/hexadécimal du Codex.
 # 5.228.5.1: Réévaluation et espacement des seuils de rappels cognitifs multi-axes (AEC_REMINDERS).
 # 5.227.1.1: Suppression des constantes de compactage in-place (ECHO_COMPACTION_*, CONTEXT_COMPACTION_*).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.90: Définition canonique de OWUI_ORCHESTRATOR_MODEL ("echo_orchestrator") pour le modèle maître Open WebUI des tâches planifiées.
-# 5.89: Ajout des constantes de compactage contextuel in-place (ECHO_COMPACTION_*, CONTEXT_COMPACTION_*) pilotées par MODEL_APOLLO (32768 tokens).
 
 
 import os
@@ -482,20 +482,28 @@ CODEX_DIR_NAME = "codex"
 
 # Mapping extension → langage Monaco Editor
 CODEX_LANG_MAP = {
-    ".py": "python", ".js": "javascript", ".ts": "typescript",
+    ".py": "python", ".js": "javascript", ".jsx": "javascript", ".ts": "typescript", ".tsx": "typescript",
     ".c": "c", ".cpp": "cpp", ".h": "c", ".hpp": "cpp",
     ".java": "java", ".go": "go", ".rs": "rust", ".rb": "ruby",
     ".php": "php", ".swift": "swift", ".kt": "kotlin",
     ".cs": "csharp", ".vb": "vb",
-    ".sh": "shell", ".bash": "shell", ".ps1": "powershell", ".bat": "bat",
+    ".sh": "shell", ".bash": "shell", ".ps1": "powershell", ".bat": "bat", ".cmd": "bat",
     ".html": "html", ".htm": "html", ".css": "css",
-    ".json": "json", ".xml": "xml", ".yaml": "yaml", ".yml": "yaml",
+    ".json": "json", ".xml": "xml", ".svg": "xml", ".yaml": "yaml", ".yml": "yaml",
     ".toml": "toml", ".ini": "ini", ".conf": "plaintext",
-    ".md": "markdown", ".txt": "plaintext", ".log": "plaintext", ".pdf": "pdf",
+    ".md": "markdown", ".txt": "plaintext", ".log": "plaintext", ".csv": "plaintext", ".pdf": "pdf",
+    ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image",
+    ".webp": "image", ".bmp": "image", ".ico": "image",
     ".sql": "sql", ".r": "r", ".lua": "lua", ".pl": "perl",
     ".dockerfile": "dockerfile",
 }
 CODEX_DEFAULT_LANG = "plaintext"
+
+# Mapping inversé langage Monaco → extension (première extension canonique trouvée)
+CODEX_LANG_TO_EXT: dict[str, str] = {}
+for _ext, _lang in CODEX_LANG_MAP.items():
+    if _lang not in CODEX_LANG_TO_EXT and _lang not in ("pdf", "image"):
+        CODEX_LANG_TO_EXT[_lang] = _ext
 
 # Les prompts de la librairie CODEX ont été migrés vers 14-owui-libs/echo_prompts.py
 
@@ -706,14 +714,14 @@ MIME_MAPPING_TXT = {
         ".editorconfig", ".env", ".gitignore", ".go", ".h", ".hpp", ".ini",
         ".java", ".js", ".json", ".kt", ".log", ".lua", ".md", ".php", ".pl",
         ".ps1", ".py", ".r", ".rb", ".rs", ".sh", ".sql", ".swift", ".toml",
-        ".ts", ".txt", ".vb", ".xml", ".yaml", ".yml", "dockerfile", "makefile"
+        ".ts", ".tsx", ".jsx", ".txt", ".vb", ".xml", ".svg", ".yaml", ".yml", "dockerfile", "makefile"
     ],
     "text/html": [".html", ".htm"]
 }
 
 MIME_MAPPING_BIN = {
     "application/pdf": [".pdf"],
-    "image/png": [".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".bmp", ".gif", ".tiff"],
+    "image/png": [".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".bmp", ".gif", ".tiff", ".ico"],
     "audio/mpeg": [".mp3"],
     "audio/wav": [".wav"],
     "audio/mp3": [".aac", ".flac", ".ogg", ".m4a", ".opus"],
@@ -792,6 +800,77 @@ def get_gemini_mime(file_path: str) -> tuple[str, bool]:
 
     # 6. Le Rejet et Fallback Sécuritaire (Binaires purs)
     return "application/octet-stream", False
+
+
+def is_text_mime(mime: str, ext: str = "") -> bool:
+    """Détermine de manière unifiée si un type MIME (et extension optionnelle) correspond à un contenu textuel."""
+    if not mime:
+        return False
+    m = mime.lower()
+    e = ext.lower() if ext else ""
+    return (
+        m.startswith("text/")
+        or m in ("application/json", "application/xml", "application/javascript", "image/svg+xml")
+        or "xml" in m
+        or e in (".md", ".csv", ".svg", ".json", ".xml", ".yaml", ".yml", ".toml", ".ini", ".conf", ".env")
+    )
+
+
+def is_binary_file(file_path: str = "", raw_bytes: bytes = None) -> tuple[bool, str]:
+    """
+    Détermine de manière unifiée (SSOT) si un fichier (sur disque ou en mémoire) est binaire.
+    Retourne le tuple (is_binary: bool, mime_type: str).
+    """
+    ext = os.path.splitext(file_path)[1].lower().strip() if file_path else ""
+    filename = os.path.basename(file_path).lower() if file_path else ""
+
+    # 1. Résolution MIME via get_gemini_mime si le fichier existe sur disque
+    if file_path and os.path.exists(file_path):
+        mime, _ = get_gemini_mime(file_path)
+    else:
+        mime = None
+        for m, exts in MIME_MAPPING_TXT.items():
+            if ext in exts or filename in exts:
+                mime = m
+                break
+        if not mime:
+            for m, exts in MIME_MAPPING_BIN.items():
+                if ext in exts:
+                    mime = m
+                    break
+        if not mime and ext in CONVERTIBLE_OFFICE_EXTENSIONS:
+            mime = CONVERTIBLE_OFFICE_EXTENSIONS[ext]
+        if not mime and file_path:
+            mime, _ = mimetypes.guess_type(file_path)
+        if not mime and raw_bytes and filetype:
+            kind = filetype.guess(raw_bytes[:2048])
+            if kind:
+                mime = kind.mime
+        if not mime:
+            mime = "text/plain"
+
+    # 2. Si le MIME est explicitement non-textuel (ex: application/pdf, image/*, audio/*, video/*, octet-stream)
+    if not is_text_mime(mime, ext):
+        return True, mime
+
+    # 3. Épreuve sur les octets bruts (Null-byte ou séquence non-UTF-8 stricte)
+    sample = raw_bytes[:8192] if raw_bytes is not None else None
+    if sample is None and file_path and os.path.isfile(file_path):
+        try:
+            with open(file_path, "rb") as f:
+                sample = f.read(8192)
+        except Exception:
+            sample = b""
+
+    if sample:
+        if b"\x00" in sample:
+            return True, "application/octet-stream"
+        try:
+            sample.decode("utf-8")
+        except UnicodeDecodeError:
+            return True, "application/octet-stream"
+
+    return False, mime
 
 # ==============================================================================
 # DIRECTIVES DE DISTILLATION SENSORIELLE (UNIFIÉES)

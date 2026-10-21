@@ -1,17 +1,17 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 5.228.6.2
+version: 5.228.7.1
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.7.1: Prise en charge de is_binary lors du chargement, de l'import, de l'export et de la sauvegarde dans le Codex.
 # 5.228.6.2: Bascule de l'import UI sur la librairie dédiée echo_codex_ui (EchoCodexUI).
 # 5.228.2.1: Résilience post-standby (ré-attachement Socket.IO dynamique _resolve_live_events, éviction par loop_id), isolation asyncio.to_thread/try-except et chargement immédiat à l'import.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 3.17: Prise en charge de la fermeture propre et fiabilisation de la boucle RPC long-polling.
-# 3.16: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 
 import sys
 import uuid
@@ -251,14 +251,15 @@ class Action:
                                     if result:
                                         escaped_content = json.dumps(result["content"]).decode("utf-8")
                                         escaped_name = json.dumps(latest_file).decode("utf-8")
+                                        is_bin_js = "true" if result.get("is_binary") else "false"
                                         load_code = (
-                                            f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
+                                            f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name}, {is_bin_js});"
                                             f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
                                         )
                                         await events.call_execute(load_code)
                                         continue
                             
-                            clear_code = "if(window.echoCodexSetContent) window.echoCodexSetContent('', ''); if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile('');"
+                            clear_code = "if(window.echoCodexSetContent) window.echoCodexSetContent('', '', false); if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile('');"
                             await events.call_execute(clear_code)
                         except Exception as e:
                             import logging
@@ -282,18 +283,20 @@ class Action:
                                         result["content"]).decode("utf-8")
                                     escaped_name = json.dumps(
                                         current_file).decode("utf-8")
+                                    is_bin_js = "true" if result.get("is_binary") else "false"
                                     sync_code = (
-                                        f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
+                                        f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name}, {is_bin_js});"
                                     )
                                     await _refresh_tree()
                                     await events.call_execute(sync_code)
                                     continue
                             await _refresh_tree()
 
-                    # ---- SAUVEGARDE (Ctrl+S dans Monaco) ----
+                    # ---- SAUVEGARDE (Ctrl+S dans Monaco / Hex Editor) ----
                     elif action_type == "save":
                         filename = response.get("filename", "")
                         content = response.get("content", "")
+                        is_bin = response.get("is_binary", None)
                         lang = response.get(
                             "language") or CodexRepo.detect_language(filename)
 
@@ -302,11 +305,13 @@ class Action:
 
                         msg = f"Edit {filename}"
                         try:
-                            commit_hash = await asyncio.to_thread(repo.commit_file, filename, content, msg)
+                            commit_hash = await asyncio.to_thread(
+                                repo.commit_file, filename, content, msg, "ECHO Codex", is_bin
+                            )
                         except Exception as e:
                             await _notify_error(e)
                             continue
-                        line_count = content.count("\n") + 1
+                        line_count = ((len(content) + 15) // 16) if is_bin else (content.count("\n") + 1)
 
                         _sync_registry(filename, commit_hash, msg, line_count, lang)
 
@@ -373,9 +378,10 @@ class Action:
                             # Recharger le fichier dans l'éditeur
                             result = await asyncio.to_thread(repo.read_file, filename)
                             file_content = result["content"] if result else ""
+                            is_bin_js = "true" if (result and result.get("is_binary")) else "false"
                             escaped = json.dumps(file_content).decode("utf-8")
                             escaped_name = json.dumps(filename).decode("utf-8")
-                            load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
+                            load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name}, {is_bin_js});"
                             await events.call_execute(load_code)
                         except Exception as e:
                             await _notify_error(e)
@@ -391,9 +397,10 @@ class Action:
                             if filename:
                                 result = await asyncio.to_thread(repo.read_file, filename)
                                 file_content = result["content"] if result else ""
+                                is_bin_js = "true" if (result and result.get("is_binary")) else "false"
                                 escaped = json.dumps(file_content).decode("utf-8")
                                 escaped_name = json.dumps(filename).decode("utf-8")
-                                load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
+                                load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name}, {is_bin_js});"
                                 await events.call_execute(load_code)
                         except Exception as e:
                             await _notify_error(e)
@@ -411,7 +418,8 @@ class Action:
                                         result["content"]).decode("utf-8")
                                     escaped_name = json.dumps(
                                         filename).decode("utf-8")
-                                    load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
+                                    is_bin_js = "true" if result.get("is_binary") else "false"
+                                    load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name}, {is_bin_js});"
                                     await events.call_execute(load_code)
                             await events.status("🔄 Actualisé.", done=True)
                         except Exception as e:
@@ -434,20 +442,25 @@ class Action:
                         try:
                             last_uploaded_name = None
                             last_uploaded_content = ""
+                            last_uploaded_bin = False
                             commit_hash = ""
                             for f in files_list:
                                 filename = f.get("filename", "")
                                 content = f.get("content", "")
+                                is_bin = f.get("is_binary", None)
                                 if not filename:
                                     continue
 
                                 lang = CodexRepo.detect_language(filename)
                                 commit_hash = await asyncio.to_thread(
-                                    repo.commit_file, filename, content, f"Import {filename}"
+                                    repo.commit_file, filename, content, f"Import {filename}", "ECHO Codex", is_bin
                                 )
-                                line_count = content.count("\n") + 1
+                                read_back = await asyncio.to_thread(repo.read_file, filename)
+                                actual_bin = bool(read_back.get("is_binary")) if read_back else bool(is_bin)
+                                line_count = ((len(content) + 15) // 16) if actual_bin else (content.count("\n") + 1)
                                 last_uploaded_name = filename
                                 last_uploaded_content = content
+                                last_uploaded_bin = actual_bin
 
                                 if current_workspace != "sandbox":
                                     _sync_registry(filename, commit_hash, f"Import {filename}", line_count, lang)
@@ -459,6 +472,7 @@ class Action:
                             if last_uploaded_name:
                                 escaped_name = json.dumps(last_uploaded_name).decode("utf-8")
                                 escaped_content = json.dumps(last_uploaded_content).decode("utf-8")
+                                is_bin_js = "true" if last_uploaded_bin else "false"
                                 status_msg = json.dumps(
                                     f"📂 {last_uploaded_name} importé ({commit_hash[:7]})"
                                     if len(files_list) == 1
@@ -467,7 +481,7 @@ class Action:
                                 upload_js = (
                                     f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
                                     f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
-                                    f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
+                                    f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name}, {is_bin_js});"
                                     f"if(window.echoCodexNotify) window.echoCodexNotify('info', {status_msg});"
                                 )
                                 await events.call_execute(upload_js)
@@ -490,7 +504,8 @@ class Action:
                                 escaped = json.dumps(
                                     result["content"]).decode("utf-8")
                                 escaped_name = json.dumps(filename).decode("utf-8")
-                                dl_code = f"if(window.echoCodexDownload) window.echoCodexDownload({escaped_name}, {escaped});"
+                                is_bin_js = "true" if result.get("is_binary") else "false"
+                                dl_code = f"if(window.echoCodexDownload) window.echoCodexDownload({escaped_name}, {escaped}, {is_bin_js});"
                                 await events.call_execute(dl_code)
                         except Exception as e:
                             await _notify_error(e)
@@ -687,10 +702,11 @@ class Action:
                             if result is None:
                                 continue
                             content = result["content"]
+                            is_bin_js = "true" if result.get("is_binary") else "false"
                             
                             escaped = json.dumps(content).decode("utf-8")
                             escaped_name = json.dumps(filename).decode("utf-8")
-                            load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name});"
+                            load_code = f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped}, {escaped_name}, {is_bin_js});"
                             
                             await events.call_execute(load_code)
                         except Exception as e:
@@ -732,16 +748,17 @@ class Action:
                                     first_escaped = json.dumps(first).decode("utf-8")
                                     result = await asyncio.to_thread(repo.read_file, first)
                                     content = result["content"] if result else ""
+                                    is_bin_js = "true" if (result and result.get("is_binary")) else "false"
                                     escaped_content = json.dumps(content).decode("utf-8")
-                                    switch_code = f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({first_escaped}); if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {first_escaped});"
+                                    switch_code = f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({first_escaped}); if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {first_escaped}, {is_bin_js});"
                                     await events.call_execute(switch_code)
                                 else:
                                     empty_escaped = json.dumps("").decode("utf-8")
-                                    switch_code = f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile(null); if(window.echoCodexSetContent) window.echoCodexSetContent({empty_escaped}, null);"
+                                    switch_code = f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile(null); if(window.echoCodexSetContent) window.echoCodexSetContent({empty_escaped}, null, false);"
                                     await events.call_execute(switch_code)
                             else:
                                 empty_escaped = json.dumps("").decode("utf-8")
-                                switch_code = f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile(null); if(window.echoCodexSetContent) window.echoCodexSetContent({empty_escaped}, null);"
+                                switch_code = f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile(null); if(window.echoCodexSetContent) window.echoCodexSetContent({empty_escaped}, null, false);"
                                 await events.call_execute(switch_code)
 
                         await events.status(f"🗑️ {filename} supprimé.", done=True)
@@ -783,12 +800,13 @@ class Action:
                                     new_current_file = new_name + current_file[len(old_name):]
                                     result = await asyncio.to_thread(repo.read_file, new_current_file)
                                     content = result["content"] if result else ""
+                                    is_bin_js = "true" if (result and result.get("is_binary")) else "false"
                                     escaped_name = json.dumps(new_current_file).decode("utf-8")
                                     escaped_content = json.dumps(content).decode("utf-8")
                                     combined = (
                                         f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
                                         f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
-                                        f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
+                                        f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name}, {is_bin_js});"
                                     )
                                 else:
                                     combined = (
@@ -797,11 +815,12 @@ class Action:
                             else:
                                 escaped_name = json.dumps(new_name).decode("utf-8")
                                 content = result["content"] if result else ""
+                                is_bin_js = "true" if (result and result.get("is_binary")) else "false"
                                 escaped_content = json.dumps(content).decode("utf-8")
                                 combined = (
                                     f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
                                     f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({files_json}, '{current_workspace}');"
-                                    f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name});"
+                                    f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name}, {is_bin_js});"
                                 )
                             await events.call_execute(combined)
                             await events.status(f"✏️ Renommé : {old_name} → {new_name} ({commit_hash[:7]})", done=True)
