@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.228.7.1
+version: 5.228.8.2
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.8.2: Résolution MIME déterministe dans is_binary_file (sans écrasement text/plain par get_gemini_mime) et détection des octets de contrôle C0.
 # 5.228.7.1: Factorisation SSOT de CODEX_LANG_TO_EXT, is_text_mime et is_binary_file pour le support binaire/hexadécimal du Codex.
 # 5.228.5.1: Réévaluation et espacement des seuils de rappels cognitifs multi-axes (AEC_REMINDERS).
 # 5.227.1.1: Suppression des constantes de compactage in-place (ECHO_COMPACTION_*, CONTEXT_COMPACTION_*).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 5.90: Définition canonique de OWUI_ORCHESTRATOR_MODEL ("echo_orchestrator") pour le modèle maître Open WebUI des tâches planifiées.
 
 
 import os
@@ -824,36 +824,23 @@ def is_binary_file(file_path: str = "", raw_bytes: bytes = None) -> tuple[bool, 
     ext = os.path.splitext(file_path)[1].lower().strip() if file_path else ""
     filename = os.path.basename(file_path).lower() if file_path else ""
 
-    # 1. Résolution MIME via get_gemini_mime si le fichier existe sur disque
-    if file_path and os.path.exists(file_path):
-        mime, _ = get_gemini_mime(file_path)
-    else:
-        mime = None
-        for m, exts in MIME_MAPPING_TXT.items():
-            if ext in exts or filename in exts:
+    # 1. Résolution MIME déterministe (priorité au registre SSOT ECHO)
+    mime = None
+    for m, exts in MIME_MAPPING_TXT.items():
+        if ext in exts or filename in exts:
+            mime = m
+            break
+    if not mime:
+        for m, exts in MIME_MAPPING_BIN.items():
+            if ext in exts:
                 mime = m
                 break
-        if not mime:
-            for m, exts in MIME_MAPPING_BIN.items():
-                if ext in exts:
-                    mime = m
-                    break
-        if not mime and ext in CONVERTIBLE_OFFICE_EXTENSIONS:
-            mime = CONVERTIBLE_OFFICE_EXTENSIONS[ext]
-        if not mime and file_path:
-            mime, _ = mimetypes.guess_type(file_path)
-        if not mime and raw_bytes and filetype:
-            kind = filetype.guess(raw_bytes[:2048])
-            if kind:
-                mime = kind.mime
-        if not mime:
-            mime = "text/plain"
+    if not mime and ext in CONVERTIBLE_OFFICE_EXTENSIONS:
+        mime = CONVERTIBLE_OFFICE_EXTENSIONS[ext]
+    if not mime and file_path:
+        mime, _ = mimetypes.guess_type(file_path)
 
-    # 2. Si le MIME est explicitement non-textuel (ex: application/pdf, image/*, audio/*, video/*, octet-stream)
-    if not is_text_mime(mime, ext):
-        return True, mime
-
-    # 3. Épreuve sur les octets bruts (Null-byte ou séquence non-UTF-8 stricte)
+    # Lecture d'un échantillon de 8 Ko si nécessaire
     sample = raw_bytes[:8192] if raw_bytes is not None else None
     if sample is None and file_path and os.path.isfile(file_path):
         try:
@@ -862,12 +849,21 @@ def is_binary_file(file_path: str = "", raw_bytes: bytes = None) -> tuple[bool, 
         except Exception:
             sample = b""
 
+    if not mime and sample and filetype:
+        kind = filetype.guess(sample[:2048])
+        if kind:
+            mime = kind.mime
+    if not mime:
+        mime = "text/plain"
+
+    # 2. Si le MIME est explicitement non-textuel (ex: application/pdf, image/*, audio/*, video/*, octet-stream)
+    if not is_text_mime(mime, ext):
+        return True, mime
+
+    # 3. Épreuve sur les octets bruts (octet nul 0x00 ou octets de contrôle C0 binaires 0x01..0x08, 0x0E..0x1F hors ESC)
+    # Préserve intégralement l'UTF-8 et les caractères accentués ISO-8859-1 / Windows-1252 (>= 0x80)
     if sample:
-        if b"\x00" in sample:
-            return True, "application/octet-stream"
-        try:
-            sample.decode("utf-8")
-        except UnicodeDecodeError:
+        if b"\x00" in sample or any((1 <= b <= 8) or (14 <= b <= 31 and b != 27) for b in sample):
             return True, "application/octet-stream"
 
     return False, mime

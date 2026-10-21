@@ -1,11 +1,12 @@
 """
 title: ECHO Codex UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.228.7.2
+version: 5.228.8.1
 description: Composant système interne : Moteur de rendu HUD Monaco et Éditeur Hexadécimal pour ECHO Codex.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.8.1: Propagation explicite du flag is_binary lors de l'import de fichiers DOM (upload).
 # 5.228.7.2: Inversion des icônes Importer/Exporter, éditeur hexadécimal virtualisé sur fichiers binaires, PREVIEW_REGISTRY extensible avec auto-ouverture débrayable et factorisation SSOT des langages.
 # 5.228.6.2: Extraction et factorisation du moteur HUD Monaco Codex depuis echo_ui.py vers echo_codex_ui.py (EchoCodexUI héritant de EchoUI).
 
@@ -986,7 +987,7 @@ class EchoCodexUI(EchoUI):
             }} else {{
               contentStr = new TextDecoder('utf-8').decode(bytes);
             }}
-            filesData.push({{filename: file.name, content: contentStr}});
+            filesData.push({{filename: file.name, content: contentStr, is_binary: isBin}});
           }} catch (err) {{
             console.error('[ECHO Codex] File read error:', err);
           }}

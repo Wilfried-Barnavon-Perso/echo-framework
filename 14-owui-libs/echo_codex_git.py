@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 5.228.7.2
+version: 5.228.8.2
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.8.2: Correction de commit_file (préservation LF stricte newline="" et textes Unicode hors plage Latin-1) et auto-réparation du décodage UTF-8/Latin-1 dans read_file.
 # 5.228.7.2: Support binaire sans perte (latin-1 bijection) dans read_file, commit_file, get_file_at_commit et list_directory via is_binary_file (echo_constants).
 # 5.228.2.1: Protection os.path.isfile dans read_file contre IsADirectoryError et découverte des dossiers physiques vides dans list_directory (workspace main).
 # 5.226.18.1: Ajout de restore_repo_to_timestamp pour restaurer l'arbre Git main lors d'un fork intermédiaire.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.10: Application stricte de ECHO_SYNC_EXCLUDE_LIST pour prévenir le gel UI sur les gros dossiers sandbox.
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
 # desc.
 
@@ -79,17 +79,30 @@ class CodexRepo:
         filepath = os.path.join(self.repo_path, safe_name)
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
-        if is_binary is None:
-            raw_probe = content.encode("latin-1", errors="ignore")[:8192] if isinstance(content, str) else None
-            is_binary, _ = is_binary_file(filepath, raw_probe)
+        latin1_bytes = None
+        if isinstance(content, str):
+            try:
+                latin1_bytes = content.encode("latin-1")
+            except UnicodeEncodeError:
+                latin1_bytes = None
+                is_binary = False
 
-        if is_binary:
-            raw_bytes = content.encode("latin-1") if isinstance(content, str) else content
+            if is_binary is None:
+                probe = b"\x00" if "\x00" in content else b""
+                is_binary, _ = is_binary_file(safe_name, probe)
+        elif isinstance(content, (bytes, bytearray)):
+            if is_binary is None:
+                is_binary, _ = is_binary_file(safe_name, bytes(content[:8192]))
+
+        if is_binary and latin1_bytes is not None:
             with open(filepath, "wb") as f:
-                f.write(raw_bytes)
-        else:
-            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(latin1_bytes)
+        elif is_binary and isinstance(content, (bytes, bytearray)):
+            with open(filepath, "wb") as f:
                 f.write(content)
+        else:
+            with open(filepath, "w", encoding="utf-8", newline="") as f:
+                f.write(content if isinstance(content, str) else content.decode("utf-8", errors="replace"))
 
         porcelain.add(self.repo_path, paths=[safe_name])
         commit_sha = porcelain.commit(
@@ -123,7 +136,10 @@ class CodexRepo:
                 "size_bytes": len(raw_bytes),
             }
 
-        text_content = raw_bytes.decode("utf-8", errors="replace")
+        try:
+            text_content = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            text_content = raw_bytes.decode("latin-1")
         lines = text_content.splitlines(True)
         total = len(lines)
 
@@ -572,7 +588,10 @@ class CodexRepo:
                     is_bin, _ = is_binary_file(safe_name, blob.data)
                     if is_bin:
                         return blob.data.decode("latin-1")
-                    return blob.data.decode("utf-8", errors="replace")
+                    try:
+                        return blob.data.decode("utf-8")
+                    except UnicodeDecodeError:
+                        return blob.data.decode("latin-1")
         except Exception:
             pass
         return None
