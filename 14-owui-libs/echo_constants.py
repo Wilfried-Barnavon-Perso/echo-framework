@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.227.1.1
+version: 5.228.5.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.5.1: Réévaluation et espacement des seuils de rappels cognitifs multi-axes (AEC_REMINDERS).
 # 5.227.1.1: Suppression des constantes de compactage in-place (ECHO_COMPACTION_*, CONTEXT_COMPACTION_*).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.90: Définition canonique de OWUI_ORCHESTRATOR_MODEL ("echo_orchestrator") pour le modèle maître Open WebUI des tâches planifiées.
 # 5.89: Ajout des constantes de compactage contextuel in-place (ECHO_COMPACTION_*, CONTEXT_COMPACTION_*) pilotées par MODEL_APOLLO (32768 tokens).
-# 5.88: Alignement documentaire interne sur echo_orchestrator.
 
 
 import os
@@ -207,38 +207,38 @@ ECHO_RETRY_JITTER_MAX    = 1.3
 AEC_REMINDERS = [
     {
         "id": "context_hygiene",
-        "token_threshold": 120000,
-        "tool_calls_threshold": 40,
+        "token_threshold": 140000,
+        "tool_calls_threshold": 65,
         "message": "Rappel : Charge contextuelle élevée. Le Modèle DOIT recentrer son attention sur le vecteur thématique principal et consolider le Méta-Artéfact Résumé. Appliquer le PGCU."
     },
     {
         "id": "kernel",
-        "token_threshold": 88000,
-        "tool_calls_threshold": 30,
+        "token_threshold": 100000,
+        "tool_calls_threshold": 50,
         "message": "Rappel : L'alignement sur le Kernel et la rigueur d'analyse sont FONDAMENTAUX."
     },
     {
         "id": "factuality",
-        "token_threshold": 55000,
-        "tool_calls_threshold": 25,
+        "token_threshold": 70000,
+        "tool_calls_threshold": 35,
         "message": "Rappel : Toute hypothèse non vérifiée est présumée incertaine. Le Modèle DOIT sourcer rigoureusement et vérifier via recherche Web ou inspection de code si un doute subsiste. Appliquer le PRAF."
     },
     {
-        "id": "alignment",
-        "token_threshold": 34000,
-        "tool_calls_threshold": 15,
-        "message": "Rappel : Le Modèle DOIT s'assurer de maintenir et respecter scrupuleusement le Profil d'Alignement et les préférences de l'Utilisateur. Appliquer le PACP."
-    },
-    {
         "id": "strategy",
-        "token_threshold": 34000,
-        "tool_calls_threshold": 15,
+        "token_threshold": 60000,
+        "tool_calls_threshold": 30,
         "message": "Rappel : Le Modèle DOIT s'assurer de mettre à jour judicieusement, et appliquer, ses Hypothèses d'Apprentissage et le plan stratégique en cours pour éviter la vision tunnel. Appliquer le PRAC."
     },
     {
+        "id": "alignment",
+        "token_threshold": 55000,
+        "tool_calls_threshold": 28,
+        "message": "Rappel : Le Modèle DOIT s'assurer de maintenir et respecter scrupuleusement le Profil d'Alignement et les préférences de l'Utilisateur. Appliquer le PACP."
+    },
+    {
         "id": "efficiency",
-        "token_threshold": 22000,
-        "tool_calls_threshold": 9,
+        "token_threshold": 44000,
+        "tool_calls_threshold": 18,
         "message": "Rappel : Le Modèle DOIT privilégier l'usage de Sous-Agents pour économiser son contexte. Appliquer le PARE."
     }
 ]
