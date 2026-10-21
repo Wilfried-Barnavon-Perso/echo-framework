@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 5.227.1.1
+version: 5.228.9.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.9.1: Ajustement sémantique du prompt new_cognitive_level (alignement sur tâches agentiques/résolution technique et PTD).
 # 5.227.1.1: Suppression des références au compactage in-place (AEC_context_checkpoint, EchoCompactionEngine) et renvoi vers l'action de migration de session.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 192.88: Transmission des métriques de Checkpoint Cognitif actif (compaction_count, compacted_turns) à EchoUI.deploy_context_gauge.
 # 192.87: Support de <artifact id="AEC_context_checkpoint"> sur le message pivot (préservation bit-perfect du shadow et séparation PGCU).
-# 192.86: Renommage du composant en echo_orchestrator.py (Écho / ECHO - Orchestrateur).
 
 
 # ==============================================================================
@@ -961,13 +961,13 @@ class Pipe:
                             "qualité de la réponse ou optimiser les ressources.\n\n"
                             "## Règles de sélection\n"
                             "- **MODEL_ZEPHYR** (Réflexe — défaut) : Salutations, remerciements, extractions simples, "
-                            "traduction courte, le simple réflexe ou la simple conversation. L'inertie "
+                            "traduction, explications directes ou conversation courante sans outil. L'inertie "
                             "en ZEPHYR est proscrite et demande une évaluation silencieuse.\n"
-                            "- **MODEL_APOLLO** (Exécution — moteur agentique) : Escalade requise pour toute "
-                            "tâche non-triviale (Recherche web, code, analyse, orchestration d'outils, "
+                            "- **MODEL_APOLLO** (Exécution — moteur agentique et analytique) : Escalade requise pour toute "
+                            "tâche agentique ou résolution technique (Recherche web, orchestration d'outils, code, analyse structurée, "
                             "planification, raisonnement multi-étapes).\n"
-                            "  \u2192 Le Modèle escalade vers APOLLO systématiquement dès que la tâche dépasse "
-                            "le simple réflexe. L'inertie en APOLLO est proscrite et demande une évaluation silencieuse.\n"
+                            "  \u2192 Le Modèle escalade vers APOLLO dès que la tâche requiert l'usage d'outils "
+                            "ou dépasse la discussion courante. L'inertie en APOLLO est proscrite et demande une évaluation silencieuse.\n"
                             "- **MODEL_PROMETHEUS** (Expertise & Réflexion Profonde) : Dès qu'une tâche nécessite un "
                             "raisonnement cognitif poussé, une anticipation structurelle ou une logique formelle. "
                             "Privilégier de manière proactive.\n"
