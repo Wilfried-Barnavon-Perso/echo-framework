@@ -1,15 +1,15 @@
 """
 title: Jobs Omnisearch MCP Module
-version: 5.228.9.3
+version: 5.228.9.4
 description: Module MCP Omnisearch Jobs avec filtrage dynamique de séniorité, France Travail et WTTJ.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.9.4: WTTJ Algolia out-of-the-box, pacing humanisé séquentiel APEC et neutralisation de la pollution de debug.
 # 5.228.9.3: Persistance atomique du jeton OAuth2 France Travail sur le volume echo-mcp-cache.
 # 5.228.9.2: Intégration de France Travail (OAuth2 v2) et Welcome to the Jungle (WTTJ).
 # 5.228.9.1: Ajout du filtrage de séniorité LinkedIn (f_E), résolution sémantique et standardisation PAS des docstrings.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.1: Fix APEC job details extraction by parsing HTML via BeautifulSoup instead of deprecated JSON fields.
 import asyncio
 import json
 import logging
@@ -29,12 +29,31 @@ logger = logging.getLogger(__name__)
 
 # Constants
 DEFAULT_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     "Accept-Language": "fr-FR,fr;q=0.9,en-US;q=0.8",
 }
 
 _semaphore = asyncio.Semaphore(5)
+_apec_semaphore = asyncio.Semaphore(1)
+_last_apec_request_time = 0.0
+
+
+async def _apec_human_delay(min_delay: float = 1.8, max_delay: float = 3.5) -> None:
+    """Impose un espacement temporel dynamique et un jitter non-linéaire mimant la navigation humaine."""
+    global _last_apec_request_time
+    now = time.time()
+    elapsed = now - _last_apec_request_time
+    target = random.uniform(min_delay, max_delay)
+    if elapsed < target:
+        await asyncio.sleep(target - elapsed)
+    else:
+        await asyncio.sleep(random.uniform(0.8, 1.5))
+    _last_apec_request_time = time.time()
+
 
 async def _fetch_with_retry(client: httpx.AsyncClient, method: str, url: str, **kwargs) -> httpx.Response:
     """Fetch URL with exponential backoff on 429."""
@@ -192,7 +211,7 @@ async def _details_linkedin(job_id: str) -> str:
             return soup.get_text(separator='\n', strip=True)
 
 # ==========================================
-# APEC EXTRACTOR
+# APEC EXTRACTOR (PACING HUMAIN & RÉSILIENCE)
 # ==========================================
 async def _search_apec(keywords: str, location: str, limit: int) -> list:
     results = []
@@ -210,11 +229,21 @@ async def _search_apec(keywords: str, location: str, limit: int) -> list:
     
     headers = DEFAULT_HEADERS.copy()
     headers["Content-Type"] = "application/json"
+    headers["Origin"] = "https://www.apec.fr"
+    headers["Referer"] = "https://www.apec.fr/candidat/recherche-emploi.html"
     
-    async with _semaphore:
-        async with httpx.AsyncClient(headers=headers, follow_redirects=True) as client:
+    datadome_cookie = os.environ.get("APEC_DATADOME_COOKIE", "").strip()
+    if datadome_cookie:
+        headers["Cookie"] = f"datadome={datadome_cookie}"
+    
+    async with _apec_semaphore:
+        await _apec_human_delay(min_delay=1.8, max_delay=3.5)
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=20.0) as client:
             try:
                 resp = await _fetch_with_retry(client, 'POST', url, json=payload)
+                if resp.status_code == 403:
+                    logger.warning("APEC : Défi anti-bot DataDome actif.")
+                    return results
                 data = resp.json()
                 resultats = data.get('resultats', [])
                 for o in resultats[:limit]:
@@ -227,21 +256,21 @@ async def _search_apec(keywords: str, location: str, limit: int) -> list:
                         "url": f"https://www.apec.fr/candidat/recherche-emploi.html/emploi/detail-offre/{o.get('numeroOffre','')}"
                     })
             except Exception as e:
-                logger.error(f"APEC search error: {e}")
-                results.append({
-                    "source": "apec_error",
-                    "id": "error",
-                    "title": f"DEBUG ERROR: {type(e).__name__}",
-                    "company": str(e),
-                    "location": "N/A",
-                    "url": "N/A"
-                })
+                logger.warning(f"Recherche APEC indisponible (défi DataDome ou réseau) : {e}")
     return results
 
 async def _details_apec(job_id: str) -> str:
     url = f"https://www.apec.fr/cms/webservices/offre/public?numeroOffre={job_id}"
-    async with _semaphore:
-        async with httpx.AsyncClient(headers=DEFAULT_HEADERS, follow_redirects=True) as client:
+    headers = DEFAULT_HEADERS.copy()
+    headers["Referer"] = "https://www.apec.fr/candidat/recherche-emploi.html"
+    
+    datadome_cookie = os.environ.get("APEC_DATADOME_COOKIE", "").strip()
+    if datadome_cookie:
+        headers["Cookie"] = f"datadome={datadome_cookie}"
+
+    async with _apec_semaphore:
+        await _apec_human_delay(min_delay=1.5, max_delay=3.0)
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=20.0) as client:
             try:
                 resp = await _fetch_with_retry(client, 'GET', url)
                 data = resp.json()
@@ -455,7 +484,8 @@ async def _details_france_travail(job_id: str) -> str:
 # ==========================================
 # WELCOME TO THE JUNGLE (WTTJ)
 # ==========================================
-WTTJ_ALGOLIA_APP_ID = "CSEKHVMS53"
+WTTJ_DEFAULT_ALGOLIA_APP_ID = "CSEKHVMS53"
+WTTJ_DEFAULT_ALGOLIA_API_KEY = "4bd8f6215d0cc52b26430765769e65a0"
 
 
 async def _search_wttj(
@@ -464,22 +494,31 @@ async def _search_wttj(
     limit: int,
     seniority: Optional[str] = None
 ) -> list:
-    """Recherche d'offres WTTJ via index Algolia ou fallback résilient."""
+    """Recherche d'offres WTTJ via index Algolia officiel avec clé publique et fallback sécurisé."""
     results = []
-    api_key = os.environ.get("WTTJ_ALGOLIA_API_KEY", "").strip()
-    if not api_key:
-        return results
+    app_id = os.environ.get("WTTJ_ALGOLIA_APP_ID", WTTJ_DEFAULT_ALGOLIA_APP_ID).strip()
+    api_key = os.environ.get("WTTJ_ALGOLIA_API_KEY", WTTJ_DEFAULT_ALGOLIA_API_KEY).strip()
 
-    url = f"https://{WTTJ_ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/wttj_jobs_production_fr/query"
+    url = f"https://{app_id}-dsn.algolia.net/1/indexes/wttj_jobs_production_fr/query"
     headers = {
-        "X-Algolia-Application-Id": WTTJ_ALGOLIA_APP_ID,
+        "X-Algolia-Application-Id": app_id,
         "X-Algolia-API-Key": api_key,
         "Content-Type": "application/json",
+        "Referer": "https://www.welcometothejungle.com/",
     }
     payload = {
         "query": f"{keywords} {location}".strip(),
         "hitsPerPage": limit,
     }
+    if seniority:
+        code_sen = _resolve_linkedin_seniority(seniority)
+        if code_sen in ("5", "6", "5,6"):
+            payload["numericFilters"] = ["experience_level_minimum >= 5"]
+        elif code_sen == "4":
+            payload["numericFilters"] = ["experience_level_minimum >= 3"]
+        elif code_sen in ("1", "2"):
+            payload["numericFilters"] = ["experience_level_minimum <= 2"]
+
     async with _semaphore:
         async with httpx.AsyncClient(headers=DEFAULT_HEADERS, timeout=15.0) as client:
             try:
@@ -489,13 +528,15 @@ async def _search_wttj(
                     for hit in data.get("hits", [])[:limit]:
                         org_slug = hit.get("organization", {}).get("slug", "")
                         job_slug = hit.get("slug", "")
+                        offices = hit.get("offices", [])
+                        city = offices[0].get("city", "France") if offices else hit.get("office", {}).get("city", "France")
                         url_wttj = f"https://www.welcometothejungle.com/fr/companies/{org_slug}/jobs/{job_slug}"
                         results.append({
                             "source": "wttj",
-                            "id": f"{org_slug}::{job_slug}",
+                            "id": hit.get("objectID") or f"{org_slug}::{job_slug}",
                             "title": hit.get("name", "Unknown Title"),
                             "company": hit.get("organization", {}).get("name", "Unknown"),
-                            "location": hit.get("office", {}).get("city", "France"),
+                            "location": city,
                             "url": url_wttj,
                         })
             except Exception as e:
@@ -504,7 +545,45 @@ async def _search_wttj(
 
 
 async def _details_wttj(job_id: str) -> str:
-    """Extrait le descriptif d'une offre WTTJ via son identifiant org::slug."""
+    """Extrait le descriptif exhaustif d'une offre WTTJ via son identifiant Algolia ou fallback."""
+    app_id = os.environ.get("WTTJ_ALGOLIA_APP_ID", WTTJ_DEFAULT_ALGOLIA_APP_ID).strip()
+    api_key = os.environ.get("WTTJ_ALGOLIA_API_KEY", WTTJ_DEFAULT_ALGOLIA_API_KEY).strip()
+    url = f"https://{app_id}-dsn.algolia.net/1/indexes/wttj_jobs_production_fr/{job_id}"
+    headers = {
+        "X-Algolia-Application-Id": app_id,
+        "X-Algolia-API-Key": api_key,
+        "Content-Type": "application/json",
+        "Referer": "https://www.welcometothejungle.com/",
+    }
+    async with _semaphore:
+        async with httpx.AsyncClient(headers=DEFAULT_HEADERS, timeout=15.0) as client:
+            try:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    title = data.get("name", "Sans titre")
+                    company = data.get("organization", {}).get("name", "Entreprise")
+                    summary = data.get("summary", "")
+                    missions = data.get("key_missions", [])
+                    profile = data.get("profile", "")
+                    remote = data.get("remote", "Non précisé")
+                    contract = data.get("contract_type", "Non précisé")
+
+                    parts = [
+                        f"POSTE : {title}",
+                        f"ENTREPRISE : {company}",
+                        f"CONTRAT : {contract} | TÉLÉTRAVAIL : {remote}",
+                    ]
+                    if summary:
+                        parts.append("\nRÉSUMÉ :\n" + summary)
+                    if missions:
+                        mission_text = "\n".join(f"- {m}" for m in missions) if isinstance(missions, list) else str(missions)
+                        parts.append("\nMISSIONS CLÉS :\n" + mission_text)
+                    if profile:
+                        parts.append("\nPROFIL RECHERCHÉ :\n" + profile)
+                    return "\n\n".join(parts)
+            except Exception as e:
+                logger.warning(f"Récupération détails WTTJ échouée : {e}")
     return f"Consultez l'offre directement sur Welcome to the Jungle pour l'identifiant '{job_id}'."
 
 
@@ -577,6 +656,12 @@ def setup_jobs_omnisearch_mcp(mcp: MCPServer):
                 logger.error(f"Job search task failed: {res}")
 
         if not all_results:
+            if sources_to_run == ["apec"]:
+                return (
+                    "Aucune offre trouvée sur APEC (passerelle protégée par un défi anti-bot). "
+                    "Consultez les directives du service pour configurer le cookie d'accès, "
+                    "ou interrogez la source 'francetravail' qui agrège officiellement les offres cadres APEC."
+                )
             return "Aucune offre trouvée sur les plateformes sélectionnées."
 
         formatted = f"Offres d'emploi trouvées ({len(all_results)}) :\n\n"

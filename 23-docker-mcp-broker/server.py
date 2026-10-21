@@ -1,13 +1,14 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 5.228.9.1
+VERSION : 5.228.9.2
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-10-21
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.9.2: Schéma jobs_omnisearch enrichi avec directives APEC (DataDome), LinkedIn (li_at) et WTTJ.
 # 5.228.9.1: Directives France Travail (OAuth2 francetravail.io) et champs WTTJ dans jobs_omnisearch.
 # 5.228.0.1: Directive PAS exhaustive pour google_workspace (anti-localhost:8001, mode In production).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
@@ -76,20 +77,23 @@ SERVICE_SCHEMAS = {
         "category": "mcp_native",
         "name": "Emplois & Carrières (Omnisearch)",
         "user_required_instructions": (
-            "DIRECTIVES IMPÉRATIVES DE CONFIGURATION FRANCE TRAVAIL (FRANCETRAVAIL.IO) :\n"
-            "1. ACCÈS AU PORTAIL DÉVELOPPEUR : Se rendre sur https://francetravail.io/ et se connecter "
-            "(ou créer un compte développeur gratuit).\n"
-            "2. CRÉATION D'UNE APPLICATION : Accéder à l'onglet 'Mes applications' puis cliquer sur 'Ajouter une application'.\n"
-            "3. SOUSCRIPTION AU PACKAGE : Dans le catalogue d'APIs, associer le package 'Offres d'emploi v2' "
-            "(accès public, libre et gratuit).\n"
-            "4. RÉCUPÉRATION DES IDENTIFIANTS : Dans la fiche de l'application créée, "
-            "copier le 'Client ID' et le 'Client Secret'.\n"
-            "5. CONSIGNATION DANS L'IDENTITY VAULT :\n"
-            "   Enregistrer dans l'Identity Vault pour le service 'jobs_omnisearch' les deux clés exactes :\n"
-            "   - 'FRANCE_TRAVAIL_CLIENT_ID' : Votre Client ID francetravail.io\n"
-            "   - 'FRANCE_TRAVAIL_CLIENT_SECRET' : Votre Client Secret francetravail.io\n"
-            "   (Alternative : définir ces variables dans l'environnement Docker ou le fichier .env d'ECHO).\n"
-            "   Sans ces clés, la recherche reste pleinement opérationnelle sur LinkedIn, APEC et WTTJ."
+            "DIRECTIVES DE CONFIGURATION DU SERVICE JOBS OMNISEARCH :\n\n"
+            "1. FRANCE TRAVAIL (FRANCETRAVAIL.IO) :\n"
+            "   1. Se rendre sur https://francetravail.io/ et se connecter (compte développeur gratuit).\n"
+            "   2. Dans 'Mes applications', créer une application et associer le package 'Offres d'emploi v2'.\n"
+            "   3. Consigner dans l'Identity Vault pour le service 'jobs_omnisearch' :\n"
+            "      - 'FRANCE_TRAVAIL_CLIENT_ID' : Votre Client ID\n"
+            "      - 'FRANCE_TRAVAIL_CLIENT_SECRET' : Votre Client Secret\n\n"
+            "2. WELCOME TO THE JUNGLE (WTTJ) :\n"
+            "   - Pleinement opérationnel nativement via la clé publique Algolia intégrée.\n"
+            "   - En cas de rotation d'index, renseigner optionnellement 'WTTJ_ALGOLIA_API_KEY'.\n\n"
+            "3. APEC :\n"
+            "   - Les offres cadres de l'APEC sont automatiquement indexées dans le flux France Travail.\n"
+            "   - En direct, apec.fr applique un défi anti-bot (DataDome). "
+            "Pour débloquer l'accès direct, enregistrer optionnellement le cookie sous 'APEC_DATADOME_COOKIE'.\n\n"
+            "4. LINKEDIN :\n"
+            "   - Opérationnel en mode public invité.\n"
+            "   - Pour un volume accru, enregistrer optionnellement le cookie sous 'LINKEDIN_SESSION_COOKIE'."
         ),
         "fields": [
             {
@@ -112,6 +116,20 @@ SERVICE_SCHEMAS = {
                 "type": "password",
                 "required": False,
                 "help": "Clé publique WTTJ (si rotation)"
+            },
+            {
+                "id": "APEC_DATADOME_COOKIE",
+                "label": "Cookie DataDome APEC (Optionnel)",
+                "type": "password",
+                "required": False,
+                "help": "Valeur du cookie 'datadome' issu d'apec.fr (contournement défi anti-bot)"
+            },
+            {
+                "id": "LINKEDIN_SESSION_COOKIE",
+                "label": "Cookie Session LinkedIn li_at (Optionnel)",
+                "type": "password",
+                "required": False,
+                "help": "Cookie de session li_at pour requêtes LinkedIn authentifiées"
             }
         ]
     },
