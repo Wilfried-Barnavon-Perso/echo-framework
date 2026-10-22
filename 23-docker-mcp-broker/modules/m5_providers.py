@@ -1,7 +1,8 @@
-# VERSION : 5.228.0.1
+# VERSION : 5.229.1.0
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.228.0.1: Fail-Closed OAuth2 sur GoogleWorkspaceProvider (prepare_env + bouclier after_tool_call anti-localhost:8001).
+# 5.229.1.0: Auto-résolution dossiers M365 (list/search/move_email) et outil list_mail_folders.
+# 5.228.0.1: Fail-Closed OAuth2 GoogleWorkspaceProvider (prepare_env + bouclier anti-localhost:8001).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.1: Occultation intégrale de _flow_cache dans tools/list et authenticate_account pour zéro fuite en contexte LLM
 """
@@ -224,6 +225,20 @@ class Microsoft365Provider(MCPServiceProvider):
     AUTH_EXEMPT_TOOLS = frozenset(
         {"list_accounts", "authenticate_account", "complete_authentication"}
     )
+    WELL_KNOWN_FOLDERS = frozenset(
+        {
+            "inbox",
+            "sent",
+            "sentitems",
+            "drafts",
+            "deleted",
+            "deleteditems",
+            "junk",
+            "junkemail",
+            "archive",
+        }
+    )
+    _FOLDERS_CACHE: dict[str, dict] = {}
 
     @staticmethod
     def _user_cache_dir(user_id: str) -> str:
@@ -275,9 +290,9 @@ class Microsoft365Provider(MCPServiceProvider):
     ) -> None:
         cache_dir = self._user_cache_dir(user_id)
         os.makedirs(cache_dir, exist_ok=True)
-        ms_sig = hashlib.md5(
-            f"{credentials.get('MICROSOFT_MCP_CLIENT_ID', '')}:{credentials.get('MICROSOFT_MCP_TENANT_ID', '')}".encode()
-        ).hexdigest()
+        cid = credentials.get("MICROSOFT_MCP_CLIENT_ID", "")
+        tid = credentials.get("MICROSOFT_MCP_TENANT_ID", "")
+        ms_sig = hashlib.md5(f"{cid}:{tid}".encode()).hexdigest()
         sig_file = os.path.join(cache_dir, ".cred_hash")
         token_cache_file = self._token_cache_path(user_id)
         flow_cache_file = self._flow_cache_path(user_id)
@@ -305,7 +320,239 @@ class Microsoft365Provider(MCPServiceProvider):
             except Exception:
                 pass
 
+        # Sauvegarde persistante des identifiants d'app pour les requêtes Graph directes
+        cfg_file = os.path.join(cache_dir, ".cred_config.json")
+        try:
+            with open(cfg_file, "w", encoding="utf-8") as cf_out:
+                json.dump(
+                    {
+                        "MICROSOFT_MCP_CLIENT_ID": credentials.get(
+                            "MICROSOFT_MCP_CLIENT_ID", ""
+                        ),
+                        "MICROSOFT_MCP_TENANT_ID": credentials.get(
+                            "MICROSOFT_MCP_TENANT_ID", "common"
+                        ),
+                    },
+                    cf_out,
+                )
+        except Exception:
+            pass
+
         env["HOME"] = cache_dir
+
+    @classmethod
+    def _get_access_token(cls, user_id: str, account_id: Optional[str] = None) -> str:
+        """
+        Extrait un jeton d'accès Graph valide depuis le cache MSAL persistant.
+        Tente d'abord une lecture directe du jeton actif, sinon rafraîchit
+        silencieusement via MSAL SerializableTokenCache ou renvoie une exception.
+        """
+        cache_path = cls._token_cache_path(user_id)
+        if not os.path.exists(cache_path):
+            raise ValueError(f"Cache MSAL introuvable dans {cache_path}")
+
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            raise ValueError(f"Lecture du cache MSAL impossible: {e}")
+
+        now = int(datetime.now(timezone.utc).timestamp())
+
+        # 1. Recherche d'un AccessToken non expiré dans le cache sérialisé MSAL
+        access_tokens = data.get("AccessToken", {})
+        if isinstance(access_tokens, dict):
+            for item in access_tokens.values():
+                if not isinstance(item, dict):
+                    continue
+                if account_id and item.get("home_account_id") != account_id:
+                    continue
+                secret = item.get("secret")
+                expires_on = int(item.get("expires_on", 0))
+                if secret and expires_on > (now + 60):
+                    return secret
+
+        # 2. Rafraîchissement silencieux via MSAL
+        try:
+            import msal
+        except ImportError:
+            raise ValueError("Module 'msal' indisponible pour rafraîchir le jeton.")
+
+        cache_dir = cls._user_cache_dir(user_id)
+        client_id = os.environ.get("MICROSOFT_MCP_CLIENT_ID")
+        tenant_id = os.environ.get("MICROSOFT_MCP_TENANT_ID", "common")
+
+        cfg_path = os.path.join(cache_dir, ".cred_config.json")
+        if os.path.exists(cfg_path):
+            try:
+                with open(cfg_path, "r", encoding="utf-8") as cf:
+                    saved_cfg = json.load(cf)
+                client_id = client_id or saved_cfg.get("MICROSOFT_MCP_CLIENT_ID")
+                tenant_id = tenant_id or saved_cfg.get("MICROSOFT_MCP_TENANT_ID")
+            except Exception:
+                pass
+
+        if not client_id:
+            raise ValueError("MICROSOFT_MCP_CLIENT_ID manquant pour rafraîchir le jeton.")
+
+        authority = f"https://login.microsoftonline.com/{tenant_id}"
+        cache = msal.SerializableTokenCache()
+        with open(cache_path, "r", encoding="utf-8") as f:
+            cache.deserialize(f.read())
+
+        app = msal.PublicClientApplication(
+            client_id, authority=authority, token_cache=cache
+        )
+        accounts = app.get_accounts()
+        account = None
+        if account_id:
+            account = next(
+                (a for a in accounts if a.get("home_account_id") == account_id),
+                None,
+            )
+        elif accounts:
+            account = accounts[0]
+
+        res = app.acquire_token_silent(
+            ["https://graph.microsoft.com/.default"], account=account
+        )
+        if res and "access_token" in res:
+            if cache.has_state_changed:
+                try:
+                    with open(cache_path, "w", encoding="utf-8") as f:
+                        f.write(cache.serialize())
+                except Exception as e:
+                    logger.warning("Échec sauvegarde cache MSAL après rafraîchissement: %s", e)
+            return res["access_token"]
+
+        raise ValueError("Impossible d'obtenir un jeton Graph valide silencieusement.")
+
+    async def _fetch_all_mail_folders(
+        self, user_id: str, account_id: str
+    ) -> list[dict]:
+        """
+        Explore récursivement tous les dossiers et sous-dossiers de messagerie
+        via l'API Microsoft Graph v1.0.
+        """
+        token = self._get_access_token(user_id, account_id)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        }
+        all_folders: list[dict] = []
+        fields = (
+            "id,displayName,parentFolderId,childFolderCount,"
+            "unreadItemCount,totalItemCount"
+        )
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            url = (
+                f"https://graph.microsoft.com/v1.0/me/mailFolders"
+                f"?$top=100&$select={fields}"
+            )
+            resp = await client.get(url, headers=headers)
+            if resp.status_code != 200:
+                logger.warning(
+                    "Graph API mailFolders error %s: %s", resp.status_code, resp.text
+                )
+                return []
+
+            root_folders = resp.json().get("value", [])
+
+            async def _fetch_children(
+                parent_id: str, parent_path: str, depth: int = 1
+            ) -> None:
+                if depth > 5:
+                    return
+                child_url = (
+                    f"https://graph.microsoft.com/v1.0/me/mailFolders/{parent_id}/childFolders"
+                    f"?$top=100&$select={fields}"
+                )
+                c_resp = await client.get(child_url, headers=headers)
+                if c_resp.status_code == 200:
+                    for child in c_resp.json().get("value", []):
+                        c_name = child.get("displayName", "")
+                        c_path = f"{parent_path}/{c_name}" if parent_path else c_name
+                        child_entry = dict(child)
+                        child_entry["path"] = c_path
+                        all_folders.append(child_entry)
+                        if child_entry.get("childFolderCount", 0) > 0:
+                            await _fetch_children(child_entry["id"], c_path, depth + 1)
+
+            for folder in root_folders:
+                f_name = folder.get("displayName", "")
+                folder_entry = dict(folder)
+                folder_entry["path"] = f_name
+                all_folders.append(folder_entry)
+                if folder_entry.get("childFolderCount", 0) > 0:
+                    await _fetch_children(folder_entry["id"], f_name, 1)
+
+        return all_folders
+
+    async def _get_cached_folders(
+        self, user_id: str, account_id: str, force_refresh: bool = False
+    ) -> list[dict]:
+        """Retourne la liste des dossiers depuis le cache mémoire (TTL 300s) ou rafraîchit."""
+        now = datetime.now(timezone.utc).timestamp()
+        cached = self._FOLDERS_CACHE.get(user_id)
+        if not force_refresh and cached and (now - cached.get("timestamp", 0) < 300):
+            return cached.get("folders", [])
+
+        try:
+            folders = await self._fetch_all_mail_folders(user_id, account_id)
+            if folders:
+                self._FOLDERS_CACHE[user_id] = {"timestamp": now, "folders": folders}
+            return folders
+        except Exception as e:
+            logger.warning("Échec de récupération des dossiers M365: %s", e)
+            if cached:
+                return cached.get("folders", [])
+            return []
+
+    async def _resolve_folder_id(
+        self, user_id: str, account_id: str, folder_name: str
+    ) -> Optional[str]:
+        """
+        Résout un libellé ou chemin de dossier en Graph ID immuable.
+        Laisse passer tels quels les alias réservés (inbox, etc.) et les FolderId déjà formatés.
+        """
+        if not folder_name:
+            return None
+        cleaned = folder_name.strip()
+        if cleaned.casefold() in self.WELL_KNOWN_FOLDERS:
+            return folder_name
+
+        # Détection d'un ID Graph immuable (Base64-like préfixé ou long)
+        if cleaned.startswith(("AQMk", "AAMk")) or (len(cleaned) >= 50 and "=" in cleaned):
+            return folder_name
+
+        folders = await self._get_cached_folders(user_id, account_id)
+        target = cleaned.lower()
+
+        # 1. Correspondance exacte sur displayName ou chemin complet
+        for f in folders:
+            d_name = (f.get("displayName") or "").lower()
+            f_path = (f.get("path") or "").lower()
+            if target in (d_name, f_path):
+                return f.get("id")
+
+        # 2. Correspondance sur le segment final (ex: "Entretiens" pour ".../Entretiens")
+        for f in folders:
+            f_path = (f.get("path") or "").lower()
+            if f_path.endswith(f"/{target}"):
+                return f.get("id")
+
+        # 3. Forcer un rafraîchissement au cas où le dossier vient d'être créé
+        refreshed = await self._get_cached_folders(
+            user_id, account_id, force_refresh=True
+        )
+        for f in refreshed:
+            d_name = (f.get("displayName") or "").lower()
+            f_path = (f.get("path") or "").lower()
+            if target in (d_name, f_path) or f_path.endswith(f"/{target}"):
+                return f.get("id")
+
+        return None
 
     async def after_list_tools(
         self,
@@ -319,8 +566,15 @@ class Microsoft365Provider(MCPServiceProvider):
 
         result = dict(result)
         patched_tools = []
+        has_list_mail_folders = False
+
         for tool in tools:
-            if isinstance(tool, dict) and tool.get("name") == "complete_authentication":
+            if not isinstance(tool, dict):
+                patched_tools.append(tool)
+                continue
+
+            t_name = tool.get("name")
+            if t_name == "complete_authentication":
                 t_copy = dict(tool)
                 t_copy["description"] = (
                     "Complete the authentication process after the user has entered the device code. "
@@ -333,8 +587,33 @@ class Microsoft365Provider(MCPServiceProvider):
                     "additionalProperties": False,
                 }
                 patched_tools.append(t_copy)
+            elif t_name == "list_mail_folders":
+                has_list_mail_folders = True
+                patched_tools.append(tool)
             else:
                 patched_tools.append(tool)
+
+        if not has_list_mail_folders:
+            patched_tools.append(
+                {
+                    "name": "list_mail_folders",
+                    "description": (
+                        "List all mail folders and subfolders in the user's Microsoft 365 mailbox with their "
+                        "display names, full hierarchical paths, Graph IDs, and unread/total message counts."
+                    ),
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "account_id": {
+                                "type": "string",
+                                "description": "Optional account ID or email address. Auto-resolved if omitted.",
+                            }
+                        },
+                        "required": [],
+                    },
+                }
+            )
+
         result["tools"] = patched_tools
         return result
 
@@ -408,38 +687,133 @@ class Microsoft365Provider(MCPServiceProvider):
 
         provided_id = str(args.get("account_id") or "").strip()
         by_id = {a["account_id"]: a["account_id"] for a in accounts}
-        by_username = {a["username"].lower(): a["account_id"] for a in accounts if a.get("username")}
+        by_username = {
+            a["username"].lower(): a["account_id"]
+            for a in accounts
+            if a.get("username")
+        }
 
+        resolved_account = None
         if provided_id in by_id:
-            return args, None
-
-        if provided_id and provided_id.lower() in by_username:
-            resolved = by_username[provided_id.lower()]
-            logger.info("MS365: account_id '%s' résolu vers '%s'", provided_id, resolved)
-            args["account_id"] = resolved
-            return args, None
-
-        if len(accounts) == 1:
-            resolved = accounts[0]["account_id"]
+            resolved_account = provided_id
+        elif provided_id and provided_id.lower() in by_username:
+            resolved_account = by_username[provided_id.lower()]
+            logger.info("MS365: account_id '%s' résolu vers '%s'", provided_id, resolved_account)
+            args["account_id"] = resolved_account
+        elif len(accounts) == 1:
+            resolved_account = accounts[0]["account_id"]
             logger.info(
                 "MS365: account_id '%s' auto-résolu vers le compte unique '%s'",
                 provided_id,
-                resolved,
+                resolved_account,
             )
-            args["account_id"] = resolved
-            return args, None
+            args["account_id"] = resolved_account
+        else:
+            return args, self._make_tool_response(
+                {
+                    "status": "invalid_account_id",
+                    "message": (
+                        f"Le paramètre account_id='{provided_id}' ne correspond à aucun compte MSAL "
+                        "en cache. Utilisez l'un des identifiants `account_id` ci-dessous."
+                    ),
+                    "available_accounts": accounts,
+                },
+                is_error=True,
+            )
 
-        return args, self._make_tool_response(
-            {
-                "status": "invalid_account_id",
-                "message": (
-                    f"Le paramètre account_id='{provided_id}' ne correspond à aucun compte MSAL "
-                    "en cache. Utilisez l'un des identifiants `account_id` ci-dessous."
-                ),
-                "available_accounts": accounts,
-            },
-            is_error=True,
-        )
+        # Cas 4 : Outil virtuel list_mail_folders -> court-circuit direct
+        if tool_name == "list_mail_folders":
+            folders = await self._get_cached_folders(user_id, resolved_account)
+            formatted = [
+                {
+                    "displayName": f.get("displayName"),
+                    "path": f.get("path"),
+                    "id": f.get("id"),
+                    "parentFolderId": f.get("parentFolderId"),
+                    "unreadItemCount": f.get("unreadItemCount", 0),
+                    "totalItemCount": f.get("totalItemCount", 0),
+                    "childFolderCount": f.get("childFolderCount", 0),
+                }
+                for f in folders
+            ]
+            return args, self._make_tool_response(formatted)
+
+        # Cas 5 : list_emails / search_emails -> résolution transparente de folder
+        if tool_name in ("list_emails", "search_emails") and args.get("folder"):
+            folder_arg = args["folder"]
+            resolved_fid = await self._resolve_folder_id(
+                user_id, resolved_account, folder_arg
+            )
+            if resolved_fid:
+                args["folder"] = resolved_fid
+            else:
+                folders = await self._get_cached_folders(user_id, resolved_account)
+                available = [
+                    f.get("path") or f.get("displayName") for f in folders
+                ]
+                return args, self._make_tool_response(
+                    {
+                        "status": "folder_not_found",
+                        "message": (
+                            f"Le dossier '{folder_arg}' est introuvable dans la messagerie Microsoft 365. "
+                            f"Dossiers disponibles : {', '.join(str(x) for x in available[:30])}. "
+                            "Appelez `list_mail_folders` pour examiner l'arborescence complète."
+                        ),
+                    },
+                    is_error=True,
+                )
+
+        # Cas 6 : move_email -> résolution et exécution directe Graph (support de tous sous-dossiers)
+        if tool_name == "move_email":
+            dest_arg = args.get("destination_folder")
+            email_id = args.get("email_id")
+            if dest_arg and email_id:
+                resolved_fid = await self._resolve_folder_id(
+                    user_id, resolved_account, dest_arg
+                )
+                if not resolved_fid:
+                    folders = await self._get_cached_folders(user_id, resolved_account)
+                    available = [
+                        f.get("path") or f.get("displayName") for f in folders
+                    ]
+                    return args, self._make_tool_response(
+                        {
+                            "status": "error",
+                            "message": (
+                                f"Dossier de destination '{dest_arg}' introuvable. "
+                                f"Dossiers disponibles : {', '.join(str(x) for x in available[:25])}."
+                            ),
+                        },
+                        is_error=True,
+                    )
+                try:
+                    token = self._get_access_token(user_id, resolved_account)
+                    async with httpx.AsyncClient(timeout=15.0) as client:
+                        move_res = await client.post(
+                            f"https://graph.microsoft.com/v1.0/me/messages/{email_id}/move",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Content-Type": "application/json",
+                            },
+                            json={"destinationId": resolved_fid},
+                        )
+                        if move_res.status_code in (200, 201):
+                            res_json = move_res.json()
+                            return args, self._make_tool_response(
+                                {"status": "moved", "new_id": res_json.get("id")}
+                            )
+                        return args, self._make_tool_response(
+                            {
+                                "status": "error",
+                                "message": f"Échec Graph move_email: {move_res.text}",
+                            },
+                            is_error=True,
+                        )
+                except Exception as e:
+                    logger.warning("Échec de move_email direct Graph: %s", e)
+                    args["destination_folder"] = resolved_fid
+
+        return args, None
 
     async def after_tool_call(
         self,
