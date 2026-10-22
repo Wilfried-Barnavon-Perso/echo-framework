@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 5.228.9.1
+version: 5.228.12.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.12.1: Exclusion de FatalAPIError (400) de la cascade descendante ; interdiction formelle de paralléliser new_cognitive_level.
 # 5.228.9.1: Ajustement sémantique du prompt new_cognitive_level (alignement sur tâches agentiques/résolution technique et PTD).
 # 5.227.1.1: Suppression des références au compactage in-place (AEC_context_checkpoint, EchoCompactionEngine) et renvoi vers l'action de migration de session.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 192.88: Transmission des métriques de Checkpoint Cognitif actif (compaction_count, compacted_turns) à EchoUI.deploy_context_gauge.
-# 192.87: Support de <artifact id="AEC_context_checkpoint"> sur le message pivot (préservation bit-perfect du shadow et séparation PGCU).
 
 
 # ==============================================================================
@@ -43,6 +43,7 @@ from echo_core import (
     convert_owui_tools
 )
 from echo_gemini_client import EchoGeminiClient
+from echo_http import FatalAPIError
 from echo_logger import DebugLogger
 from echo_protocol import get_ca_model_id
 from echo_ui import EchoUI
@@ -956,6 +957,9 @@ class Pipe:
                     escalation_tool = {
                         "name": "new_cognitive_level",
                         "description": (
+                            "RÈGLE ABSOLUE : cet outil DOIT être appelé SEUL, dans un tour dédié. Il est ABSOLUMENT "
+                            "INTERDIT de l'appeler en parallèle d'un autre outil, ou plusieurs fois dans le même tour. "
+                            "Tout autre outil requis DOIT être appelé APRÈS le transfert, par le modèle cible.\n\n"
                             "Outil d'ajustement cognitif. Le Modèle est tenu d'appeler cet outil AVANT "
                             "toute tâche nécessitant d'adapter le niveau cognitif pour garantir la "
                             "qualité de la réponse ou optimiser les ressources.\n\n"
@@ -1018,6 +1022,11 @@ class Pipe:
                         yield chunk
             except Exception as e:
                 log.error(f"[PipeEngine] Erreur API lors de l'appel Gemini: {e}")
+                # Payload rejeté (400) : le contexte est invalide pour TOUS les modèles.
+                # Une cascade ne peut pas corriger l'erreur et masquerait la cause réelle.
+                if isinstance(e, FatalAPIError):
+                    yield f"❌ Requête rejetée par l'API (400, payload invalide), sans cascade. ({str(e)})"
+                    break
                 # GESTION DES ÉCHECS TECHNIQUES — CASCADE DESCENDANTE
                 if is_auto and cascade_attempt < max_cascade_attempts:
                     cascade_order = get_descending_cascade(target_model, include_start=False)

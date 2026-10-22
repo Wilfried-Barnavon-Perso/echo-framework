@@ -8,7 +8,7 @@ Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégratio
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `echo_orchestrator.py` (v5.228.9.1)
+### `echo_orchestrator.py` (v5.228.12.1)
 
 #### A. Classe `UserDataManager` (Le Tisserand de Mémoire)
 **Rôle** : Gestionnaire de l'état asynchrone SQLite (proxy vers `EchoStateManager`). Il reconstruit l'historique exact de la conversation.
@@ -23,7 +23,8 @@ Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégratio
 - **Traduction & Déballage d'Outils (`echo_core.py`)** : S'appuie sur `convert_owui_tools()` et `unbox_tool_output()` (factorisés dans `echo_core.py`) pour normaliser les schémas d'outils en `camelCase` (`functionDeclarations`, `functionCallingConfig`), appliquer les politiques `MODEL_ENUM_BY_POLICY` via `ECHO_MODELS_REGISTRY`, et extraire les payloads multimodaux (`echo_tool_multiparts`) avec leur `call_id`.
 - **Verrou de Tour (`turn_origin_model`) & `_mutate_context_identity()`** : Fige en base SQLite l'origine cognitive du tour utilisateur (`turn_origin_model`) afin que les sous-tours d'outils et les cascades descendantes conservent la trace exacte du modèle initial. `_mutate_context_identity()` patche chirurgicalement la seule dernière occurrence de `<artifact id="AEC_modele">` (`<modele_actuel>` et `<modele_origine>`) pour préserver le cache de préfixes de l'API Gemini sur l'historique.
 - **Rappels Cognitifs Multi-Axes (`AEC_REMINDERS`) & Drainage Atomique (`EchoAEC.drain_pending_directives`)** : Évalue `promptTokenCount` dans `prepare_context()` pour déclencher les rappels par paliers (`context_hygiene` 140k, `kernel` 100k, `factuality` 70k, `strategy` 60k, `alignment` 55k, `efficiency` 44k), purge les AEC orphelins postérieurs au `t_pivot`, et draine atomiquement (extraction + suppression en une transaction SQLite) les `aec_directive` et `aec_event` en attente avant de les sceller dans le Shadow.
-- **Règles d'Élasticité Cognitive (`new_cognitive_level`)** : Applique une symétrie stricte sur la prohibition de l'inertie cognitive en `MODEL_ZEPHYR` comme en `MODEL_APOLLO`, et exclut automatiquement du menu d'escalade tout modèle ayant échoué durant le tour courant (`failed_models_this_turn`).
+- **Exclusion de la 400 de la Cascade** : Une `FatalAPIError` (400, payload rejeté) est remontée immédiatement à l'utilisateur sans cascade descendante, le contexte invalide l'étant pour tous les modèles.
+- **Règles d'Élasticité Cognitive (`new_cognitive_level`)** : Interdiction formelle, dans la description de l'outil, de l'appeler en parallèle d'un autre outil. Applique une symétrie stricte sur la prohibition de l'inertie cognitive en `MODEL_ZEPHYR` comme en `MODEL_APOLLO`, et exclut automatiquement du menu d'escalade tout modèle ayant échoué durant le tour courant (`failed_models_this_turn`).
 - **Routage HTTP/2 (`EchoGeminiClient`)** : S'appuie intégralement sur le client modulaire `EchoGeminiClient` (`echo_gemini_client.py`) pour bénéficier du Circuit Breaker OAuth2 et du multiplexage H2.
 
 #### C. Classe `StreamProcessor`
