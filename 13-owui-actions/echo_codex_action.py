@@ -1,17 +1,17 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 5.228.7.1
+version: 5.228.9.1
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.9.1: Inversion de l'ordre d'appel echoCodexSetCurrentFile avant echoCodexSetContent dans switch_workspace.
 # 5.228.7.1: Prise en charge de is_binary lors du chargement, de l'import, de l'export et de la sauvegarde dans le Codex.
 # 5.228.6.2: Bascule de l'import UI sur la librairie dédiée echo_codex_ui (EchoCodexUI).
 # 5.228.2.1: Résilience post-standby (ré-attachement Socket.IO dynamique _resolve_live_events, éviction par loop_id), isolation asyncio.to_thread/try-except et chargement immédiat à l'import.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 3.17: Prise en charge de la fermeture propre et fiabilisation de la boucle RPC long-polling.
 
 import sys
 import uuid
@@ -253,13 +253,13 @@ class Action:
                                         escaped_name = json.dumps(latest_file).decode("utf-8")
                                         is_bin_js = "true" if result.get("is_binary") else "false"
                                         load_code = (
-                                            f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name}, {is_bin_js});"
                                             f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
+                                            f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name}, {is_bin_js});"
                                         )
                                         await events.call_execute(load_code)
                                         continue
                             
-                            clear_code = "if(window.echoCodexSetContent) window.echoCodexSetContent('', '', false); if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile('');"
+                            clear_code = "if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile(''); if(window.echoCodexSetContent) window.echoCodexSetContent('', '', false);"
                             await events.call_execute(clear_code)
                         except Exception as e:
                             import logging

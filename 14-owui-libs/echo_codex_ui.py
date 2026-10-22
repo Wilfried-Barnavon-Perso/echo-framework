@@ -1,11 +1,12 @@
 """
 title: ECHO Codex UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.228.8.1
+version: 5.228.9.1
 description: Composant système interne : Moteur de rendu HUD Monaco et Éditeur Hexadécimal pour ECHO Codex.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.9.1: Synchronisation atomique de currentFile dans echoCodexSetContent/echoCodexSetCurrentFile (fix preview lors de switch_workspace) et anti-wrap de l'en-tête Hex.
 # 5.228.8.1: Propagation explicite du flag is_binary lors de l'import de fichiers DOM (upload).
 # 5.228.7.2: Inversion des icônes Importer/Exporter, éditeur hexadécimal virtualisé sur fichiers binaires, PREVIEW_REGISTRY extensible avec auto-ouverture débrayable et factorisation SSOT des langages.
 # 5.228.6.2: Extraction et factorisation du moteur HUD Monaco Codex depuis echo_ui.py vers echo_codex_ui.py (EchoCodexUI héritant de EchoUI).
@@ -344,12 +345,12 @@ class EchoCodexUI(EchoUI):
       hexWrap.tabIndex = 0;
       hexWrap.style.cssText = `display:none; flex:1; width:100%; height:100%; flex-direction:column; overflow:hidden; background:${{bgColor}}; color:${{textColor}}; font-family:'Cascadia Code','Fira Code',Consolas,monospace; font-size:12px; outline:none; user-select:none;`;
       hexWrap.innerHTML = `
-        <div style="display:flex; align-items:center; padding:6px 12px; background:${{sidebarBg}}; border-bottom:1px solid ${{borderColor}}; font-size:11px; color:${{isDark ? '#a6adc8' : '#666'}}; font-weight:600; flex-shrink:0; gap:12px;">
-          <span style="width:76px;">OFFSET</span>
-          <span style="width:336px; letter-spacing:0.5px;">00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F</span>
-          <span style="flex:1;">ASCII</span>
-          <button id="${{CODEX_ID}}-hex-insert" title="Insérer un octet (0x00) après l'offset" style="background:transparent; border:1px solid ${{borderColor}}; color:${{textColor}}; border-radius:4px; padding:1px 6px; font-size:11px; cursor:pointer;">+ Octet</button>
-          <button id="${{CODEX_ID}}-hex-delete" title="Supprimer l'octet sélectionné" style="background:transparent; border:1px solid ${{borderColor}}; color:#f38ba8; border-radius:4px; padding:1px 6px; font-size:11px; cursor:pointer;">- Octet</button>
+        <div style="display:flex; align-items:center; padding:6px 12px; background:${{sidebarBg}}; border-bottom:1px solid ${{borderColor}}; font-size:11px; color:${{isDark ? '#a6adc8' : '#666'}}; font-weight:600; flex-shrink:0; gap:12px; white-space:nowrap; overflow-x:auto;">
+          <span style="width:76px; flex-shrink:0; white-space:nowrap;">OFFSET</span>
+          <span style="width:336px; flex-shrink:0; letter-spacing:0.5px; white-space:nowrap;">00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F</span>
+          <span style="flex:1; min-width:48px; flex-shrink:0; white-space:nowrap;">ASCII</span>
+          <button id="${{CODEX_ID}}-hex-insert" title="Insérer un octet (0x00) après l'offset" style="background:transparent; border:1px solid ${{borderColor}}; color:${{textColor}}; border-radius:4px; padding:1px 6px; font-size:11px; cursor:pointer; flex-shrink:0; white-space:nowrap;">+ Octet</button>
+          <button id="${{CODEX_ID}}-hex-delete" title="Supprimer l'octet sélectionné" style="background:transparent; border:1px solid ${{borderColor}}; color:#f38ba8; border-radius:4px; padding:1px 6px; font-size:11px; cursor:pointer; flex-shrink:0; white-space:nowrap;">- Octet</button>
         </div>
         <div id="${{CODEX_ID}}-hex-scroll" style="flex:1; overflow-y:auto; overflow-x:auto; position:relative; padding:0;">
           <div id="${{CODEX_ID}}-hex-spacer" style="position:relative; width:100%;">
@@ -1568,7 +1569,8 @@ class EchoCodexUI(EchoUI):
       window.echoCodexReset = () => {{ hud.remove(); }};
 
       window.echoCodexSetCurrentFile = (filename) => {{
-        currentFile = filename;
+        currentFile = filename || null;
+        renderFileTree();
       }};
 
       // Chargement de contenu depuis le backend Python
@@ -1576,6 +1578,9 @@ class EchoCodexUI(EchoUI):
         if (!editor) {{
           pendingContent = {{ content: content ?? '', filename: filename ?? '', isBinary: isBinary }};
           return;
+        }}
+        if (filename !== undefined) {{
+          currentFile = filename || null;
         }}
         const lang = detectFileLang(filename);
         const isBin = detectIsBinary(content, filename, isBinary);
@@ -1593,6 +1598,7 @@ class EchoCodexUI(EchoUI):
           }});
         }}
         modified = false;
+        renderFileTree();
         updateSaveButton();
         // Mettre à jour le sélecteur de langage
         const langSelect = document.getElementById(CODEX_ID + '-lang');
