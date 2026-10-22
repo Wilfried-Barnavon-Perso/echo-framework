@@ -1,11 +1,12 @@
 """
 title: ECHO Codex UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.228.9.1
+version: 5.228.10.1
 description: Composant système interne : Moteur de rendu HUD Monaco et Éditeur Hexadécimal pour ECHO Codex.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.10.1: Durcissement post-standby (estampille de fraîcheur lastReadyTs, pré-ping automatique avant ai_edit, relance de file dans reconnectCodexBackend et heartbeat adaptatif en arrière-plan).
 # 5.228.9.1: Synchronisation atomique de currentFile dans echoCodexSetContent/echoCodexSetCurrentFile (fix preview lors de switch_workspace) et anti-wrap de l'en-tête Hex.
 # 5.228.8.1: Propagation explicite du flag is_binary lors de l'import de fichiers DOM (upload).
 # 5.228.7.2: Inversion des icônes Importer/Exporter, éditeur hexadécimal virtualisé sur fichiers binaires, PREVIEW_REGISTRY extensible avec auto-ouverture débrayable et factorisation SSOT des langages.
@@ -144,6 +145,8 @@ class EchoCodexUI(EchoUI):
       let inFlightWatchdog = null;
       let waitResolveTimer = null;
       let isReconnecting = false;
+      let lastReadyTs = 0;
+      let lastPingTs = 0;
 
       async function reconnectCodexBackend() {{
         if (isReconnecting || !document.getElementById(CODEX_ID)) return;
@@ -181,13 +184,24 @@ class EchoCodexUI(EchoUI):
         }} catch (e) {{
           console.error('[ECHO Codex] Reconnect error:', e);
         }} finally {{
-          setTimeout(() => {{ isReconnecting = false; }}, 2500);
+          setTimeout(() => {{
+            isReconnecting = false;
+            if (actionQueue.length > 0 && typeof window.echoCodexResolve !== 'function') {{
+              flushCodexQueue();
+            }}
+          }}, 2000);
         }}
       }}
 
       function flushCodexQueue() {{
         if (actionQueue.length === 0) return;
+        if (typeof window.echoCodexResolve === 'function' && lastReadyTs > 0 && (Date.now() - lastReadyTs > 45000)) {{
+          window.echoCodexResolve = null;
+        }}
         if (typeof window.echoCodexResolve === 'function') {{
+          if (actionQueue[0] && actionQueue[0].action === 'ai_edit' && (Date.now() - lastReadyTs > 10000)) {{
+            actionQueue.unshift({{ action: 'ping', current_file: currentFile }});
+          }}
           if (waitResolveTimer) {{ clearTimeout(waitResolveTimer); waitResolveTimer = null; }}
           const resolveFn = window.echoCodexResolve;
           window.echoCodexResolve = null;
@@ -226,6 +240,7 @@ class EchoCodexUI(EchoUI):
         if (waitResolveTimer) {{ clearTimeout(waitResolveTimer); waitResolveTimer = null; }}
         inFlightPayload = null;
         isReconnecting = false;
+        lastReadyTs = Date.now();
         flushCodexQueue();
       }};
 
@@ -2068,7 +2083,9 @@ class EchoCodexUI(EchoUI):
             window.sendCodexAction({{action: 'close'}});
             return;
         }}
-        if (!document.hidden) {{
+        const now = Date.now();
+        if (!document.hidden || (now - lastPingTs >= 25000)) {{
+            lastPingTs = now;
             window.sendCodexAction({{action: 'ping', current_file: currentFile}});
         }}
       }}, 5000);
