@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 5.226.18.1
+version: 5.229.0.0
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression des docstrings OpenAPI et refonte de delegate_to_tool_consultant en Conseiller Opérationnel Hybride (EchoToolGuidesManager + read_tool_guide).
 # 5.226.18.1: Documentation : Harmonisation fonctionnelle et terminologique (PAS/Utilisateur) du docstring de ask_user_input.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.32: Fixation déterministe du modèle sur OWUI_ORCHESTRATOR_MODEL ("echo_orchestrator") et suppression de model_id (zéro rétrocompatibilité).
 # 1.31: Alignement du cache d'outils sur sys.modules["function_echo_orchestrator"].
-# 1.30: Ajout de list_ui_calendar_events, read_ui_calendar_events, update_ui_calendar_event et update_ui_automation.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -29,6 +29,7 @@ from echo_constants import ECHO_MAX_WAIT_TIMER, get_generation_config, OWUI_ORCH
 from echo_ui import EchoUI
 from echo_gemini_client import EchoGeminiClient
 from echo_prompts import SYS_ORCHESTRATOR_CONSULTANT
+from echo_tool_guides import EchoToolGuidesManager
 
 from open_webui.tools.builtin import (
     search_calendar_events as _owui_search,
@@ -107,10 +108,7 @@ class Tools:
         __event_call__: Any = None,
         __metadata__: dict = {},
     ) -> str:
-        """
-        Met en pause l'exécution. Strictement limité à 1 seule tentative par boucle agentique pour éviter les boucles infinies.
-        :param seconds: Durée en secondes (Maximum autorisé: 300).
-        """
+        """Suspend l'exécution de manière asynchrone pendant `seconds` secondes (max 300s, 1 appel max par tour)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         
         # 1. Validation & Clamp de sécurité
@@ -209,15 +207,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> dict:
-        """
-        Interrompt brièvement l'exécution pour afficher une boîte de dialogue à l'Utilisateur.
-        Permet de demander une information (ex: Clé API) via 'text', ou une approbation (Oui/Non) via 'confirm'.
-
-        :param question: La question ou le message à afficher à l'Utilisateur pour lui demander une saisie ou une confirmation.
-        :param input_type: Type de demande : 'text' (pour demander de taper un texte) ou 'confirm' (pour un simple choix Oui/Non).
-        :param options: Liste optionnelle de suggestions (réponses prédéfinies) affichées sous forme de boutons interactifs dans l'interface. L'Utilisateur peut sélectionner une option ou effectuer une saisie libre.
-        :param timeout_seconds: Délai maximum en secondes avant l'annulation (uniquement pour 'text'). Par défaut 5 minutes.
-        """
+        """Affiche une boîte de dialogue interactive à l'Utilisateur pour demander une saisie texte (`input_type='text'`) ou une confirmation Oui/Non (`input_type='confirm'`)."""
         if not __user__:
             return wrap_tool_output(text="Erreur : Contexte manquant.", status={"status": "error"})
 
@@ -279,39 +269,15 @@ class Tools:
         )
 
     async def search_ui_calendar_events(self, query: str = "", start: str = None, end: str = None, limit: int = 10, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """
-        Le Modèle DOIT consulter l'agenda de l'Interface Utilisateur pour vérifier ses disponibilités et filtrer par dates ou mots-clés.
-        Format attendu pour start/end : Chaîne ISO 8601 (ex: "2026-10-10T10:00:00Z") ou "YYYY-MM-DD HH:MM".
-
-        :param query: Terme de recherche textuelle optionnel (titre, description, lieu).
-        :param start: Date/heure minimale de début pour borner la recherche (optionnel).
-        :param end: Date/heure maximale de début pour borner la recherche (optionnel).
-        :param limit: Nombre maximal d'évènements à retourner (par défaut 10).
-        """
+        """Recherche des événements dans l'agenda de l'Interface Utilisateur par mot-clé et bornes `start`/`end` (ISO 8601)."""
         return await safe_owui_call(_owui_search, query=query, start=start, end=end, count=limit, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
     async def list_ui_calendar_events(self, query: str = "", start: str = None, end: str = None, limit: int = 30, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """
-        Permet au Modèle de lister et explorer les évènements de son agenda dans l'Interface Utilisateur.
-        Complément indispensable pour inspecter les disponibilités ou identifier les identifiants d'évènements avant modification ou suppression.
-        Format attendu pour start/end : Chaîne ISO 8601 (ex: "2026-10-10T10:00:00Z") ou "YYYY-MM-DD HH:MM".
-
-        :param query: Terme de recherche textuelle optionnel filtrant sur le titre, la description ou le lieu.
-        :param start: Date/heure minimale de début pour borner la liste (optionnel).
-        :param end: Date/heure maximale de début pour borner la liste (optionnel).
-        :param limit: Nombre maximal d'évènements à lister (par défaut 30).
-        """
+        """Liste les événements de l'agenda de l'Interface Utilisateur sur une période (`start`/`end` ISO 8601)."""
         return await safe_owui_call(_owui_search, query=query, start=start, end=end, count=limit, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
     async def read_ui_calendar_events(self, event_ids: list[str], __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """
-        Le Modèle DOIT utiliser cet outil pour inspecter le contenu intégral et les détails techniques
-        (titre, description, dates locales, récurrence RRULE, rappels, statut d'annulation, lieu, participants)
-        d'un ou plusieurs évènements du calendrier de l'Interface Utilisateur à partir de leurs identifiants.
-        Complément indispensable de list_ui_calendar_events pour analyser ou auditer un évènement avant modification ou suppression.
-
-        :param event_ids: Liste des identifiants (IDs au format UUID) des évènements à inspecter (ou chaîne d'identifiants séparés par des virgules).
-        """
+        """Lit les détails complets d'un ou plusieurs événements de l'agenda à partir de leurs `event_ids`."""
         user_id = __user__.get("id")
         if not user_id:
             return wrap_tool_output(text=json.dumps({"error": "User context missing"}), status={"status": "error"}, metadata=__metadata__)
@@ -379,10 +345,7 @@ class Tools:
             return wrap_tool_output(text=json.dumps({"error": str(e)}), status={"status": "error"}, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
 
     async def create_ui_calendar_event(self, title: str, description: str = "", start: str = "", end: str = "", location: str = "", __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """
-        Le Modèle DOIT créer un évènement dans le calendrier de l'Interface Utilisateur via cette fonction.
-        Format attendu pour start/end : Chaîne ISO 8601 (ex: "2026-10-10T10:00:00Z") ou "YYYY-MM-DD HH:MM".
-        """
+        """Crée un événement dans l'agenda de l'Interface Utilisateur (`start`/`end` au format ISO 8601 ou 'YYYY-MM-DD HH:MM')."""
         return await safe_owui_call(_owui_create_cal, title=title, description=description, start=start, end=end, location=location, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
     async def update_ui_calendar_event(
@@ -400,21 +363,7 @@ class Tools:
         __user__: dict = {},
         __metadata__: dict = {}
     ) -> str:
-        """
-        Le Modèle DOIT mettre à jour un évènement existant dans le calendrier de l'Interface Utilisateur via cette fonction.
-        Seuls les champs explicitement fournis sont modifiés ; les champs omis conservent leur valeur actuelle.
-        Format attendu pour start/end : Chaîne ISO 8601 (ex: "2026-10-10T10:00:00Z") ou "YYYY-MM-DD HH:MM".
-
-        :param event_id: Identifiant unique de l'évènement à modifier (obligatoire).
-        :param title: Nouveau titre de l'évènement (optionnel).
-        :param description: Nouvelle description ou notes de l'évènement (optionnel).
-        :param start: Nouvelle date/heure de début locale (optionnel).
-        :param end: Nouvelle date/heure de fin locale (optionnel).
-        :param all_day: Indique si l'évènement dure toute la journée (optionnel).
-        :param location: Nouveau lieu de l'évènement (optionnel).
-        :param is_cancelled: Définir à True pour annuler l'évènement (optionnel).
-        :param reminder_minutes: Délai en minutes avant l'évènement pour envoyer une notification de rappel (optionnel). 0 pour notification à l'heure pile, -1 pour désactiver.
-        """
+        """Met à jour les champs spécifiés d'un événement existant (`event_id`) dans l'agenda de l'Interface Utilisateur."""
         return await safe_owui_call(
             _owui_update_cal,
             event_id=event_id,
@@ -432,23 +381,11 @@ class Tools:
         )
 
     async def delete_ui_calendar_event(self, event_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """Le Modèle DOIT supprimer un évènement du calendrier de l'Interface Utilisateur s'il est devenu obsolète ou erroné."""
+        """Supprime un événement de l'agenda de l'Interface Utilisateur via son `event_id`."""
         return await safe_owui_call(_owui_delete_cal, event_id=event_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
     async def create_ui_automation(self, name: str, prompt: str, rrule: str, target_folder_name: str = "Automations", __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """
-        CRON Cognitif : Le Modèle DOIT programmer ses propres tâches de fond de l'Interface Utilisateur avec cet outil.
-        L'action générera un nouveau chat indépendant à chaque déclenchement.
-        Le Modèle DOIT préciser le nom du dossier via 'target_folder_name'. S'il n'existe pas, l'outil le créera automatiquement.
-        
-        RÈGLES STRICTES DE SYNTAXE RRULE :
-        L'argument rrule DOIT être une chaîne iCalendar valide. Si 'COUNT' est spécifié, 'DTSTART' est OBLIGATOIRE.
-        Le format DTSTART exige la syntaxe YYYYMMDDTHHMMSS.
-        Exemples valides :
-        - Une seule fois à une date précise : "DTSTART:20261015T140000\nRRULE:FREQ=DAILY;COUNT=1"
-        - Tous les jours à 9h : "DTSTART:20261001T090000\nRRULE:FREQ=DAILY"
-        - Toutes les heures : "RRULE:FREQ=HOURLY;INTERVAL=1"
-        """
+        """Crée une tâche de fond planifiée (CRON au format iCalendar `rrule`) exécutant `prompt` dans `target_folder_name`."""
         user_id = __user__.get("id")
         if not user_id:
             return json.dumps({"error": "User context missing"})
@@ -498,26 +435,7 @@ class Tools:
         __user__: dict = {},
         __metadata__: dict = {}
     ) -> str:
-        """
-        CRON Cognitif : Le Modèle DOIT utiliser cet outil pour modifier une tâche de fond automatisée (CRON) existante dans l'Interface Utilisateur.
-        Seuls les champs explicitement fournis sont modifiés ; les champs omis conservent leur valeur actuelle.
-        Si 'target_folder_name' est spécifié, la tâche sera rattachée à ce dossier (créé automatiquement s'il n'existe pas).
-        Le modèle d'exécution de la tâche est invariablement fixé et verrouillé sur l'Orchestrateur maître Open WebUI (echo_orchestrator).
-
-        RÈGLES STRICTES DE SYNTAXE RRULE :
-        L'argument rrule DOIT être une chaîne iCalendar valide. Si 'COUNT' est spécifié, 'DTSTART' est OBLIGATOIRE.
-        Le format DTSTART exige la syntaxe YYYYMMDDTHHMMSS.
-        Exemples valides :
-        - Une seule fois à une date précise : "DTSTART:20261015T140000\nRRULE:FREQ=DAILY;COUNT=1"
-        - Tous les jours à 9h : "DTSTART:20261001T090000\nRRULE:FREQ=DAILY"
-        - Toutes les heures : "RRULE:FREQ=HOURLY;INTERVAL=1"
-
-        :param automation_id: Identifiant unique de la tâche automatisée à modifier (obligatoire).
-        :param name: Nouveau nom descriptif de l'automatisation (optionnel).
-        :param prompt: Nouvelles instructions/prompt exécutées à chaque déclenchement (optionnel).
-        :param rrule: Nouvelle périodicité au format RRULE iCalendar (optionnel).
-        :param target_folder_name: Nom du dossier cible pour les chats générés (optionnel, conserve le dossier actuel si omis).
-        """
+        """Modifie les paramètres (`name`, `prompt`, `rrule`, `target_folder_name`) d'une tâche planifiée existante (`automation_id`)."""
         user_id = __user__.get("id")
         if not user_id:
             return json.dumps({"error": "User context missing"})
@@ -557,16 +475,11 @@ class Tools:
         )
 
     async def delete_ui_automation(self, automation_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """Le Modèle DOIT utiliser cet outil pour supprimer une de ses tâches de fond de l'Interface Utilisateur si elle n'est plus nécessaire."""
+        """Supprime définitivement une tâche planifiée via son `automation_id`."""
         return await safe_owui_call(_owui_delete_auto, automation_id=automation_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
     async def read_ui_automations(self, automation_ids: list[str], __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """
-        Le Modèle DOIT utiliser cet outil pour inspecter le contenu intégral et la configuration technique (prompt complet, modèle cible, règle RRULE, statut) d'une ou plusieurs tâches de fond (CRON) de l'Interface Utilisateur à partir de leurs identifiants.
-        Complément indispensable de list_ui_automations pour analyser ou auditer une automatisation avant modification ou suppression.
-
-        :param automation_ids: Liste des identifiants (IDs au format UUID) des automatisations à inspecter.
-        """
+        """Lit la configuration complète (incluant le prompt et la règle `rrule`) d'une ou plusieurs automatisations (`automation_ids`)."""
         user_id = __user__.get("id")
         if not user_id:
             return wrap_tool_output(text=json.dumps({"error": "User context missing"}), status={"status": "error"}, metadata=__metadata__)
@@ -626,10 +539,7 @@ class Tools:
             return wrap_tool_output(text=json.dumps({"error": str(e)}), status={"status": "error"}, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
 
     async def list_ui_automations(self, query: str = "", limit: int = 30, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """
-        Permet au Modèle de lister et rechercher ses tâches de fond automatisées (CRON) de l'Interface Utilisateur.
-        Retourne l'ID, le nom, la périodicité (rrule) et le statut. Indispensable avant d'utiliser delete_ui_automation.
-        """
+        """Liste et recherche les tâches de fond planifiées (CRON) de l'Interface Utilisateur."""
         user_id = __user__.get("id")
         if not user_id:
             return wrap_tool_output(text=json.dumps({"error": "User context missing"}), status={"status": "error"})
@@ -651,10 +561,7 @@ class Tools:
             return wrap_tool_output(text=json.dumps({"error": str(e)}), status={"status": "error"}, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
 
     async def list_ui_folders(self, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """
-        Permet au Modèle de scanner l'arborescence des UI Folders de l'Interface Utilisateur.
-        Retourne la liste complète des dossiers de l'Utilisateur pour de l'organisation spatiale.
-        """
+        """Liste l'arborescence des dossiers de conversations de l'Interface Utilisateur (`id`, `name`)."""
         user_id = __user__.get("id")
         folders = await Folders.get_folders_by_user_id(user_id) if hasattr(Folders, 'get_folders_by_user_id') else []
         res = json.dumps([{"id": f.id, "name": f.name} for f in folders])
@@ -664,7 +571,15 @@ class Tools:
         self,
         objective: str = Field(
             ...,
-            description="L'objectif technique précis à accomplir (ex: 'Chercher X sur le web puis l'injecter dans N8N, via un plan et après discussion entre experts...')."
+            description="Objectif technique précis, question sur l'usage d'un outil ou contexte d'erreur à diagnostiquer."
+        ),
+        target_tools: str = Field(
+            default=None,
+            description="Liste optionnelle de noms de fonctions ou de domaines séparés par des virgules (ex: 'edit_codex,open_codex_ui')."
+        ),
+        error_context: str = Field(
+            default=None,
+            description="Message d'erreur ou comportement inattendu observé lors d'un appel d'outil précédent."
         ),
         __user__: dict = {},
         __chat_id__: str = "",
@@ -672,17 +587,17 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """
-        Agent Stateless. À invoquer AVANT toute séquence complexe d'outils.
-        Analyse dynamiquement les outils disponibles et retourne en un seul jet 
-        un plan détaillé et structuré (Quels outils utiliser, pour quoi faire, et dans quel ordre).
-        Ne possède aucune capacité d'exécution d'outil.
-        """
+        """Consulte l'Expert Opérationnel des Outils ECHO (manuels complets, paramètres exacts, séquences d'appels et diagnostic d'erreurs). À appeler en cas de doute sur l'usage d'une fonction, d'orchestration multi-outils complexe ou d'échec d'un appel."""
         if not __user__:
             return wrap_tool_output(text="Erreur : contexte OWUI manquant.", status={"status": "error"}, metadata=__metadata__)
 
+        if not isinstance(target_tools, str):
+            target_tools = None
+        if not isinstance(error_context, str):
+            error_context = None
+
         events = EchoEvents(__event_emitter__, __event_call__)
-        await events.status("🧠 Conseiller Outils : Analyse du catalogue d'outils en cours...")
+        await events.status("🧠 Conseiller Outils : Analyse de la base de connaissances opérationnelle...")
 
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id") or ""
         user_id = __user__.get("id", "system")
@@ -691,7 +606,7 @@ class Tools:
         _pipe_mod = sys.modules.get("function_echo_orchestrator")
         _tools_cache = (getattr(_pipe_mod, "_TOOLS_CACHE", {}) or {}) if _pipe_mod else {}
         _tools_dict = _tools_cache.get(chat_id, {})
-        
+
         if not _tools_dict:
             _tools_dict = (__metadata__ or {}).get("_echo_tools_dict", {})
 
@@ -702,12 +617,12 @@ class Tools:
             allowed = set(sub_ctx["sub_tools_names"])
             _tools_dict = {k: v for k, v in _tools_dict.items() if k in allowed}
 
-        # Liste noire : Ne pas lister ces outils au conseiller pour éviter la récursion
-        blacklist = {"delegate_to_agent", "delegate_to_tool_consultant"}
+        # Liste noire : Ne pas lister l'auto-référence au conseiller
+        blacklist = {"delegate_to_tool_consultant"}
         if is_subagent:
             blacklist |= set(DELEGATE_AGENT_BLACKLIST)
 
-        # Construction textuelle du catalogue d'outils
+        # Construction textuelle des signatures techniques disponibles
         tools_docs = []
         for t_name, t_spec in _tools_dict.items():
             if t_name in blacklist:
@@ -715,53 +630,140 @@ class Tools:
             spec = t_spec.get("spec", {})
             desc = spec.get("description", "Pas de description")
             params = spec.get("parameters", {}).get("properties", {})
-            
-            # Formatage dense pour injection dans {tools_catalog}
-            tools_docs.append(f"### OUTIL: {t_name} ###\n- DESCRIPTION: {desc}\n- PARAMÈTRES: {list(params.keys())}")
-        
-        tools_catalog = "\n\n".join(tools_docs) if tools_docs else "Aucun outil détecté."
+            required = spec.get("parameters", {}).get("required", [])
+            tools_docs.append(
+                f"- `{t_name}` (requis: {required}, params: {list(params.keys())}) : {desc}"
+            )
 
-        # Formatage du prompt centralisé depuis echo_prompts
-        system_prompt = SYS_ORCHESTRATOR_CONSULTANT.format(tools_catalog=tools_catalog)
+        tools_catalog = "\n".join(tools_docs) if tools_docs else "Catalogue dynamique non chargé (se référer aux manuels)."
+
+        # Résolution de la Carte Hiérarchique et pré-injection déterministe des manuels .md
+        hierarchical_index = EchoToolGuidesManager.get_hierarchical_index()
+        preloaded_guides = EchoToolGuidesManager.resolve_guides(
+            objective=objective,
+            target_tools=target_tools,
+            error_context=error_context,
+        )
+
+        system_prompt = SYS_ORCHESTRATOR_CONSULTANT.format(
+            hierarchical_index=hierarchical_index,
+            tools_catalog=tools_catalog,
+            preloaded_guides=preloaded_guides,
+        )
+
+        # Déclaration de l'outil interne `read_tool_guide` pour lecture complémentaire à la volée
+        internal_tools = [
+            {
+                "functionDeclarations": [
+                    {
+                        "name": "read_tool_guide",
+                        "description": "Lit le manuel opérationnel complet d'un ou plusieurs domaines (`domain_id` issus de <hierarchical_domains_map>) ou noms d'outils (`tool_name`).",
+                        "parameters": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "targets": {
+                                    "type": "ARRAY",
+                                    "items": {"type": "STRING"},
+                                    "description": "Liste de domain_id (ex: ['codex_management']) ou de noms de fonctions (ex: ['edit_codex']).",
+                                }
+                            },
+                            "required": ["targets"],
+                        },
+                    }
+                ]
+            }
+        ]
+
+        user_prompt = objective
+        if target_tools:
+            user_prompt += f"\n\n[Outils/Domaines ciblés : {target_tools}]"
+        if error_context:
+            user_prompt += f"\n\n[Contexte d'erreur : {error_context}]"
+
+        contents = [{"role": "user", "parts": [{"text": user_prompt}]}]
 
         try:
-            payload = {
-                "contents": [{"role": "user", "parts": [{"text": objective}]}],
-                "generationConfig": get_generation_config("MODEL_PROMETHEUS", override_thinking="medium"),
-                "systemInstruction": {"role": "system", "parts": [{"text": system_prompt}]}
-            }
-            # Inférence Stateless via call_cascade (Clamping + résilience) sans exposer la section tools
-            response, _, _ = await EchoGeminiClient.call_cascade(
-                target_model_key="MODEL_PROMETHEUS",
-                payload=payload,
-                user_id=user_id,
-                metadata=__metadata__,
-                events=events,
-                chat_id=chat_id,
-                include_thoughts=False,
-            )
-            if not response:
-                await events.status("❌ Erreur Conseiller Outils : Cascade épuisée", done=True)
-                return wrap_tool_output(
-                    text="Erreur lors de la délégation au Conseiller Outils : Aucun modèle disponible (cascade épuisée).",
-                    status={"status": "error", "message": "cascade exhausted"},
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    metadata=__metadata__
-                )
-
             text_result = ""
-            candidates = response.get("candidates", [])
-            if candidates and candidates[0].get("content"):
-                for p in candidates[0]["content"].get("parts", []):
+            # Boucle hybride bornée à 2 tours max (Tour 1: réponse directe ou read_tool_guide -> Tour 2: synthèse finale)
+            for turn_idx in range(2):
+                payload = {
+                    "contents": contents,
+                    "generationConfig": get_generation_config("MODEL_PROMETHEUS", override_thinking="medium"),
+                    "systemInstruction": {"role": "system", "parts": [{"text": system_prompt}]},
+                }
+                if turn_idx == 0:
+                    payload["tools"] = internal_tools
+
+                response, _, _ = await EchoGeminiClient.call_cascade(
+                    target_model_key="MODEL_PROMETHEUS",
+                    payload=payload,
+                    user_id=user_id,
+                    metadata=__metadata__,
+                    events=events,
+                    chat_id=chat_id,
+                    include_thoughts=False,
+                )
+                if not response:
+                    await events.status("❌ Erreur Conseiller Outils : Cascade épuisée", done=True)
+                    return wrap_tool_output(
+                        text="Erreur lors de la délégation au Conseiller Outils : Aucun modèle disponible (cascade épuisée).",
+                        status={"status": "error", "message": "cascade exhausted"},
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        metadata=__metadata__,
+                    )
+
+                candidates = response.get("candidates", [])
+                if not candidates or not candidates[0].get("content"):
+                    break
+
+                model_content = candidates[0]["content"]
+                parts = model_content.get("parts", [])
+                fn_calls = [p["functionCall"] for p in parts if "functionCall" in p]
+
+                if fn_calls and turn_idx == 0:
+                    contents.append(model_content)
+                    fn_responses_parts = []
+                    for fc in fn_calls:
+                        fc_name = fc.get("name", "")
+                        fc_args = fc.get("args", {}) or {}
+                        if fc_name == "read_tool_guide":
+                            req_targets = fc_args.get("targets", [])
+                            if isinstance(req_targets, str):
+                                req_targets = [req_targets]
+                            await events.status(f"📖 Conseiller Outils : Lecture du manuel {', '.join(req_targets)}...")
+                            guide_content = EchoToolGuidesManager.format_guides_for_targets(req_targets)
+                            fn_responses_parts.append(
+                                {
+                                    "functionResponse": {
+                                        "name": fc_name,
+                                        "response": {"result": guide_content},
+                                    }
+                                }
+                            )
+                        else:
+                            fn_responses_parts.append(
+                                {
+                                    "functionResponse": {
+                                        "name": fc_name,
+                                        "response": {"error": f"Outil interne inconnu : {fc_name}"},
+                                    }
+                                }
+                            )
+                    contents.append({"role": "user", "parts": fn_responses_parts})
+                    continue
+
+                for p in parts:
                     if "text" in p and not p.get("thought"):
                         text_result += p["text"]
-            await events.status("✅ Conseiller Outils : Planification terminée.", done=True)
+                break
+
+            await events.status("✅ Conseiller Outils : Recommandation opérationnelle prête.", done=True)
             return wrap_tool_output(
                 text=f"Recommandation du Conseiller Outils :\n\n{text_result}",
                 user_id=user_id,
                 chat_id=chat_id,
-                metadata=__metadata__
+                metadata=__metadata__,
             )
         except Exception as e:
             await events.status("❌ Erreur Conseiller Outils", done=True)
@@ -770,5 +772,5 @@ class Tools:
                 status={"status": "error", "message": str(e)},
                 user_id=user_id,
                 chat_id=chat_id,
-                metadata=__metadata__
+                metadata=__metadata__,
             )

@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.226.18.0
+version: 5.229.0.0
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides) et purge des directives IMPLIQUE.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.42: Sanctuarisation thinkingLevel "high" sur synthèse Delphi et critique, consolidation sur MODEL_APOLLO (medium).
 # 5.41: Résolution robuste de chat_id avec fallback sur __metadata__ pour la propagation aux sous-agents.
 # 5.40: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
-# 5.38: Mise à jour de la docstring de forge_skill pour recommander l'usage de search_skill en amont.
 
 import sys
 import orjson as json
@@ -72,14 +72,7 @@ class Tools:
         __user__: Optional[dict] = None,
         __metadata__: dict = {}
     ) -> str:
-        """Permet au Modèle de créer ou mettre à jour une expertise (Skill). Il est fortement recommandé d'utiliser l'outil 'search_skill' au préalable pour vérifier qu'aucune expertise similaire ne couvre déjà le besoin. Requis avant appel d'un agent inexistant.
-
-        :param skill_id: Identifiant technique (snake_case).
-        :param name: Titre lisible.
-        :param description: Description courte de l'expertise.
-        :param instructions: Directives système détaillées.
-        :param require_web_grounding: Si activé, contraint l'expertise à s'actualiser systématiquement sur le Web pour garantir la fraîcheur et la validation de ses méthodologies avant toute réponse.
-        """
+        """Crée ou met à jour une expertise spécialisée (Skill) pour les sous-agents."""
         if require_web_grounding:
             grounding_directive = (
                 "\n\n<directive_obligatoire>\n"
@@ -102,7 +95,7 @@ class Tools:
         __user__: Optional[dict] = None,
         __metadata__: dict = {}
     ) -> str:
-        """Permet au Modèle de lister les expertises (Skills) forgées pour obtenir les skill_id valides avant délégation."""
+        """Liste les expertises (Skills) disponibles dans le catalogue utilisateur."""
         user_id = __user__.get("id", "system") if __user__ else "system"
         skills = get_all_skills(user_id)
 
@@ -122,10 +115,7 @@ class Tools:
         __user__: Optional[dict] = None,
         __metadata__: dict = {}
     ) -> str:
-        """Permet au Modèle de consulter le contenu brut et détaillé d'une expertise (Skill) existante, afin d'en auditer les directives sans en déclencher l'application ni instancier de sous-agent.
-
-        :param skill_id: Identifiant technique du skill à lire.
-        """
+        """Lit le contenu brut et les directives d'une expertise (Skill) existante."""
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
 
@@ -156,10 +146,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Permet au Modèle d'identifier les expertises (Skills) existantes répondant à un besoin spécifique. Retourne un maximum de 3 identifiants (skill_id) classés par ordre de pertinence sémantique.
-
-        :param need_description: Description textuelle du besoin ou de la spécialité recherchée.
-        """
+        """Identifie jusqu'à 3 expertises (Skills) pertinentes pour un besoin spécifique."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
@@ -244,12 +231,7 @@ class Tools:
         __event_call__: callable = None,
         __metadata__: dict = {}
     ) -> str:
-        """Permet de supprimer une expertise (Skill) de l'utilisateur.
-        Demande obligatoirement l'accord de l'utilisateur via une modale avant de procéder.
-
-        :param skill_id: L'identifiant technique (nom du dossier) du skill à supprimer.
-        :param timeout_seconds: Délai maximum en secondes avant annulation automatique de la suppression (par défaut 300s).
-        """
+        """Supprime une expertise (Skill) après confirmation interactive de l'utilisateur."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
 
@@ -329,18 +311,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """
-        Table ronde (N experts, tours parallèles). CAS D'USAGE PRINCIPAL : Lorsqu'un sujet est complexe, multidimensionnel ou incertain, cet outil permet un débat structuré entre plusieurs spécialistes pour dégager une solution consensuelle ou exhaustive.
-        Rapport exhaustif multi-perspectives. Minimum 2 experts requis. IMPLIQUE appel à `forge_skill` si experts manquants.
-        Le conseil reste ouvert (close_on_finish=False) pour permettre de le relancer avec le même council_id. Le Modèle DOIT utiliser close_council une fois la délibération définitivement terminée.
-        DIRECTIVE ORCHESTRATEUR: Le résultat n'est pas automatiquement affiché. Le Modèle appelant DOIT restituer l'intégralité du rapport dans sa réponse finale.
-
-        :param question: Sujet de délibération.
-        :param participants: Chaîne CSV de `skill_id` (ex: expert_1, dev_py) (min 2, [ p * r ] <= COUNCIL_MAX_PR_COMPLEXITY).
-        :param council_id: Identifiant obligatoire pour conserver et reprendre le conseil plus tard.
-        :param rounds: Nombre d'itérations ([ p * r ] <= COUNCIL_MAX_PR_COMPLEXITY).
-        :param close_on_finish: False par défaut pour reprise de contexte. Mettre à True pour détruire immédiatement.
-        """
+        """Convoque un conseil d'experts en parallèle (méthode Delphi, min 2 skill_id) et synthétise leurs délibérations."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
@@ -580,18 +551,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """
-        Boucle multi-agentique itérative et asynchrone avec supervision critique (Délégation, Évaluation, Correction, Consolidation).
-        CAS D'USAGE PRINCIPAL : Délégation de tâches exigeant une qualité irréprochable (génération de code critique, architecture logicielle, rédaction formelle complexe).
-        POURQUOI : Garantit via un superviseur indépendant que chaque livrable respecte strictement l'objectif par validations croisées avant consolidation, tout en préservant le contexte de l'Orchestrateur.
-        IMPLIQUE appel à `forge_skill` si les experts assignés sont manquants.
-        FORTEMENT RECOMMANDÉ : Inscrire cet objectif dans un plan formel via le `strategic_planner` (`build_plan` / `update_plan`) avant de lancer la délégation.
-        La tâche reste ouverte par défaut (close_on_finish=False). Le Modèle DOIT utiliser close_supervised_task une fois définitivement terminée.
-
-        :param objective: Mission globale.
-        :param workers: Mapping JSON {worker_id_libre: {"task": "...", "skill_id": "..."}}.
-        :param close_on_finish: False par défaut pour reprise de contexte. Mettre à True pour détruire immédiatement.
-        """
+        """Délègue des sous-tâches à des workers supervisés par un critique itératif avant consolidation."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
@@ -857,11 +817,7 @@ class Tools:
         __chat_id__: Optional[str] = None,
         __metadata__: dict = {},
     ) -> str:
-        """
-        Liste les conseils d'experts actifs (non clôturés) pour ce chat.
-
-        :return: Markdown listant les conseils avec leurs participants et état.
-        """
+        """Liste les conseils d'experts actifs dans la session courante."""
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
         if not chat_id:
@@ -897,11 +853,7 @@ class Tools:
         __chat_id__: Optional[str] = None,
         __metadata__: dict = {},
     ) -> str:
-        """
-        Ferme définitivement un conseil et purge toutes les sessions de ses participants.
-
-        :param council_id: Identifiant du conseil à fermer.
-        """
+        """Ferme définitivement un conseil d'experts et purge les sessions de ses participants."""
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
         if not chat_id:
@@ -929,11 +881,7 @@ class Tools:
         __chat_id__: Optional[str] = None,
         __metadata__: dict = {},
     ) -> str:
-        """
-        Liste les tâches supervisées actives pour ce chat.
-
-        :return: Markdown listant les tâches avec leurs workers et état.
-        """
+        """Liste les tâches supervisées actives dans la session courante."""
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
         if not chat_id:
@@ -968,11 +916,7 @@ class Tools:
         __chat_id__: Optional[str] = None,
         __metadata__: dict = {},
     ) -> str:
-        """
-        Ferme définitivement une tâche supervisée et purge toutes les sessions de ses workers.
-
-        :param task_id: Identifiant de la tâche supervisée à fermer.
-        """
+        """Ferme définitivement une tâche supervisée et purge les sessions de ses workers."""
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
         if not chat_id:

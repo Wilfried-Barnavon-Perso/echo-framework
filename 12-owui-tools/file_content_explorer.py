@@ -1,16 +1,16 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.228.7.1
+version: 5.229.0.0
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.228.7.1: Factorisation de la détection textuelle via is_text_mime (echo_constants).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.109.32: Fix thinking medium explicite sur semantic_probe et read_multimedia_file (MODEL_APOLLO).
 # 5.109.31: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
-# 5.109.30: Intégration de l'accès aux espaces Codex (main/sandbox) via _resolve_extended_file_path et mise à jour des docstrings.
 
 import os
 import sys
@@ -84,15 +84,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """
-        Lecture d'un fichier personnel (Uploads, Codex 'main', ou 'sandbox'). Validation Registre requise (sauf sandbox).
-        [CONTRAINTE CRITIQUE : byte_offset est mutuellement exclusif avec start_line/end_line. Maximum conseillé pour byte_offset/lignes : éviter de saturer le contexte (ex: 100 lignes max).]
-        :param file_id: Identifiant Registre ou nom de fichier exact (si ciblage du sandbox).
-        :param start_line: (Optionnel) Ligne de départ.
-        :param end_line: (Optionnel) Ligne de fin.
-        :param output_mode: (Optionnel) Format: 'text' (défaut/extraction standard), 'base64' (pour injection multimodale ou encapsulation de binaires), 'hex' (analyse structurelle).
-        :param byte_offset: (Optionnel) Décalage binaire (exclut start_line/end_line).
-        """
+        """Lit un fichier de l'Espace Personnel (Uploads, Codex `main` ou `sandbox`) par lignes ou offset binaire."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
         fpath = self._resolve_extended_file_path(uid, __metadata__.get("chat_id"), file_id)
@@ -178,10 +170,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Sonde sémantiquement un fichier volumineux (Upload, Codex 'main', 'sandbox'). Validation Registre requise (sauf sandbox).
-        :param file_id: Identifiant Registre ou nom de fichier exact (pour le sandbox).
-        :param query: Motif d'analyse sémantique.
-        """
+        """Analyse sémantiquement un fichier volumineux ou binaire (PDF, Média) sans saturer le contexte."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system")
         fpath = self._resolve_extended_file_path(user_id, __metadata__.get("chat_id"), file_id)
@@ -260,9 +249,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Sonde sensorielle (Média) pour obtenir un rapport textuel (Zéro-RAM). Supporte Uploads, Codex 'main' et 'sandbox'.
-        :param file_id: Identifiant Registre ou nom de fichier exact (pour le sandbox).
-        """
+        """Génère un rapport textuel descriptif d'un fichier multimédia (image, audio, vidéo)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
         fpath = self._resolve_extended_file_path(uid, __metadata__.get("chat_id"), file_id)
@@ -343,7 +330,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> dict:
-        """Avertissement à l'Utilisateur et syntaxe markdown en dernier recours. Le Modèle est multimédia natif (pas d'outil requis pour visionner)."""
+        """Affiche une image locale ou valide une URL d'image distante pour présentation à l'utilisateur."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
         is_url = target.lower().startswith(("http://", "https://"))
@@ -416,7 +403,7 @@ class Tools:
 
 
     async def get_file_metadata(self, file_id: str, __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None) -> str:
-        """Récupère les métadonnées techniques d'un fichier."""
+        """Récupère la taille et le type MIME d'un fichier de l'Espace Personnel."""
         uid = __user__.get("id", "anonymous")
         fpath = self._resolve_extended_file_path(uid, __metadata__.get("chat_id"), file_id)
         if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -432,10 +419,7 @@ class Tools:
         __metadata__: dict = {}, 
         __event_emitter__: Any = None
     ) -> str:
-        """Calcul d'empreintes numériques (intégrité) pour l'Espace Personnel.
-        :param file_ids: Liste des identifiants stricts de fichiers (Registre).
-        :param algorithm: Algorithme de hachage à utiliser.
-        """
+        """Calcule les empreintes cryptographiques (SHA256, MD5, etc.) d'une liste de fichiers."""
         import zlib
         uid = __user__.get("id", "anonymous")
         res = []

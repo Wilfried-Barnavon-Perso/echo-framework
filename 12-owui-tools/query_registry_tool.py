@@ -1,21 +1,16 @@
 """
 title: ECHO Resource Registry
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.229.0.0
 description: Composant système interne : ECHO Resource Registry.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.0: Outil de consultation du registre unifié des ressources (echo_resources).
-# Permet au modèle de requêter l'état complet des fichiers, plans, documents Codex
-# et pages web de la session.
-# 1.1: Fix troncature ID UUID dans le tableau ([:20] supprimé).
-# Fix fallback partiel dans get_resource (LIKE si ID exact échoue).
-# 1.2: Suppression des Valves inutilisées (code mort).
-# 1.5: Nettoyage PEP8 : F841 (Variables locales inutilisées préfixées par _ ou retirées).
-# 1.6: Suppression d'assignations obsolètes.
 # 1.9: Mise à jour SNR de la docstring (explication sémantique stricte des statuts d'ingestion).
+# 1.6: Suppression d'assignations obsolètes.
+# 1.5: Nettoyage PEP8 : F841 (Variables locales inutilisées préfixées par _ ou retirées).
 
 # ECHO CONFIG NAME : ECHO Registry
 
@@ -45,22 +40,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """
-        Consultation centralisée de l'état des ressources du Registre (fichiers, URLs, agents, Codex, plans, etc.). Étape de validation obligatoire AVANT toute manipulation.
-        RÈGLES DE STATUTS PAR TYPE :
-        - Fichiers (media/binary/weburl/codex) :
-          * pending_ingestion : en attente d'ingestion au prochain tour.
-          * put_in_context : fichier injecté directement.
-          * vectorized_sum_up : résumé via Smart Context, contenu disponible dans le RAG.
-          * indexed : id du fichier connu, consultable via agent ou outils disponibles.
-        - Plans (plan) : proposed, executing, success, partial, failed, abandoned
-        - N8N Workflows (n8n_workflow) : 
-          * ready : Le workflow est préparé et en attente.
-          * executing : Le workflow est en cours d'exécution unique (One-Shot).
-          * error : Le workflow ou le déploiement est en échec.
-          * deployed : Le workflow tourne en autonomie comme démon persistant en arrière-plan.
-        - n8n_template : NE PREND AUCUN STATUT (laisser None).
-        """
+        """Consulte l'état des ressources du Registre Unifié (fichiers, Codex, plans, workflows N8N, URLs). Étape obligatoire avant manipulation."""
         uid = __user__.get("id", "anonymous") if __user__ else "anonymous"
         cid = (__metadata__ or {}).get("chat_id")
 

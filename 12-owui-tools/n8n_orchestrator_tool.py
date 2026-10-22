@@ -1,11 +1,12 @@
 """
 title: ECHO N8N Orchestrator
 author: ECHO
-version: 5.226.18.1
+version: 5.229.0.0
 description: Outil agentique de cycle de vie et d'exécution N8N (Phase 2 & 3). Refactorisation institutionnelle et N8N Grapher.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression des docstrings OpenAPI et externalisation de la documentation vers 14-owui-libs/tool_guides/n8n_workflows.md.
 # 5.226.18.1: Alignement global ECHO et harmonisation impersonnelle (PAS) du docstring de run_n8n_oneshot_workflow.
 # 1.18: Nomenclature : Alignement de la délégation N8N Grapher sur MODEL_PROMETHEUS.
 # 1.17: Documentation : Ajout des directives d'usage de la macro __ECHO_DOWNLOAD_DIR__ et obligation de validation One-Shot avant déploiement.
@@ -44,13 +45,7 @@ class Tools:
     # =========================================================================
     
     def create_n8n_template(self, template_id: str, content: str, __user__: dict = None, __metadata__: dict = None) -> dict:
-        """
-        Permet au modèle de forger un template global réutilisable N8N (non exécutable).
-        Enregistre le JSON brut sous un identifiant métier unique (ex: 'veille_techno').
-        
-        :param template_id: L'identifiant du template (ex: 'veille_techno').
-        :param content: Le JSON complet du template N8N.
-        """
+        """Enregistre un JSON N8N comme template global réutilisable sous `template_id`."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
 
@@ -76,12 +71,7 @@ class Tools:
             return wrap_tool_output(f"Erreur lors de la création : {str(e)}", user_id=uid, chat_id=cid, metadata=__metadata__)
 
     def modify_n8n_template(self, template_id: str, new_content: str, __user__: dict = None, __metadata__: dict = None) -> dict:
-        """
-        Permet au modèle d'altérer la structure JSON d'un template N8N global existant.
-        
-        :param template_id: L'identifiant du template à modifier.
-        :param new_content: Le nouveau JSON complet du template N8N.
-        """
+        """Remplace la structure JSON d'un template N8N global existant (`template_id`)."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
 
@@ -103,11 +93,7 @@ class Tools:
             return wrap_tool_output(f"Erreur lors de la modification : {str(e)}", user_id=uid, chat_id=cid, metadata=__metadata__)
 
     def delete_n8n_template(self, template_id: str, __user__: dict = None, __metadata__: dict = None) -> dict:
-        """
-        Permet au modèle de purger un template N8N global de l'espace utilisateur.
-        
-        :param template_id: L'identifiant du template à supprimer.
-        """
+        """Supprime un template N8N global (`template_id`) de l'espace utilisateur."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
 
@@ -174,15 +160,7 @@ class Tools:
         return None
 
     def prepare_n8n_workflow(self, content: str = None, from_template_id: str = None, __user__: dict = None, __metadata__: dict = None) -> dict:
-        """
-        Permet au Modèle d'instancier un workflow N8N exécutable spécifiquement pour la session en cours.
-        Requiert soit l'injection directe d'un JSON (content), soit l'identifiant d'un template source (from_template_id).
-        Le Modèle DOIT comprendre que les noeuds "Webhook" sont STRICTEMENT INUTILISABLES dans cette infrastructure isolée.
-        Invoque la barrière de sécurité Vault avant enregistrement.
-        
-        :param content: Optionnel. Le JSON complet du workflow.
-        :param from_template_id: Optionnel. L'identifiant d'un template existant à utiliser comme source.
-        """
+        """Instancie et valide un workflow N8N pour la session (depuis un JSON `content` ou un `from_template_id`) et retourne son `n8n_workflow_id`."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
 
@@ -224,12 +202,7 @@ class Tools:
             return wrap_tool_output(f"Erreur : {str(e)}", user_id=uid, chat_id=cid, metadata=__metadata__)
 
     def modify_n8n_workflow(self, n8n_workflow_id: str, new_content: str, __user__: dict = None, __metadata__: dict = None) -> dict:
-        """
-        Permet au modèle de surcharger l'intégralité du JSON d'un workflow de session instancié.
-        
-        :param n8n_workflow_id: L'UUID du workflow à modifier.
-        :param new_content: Le nouveau JSON complet du workflow.
-        """
+        """Met à jour le JSON complet d'un workflow de session instancié (`n8n_workflow_id`)."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
 
@@ -258,11 +231,7 @@ class Tools:
             return wrap_tool_output(f"Erreur : {str(e)}", user_id=uid, chat_id=cid, metadata=__metadata__)
 
     def delete_n8n_workflow(self, n8n_workflow_id: str, __user__: dict = None, __metadata__: dict = None) -> dict:
-        """
-        Permet au modèle de supprimer l'instance d'un workflow de la session, d'arrêter son exécution et de purger les fichiers qu'il a générés.
-        
-        :param n8n_workflow_id: L'UUID du workflow à supprimer.
-        """
+        """Supprime un workflow de session (`n8n_workflow_id`), arrête ses processus/démons actifs et purge ses fichiers générés."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
 
@@ -356,16 +325,7 @@ class Tools:
         return data
 
     async def run_n8n_oneshot_workflow(self, n8n_workflow_id: str, sync: bool = False, parameters_override: Optional[dict] = None, __user__: dict = None, __metadata__: dict = None) -> dict:
-        """
-        Permet au Modèle de déclencher l'exécution ÉPHÉMÈRE CLI d'un workflow préparé via prepare_n8n_workflow.
-        Procède à l'injection algorithmique des secrets via Vault. Les noeuds Triggers/Cron sont forcés et exécutés une seule fois.
-        Si le workflow produit un fichier, le Modèle DOIT configurer le nœud d'écriture STRICTEMENT avec le chemin 
-        `__ECHO_DOWNLOAD_DIR__/nom_du_fichier.ext`. Le système gère automatiquement le renommage, la sécurisation et l'ingestion asynchrone.
-        
-        :param n8n_workflow_id: L'UUID retourné par prepare_n8n_workflow.
-        :param sync: Si True, le Modèle attend (bloquant) la fin du processus et reçoit stdout/stderr. Si False (par défaut), lance en tâche de fond (Fire&Forget). Définir sync sur False pour le scraping, les tâches longues ou les cas de récursivité.
-        :param parameters_override: Optionnel. Dictionnaire pour surcharger dynamiquement des paramètres.
-        """
+        """Exécute de façon éphémère un workflow préparé (`n8n_workflow_id`) en mode synchrone (`sync=True`) ou tâche de fond (`sync=False`)."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
 
@@ -437,17 +397,7 @@ class Tools:
 
 
     async def deploy_n8n_daemon(self, n8n_workflow_id: str, __user__: dict = None, __metadata__: dict = None) -> dict:
-        """
-        Permet au modèle de DÉPLOYER un workflow de façon PERSISTANTE dans N8N.
-        Indispensable pour les workflows qui doivent tourner en autonomie (Triggers : Schedule, Cron, Webhook, Email).
-        Le Modèle DOIT tester le cas nominal de son workflow via `run_n8n_oneshot_workflow` (avec Mocking)
-        AVANT de le déployer en mode Démon, pour garantir la validité du graphe.
-        ATTENTION : En mode Démon, le flux stdout/stderr est perdu. Si le démon doit transmettre des données ou 
-        des rapports, le workflow DOIT se terminer par une écriture disque utilisant STRICTEMENT le chemin 
-        `__ECHO_DOWNLOAD_DIR__/nom_du_fichier.ext`. Le système gère automatiquement le renommage, la sécurisation et l'ingestion asynchrone.
-        
-        :param n8n_workflow_id: L'UUID du workflow préparé via prepare_n8n_workflow.
-        """
+        """Déploie et active de façon persistante un workflow N8N préparé et préalablement testé (`n8n_workflow_id`)."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
 
@@ -512,13 +462,7 @@ class Tools:
     # =========================================================================
 
     async def search_n8n_hub(self, query: str, limit: int = 3, __user__: dict = None, __metadata__: dict = None) -> dict:
-        """
-        Permet au modèle de rechercher des workflows directement sur le Hub officiel N8N.
-        Interroge l'API publique en temps réel et retourne les identifiants, noms et descriptions des meilleurs résultats.
-        
-        :param query: Le mot-clé ou le cas d'usage à rechercher (ex: 'scraper', 'google drive').
-        :param limit: Optionnel. Le nombre maximum de résultats à retourner (défaut: 3).
-        """
+        """Recherche des modèles de workflows sur le Hub officiel N8N par mot-clé (`query`)."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
 
@@ -551,13 +495,7 @@ class Tools:
             return wrap_tool_output(f"Erreur de recherche Hub N8N : {str(e)}", user_id=uid, chat_id=cid, metadata=__metadata__)
 
     async def download_n8n_hub_template(self, hub_id: str, template_id: str, __user__: dict = None, __metadata__: dict = None) -> dict:
-        """
-        Permet au modèle de télécharger un workflow depuis le Hub officiel N8N et de le forger en tant que template local.
-        L'identifiant du template enregistré pourra ensuite être utilisé pour instancier des workflows de session.
-        
-        :param hub_id: L'identifiant public du workflow sur le Hub N8N (obtenu via search_n8n_hub).
-        :param template_id: L'identifiant métier unique sous lequel enregistrer le template localement.
-        """
+        """Télécharge un workflow depuis le Hub N8N (`hub_id`) et l'enregistre comme template local sous `template_id`."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
 
@@ -610,13 +548,7 @@ class Tools:
             return wrap_tool_output(f"Erreur lors du téléchargement Hub N8N : {str(e)}", user_id=uid, chat_id=cid, metadata=__metadata__)
 
     async def query_n8n_documentation(self, __user__: dict = None, __metadata__: dict = None) -> dict:
-        """
-        Permet au Modèle de consulter la documentation architecturale et la version exacte de l'instance N8N cible.
-        À utiliser impérativement AVANT la création ou la modification d'un workflow N8N pour garantir le respect des contraintes d'exécution (Triggers requis, règles de Mocking, isolation Sandbox).
-        
-        :param __user__: (Système) Dictionnaire contenant l'identité de l'Utilisateur.
-        :param __metadata__: (Système) Dictionnaire contenant les métadonnées de la session (chat_id).
-        """
+        """Consulte la version et les règles architecturales N8N de l'infrastructure (obligatoire avant toute création manuelle de graphe)."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
 
@@ -647,13 +579,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> dict:
-        """
-        Permet de déléguer la construction complexe d'un diagramme N8N, sa configuration (Mocking, gestion 
-        des payloads volumineux) et ses tests en Sandbox à l'agent spécialisé (N8N Grapher).
-        
-        RÈGLE CRITIQUE : Le Modèle DOIT absolument privilégier cet outil et déléguer la tâche dès que le 
-        workflow demandé dépasse 2 nœuds, nécessite du mocking ou un formatage complexe.
-        """
+        """Délègue la conception, le mocking et le test en Sandbox d'un workflow N8N complexe (> 2 nœuds) à l'agent spécialisé N8N Grapher."""
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = __metadata__.get("chat_id") if __metadata__ else None
         

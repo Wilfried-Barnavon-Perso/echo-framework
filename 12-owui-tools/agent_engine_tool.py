@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 5.226.18.0
+version: 5.229.0.0
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/agent_orchestration.md.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.28: Alignement du cache d'outils sur sys.modules["function_echo_orchestrator"].
 # 1.27: Bascule de la synthèse d'agent vers MODEL_APOLLO (medium) au lieu de MODEL_DISTILLATION.
 # 1.26: Résolution robuste de chat_id depuis __metadata__ et propagation de __metadata__ dans infra_kwargs des sous-agents.
-# 1.25: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 
 import sys
 import uuid
@@ -94,21 +94,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """
-        Délégation experte par agent autonome.
-        CAS D'USAGE PRINCIPAUX :
-        1. Exécuter des tâches isolées et spécialisées via des Skills dédiés.
-        2. Protéger et ne pas encombrer inutilement le contexte de l'Orchestrateur (offload cognitif pour les opérations verbeuses ou répétitives).
-        
-        INFO ORCHESTRATEUR : si le système_prompt est vide, ainsi que le skill, alors c'est le système prompt de l'Orchestrateur qui est transmis.
-        
-        :param task: Mission ou réponse (si reprise).
-        :param system_prompt: (Optionnel) Directives comportementales additionnelles.
-        :param skill_id: (Optionnel) Identifiant de Skill (se combine avec system_prompt si les deux sont fournis).
-        :param sub_sid: (Optionnel) ID de session pour reprise.
-        :param with_context_distillate: (Bool) Injection du résumé de branche.
-        :param target_model_key: (Optionnel) Enum des modèles (echo_constants).
-        """
+        """Délègue une tâche isolée ou multi-outils à un sous-agent autonome outillé (avec `skill_id` optionnel et reprise possible via `sub_sid`)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = (__user__ or {}).get("id", "system")
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id") or ""
@@ -130,7 +116,7 @@ class Tools:
             skill_content = get_skill_content(user_id, skill_id)
             if not skill_content:
                 return wrap_tool_output(
-                    text=f"❌ Skill '{skill_id}' introuvable. IMPLIQUE `forge_skill`.",
+                    text=f"❌ Skill '{skill_id}' introuvable.",
                     status={"status": "error", "message": f"Skill '{skill_id}' not found"}
                 , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             
@@ -298,7 +284,7 @@ class Tools:
         __event_emitter__: Any = None,
         __metadata__: dict = {},
     ) -> str:
-        """Liste des sessions d'agents actives."""
+        """Liste toutes les sessions de sous-agents actives (`sub_sid`) dans la conversation."""
         user_id = (__user__ or {}).get("id", "system")
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
         if not chat_id:
@@ -349,9 +335,7 @@ class Tools:
         __event_emitter__: Any = None,
         __metadata__: dict = {},
     ) -> str:
-        """Ferme définitivement une session d'agent et purge son historique (irréversible).
-        :param sub_sid: Identifiant strict de la session.
-        """
+        """Ferme définitivement une session de sous-agent (`sub_sid`) et purge son historique."""
         user_id = (__user__ or {}).get("id", "system")
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
         if not chat_id:
@@ -386,9 +370,7 @@ class Tools:
         __metadata__: Optional[dict] = None,
         __event_emitter__: Any = None,
     ) -> str:
-        """Résumé structuré d'une session d'agent.
-        :param sub_sid: Identifiant strict de la session.
-        """
+        """Génère un résumé structuré (Tâche, Outils utilisés, Résultats, Conclusion) de l'historique d'une session de sous-agent (`sub_sid`)."""
         events = EchoEvents(__event_emitter__)
         user_id = (__user__ or {}).get("id", "system")
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
@@ -593,7 +575,7 @@ async def _run_agent_loop(
                 state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", model_raw, _sig(model_raw))
 
                 return wrap_tool_output(
-                    text=f"⚠️ Agent [{sid}] bloqué. IMPLIQUE clarification utilisateur.",
+                    text=f"⚠️ Agent [{sid}] en attente de clarification : {question}",
                     status={
                         "status": "pending_question",
                         "sid": sid,

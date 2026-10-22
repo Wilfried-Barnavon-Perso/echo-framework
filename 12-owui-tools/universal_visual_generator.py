@@ -1,16 +1,16 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.229.0.0
 description: Composant système interne : ECHO Visual Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.15: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 5.12: Suppression d'assignations obsolètes.
 # 5.11: Nettoyage PEP8 : F841 (Variables locales inutilisées préfixées par _ ou retirées).
-# 5.10: Nettoyage du code : suppression des imports inutilisés (PEP8).
 # MOTEURS INTÉGRÉS ET DATAFLOWS :
 # - mermaid (v11) : Syntaxe Mermaid pure
 # - echarts (v5) : JSON ECharts strict
@@ -67,13 +67,7 @@ class Tools:
     __event_emitter__: Any = None,
     __event_call__: Any = None
   ) -> Union[dict, Tuple[HTMLResponse, dict]]:
-    """
-    Génération asynchrone d'interfaces interactives (Mindmaps, Graphes, Tableaux). Sub-chat MODEL_APOLLO. Retourne le composant ECHO Visual.
-    :param intention: Objectif du rendu visuel.
-    :param donnees_contextuelles: Données brutes à modéliser.
-    :param moteur: (Optionnel) markmap, mermaid, echarts, etc.
-    :param niveau_cognitif: (Optionnel) Enum des modèles (echo_constants).
-    """
+    """Génère une visualisation interactive riche (Mermaid, ECharts, Markmap, Leaflet, etc.) à partir de données contextuelles."""
     events = EchoEvents(__event_emitter__, __event_call__)
     await events.status(f"🧠 Rendu Visuel : Orchestration {moteur or 'Auto'}...")
     user_id = __user__.get("id", "system") if __user__ else "system"

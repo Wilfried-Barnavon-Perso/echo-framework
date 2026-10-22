@@ -1,16 +1,16 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 5.226.18.0
+version: 5.229.0.0
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 11.43: Séparation stricte entre chat_id (persistance SQLite/Vault) et browser_session_id (isolation Playwright par sub_sid) pour empêcher la création de dossiers chats/<sub_sid> orphelins.
 # 11.42: Ajustement du thinking level de analyze_web_page à medium.
 # 11.41: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
-# 11.40: Fix de la compatibilité API (camelCase) pour l'injection du fichier téléchargé et ajout explicite de systemInstruction pour contrer le stripping des thoughts.
 
 import os
 import time
@@ -130,11 +130,7 @@ class Tools:
         max_iterations: int = 30,
         __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None
     ) -> dict:
-        """
-        Interactions web complexes (formulaires, clics, lecture intégrale d'URL). Recherche d'informations simples proscrite (utiliser `search_web`). La requête (task_objective) DOIT INCLURE le contexte général et spatio-temporel si judicieux.
-        
-        :param max_iterations: Nombre max d'itérations. À augmenter pour les tâches longues (ex: 60 questions). Max: 100.
-        """
+        """Délègue une navigation web interactive complexe (clics, formulaires, SPA) au Navigateur Autonome."""
         events = EchoEvents(__event_emitter__, __event_call__)
         
         # Récupération de l'identité du sous-agent via contextvars
@@ -542,12 +538,7 @@ class Tools:
                 proxy_task.cancel()
 
     async def analyze_web_page(self, url: str, query: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
-        """[ANALYSE SÉMANTIQUE IMMÉDIATE] UTILISER EN PRIORITÉ : Idéal pour trouver une info précise sur une page web identifiée.
-        Délègue la lecture d'une page Web à un sous-agent pour la synthétiser, la décrire ou y chercher une donnée exacte. Retourne la réponse dans le tour de parole courant sans polluer la mémoire vectorielle.
-        
-        :param url: L'URL absolue de la page à analyser.
-        :param query: La directive (ex: 'Résume cet article', 'Trouve le prix', 'Décris le produit').
-        """
+        """Extrait et analyse sémantiquement le contenu d'une URL connue pour répondre à une directive précise."""
         events = EchoEvents(__event_emitter__, __event_call__)
         chat_id = (__metadata__ or {}).get("chat_id", "default_session")
         sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
@@ -601,10 +592,7 @@ class Tools:
 
 
     async def archive_web_page(self, url: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
-        """[ARCHIVAGE RAG ASYNCHRONE] Permet au Modèle de sauvegarder l'intégralité du texte Markdown d'une page Web volumineuse dans la Mémoire Vectorisée. L'archivage s'effectue silencieusement en tâche de fond. Le Modèle doit utiliser cet outil uniquement pour figer un savoir de long-terme.
-        
-        :param url: L'URL absolue de la page à archiver.
-        """
+        """Archive le texte intégral d'une page Web en tâche de fond dans la Mémoire Vectorielle de la session."""
         events = EchoEvents(__event_emitter__, __event_call__)
         chat_id = (__metadata__ or {}).get("chat_id", "default_session")
         sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
@@ -652,7 +640,7 @@ class Tools:
         , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def web_browse_reset(self, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
-        """Réinitialise la session du navigateur (Fermeture et Nettoyage)."""
+        """Réinitialise la session courante du Navigateur Autonome."""
         chat_id = (__metadata__ or {}).get("chat_id", "default_session")
         sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
         sub_sid = sub_ctx.get("sub_sid") if sub_ctx else None
@@ -663,10 +651,7 @@ class Tools:
         return wrap_tool_output(text="🚀 Navigateur réinitialisé.", status=res, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def close_web_thread(self, sub_sid: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
-        """
-        Ferme définitivement une session du navigateur web et purge son historique (irréversible).
-        :param sub_sid: L'identifiant de la session web à fermer (ex: thread_web_abc123)
-        """
+        """Ferme définitivement une session de navigation web (`thread_web_*`) et purge son historique."""
         chat_id = __metadata__.get("chat_id", "default_session")
         uid = __user__.get("id", "anonymous")
         
@@ -692,9 +677,7 @@ class Tools:
         , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def get_browser_frames_history(self, depth: Optional[int] = 10, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None) -> dict:
-        """
-        Consultation de l'historique des captures d'écran (Vision multimodale).
-        """
+        """Consulte l'historique des captures d'écran de navigation de la session."""
         import orjson as json
         chat_id = (__metadata__ or {}).get("chat_id")
         uid = __user__.get("id", "anonymous")

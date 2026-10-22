@@ -1,16 +1,16 @@
 """
 title: ECHO Maps Grounding
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.229.0.0
 description: Composant système interne : ECHO Maps Grounding.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 13.8: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 13.6: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
 # 13.5: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 13.4: Fix - Intégration de TEMP_DEFAULT et TOP_P_DEFAULT dans generationConfig.
 
 import sys
 from typing import Any, Tuple, Union
@@ -58,9 +58,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> Union[dict, Tuple[HTMLResponse, dict]]:
-        """
-        Affiche des cartes de données géo-spatiales (lieux, itinéraires) via une recherche sur Google Maps. Le Modèle doit afficher l'UI locale puis traiter les données textuelles retournées.
-        """
+        """Effectue une recherche géo-spatiale (lieux, itinéraires) via Google Maps Grounding, et affiche une carte."""
         user_id = __user__.get("id", "system")
         chat_id = (__metadata__ or {}).get("chat_id")
         events = EchoEvents(__event_emitter__, __event_call__)

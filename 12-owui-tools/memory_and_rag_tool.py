@@ -1,16 +1,16 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 5.228.0.1
+version: 5.229.0.0
 description: ECHO Toolbox pour gestion RAG (Sessions & Codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression des docstrings OpenAPI et externalisation de la documentation vers 14-owui-libs/tool_guides/memory_and_rag.md.
 # 5.228.0.1: Précision d'usage de search_sessions_context par un sous-agent pour distillation en phase prospective.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.31: Clarté du statut UI dans update_meta_artifact ciblant explicitement le Méta-Artéfact concerné.
 # 2.30: Paramètre importance obligatoire (Literal["1".."5"]), alignement PACP/PRAC et énonciation impersonnelle stricte.
-# 2.29: Suppression des emojis dans les retours de l'outil delete_session_context_source pour maximiser le signal/bruit.
 
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
@@ -98,21 +98,7 @@ class Tools:
         __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None
     ) -> dict:
-        """
-        Permet au Modèle de consigner de manière persistante une information dans un Méta-Artéfact (PACP ou PRAC).
-        Cet outil retourne le memory_id généré, indispensable pour permettre au Modèle de supprimer ou de cibler ce fait ultérieurement via delete_meta_artifact_item.
-
-        Échelle des niveaux d'importance autorisés (sélection obligatoire) :
-        - "1" (Trivial) : Fait atomique ponctuel, observation isolée ou indice faible non confirmé (Pondération 0.6x, TTL 30j sans accès, éligible à la consolidation nocturne Lvl1 -> Lvl2).
-        - "2" (Mineur) : Hypothèse de travail récurrente, préférence contextuelle secondaire ou synthèse consolidée (Pondération 0.8x, TTL 30j sans accès).
-        - "3" (Utile) : Fait vérifié, contexte technique récurrent ou habitude opérationnelle établie (Pondération 1.0x, TTL 30j sans accès).
-        - "4" (Majeur) : Préférence forte validée, architecture clé ou règle métier structurante (Pondération 1.3x, permanent hors TTL).
-        - "5" (Axiome) : Directive absolue de l'Utilisateur, contrainte critique de sécurité ou invariant identitaire (Pondération 1.6x, sanctuarisé hors TTL).
-
-        :param artifact_name: Le nom du Méta-Artéfact cible ("Profil d'Alignement" ou "Hypothèses d'Apprentissage").
-        :param fact: L'énoncé factuel, la préférence ou l'hypothèse à persister.
-        :param importance: Le niveau d'importance obligatoire choisi parmi "1", "2", "3", "4", "5".
-        """
+        """Consigne de manière persistante un fait (`fact`) dans un Méta-Artéfact (`Profil d'Alignement` ou `Hypothèses d'Apprentissage`) avec niveau d'importance obligatoire de '1' à '5', et retourne son `memory_id`."""
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id") or not __metadata__:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -192,20 +178,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None
     ) -> dict:
-        """
-        Interface de lecture de la mémoire vectorielle persistante (Méta-Artéfacts inter-sessions).
-        Retourne systématiquement le contenu détaillé des faits mémorisés. Le mode d'extraction s'adapte selon la présence de 'query'.
-
-        Règle de résolution :
-        - Mode "Recherche Ciblée" (query renseigné) : Extraction sémantique vectorielle. Renvoie les souvenirs les plus pertinents par rapport au concept, pondérés par leur niveau d'importance.
-        - Mode "Lecture Globale" (query omis) : Extraction chronologique neutre. Renvoie les N derniers faits mémorisés dans leur intégralité pour s'imprégner du contexte général sans biais sémantique.
-
-        :param query: Optionnel. Le concept ou mot-clé ciblé. Omettre pour une lecture globale et temporelle.
-        :param artifact_name: Optionnel. Restreint la lecture à un Méta-Artéfact spécifique.
-        :param limit: Optionnel. Nombre maximum de faits retournés. Défaut: 20.
-        :param start_date: Optionnel. Borne chronologique inférieure (ISO 8601).
-        :param end_date: Optionnel. Borne chronologique supérieure (ISO 8601).
-        """
+        """Recherche par similarité sémantique (`query` défini) ou lit chronologiquement (`query` omis) les faits stockés dans les Méta-Artéfacts long-terme."""
 
         events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
@@ -348,7 +321,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __metadata__: Optional[dict] = None,
     ) -> dict:
-        """Permet au Modèle de supprimer une information obsolète ou erronée d'un Méta-Artéfact à partir de son memory_id."""
+        """Supprime définitivement un fait d'un Méta-Artéfact long-terme à partir de son `memory_id`."""
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id"):
             return wrap_tool_output(text="❌ Erreur : Utilisateur non identifié.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -390,7 +363,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None
     ) -> dict:
-        """Sauvegarde éphémère dans le RAG Temporaire (Contexte de la session en cours)."""
+        """Vectorise et sauvegarde un texte (`text`) sous l'identifiant `source_id` dans la Mémoire Vectorielle de la session."""
         events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -433,13 +406,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None
     ) -> dict:
-        """
-        Suppression intégrale et irréversible d'une source du RAG Éphémère.
-        Permet d'éliminer le contexte d'un fichier, d'une page web ou d'une session obsolète de la mémoire de travail.
-        Attention : Purge strictement locale à la source nommée. Une suppression globale de session est impossible via cet outil.
-
-        :param source_id: Obligatoire. L'identifiant strict de la source (ex: nom de fichier, UUID de session, slug libre) à purger de la mémoire.
-        """
+        """Supprime tous les vecteurs associés à `source_id` dans la Mémoire Vectorielle de la session active."""
         events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -509,27 +476,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None
     ) -> dict:
-        """
-        Interface d'exploration de la mémoire vectorielle de travail (RAG).
-        En phase prospective, l'outil est destiné à être exécuté par un Sous-Agent pour distillation, si disponible.
-        Mode sémantique (query défini) : Extraction de fragments textuels complets.
-        Mode index (query omis) : Cartographie des sources indexées (aperçu 60 chars).
-
-        :param certainty_level: Obligatoire. Niveau de certitude cosinus attendu ("BROAD", "STANDARD", "STRICT", "EXACT").
-               - BROAD : Tolérance maximale (exploration, concepts vagues).
-               - STANDARD : Équilibre pertinence/bruit.
-               - STRICT : Correspondance sémantique forte (factuel).
-               - EXACT : Correspondance quasi-littérale.
-        :param query: Optionnel. Concept ciblé. Omettre pour cartographier l'index.
-        :param source_id: Optionnel. UUID de la source pour filtrage strict.
-        :param global_search: Optionnel. Booléen. Défaut: False (restreint à la session active).
-                              Définir sur True pour étendre la recherche à l'intégralité de l'historique inter-sessions.
-                              Déclencheur d'activation : référence explicite de l'utilisateur à des données antérieures ("hier", "précédemment", "autre session").
-        :param limit: Optionnel. Nombre maximum de fragments uniques. Défaut: 32.
-        :param sort_by_time: Optionnel. Si True, force le tri chronologique (historique). Si False (défaut), trie par pertinence (score).
-        :param start_date: Optionnel. Borne chronologique inférieure (ISO 8601).
-        :param end_date: Optionnel. Borne chronologique supérieure (ISO 8601).
-        """
+        """Explore la Mémoire Vectorielle de la session (`global_search=False`) ou de toutes les sessions (`global_search=True`) selon le seuil `certainty_level` ('BROAD', 'STANDARD', 'STRICT', 'EXACT'), ou cartographie les sources indexées (`query` omis)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)

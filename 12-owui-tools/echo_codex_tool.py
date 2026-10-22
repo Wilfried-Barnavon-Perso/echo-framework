@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.229.0.0
 description: Permet au modèle de manipuler un espace de travail virtuel et asynchrone (Codex) avec versioning Git invisible, et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/codex_management.md.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.15: Alignement du fallback model_id sur echo_orchestrator dans open_codex_ui.
 # 2.14: Remplacement de la distillation par MODEL_APOLLO (thinking: medium) dans summarize_codex pour fiabiliser la synthèse.
 # 2.13: Fix critique - Levée du blocage du 1er tour et ancrage déterministe de l'action sur le message utilisateur immuable (user_msg_id) pour éliminer le stale write-back (Chat.svelte:1724) et fiabiliser la réouverture du HUD.
-# 2.12: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -104,19 +104,14 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """Création de fichier dans le Codex avec versioning Git. Validation Registre (query_registry) requise.
-        :param filename: Nom du fichier cible.
-        :param content: Le contenu texte intégral à injecter dans le fichier.
-        :param language: (Optionnel) Langage du fichier.
-        :param commit_message: (Optionnel) Message Git.
-        """
+        """Crée un nouveau fichier versionné dans le Codex (`workspace='main'` ou `'sandbox'`)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         if repo.read_file(filename):
-            return wrap_tool_output(text=f"❌ Le fichier `{filename}` existe déjà. IMPLIQUE `edit_codex`.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text=f"❌ Le fichier `{filename}` existe déjà dans l'espace `{workspace}`.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         await events.status(f"📝 Création de {filename}...", done=False)
 
@@ -144,13 +139,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """
-        Modification d'un fichier Codex.
-        [CONTRAINTE CRITIQUE : Les paramètres `new_content` et `instructions` sont mutuellement exclusifs. Le Modèle DOIT obligatoirement fournir l'un OU l'autre, et ne doit JAMAIS utiliser les deux simultanément.]
-        :param filename: Fichier cible (existant).
-        :param new_content: (Optionnel) Remplacement intégral immédiat (exclut instructions).
-        :param instructions: (Optionnel) Directives d'édition (exclut new_content).
-        """
+        """Modifie un fichier existant du Codex par remplacement direct (`new_content`) OU par édition assistée (`instructions`, mutuellement exclusifs)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
@@ -159,7 +148,7 @@ class Tools:
         # Vérification existence
         existing = repo.read_file(filename)
         if not existing:
-            return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable. IMPLIQUE `create_codex` ou vérification Registre.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable dans l'espace `{workspace}`.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         lang = CodexRepo.detect_language(filename)
 
@@ -235,7 +224,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """Suppression d'un fichier du Codex. Validation Registre requise."""
+        """Supprime un fichier du Codex (`main` ou `sandbox`) et met à jour le Registre Unifié."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
@@ -273,12 +262,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """Lecture du contenu d'un fichier Codex. Paramètres optionnels de plage (start_line/end_line) ou historique (commit_hash).
-        :param filename: Fichier cible.
-        :param start_line: (Optionnel) Ligne de début (1-indexed).
-        :param end_line: (Optionnel) Ligne de fin (inclusive).
-        :param commit_hash: (Optionnel) Hash du commit pour lire une version historique spécifique.
-        """
+        """Lit le contenu d'un fichier du Codex (plage optionnelle `start_line`/`end_line` ou version historique `commit_hash`)."""
         uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -320,10 +304,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """Restaure un fichier Codex à une version historique spécifique.
-        :param filename: Fichier cible à restaurer.
-        :param commit_hash: Hash du commit contenant la version à restaurer (fourni par history_codex).
-        """
+        """Restaure un fichier du Codex à une version antérieure à partir de son `commit_hash`."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
@@ -358,14 +339,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """Permet au modèle de rechercher une chaîne de caractères (ou regex) au sein du Codex, que ce soit spatialement (fichiers actuels) ou temporellement (historique de versionnement du Codex).
-        :param query: Motif de recherche (nom de variable, fonction, texte).
-        :param target_paths: (Optionnel) Restreint la recherche à un ou plusieurs dossiers/fichiers du Codex (ex: ["src/api", "main.py"]). Laissez vide pour scruter l'intégralité du Codex.
-        :param is_regex: (Optionnel) Interprète la query comme une expression régulière.
-        :param commit_hash: (Optionnel) Identifiant du commit (obtenu via history_codex) pour effectuer la recherche spatiale à un instant précis du passé du Codex. Ignoré si trace_history est True.
-        :param trace_history: (Optionnel) Si True, bascule en mode 'Voyage Temporel'. Traverse l'historique du Codex et retourne exclusivement les contextes de modification (ajout/suppression) du motif recherché au lieu de sa position statique.
-        :param history_depth: (Optionnel) Nombre maximum d'itérations Git à remonter dans l'historique du Codex en mode trace_history (défaut: 50).
-        """
+        """Recherche un motif texte ou regex dans les fichiers actuels du Codex ou à travers l'historique des modifications (`trace_history=True`)."""
         uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -419,7 +393,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """Résumé technique structuré d'un fichier Codex par distillation Gemini."""
+        """Génère un résumé technique structuré d'un fichier volumineux du Codex."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
@@ -462,7 +436,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """Liste tous les fichiers du Codex de la session courante."""
+        """Liste tous les fichiers présents dans le workspace Codex (`main` ou `sandbox`)."""
         uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -494,11 +468,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """
-        Affiche l'historique Git du Codex (global ou par fichier).
-        :param filename: (Optionnel) Nom du fichier pour filtrer l'historique.
-        :param limit: (Optionnel) Nombre maximum de commits à retourner. Le Modèle doit limiter (Maximum conseillé: 100) pour éviter la surcharge cognitive.
-        """
+        """Affiche l'historique des versions (`commit_hash`, message, date) du Codex global ou d'un fichier `filename`."""
         uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -529,12 +499,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """
-        Permet au Modèle de déclencher l'ouverture asynchrone du HUD Codex dans l'interface de l'Utilisateur pour y afficher un fichier ciblé.
-        RÈGLE DE PARCIMONIE : N'utiliser cet outil QUE si l'Utilisateur en a fait la demande expresse, ou si une relecture de l'Utilisateur est indispensable.
-        :param filename: Nom du fichier, chemin relatif, ou identifiant unique (ID) de la cible au sein de l'espace de travail.
-        :param workspace: (Optionnel) Espace de travail cible ("main" ou "sandbox"). Défaut: "main".
-        """
+        """Ouvre le HUD Codex dans l'interface de l'Utilisateur pour afficher `filename` (à utiliser uniquement sur demande expresse ou relecture indispensable)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         
         chat_id = (__metadata__ or {}).get("chat_id", "")

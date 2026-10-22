@@ -1,11 +1,12 @@
 """
 title: ECHO Universal MCP Tool
 author: ECHO
-version: 5.226.18.0
+version: 5.229.0.0
 description: Outil universel permettant au Modèle d'interroger et d'exécuter des requêtes sur l'infrastructure MCP via un routage dynamique.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 import sys
 import json
@@ -46,10 +47,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> dict:
-        """
-        Permet au Modèle de découvrir dynamiquement les capacités et les schémas d'outils exposés par un serveur MCP.
-        L'argument 'service' doit strictement correspondre à une clé valide issue du registre de l'Identity Vault.
-        """
+        """Découvre les fonctions et schémas d'arguments exposés par un serveur MCP."""
         if not __user__:
             return wrap_tool_output(
                 "Erreur: Contexte manquant.", {"status": "error"}, user_id="", chat_id="", metadata={}
@@ -130,10 +128,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> dict:
-        """
-        Permet au Modèle d'exécuter une fonction précise sur un serveur MCP ciblé via le Broker.
-        L'argument 'service' et 'function_name' sont strictement obligatoires.
-        """
+        """Exécute une fonction spécifique sur un serveur MCP via le Broker."""
         if not __user__:
             return wrap_tool_output(
                 "Erreur: Contexte manquant.", {"status": "error"}, user_id="", chat_id="", metadata={}

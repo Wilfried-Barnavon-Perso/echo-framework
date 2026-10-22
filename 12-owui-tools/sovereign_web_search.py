@@ -1,16 +1,16 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.229.0.0
 description: Composant système interne : ECHO Sovereign Web Search.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/web_search_and_browsing.md.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.21: Fermeture explicite de la session navigateur Playwright (reset_session) en fin de delegate_deep_research.
 # 1.20: Résolution robuste de chat_id avec fallback sur __metadata__ dans delegate_deep_research.
 # 1.19: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
-# 1.17: Optim - Ajout de la priorisation des informations récentes via consignes et utilisation proactive de time_range.
 
 import httpx
 import sys
@@ -48,9 +48,7 @@ class Tools:
         __event_emitter__: Any = None,
         __metadata__: dict = {},
     ) -> str:
-        """
-        Permet au Modèle d'obtenir des définitions de concepts, biographies ou dates via DuckDuckGo (type Wikipédia). Actualité ou événements récents proscrits. Les requêtes doivent utiliser des mots-clés stricts.
-        """
+        """Obtient une définition encyclopédique, biographie ou fait statique via le moteur de réponses instantanées (hors actualité)."""
         events = EchoEvents(__event_emitter__)
         await events.status(f"🦆 DuckDuckGo Instant Answer : {query}...")
         
@@ -73,7 +71,7 @@ class Tools:
                     if source_url: output += f"\n\n[Lire la suite]({source_url})"
                     return wrap_tool_output(text=output, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                 
-                return wrap_tool_output(text="⚠️ Aucune réponse instantanée. IMPLIQUE `search_web`.", status={"status": "no_result"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return wrap_tool_output(text="⚠️ Aucune réponse instantanée disponible.", status={"status": "no_result"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         except Exception as e:
             return wrap_tool_output(text=f"❌ Erreur DDG: {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -89,18 +87,7 @@ class Tools:
         __metadata__: dict = {},
         __event_emitter__: Any = None
     ) -> str:
-        """
-        Permet au Modèle d'effectuer une recherche web simple (one-shot). Retourne des extraits textuels (snippets) limités. Strictement réservé à l'extraction de faits rapides ou d'URLs. Ne permet pas de lire le contenu complet des pages.
-        Pour prioriser l'actualité ou les informations récentes, définissez TOUJOURS time_range (ex: 'year', 'month' ou 'week'). Par défaut aucune limite temporelle n'est appliquée.
-        ANTI-SPAM : Le Modèle a l'INTERDICTION d'exécuter plus de 2 appels à cet outil simultanément lors d'un même tour (Parallel Function Calling). Pour une recherche exhaustive, complexe ou nécessitant de multiples requêtes, le Modèle DOIT utiliser l'outil `delegate_deep_research`.
-        
-        :param query: La recherche textuelle.
-        :param categories: Catégorie spécifique de recherche.
-        :param time_range: Filtre temporel.
-        :param language: Code langue, ex: 'fr-FR', 'en-US', 'all' (défaut: 'fr-FR').
-        :param safesearch: 0:Désactivé, 1:Modéré, 2:Strict (défaut: 1).
-        :param engines: Moteurs séparés par des virgules sans espace (ex: 'google,duckduckgo,wikipedia').
-        """
+        """Exécute une recherche web rapide via le Méta-moteur de recherche et retourne des extraits et URLs (max 2 appels parallèles ; définir `time_range` pour le récent)."""
         events = EchoEvents(__event_emitter__)
         u_valves = __user__.get("valves", self.UserValves()) if __user__ else self.UserValves()
         await events.status(f"🔍 SearxNG Deep Search : {query}...")
@@ -130,7 +117,7 @@ class Tools:
                 
                 if not results:
                     if not is_sub_agent:
-                        return wrap_tool_output(text="⚠️ Aucun résultat. Les extraits textuels courts sont insuffisants, IMPLIQUE `delegate_deep_research`.", status={"status": "no_result"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                        return wrap_tool_output(text="⚠️ Aucun résultat trouvé pour cette requête.", status={"status": "no_result"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                     else:
                         return wrap_tool_output(text="⚠️ Requête sans réponse. Altération des mots-clés requise.", status={"status": "no_result"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
                 
@@ -157,7 +144,7 @@ class Tools:
     async def delegate_deep_research(
         self,
         query: str,
-        engines: Optional[str] = Field(default=None, description="Ciblage éventuel des moteurs pour l'agent (ex: 'scholar,wikipedia')"),
+        engines: Optional[str] = Field(default=None, description="Moteurs cibles séparés par des virgules (ex: 'scholar,wikipedia')."),
         target_model_key: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_PROMETHEUS",
         __user__: dict = {},
         __chat_id__: str = "",
@@ -165,9 +152,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """
-        Permet au Modèle de déléguer la recherche web complexe à un Agent Autonome multi-tours. L'agent naviguera en profondeur pour lire le contenu intégral des pages, procéder à des investigations vastes et croiser de multiples sources.
-        """
+        """Délègue une investigation web complexe et multi-sources à un sous-agent de recherche profonde multi-tours."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system")
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id") or ""
@@ -179,7 +164,7 @@ class Tools:
         _agent_mod = sys.modules.get("tool_agent_engine_tool")
         if not _agent_mod or not hasattr(_agent_mod, "Tools"):
             return wrap_tool_output(
-                text="❌ `agent_engine_tool` introuvable. IMPLIQUE notification utilisateur pour activation.",
+                text="❌ Moteur de délégation `agent_engine_tool` indisponible.",
                 status={"status": "error"}
             , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=chat_id or None, metadata=__metadata__)
         
