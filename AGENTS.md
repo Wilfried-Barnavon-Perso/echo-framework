@@ -4,7 +4,7 @@
 
 - **IDE :** VS Code.
 - **Terminal :** PowerShell (Admin requis pour Hyper-V).
-- **Infrastructure Cible :** Machine Virtuelle Ubuntu 24.04 sur Hyper-V (Allouée à 8Go RAM au démarrage, dynamique 4Go-10Go, 4 vCPU, disque principal VHDX dynamique de 100Go et disque Seed CIDATA de 64Mo).
+- **Infrastructure Cible :** Machine Virtuelle Ubuntu 26.04 sur Hyper-V (Allouée à 8Go RAM au démarrage, dynamique 4Go-10Go, 4 vCPU, disque principal VHDX dynamique de 100Go et disque Seed CIDATA de 64Mo).
 - **Orchestration :** Docker Compose (Standardisé `stack-echo.yml` v5.227.1.1 et `bunkerweb-stack.yml` v5.226.18.0 : Forward Auth SSO `/api/verify`, Rate Limiting `300r/s` burst `1000`, `USE_MODSECURITY=no` sur Open WebUI, et protection `BAD_BEHAVIOR` ciblée sur les codes `405 444`).
 - **Note Critique :** L'agent opère depuis l'hôte Windows. L'interaction avec la cible se fait via `install-hyperv.ps1` (injection ZIP via disque Seed, pointant par défaut sur la branche `dev`), `sync-echo.sh` (distribution), et `upgrade-echo.sh` (mise à niveau majeure).
 
@@ -152,4 +152,4 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 ---
 ---
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.228.12*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.228.13*

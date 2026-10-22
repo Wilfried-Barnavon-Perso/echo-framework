@@ -22,7 +22,7 @@ Fichier monolithique exposant une API Flask très légère.
 - **Multiplexage** : Elle exploite le fichier `/sandbox/.echo_monitor.jsonl` en mode "append" (Multiplexage) pour gérer un fenêtrage multiple simultané (paramètre `window_id`).
 
 ### `Dockerfile` & `requirements.txt`
-- **Build** : Image hybride basée sur **`FROM python:3.14`** embarquant **Node.js 22.x LTS**, `npm` (packages globaux `axios`, `cheerio`, `js-yaml`, `lodash`, `papaparse`, `mathjs`, `zod`, `dotenv`, `moment`) et `bubblewrap`.
+- **Build** : Image hybride basée sur **`FROM python:3.14`** embarquant **Node.js 22.x LTS** (patché CVE-2026-111497 Brotli), `npm` (packages globaux `axios`, `cheerio`, `js-yaml`, `lodash`, `papaparse`, `mathjs`, `zod`, `dotenv`, `moment`) et `bubblewrap`.
 - **Dépendances** : Installe `Flask` pour l'API (avec `CMAKE_BUILD_PARALLEL_LEVEL=2`), ainsi que des librairies d'analyse lourdes fréquemment requêtées par l'agent (`pandas`, `numpy`, `matplotlib`).
 
 ## 3. Dépendances Logiques

@@ -29,6 +29,9 @@ Dossiers contenant la logique métier des outils exposés par le Broker.
   - **Sérialisation** : `_dump()` utilise `model_dump(by_alias=True, mode="json", exclude_none=True)` pour restituer les champs en camelCase (`isError`, `structuredContent`).
   - **Éviction** : toute exception (`except BaseException:`, incluant `asyncio.CancelledError` sur timeout HTTP client) entraîne le retrait de la session du cache et sa fermeture protégée par `asyncio.shield(holder.close())`.
 
+### `Dockerfile`
+- **Build & Runtime** : Hérite de `echo-python-base:latest`. Embarque **Node.js 22.x LTS** (`setup_22.x`, patché CVE-2026-111497) et Git afin de supporter l'exécution sécurisée de serveurs MCP JavaScript/TypeScript (via `npx` / `node`) et de packages distants.
+
 ## 3. Dépendances Logiques
 - Le MCP Broker est interrogé par l'outil `12-owui-tools/echo_mcp_tool.py` et l'action `13-owui-actions/echo_identity_vault_action.py` via ses endpoints HTTP REST (`http://echo-mcp-broker:8000/proxy_mcp` et `/schemas`).
 - N'ayant aucun accès direct aux bases SQLite d'Open WebUI, il reçoit les *Credentials* (extraits en amont de `identity.db` par `echo_mcp_tool.py` via `EchoStateManager`) directement dans le corps de la requête `/proxy_mcp`, et monte le volume externe `echo-mcp-cache` sur `/app/mcp_cache`.
