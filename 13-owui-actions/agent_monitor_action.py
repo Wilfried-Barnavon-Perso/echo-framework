@@ -1,28 +1,22 @@
 """
 title: ECHO Agent Monitor
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.228.12.1
 description: HUD interactif de visualisation arborescente des sous-agents et experts cognitifs ECHO.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxjaXJjbGUgY3g9IjEyIiBjeT0iNCIgcj0iMiIvPjxsaW5lIHgxPSIxMiIgeTE9IjYiIHgyPSIxMiIgeTI9IjkiLz48bGluZSB4MT0iMTIiIHkxPSI5IiB4Mj0iNiIgeTI9IjEzIi8+PGxpbmUgeDE9IjEyIiB5MT0iOSIgeDI9IjE4IiB5Mj0iMTgiLz48Y2lyY2xlIGN4PSI2IiBjeT0iMTUiIHI9IjIiLz48Y2lyY2xlIGN4PSIxOCIgY3k9IjE1IiByPSIyIi8+PGxpbmUgeDE9IjYiIHkxPSIxNyIgeDI9IjYiIHkyPSIyMCIvPjxsaW5lIHgxPSIxOCIgeTE9IjE3IiB4Mj0iMTgiIHkyPSIyMCIvPjxjaXJjbGUgY3g9IjYiIGN5PSIyMSIgcj0iMSIvPjxjaXJjbGUgY3g9IjE4IiBjeT0iMjEiIHI9IjEiLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.12.1: Résilience RPC post-standby et anti-timeout 60s via EchoEvents (resolve_live_session, wait_hud_action, support ping et reconnect_only).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.6: Mise à jour de la priorité d'affichage à 50.
-# 1.0: HUD de visualisation arborescente des agents cognitifs ECHO.
-# 1.1: Boucle événementielle bidirectionnelle (pattern Codex).
-# Suppression des troncatures Python. Refresh live via Promise.
-# Icône arbre d'orchestration.
-# 1.2: Renommage subagent→agent. Classification enrichie par préfixe
-# (agent, expert, council, supervisor). Regroupement des threads de
-# conseil et de supervision sous onglets uniques.
-# 1.3: Stratégie multi-agentique : fusion chronologique des conseils (chat)
-# et regroupement arborescent des workers sous le superviseur.
-# 1.4: Optimisation du rendu HUD multi-agent et intégration du nouveau moteur EchoUI.
 # 1.5: Classification spécifique Navigateur Web et filtrage HUD de la carte DOM.
+# 1.4: Optimisation du rendu HUD multi-agent et intégration du nouveau moteur EchoUI.
 
 import sys
 import re
+import uuid
+import asyncio
 import orjson as json
 from pydantic import BaseModel, Field
 
@@ -31,6 +25,8 @@ sys.path.append("/app/backend/echo_libs")
 from echo_events import EchoEvents
 from echo_state_manager import EchoStateManager
 from echo_ui import EchoUI
+
+_ACTIVE_AGENT_LOOPS: dict[tuple[str, str], str] = {}
 
 
 class Action:
@@ -282,43 +278,70 @@ class Action:
             await events.toast("❌ Aucun chat_id détecté.", "error")
             return None
 
-        await events.status("🧠 Chargement des agents cognitifs...", False)
+        mid = body.get("id") or __metadata__.get("message_id") or ""
+        model_id = body.get("model") or __metadata__.get("model_id") or "echo_orchestrator"
+        reconnect_only = bool(body.get("reconnect_only"))
+
+        if reconnect_only or not body.get("session_id"):
+            resolved = await EchoEvents.resolve_live_session(
+                uid, chat_id, mid, hud_id="echo-cognitive-monitor"
+            )
+            if resolved:
+                events, _ = resolved
+            elif reconnect_only:
+                return {"status": "no_active_hud"}
 
         state = EchoStateManager(user_id=uid, chat_id=chat_id)
-        threads_data = self._build_threads_data(state, chat_id)
+        threads_data = await asyncio.to_thread(self._build_threads_data, state, chat_id)
 
-        if not threads_data:
+        if not threads_data and not reconnect_only:
             await events.status("🧠 Aucun agent cognitif actif.", True)
             await events.toast("ℹ️ Aucun thread cognitif trouvé pour ce chat.", "info")
             return None
 
-        # 1. Injection initiale du HUD
-        threads_json = json.dumps(threads_data).decode("utf-8")
-        hud_js = EchoUI._generate_agent_monitor_js(threads_json, chat_id)
-        await events.call_execute(hud_js)
-        await events.status("🧠 Cognitive Monitor actif.", True)
+        # 1. Injection initiale du HUD (sauf reconnexion transparente post-standby)
+        if not reconnect_only:
+            await events.status("🧠 Chargement des agents cognitifs...", False)
+            threads_json = json.dumps(threads_data).decode("utf-8")
+            hud_js = EchoUI._generate_agent_monitor_js(threads_json, chat_id, mid, model_id)
+            await events.call_execute(hud_js)
+            await events.status("🧠 Cognitive Monitor actif.", True)
 
-        # 2. Boucle événementielle bidirectionnelle (pattern Codex)
-        while True:
-            wait_code = "return new Promise(r => window.echoAgentResolve = r);"
-            response = await events.call_execute(wait_code)
+        loop_id = uuid.uuid4().hex
+        _ACTIVE_AGENT_LOOPS[(uid, chat_id)] = loop_id
+
+        # 2. Boucle événementielle bidirectionnelle résiliente
+        while _ACTIVE_AGENT_LOOPS.get((uid, chat_id)) == loop_id:
+            response = await events.wait_hud_action("echoAgentResolve", "_echoAgentOnReady")
+
+            if _ACTIVE_AGENT_LOOPS.get((uid, chat_id)) != loop_id:
+                break
 
             if not response or not isinstance(response, dict):
+                if _ACTIVE_AGENT_LOOPS.get((uid, chat_id)) == loop_id:
+                    await asyncio.sleep(1.5)
+                    resolved = await EchoEvents.resolve_live_session(
+                        uid, chat_id, mid, hud_id="echo-cognitive-monitor", retries=3, delay=2.0
+                    )
+                    if resolved and _ACTIVE_AGENT_LOOPS.get((uid, chat_id)) == loop_id:
+                        events, _ = resolved
+                        continue
                 break
 
             action_type = response.get("action")
 
             if action_type == "close":
                 break
-
+            elif action_type == "ping":
+                continue
             elif action_type == "refresh":
-                # Relecture SQLite et push des nouvelles données
-                threads_data = self._build_threads_data(state, chat_id)
+                threads_data = await asyncio.to_thread(self._build_threads_data, state, chat_id)
                 threads_json = json.dumps(threads_data).decode("utf-8")
                 update_js = f"if(window.echoMonitorUpdate) window.echoMonitorUpdate({threads_json});"
                 await events.call_execute(update_js)
-
             else:
                 break
 
+        if _ACTIVE_AGENT_LOOPS.get((uid, chat_id)) == loop_id:
+            _ACTIVE_AGENT_LOOPS.pop((uid, chat_id), None)
         return {"status": "success"}

@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Events
 author: Wilfried BARNAVON
-version: 5.228.2.1
+version: 5.228.12.1
 description: Gestionnaire des événements WebSocket et UI. Intègre le protocole UCTP (Universal Chunked Transfer Protocol).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.12.1: Factorisation de resolve_live_session et wait_hud_action dans EchoEvents pour la résilience RPC post-standby de tous les HUDs.
 # 5.228.2.1: Vérification de la vivacité de window.echoCodexResolve dans le fast-path de trigger_action pour ré-amorcer le HUD Codex après standby.
 # 5.227.1.1: Durcissement de EchoEvents.confirm contre les retours d'erreur dict de l'Event Caller.
 # 5.226.18.1: Vérification de data-chat-id dans le fast-path de trigger_action pour le HUD Codex.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 2.7: Fix critique UX - Alignement de EchoEvents.toast() sur l'événement Socket.IO natif 'notification' d'Open WebUI (Chat.svelte).
 import asyncio
 from typing import Any, Optional
 import uuid
@@ -221,6 +221,77 @@ class EchoEvents:
         except Exception as e:
             print(f"[EchoEvents] Call Execute Error: {e}")
             return None
+
+    async def wait_hud_action(
+        self, resolve_var: str, ready_fn: str = "", timeout: Optional[float] = None
+    ) -> Any:
+        """Attend la prochaine action RPC du HUD et signale au frontend que le backend écoute."""
+        ready_call = (
+            f" if (typeof window.{ready_fn} === 'function') window.{ready_fn}();"
+            if ready_fn
+            else ""
+        )
+        wait_code = f"return new Promise(r => {{ window.{resolve_var} = r;{ready_call} }});"
+        return await self.call_execute(wait_code, timeout=timeout)
+
+    @classmethod
+    async def resolve_live_session(
+        cls,
+        user_id: str,
+        chat_id: str = "",
+        message_id: str = "",
+        hud_id: str = "",
+        probe_expr: str = "true",
+        retries: int = 3,
+        delay: float = 1.5,
+    ) -> Optional[tuple["EchoEvents", Any]]:
+        """Résout dynamiquement la session Socket.IO active de l'utilisateur possédant le HUD ouvert."""
+        for attempt in range(max(1, retries)):
+            try:
+                from open_webui.socket.main import (
+                    get_session_ids_by_user_id,
+                    SESSION_POOL,
+                    get_event_call,
+                    get_event_emitter,
+                )
+                sids = get_session_ids_by_user_id(user_id)
+                if sids:
+                    sids_sorted = sorted(
+                        sids,
+                        key=lambda s: (SESSION_POOL.get(s) or {}).get("last_seen_at", 0),
+                        reverse=True,
+                    )
+                    if hud_id:
+                        cid_check = (
+                            f" && el.getAttribute('data-chat-id') === '{chat_id}'"
+                            if chat_id
+                            else ""
+                        )
+                        probe_js = (
+                            f"const el = document.getElementById('{hud_id}');"
+                            f"return (el{cid_check}) ? ({probe_expr}) : false;"
+                        )
+                    else:
+                        probe_js = f"return ({probe_expr});"
+
+                    for sid in sids_sorted:
+                        req_info = {
+                            "chat_id": chat_id,
+                            "message_id": message_id,
+                            "session_id": sid,
+                            "user_id": user_id,
+                        }
+                        caller = await get_event_call(req_info)
+                        emitter = await get_event_emitter(req_info)
+                        candidate_events = cls(emitter, caller)
+                        probe_res = await candidate_events.call_execute(probe_js, timeout=3.0)
+                        if probe_res is not None and probe_res is not False:
+                            return candidate_events, probe_res
+            except Exception as e:
+                print(f"[EchoEvents] resolve_live_session error: {e}")
+            if attempt < retries - 1:
+                await asyncio.sleep(delay)
+        return None
 
     async def trigger_action(self, action_id: str, chat_id: str, message_id: str, model_id: str, session_id: str, payload: dict = None) -> Any:
         """ 

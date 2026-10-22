@@ -1,19 +1,21 @@
 """
 title: ECHO Identity Vault
 author: ECHO
-version: 5.226.18.0
+version: 5.228.12.1
 description: Coffre-fort universel pour l'authentification des agents (MCP et N8N).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xMiAyMnM4LTQgOC0xMFY1bC04LTMtOCAzdjdjMCA2IDggMTAgOCAxMHoiLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.12.1: Résilience RPC post-standby et anti-timeout 60s via EchoEvents (resolve_live_session, wait_hud_action, support ping et reconnect_only).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.1: Suppression totale de la notion d'accès RO/RW (access_level).
 # 1.4: Suppression de la notion d'Alias (multicompte) pour simplifier en accès unique.
 # 1.3: Remplacement de la saisie manuelle des services par une découverte dynamique (API /schemas du MCP Broker).
-# 1.2: Mise à jour de la priorité d'affichage à 40.
 
 import sys
+import uuid
+import asyncio
 import orjson as json
 from pydantic import BaseModel, Field
 from typing import Any, Optional, List, Dict
@@ -23,6 +25,8 @@ sys.path.append("/app/backend/echo_libs")
 from echo_events import EchoEvents
 from echo_state_manager import EchoStateManager
 from echo_ui import EchoUI
+
+_ACTIVE_VAULT_LOOPS: dict[str, str] = {}
 
 class Action:
     class Valves(BaseModel):
@@ -79,50 +83,78 @@ class Action:
             return None
 
         user_id = __user__["id"]
+        chat_id = body.get("chat_id") or (__metadata__ or {}).get("chat_id") or ""
+        mid = body.get("id") or (__metadata__ or {}).get("message_id") or ""
+        model_id = body.get("model") or (__metadata__ or {}).get("model_id") or "echo_orchestrator"
+        reconnect_only = bool(body.get("reconnect_only"))
+
+        if reconnect_only or not body.get("session_id"):
+            resolved = await EchoEvents.resolve_live_session(
+                user_id, chat_id, mid, hud_id="echo-vault-identity"
+            )
+            if resolved:
+                events, _ = resolved
+            elif reconnect_only:
+                return {"status": "no_active_hud"}
+
         state = self._init_vault(user_id)
 
-        # 1. Récupération des schémas MCP (dynamique)
-        schemas = {}
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get("http://echo-mcp-broker:8000/schemas", timeout=2.0)
-                if resp.status_code == 200:
-                    schemas = resp.json()
-        except Exception as e:
-            pass
-        
-        # Injection du schéma générique N8N
-        schemas["n8n_workflows"] = {
-            "category": "orchestration",
-            "name": "N8N Orchestration",
-            "fields": [
-                {"id": "credentials", "label": "N8N Secret", "type": "text", "help": "Valeur du secret."}
-            ]
-        }
-        
-        if not schemas:
-            schemas = {
-                "default": {
-                    "name": "Service Défaut",
-                    "fields": [{"id": "credentials", "label": "Credentials", "type": "text", "help": "Saisissez vos identifiants."}]
-                }
+        if not reconnect_only:
+            # 1. Récupération des schémas MCP (dynamique)
+            schemas = {}
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get("http://echo-mcp-broker:8000/schemas", timeout=2.0)
+                    if resp.status_code == 200:
+                        schemas = resp.json()
+            except Exception:
+                pass
+            
+            # Injection du schéma générique N8N
+            schemas["n8n_workflows"] = {
+                "category": "orchestration",
+                "name": "N8N Orchestration",
+                "fields": [
+                    {"id": "credentials", "label": "N8N Secret", "type": "text", "help": "Valeur du secret."}
+                ]
             }
-        schemas_json = json.dumps(schemas).decode("utf-8")
+            
+            if not schemas:
+                schemas = {
+                    "default": {
+                        "name": "Service Défaut",
+                        "fields": [{"id": "credentials", "label": "Credentials", "type": "text", "help": "Saisissez vos identifiants."}]
+                    }
+                }
+            schemas_json = json.dumps(schemas).decode("utf-8")
 
-        # 2. Récupération des comptes et génération du HUD JS
-        accounts = self._get_accounts(state)
-        accounts_json = json.dumps(accounts).decode("utf-8")
-        
-        hud_js = EchoUI._generate_identity_vault_js(accounts_json, schemas_json)
-        await events.call_execute(hud_js)
-        await events.status("🔐 ECHO Identity Vault actif.", True)
+            # 2. Récupération des comptes et génération du HUD JS
+            accounts = self._get_accounts(state)
+            accounts_json = json.dumps(accounts).decode("utf-8")
+            
+            hud_js = EchoUI._generate_identity_vault_js(accounts_json, schemas_json, chat_id, mid, model_id)
+            await events.call_execute(hud_js)
+            await events.status("🔐 ECHO Identity Vault actif.", True)
 
-        # 2. Boucle d'événements asynchrones
-        while True:
-            wait_code = "return new Promise(r => window.echoVaultResolve = r);"
-            response = await events.call_execute(wait_code)
+        loop_id = uuid.uuid4().hex
+        _ACTIVE_VAULT_LOOPS[user_id] = loop_id
+
+        # 2. Boucle d'événements asynchrones résiliente
+        while _ACTIVE_VAULT_LOOPS.get(user_id) == loop_id:
+            response = await events.wait_hud_action("echoVaultResolve", "_echoVaultOnReady")
+
+            if _ACTIVE_VAULT_LOOPS.get(user_id) != loop_id:
+                break
 
             if not response or not isinstance(response, dict):
+                if _ACTIVE_VAULT_LOOPS.get(user_id) == loop_id:
+                    await asyncio.sleep(1.5)
+                    resolved = await EchoEvents.resolve_live_session(
+                        user_id, chat_id, mid, hud_id="echo-vault-identity", retries=3, delay=2.0
+                    )
+                    if resolved and _ACTIVE_VAULT_LOOPS.get(user_id) == loop_id:
+                        events, _ = resolved
+                        continue
                 break
 
             action_type = response.get("action")
@@ -130,6 +162,8 @@ class Action:
             if action_type == "close":
                 await events.toast("Fermeture du Vault.", "info")
                 break
+            elif action_type == "ping":
+                continue
 
             elif action_type == "add_account":
                 service = response.get("service")

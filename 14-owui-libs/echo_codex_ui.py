@@ -1,16 +1,16 @@
 """
 title: ECHO Codex UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.228.10.1
+version: 5.228.12.1
 description: Composant système interne : Moteur de rendu HUD Monaco et Éditeur Hexadécimal pour ECHO Codex.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.12.1: Héritage factorisé de EchoUI.get_hud_geometry_js (echoBindHudGeometry) et EchoUI.get_hud_rpc_bridge_js (echoCreateHudRpcBridge).
 # 5.228.10.1: Durcissement post-standby (estampille de fraîcheur lastReadyTs, pré-ping automatique avant ai_edit, relance de file dans reconnectCodexBackend et heartbeat adaptatif en arrière-plan).
 # 5.228.9.1: Synchronisation atomique de currentFile dans echoCodexSetContent/echoCodexSetCurrentFile (fix preview lors de switch_workspace) et anti-wrap de l'en-tête Hex.
 # 5.228.8.1: Propagation explicite du flag is_binary lors de l'import de fichiers DOM (upload).
 # 5.228.7.2: Inversion des icônes Importer/Exporter, éditeur hexadécimal virtualisé sur fichiers binaires, PREVIEW_REGISTRY extensible avec auto-ouverture débrayable et factorisation SSOT des langages.
-# 5.228.6.2: Extraction et factorisation du moteur HUD Monaco Codex depuis echo_ui.py vers echo_codex_ui.py (EchoCodexUI héritant de EchoUI).
 
 
 import sys
@@ -139,121 +139,27 @@ class EchoCodexUI(EchoUI):
       let markedLoaded = false;
       let previewDebounceTimer = null;
 
-      // --- COMMUNICATION PROXY & AUTO-RECONNECT RPC (Standby Resilience) ---
-      let actionQueue = [];
-      let inFlightPayload = null;
-      let inFlightWatchdog = null;
-      let waitResolveTimer = null;
-      let isReconnecting = false;
-      let lastReadyTs = 0;
-      let lastPingTs = 0;
-
-      async function reconnectCodexBackend() {{
-        if (isReconnecting || !document.getElementById(CODEX_ID)) return;
-        isReconnecting = true;
-        if (typeof updateStatus === 'function') updateStatus('🔄 Reconnexion au Codex...');
-        try {{
-          const token = localStorage.token ? localStorage.token.replace(/^"|"$/g, '') : '';
-          let msgId = MID;
-          if (!msgId) {{
-            const msgs = document.querySelectorAll('[id^="message-"]');
-            for (let i = msgs.length - 1; i >= 0; i--) {{
-              const rawId = msgs[i].id.replace(/^message-/, '');
-              if (rawId && !rawId.includes('input') && !rawId.includes('edit') && !rawId.includes('feedback')) {{
-                msgId = rawId;
-                break;
-              }}
-            }}
-          }}
-          await fetch('/api/chat/actions/echo_codex_action', {{
-            method: 'POST',
-            headers: {{
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${{token}}`
-            }},
-            body: JSON.stringify({{
-              chat_id: CID,
-              model: MODEL_ID || 'echo_orchestrator',
-              id: msgId || 'codex-reconnect',
-              session_id: '',
-              messages: [],
-              reconnect_only: true,
-              workspace: currentWorkspace
-            }})
-          }});
-        }} catch (e) {{
-          console.error('[ECHO Codex] Reconnect error:', e);
-        }} finally {{
-          setTimeout(() => {{
-            isReconnecting = false;
-            if (actionQueue.length > 0 && typeof window.echoCodexResolve !== 'function') {{
-              flushCodexQueue();
-            }}
-          }}, 2000);
-        }}
-      }}
-
-      function flushCodexQueue() {{
-        if (actionQueue.length === 0) return;
-        if (typeof window.echoCodexResolve === 'function' && lastReadyTs > 0 && (Date.now() - lastReadyTs > 45000)) {{
-          window.echoCodexResolve = null;
-        }}
-        if (typeof window.echoCodexResolve === 'function') {{
-          if (actionQueue[0] && actionQueue[0].action === 'ai_edit' && (Date.now() - lastReadyTs > 10000)) {{
-            actionQueue.unshift({{ action: 'ping', current_file: currentFile }});
-          }}
-          if (waitResolveTimer) {{ clearTimeout(waitResolveTimer); waitResolveTimer = null; }}
-          const resolveFn = window.echoCodexResolve;
-          window.echoCodexResolve = null;
-          const payload = actionQueue.shift();
-          inFlightPayload = payload;
-          resolveFn(payload);
-
-          if (inFlightWatchdog) clearTimeout(inFlightWatchdog);
-          if (payload && payload.action !== 'close' && payload.action !== 'ai_edit') {{
-            inFlightWatchdog = setTimeout(() => {{
-              if (typeof window.echoCodexResolve !== 'function') {{
-                if (inFlightPayload && inFlightPayload.action !== 'ping') {{
-                  actionQueue.unshift(inFlightPayload);
-                }} else if (currentFile) {{
-                  actionQueue.push({{ action: 'load_file', filename: currentFile }});
-                }}
-                inFlightPayload = null;
-                reconnectCodexBackend();
-              }}
-            }}, 2000);
-          }}
-        }} else {{
-          if (!waitResolveTimer) {{
-            waitResolveTimer = setTimeout(() => {{
-              waitResolveTimer = null;
-              if (typeof window.echoCodexResolve !== 'function' && actionQueue.length > 0) {{
-                reconnectCodexBackend();
-              }}
-            }}, 1000);
-          }}
-        }}
-      }}
-
-      window._echoCodexOnReady = function() {{
-        if (inFlightWatchdog) {{ clearTimeout(inFlightWatchdog); inFlightWatchdog = null; }}
-        if (waitResolveTimer) {{ clearTimeout(waitResolveTimer); waitResolveTimer = null; }}
-        inFlightPayload = null;
-        isReconnecting = false;
-        lastReadyTs = Date.now();
-        flushCodexQueue();
-      }};
-
-      window.sendCodexAction = function(payload) {{
-        if (!payload) return;
-        if (payload.action === 'ping') {{
-          if (actionQueue.length > 0 || inFlightPayload) return;
-        }} else {{
-          actionQueue = actionQueue.filter(p => p.action !== 'ping');
-        }}
-        actionQueue.push(payload);
-        flushCodexQueue();
-      }};
+      // --- COMMUNICATION PROXY & AUTO-RECONNECT RPC (Hérité de EchoUI) ---
+      {cls.get_hud_geometry_js()}
+      {cls.get_hud_rpc_bridge_js()}
+      const rpcBridge = window.echoCreateHudRpcBridge({{
+        hudId: CODEX_ID,
+        actionId: 'echo_codex_action',
+        resolveVar: 'echoCodexResolve',
+        sendFn: 'sendCodexAction',
+        readyFn: '_echoCodexOnReady',
+        cid: CID,
+        mid: MID,
+        modelId: MODEL_ID || 'echo_orchestrator',
+        visiblePingMs: 5000,
+        hiddenPingMs: 25000,
+        prePingActions: ['ai_edit'],
+        noWatchdogActions: ['close', 'ai_edit'],
+        onReconnectStart: () => {{ if (typeof updateStatus === 'function') updateStatus('🔄 Reconnexion au Codex...'); }},
+        getExtraReconnect: () => ({{ workspace: currentWorkspace }}),
+        getPingPayload: () => ({{ action: 'ping', current_file: currentFile }}),
+        onWatchdogFallback: () => (currentFile ? {{ action: 'load_file', filename: currentFile }} : null)
+      }});
 
       // --- Restore position ---
       let savedState = {{}};
@@ -916,63 +822,57 @@ class EchoCodexUI(EchoUI):
         if (el) el.textContent = text;
       }}
 
-      // ===== DRAG (clampé aux limites du viewport) =====
-      let isDragging = false, dragX, dragY;
-      header.onmousedown = (e) => {{
-        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'SELECT') return;
-        isDragging = true;
-        dragX = e.clientX - hud.offsetLeft;
-        dragY = e.clientY - hud.offsetTop;
-        hud.style.transform = 'none';
-      }};
-      document.onmousemove = (e) => {{
-        if (!isDragging) return;
-        const maxX = window.innerWidth - hud.offsetWidth;
-        const maxY = window.innerHeight - 44; // Header height (~44px) toujours visible
-        let newX = Math.max(0, Math.min(e.clientX - dragX, maxX));
-        let newY = Math.max(0, Math.min(e.clientY - dragY, maxY));
-        hud.style.left = newX + 'px';
-        hud.style.top = newY + 'px';
-      }};
-      document.onmouseup = () => {{
-        isDragging = false;
-        saveState();
-      }};
+      // ===== DRAG, MINIMIZE & FULLSCREEN (Hérité de EchoUI) =====
+      let isMinimized = false;
+      let isFullscreen = false;
+      const geoCtrl = window.echoBindHudGeometry(hud, header, {{
+        defaultW: '900px',
+        defaultH: '600px',
+        defaultX: '50%',
+        defaultY: '60px',
+        defaultTx: 'translateX(-50%)',
+        minW: '600px',
+        minH: '400px',
+        minimizedH: 'auto',
+        minimizedMinH: '0',
+        fsW: '95vw',
+        fsH: '95vh',
+        fsX: '2.5vw',
+        fsY: '2.5vh',
+        initialBounds: savedState,
+        onSave: () => saveState(),
+        onMinimize: (isMin) => {{
+          isMinimized = isMin;
+          body.style.display = isMin ? 'none' : 'flex';
+          aiPanel.style.display = (!isMin && !isCurrentBinary && !isDiffMode) ? 'flex' : 'none';
+          statusBar.style.display = isMin ? 'none' : 'flex';
+          diffBar.style.display = (!isMin && isDiffMode) ? 'flex' : 'none';
+          if (!isMin && editor) setTimeout(() => editor.layout(), 50);
+        }},
+        onFullscreen: (isFs) => {{
+          isFullscreen = isFs;
+          if (editor) setTimeout(() => editor.layout(), 50);
+        }}
+      }});
 
       // ===== HEADER BUTTONS =====
       document.getElementById(CODEX_ID + '-close').onclick = () => {{
         saveState();
+        if (rpcBridge) rpcBridge.cleanup();
         hud.remove();
         window.sendCodexAction({{action:'close'}});
       }};
-      let isMinimized = false;
-      document.getElementById(CODEX_ID + '-minimize').onclick = () => {{
-        isMinimized = !isMinimized;
-        // Collapse : on masque tout sauf le header, et on fixe la taille
-        body.style.display = isMinimized ? 'none' : 'flex';
-        aiPanel.style.display = isMinimized ? 'none' : 'flex';
-        statusBar.style.display = isMinimized ? 'none' : 'flex';
-        if (!isMinimized && isDiffMode) diffBar.style.display = 'flex';
-        else diffBar.style.display = 'none';
-        hud.style.resize = isMinimized ? 'none' : 'both';
-        hud.style.height = isMinimized ? 'auto' : (savedState.h || '600px');
-        hud.style.minHeight = isMinimized ? '0' : '400px';
+      document.getElementById(CODEX_ID + '-minimize').onclick = (e) => {{
+        if (e && e.stopPropagation) e.stopPropagation();
+        geoCtrl.toggleMinimize();
       }};
 
       // Fullscreen Toggle
-      let isFullscreen = false;
-      let preFsState = {{}};
       const fsBtn = document.getElementById(CODEX_ID + '-fullscreen');
       if (fsBtn) {{
-        fsBtn.onclick = () => {{
-          if (!isFullscreen) {{
-            preFsState = {{ w: hud.style.width, h: hud.style.height, t: hud.style.top, l: hud.style.left, tx: hud.style.transform }};
-            hud.style.width = '95vw'; hud.style.height = '95vh'; hud.style.top = '2.5vh'; hud.style.left = '2.5vw'; hud.style.transform = 'none'; hud.style.resize = 'none';
-            isFullscreen = true;
-          }} else {{
-            hud.style.width = '50vw'; hud.style.height = '50vh'; hud.style.top = '25vh'; hud.style.left = '25vw'; hud.style.transform = 'none'; hud.style.resize = 'both';
-            isFullscreen = false;
-          }}
+        fsBtn.onclick = (e) => {{
+          if (e && e.stopPropagation) e.stopPropagation();
+          geoCtrl.toggleFullscreen();
         }};
       }};
 
@@ -1454,9 +1354,11 @@ class EchoCodexUI(EchoUI):
       // ===== SAVE STATE =====
       function saveState() {{
         try {{
+          if (geoCtrl) geoCtrl.captureNormalBounds();
+          const nb = geoCtrl ? geoCtrl.normalBounds : {{ x: hud.style.left, y: hud.style.top, w: hud.style.width, h: hud.style.height }};
           localStorage.setItem(STATE_KEY, JSON.stringify({{
-            x: hud.style.left, y: hud.style.top,
-            w: hud.style.width, h: hud.style.height,
+            x: nb.x, y: nb.y,
+            w: nb.w, h: nb.h,
             previewOpen: previewOpen,
             editorRatio: editorRatio,
             previewRatio: previewRatio,
@@ -2059,37 +1961,6 @@ class EchoCodexUI(EchoUI):
         }};
         document.head.appendChild(loaderScript);
       }}
-
-      // ===== PING HEARTBEAT, VISIBILITY WAKEUP & SPA ROUTE GUARD =====
-      window._echoCodexVisHandler = () => {{
-        if (!document.getElementById(CODEX_ID)) {{
-          document.removeEventListener('visibilitychange', window._echoCodexVisHandler);
-          return;
-        }}
-        if (!document.hidden) {{
-          window.sendCodexAction({{action: 'ping', current_file: currentFile}});
-        }}
-      }};
-      document.addEventListener('visibilitychange', window._echoCodexVisHandler);
-
-      const pingInterval = setInterval(() => {{
-        if (!document.getElementById(CODEX_ID)) {{
-            clearInterval(pingInterval);
-            return;
-        }}
-        if (CID && window.location.pathname.startsWith('/c/') && !window.location.pathname.includes(CID)) {{
-            clearInterval(pingInterval);
-            hud.remove();
-            window.sendCodexAction({{action: 'close'}});
-            return;
-        }}
-        const now = Date.now();
-        if (!document.hidden || (now - lastPingTs >= 25000)) {{
-            lastPingTs = now;
-            window.sendCodexAction({{action: 'ping', current_file: currentFile}});
-        }}
-      }}, 5000);
-      window._echoCodexPingInterval = pingInterval;
 
       loadMonaco();
     }})();

@@ -1,22 +1,24 @@
 """
 title: Revue Navigation Web
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.228.12.1
 description: Cockpit vidéo interactif permettant de visionner et d'extraire des captures de la navigation autonome.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgeD0iMyIgeT0iMyIgcng9IjIiIC8+PHBhdGggZD0iTTcgM3YxOCIgLz48cGF0aCBkPSJNMyA3LjVoNCIgLz48cGF0aCBkPSJNMyAxMmgxOCIgLz48cGF0aCBkPSJNMyAxNi41aDQiIC8+PHBhdGggZD0iTTE3IDN2MTgiIC8+PHBhdGggZD0iTTE3IDcuNWg0IiAvPjxwYXRoIGQ9Ik0xNyAxNi41aDQiIC8+PC9zdmc+
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.12.1: Résilience RPC post-standby et anti-timeout 60s via EchoEvents et EchoUI.get_hud_rpc_bridge_js (support ping et reconnect_only).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 4.27: Amélioration UX - Ajout d'un label informatif pour la fonctionnalité de zoom (Ctrl+Molette).
 # 4.26: Refonte iconographique complète via SVGs natifs (EchoUI) et alignements épurés sans background/border-radius.
 # 4.16: Fix - Levée d'une Exception explicite en cas d'absence d'archives pour forcer l'affichage d'un toast d'erreur côté OWUI frontend.
-# 4.15: Optimisation UX - Suppression du statut persistant lors de l'absence d'archives visuelles au profit d'un simple toast transitoire.
 
 import orjson as json
 import pybase64 as base64
 import logging
 import sys
+import uuid
+import asyncio
 from typing import Optional, List, Dict
 from pydantic import BaseModel, Field
 
@@ -29,7 +31,14 @@ from echo_ui import EchoUI
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
+_ACTIVE_REPLAY_LOOPS: dict[tuple[str, str], str] = {}
+
+def _generate_replay_shell(
+    timestamps: List[Dict],
+    chat_id: str,
+    message_id: str = "",
+    model_id: str = "echo_orchestrator",
+) -> str:
     """Génère le script JS Cockpit (Interface et Listeners) - Version INTEGRALE v5.136."""
     ts_json = json.dumps(timestamps).decode('utf-8')
     return f"""
@@ -38,6 +47,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
             const data = {{ timestamps: {ts_json}, cid: "{chat_id}" }};
             const REPLAY_ID = 'echo-browser-replay';
             {EchoUI.get_mobile_guard_js('echo-browser-replay')}
+            {EchoUI.get_hud_rpc_bridge_js()}
             let replay = document.getElementById(REPLAY_ID);
 
             if (replay && replay.getAttribute('data-chat-id') !== data.cid) {{
@@ -123,6 +133,18 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                     btnRev.style.background = "#f97316";
                 }};
 
+                const rpcBridge = window.echoCreateHudRpcBridge({{
+                    hudId: REPLAY_ID,
+                    actionId: 'web_navigation_replay_action',
+                    resolveVar: 'echoReplayResolve',
+                    sendFn: 'sendReplayAction',
+                    readyFn: '_echoReplayOnReady',
+                    cid: data.cid,
+                    mid: "{message_id}",
+                    modelId: "{model_id}",
+                    onRouteClose: () => stopPlayback()
+                }});
+
                 const requestFrame = (idx) => {{
                     if (idx < 0 || idx >= timestamps.length) {{
                         stopPlayback();
@@ -130,7 +152,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                     }}
                     currentIndex = idx;
                     document.getElementById(`${{REPLAY_ID}}-meta`).innerText = "REQUÊTE FLUX... (" + (idx + 1) + "/" + timestamps.length + ")";
-                    if(window.echoReplayResolve) window.echoReplayResolve({{ action: "goto", index: idx }});
+                    window.sendReplayAction({{ action: "goto", index: idx }});
                 }};
 
                 const updateUI = (b64, ts, current, total) => {{
@@ -356,7 +378,7 @@ def _generate_replay_shell(timestamps: List[Dict], chat_id: str) -> str:
                 }};
 
                 document.getElementById(`${{REPLAY_ID}}-speed`).oninput = (e) => {{ document.getElementById(`${{REPLAY_ID}}-speed-val`).innerText = e.target.value + "s"; }};
-                document.getElementById(`${{REPLAY_ID}}-close`).onclick = () => {{ stopPlayback(); replay.remove(); if(window.echoReplayResolve) window.echoReplayResolve({{ action: "close" }}); }};
+                document.getElementById(`${{REPLAY_ID}}-close`).onclick = () => {{ stopPlayback(); if (rpcBridge) rpcBridge.cleanup(); replay.remove(); window.sendReplayAction({{ action: "close" }}); }};
             }}
             return true;
         }} catch (e) {{ return e.toString(); }}
@@ -377,6 +399,19 @@ class Action:
         uid = __user__.get("id", "anonymous")
         cid = body.get("chat_id") or __metadata__.get("chat_id")
         if not cid: return None
+
+        mid = body.get("id") or __metadata__.get("message_id") or ""
+        model_id = body.get("model") or __metadata__.get("model_id") or "echo_orchestrator"
+        reconnect_only = bool(body.get("reconnect_only"))
+
+        if reconnect_only or not body.get("session_id"):
+            resolved = await EchoEvents.resolve_live_session(
+                uid, cid, mid, hud_id="echo-browser-replay"
+            )
+            if resolved:
+                events, _ = resolved
+            elif reconnect_only:
+                return {"status": "no_active_hud"}
 
         # Redirection vers le Registre V2
         from echo_state_manager import EchoStateManager
@@ -403,34 +438,59 @@ class Action:
             return None
 
         if not files:
-            await events.toast("🤷‍♂️ Aucune archive de navigation web trouvée pour ce chat.", "error")
+            if not reconnect_only:
+                await events.toast("🤷‍♂️ Aucune archive de navigation web trouvée pour ce chat.", "error")
             return None
 
         # 1. Installation de la Console
-        shell_code = _generate_replay_shell(files, cid)
-        await events.call_execute(shell_code)
+        if not reconnect_only:
+            shell_code = _generate_replay_shell(files, cid, mid, model_id)
+            await events.call_execute(shell_code)
 
-        # 2. Boucle de Streaming Atomique
+        loop_id = uuid.uuid4().hex
+        _ACTIVE_REPLAY_LOOPS[(uid, cid)] = loop_id
+
+        # 2. Boucle de Streaming Atomique Résiliente
         current_idx = 0
-        while True:
-            # a. PUSH: Envoi de la frame actuelle (Atomic Update)
-            path = files[current_idx]["storage_path"]
-            try:
-                with open(path, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode()
+        need_push = not reconnect_only
+        while _ACTIVE_REPLAY_LOOPS.get((uid, cid)) == loop_id:
+            if need_push and 0 <= current_idx < len(files):
+                path = files[current_idx]["storage_path"]
+                try:
+                    b64 = await asyncio.to_thread(
+                        lambda p: base64.b64encode(open(p, "rb").read()).decode(), path
+                    )
+                    update_code = f"if(window.echoReplayUpdate) window.echoReplayUpdate('{b64}', {files[current_idx]['ts']}, {current_idx+1}, {len(files)});"       
+                    await events.call_execute(update_code)
+                    need_push = False
+                except Exception:
+                    break
 
-                update_code = f"if(window.echoReplayUpdate) window.echoReplayUpdate('{b64}', {files[current_idx]['ts']}, {current_idx+1}, {len(files)});"       
-                await events.call_execute(update_code)
-            except: break
+            response = await events.wait_hud_action("echoReplayResolve", "_echoReplayOnReady")
 
-            # b. WAIT: Attente de la prochaine commande (Atomic Listen)
-            wait_code = "return new Promise(r => window.echoReplayResolve = r);"
-            response = await events.call_execute(wait_code)
+            if _ACTIVE_REPLAY_LOOPS.get((uid, cid)) != loop_id:
+                break
 
-            if not response or not isinstance(response, dict): break
+            if not response or not isinstance(response, dict):
+                if _ACTIVE_REPLAY_LOOPS.get((uid, cid)) == loop_id:
+                    await asyncio.sleep(1.5)
+                    resolved = await EchoEvents.resolve_live_session(
+                        uid, cid, mid, hud_id="echo-browser-replay", retries=3, delay=2.0
+                    )
+                    if resolved and _ACTIVE_REPLAY_LOOPS.get((uid, cid)) == loop_id:
+                        events, _ = resolved
+                        continue
+                break
+
             action = response.get("action")
-            if action == "close": break
-            if action == "goto":
-                current_idx = response.get("index", 0)
+            if action == "close":
+                break
+            elif action == "ping":
+                continue
+            elif action == "goto":
+                current_idx = max(0, min(len(files) - 1, int(response.get("index", 0))))
+                need_push = True
 
+        if _ACTIVE_REPLAY_LOOPS.get((uid, cid)) == loop_id:
+            _ACTIVE_REPLAY_LOOPS.pop((uid, cid), None)
         return {"status": "success"}

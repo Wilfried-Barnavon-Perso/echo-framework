@@ -1,17 +1,17 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 5.228.10.1
+version: 5.228.12.1
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.12.1: Délégation de la résolution Socket.IO et de l'attente RPC vers EchoEvents (resolve_live_session, wait_hud_action).
 # 5.228.10.1: Factorisation de la boucle de retry Socket.IO dans _resolve_live_events (mutualisée entre action reconnect_only et background_loop).
 # 5.228.9.1: Inversion de l'ordre d'appel echoCodexSetCurrentFile avant echoCodexSetContent dans switch_workspace.
 # 5.228.7.1: Prise en charge de is_binary lors du chargement, de l'import, de l'export et de la sauvegarde dans le Codex.
 # 5.228.6.2: Bascule de l'import UI sur la librairie dédiée echo_codex_ui (EchoCodexUI).
-# 5.228.2.1: Résilience post-standby (ré-attachement Socket.IO dynamique _resolve_live_events, éviction par loop_id), isolation asyncio.to_thread/try-except et chargement immédiat à l'import.
 
 import sys
 import uuid
@@ -58,44 +58,15 @@ class Action:
         self, uid: str, cid: str, mid: str, retries: int = 3, delay: float = 1.5
     ) -> Optional[tuple[EchoEvents, str]]:
         """Résout dynamiquement la session Socket.IO active de l'utilisateur possédant le HUD Codex ouvert."""
-        for attempt in range(max(1, retries)):
-            try:
-                from open_webui.socket.main import (
-                    get_session_ids_by_user_id,
-                    SESSION_POOL,
-                    get_event_call,
-                    get_event_emitter,
-                )
-                sids = get_session_ids_by_user_id(uid)
-                if sids:
-                    sids_sorted = sorted(
-                        sids,
-                        key=lambda s: (SESSION_POOL.get(s) or {}).get("last_seen_at", 0),
-                        reverse=True,
-                    )
-                    probe_js = (
-                        f"const el = document.getElementById('echo-codex-hud');"
-                        f"return (el && el.getAttribute('data-chat-id') === '{cid}') "
-                        f"? (document.getElementById('echo-codex-hud-workspace')?.value || 'main') : false;"
-                    )
-                    for sid in sids_sorted:
-                        req_info = {
-                            "chat_id": cid,
-                            "message_id": mid,
-                            "session_id": sid,
-                            "user_id": uid,
-                        }
-                        caller = await get_event_call(req_info)
-                        emitter = await get_event_emitter(req_info)
-                        candidate_events = EchoEvents(emitter, caller)
-                        ws = await candidate_events.call_execute(probe_js, timeout=3.0)
-                        if isinstance(ws, str) and ws:
-                            return candidate_events, ws
-            except Exception as e:
-                logger.debug(f"[ECHO Codex] _resolve_live_events error: {e}")
-            if attempt < retries - 1:
-                await asyncio.sleep(delay)
-        return None
+        return await EchoEvents.resolve_live_session(
+            user_id=uid,
+            chat_id=cid,
+            message_id=mid,
+            hud_id="echo-codex-hud",
+            probe_expr="document.getElementById('echo-codex-hud-workspace')?.value || 'main'",
+            retries=retries,
+            delay=delay,
+        )
 
     async def action(
         self,
@@ -195,13 +166,9 @@ class Action:
             try:
                 current_state = await asyncio.to_thread(repo.get_latest_state)
                 while _ACTIVE_CODEX_LOOPS.get((uid, cid)) == loop_id:
-                    wait_code = (
-                        "return new Promise(r => {"
-                        " window.echoCodexResolve = r;"
-                        " if (typeof window._echoCodexOnReady === 'function') window._echoCodexOnReady();"
-                        "});"
+                    response = await events.wait_hud_action(
+                        "echoCodexResolve", "_echoCodexOnReady"
                     )
-                    response = await events.call_execute(wait_code)
 
                     if _ACTIVE_CODEX_LOOPS.get((uid, cid)) != loop_id:
                         break

@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.228.6.2
+version: 5.228.12.1
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.12.1: Factorisation de get_hud_geometry_js (echoBindHudGeometry) et get_hud_rpc_bridge_js (echoCreateHudRpcBridge) sur toutes les fenêtres EchoUI.
 # 5.228.6.2: Déportation du moteur HUD Monaco Codex (_generate_codex_js) vers la librairie dédiée echo_codex_ui.py (EchoCodexUI).
 # 5.228.2.1: Fiabilisation du HUD Codex (file d'attente RPC avec auto-reconnect post-standby, verrou anti-double création + Créer, import DOM/PDF binaire, détection d'extension et purge de surrogates UTF-16).
 # 5.227.1.1: Suppression du badge et de la ligne de Checkpoint Cognitif dans deploy_context_gauge.
 # 5.226.18.1: Estampillage data-chat-id et auto-fermeture sur changement de route SPA pour les HUDs Codex et Cognitive Monitor.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 
 import sys
@@ -57,6 +57,413 @@ class EchoRichUI:
         return f"<svg width='{size}' height='{size}' viewBox='0 0 24 24' fill='none' stroke='{color}' stroke-width='{stroke_width}' stroke-linecap='round' stroke-linejoin='round'{cls}>{path}</svg>"
 
     @staticmethod
+    def get_hud_geometry_js() -> str:
+        """Génère le contrôleur géométrique universel (Drag SVG-safe, Clamping Viewport, Minimize, Fullscreen, ResizeObserver filtré)."""
+        return """
+        if (!window.echoBindHudGeometry) {
+            window.echoBindHudGeometry = function(hud, header, opts) {
+                opts = opts || {};
+                const defaultW = opts.defaultW || '700px';
+                const defaultH = opts.defaultH || '500px';
+                const defaultX = opts.defaultX !== undefined ? opts.defaultX : '50%';
+                const defaultY = opts.defaultY !== undefined ? opts.defaultY : '60px';
+                const defaultTx = opts.defaultTx !== undefined ? opts.defaultTx : (defaultX === '50%' ? 'translateX(-50%)' : 'none');
+                const minW = opts.minW || '200px';
+                const minH = opts.minH || '100px';
+                const minCollapsedH = opts.minimizedH || 'auto';
+                const minCollapsedMinH = opts.minimizedMinH || '0';
+                const fsW = opts.fsW || '95vw';
+                const fsH = opts.fsH || '95vh';
+                const fsX = opts.fsX !== undefined ? opts.fsX : '2.5vw';
+                const fsY = opts.fsY !== undefined ? opts.fsY : '2.5vh';
+                const allowResize = opts.allowResize !== false;
+
+                const isInvalidDim = (v) => !v || v === 'auto' || v === '42px' || v === '0px' || v === '95vw' || v === '95vh' || v === '100vw' || v === '100vh' || (typeof v === 'string' && v.endsWith('px') && parseFloat(v) < parseFloat(minH));
+                const isInvalidW = (v) => !v || v === 'auto' || v === '95vw' || v === '100vw' || (typeof v === 'string' && v.endsWith('px') && parseFloat(v) < parseFloat(minW));
+                const init = opts.initialBounds || {};
+                const fmtCoord = (v, def) => (v !== undefined && v !== null && v !== '') ? (typeof v === 'number' ? v + 'px' : String(v)) : def;
+                const hasSavedX = init.x !== undefined && init.x !== null && init.x !== '';
+
+                const normalBounds = {
+                    w: isInvalidW(init.w) ? defaultW : String(init.w),
+                    h: isInvalidDim(init.h) ? defaultH : String(init.h),
+                    x: fmtCoord(init.x, defaultX),
+                    y: fmtCoord(init.y, defaultY),
+                    tx: hasSavedX ? (String(init.x) === '50%' ? 'translateX(-50%)' : 'none') : defaultTx
+                };
+
+                const ctrl = {
+                    isMinimized: false,
+                    isFullscreen: false,
+                    isDragging: false,
+                    normalBounds: normalBounds,
+                    applyNormalBounds: function() {
+                        hud.style.maxWidth = '98vw';
+                        hud.style.maxHeight = '96vh';
+                        hud.style.minWidth = minW;
+                        hud.style.minHeight = minH;
+                        hud.style.width = normalBounds.w;
+                        hud.style.height = normalBounds.h;
+                        hud.style.left = normalBounds.x;
+                        hud.style.top = normalBounds.y;
+                        hud.style.transform = normalBounds.tx || 'none';
+                        if (allowResize && !opts.customResizer) hud.style.resize = 'both';
+                    },
+                    captureNormalBounds: function() {
+                        if (ctrl.isMinimized || ctrl.isFullscreen) return;
+                        if (hud.offsetWidth >= parseFloat(minW)) normalBounds.w = hud.offsetWidth + 'px';
+                        else if (!isInvalidW(hud.style.width)) normalBounds.w = hud.style.width;
+                        if (hud.offsetHeight >= parseFloat(minH)) normalBounds.h = hud.offsetHeight + 'px';
+                        else if (!isInvalidDim(hud.style.height)) normalBounds.h = hud.style.height;
+                        if (hud.style.left) normalBounds.x = hud.style.left;
+                        if (hud.style.top) normalBounds.y = hud.style.top;
+                        normalBounds.tx = hud.style.transform || 'none';
+                    },
+                    clampToViewport: function() {
+                        if (ctrl.isFullscreen || !hud.isConnected) return;
+                        if (hud.style.transform && hud.style.transform.includes('translateX')) return;
+                        const vw = window.innerWidth || 1280;
+                        const vh = window.innerHeight || 800;
+                        const w = hud.offsetWidth || parseFloat(normalBounds.w) || 600;
+                        const maxX = Math.max(0, vw - Math.min(w, vw));
+                        const maxY = Math.max(0, vh - 44);
+                        let curX = parseFloat(hud.style.left);
+                        let curY = parseFloat(hud.style.top);
+                        if (!isNaN(curX)) {
+                            curX = Math.max(0, Math.min(curX, maxX));
+                            hud.style.left = curX + 'px';
+                            normalBounds.x = hud.style.left;
+                        }
+                        if (!isNaN(curY)) {
+                            curY = Math.max(0, Math.min(curY, maxY));
+                            hud.style.top = curY + 'px';
+                            normalBounds.y = hud.style.top;
+                        }
+                    },
+                    save: function() {
+                        ctrl.captureNormalBounds();
+                        if (typeof opts.onSave === 'function') opts.onSave(normalBounds, ctrl);
+                    },
+                    toggleMinimize: function() {
+                        if (!ctrl.isMinimized) {
+                            ctrl.captureNormalBounds();
+                            ctrl.isMinimized = true;
+                            hud.style.resize = 'none';
+                            hud.style.minHeight = minCollapsedMinH;
+                            hud.style.height = minCollapsedH;
+                        } else {
+                            ctrl.isMinimized = false;
+                            if (ctrl.isFullscreen) {
+                                hud.style.maxWidth = '100vw';
+                                hud.style.maxHeight = '100vh';
+                                hud.style.minHeight = minH;
+                                hud.style.width = fsW;
+                                hud.style.height = fsH;
+                                hud.style.resize = 'none';
+                            } else {
+                                hud.style.maxWidth = '98vw';
+                                hud.style.maxHeight = '96vh';
+                                hud.style.minHeight = minH;
+                                hud.style.width = normalBounds.w;
+                                hud.style.height = normalBounds.h;
+                                if (allowResize && !opts.customResizer) hud.style.resize = 'both';
+                                ctrl.clampToViewport();
+                            }
+                        }
+                        if (typeof opts.onMinimize === 'function') opts.onMinimize(ctrl.isMinimized, ctrl);
+                        ctrl.save();
+                        return ctrl.isMinimized;
+                    },
+                    toggleFullscreen: function() {
+                        if (ctrl.isMinimized) {
+                            ctrl.isMinimized = false;
+                            if (typeof opts.onMinimize === 'function') opts.onMinimize(false, ctrl);
+                        }
+                        if (!ctrl.isFullscreen) {
+                            ctrl.captureNormalBounds();
+                            ctrl.isFullscreen = true;
+                            hud.style.maxWidth = '100vw';
+                            hud.style.maxHeight = '100vh';
+                            hud.style.minHeight = minH;
+                            hud.style.width = fsW;
+                            hud.style.height = fsH;
+                            hud.style.left = fsX;
+                            hud.style.top = fsY;
+                            hud.style.transform = 'none';
+                            hud.style.resize = 'none';
+                        } else {
+                            ctrl.isFullscreen = false;
+                            ctrl.applyNormalBounds();
+                            ctrl.clampToViewport();
+                        }
+                        if (typeof opts.onFullscreen === 'function') opts.onFullscreen(ctrl.isFullscreen, ctrl);
+                        ctrl.save();
+                        return ctrl.isFullscreen;
+                    },
+                    resetSize: function() {
+                        ctrl.isFullscreen = false;
+                        ctrl.isMinimized = false;
+                        normalBounds.w = defaultW;
+                        normalBounds.h = defaultH;
+                        ctrl.applyNormalBounds();
+                        if (typeof opts.onMinimize === 'function') opts.onMinimize(false, ctrl);
+                        if (typeof opts.onFullscreen === 'function') opts.onFullscreen(false, ctrl);
+                        ctrl.save();
+                    }
+                };
+
+                ctrl.applyNormalBounds();
+                ctrl.clampToViewport();
+
+                if (header) {
+                    header.onmousedown = function(e) {
+                        if (e.target && e.target.closest && e.target.closest('button, input, select, textarea, a, .no-drag')) return;
+                        if (e.target && (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
+                        if (ctrl.isFullscreen) return;
+                        if (e.preventDefault) e.preventDefault();
+                        if (hud.style.transform && hud.style.transform !== 'none') {
+                            const rect = hud.getBoundingClientRect ? hud.getBoundingClientRect() : null;
+                            const realLeft = (rect && rect.width > 0) ? rect.left : hud.offsetLeft;
+                            const realTop = (rect && rect.height > 0) ? rect.top : hud.offsetTop;
+                            hud.style.transform = 'none';
+                            hud.style.left = realLeft + 'px';
+                            hud.style.top = realTop + 'px';
+                            normalBounds.tx = 'none';
+                            normalBounds.x = hud.style.left;
+                            normalBounds.y = hud.style.top;
+                        }
+                        ctrl.isDragging = true;
+                        const startLeft = parseFloat(hud.style.left) || hud.offsetLeft || 0;
+                        const startTop = parseFloat(hud.style.top) || hud.offsetTop || 0;
+                        const dragOffsetX = e.clientX - startLeft;
+                        const dragOffsetY = e.clientY - startTop;
+                        hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
+
+                        const onMove = function(me) {
+                            if (!ctrl.isDragging) return;
+                            const vw = window.innerWidth || 1280;
+                            const vh = window.innerHeight || 800;
+                            const maxX = Math.max(0, vw - (hud.offsetWidth || 200));
+                            const maxY = Math.max(0, vh - 44);
+                            const newX = Math.max(0, Math.min(me.clientX - dragOffsetX, maxX));
+                            const newY = Math.max(0, Math.min(me.clientY - dragOffsetY, maxY));
+                            hud.style.left = newX + 'px';
+                            hud.style.top = newY + 'px';
+                            normalBounds.x = hud.style.left;
+                            normalBounds.y = hud.style.top;
+                            normalBounds.tx = 'none';
+                        };
+                        const onUp = function() {
+                            document.removeEventListener('mousemove', onMove);
+                            document.removeEventListener('mouseup', onUp);
+                            if (ctrl.isDragging) {
+                                ctrl.isDragging = false;
+                                hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
+                                ctrl.save();
+                            }
+                        };
+                        document.addEventListener('mousemove', onMove);
+                        document.addEventListener('mouseup', onUp);
+                    };
+                }
+
+                if (typeof ResizeObserver !== 'undefined') {
+                    new ResizeObserver(function() {
+                        if (!ctrl.isMinimized && !ctrl.isFullscreen && !ctrl.isDragging) {
+                            const w = hud.style.width;
+                            const h = hud.style.height;
+                            if (!isInvalidW(w)) normalBounds.w = w;
+                            if (!isInvalidDim(h)) normalBounds.h = h;
+                            if (typeof opts.onSave === 'function') opts.onSave(normalBounds, ctrl);
+                        }
+                    }).observe(hud);
+                }
+
+                window.addEventListener('resize', function() {
+                    ctrl.clampToViewport();
+                });
+
+                return ctrl;
+            };
+        }
+        """
+
+    @staticmethod
+    def get_hud_rpc_bridge_js() -> str:
+        """Génère le pont RPC résilient universel (file d'attente, heartbeat 5s/25s anti-timeout 60s, reconnexion post-standby et garde-fou SPA)."""
+        return """
+        if (!window.echoCreateHudRpcBridge) {
+            window.echoCreateHudRpcBridge = function(cfg) {
+                const hudId = cfg.hudId;
+                const actionId = cfg.actionId;
+                const resolveVar = cfg.resolveVar;
+                const sendFn = cfg.sendFn;
+                const readyFn = cfg.readyFn;
+                const cid = cfg.cid || '';
+                const mid = cfg.mid || '';
+                const modelId = cfg.modelId || 'echo_orchestrator';
+                const prePingActions = cfg.prePingActions || [];
+                const noWatchdogActions = cfg.noWatchdogActions || ['close'];
+                const visiblePingMs = cfg.visiblePingMs || 25000;
+                const hiddenPingMs = cfg.hiddenPingMs || 25000;
+
+                let actionQueue = [];
+                let isReconnecting = false;
+                let inFlightPayload = null;
+                let inFlightWatchdog = null;
+                let waitResolveTimer = null;
+                let lastReadyTs = Date.now();
+                let lastPingTs = 0;
+
+                async function reconnectBackend() {
+                    if (isReconnecting || !document.getElementById(hudId)) return;
+                    isReconnecting = true;
+                    if (typeof cfg.onReconnectStart === 'function') cfg.onReconnectStart();
+                    try {
+                        const token = localStorage.token ? localStorage.token.replace(/^"|"$/g, '') : '';
+                        let msgId = mid;
+                        if (!msgId) {
+                            const msgs = document.querySelectorAll('[id^="message-"]');
+                            for (let i = msgs.length - 1; i >= 0; i--) {
+                                const rawId = msgs[i].id.replace(/^message-/, '');
+                                if (rawId && !rawId.includes('input') && !rawId.includes('edit') && !rawId.includes('feedback')) {
+                                    msgId = rawId;
+                                    break;
+                                }
+                            }
+                        }
+                        const extra = (typeof cfg.getExtraReconnect === 'function') ? (cfg.getExtraReconnect() || {}) : {};
+                        await fetch('/api/chat/actions/' + actionId, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                            body: JSON.stringify(Object.assign({
+                                chat_id: cid, model: modelId, id: msgId || 'hud-reconnect', session_id: '', messages: [],
+                                reconnect_only: true
+                            }, extra))
+                        });
+                    } catch (e) {
+                        console.error('[ECHO HUD] Reconnect error (' + actionId + '):', e);
+                    } finally {
+                        setTimeout(() => {
+                            isReconnecting = false;
+                            if (actionQueue.length > 0 && typeof window[resolveVar] !== 'function') {
+                                flushQueue();
+                            }
+                        }, 2000);
+                    }
+                }
+
+                function getPingPayload() {
+                    return (typeof cfg.getPingPayload === 'function') ? cfg.getPingPayload() : { action: 'ping' };
+                }
+
+                function flushQueue() {
+                    if (actionQueue.length === 0) return;
+                    if (typeof window[resolveVar] === 'function' && lastReadyTs > 0 && (Date.now() - lastReadyTs > 45000)) {
+                        window[resolveVar] = null;
+                    }
+                    if (typeof window[resolveVar] === 'function') {
+                        if (actionQueue[0] && prePingActions.indexOf(actionQueue[0].action) !== -1 && (Date.now() - lastReadyTs > 10000)) {
+                            actionQueue.unshift(getPingPayload());
+                        }
+                        if (waitResolveTimer) { clearTimeout(waitResolveTimer); waitResolveTimer = null; }
+                        const resolveFn = window[resolveVar];
+                        window[resolveVar] = null;
+                        const payload = actionQueue.shift();
+                        inFlightPayload = payload;
+                        resolveFn(payload);
+
+                        if (inFlightWatchdog) clearTimeout(inFlightWatchdog);
+                        if (payload && noWatchdogActions.indexOf(payload.action) === -1) {
+                            inFlightWatchdog = setTimeout(() => {
+                                if (typeof window[resolveVar] !== 'function') {
+                                    if (inFlightPayload && inFlightPayload.action !== 'ping') {
+                                        actionQueue.unshift(inFlightPayload);
+                                    } else if (typeof cfg.onWatchdogFallback === 'function') {
+                                        const fb = cfg.onWatchdogFallback();
+                                        if (fb) actionQueue.push(fb);
+                                    }
+                                    inFlightPayload = null;
+                                    reconnectBackend();
+                                }
+                            }, 2000);
+                        }
+                    } else {
+                        if (!waitResolveTimer) {
+                            waitResolveTimer = setTimeout(() => {
+                                waitResolveTimer = null;
+                                if (typeof window[resolveVar] !== 'function' && actionQueue.length > 0) {
+                                    reconnectBackend();
+                                }
+                            }, 1000);
+                        }
+                    }
+                }
+
+                window[readyFn] = function() {
+                    if (inFlightWatchdog) { clearTimeout(inFlightWatchdog); inFlightWatchdog = null; }
+                    if (waitResolveTimer) { clearTimeout(waitResolveTimer); waitResolveTimer = null; }
+                    inFlightPayload = null;
+                    isReconnecting = false;
+                    lastReadyTs = Date.now();
+                    flushQueue();
+                };
+
+                window[sendFn] = function(payload) {
+                    if (!payload) return;
+                    if (payload.action === 'ping') {
+                        if (actionQueue.length > 0 || inFlightPayload) return;
+                    } else {
+                        actionQueue = actionQueue.filter(p => p.action !== 'ping');
+                    }
+                    actionQueue.push(payload);
+                    flushQueue();
+                };
+
+                const pingInterval = setInterval(() => {
+                    const el = document.getElementById(hudId);
+                    if (!el) { clearInterval(pingInterval); return; }
+                    if (cid && window.location.pathname.startsWith('/c/') && !window.location.pathname.includes(cid)) {
+                        clearInterval(pingInterval);
+                        if (typeof cfg.onRouteClose === 'function') cfg.onRouteClose();
+                        el.remove();
+                        window[sendFn]({ action: 'close' });
+                        return;
+                    }
+                    const now = Date.now();
+                    const threshold = document.hidden ? hiddenPingMs : visiblePingMs;
+                    if (now - lastPingTs >= threshold) {
+                        lastPingTs = now;
+                        window[sendFn](getPingPayload());
+                    }
+                }, Math.min(5000, visiblePingMs));
+
+                const wakeUpHandler = () => {
+                    if (!document.getElementById(hudId)) {
+                        document.removeEventListener('visibilitychange', wakeUpHandler);
+                        window.removeEventListener('focus', wakeUpHandler);
+                        return;
+                    }
+                    if (!document.hidden) {
+                        window[sendFn](getPingPayload());
+                    }
+                };
+                document.addEventListener('visibilitychange', wakeUpHandler);
+                window.addEventListener('focus', wakeUpHandler);
+
+                return {
+                    send: window[sendFn],
+                    cleanup: () => {
+                        clearInterval(pingInterval);
+                        document.removeEventListener('visibilitychange', wakeUpHandler);
+                        window.removeEventListener('focus', wakeUpHandler);
+                    }
+                };
+            };
+        }
+        """
+
+    @staticmethod
     def get_floating_window_class_js() -> str:
         """
         # ==============================================================================
@@ -65,7 +472,7 @@ class EchoRichUI:
         # pour gérer nativement le rendu Glassmorphism, le Drag, Resize et les contrôles.
         # ==============================================================================
         """
-        return """
+        return EchoRichUI.get_hud_geometry_js() + """
         if (!window.EchoFloatingWindow) {
             window.EchoFloatingWindow = class {
                 constructor(config) {
@@ -88,7 +495,7 @@ class EchoRichUI:
                     
                     this.isMinimized = false;
                     this.isFullscreen = false;
-                    this.oldState = {};
+                    this.geo = null;
                 }
                 
                 render() {
@@ -97,7 +504,7 @@ class EchoRichUI:
                     
                     hud = document.createElement('div');
                     hud.id = this.id;
-                    hud.style.cssText = `position:fixed; left:${this.posX}px; top:${this.posY}px; width:${this.width}; height:${this.height}; z-index:10000; background:rgba(12,12,12,0.98); backdrop-filter:blur(25px); border:1px solid #333; border-radius:12px; box-shadow:0 25px 70px rgba(0,0,0,0.9); color:white; font-family:system-ui,sans-serif; display:flex; flex-direction:column; overflow:hidden; min-width:${this.minWidth}; min-height:${this.minHeight};`;
+                    hud.style.cssText = `position:fixed; left:${this.posX}px; top:${this.posY}px; width:${this.width}; height:${this.height}; max-width:98vw; max-height:96vh; z-index:10000; background:rgba(12,12,12,0.98); backdrop-filter:blur(25px); border:1px solid #333; border-radius:12px; box-shadow:0 25px 70px rgba(0,0,0,0.9); color:white; font-family:system-ui,sans-serif; display:flex; flex-direction:column; overflow:hidden; min-width:${this.minWidth}; min-height:${this.minHeight};`;
                     
                     const iconHtml = this.icon ? `<span style="font-size:14px; padding:3px 8px; border-radius:8px; background:rgba(0,212,255,0.1); color:#00d4ff;">${this.icon}</span>` : '';
                     
@@ -135,31 +542,30 @@ class EchoRichUI:
                     });
                     
                     const header = document.getElementById(this.id + '-header');
-                    let isDragging = false, startX, startY, initialLeft, initialTop;
-                    
-                    header.onmousedown = (e) => {
-                        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.closest('button')) return;
-                        e.preventDefault();
-                        isDragging = true;
-                        startX = e.clientX;
-                        startY = e.clientY;
-                        initialLeft = hud.offsetLeft;
-                        initialTop = hud.offsetTop;
-                        hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
-                    };
-                    
-                    document.addEventListener('mousemove', (e) => {
-                        if (isDragging) {
-                            e.preventDefault();
-                            hud.style.left = (initialLeft + (e.clientX - startX)) + 'px';
-                            hud.style.top = (initialTop + (e.clientY - startY)) + 'px';
-                        }
-                    });
-                    
-                    document.addEventListener('mouseup', () => {
-                        if (isDragging) {
-                            isDragging = false;
-                            hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
+                    const body = document.getElementById(this.id + '-body');
+                    this.geo = window.echoBindHudGeometry(hud, header, {
+                        defaultW: this.width,
+                        defaultH: this.height,
+                        defaultX: this.posX + 'px',
+                        defaultY: this.posY + 'px',
+                        defaultTx: 'none',
+                        minW: this.minWidth,
+                        minH: this.minHeight,
+                        minimizedH: 'auto',
+                        minimizedMinH: '0',
+                        fsW: '100vw',
+                        fsH: '100vh',
+                        fsX: '0px',
+                        fsY: '0px',
+                        allowResize: this.allowResize,
+                        customResizer: true,
+                        onMinimize: (isMin) => {
+                            this.isMinimized = isMin;
+                            if (body) body.style.display = isMin ? 'none' : 'flex';
+                            if (this.onMinimize) this.onMinimize(isMin);
+                        },
+                        onFullscreen: (isFs) => {
+                            this.isFullscreen = isFs;
                         }
                     });
                     
@@ -172,16 +578,16 @@ class EchoRichUI:
                             isResizing = true;
                             rStartX = e.clientX;
                             rStartY = e.clientY;
-                            startW = hud.offsetWidth;
-                            startH = hud.offsetHeight;
+                            startW = hud.offsetWidth || parseInt(hud.style.width) || 500;
+                            startH = hud.offsetHeight || parseInt(hud.style.height) || 400;
                             hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
                         };
                         
                         document.addEventListener('mousemove', (e) => {
                             if (isResizing) {
                                 e.preventDefault();
-                                hud.style.width = (startW + (e.clientX - rStartX)) + 'px';
-                                hud.style.height = (startH + (e.clientY - rStartY)) + 'px';
+                                hud.style.width = Math.max(parseInt(this.minWidth) || 200, startW + (e.clientX - rStartX)) + 'px';
+                                hud.style.height = Math.max(parseInt(this.minHeight) || 100, startH + (e.clientY - rStartY)) + 'px';
                             }
                         });
                         
@@ -189,6 +595,7 @@ class EchoRichUI:
                             if (isResizing) {
                                 isResizing = false;
                                 hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
+                                if (this.geo) this.geo.save();
                             }
                         });
                     }
@@ -198,38 +605,17 @@ class EchoRichUI:
                         if (this.onClose) this.onClose();
                     };
                     
-                    const body = document.getElementById(this.id + '-body');
                     document.getElementById(this.id + '-btn-min').onclick = (e) => {
                         e.stopPropagation();
-                        this.isMinimized = !this.isMinimized;
-                        body.style.display = this.isMinimized ? 'none' : 'flex';
-                        if (this.isMinimized) {
-                            hud.style.height = 'auto';
-                            hud.style.minHeight = '0';
-                        } else {
-                            hud.style.height = this.height;
-                            hud.style.minHeight = this.minHeight;
-                        }
-                        if (this.onMinimize) this.onMinimize(this.isMinimized);
+                        this.geo.toggleMinimize();
                     };
                     
                     document.getElementById(this.id + '-btn-zoom').onclick = () => {
-                        if (!this.isFullscreen) {
-                            this.oldState = { w: hud.style.width, h: hud.style.height, l: hud.style.left, t: hud.style.top };
-                            hud.style.width = '100vw'; hud.style.height = '100vh';
-                            hud.style.left = '0'; hud.style.top = '0';
-                            this.isFullscreen = true;
-                        } else {
-                            hud.style.width = this.oldState.w; hud.style.height = this.oldState.h;
-                            hud.style.left = this.oldState.l; hud.style.top = this.oldState.t;
-                            this.isFullscreen = false;
-                        }
+                        this.geo.toggleFullscreen();
                     };
                     
                     document.getElementById(this.id + '-btn-reset').onclick = () => {
-                        hud.style.width = this.width;
-                        hud.style.height = this.height;
-                        this.isFullscreen = false;
+                        this.geo.resetSize();
                     };
                 }
             };
@@ -673,6 +1059,7 @@ class EchoUI(EchoRichUI):
           }});
 
           header.onmousedown = (e) => {{
+            if (e.target.closest && e.target.closest('button, input, select, a')) return;
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
             e.preventDefault();
             let ox = e.clientX, oy = e.clientY;
@@ -1465,7 +1852,12 @@ return new Promise(function(resolve) {{
     # =====================================================================
 
     @staticmethod
-    def _generate_agent_monitor_js(threads_json: str, chat_id: str) -> str:
+    def _generate_agent_monitor_js(
+        threads_json: str,
+        chat_id: str,
+        message_id: str = "",
+        model_id: str = "echo_orchestrator",
+    ) -> str:
         """Génère le script JS complet du HUD Cognitive Monitor.
         Injection via __event_call__(type: 'execute', data: code: ...).
 
@@ -1475,8 +1867,13 @@ return new Promise(function(resolve) {{
 
         return (
             "(function() {\n"
-            "  const HUD_ID = 'echo-cognitive-monitor';\n" + EchoUI.get_mobile_guard_js('echo-cognitive-monitor') + "\n"
+            "  const HUD_ID = 'echo-cognitive-monitor';\n"
+            + EchoUI.get_mobile_guard_js('echo-cognitive-monitor') + "\n"
+            + EchoUI.get_hud_geometry_js() + "\n"
+            + EchoUI.get_hud_rpc_bridge_js() + "\n"
             "  const CID = '" + chat_id + "';\n"
+            "  const MID = '" + message_id + "';\n"
+            "  const MODEL_ID = '" + model_id + "';\n"
             "  const STATE_KEY = 'echo_cogmon_' + CID;\n"
             "\n"
             "  var existing = document.getElementById(HUD_ID);\n"
@@ -1488,13 +1885,10 @@ return new Promise(function(resolve) {{
             "  var expandedNodes = {};\n"
             "  var autoRefreshTimer = null;\n"
             "  var isMinimized = false;\n"
+            "  var geoCtrl = null;\n"
             "\n"
             "  var saved = {};\n"
             "  try { saved = JSON.parse(localStorage.getItem(STATE_KEY) || '{}'); } catch(e) {}\n"
-            "  var posX = saved.x || 60;\n"
-            "  var posY = saved.y || 60;\n"
-            "  var hudW = saved.w || '720px';\n"
-            "  var hudH = saved.h || '500px';\n"
             "  var autoInterval = saved.interval || 5;\n"
             "  var autoEnabled = saved.autoOn || false;\n"
             "  // Forcé à false au lancement pour éviter le bug de la fenêtre vide après restauration\n"
@@ -1502,6 +1896,18 @@ return new Promise(function(resolve) {{
             "  if (saved.activeIdx !== undefined) activeThreadIdx = saved.activeIdx;\n"
             "  if (activeThreadIdx >= threads.length) activeThreadIdx = Math.max(0, threads.length - 1);\n"
             "  if (saved.expanded) try { expandedNodes = JSON.parse(saved.expanded); } catch(e) {}\n"
+            "\n"
+            "  var rpcBridge = window.echoCreateHudRpcBridge({\n"
+            "    hudId: HUD_ID,\n"
+            "    actionId: 'agent_monitor_action',\n"
+            "    resolveVar: 'echoAgentResolve',\n"
+            "    sendFn: 'sendAgentAction',\n"
+            "    readyFn: '_echoAgentOnReady',\n"
+            "    cid: CID,\n"
+            "    mid: MID,\n"
+            "    modelId: MODEL_ID,\n"
+            "    onRouteClose: function() { if (autoRefreshTimer) clearInterval(autoRefreshTimer); }\n"
+            "  });\n"
             "\n"
             "  var isDark = document.documentElement.classList.contains('dark') ||\n"
             "               window.matchMedia('(prefers-color-scheme: dark)').matches;\n"
@@ -1531,24 +1937,13 @@ return new Promise(function(resolve) {{
             "  function saveState() {\n"
             "    var hud = document.getElementById(HUD_ID);\n"
             "    if (!hud) return;\n"
+            "    var nb = geoCtrl ? geoCtrl.normalBounds : { x: '60px', y: '60px', w: '720px', h: '500px' };\n"
             "    localStorage.setItem(STATE_KEY, JSON.stringify({\n"
-            "      x: posX, y: posY,\n"
-            "      w: hud.style.width, h: hud.style.height,\n"
+            "      x: nb.x, y: nb.y,\n"
+            "      w: nb.w, h: nb.h,\n"
             "      interval: autoInterval, autoOn: autoEnabled, min: isMinimized,\n"
             "      activeIdx: activeThreadIdx, expanded: JSON.stringify(expandedNodes)\n"
             "    }));\n"
-            "  }\n"
-            "  function clampHud() {\n"
-            "    var hud = document.getElementById(HUD_ID);\n"
-            "    if (!hud) return;\n"
-            "    var vw = window.innerWidth, vh = window.innerHeight;\n"
-            "    var w = hud.offsetWidth, h = hud.offsetHeight;\n"
-            "    if (posX < 0) posX = 0;\n"
-            "    if (posY < 0) posY = 0;\n"
-            "    if (posX + w > vw) posX = Math.max(0, vw - w);\n"
-            "    if (posY + h > vh) posY = Math.max(0, vh - h);\n"
-            "    hud.style.left = posX + 'px';\n"
-            "    hud.style.top = posY + 'px';\n"
             "  }\n"
             "\n"
             "  // =============== SIDEBAR ONGLETS VERTICAUX ===============\n"
@@ -1670,8 +2065,7 @@ return new Promise(function(resolve) {{
             "  hud.style.cssText = 'position:fixed; z-index:10001; display:flex; flex-direction:column;'\n"
             "    + ' background:' + C.bg + '; border:1px solid ' + C.border + '; border-radius:12px;'\n"
             "    + ' box-shadow:0 20px 60px rgba(0,0,0,0.4); font-family:Segoe UI,system-ui,sans-serif;'\n"
-            "    + ' color:' + C.text + '; overflow:hidden; resize:both; min-width:500px; min-height:200px;'\n"
-            "    + ' width:' + hudW + '; height:' + hudH + '; left:' + posX + 'px; top:' + posY + 'px;';\n"
+            "    + ' color:' + C.text + '; overflow:hidden; resize:both; min-width:500px; min-height:200px;';\n"
             "\n"
             "  // --- HEADER ---\n"
             "  var header = document.createElement('div');\n"
@@ -1727,36 +2121,28 @@ return new Promise(function(resolve) {{
             "  document.body.appendChild(hud);\n"
             "\n"
             "  // =============== ÉVÉNEMENTS ===============\n"
-            "\n"
-            "  // Draggable\n"
-            "  header.onmousedown = function(e) {\n"
-            "    if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;\n"
-            "    e.preventDefault();\n"
-            "    var ox = e.clientX, oy = e.clientY;\n"
-            "    function move(me) {\n"
-            "      posX += (me.clientX - ox); posY += (me.clientY - oy);\n"
-            "      ox = me.clientX; oy = me.clientY;\n"
-            "      clampHud();\n"
+            "  geoCtrl = window.echoBindHudGeometry(hud, header, {\n"
+            "    defaultW: '720px',\n"
+            "    defaultH: '500px',\n"
+            "    defaultX: '60px',\n"
+            "    defaultY: '60px',\n"
+            "    defaultTx: 'none',\n"
+            "    minW: '500px',\n"
+            "    minH: '200px',\n"
+            "    minimizedH: '42px',\n"
+            "    minimizedMinH: '42px',\n"
+            "    initialBounds: saved,\n"
+            "    onSave: function() { saveState(); },\n"
+            "    onMinimize: function(isMin) {\n"
+            "      isMinimized = isMin;\n"
+            "      body.style.display = isMin ? 'none' : 'flex';\n"
+            "      statusBar.style.display = isMin ? 'none' : 'flex';\n"
             "    }\n"
-            "    function up() {\n"
-            "      document.removeEventListener('mousemove', move);\n"
-            "      document.removeEventListener('mouseup', up);\n"
-            "      saveState();\n"
-            "    }\n"
-            "    document.addEventListener('mousemove', move);\n"
-            "    document.addEventListener('mouseup', up);\n"
-            "  };\n"
-            "\n"
-            "  window.addEventListener('resize', clampHud);\n"
+            "  });\n"
             "\n"
             "  // Refresh\n"
             "  document.getElementById(HUD_ID + '-refresh').onclick = function() {\n"
-            "    if (window.echoAgentResolve) {\n"
-            "      window.echoAgentResolve({action: 'refresh'});\n"
-            "    } else {\n"
-            "      var btn = document.getElementById(HUD_ID + '-refresh');\n"
-            "      if (btn) { btn.textContent = '\\u23f3'; setTimeout(function() { if (btn) btn.textContent = '\\ud83d\\udd04'; }, 1000); }\n"
-            "    }\n"
+            "    window.sendAgentAction({action: 'refresh'});\n"
             "  };\n"
             "\n"
             "  // Auto-refresh\n"
@@ -1776,7 +2162,7 @@ return new Promise(function(resolve) {{
             "    if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }\n"
             "    if (autoEnabled) {\n"
             "      autoRefreshTimer = setInterval(function() {\n"
-            "        if (window.echoAgentResolve) window.echoAgentResolve({action: 'refresh'});\n"
+            "        window.sendAgentAction({action: 'refresh'});\n"
             "      }, autoInterval * 1000);\n"
             "    }\n"
             "    saveState();\n"
@@ -1792,39 +2178,15 @@ return new Promise(function(resolve) {{
             "\n"
             "  // Minimize\n"
             "  document.getElementById(HUD_ID + '-minimize').onclick = function() {\n"
-            "    isMinimized = !isMinimized;\n"
-            "    body.style.display = isMinimized ? 'none' : 'flex';\n"
-            "    statusBar.style.display = isMinimized ? 'none' : 'flex';\n"
-            "    hud.style.minHeight = isMinimized ? '42px' : '200px';\n"
-            "    hud.style.height = isMinimized ? '42px' : hudH;\n"
-            "    hud.style.resize = isMinimized ? 'none' : 'both';\n"
-            "    saveState();\n"
+            "    geoCtrl.toggleMinimize();\n"
             "  };\n"
-            "\n"
-            "  // Close — resolve pour sortir de la boucle Python\n"
-            "  var routeGuardTimer = setInterval(function() {\n"
-            "    if (!document.getElementById(HUD_ID)) { clearInterval(routeGuardTimer); return; }\n"
-            "    if (CID && window.location.pathname.startsWith('/c/') && !window.location.pathname.includes(CID)) {\n"
-            "      clearInterval(routeGuardTimer);\n"
-            "      if (autoRefreshTimer) clearInterval(autoRefreshTimer);\n"
-            "      hud.remove();\n"
-            "      if (window.echoAgentResolve) window.echoAgentResolve({action: 'close'});\n"
-            "    }\n"
-            "  }, 2000);\n"
             "\n"
             "  document.getElementById(HUD_ID + '-close').onclick = function() {\n"
-            "    clearInterval(routeGuardTimer);\n"
+            "    if (rpcBridge) rpcBridge.cleanup();\n"
             "    if (autoRefreshTimer) clearInterval(autoRefreshTimer);\n"
             "    hud.remove();\n"
-            "    if (window.echoAgentResolve) window.echoAgentResolve({action: 'close'});\n"
+            "    window.sendAgentAction({action: 'close'});\n"
             "  };\n"
-            "\n"
-            "  // Resize persistence\n"
-            "  new ResizeObserver(function() {\n"
-            "    hudW = hud.style.width;\n"
-            "    hudH = hud.style.height;\n"
-            "    saveState();\n"
-            "  }).observe(hud);\n"
             "\n"
             "  // =============== STATUS BAR UPDATE ===============\n"
             "  function updateStatusBar() {\n"
@@ -1854,7 +2216,6 @@ return new Promise(function(resolve) {{
             "  };\n"
             "\n"
             "  // =============== INIT ===============\n"
-            "  clampHud();\n"
             "  renderSidebar();\n"
             "  renderTree();\n"
             "  updateAutoState();\n"
@@ -1869,16 +2230,33 @@ return new Promise(function(resolve) {{
     @staticmethod
     def _generate_identity_vault_js(
             accounts_json: str,
-            schemas_json: str = "{}") -> str:
+            schemas_json: str = "{}",
+            chat_id: str = "",
+            message_id: str = "",
+            model_id: str = "echo_orchestrator") -> str:
         """Génère le script JS complet du HUD ECHO Identity Vault avec schémas dynamiques."""
 
         return (
             "(function() {\n"
             "  const HUD_ID = 'echo-vault-identity';\n"
+            "  const CID = '" + chat_id + "';\n"
+            "  const MID = '" + message_id + "';\n"
+            "  const MODEL_ID = '" + model_id + "';\n"
             + EchoUI.get_mobile_guard_js('echo-vault-identity') + "\n"
             + EchoUI.get_floating_window_class_js() + "\n"
+            + EchoUI.get_hud_rpc_bridge_js() + "\n"
             + EchoUI.get_sanitize_html_js() + "\n"
             "  if (document.getElementById(HUD_ID)) document.getElementById(HUD_ID).remove();\n"
+            "  const rpcBridge = window.echoCreateHudRpcBridge({\n"
+            "    hudId: HUD_ID,\n"
+            "    actionId: 'echo_identity_vault_action',\n"
+            "    resolveVar: 'echoVaultResolve',\n"
+            "    sendFn: 'sendVaultAction',\n"
+            "    readyFn: '_echoVaultOnReady',\n"
+            "    cid: CID,\n"
+            "    mid: MID,\n"
+            "    modelId: MODEL_ID\n"
+            "  });\n"
             "  let accounts = JSON.parse('" + accounts_json.replace("\\", "\\\\").replace("'", "\\'") + "');\n"
             "  let schemas = JSON.parse('" + schemas_json.replace("\\", "\\\\").replace("'", "\\'") + "');\n"
             "  const isDark = document.documentElement.classList.contains('dark') || document.documentElement.classList.contains('oled-dark');\n"
@@ -1955,9 +2333,11 @@ return new Promise(function(resolve) {{
             "      width: '500px',\n"
             "      height: '80vh',\n"
             "      bodyHtml: bodyHtml,\n"
-            "      onClose: () => { if(window.echoVaultResolve) window.echoVaultResolve({action: 'close'}); }\n"
+            "      onClose: () => { if (rpcBridge) rpcBridge.cleanup(); window.sendVaultAction({action: 'close'}); }\n"
             "  });\n"
             "  monitor.render();\n"
+            "  const vaultEl = document.getElementById(HUD_ID);\n"
+            "  if (vaultEl && CID) vaultEl.setAttribute('data-chat-id', CID);\n"
             "  monitor.attachBaseEvents();\n"
             "  \n"
             "  // Populate Select Service & Dynamic Fields\n"
@@ -2106,7 +2486,7 @@ return new Promise(function(resolve) {{
             "      const credStr = JSON.stringify(credObj);\n"
             "      document.querySelectorAll('.vault-dynamic-input').forEach(input => input.value = '');\n"
             "      resetForm();\n"
-            "      if(window.echoVaultResolve) window.echoVaultResolve({action: 'add_account', service: service, account_id: account_id, credentials: credStr});\n"
+            "      window.sendVaultAction({action: 'add_account', service: service, account_id: account_id, credentials: credStr});\n"
             "    };\n"
             "    \n"
             "    if(missingField) {\n"
@@ -2120,7 +2500,7 @@ return new Promise(function(resolve) {{
             "  \n"
             "  window.echoVaultDelete = function(service, alias) {\n"
             "    vaultConfirm('Supprimer les identifiants pour ' + service + ' ?', function(agreed) {\n"
-            "      if(agreed && window.echoVaultResolve) window.echoVaultResolve({action: 'delete_account', service: service, account_id: alias});\n"
+            "      if(agreed) window.sendVaultAction({action: 'delete_account', service: service, account_id: alias});\n"
             "    });\n"
             "  };\n"
             "  \n"
