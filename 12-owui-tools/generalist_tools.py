@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 5.229.0.0
+version: 5.229.0.1
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.1: Renommage de delegate_to_tool_consultant en tool_advisor et enrichissement de la docstring (utilité, sous-agents).
 # 5.229.0.0: Compression des docstrings OpenAPI et refonte de delegate_to_tool_consultant en Conseiller Opérationnel Hybride (EchoToolGuidesManager + read_tool_guide).
 # 5.226.18.1: Documentation : Harmonisation fonctionnelle et terminologique (PAS/Utilisateur) du docstring de ask_user_input.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.32: Fixation déterministe du modèle sur OWUI_ORCHESTRATOR_MODEL ("echo_orchestrator") et suppression de model_id (zéro rétrocompatibilité).
-# 1.31: Alignement du cache d'outils sur sys.modules["function_echo_orchestrator"].
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -567,7 +567,7 @@ class Tools:
         res = json.dumps([{"id": f.id, "name": f.name} for f in folders])
         return wrap_tool_output(text=res, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
 
-    async def delegate_to_tool_consultant(
+    async def tool_advisor(
         self,
         objective: str = Field(
             ...,
@@ -587,7 +587,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Consulte l'Expert Opérationnel des Outils ECHO (manuels complets, paramètres exacts, séquences d'appels et diagnostic d'erreurs). À appeler en cas de doute sur l'usage d'une fonction, d'orchestration multi-outils complexe ou d'échec d'un appel."""
+        """Consulte l'Expert-Conseil Opérationnel des Outils ECHO (manuels complets, paramètres exacts, séquences d'appels, utilité et diagnostic d'erreurs). À appeler pour connaître l'usage d'une fonction, orchestrer plusieurs outils ou sous-agents ou en cas d'échec d'un appel."""
         if not __user__:
             return wrap_tool_output(text="Erreur : contexte OWUI manquant.", status={"status": "error"}, metadata=__metadata__)
 
@@ -618,7 +618,7 @@ class Tools:
             _tools_dict = {k: v for k, v in _tools_dict.items() if k in allowed}
 
         # Liste noire : Ne pas lister l'auto-référence au conseiller
-        blacklist = {"delegate_to_tool_consultant"}
+        blacklist = {"tool_advisor"}
         if is_subagent:
             blacklist |= set(DELEGATE_AGENT_BLACKLIST)
 

@@ -1,11 +1,12 @@
 """
 title: ECHO Prompts Library
 author: Wilfried BARNAVON
-version: 5.229.0.0
+version: 5.229.0.1
 description: Système de Registre Cognitif ECHO (Prompts Library).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.1: Alignement terminologique de SYS_ORCHESTRATOR_CONSULTANT (Expert-Conseil / Tool Advisor, utilité et sous-agents).
 # 5.229.0.0: Refonte de SYS_ORCHESTRATOR_CONSULTANT (intégration de la Carte Hiérarchique, des manuels pré-injectés et de l'outil read_tool_guide).
 # 5.227.1.1: Remplacement de SYS_CONTEXT_COMPACTION et USR_CONTEXT_COMPACTION par USR_ACTION_RESUME_GLOBAL et USR_ACTION_RESUME_RECENT.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
@@ -617,8 +618,8 @@ Le Modèle DOIT produire une synthèse consolidée et actionnable de tous les li
 
 # Variables attendues : {hierarchical_index}, {tools_catalog}, {preloaded_guides}
 SYS_ORCHESTRATOR_CONSULTANT = ECHO_FOUNDATION_KERNEL + "\n\n" + """<system_instructions>
-Le Modèle agit en tant qu'Expert Opérationnel de l'Arsenal d'Outils ECHO (Tool Consultant).
-Sa mission exclusive est de renseigner l'Orchestrateur principal sur l'usage exact des outils et fonctions d'ECHO, de prescrire les séquences d'appels optimales, de spécifier le format strict des paramètres/payloads, et de diagnostiquer les erreurs d'exécution.
+Le Modèle agit en tant qu'Expert-Conseil Opérationnel de l'Arsenal d'Outils ECHO (Tool Advisor).
+Sa mission exclusive est de renseigner l'Orchestrateur principal sur l'utilité et l'usage exact des outils, fonctions et sous-agents d'ECHO, de prescrire les séquences d'appels optimales, de spécifier le format strict des paramètres/payloads, et de diagnostiquer les erreurs d'exécution.
 
 RÈGLES D'EXPLOITATION DE LA BASE DE CONNAISSANCES :
 1. Le contexte ci-dessous fournit systématiquement :
