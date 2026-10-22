@@ -1,6 +1,6 @@
 ---
 domain_id: identity_and_api_mcp
-version: 5.229.1.2
+version: 5.229.1.4
 updated_at: 2026-10-22
 name: Coffre-Fort d'Identités (Identity Vault), Client API HTTP & Protocole MCP
 description: Découverte et gestion des secrets/comptes (Identity Vault), requêtes HTTP universelles (call_api), instanciation/exécution sur les serveurs MCP (echo_mcp_tool) et stratégies par service.
@@ -60,27 +60,53 @@ L'outil MCP route dynamiquement les requêtes JSON-RPC vers toutes les catégori
 - **Exploration des Dossiers de Messagerie (`list_mail_folders`)** :
   - `call_mcp_function(service="microsoft_365", function_name="list_mail_folders", arguments={})` :
     Restitue l'arborescence exhaustive de tous les dossiers et sous-dossiers (`displayName`, chemin hiérarchique `path`, identifiant immuable `id`, `unreadItemCount`, `totalItemCount`, `childFolderCount`).
-- **Lecture, Pagination et Tri (`list_emails`)** :
+- **Recherche Multi-Axes Puissante (`search_emails`)** :
+  - Recherche unifiée par mots-clés, temporalité, expéditeur, statut et dossier :
+    - `query` : Mots-clés textuels (optionnel, ex: `"facture"`, `"Pennylane"`). Si omis, bascule automatiquement en mode OData pur pour filtrer uniquement par dates ou dossier avec tri strict.
+    - `folder` : Dossier spécifique ou chemin hiérarchique (ex: `"Boîte de réception/LinkedIn"`, `"inbox"`). Si omis, recherche globale sur toute la messagerie.
+    - `received_after` : Date de début plancher (`"YYYY-MM-DD"` ou ISO).
+    - `received_before` : Date de fin plafond (`"YYYY-MM-DD"` ou ISO, ex: `"2026-09-22"` pour e-mails de plus d'un mois).
+    - `sender` : Filtre expéditeur (nom partiel ou adresse email, ex: `"linkedin"`, `"alertes@banque.fr"`).
+    - `unread_only` : `True` pour restreindre aux non-lus.
+    - `has_attachments` : `True` pour exiger la présence de pièces jointes.
+    - `order_by` : `"receivedDateTime desc"` (défaut) ou `"receivedDateTime asc"` (mode OData sans `query`).
+    - `limit` : Nombre maximal de résultats (1 à 100, défaut `50`).
+    - `include_body` : `False` par défaut pour une qualification rapide et légère.
+- **Prévisualisation Immédiate Zéro-Coût (`bodyPreview`)** :
+  - Tous les outils d'inspection (`search_emails`, `list_emails`, `get_email`, `batch_get_emails`) restituent systématiquement le champ `bodyPreview` (255 premiers caractères de texte pur générés par Exchange). Ce champ permet de pré-qualifier le contenu sans surcoût de contexte LLM.
+- **Lecture Unitaire vs Lecteur Batch (`get_email` vs `batch_get_emails`) & Assainissement Anti-HTML** :
+  - **Conversion Textuelle Haute Fidélité (SNR 100%)** : Le connecteur injecte systématiquement l'en-tête Graph `Prefer: outlook.body-content-type="text"` et applique un nettoyeur applicatif éliminant 100% des styles CSS inline, media queries et balises HTML. La troncature (`body_max_length`) s'applique toujours sur du texte pur utile.
+  - **Lecteur Batch (`batch_get_emails`) - FORTEMENT RECOMMANDÉ** :
+    - `batch_get_emails(email_ids=["id1", "id2", ...], include_body=True, body_max_length=5000, include_attachments=False)` :
+      Rapatrie le contenu textuel complet de plusieurs e-mails en 1 seul appel (via `$batch` Graph par tranches de 20).
+      À utiliser immédiatement après `search_emails` ou `list_emails(include_body=False)` pour lire et analyser les e-mails sans multiplier les tours LLM.
+  - **Lecture unitaire (`get_email`)** :
+    - Réservée à l'inspection isolée d'un e-mail unique (`email_id="...", include_body=True`).
+- **Lecture, Pagination et Tri de Dossier (`list_emails`)** :
   - Arguments :
-    - `folder` : Nom usuel (`"Emploi"`), chemin hiérarchique (`"Boîte de réception/LinkedIn"`), alias réservé (`"inbox"`, `"sent"`, `"drafts"`, `"archive"`), ou `FolderId` Graph immuable. Le Broker résout automatiquement les noms personnalisés.
+    - `folder` : Nom usuel (`"Emploi"`), chemin hiérarchique (`"Boîte de réception/LinkedIn"`), alias réservé (`"inbox"`), ou `FolderId` Graph.
     - `limit` : Nombre maximal de messages par page (1 à 100, défaut `10`).
     - `skip` : Décalage d'index pour pagination (défaut `0`, ex: `0`, `50`, `100`).
-    - `order_by` : Critère de tri Microsoft Graph :
-      - `"receivedDateTime desc"` : Plus récents en premier (défaut).
-      - `"receivedDateTime asc"` : **Plus anciens en premier** (INDISPENSABLE pour traiter les archives ou les e-mails de plus d'un mois sans saturer la mémoire).
-    - `include_body` : `False` pour métadonnées seules (économise massivement le contexte lors de tris ou balayages), `True` pour lire le corps du texte.
-- **Suppression et Mise à la Corbeille (Règles Critiques de Sécurité)** :
+    - `order_by` : `"receivedDateTime desc"` (défaut) ou `"receivedDateTime asc"` (**Plus anciens en premier**).
+    - `include_body` : `False` pour scanner uniquement les métadonnées (économise le contexte).
+- **Suppression, Déplacement et Mutation MAPI des Identifiants (`email_id`)** :
+  - **RÈGLE CRITIQUE D'ARCHITECTURE MAPI** : Dans Exchange/Graph, déplacer un message vers un autre dossier modifie obligatoirement son identifiant (`email_id`). L'ancien ID renvoie immédiatement une erreur HTTP 404.
+  - **Traçabilité des Identifiants (`new_id` et `id_mapping`)** :
+    - `trash_email` et `move_email` restituent systématiquement `{"old_id": "...", "new_id": "..."}`.
+    - `batch_trash_emails` restitue un dictionnaire `id_mapping: {"old_id": "new_id"}` pour tous les messages déplacés.
+    - Si une action ultérieure doit cibler un message déplacé, elle **DOIT obligatoirement** utiliser `new_id`.
   - **Mise à la corbeille réversible (Soft Delete - À PRIVILÉGIER)** :
+    - Par lot : `batch_trash_emails(email_ids=["id1", "id2", ...])` traite jusqu'à 100 e-mails en paquets de 20 via Graph `$batch`. **À utiliser obligatoirement pour les nettoyages massifs d'alertes ou de newsletters.**
     - Unitaire : `trash_email(email_id="...")` déplace le message vers la corbeille (`deleteditems`).
-    - Par lot : `batch_trash_emails(email_ids=["id1", "id2", ...])` traite jusqu'à 100 e-mails en paquets de 20 via l'API Graph `$batch`. **À utiliser obligatoirement pour les nettoyages massifs d'alertes ou de newsletters.**
   - **Purge définitive irréversible (Hard Delete - DANGER)** :
     - `delete_email(email_id="...")` : **ATTENTION**, détruit définitivement le message sans passage par la corbeille. **INTERDIT** pour les opérations de ménage standard ; réservé exclusivement aux demandes explicites de purge définitive de l'Utilisateur.
   - **Classement métier (`move_email`)** :
     - `move_email(email_id="...", destination_folder="...")` sert exclusivement à classer des e-mails vers des dossiers métier (`"Archives"`, `"Projets"`). **NE PAS utiliser pour supprimer** ; utiliser `trash_email`.
-- **Recherche de Messages (`search_emails`)** :
-  - `search_emails(query="...", limit=50, folder=None)` :
-    - Si `folder` est renseigné (ex: `folder="LinkedIn"` ou `"inbox"`), la recherche est restreinte au dossier ciblé.
-    - Si `folder` est omis, la recherche est globale à toute la messagerie via `/me/messages?$search="..."` (compatible comptes personnels et professionnels).
+- **Workflow Optimal pour les Tâches de Tri/Ménage Massif** :
+  1. `list_mail_folders()` pour identifier le chemin exact du dossier.
+  2. `search_emails(folder="...", received_before="<date>", order_by="receivedDateTime asc")` pour cibler immédiatement les e-mails éligibles (ou `list_emails(order_by="receivedDateTime asc", include_body=False)`).
+  3. Optionnel : `batch_get_emails(email_ids=[...])` si une vérification du contenu textuel est exigée avant action.
+  4. `batch_trash_emails(email_ids=[...])` pour envoyer l'ensemble à la corbeille en un minimum d'appels API.
 - **Autres Capacités** : Gestion d'agenda (`list_events`, `create_event`, `respond_event`) et stockage OneDrive (`list_files`, `upload_file`, `delete_file`).
 
 ### 3.2 Google Workspace (`google_workspace` - Résident `workspace-mcp`)

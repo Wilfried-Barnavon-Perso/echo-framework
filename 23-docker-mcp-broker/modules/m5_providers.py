@@ -1,10 +1,11 @@
-# VERSION : 5.229.1.1
+# VERSION : 5.229.1.3
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.1.3: En-tête Prefer text, assainisseur anti-HTML, bodyPreview et traçabilité new_id post-déplacement.
+# 5.229.1.2: Lecteur batch (batch_get_emails) et recherche multi-axes (search_emails KQL/OData/dossiers).
 # 5.229.1.1: Auto-résolution dossiers M365, pagination/tri list_emails, trash_email et batch_trash_emails ($batch).
 # 5.228.0.1: Fail-Closed OAuth2 GoogleWorkspaceProvider (prepare_env + bouclier anti-localhost:8001).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.1: Occultation intégrale de _flow_cache dans tools/list et authenticate_account pour zéro fuite en contexte LLM
 """
 ECHO MCP Broker - Adaptateurs de cycle de vie spécifiques aux fournisseurs MCP résidents.
 Isole la logique d'authentification et de préparation d'environnement (Microsoft 365 MSAL,
@@ -12,9 +13,11 @@ Google Workspace OAuth2) hors de l'orchestrateur de transport générique m5_pro
 """
 import ast
 import hashlib
+import html
 import json
 import logging
 import os
+import re
 import tempfile
 import urllib.parse
 from contextlib import AsyncExitStack
@@ -238,6 +241,67 @@ class Microsoft365Provider(MCPServiceProvider):
     }
     WELL_KNOWN_FOLDERS = frozenset(WELL_KNOWN_PATHS.keys())
     _FOLDERS_CACHE: dict[str, dict] = {}
+
+    @staticmethod
+    def _normalize_iso_date(date_str: str, is_end_of_day: bool = False) -> Tuple[str, str]:
+        """
+        Normalise une date (YYYY-MM-DD ou ISO 8601) vers :
+        - une chaîne ISO 8601 UTC ('YYYY-MM-DDTHH:MM:SSZ') pour OData $filter
+        - une chaîne courte ('YYYY-MM-DD') pour Graph KQL $search
+        """
+        raw = str(date_str or "").strip()
+        if not raw:
+            return "", ""
+        try:
+            if len(raw) == 10 and raw.count("-") == 2:
+                short_date = raw
+                iso_time = "23:59:59Z" if is_end_of_day else "00:00:00Z"
+                return f"{raw}T{iso_time}", short_date
+            cleaned = raw.replace("Z", "+00:00")
+            dt_obj = datetime.fromisoformat(cleaned)
+            if dt_obj.tzinfo is None:
+                dt_obj = dt_obj.replace(tzinfo=timezone.utc)
+            else:
+                dt_obj = dt_obj.astimezone(timezone.utc)
+            short_date = dt_obj.strftime("%Y-%m-%d")
+            iso_str = dt_obj.strftime("%Y-%m-%dT%H:%M:%SZ")
+            return iso_str, short_date
+        except Exception:
+            return raw, raw
+
+    @staticmethod
+    def _clean_html_to_text(html_text: str) -> str:
+        """
+        Nettoie et convertit un contenu HTML en texte brut dense à haut SNR :
+        1. Supprime les balises <style> et <script> et leur contenu.
+        2. Remplace les sauts de ligne HTML (<br>, </p>, </div>, </tr>, </li>) par des retours chariot.
+        3. Supprime toutes les autres balises HTML.
+        4. Décode les entités HTML standard (&nbsp;, &amp;, &lt;, &gt;, &quot;, &#39;).
+        5. Normalise les espaces blancs consécutifs.
+        """
+        if not html_text or not isinstance(html_text, str):
+            return ""
+        if "<" not in html_text or ">" not in html_text:
+            return html_text.strip()
+
+        # Supprimer styles et scripts
+        text = re.sub(r"(?is)<style.*?>.*?</style>", "", html_text)
+        text = re.sub(r"(?is)<script.*?>.*?</script>", "", text)
+
+        # Remplacer les sauts de lignes structurels
+        text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+        text = re.sub(r"(?i)</(?:p|div|tr|li|h[1-6])>", "\n", text)
+
+        # Supprimer les balises HTML restantes
+        text = re.sub(r"<[^>]+>", "", text)
+
+        # Décoder les entités HTML
+        text = html.unescape(text)
+
+        # Normaliser les espaces et sauts de ligne
+        lines = [line.strip() for line in text.splitlines()]
+        text = "\n".join(line for line in lines if line)
+        return text
 
     @staticmethod
     def _user_cache_dir(user_id: str) -> str:
@@ -568,6 +632,7 @@ class Microsoft365Provider(MCPServiceProvider):
         has_list_mail_folders = False
         has_trash_email = False
         has_batch_trash = False
+        has_batch_get = False
 
         for tool in tools:
             if not isinstance(tool, dict):
@@ -607,6 +672,87 @@ class Microsoft365Provider(MCPServiceProvider):
                 t_copy["inputSchema"] = dict(t_copy.get("inputSchema", {}))
                 t_copy["inputSchema"]["properties"] = props
                 patched_tools.append(t_copy)
+            elif t_name == "search_emails":
+                t_copy = dict(tool)
+                t_copy["description"] = (
+                    "Search emails across the mailbox or in a specific folder by keywords, date range, "
+                    "sender, and status. Supports KQL full-text search or pure OData date/status filtering."
+                )
+                props = {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "Optional text keywords to search for. Can be omitted when filtering by dates, "
+                            "sender, or folder alone."
+                        ),
+                    },
+                    "folder": {
+                        "type": "string",
+                        "description": (
+                            "Optional folder name, path (e.g. 'Boîte de réception/LinkedIn', 'inbox'), "
+                            "or Graph ID. If omitted, searches across the entire mailbox."
+                        ),
+                    },
+                    "received_after": {
+                        "type": "string",
+                        "description": (
+                            "Optional start date/time (format 'YYYY-MM-DD' or ISO 'YYYY-MM-DDTHH:MM:SSZ'). "
+                            "Matches emails received on or after this timestamp."
+                        ),
+                    },
+                    "received_before": {
+                        "type": "string",
+                        "description": (
+                            "Optional end date/time (format 'YYYY-MM-DD' or ISO 'YYYY-MM-DDTHH:MM:SSZ'). "
+                            "Matches emails received on or before this timestamp."
+                        ),
+                    },
+                    "sender": {
+                        "type": "string",
+                        "description": "Optional sender name or email address filter (e.g. 'linkedin').",
+                    },
+                    "unread_only": {
+                        "type": "boolean",
+                        "description": "Optional boolean: if true, returns only unread messages.",
+                    },
+                    "has_attachments": {
+                        "type": "boolean",
+                        "description": "Optional boolean: filter by presence of attachments.",
+                    },
+                    "order_by": {
+                        "type": "string",
+                        "enum": ["receivedDateTime desc", "receivedDateTime asc"],
+                        "default": "receivedDateTime desc",
+                        "description": (
+                            "Sort order: 'receivedDateTime desc' (newest first) or "
+                            "'receivedDateTime asc' (oldest first). "
+                            "Note: applies when query keywords are omitted (OData mode)."
+                        ),
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Maximum number of messages to return (default 50, max 100).",
+                    },
+                    "include_body": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Whether to include email body in search results (default false for fast scanning; "
+                            "use batch_get_emails for deep reading)."
+                        ),
+                    },
+                    "account_id": {
+                        "type": "string",
+                        "description": "Optional account ID or email address. Auto-resolved if omitted.",
+                    },
+                }
+                t_copy["inputSchema"] = {
+                    "type": "object",
+                    "properties": props,
+                    "required": [],
+                }
+                patched_tools.append(t_copy)
             elif t_name == "delete_email":
                 t_copy = dict(tool)
                 t_copy["description"] = (
@@ -622,6 +768,9 @@ class Microsoft365Provider(MCPServiceProvider):
                 patched_tools.append(tool)
             elif t_name == "batch_trash_emails":
                 has_batch_trash = True
+                patched_tools.append(tool)
+            elif t_name == "batch_get_emails":
+                has_batch_get = True
                 patched_tools.append(tool)
             else:
                 patched_tools.append(tool)
@@ -686,6 +835,50 @@ class Microsoft365Provider(MCPServiceProvider):
                                 "type": "array",
                                 "items": {"type": "string"},
                                 "description": "List of email IDs to move to trash.",
+                            },
+                            "account_id": {
+                                "type": "string",
+                                "description": "Optional account ID or email address. Auto-resolved if omitted.",
+                            },
+                        },
+                        "required": ["email_ids"],
+                    },
+                }
+            )
+
+        if not has_batch_get:
+            patched_tools.append(
+                {
+                    "name": "batch_get_emails",
+                    "description": (
+                        "Retrieve full details and content for multiple emails in batch using Graph $batch API "
+                        "(up to 100 emails at a time). Significantly faster and more token-efficient than calling "
+                        "get_email repeatedly."
+                    ),
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "email_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "List of email IDs to retrieve.",
+                            },
+                            "include_body": {
+                                "type": "boolean",
+                                "default": True,
+                                "description": "Whether to include body content in the response.",
+                            },
+                            "body_max_length": {
+                                "type": "integer",
+                                "default": 5000,
+                                "description": (
+                                    "Maximum characters for body content per email to preserve LLM context."
+                                ),
+                            },
+                            "include_attachments": {
+                                "type": "boolean",
+                                "default": False,
+                                "description": "Whether to include attachment metadata (name, size, type).",
                             },
                             "account_id": {
                                 "type": "string",
@@ -840,10 +1033,14 @@ class Microsoft365Provider(MCPServiceProvider):
                         json={"destinationId": "deleteditems"},
                     )
                     if res.status_code in (200, 201):
+                        res_json = res.json() if res.content else {}
+                        new_id = res_json.get("id", email_id)
                         return args, self._make_tool_response(
                             {
                                 "status": "trashed",
                                 "message_id": email_id,
+                                "old_id": email_id,
+                                "new_id": new_id,
                                 "folder": "deleteditems",
                             }
                         )
@@ -879,6 +1076,7 @@ class Microsoft365Provider(MCPServiceProvider):
                 }
                 trashed_count = 0
                 failed_ids = []
+                id_mapping = {}
 
                 chunks = [
                     email_ids[i:i + 20] for i in range(0, len(email_ids), 20)
@@ -906,6 +1104,11 @@ class Microsoft365Provider(MCPServiceProvider):
                                 idx_req = int(r.get("id", -1))
                                 if r.get("status") in (200, 201):
                                     trashed_count += 1
+                                    if 0 <= idx_req < len(chunk):
+                                        orig_id = chunk[idx_req]
+                                        res_b = r.get("body", {})
+                                        new_id = res_b.get("id", orig_id) if isinstance(res_b, dict) else orig_id
+                                        id_mapping[orig_id] = new_id
                                 else:
                                     if 0 <= idx_req < len(chunk):
                                         failed_ids.append(chunk[idx_req])
@@ -918,6 +1121,7 @@ class Microsoft365Provider(MCPServiceProvider):
                         "total_requested": len(email_ids),
                         "trashed_count": trashed_count,
                         "failed_count": len(failed_ids),
+                        "id_mapping": id_mapping,
                         "failed_ids": failed_ids,
                     }
                 )
@@ -930,7 +1134,194 @@ class Microsoft365Provider(MCPServiceProvider):
                     is_error=True,
                 )
 
-        # Cas 7 : list_emails -> exécution Graph directe (supporte skip, order_by, auto-résolution)
+        # Cas 7 : get_email -> interception Graph directe avec Prefer text et nettoyage HTML
+        if tool_name == "get_email":
+            email_id = args.get("email_id")
+            if not email_id:
+                return args, self._make_tool_response(
+                    {"status": "error", "message": "email_id obligatoire."}, is_error=True
+                )
+            include_body = bool(args.get("include_body", True))
+            body_max_length = max(int(args.get("body_max_length", 50000) or 50000), 100)
+            include_attachments = bool(args.get("include_attachments", True))
+
+            if include_body:
+                select_fields = (
+                    "id,subject,from,toRecipients,ccRecipients,receivedDateTime,"
+                    "hasAttachments,body,bodyPreview,conversationId,isRead"
+                )
+            else:
+                select_fields = (
+                    "id,subject,from,toRecipients,receivedDateTime,hasAttachments,"
+                    "bodyPreview,conversationId,isRead"
+                )
+
+            params = {"$select": select_fields}
+            if include_attachments:
+                params["$expand"] = "attachments($select=id,name,size,contentType)"
+
+            try:
+                token = self._get_access_token(user_id, resolved_account)
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "Prefer": 'outlook.body-content-type="text"',
+                }
+                async with httpx.AsyncClient(timeout=20.0) as client:
+                    res = await client.get(
+                        f"https://graph.microsoft.com/v1.0/me/messages/{email_id}",
+                        headers=headers,
+                        params=params,
+                    )
+                    if res.status_code == 200:
+                        msg = res.json()
+                        if include_body and "body" in msg and isinstance(msg["body"], dict):
+                            raw_content = msg["body"].get("content", "")
+                            clean_content = self._clean_html_to_text(raw_content)
+                            if len(clean_content) > body_max_length:
+                                trunc_msg = f"\n\n[Content truncated - {len(clean_content)} total characters]"
+                                msg["body"]["content"] = clean_content[:body_max_length] + trunc_msg
+                                msg["body"]["truncated"] = True
+                                msg["body"]["total_length"] = len(clean_content)
+                            else:
+                                msg["body"]["content"] = clean_content
+                        elif not include_body and "body" in msg:
+                            del msg["body"]
+
+                        if "attachments" in msg and isinstance(msg["attachments"], list):
+                            for att in msg["attachments"]:
+                                if isinstance(att, dict) and "contentBytes" in att:
+                                    del att["contentBytes"]
+
+                        return args, self._make_tool_response(msg)
+                    return args, self._make_tool_response(
+                        {
+                            "status": "error",
+                            "message": f"Échec Graph get_email ({res.status_code}): {res.text}",
+                        },
+                        is_error=True,
+                    )
+            except Exception as e:
+                return args, self._make_tool_response(
+                    {"status": "error", "message": f"Exception lors de get_email: {e}"},
+                    is_error=True,
+                )
+
+        # Cas 8 : Outil virtuel batch_get_emails -> lecture par lot via Graph $batch
+        if tool_name == "batch_get_emails":
+            email_ids = args.get("email_ids", [])
+            if not email_ids or not isinstance(email_ids, list):
+                return args, self._make_tool_response(
+                    {
+                        "status": "error",
+                        "message": "email_ids DOIT être une liste non vide d'identifiants.",
+                    },
+                    is_error=True,
+                )
+
+            email_ids = [str(e).strip() for e in email_ids if str(e).strip()][:100]
+            include_body = bool(args.get("include_body", True))
+            body_max_length = max(int(args.get("body_max_length", 5000) or 5000), 100)
+            include_attachments = bool(args.get("include_attachments", False))
+
+            if include_body:
+                select_fields = (
+                    "id,subject,from,toRecipients,ccRecipients,receivedDateTime,"
+                    "hasAttachments,body,bodyPreview,conversationId,isRead"
+                )
+            else:
+                select_fields = (
+                    "id,subject,from,toRecipients,receivedDateTime,hasAttachments,"
+                    "bodyPreview,conversationId,isRead"
+                )
+
+            expand_clause = (
+                "&$expand=attachments($select=id,name,size,contentType)"
+                if include_attachments
+                else ""
+            )
+
+            try:
+                token = self._get_access_token(user_id, resolved_account)
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                }
+                retrieved_emails = []
+                failed_ids = []
+
+                chunks = [
+                    email_ids[i:i + 20] for i in range(0, len(email_ids), 20)
+                ]
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    for chunk in chunks:
+                        sub_requests = [
+                            {
+                                "id": str(idx),
+                                "method": "GET",
+                                "url": f"/me/messages/{eid}?$select={select_fields}{expand_clause}",
+                                "headers": {"Prefer": 'outlook.body-content-type="text"'},
+                            }
+                            for idx, eid in enumerate(chunk)
+                        ]
+                        batch_res = await client.post(
+                            "https://graph.microsoft.com/v1.0/$batch",
+                            headers=headers,
+                            json={"requests": sub_requests},
+                        )
+                        if batch_res.status_code == 200:
+                            b_data = batch_res.json()
+                            for r in b_data.get("responses", []):
+                                idx_req = int(r.get("id", -1))
+                                if r.get("status") == 200:
+                                    msg = r.get("body", {})
+                                    if include_body and "body" in msg and isinstance(msg["body"], dict):
+                                        raw_content = msg["body"].get("content", "")
+                                        clean_content = self._clean_html_to_text(raw_content)
+                                        if len(clean_content) > body_max_length:
+                                            trunc_msg = (
+                                                f"\n\n[Content truncated - {len(clean_content)} total characters]"
+                                            )
+                                            msg["body"]["content"] = clean_content[:body_max_length] + trunc_msg
+                                            msg["body"]["truncated"] = True
+                                            msg["body"]["total_length"] = len(clean_content)
+                                        else:
+                                            msg["body"]["content"] = clean_content
+                                    elif not include_body and "body" in msg:
+                                        del msg["body"]
+
+                                    if "attachments" in msg and isinstance(msg["attachments"], list):
+                                        for att in msg["attachments"]:
+                                            if isinstance(att, dict) and "contentBytes" in att:
+                                                del att["contentBytes"]
+
+                                    retrieved_emails.append(msg)
+                                else:
+                                    if 0 <= idx_req < len(chunk):
+                                        failed_ids.append(chunk[idx_req])
+                        else:
+                            failed_ids.extend(chunk)
+
+                return args, self._make_tool_response(
+                    {
+                        "status": "success" if not failed_ids else "partial_success",
+                        "total_requested": len(email_ids),
+                        "retrieved_count": len(retrieved_emails),
+                        "failed_count": len(failed_ids),
+                        "emails": retrieved_emails,
+                        "failed_ids": failed_ids,
+                    }
+                )
+            except Exception as e:
+                return args, self._make_tool_response(
+                    {
+                        "status": "error",
+                        "message": f"Exception lors de batch_get_emails: {e}",
+                    },
+                    is_error=True,
+                )
+
+        # Cas 9 : list_emails -> exécution Graph directe (supporte skip, order_by, auto-résolution)
         if tool_name == "list_emails":
             folder_arg = args.get("folder", "inbox")
             limit = min(int(args.get("limit", 10) or 10), 100)
@@ -964,12 +1355,12 @@ class Microsoft365Provider(MCPServiceProvider):
             if include_body:
                 select_fields = (
                     "id,subject,from,toRecipients,ccRecipients,receivedDateTime,"
-                    "hasAttachments,body,conversationId,isRead"
+                    "hasAttachments,body,bodyPreview,conversationId,isRead"
                 )
             else:
                 select_fields = (
                     "id,subject,from,toRecipients,receivedDateTime,hasAttachments,"
-                    "conversationId,isRead"
+                    "bodyPreview,conversationId,isRead"
                 )
 
             try:
@@ -987,11 +1378,18 @@ class Microsoft365Provider(MCPServiceProvider):
                         headers={
                             "Authorization": f"Bearer {token}",
                             "Accept": "application/json",
+                            "Prefer": 'outlook.body-content-type="text"',
                         },
                         params=params,
                     )
                     if res.status_code == 200:
                         messages = res.json().get("value", [])
+                        if include_body:
+                            for m in messages:
+                                if "body" in m and isinstance(m["body"], dict):
+                                    m["body"]["content"] = self._clean_html_to_text(
+                                        m["body"].get("content", "")
+                                    )
                         return args, self._make_tool_response(messages)
                     return args, self._make_tool_response(
                         {
@@ -1004,16 +1402,24 @@ class Microsoft365Provider(MCPServiceProvider):
                 logger.warning("Échec Graph list_emails direct: %s", e)
                 args["folder"] = folder_endpoint_id
 
-        # Cas 8 : search_emails -> fiabilisation comptes personnels + résolution dossier
+        # Cas 10 : search_emails -> recherche multi-axes (mots-clés, temporalité, expéditeur, dossier, statut)
         if tool_name == "search_emails":
+            query = str(args.get("query") or "").strip()
             folder_arg = args.get("folder")
+            received_after = str(args.get("received_after") or "").strip()
+            received_before = str(args.get("received_before") or "").strip()
+            sender = str(args.get("sender") or "").strip()
+            unread_only = args.get("unread_only")
+            has_attachments = args.get("has_attachments")
+            order_by = str(args.get("order_by") or "receivedDateTime desc").strip()
+            limit = min(max(int(args.get("limit", 50) or 50), 1), 100)
+            include_body = bool(args.get("include_body", False))
+
             if folder_arg:
                 resolved_fid = await self._resolve_folder_id(
                     user_id, resolved_account, folder_arg
                 )
-                if resolved_fid:
-                    args["folder"] = resolved_fid
-                else:
+                if not resolved_fid:
                     folders = await self._get_cached_folders(user_id, resolved_account)
                     available = [
                         f.get("path") or f.get("displayName") for f in folders
@@ -1028,38 +1434,107 @@ class Microsoft365Provider(MCPServiceProvider):
                         },
                         is_error=True,
                     )
+                folder_endpoint_id = self.WELL_KNOWN_PATHS.get(
+                    resolved_fid.casefold(), resolved_fid
+                )
+                base_url = f"https://graph.microsoft.com/v1.0/me/mailFolders/{folder_endpoint_id}/messages"
             else:
-                # Si folder est omis, requêter directement /me/messages?$search pour éviter l'erreur 400
-                query = args.get("query", "")
-                limit = min(int(args.get("limit", 50) or 50), 100)
+                base_url = "https://graph.microsoft.com/v1.0/me/messages"
+
+            if include_body:
+                select_fields = (
+                    "id,subject,from,toRecipients,ccRecipients,receivedDateTime,"
+                    "hasAttachments,body,bodyPreview,conversationId,isRead"
+                )
+            else:
                 select_fields = (
                     "id,subject,from,toRecipients,receivedDateTime,hasAttachments,"
-                    "body,conversationId,isRead"
+                    "bodyPreview,conversationId,isRead"
                 )
-                try:
-                    token = self._get_access_token(user_id, resolved_account)
-                    url = "https://graph.microsoft.com/v1.0/me/messages"
-                    params = {
-                        "$search": f'"{query}"',
-                        "$top": str(limit),
-                        "$select": select_fields,
-                    }
-                    async with httpx.AsyncClient(timeout=20.0) as client:
-                        res = await client.get(
-                            url,
-                            headers={
-                                "Authorization": f"Bearer {token}",
-                                "Accept": "application/json",
-                            },
-                            params=params,
-                        )
-                        if res.status_code == 200:
-                            messages = res.json().get("value", [])
-                            return args, self._make_tool_response(messages)
-                except Exception as e:
-                    logger.warning("Échec search_emails direct Graph: %s", e)
 
-        # Cas 9 : move_email -> résolution et exécution directe Graph (support de tous sous-dossiers)
+            iso_after, short_after = self._normalize_iso_date(received_after, is_end_of_day=False)
+            iso_before, short_before = self._normalize_iso_date(received_before, is_end_of_day=True)
+
+            params = {
+                "$top": str(limit),
+                "$select": select_fields,
+            }
+
+            use_kql = bool(query) or (bool(sender) and "@" not in sender)
+            if use_kql:
+                kql_terms = []
+                if query:
+                    kql_terms.append(f'"{query}"')
+                if sender:
+                    kql_terms.append(f"from:{sender}")
+                if short_after:
+                    kql_terms.append(f"received>={short_after}")
+                if short_before:
+                    kql_terms.append(f"received<={short_before}")
+                if has_attachments is True:
+                    kql_terms.append("hasAttachments:true")
+                if unread_only is True:
+                    kql_terms.append("isRead:false")
+
+                params["$search"] = " AND ".join(kql_terms)
+            else:
+                filters = []
+                if iso_after:
+                    filters.append(f"receivedDateTime ge {iso_after}")
+                if iso_before:
+                    filters.append(f"receivedDateTime le {iso_before}")
+                if sender:
+                    clean_sender = sender.replace("'", "''")
+                    filters.append(f"from/emailAddress/address eq '{clean_sender}'")
+                if unread_only is True:
+                    filters.append("isRead eq false")
+                if has_attachments is not None:
+                    filters.append(f"hasAttachments eq {'true' if has_attachments else 'false'}")
+
+                if filters:
+                    params["$filter"] = " and ".join(filters)
+                params["$orderby"] = order_by
+
+            try:
+                token = self._get_access_token(user_id, resolved_account)
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                    "Prefer": 'outlook.body-content-type="text"',
+                    "ConsistencyLevel": "eventual",
+                }
+                async with httpx.AsyncClient(timeout=20.0) as client:
+                    res = await client.get(
+                        base_url,
+                        headers=headers,
+                        params=params,
+                    )
+                    if res.status_code == 200:
+                        messages = res.json().get("value", [])
+                        if include_body:
+                            for m in messages:
+                                if "body" in m and isinstance(m["body"], dict):
+                                    m["body"]["content"] = self._clean_html_to_text(
+                                        m["body"].get("content", "")
+                                    )
+                        return args, self._make_tool_response(messages)
+                    return args, self._make_tool_response(
+                        {
+                            "status": "error",
+                            "message": f"Échec Graph search_emails ({res.status_code}): {res.text}",
+                        },
+                        is_error=True,
+                    )
+            except Exception as e:
+                return args, self._make_tool_response(
+                    {
+                        "status": "error",
+                        "message": f"Exception lors de search_emails: {e}",
+                    },
+                    is_error=True,
+                )
+
+        # Cas 11 : move_email -> résolution et exécution directe Graph (support de tous sous-dossiers)
         if tool_name == "move_email":
             dest_arg = args.get("destination_folder")
             email_id = args.get("email_id")
@@ -1094,9 +1569,14 @@ class Microsoft365Provider(MCPServiceProvider):
                             json={"destinationId": resolved_fid},
                         )
                         if move_res.status_code in (200, 201):
-                            res_json = move_res.json()
+                            res_json = move_res.json() if move_res.content else {}
                             return args, self._make_tool_response(
-                                {"status": "moved", "new_id": res_json.get("id")}
+                                {
+                                    "status": "moved",
+                                    "old_id": email_id,
+                                    "new_id": res_json.get("id"),
+                                    "destination_folder": dest_arg,
+                                }
                             )
                         return args, self._make_tool_response(
                             {
