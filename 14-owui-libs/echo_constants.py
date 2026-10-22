@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.228.9.1
+version: 5.229.1.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.1.1: Définition de DELEGATE_AGENT_SYSTEM_TOOLS garantissant la disponibilité des outils système pour tout sous-agent.
+# 5.228.9.1: Alignement de la version globale ECHO.
 # 5.228.8.2: Résolution MIME déterministe dans is_binary_file (sans écrasement text/plain par get_gemini_mime) et détection des octets de contrôle C0.
 # 5.228.7.1: Factorisation SSOT de CODEX_LANG_TO_EXT, is_text_mime et is_binary_file pour le support binaire/hexadécimal du Codex.
 # 5.228.5.1: Réévaluation et espacement des seuils de rappels cognitifs multi-axes (AEC_REMINDERS).
-# 5.227.1.1: Suppression des constantes de compactage in-place (ECHO_COMPACTION_*, CONTEXT_COMPACTION_*).
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 
 import os
@@ -547,6 +547,15 @@ DEEP_RESEARCH_MAX_CALLS_DEFAULT = 200
 #
 # NB : Le budget (MAX_AGENT_FUNCTION_CALLS) compte les DÉCISIONS d'appel
 #      de l'agent — pas les opérations internes des outils appelés.
+# ==============================================================================
+# OUTILS SYSTÈME PERMANENTS DES SOUS-AGENTS (WHITELIST SYSTÈME)
+# ==============================================================================
+# Outils vitaux injectés d'office à tout sous-agent (prévalent sur allowed_tools,
+# mais strictement subordonnés aux interdictions absolues de DELEGATE_AGENT_BLACKLIST).
+DELEGATE_AGENT_SYSTEM_TOOLS: frozenset = frozenset({
+    "tool_advisor",
+})
+
 #      consult_council appelé par l'agent = 1 unité de budget,
 #      quelles que soient les itérations internes du conseil.
 DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({

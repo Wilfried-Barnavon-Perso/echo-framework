@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 5.229.0.1
+version: 5.229.1.2
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.1.2: Factorisation SSOT via DELEGATE_AGENT_SYSTEM_TOOLS garantissant la disponibilité des outils système pour tout sous-agent.
 # 5.229.0.1: Précision de la condition de fermeture de session dans la docstring de close_agent_session.
 # 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/agent_orchestration.md.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.28: Alignement du cache d'outils sur sys.modules["function_echo_orchestrator"].
-# 1.27: Bascule de la synthèse d'agent vers MODEL_APOLLO (medium) au lieu de MODEL_DISTILLATION.
 
 import sys
 import uuid
@@ -34,6 +34,7 @@ from echo_state_manager import EchoStateManager
 from echo_constants import (
     ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES,
     DELEGATE_AGENT_BLACKLIST,
+    DELEGATE_AGENT_SYSTEM_TOOLS,
     CONTEXT_TRUNCATE_THRESHOLD,
     ECHO_MAX_CONTEXT_SIZE,
     get_generation_config
@@ -206,16 +207,22 @@ class Tools:
         sub_tools: dict = {}
         if _tools_dict:
             # Filtrage de la blacklist : certains outils ne doivent pas être délégués
-            # (ex: delegate_to_agent lui-même pour éviter les récursions infinies)
+            # (ex: delegate_to_agent lui-même pour éviter les récursions infinies).
+            # DELEGATE_AGENT_SYSTEM_TOOLS traverse le filtre allowed_tools pour rester disponible à tout sous-agent.
             sub_tools = {
                 k: v for k, v in _tools_dict.items()
-                if k not in DELEGATE_AGENT_BLACKLIST and (not allowed_tools or k in allowed_tools)
+                if k not in DELEGATE_AGENT_BLACKLIST and (
+                    not allowed_tools or k in allowed_tools or k in DELEGATE_AGENT_SYSTEM_TOOLS
+                )
             }
         elif _body_tools_specs:
             # Source 3 : reconstruction depuis sys.modules (valves par défaut)
             sub_tools = _resolve_sub_tools_from_sys_modules(_body_tools_specs, __user__)
             if allowed_tools:
-                sub_tools = {k: v for k, v in sub_tools.items() if k in allowed_tools}
+                sub_tools = {
+                    k: v for k, v in sub_tools.items()
+                    if k in allowed_tools or k in DELEGATE_AGENT_SYSTEM_TOOLS
+                }
 
         _callable_count = sum(1 for v in sub_tools.values() if v.get("callable") is not None)
         _log.debug(

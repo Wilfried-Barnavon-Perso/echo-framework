@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 5.229.0.1
+version: 5.229.1.1
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.1.1: Bascule cognitive de tool_advisor vers MODEL_APOLLO (medium thinking).
 # 5.229.0.1: Renommage de delegate_to_tool_consultant en tool_advisor et enrichissement de la docstring (utilité, sous-agents).
 # 5.229.0.0: Compression des docstrings OpenAPI et refonte de delegate_to_tool_consultant en Conseiller Opérationnel Hybride (EchoToolGuidesManager + read_tool_guide).
 # 5.226.18.1: Documentation : Harmonisation fonctionnelle et terminologique (PAS/Utilisateur) du docstring de ask_user_input.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.32: Fixation déterministe du modèle sur OWUI_ORCHESTRATOR_MODEL ("echo_orchestrator") et suppression de model_id (zéro rétrocompatibilité).
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -688,14 +688,14 @@ class Tools:
             for turn_idx in range(2):
                 payload = {
                     "contents": contents,
-                    "generationConfig": get_generation_config("MODEL_PROMETHEUS", override_thinking="medium"),
+                    "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="medium"),
                     "systemInstruction": {"role": "system", "parts": [{"text": system_prompt}]},
                 }
                 if turn_idx == 0:
                     payload["tools"] = internal_tools
 
                 response, _, _ = await EchoGeminiClient.call_cascade(
-                    target_model_key="MODEL_PROMETHEUS",
+                    target_model_key="MODEL_APOLLO",
                     payload=payload,
                     user_id=user_id,
                     metadata=__metadata__,
