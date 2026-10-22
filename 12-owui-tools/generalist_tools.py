@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 5.229.1.1
+version: 5.229.1.2
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.1.2: Précision de la transmission par défaut aux sous-agents dans la docstring de tool_advisor.
 # 5.229.1.1: Bascule cognitive de tool_advisor vers MODEL_APOLLO (medium thinking).
 # 5.229.0.1: Renommage de delegate_to_tool_consultant en tool_advisor et enrichissement de la docstring (utilité, sous-agents).
 # 5.229.0.0: Compression des docstrings OpenAPI et refonte de delegate_to_tool_consultant en Conseiller Opérationnel Hybride (EchoToolGuidesManager + read_tool_guide).
 # 5.226.18.1: Documentation : Harmonisation fonctionnelle et terminologique (PAS/Utilisateur) du docstring de ask_user_input.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -587,7 +587,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Consulte l'Expert-Conseil Opérationnel des Outils ECHO (manuels complets, paramètres exacts, séquences d'appels, utilité et diagnostic d'erreurs). À appeler pour connaître l'usage d'une fonction, orchestrer plusieurs outils ou sous-agents ou en cas d'échec d'un appel."""
+        """Consulte l'Expert-Conseil Opérationnel des Outils ECHO (manuels complets, paramètres exacts, séquences d'appels, utilité et diagnostic d'erreurs). Cet outil est transmis par défaut à tous les sous-agents pour assister l'orchestration, connaître l'usage d'une fonction ou diagnostiquer un échec d'appel."""
         if not __user__:
             return wrap_tool_output(text="Erreur : contexte OWUI manquant.", status={"status": "error"}, metadata=__metadata__)
 
