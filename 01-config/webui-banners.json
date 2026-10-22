@@ -1,11 +1,11 @@
 [
   {
-    "id": "echo-banner-update-snapshot-20261022",
-    "type": "warning",
-    "title": "Mise à jour sous snapshot",
-    "content": "**Mise à jour sous snapshot** : Mise à jour en cours sous snapshot. Rollback possible, avec perte de votre travail actuel. Le travail mené avant cet avertissement ne sera pas perdu.",
-    "dismissible": false,
-    "timestamp": 1729592714
+    "id": "echo-banner-tools-efficiency-20261022",
+    "type": "info",
+    "title": "Optimisation des outils & sous-agents",
+    "content": "**Optimisation des outils & sous-agents** : Le fonctionnement des outils et la délégation aux sous-agents ont été optimisés pour maximiser leur efficacité opérationnelle tout en réduisant nettement la consommation de tokens.",
+    "dismissible": true,
+    "timestamp": 1729609721
   },
   {
     "id": "echo-banner-mode-guidance-v2",
