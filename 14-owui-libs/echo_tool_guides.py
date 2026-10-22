@@ -1,11 +1,12 @@
 """
 title: ECHO Tool Guides Manager
 author: Wilfried BARNAVON
-version: 5.229.0.0
+version: 5.229.0.1
 description: Gestionnaire de la base de connaissances opérationnelle des outils ECHO (tool_guides/*.md).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.1: Intégration de version et updated_at dans le parsing frontmatter, la Carte Hiérarchique et les balises XML.
 # 5.229.0.0: Création initiale de EchoToolGuidesManager (indexation YAML, tool->domain et pré-injection).
 
 import os
@@ -37,6 +38,8 @@ class EchoToolGuidesManager:
         meta: Dict = {
             "domain_id": "",
             "name": "",
+            "version": "",
+            "updated_at": "",
             "description": "",
             "tools": [],
             "keywords": [],
@@ -126,8 +129,9 @@ class EchoToolGuidesManager:
         lines: List[str] = []
         for domain_id, info in guides.items():
             tools_str = ", ".join(info.get("tools", []))
+            ver_str = f" [v{info.get('version', '')} - {info.get('updated_at', '')}]" if info.get("version") or info.get("updated_at") else ""
             lines.append(
-                f"- DOMAINE `{domain_id}` ({info.get('name', domain_id)}) :\n"
+                f"- DOMAINE `{domain_id}` ({info.get('name', domain_id)}){ver_str} :\n"
                 f"  Description : {info.get('description', '')}\n"
                 f"  Outils couverts : {tools_str}"
             )
@@ -237,8 +241,10 @@ class EchoToolGuidesManager:
         blocks: List[str] = []
         for d_id in matched_domains[:max_preloaded]:
             info = guides[d_id]
+            ver_attr = f' version="{info.get("version", "")}"' if info.get("version") else ""
+            date_attr = f' updated_at="{info.get("updated_at", "")}"' if info.get("updated_at") else ""
             blocks.append(
-                f"<operational_manual domain_id=\"{d_id}\" name=\"{info.get('name', d_id)}\">\n"
+                f'<operational_manual domain_id="{d_id}" name="{info.get("name", d_id)}"{ver_attr}{date_attr}>\n'
                 f"{info.get('body', '')}\n"
                 f"</operational_manual>"
             )
@@ -260,8 +266,10 @@ class EchoToolGuidesManager:
                 d_id = info["domain_id"]
                 if d_id not in seen:
                     seen.add(d_id)
+                    ver_attr = f' version="{info.get("version", "")}"' if info.get("version") else ""
+                    date_attr = f' updated_at="{info.get("updated_at", "")}"' if info.get("updated_at") else ""
                     matched.append(
-                        f"<operational_manual domain_id=\"{d_id}\" name=\"{info.get('name', d_id)}\">\n"
+                        f'<operational_manual domain_id="{d_id}" name="{info.get("name", d_id)}"{ver_attr}{date_attr}>\n'
                         f"{info.get('body', '')}\n"
                         f"</operational_manual>"
                     )

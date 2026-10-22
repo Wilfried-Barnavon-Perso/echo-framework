@@ -1,5 +1,7 @@
 ---
 domain_id: strategic_planner
+version: 5.229.0.0
+updated_at: 2026-10-22
 name: Planification Stratégique & Suivi Tactique
 description: Conception de plans d'action (MODEL_PROMETHEUS), audit contradictoire, amorçage par validation utilisateur et pointage tactique des tâches (MODEL_APOLLO) adossés au Codex.
 tools: [build_plan, read_plan, update_plan, update_tasks, process_plan, delete_plan, analyze_plan]

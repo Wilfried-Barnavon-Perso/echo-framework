@@ -1,5 +1,7 @@
 ---
 domain_id: web_search_and_browsing
+version: 5.229.0.0
+updated_at: 2026-10-22
 name: Recherche Web Souveraine, Navigateur Autonome & Géolocalisation Maps
 description: Escalade de recherche Web (Réponses instantanées, Méta-moteur de recherche, Deep Research), navigation interactive via le Navigateur Autonome et ancrage cartographique Maps.
 tools: [search_instant_answer, search_web, delegate_deep_research, delegate_web_browsing, analyze_web_page, archive_web_page, web_browse_reset, close_web_thread, get_browser_frames_history, search_maps]

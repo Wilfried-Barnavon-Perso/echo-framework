@@ -1,5 +1,7 @@
 ---
 domain_id: visual_and_system_metrics
+version: 5.229.0.0
+updated_at: 2026-10-22
 name: Moteur de Rendu Visuel Interactif (ECHO Visual) & Jauge de Contexte
 description: Génération asynchrone d'interfaces et visualisations interactives (17 moteurs : Mermaid, ECharts, Markmap, Leaflet, etc.) et surveillance de la charge du contexte (get_context_load).
 tools: [generate_rich_visualization, get_context_load]

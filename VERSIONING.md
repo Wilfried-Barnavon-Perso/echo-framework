@@ -27,6 +27,7 @@ Tous les composants d'ECHO (Pipes, Filtres, Outils, Actions, Librairies partagé
 ### Périmètre d'Application et Exclusions
 1. **Composants soumis au format `A.B.C.X`** :
    * Modules Open WebUI (`10-owui-pipes/`, `11-owui-filters/`, `12-owui-tools/`, `13-owui-actions/`, `14-owui-libs/`) via le champ `version:` du frontmatter docstring.
+   * Manuels opérationnels Markdown (`14-owui-libs/tool_guides/*.md`) via les champs `version:` et `updated_at:` (format `YYYY-MM-DD`) du frontmatter YAML, devant être mis à jour à chaque modification documentaire ou d'outils rattachés.
    * Services et Workers Docker (`20` à `30`) via la directive `VERSION :` d'en-tête.
    * Scripts d'infrastructure (`00-echo-scripts/*.sh`, `install-hyperv.ps1`, `install-linux.sh`, `install-wsl2.sh`) et manifestes (`01-config/stack-echo.yml`, `01-config/bunkerweb-stack.yml`).
    * Variables runtime internes liées à la version du composant (`SCRIPT_VERSION` dans `edge_embed_bridge_filter.py` et `install-hyperv.ps1`, `FastAPI(..., version=...)` dans `30-docker-embedding-worker/app.py`).

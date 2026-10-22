@@ -1,5 +1,7 @@
 ---
 domain_id: codex_management
+version: 5.229.0.0
+updated_at: 2026-10-22
 name: Gestionnaire Documentaire & Versionnement Git (ECHO Codex)
 description: Création, édition directe ou assistée, lecture paginée/historique, recherche spatiale ou temporelle et versionnement Git sur les espaces main et sandbox.
 tools: [create_codex, edit_codex, delete_codex, read_codex, restore_codex, search_codex, summarize_codex, list_codex, history_codex, open_codex_ui]

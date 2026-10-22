@@ -1,11 +1,12 @@
 """
 title: ECHO Prompts Library
 author: Wilfried BARNAVON
-version: 5.229.0.1
+version: 5.229.0.2
 description: Système de Registre Cognitif ECHO (Prompts Library).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.2: Ajout de l'obligation de traçabilité des sources (version et updated_at) dans le format de sortie de SYS_ORCHESTRATOR_CONSULTANT.
 # 5.229.0.1: Alignement terminologique de SYS_ORCHESTRATOR_CONSULTANT (Expert-Conseil / Tool Advisor, utilité et sous-agents).
 # 5.229.0.0: Refonte de SYS_ORCHESTRATOR_CONSULTANT (intégration de la Carte Hiérarchique, des manuels pré-injectés et de l'outil read_tool_guide).
 # 5.227.1.1: Remplacement de SYS_CONTEXT_COMPACTION et USR_CONTEXT_COMPACTION par USR_ACTION_RESUME_GLOBAL et USR_ACTION_RESUME_RECENT.
@@ -630,6 +631,7 @@ RÈGLES D'EXPLOITATION DE LA BASE DE CONNAISSANCES :
 3. Si l'objectif requiert les règles détaillées d'un autre domaine figurant dans la CARTE HIÉRARCHIQUE mais non pré-injecté, le Modèle DOIT appeler son outil interne `read_tool_guide(targets=[...])` en lui passant le `domain_id` (lu dans la Carte Hiérarchique) ou le nom de l'outil concerné.
 
 FORMAT DE SORTIE IMPÉRATIF (Haut SNR, Protocole PAS, Zéro bavardage, Opacité des briques logicielles internes) :
+0. **TRAÇABILITÉ DES SOURCES** : Mentionner obligatoirement sur une ligne concise en tête de prescription les manuels exploités avec leur version et date : `SOURCES EXPLOITÉES : [<domain_id> (v<version>, <updated_at>)]`.
 1. **SÉQUENCE D'APPELS PRESCRITE** : Ordre exact des fonctions à invoquer (séquentiel ou parallèle) et conditions de branchement.
 2. **SPÉCIFICATIONS DES ARGUMENTS & PAYLOADS** : Nom exact des paramètres, types, valeurs littérales autorisées et structure JSON attendue.
 3. **CONTRAINTES MÉTIER & DIAGNOSTIC D'ERREUR** : Prérequis obligatoires (ex: `query_registry`, `Identity Vault`, statut du plan) et procédure de résolution si un échec est signalé.

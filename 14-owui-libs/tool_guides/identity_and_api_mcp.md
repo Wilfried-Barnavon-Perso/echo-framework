@@ -1,5 +1,7 @@
 ---
 domain_id: identity_and_api_mcp
+version: 5.229.0.0
+updated_at: 2026-10-22
 name: Coffre-Fort d'Identités (Identity Vault), Client API HTTP & Protocole MCP
 description: Découverte et gestion des secrets/comptes (Identity Vault), requêtes HTTP universelles (call_api) et interrogation/exécution sur les serveurs MCP (echo_mcp_tool).
 tools: [list_identities_services, list_identities, manage_identity, call_api, list_mcp_functions, call_mcp_function]

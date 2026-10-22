@@ -1,5 +1,7 @@
 ---
 domain_id: ui_calendar_and_automations
+version: 5.229.0.0
+updated_at: 2026-10-22
 name: Agenda de l'Interface Utilisateur, Automatisations CRON (RRULE), Dossiers UI & Saisie Interactive
 description: Gestion complète du calendrier de l'Interface Utilisateur, programmation de tâches de fond CRON (syntaxe RRULE iCalendar), dossiers UI, ask_user_input et wait_timer.
 tools: [search_ui_calendar_events, list_ui_calendar_events, read_ui_calendar_events, create_ui_calendar_event, update_ui_calendar_event, delete_ui_calendar_event, create_ui_automation, update_ui_automation, delete_ui_automation, read_ui_automations, list_ui_automations, list_ui_folders, ask_user_input, wait_timer]

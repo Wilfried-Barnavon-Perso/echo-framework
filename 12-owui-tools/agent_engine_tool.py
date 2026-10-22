@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 5.229.0.0
+version: 5.229.0.1
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.1: Précision de la condition de fermeture de session dans la docstring de close_agent_session.
 # 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/agent_orchestration.md.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.28: Alignement du cache d'outils sur sys.modules["function_echo_orchestrator"].
 # 1.27: Bascule de la synthèse d'agent vers MODEL_APOLLO (medium) au lieu de MODEL_DISTILLATION.
-# 1.26: Résolution robuste de chat_id depuis __metadata__ et propagation de __metadata__ dans infra_kwargs des sous-agents.
 
 import sys
 import uuid
@@ -335,7 +335,7 @@ class Tools:
         __event_emitter__: Any = None,
         __metadata__: dict = {},
     ) -> str:
-        """Ferme définitivement une session de sous-agent (`sub_sid`) et purge son historique."""
+        """Ferme définitivement une session de sous-agent (`sub_sid`) et purge son historique, à n'appeler que si aucune reprise ultérieure de son travail n'est requise."""
         user_id = (__user__ or {}).get("id", "system")
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
         if not chat_id:
