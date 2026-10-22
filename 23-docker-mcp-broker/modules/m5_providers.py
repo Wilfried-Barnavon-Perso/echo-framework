@@ -1,7 +1,7 @@
-# VERSION : 5.229.1.0
+# VERSION : 5.229.1.1
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.229.1.0: Auto-résolution dossiers M365 (list/search/move_email) et outil list_mail_folders.
+# 5.229.1.1: Auto-résolution dossiers M365, pagination/tri list_emails, trash_email et batch_trash_emails ($batch).
 # 5.228.0.1: Fail-Closed OAuth2 GoogleWorkspaceProvider (prepare_env + bouclier anti-localhost:8001).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.1: Occultation intégrale de _flow_cache dans tools/list et authenticate_account pour zéro fuite en contexte LLM
@@ -225,19 +225,18 @@ class Microsoft365Provider(MCPServiceProvider):
     AUTH_EXEMPT_TOOLS = frozenset(
         {"list_accounts", "authenticate_account", "complete_authentication"}
     )
-    WELL_KNOWN_FOLDERS = frozenset(
-        {
-            "inbox",
-            "sent",
-            "sentitems",
-            "drafts",
-            "deleted",
-            "deleteditems",
-            "junk",
-            "junkemail",
-            "archive",
-        }
-    )
+    WELL_KNOWN_PATHS = {
+        "inbox": "inbox",
+        "sent": "sentitems",
+        "sentitems": "sentitems",
+        "drafts": "drafts",
+        "deleted": "deleteditems",
+        "deleteditems": "deleteditems",
+        "junk": "junkemail",
+        "junkemail": "junkemail",
+        "archive": "archive",
+    }
+    WELL_KNOWN_FOLDERS = frozenset(WELL_KNOWN_PATHS.keys())
     _FOLDERS_CACHE: dict[str, dict] = {}
 
     @staticmethod
@@ -519,8 +518,8 @@ class Microsoft365Provider(MCPServiceProvider):
         if not folder_name:
             return None
         cleaned = folder_name.strip()
-        if cleaned.casefold() in self.WELL_KNOWN_FOLDERS:
-            return folder_name
+        if cleaned.casefold() in self.WELL_KNOWN_PATHS:
+            return self.WELL_KNOWN_PATHS[cleaned.casefold()]
 
         # Détection d'un ID Graph immuable (Base64-like préfixé ou long)
         if cleaned.startswith(("AQMk", "AAMk")) or (len(cleaned) >= 50 and "=" in cleaned):
@@ -567,6 +566,8 @@ class Microsoft365Provider(MCPServiceProvider):
         result = dict(result)
         patched_tools = []
         has_list_mail_folders = False
+        has_trash_email = False
+        has_batch_trash = False
 
         for tool in tools:
             if not isinstance(tool, dict):
@@ -587,8 +588,40 @@ class Microsoft365Provider(MCPServiceProvider):
                     "additionalProperties": False,
                 }
                 patched_tools.append(t_copy)
+            elif t_name == "list_emails":
+                t_copy = dict(tool)
+                props = dict(t_copy.get("inputSchema", {}).get("properties", {}))
+                props["skip"] = {
+                    "type": "integer",
+                    "description": "Number of emails to skip for pagination (default: 0).",
+                    "default": 0,
+                }
+                props["order_by"] = {
+                    "type": "string",
+                    "description": (
+                        "Sort order: 'receivedDateTime desc' (newest first) or "
+                        "'receivedDateTime asc' (oldest first)."
+                    ),
+                    "default": "receivedDateTime desc",
+                }
+                t_copy["inputSchema"] = dict(t_copy.get("inputSchema", {}))
+                t_copy["inputSchema"]["properties"] = props
+                patched_tools.append(t_copy)
+            elif t_name == "delete_email":
+                t_copy = dict(tool)
+                t_copy["description"] = (
+                    "PERMANENTLY PURGE an email (Hard Delete). CAUTION: This deletes the message permanently "
+                    "without moving it to the trash folder. For safe reversible deletion, use 'trash_email' instead."
+                )
+                patched_tools.append(t_copy)
             elif t_name == "list_mail_folders":
                 has_list_mail_folders = True
+                patched_tools.append(tool)
+            elif t_name == "trash_email":
+                has_trash_email = True
+                patched_tools.append(tool)
+            elif t_name == "batch_trash_emails":
+                has_batch_trash = True
                 patched_tools.append(tool)
             else:
                 patched_tools.append(tool)
@@ -610,6 +643,56 @@ class Microsoft365Provider(MCPServiceProvider):
                             }
                         },
                         "required": [],
+                    },
+                }
+            )
+
+        if not has_trash_email:
+            patched_tools.append(
+                {
+                    "name": "trash_email",
+                    "description": (
+                        "Safely move an email to Deleted Items (Trash / Corbeille). Reversible soft delete."
+                    ),
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "email_id": {
+                                "type": "string",
+                                "description": "The ID of the email to move to trash.",
+                            },
+                            "account_id": {
+                                "type": "string",
+                                "description": "Optional account ID or email address. Auto-resolved if omitted.",
+                            },
+                        },
+                        "required": ["email_id"],
+                    },
+                }
+            )
+
+        if not has_batch_trash:
+            patched_tools.append(
+                {
+                    "name": "batch_trash_emails",
+                    "description": (
+                        "Move multiple emails to Trash in batch using Graph $batch API (up to 100 emails at a time). "
+                        "Highly recommended for bulk cleanup operations."
+                    ),
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "email_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "List of email IDs to move to trash.",
+                            },
+                            "account_id": {
+                                "type": "string",
+                                "description": "Optional account ID or email address. Auto-resolved if omitted.",
+                            },
+                        },
+                        "required": ["email_ids"],
                     },
                 }
             )
@@ -738,15 +821,127 @@ class Microsoft365Provider(MCPServiceProvider):
             ]
             return args, self._make_tool_response(formatted)
 
-        # Cas 5 : list_emails / search_emails -> résolution transparente de folder
-        if tool_name in ("list_emails", "search_emails") and args.get("folder"):
-            folder_arg = args["folder"]
+        # Cas 5 : Outil virtuel trash_email -> mise à la corbeille réversible (Soft Delete)
+        if tool_name == "trash_email":
+            email_id = args.get("email_id")
+            if not email_id:
+                return args, self._make_tool_response(
+                    {"status": "error", "message": "email_id obligatoire."}, is_error=True
+                )
+            try:
+                token = self._get_access_token(user_id, resolved_account)
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    res = await client.post(
+                        f"https://graph.microsoft.com/v1.0/me/messages/{email_id}/move",
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Content-Type": "application/json",
+                        },
+                        json={"destinationId": "deleteditems"},
+                    )
+                    if res.status_code in (200, 201):
+                        return args, self._make_tool_response(
+                            {
+                                "status": "trashed",
+                                "message_id": email_id,
+                                "folder": "deleteditems",
+                            }
+                        )
+                    return args, self._make_tool_response(
+                        {
+                            "status": "error",
+                            "message": f"Échec de mise à la corbeille Graph: {res.text}",
+                        },
+                        is_error=True,
+                    )
+            except Exception as e:
+                return args, self._make_tool_response(
+                    {"status": "error", "message": f"Exception lors de trash_email: {e}"},
+                    is_error=True,
+                )
+
+        # Cas 6 : Outil virtuel batch_trash_emails -> suppression par lot via Graph $batch
+        if tool_name == "batch_trash_emails":
+            email_ids = args.get("email_ids", [])
+            if not email_ids or not isinstance(email_ids, list):
+                return args, self._make_tool_response(
+                    {
+                        "status": "error",
+                        "message": "email_ids DOIT être une liste non vide d'identifiants.",
+                    },
+                    is_error=True,
+                )
+            try:
+                token = self._get_access_token(user_id, resolved_account)
+                headers = {
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                }
+                trashed_count = 0
+                failed_ids = []
+
+                chunks = [
+                    email_ids[i:i + 20] for i in range(0, len(email_ids), 20)
+                ]
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    for chunk in chunks:
+                        sub_requests = [
+                            {
+                                "id": str(idx),
+                                "method": "POST",
+                                "url": f"/me/messages/{eid}/move",
+                                "headers": {"Content-Type": "application/json"},
+                                "body": {"destinationId": "deleteditems"},
+                            }
+                            for idx, eid in enumerate(chunk)
+                        ]
+                        batch_res = await client.post(
+                            "https://graph.microsoft.com/v1.0/$batch",
+                            headers=headers,
+                            json={"requests": sub_requests},
+                        )
+                        if batch_res.status_code == 200:
+                            b_data = batch_res.json()
+                            for r in b_data.get("responses", []):
+                                idx_req = int(r.get("id", -1))
+                                if r.get("status") in (200, 201):
+                                    trashed_count += 1
+                                else:
+                                    if 0 <= idx_req < len(chunk):
+                                        failed_ids.append(chunk[idx_req])
+                        else:
+                            failed_ids.extend(chunk)
+
+                return args, self._make_tool_response(
+                    {
+                        "status": "success" if not failed_ids else "partial_success",
+                        "total_requested": len(email_ids),
+                        "trashed_count": trashed_count,
+                        "failed_count": len(failed_ids),
+                        "failed_ids": failed_ids,
+                    }
+                )
+            except Exception as e:
+                return args, self._make_tool_response(
+                    {
+                        "status": "error",
+                        "message": f"Exception lors de batch_trash_emails: {e}",
+                    },
+                    is_error=True,
+                )
+
+        # Cas 7 : list_emails -> exécution Graph directe (supporte skip, order_by, auto-résolution)
+        if tool_name == "list_emails":
+            folder_arg = args.get("folder", "inbox")
+            limit = min(int(args.get("limit", 10) or 10), 100)
+            skip = max(int(args.get("skip", 0) or 0), 0)
+            order_by = str(args.get("order_by") or "receivedDateTime desc").strip()
+            include_body = bool(args.get("include_body", True))
+
             resolved_fid = await self._resolve_folder_id(
                 user_id, resolved_account, folder_arg
             )
-            if resolved_fid:
-                args["folder"] = resolved_fid
-            else:
+            if not resolved_fid:
                 folders = await self._get_cached_folders(user_id, resolved_account)
                 available = [
                     f.get("path") or f.get("displayName") for f in folders
@@ -763,7 +958,108 @@ class Microsoft365Provider(MCPServiceProvider):
                     is_error=True,
                 )
 
-        # Cas 6 : move_email -> résolution et exécution directe Graph (support de tous sous-dossiers)
+            folder_endpoint_id = self.WELL_KNOWN_PATHS.get(
+                resolved_fid.casefold(), resolved_fid
+            )
+            if include_body:
+                select_fields = (
+                    "id,subject,from,toRecipients,ccRecipients,receivedDateTime,"
+                    "hasAttachments,body,conversationId,isRead"
+                )
+            else:
+                select_fields = (
+                    "id,subject,from,toRecipients,receivedDateTime,hasAttachments,"
+                    "conversationId,isRead"
+                )
+
+            try:
+                token = self._get_access_token(user_id, resolved_account)
+                url = f"https://graph.microsoft.com/v1.0/me/mailFolders/{folder_endpoint_id}/messages"
+                params = {
+                    "$top": str(limit),
+                    "$skip": str(skip),
+                    "$orderby": order_by,
+                    "$select": select_fields,
+                }
+                async with httpx.AsyncClient(timeout=20.0) as client:
+                    res = await client.get(
+                        url,
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Accept": "application/json",
+                        },
+                        params=params,
+                    )
+                    if res.status_code == 200:
+                        messages = res.json().get("value", [])
+                        return args, self._make_tool_response(messages)
+                    return args, self._make_tool_response(
+                        {
+                            "status": "error",
+                            "message": f"Échec Graph list_emails ({res.status_code}): {res.text}",
+                        },
+                        is_error=True,
+                    )
+            except Exception as e:
+                logger.warning("Échec Graph list_emails direct: %s", e)
+                args["folder"] = folder_endpoint_id
+
+        # Cas 8 : search_emails -> fiabilisation comptes personnels + résolution dossier
+        if tool_name == "search_emails":
+            folder_arg = args.get("folder")
+            if folder_arg:
+                resolved_fid = await self._resolve_folder_id(
+                    user_id, resolved_account, folder_arg
+                )
+                if resolved_fid:
+                    args["folder"] = resolved_fid
+                else:
+                    folders = await self._get_cached_folders(user_id, resolved_account)
+                    available = [
+                        f.get("path") or f.get("displayName") for f in folders
+                    ]
+                    return args, self._make_tool_response(
+                        {
+                            "status": "folder_not_found",
+                            "message": (
+                                f"Le dossier '{folder_arg}' est introuvable dans Microsoft 365. "
+                                f"Dossiers disponibles : {', '.join(str(x) for x in available[:30])}."
+                            ),
+                        },
+                        is_error=True,
+                    )
+            else:
+                # Si folder est omis, requêter directement /me/messages?$search pour éviter l'erreur 400
+                query = args.get("query", "")
+                limit = min(int(args.get("limit", 50) or 50), 100)
+                select_fields = (
+                    "id,subject,from,toRecipients,receivedDateTime,hasAttachments,"
+                    "body,conversationId,isRead"
+                )
+                try:
+                    token = self._get_access_token(user_id, resolved_account)
+                    url = "https://graph.microsoft.com/v1.0/me/messages"
+                    params = {
+                        "$search": f'"{query}"',
+                        "$top": str(limit),
+                        "$select": select_fields,
+                    }
+                    async with httpx.AsyncClient(timeout=20.0) as client:
+                        res = await client.get(
+                            url,
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Accept": "application/json",
+                            },
+                            params=params,
+                        )
+                        if res.status_code == 200:
+                            messages = res.json().get("value", [])
+                            return args, self._make_tool_response(messages)
+                except Exception as e:
+                    logger.warning("Échec search_emails direct Graph: %s", e)
+
+        # Cas 9 : move_email -> résolution et exécution directe Graph (support de tous sous-dossiers)
         if tool_name == "move_email":
             dest_arg = args.get("destination_folder")
             email_id = args.get("email_id")

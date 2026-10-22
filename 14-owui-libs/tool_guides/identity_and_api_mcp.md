@@ -1,6 +1,6 @@
 ---
 domain_id: identity_and_api_mcp
-version: 5.229.1.1
+version: 5.229.1.2
 updated_at: 2026-10-22
 name: Coffre-Fort d'Identités (Identity Vault), Client API HTTP & Protocole MCP
 description: Découverte et gestion des secrets/comptes (Identity Vault), requêtes HTTP universelles (call_api), instanciation/exécution sur les serveurs MCP (echo_mcp_tool) et stratégies par service.
@@ -56,18 +56,32 @@ L'outil MCP route dynamiquement les requêtes JSON-RPC vers toutes les catégori
 - **Protocole d'Authentification Device Code Flow** :
   1. Si `list_mcp_functions` signale une absence d'authentification ou si un appel renvoie une erreur de token, appeler `call_mcp_function(service="microsoft_365", function_name="authenticate_account", arguments={})`.
   2. Restituer immédiatement à l'Utilisateur l'URL de vérification (`verification_uri`) et le code alphanumérique (`user_code`).
-  3. Dès que l'Utilisateur confirme avoir validé le code, appeler `complete_authentication` en fournissant le `flow_cache` retourné à l'étape 1.
+  3. Dès que l'Utilisateur confirme avoir validé le code, appeler `complete_authentication` avec arguments vides `{}` (la persistance du flux est automatique).
 - **Exploration des Dossiers de Messagerie (`list_mail_folders`)** :
   - `call_mcp_function(service="microsoft_365", function_name="list_mail_folders", arguments={})` :
     Restitue l'arborescence exhaustive de tous les dossiers et sous-dossiers (`displayName`, chemin hiérarchique `path`, identifiant immuable `id`, `unreadItemCount`, `totalItemCount`, `childFolderCount`).
-- **Auto-Résolution Transparente des Dossiers (`list_emails`, `search_emails`, `move_email`)** :
-  - Grâce au MCP Broker ECHO, le Modèle **PEUT utiliser directement le libellé textuel usuel** d'un dossier (`folder="Emploi"`, `folder="LinkedIn"`) ou son chemin hiérarchique (`folder="Boîte de réception/Emploi"`). Le Broker résout automatiquement le nom vers son `FolderId` Graph immuable en amont de l'appel.
-  - Sont également acceptés : les alias réservés natifs (`"inbox"`, `"sent"`, `"drafts"`, `"deleted"`, `"junk"`, `"archive"`) et les `FolderId` Graph immuables (`"AQMk..."`).
-  - `move_email(email_id="...", destination_folder="...")` : Prend en charge le déplacement vers n'importe quel sous-dossier enfant de manière récursive.
-- **Comptes Personnels (`consumers` vs organisationnels)** :
-  - L'argument `search_query` sur `list_emails` peut déclencher des erreurs HTTP 400 sur les tenants personnels si combiné à certains filtres.
-  - Privilégier le ciblage précis par dossier (`folder="Emploi"`) avec pagination (`limit`, `skip`), puis filtrer localement les résultats.
-- **Autres Capacités** : Gestion d'agenda (`list_events`, `create_event`) et stockage OneDrive (`list_files`, `upload_file`).
+- **Lecture, Pagination et Tri (`list_emails`)** :
+  - Arguments :
+    - `folder` : Nom usuel (`"Emploi"`), chemin hiérarchique (`"Boîte de réception/LinkedIn"`), alias réservé (`"inbox"`, `"sent"`, `"drafts"`, `"archive"`), ou `FolderId` Graph immuable. Le Broker résout automatiquement les noms personnalisés.
+    - `limit` : Nombre maximal de messages par page (1 à 100, défaut `10`).
+    - `skip` : Décalage d'index pour pagination (défaut `0`, ex: `0`, `50`, `100`).
+    - `order_by` : Critère de tri Microsoft Graph :
+      - `"receivedDateTime desc"` : Plus récents en premier (défaut).
+      - `"receivedDateTime asc"` : **Plus anciens en premier** (INDISPENSABLE pour traiter les archives ou les e-mails de plus d'un mois sans saturer la mémoire).
+    - `include_body` : `False` pour métadonnées seules (économise massivement le contexte lors de tris ou balayages), `True` pour lire le corps du texte.
+- **Suppression et Mise à la Corbeille (Règles Critiques de Sécurité)** :
+  - **Mise à la corbeille réversible (Soft Delete - À PRIVILÉGIER)** :
+    - Unitaire : `trash_email(email_id="...")` déplace le message vers la corbeille (`deleteditems`).
+    - Par lot : `batch_trash_emails(email_ids=["id1", "id2", ...])` traite jusqu'à 100 e-mails en paquets de 20 via l'API Graph `$batch`. **À utiliser obligatoirement pour les nettoyages massifs d'alertes ou de newsletters.**
+  - **Purge définitive irréversible (Hard Delete - DANGER)** :
+    - `delete_email(email_id="...")` : **ATTENTION**, détruit définitivement le message sans passage par la corbeille. **INTERDIT** pour les opérations de ménage standard ; réservé exclusivement aux demandes explicites de purge définitive de l'Utilisateur.
+  - **Classement métier (`move_email`)** :
+    - `move_email(email_id="...", destination_folder="...")` sert exclusivement à classer des e-mails vers des dossiers métier (`"Archives"`, `"Projets"`). **NE PAS utiliser pour supprimer** ; utiliser `trash_email`.
+- **Recherche de Messages (`search_emails`)** :
+  - `search_emails(query="...", limit=50, folder=None)` :
+    - Si `folder` est renseigné (ex: `folder="LinkedIn"` ou `"inbox"`), la recherche est restreinte au dossier ciblé.
+    - Si `folder` est omis, la recherche est globale à toute la messagerie via `/me/messages?$search="..."` (compatible comptes personnels et professionnels).
+- **Autres Capacités** : Gestion d'agenda (`list_events`, `create_event`, `respond_event`) et stockage OneDrive (`list_files`, `upload_file`, `delete_file`).
 
 ### 3.2 Google Workspace (`google_workspace` - Résident `workspace-mcp`)
 - **Pérennité du Refresh Token** :
