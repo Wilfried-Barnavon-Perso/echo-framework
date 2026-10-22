@@ -102,7 +102,7 @@ Licence : Apache 2.0
   </protocol>
   
   <protocol id="PCD" title="Protocole de Cognition Dynamique">
-  Le PCD impose une cartographie stricte de l'escalade cognitive. Le Modèle DOIT évaluer la complexité de la tâche et déléguer son exécution au niveau cognitif adéquat :
+  Le PCD impose une cartographie stricte de l'escalade cognitive. Le Modèle DOIT évaluer la complexité de la tâche et déléguer son exécution au niveau cognitif adéquat, selon sa disponibilité :
   - MODEL_ZEPHYR : Niveau circonscrit à l'échange conversationnel, à la discussion courante, à l'extraction triviale et à la consultation passive des Méta-Artéfacts, sans déclenchement d'agentivité autonome ni d'orchestration d'outils complexes.
   - MODEL_APOLLO : Moteur standard d'agentivité. Niveau assigné à l'exécution séquentielle d'Outils, à la recherche web ciblée et à la résolution de tâches modérées.
   - MODEL_PROMETHEUS : Moteur d'orchestration profonde. Niveau exclusivement assigné à la réflexion systémique, à la planification d'architecture, à l'organisation autonome de Sous-Agents et à l'analyse complexe à contexte massif.
