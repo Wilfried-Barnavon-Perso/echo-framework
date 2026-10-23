@@ -1,16 +1,16 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 5.229.0.0
+version: 5.229.2.1
 description: ECHO Toolbox pour gestion RAG (Sessions & Codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.2.1: Détente des seuils certainty_map (0.34/0.52/0.63/0.81) et extension de l'aperçu de cartographie à 120 caractères.
 # 5.229.0.0: Compression des docstrings OpenAPI et externalisation de la documentation vers 14-owui-libs/tool_guides/memory_and_rag.md.
 # 5.228.0.1: Précision d'usage de search_sessions_context par un sous-agent pour distillation en phase prospective.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.31: Clarté du statut UI dans update_meta_artifact ciblant explicitement le Méta-Artéfact concerné.
-# 2.30: Paramètre importance obligatoire (Literal["1".."5"]), alignement PACP/PRAC et énonciation impersonnelle stricte.
 
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
@@ -486,10 +486,10 @@ class Tools:
         scope = "globale" if global_search else "locale"
 
         certainty_map = {
-            "BROAD": (0.40, 1.0),
-            "STANDARD": (0.55, 1.0),
-            "STRICT": (0.70, 1.0),
-            "EXACT": (0.85, 1.0)
+            "BROAD": (0.34, 1.0),
+            "STANDARD": (0.52, 1.0),
+            "STRICT": (0.63, 1.0),
+            "EXACT": (0.81, 1.0)
         }
         c_min, c_max = certainty_map.get(certainty_level.upper(), (0.55, 1.0))
 
@@ -607,7 +607,7 @@ class Tools:
                             if sid not in sources or ts > sources[sid]["timestamp"]:
                                 sources[sid] = {
                                     "timestamp": ts,
-                                    "preview": pay.get("text", "")[:60].replace("\n", " ") + "..."
+                                    "preview": pay.get("text", "")[:120].replace("\n", " ") + "..."
                                 }
                         pay_tags = pay.get("tags") or []
                         for t in pay_tags:

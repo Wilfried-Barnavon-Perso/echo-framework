@@ -1,7 +1,7 @@
 ---
 domain_id: memory_and_rag
-version: 5.229.0.0
-updated_at: 2026-10-22
+version: 5.229.2.1
+updated_at: 2026-10-23
 name: Mémoire Vectorielle Long-Terme (Méta-Artéfacts) & Mémoire Vectorielle de Session
 description: Gouvernance de la mémoire persistante inter-sessions (PACP/PRAC) et de la Mémoire Vectorielle de la session (documents ingérés et historique conversationnel).
 tools: [update_meta_artifact, search_meta_artifacts, delete_meta_artifact_item, save_session_context, delete_session_context_source, search_sessions_context]
@@ -62,13 +62,13 @@ Lorsqu'un document est ingéré, la balise `<artifact id="AEC_smart_context">` f
 ### 3.2 Spécifications de `search_sessions_context`
 `search_sessions_context(certainty_level, query=None, source_id="", global_search=False, limit=32, sort_by_time=False, start_date="", end_date="")` :
 - `certainty_level` (**Obligatoire**) : Niveau de certitude sémantique attendu :
-  - `"BROAD"` (seuil 0.40) : Exploration large, concepts vagues ou reformulés.
-  - `"STANDARD"` (seuil 0.55) : Équilibre nominal pertinence/rappel.
-  - `"STRICT"` (seuil 0.70) : Recherche factuelle à haute correspondance sémantique.
-  - `"EXACT"` (seuil 0.85) : Recherche quasi-littérale d'un terme ou identifiant.
+  - `"BROAD"` (seuil 0.34) : Exploration large, concepts vagues ou reformulés.
+  - `"STANDARD"` (seuil 0.52) : Équilibre nominal pertinence/rappel.
+  - `"STRICT"` (seuil 0.63) : Recherche factuelle à haute correspondance sémantique.
+  - `"EXACT"` (seuil 0.81) : Recherche quasi-littérale d'un terme ou identifiant.
 - `query` :
   - **Défini (`query="..."`)** : Recherche et extrait les fragments textuels complets dédupliqués.
-  - **Omis (`query=None`)** : **Mode Cartographie d'Index** — retourne la liste des `source_id` indexés dans la session avec horodatage, tags et aperçu de 60 caractères.
+  - **Omis (`query=None`)** : **Mode Cartographie d'Index** — retourne la liste des `source_id` indexés dans la session avec horodatage, tags et aperçu de 120 caractères.
 - `global_search` :
   - `False` (Défaut) : Restreint la recherche à la session de conversation active.
   - `True` : Étend la recherche à **l'intégralité de l'historique inter-sessions** de l'Utilisateur. **DOIT** être activé dès que l'Utilisateur fait référence à un échange antérieur (*"hier"*, *"la semaine dernière"*, *"dans une autre session"*).
