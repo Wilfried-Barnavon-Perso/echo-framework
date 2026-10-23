@@ -33,6 +33,9 @@ Ce dossier est le **Centre Névralgique Statique** de l'architecture. Il contien
 - **Sémantique** : Définit la collection ordonnée des bannières affichées aux utilisateurs (`id`, `type`, `title`, `content`, `dismissible`, `timestamp`, `i18n`).
 - **Typologies Validées** : Mappe strictement les 4 types acceptés et stylisés par le composant `Banner.svelte` : `info` (badge bleu), `warning` (badge jaune), `error` (badge rouge), `success` (badge vert).
 - **Persistance** : Le drapeau `dismissible: true` enregistre l'identifiant fermé dans le `localStorage` du client (`dismissedBannerIds`), tandis que `dismissible: false` limite l'occultation à la session courante en mémoire.
+- **Règles de Cycle de Vie & Rétention** :
+  - **Bannières Inamovibles (`dismissible: false`)** : Alertes opérationnelles critiques (maintenance, snapshot, rollback). Elles restent actives jusqu'à retrait explicite par le développeur.
+  - **Bannières Masquables (`dismissible: true`)** : Annonces fonctionnelles et conseils. Elles ont une durée de vie maximale de **14 jours (2 semaines)** à compter de leur `timestamp`. Tout agent intervenant sur le fichier doit purger les bannières masquables ayant dépassé cette échéance.
 
 ### `searxng-settings.yml`
 **Rôle** : Configuration du moteur de méta-recherche souverain.

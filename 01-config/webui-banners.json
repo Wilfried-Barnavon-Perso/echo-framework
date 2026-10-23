@@ -1,11 +1,19 @@
 [
   {
-    "id": "echo-banner-tools-efficiency-20261022",
+    "id": "echo-banner-tags-rag-20261023",
     "type": "info",
-    "title": "Optimisation des outils & sous-agents",
-    "content": "**Optimisation des outils & sous-agents** : Le fonctionnement des outils et la délégation aux sous-agents ont été optimisés pour maximiser leur efficacité opérationnelle tout en réduisant nettement la consommation de tokens.",
+    "title": "Mémoire & Tags de discussion",
+    "content": "**Mémoire ciblée par tags** : Vous pouvez désormais organiser vos conversations avec des étiquettes (tags). Écho sait provisionner automatiquement mais aussi lister vos tags et **restreindre ses recherches en mémoire** aux discussions portant le tag de votre choix.",
     "dismissible": true,
-    "timestamp": 1729609721
+    "timestamp": 1729683543
+  },
+  {
+    "id": "echo-banner-tool-advisor-20261023",
+    "type": "info",
+    "title": "Conseiller Outils & Sous-Agents",
+    "content": "**Conseiller Outils opérationnel** : Un expert dédié guide désormais Écho et ses sous-agents pour choisir les bons outils et corriger les erreurs à la volée. Les schémas d'outils ont été allégés de 80%, vous garantissant **plus de rapidité et une moindre consommation de tokens**.",
+    "dismissible": true,
+    "timestamp": 1729683543
   },
   {
     "id": "echo-banner-mode-guidance-v2",
