@@ -1,6 +1,6 @@
 ---
 domain_id: memory_and_rag
-version: 5.229.2.2
+version: 5.229.3.1
 updated_at: 2026-10-23
 name: Mémoire Vectorielle Long-Terme (Méta-Artéfacts) & Mémoire Vectorielle de Session
 description: Gouvernance de la mémoire persistante inter-sessions (PACP/PRAC) et de la Mémoire Vectorielle de la session (documents ingérés et historique conversationnel).
@@ -71,7 +71,7 @@ Lorsqu'un document est ingéré, la balise `<artifact id="AEC_smart_context">` f
   - **Omis (`query=None`)** : **Mode Cartographie d'Index** — retourne la liste des `source_id` indexés dans la session avec horodatage, tags et aperçu de 120 caractères.
 - `tag` :
   - **Filtrage par étiquette** : Restreint la recherche vectorielle aux seules conversations rattachées à cette étiquette (résolution SSoT automatique des identifiants de chat correspondants).
-  - **Règle d'or d'orchestration** : Les étiquettes étant agnostiques de tout domaine particulier et pouvant être formulées dans la langue de l'échange ou en anglais consacré, le Modèle DOIT préalablement appeler `list_ui_tags(global_scope=True)` pour cartographier les étiquettes existantes dans toutes les discussions et identifier la chaîne exacte avant de lancer la recherche.
+  - **Règle d'or d'orchestration** : Les étiquettes étant standardisées EXCLUSIVEMENT en anglais (minuscules, snake_case/kebab_case au singulier), le Modèle DOIT préalablement appeler `list_ui_tags(global_scope=True)` pour cartographier les étiquettes existantes dans toutes les discussions et identifier la chaîne anglaise exacte avant de lancer la recherche.
 - `global_search` :
   - `False` (Défaut) : Restreint la recherche à la session de conversation active.
   - `True` : Étend la recherche à **l'intégralité de l'historique inter-sessions** de l'Utilisateur. **DOIT** être activé dès que l'Utilisateur fait référence à un échange antérieur (*"hier"*, *"la semaine dernière"*, *"dans une autre session"*).
