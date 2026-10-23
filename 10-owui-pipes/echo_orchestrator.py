@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 5.229.4.1
+version: 5.229.5.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.5.1: Extension de l'amplitude de génération des tags de 2 à 16 étiquettes.
 # 5.229.4.1: Assouplissement de la réconciliation tags_generation : granularité distinctive et création libre de nouveaux tags.
 # 5.229.3.1: Imposition stricte des étiquettes en anglais et réconciliation anti-dispersion dans le Fast-Track tags_generation.
 # 5.229.2.1: Réconciliation dynamique et anti-dispersion agnostique des tags dans le Fast-Track tags_generation.
 # 5.228.12.1: Exclusion de FatalAPIError (400) de la cascade descendante ; interdiction formelle de paralléliser new_cognitive_level.
-# 5.228.9.1: Ajustement sémantique du prompt new_cognitive_level (alignement sur tâches agentiques/résolution technique et PTD).
 
 
 # ==============================================================================
@@ -637,7 +637,7 @@ class Pipe:
                     "2. Granularité : Privilégier des étiquettes informatives et distinctives (technologies, méthodes, outils, concepts métiers, objets d'étude).\n"
                     "3. Le catalogue sert de référence d'harmonisation pour réutiliser les termes exacts et éviter les quasi-synonymes, mais DOIT laisser place à de NOUVELLES étiquettes distinctives dès qu'un concept clé distinct le justifie.\n"
                     "4. CONSERVER les étiquettes actuelles de cette discussion si les thèmes correspondants demeurent pertinents dans l'échange.\n"
-                    "5. Quota strict : retourner un objet JSON contenant entre 2 et 4 étiquettes au total."
+                    "5. Quota : retourner un objet JSON contenant entre 2 et 16 étiquettes au total."
                 )
                 if gemini_contents and gemini_contents[-1]["parts"]:
                     gemini_contents[-1]["parts"].append({"text": reconcile_directive})
