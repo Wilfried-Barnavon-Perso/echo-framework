@@ -1,6 +1,6 @@
 ---
 domain_id: memory_and_rag
-version: 5.229.3.1
+version: 5.229.4.1
 updated_at: 2026-10-23
 name: Mémoire Vectorielle Long-Terme (Méta-Artéfacts) & Mémoire Vectorielle de Session
 description: Gouvernance de la mémoire persistante inter-sessions (PACP/PRAC) et de la Mémoire Vectorielle de la session (documents ingérés et historique conversationnel).

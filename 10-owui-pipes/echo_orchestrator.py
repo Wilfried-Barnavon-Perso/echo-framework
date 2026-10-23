@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 5.229.3.1
+version: 5.229.4.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.4.1: Assouplissement de la réconciliation tags_generation : granularité distinctive et création libre de nouveaux tags.
 # 5.229.3.1: Imposition stricte des étiquettes en anglais et réconciliation anti-dispersion dans le Fast-Track tags_generation.
 # 5.229.2.1: Réconciliation dynamique et anti-dispersion agnostique des tags dans le Fast-Track tags_generation.
 # 5.228.12.1: Exclusion de FatalAPIError (400) de la cascade descendante ; interdiction formelle de paralléliser new_cognitive_level.
 # 5.228.9.1: Ajustement sémantique du prompt new_cognitive_level (alignement sur tâches agentiques/résolution technique et PTD).
-# 5.227.1.1: Suppression des références au compactage in-place (AEC_context_checkpoint, EchoCompactionEngine) et renvoi vers l'action de migration de session.
 
 
 # ==============================================================================
@@ -633,10 +633,10 @@ class Pipe:
                     f"- Catalogue des étiquettes existantes de l'Utilisateur : {json.dumps(known_user_tags, ensure_ascii=False)}\n"
                     f"- Étiquettes actuelles de cette discussion : {json.dumps(current_chat_tags, ensure_ascii=False)}\n"
                     "Directives strictes :\n"
-                    "1. Rédiger TOUTES les étiquettes EXCLUSIVEMENT en anglais.\n"
-                    "2. RÉUTILISER EN PRIORITÉ les étiquettes existantes de l'Utilisateur si elles correspondent sémantiquement, afin d'éviter la prolifération de quasi-synonymes.\n"
-                    "3. CONSERVER les étiquettes actuelles de cette discussion si les thèmes correspondants demeurent pertinents dans l'échange.\n"
-                    "4. Ne forger une NOUVELLE étiquette que si le champ thématique ou le sujet central n'est couvert par aucune étiquette existante.\n"
+                    "1. Rédiger TOUTES les étiquettes EXCLUSIVEMENT en anglais (minuscules, tiret du bas '_' au singulier).\n"
+                    "2. Granularité : Privilégier des étiquettes informatives et distinctives (technologies, méthodes, outils, concepts métiers, objets d'étude).\n"
+                    "3. Le catalogue sert de référence d'harmonisation pour réutiliser les termes exacts et éviter les quasi-synonymes, mais DOIT laisser place à de NOUVELLES étiquettes distinctives dès qu'un concept clé distinct le justifie.\n"
+                    "4. CONSERVER les étiquettes actuelles de cette discussion si les thèmes correspondants demeurent pertinents dans l'échange.\n"
                     "5. Quota strict : retourner un objet JSON contenant entre 2 et 4 étiquettes au total."
                 )
                 if gemini_contents and gemini_contents[-1]["parts"]:

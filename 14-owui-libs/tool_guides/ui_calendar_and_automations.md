@@ -1,6 +1,6 @@
 ---
 domain_id: ui_calendar_and_automations
-version: 5.229.3.1
+version: 5.229.4.1
 updated_at: 2026-10-23
 name: Agenda de l'Interface Utilisateur, Automatisations CRON (RRULE), Dossiers UI, Étiquettes & Saisie Interactive
 description: Gestion complète du calendrier de l'Interface Utilisateur, programmation de tâches de fond CRON (syntaxe RRULE iCalendar), dossiers UI, exploration des étiquettes (tags), ask_user_input et wait_timer.
@@ -50,7 +50,7 @@ L'argument `rrule` dans `create_ui_automation` et `update_ui_automation` **DOIT 
 - `delete_ui_automation(automation_id)` : Supprime la tâche planifiée.
 - `list_ui_folders()` : Scanne et retourne tous les dossiers de l'Interface Utilisateur (`[{"id": "...", "name": "..."}]`).
 - `list_ui_tags(global_scope=False, chat_id=None)` :
-  - **Principe Général** : Permet au Modèle et aux sous-agents de consulter les étiquettes catégorisant les discussions. Les étiquettes sont agnostiques de tout domaine particulier et standardisées EXCLUSIVEMENT en anglais (minuscules, tiret du bas "_" ou tiret simple au singulier) afin d'assurer une taxonomie cohérente et exempte de doublons.
+  - **Principe Général** : Permet au Modèle et aux sous-agents de consulter les étiquettes catégorisant les discussions. Les étiquettes sont informatives, distinctives et standardisées EXCLUSIVEMENT en anglais (minuscules, tiret du bas "_" ou tiret simple au singulier) afin d'assurer une granularité technique précise sans catégories parapluie rigides.
   - **Mode Conversation en cours (`global_scope=False`, défaut)** : Retourne les étiquettes rattachées spécifiquement à la conversation active (`{"scope": "local", "chat_id": "...", "tags": [{"id": "...", "name": "..."}]}`). Permet au Modèle de prendre connaissance du contexte thématique immédiat de l'échange.
   - **Mode Toutes les conversations existantes (`global_scope=True`)** : Recherche et retourne l'ensemble des étiquettes présentes dans toutes les conversations existantes de l'Utilisateur avec le décompte de discussions associées (`{"scope": "global", "total_tags": N, "tags": [{"id": "...", "name": "...", "chat_count": X}]}`).
   - **Stratégie d'Orchestration RAG** : Avant d'exécuter une recherche RAG ciblée par étiquette (`search_sessions_context(tag=...)`), le Modèle DOIT impérativement invoquer `list_ui_tags(global_scope=True)`. Cette inspection préalable permet de découvrir la nomenclature anglaise exacte des étiquettes réellement indexées dans toutes les discussions, éliminant ainsi les faux négatifs dus aux synonymes ou aux traductions approximatives.
