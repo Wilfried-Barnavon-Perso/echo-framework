@@ -1,17 +1,17 @@
 """
 title: Résume et Transfert vers un nouveau chat
 author: ECHO Framework
-version: 5.228.4.2
+version: 5.229.2.1
 description: Migre le contexte de travail saturé vers une nouvelle conversation optimisée (clonage Workspace).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxsaW5lIHgxPSI0IiB5MT0iNCIgeDI9IjQiIHkyPSIyMCIvPjxsaW5lIHgxPSI4IiB5MT0iMTIiIHgyPSIxNiIgeTI9IjEyIi8+PHBvbHlsaW5lIHBvaW50cz0iMTIgOCAxNiAxMiAxMiAxNiIvPjxsaW5lIHgxPSIyMCIgeTE9IjQiIHgyPSIyMCIgeTI9IjIwIi8+PC9zdmc+
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.2.1: Propagation et héritage direct des tags du chat parent vers la nouvelle conversation migrée.
 # 5.228.4.2: Support asynchrone des routines Chats (_call_owui), purge des blocs <details type="reasoning"> avant troncature, ancrage utilisateur racine pour le Session RAG, synchronisation atomique sous clone_lock et redirection window.location.replace.
 # 5.228.1.1: Suppression de l'en-tête de codage UTF-8 obsolète pour alignement sur extract_frontmatter OWUI (affichage icône).
 # 5.228.0.1: Intégration de l'icône SVG base64 borne à borne (|->|) pour le bouton d'action.
 # 5.227.1.1: Réintroduction et modernisation de l'action de migration de session (extraction complète de branche, backup SQLite atomique via echo_session_clone, pagination Qdrant COLLECTION_SESSION_RAG et timeouts RPC).
-# 1.12: Injection de la requête racine (RAG macro-objectif) et ajout de la routine de reprise obligatoire (Onboarding cognitif).
 
 import asyncio
 import inspect
@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import sys
+import types
 import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -398,6 +399,11 @@ class Action:
         )
         new_title = f"[Suite] {old_title}"
         old_folder_id = getattr(old_chat, "folder_id", None) if old_chat else None
+        old_tags = (
+            (old_chat.meta or {}).get("tags", [])
+            if old_chat and hasattr(old_chat, "meta") and isinstance(old_chat.meta, dict)
+            else []
+        )
 
         old_chat_dict = (
             old_chat.chat
@@ -485,6 +491,14 @@ class Action:
                 "error",
             )
             return None
+
+        if old_tags:
+            try:
+                user_obj = types.SimpleNamespace(id=user_id)
+                await Action._call_owui(Chats.update_chat_tags_by_id, new_chat_id, old_tags, user_obj)
+                logger.info(f"[ECHO-RESUME-ACTION] Tags du chat parent propagés à la nouvelle session : {old_tags}")
+            except Exception as tag_err:
+                logger.warning(f"[ECHO-RESUME-ACTION] Avertissement propagation tags : {tag_err}")
 
         # 4. Duplication atomique du conteneur de session ECHO et de la mémoire vectorielle sous verrou
         await update_hud(75, "📁 Duplication de l'Espace Personnel et de la Base SQLite...")

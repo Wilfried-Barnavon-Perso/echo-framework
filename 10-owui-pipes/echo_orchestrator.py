@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 5.228.12.1
+version: 5.229.2.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.2.1: Réconciliation dynamique et anti-dispersion agnostique des tags dans le Fast-Track tags_generation.
 # 5.228.12.1: Exclusion de FatalAPIError (400) de la cascade descendante ; interdiction formelle de paralléliser new_cognitive_level.
 # 5.228.9.1: Ajustement sémantique du prompt new_cognitive_level (alignement sur tâches agentiques/résolution technique et PTD).
 # 5.227.1.1: Suppression des références au compactage in-place (AEC_context_checkpoint, EchoCompactionEngine) et renvoi vers l'action de migration de session.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 192.88: Transmission des métriques de Checkpoint Cognitif actif (compaction_count, compacted_turns) à EchoUI.deploy_context_gauge.
 
 
 # ==============================================================================
@@ -22,6 +22,7 @@ import secrets
 import re
 import time
 import codecs
+import json
 import orjson as std_json
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Any, Union
@@ -609,6 +610,36 @@ class Pipe:
             # Indispensable car Open WebUI parse la sortie via JSONCodec.loads()
             if task_id in ["title_generation", "tags_generation", "follow_up_generation"]:
                 generation_config["responseMimeType"] = "application/json"
+
+            if task_id == "tags_generation":
+                user_id = __user__.get("id") if __user__ else None
+                chat_id = safe_metadata.get("chat_id")
+                known_user_tags = []
+                current_chat_tags = []
+                try:
+                    from open_webui.models.tags import Tags
+                    from open_webui.models.chats import Chats
+                    if user_id:
+                        user_tag_objs = await Tags.get_tags_by_user_id(user_id) if hasattr(Tags, "get_tags_by_user_id") else []
+                        known_user_tags = [t.name for t in user_tag_objs]
+                    if chat_id and user_id:
+                        chat_obj = await Chats.get_chat_by_id_and_user_id(chat_id, user_id) if hasattr(Chats, "get_chat_by_id_and_user_id") else None
+                        current_chat_tags = (chat_obj.meta or {}).get("tags", []) if chat_obj else []
+                except Exception as tag_ctx_err:
+                    log.warning(f"[ECHO-ORCHESTRATOR] Impossible de charger le contexte tags: {tag_ctx_err}")
+
+                reconcile_directive = (
+                    "\n\n### Réconciliation et Cohérence des Étiquettes\n"
+                    f"- Catalogue des étiquettes existantes de l'Utilisateur : {json.dumps(known_user_tags, ensure_ascii=False)}\n"
+                    f"- Étiquettes actuelles de cette discussion : {json.dumps(current_chat_tags, ensure_ascii=False)}\n"
+                    "Directives strictes :\n"
+                    "1. RÉUTILISER EN PRIORITÉ les étiquettes existantes de l'Utilisateur si elles correspondent sémantiquement, afin d'éviter la prolifération de quasi-synonymes.\n"
+                    "2. CONSERVER les étiquettes actuelles de cette discussion si les thèmes correspondants demeurent pertinents dans l'échange.\n"
+                    "3. Ne forger une NOUVELLE étiquette que si le champ thématique ou le sujet central n'est couvert par aucune étiquette existante.\n"
+                    "4. Quota strict : retourner un objet JSON contenant entre 2 et 4 étiquettes au total."
+                )
+                if gemini_contents and gemini_contents[-1]["parts"]:
+                    gemini_contents[-1]["parts"].append({"text": reconcile_directive})
 
             payload = {
                 "contents": gemini_contents,

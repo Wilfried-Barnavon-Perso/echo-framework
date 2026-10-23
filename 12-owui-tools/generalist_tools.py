@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 5.229.1.2
+version: 5.229.2.1
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.2.1: Ajout de l'outil list_ui_tags (consultation locale des tags du chat courant ou globale de toutes les conversations).
 # 5.229.1.2: Précision de la transmission par défaut aux sous-agents dans la docstring de tool_advisor.
 # 5.229.1.1: Bascule cognitive de tool_advisor vers MODEL_APOLLO (medium thinking).
 # 5.229.0.1: Renommage de delegate_to_tool_consultant en tool_advisor et enrichissement de la docstring (utilité, sous-agents).
 # 5.229.0.0: Compression des docstrings OpenAPI et refonte de delegate_to_tool_consultant en Conseiller Opérationnel Hybride (EchoToolGuidesManager + read_tool_guide).
-# 5.226.18.1: Documentation : Harmonisation fonctionnelle et terminologique (PAS/Utilisateur) du docstring de ask_user_input.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -43,6 +43,8 @@ from open_webui.tools.builtin import (
     _ns_to_dt,
 )
 from open_webui.models.folders import Folders, FolderForm
+from open_webui.models.tags import Tags
+from open_webui.models.chats import Chats
 from open_webui.models.automations import Automations
 from open_webui.models.calendar import CalendarEvents
 import logging
@@ -566,6 +568,46 @@ class Tools:
         folders = await Folders.get_folders_by_user_id(user_id) if hasattr(Folders, 'get_folders_by_user_id') else []
         res = json.dumps([{"id": f.id, "name": f.name} for f in folders])
         return wrap_tool_output(text=res, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
+
+    async def list_ui_tags(
+        self,
+        global_scope: bool = False,
+        chat_id: str = None,
+        __user__: dict = {},
+        __metadata__: dict = {}
+    ) -> str:
+        """Liste les étiquettes (tags) de la conversation en cours (`global_scope=False`) ou de l'ensemble des conversations existantes (`global_scope=True`)."""
+        user_id = __user__.get("id")
+        cid = chat_id or (__metadata__ or {}).get("chat_id")
+        try:
+            if global_scope:
+                all_tags = await Tags.get_tags_by_user_id(user_id) if hasattr(Tags, "get_tags_by_user_id") else []
+                tag_ids = [t.id for t in all_tags]
+                counts = await Chats.count_chats_by_tag_ids_and_user_id(tag_ids, user_id) if hasattr(Chats, "count_chats_by_tag_ids_and_user_id") and tag_ids else {}
+                data = {
+                    "scope": "global",
+                    "total_tags": len(all_tags),
+                    "tags": [{"id": t.id, "name": t.name, "chat_count": counts.get(t.id, 0)} for t in all_tags]
+                }
+            else:
+                if not cid:
+                    return wrap_tool_output(
+                        text=json.dumps({"error": "Contexte chat_id manquant pour la conversation en cours."}),
+                        status={"status": "error"},
+                        user_id=user_id, chat_id=cid, metadata=__metadata__
+                    )
+                chat = await Chats.get_chat_by_id_and_user_id(cid, user_id) if hasattr(Chats, "get_chat_by_id_and_user_id") else None
+                raw_tag_ids = (chat.meta or {}).get("tags", []) if chat else []
+                tag_models = await Tags.get_tags_by_ids_and_user_id(raw_tag_ids, user_id) if hasattr(Tags, "get_tags_by_ids_and_user_id") and raw_tag_ids else []
+                tag_dict = {t.id: t.name for t in tag_models}
+                data = {
+                    "scope": "local",
+                    "chat_id": cid,
+                    "tags": [{"id": tid, "name": tag_dict.get(tid, tid)} for tid in raw_tag_ids]
+                }
+            return wrap_tool_output(text=json.dumps(data, ensure_ascii=False), user_id=user_id, chat_id=cid, metadata=__metadata__)
+        except Exception as e:
+            return wrap_tool_output(text=json.dumps({"error": str(e)}), status={"status": "error"}, user_id=user_id, chat_id=cid, metadata=__metadata__)
 
     async def tool_advisor(
         self,

@@ -1,16 +1,16 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 5.229.2.1
+version: 5.229.2.2
 description: ECHO Toolbox pour gestion RAG (Sessions & Codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.2.2: Ajout du paramètre tag dans search_sessions_context avec résolution SSoT par chat_id.
 # 5.229.2.1: Détente des seuils certainty_map (0.34/0.52/0.63/0.81) et extension de l'aperçu de cartographie à 120 caractères.
 # 5.229.0.0: Compression des docstrings OpenAPI et externalisation de la documentation vers 14-owui-libs/tool_guides/memory_and_rag.md.
 # 5.228.0.1: Précision d'usage de search_sessions_context par un sous-agent pour distillation en phase prospective.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 2.31: Clarté du statut UI dans update_meta_artifact ciblant explicitement le Méta-Artéfact concerné.
 
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
@@ -32,6 +32,11 @@ from echo_constants import (
     ECHO_QDRANT_URL
 )
 from echo_prompts import SYS_RAG_DISTILL
+
+try:
+    from open_webui.models.chats import Chats
+except ImportError:
+    Chats = None
 
 # Configuration du Logger
 logging.basicConfig(level=logging.INFO)
@@ -466,6 +471,7 @@ class Tools:
         certainty_level: str,
         query: Optional[str] = None,
         source_id: str = "",
+        tag: Optional[str] = None,
         global_search: bool = False,
         limit: int = 32,
         sort_by_time: bool = False,
@@ -476,13 +482,35 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None
     ) -> dict:
-        """Explore la Mémoire Vectorielle de la session (`global_search=False`) ou de toutes les sessions (`global_search=True`) selon le seuil `certainty_level` ('BROAD', 'STANDARD', 'STRICT', 'EXACT'), ou cartographie les sources indexées (`query` omis)."""
+        """Explore la Mémoire Vectorielle de la session (`global_search=False`), de toutes les sessions (`global_search=True`) ou filtrée par étiquette (`tag`), selon `certainty_level`, ou cartographie les sources indexées (`query` omis)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         user_id = __user__.get("id")
         chat_id = __metadata__.get("chat_id")
+
+        matching_chat_ids = None
+        if tag and tag.strip():
+            clean_tag = tag.strip()
+            try:
+                matching_chats = await Chats.get_chat_list_by_user_id_and_tag_name(
+                    user_id=user_id, tag_name=clean_tag, skip=0, limit=100
+                ) if Chats and hasattr(Chats, "get_chat_list_by_user_id_and_tag_name") else []
+                matching_chat_ids = [c.id for c in matching_chats]
+                if not matching_chat_ids:
+                    return wrap_tool_output(
+                        text=f"Aucune conversation associée au tag '{clean_tag}' n'a été trouvée.",
+                        status={"status": "success", "results": []},
+                        user_id=user_id, chat_id=chat_id, metadata=__metadata__
+                    )
+            except Exception as e:
+                return wrap_tool_output(
+                    text=f"❌ Erreur résolution du tag '{clean_tag}': {str(e)}",
+                    status={"status": "error"},
+                    user_id=user_id, chat_id=chat_id, metadata=__metadata__
+                )
+
         scope = "globale" if global_search else "locale"
 
         certainty_map = {
@@ -497,7 +525,10 @@ class Tools:
             from echo_constants import COLLECTION_SESSION_RAG
             async with httpx.AsyncClient(timeout=self.valves.RECALL_TIMEOUT) as client:
                 must_filters = [{"key": "user_id", "match": {"value": user_id}}]
-                if not global_search:
+                if matching_chat_ids is not None:
+                    must_filters.append({"key": "chat_id", "match": {"any": matching_chat_ids}})
+                    scope = f"filtrée sur tag '{tag.strip()}' ({len(matching_chat_ids)} chats)"
+                elif not global_search:
                     must_filters.append({"key": "chat_id", "match": {"value": chat_id}})
                 if source_id:
                     must_filters.append({"key": "source_id", "match": {"value": source_id}})
