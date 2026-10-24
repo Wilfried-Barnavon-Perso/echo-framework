@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 5.229.1.2
+version: 5.229.6.1
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.6.1: Remplacement du circuit breaker réactif par un Tool Stripping proactif en fin de budget avec achèvement du lot parallèle.
 # 5.229.1.2: Factorisation SSOT via DELEGATE_AGENT_SYSTEM_TOOLS garantissant la disponibilité des outils système pour tout sous-agent.
 # 5.229.0.1: Précision de la condition de fermeture de session dans la docstring de close_agent_session.
 # 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/agent_orchestration.md.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.28: Alignement du cache d'outils sur sys.modules["function_echo_orchestrator"].
 
 import sys
 import uuid
@@ -487,7 +487,10 @@ async def _run_agent_loop(
 
     while True:
         # 1. Construction des function_declarations (source A : sub_tools, B : body_tools_specs)
-        fn_decls = _build_function_declarations(sub_tools, body_tools_specs)
+        # Si le budget d'appels d'outils est atteint ou dépassé (calls_used >= max_calls),
+        # Tool Stripping proactif : la liste d'outils est vidée pour forcer mécaniquement
+        # le LLM à formuler sa synthèse finale en texte pur sans outil.
+        fn_decls = _build_function_declarations(sub_tools, body_tools_specs) if calls_used < max_calls else []
 
         # 1.5. Défense passive : Troncature de l'historique de l'agent
         current_size = estimate_token_size(history) + estimate_token_size(final_system)
@@ -601,8 +604,43 @@ async def _run_agent_loop(
             state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", model_raw, _sig(model_raw))
 
             final_text = text or "(Réponse vide)"
+            status_dict = {
+                "status": "success",
+                "sid": sid,
+                "calls_remaining": max(0, max_calls - calls_used),
+                "model_used": model_used,
+            }
+            if calls_used >= max_calls:
+                status_dict["warning"] = "budget_exhausted"
+                await events.status(
+                    f"🛑 Agent [{sid}] — budget d'outils atteint ou dépassé "
+                    f"({calls_used}/{max_calls} appels). Synthèse terminée.",
+                    done=True
+                )
+            else:
+                await events.status(
+                    f"✅ Agent [{sid}] terminé ({calls_used}/{max_calls} appels).",
+                    done=True
+                )
+            return wrap_tool_output(
+                text=final_text,
+                status=status_dict,
+                user_id=__user__.get("id", "system") if __user__ else "system",
+                chat_id=__metadata__.get("chat_id") if __metadata__ else None,
+                metadata=__metadata__
+            )
+
+        # =====================================================================
+        # CAS 4 : Garde-fou hallucination — tool call sur tour stripped (calls_used >= max_calls)
+        # =====================================================================
+        if calls_used >= max_calls and real_fc:
+            final_text = text or "(Synthèse finale — budget d'outils atteint ou dépassé)"
+            model_raw = raw_parts if raw_parts else [{"text": final_text}]
+            history.append({"role": "model", "parts": model_raw})
+            state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", model_raw, _sig(model_raw))
             await events.status(
-                f"✅ Agent [{sid}] terminé ({calls_used}/{max_calls} appels).",
+                f"🛑 Agent [{sid}] — budget d'outils atteint ou dépassé "
+                f"({calls_used}/{max_calls} appels). Synthèse terminée.",
                 done=True
             )
             return wrap_tool_output(
@@ -610,66 +648,14 @@ async def _run_agent_loop(
                 status={
                     "status": "success",
                     "sid": sid,
-                    "calls_remaining": max_calls - calls_used,
-                    "model_used": model_used,
-                }
-            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-
-        # =====================================================================
-        # CAS 4 : Circuit breaker — budget dépassé avant exécution
-        # =====================================================================
-        if calls_used + len(real_fc) > max_calls:
-            budget_warning = (
-                f"⚠️ Budget de {max_calls} appels épuisé ({calls_used} utilisés). "
-                "Produis immédiatement ta meilleure réponse finale avec les informations "
-                "disponibles — aucun outil supplémentaire ne peut être appelé."
-            )
-            history.append({"role": "user", "parts": [{"text": budget_warning}]})
-
-            # Dernier appel sans outils (conclusion forcée)
-            forced_text = "(Conclusion forcée — budget épuisé)"
-            try:
-                forced_payload: dict = {
-                    "contents": history,
-                    "systemInstruction": {"parts": [{"text": final_system}]},
-                    "generationConfig": get_generation_config("MODEL_APOLLO"),
-                }
-                data2, _, _ = await EchoGeminiClient.call_cascade(
-                    target_model_key=current_model_key,
-                    payload=forced_payload,
-                    user_id=user_id,
-                    metadata=__metadata__,
-                    events=events,
-                    threshold=valves.KEY_SWITCH_THRESHOLD,
-                    max_retries=valves.MAX_RETRIES,
-                    timeout=120,
-                    include_thoughts=False,
-                )
-                if data2:
-                    cands2 = data2.get("candidates", [])
-                    if cands2 and cands2[0].get("content"):
-                        forced_text = "".join(
-                            p.get("text", "")
-                            for p in cands2[0]["content"].get("parts", [])
-                            if "text" in p and not p.get("thought")
-                        ) or forced_text
-            except Exception:
-                pass
-
-            await events.status(
-                f"⚠️ Agent [{sid}] — budget épuisé ({max_calls}/{max_calls} appels).",
-                done=True
-            )
-            return wrap_tool_output(
-                text=forced_text,
-                status={
-                    "status": "success",
-                    "sid": sid,
                     "warning": "budget_exhausted",
-                    "calls_remaining": max_calls - calls_used,
+                    "calls_remaining": 0,
                     "model_used": model_used,
-                }
-            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                },
+                user_id=__user__.get("id", "system") if __user__ else "system",
+                chat_id=__metadata__.get("chat_id") if __metadata__ else None,
+                metadata=__metadata__
+            )
 
         # =====================================================================
         # CAS 5 : Exécution des outils (appels linéaires ou parallèles)
@@ -768,7 +754,7 @@ async def _run_agent_loop(
 
         # Règle API : le message user après une functionCall doit contenir
         # UNIQUEMENT des functionResponse parts — pas de text mélangé.
-        # Le budget est géré par l'infrastructure (circuit breaker CAS 4),
+        # Le budget est géré par l'infrastructure (Tool Stripping au tour suivant si calls_used >= max_calls),
         # pas par le LLM sous-agent via l'historique.
         history.append({"role": "user", "parts": response_parts})
         state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx + 1, "user", response_parts)
