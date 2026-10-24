@@ -1,16 +1,16 @@
 """
 title: ECHO Codex UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.229.7.1
+version: 5.229.7.2
 description: Composant système interne : Moteur de rendu HUD Monaco et Éditeur Hexadécimal pour ECHO Codex.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.7.2: Réarmement systématique des spinners et selects d'en-tête (echoCodexNotify) et émission dual-key (chat_id, target_chat_id).
+# 5.229.7.1: Intégration du sélecteur hiérarchique multi-chat, badge lecture seule et verrouillage d'édition contextuel.
 # 5.228.12.1: Héritage factorisé de EchoUI.get_hud_geometry_js (echoBindHudGeometry) et EchoUI.get_hud_rpc_bridge_js (echoCreateHudRpcBridge).
 # 5.228.10.1: Durcissement post-standby (estampille de fraîcheur lastReadyTs, pré-ping automatique avant ai_edit, relance de file dans reconnectCodexBackend et heartbeat adaptatif en arrière-plan).
 # 5.228.9.1: Synchronisation atomique de currentFile dans echoCodexSetContent/echoCodexSetCurrentFile (fix preview lors de switch_workspace) et anti-wrap de l'en-tête Hex.
-# 5.228.8.1: Propagation explicite du flag is_binary lors de l'import de fichiers DOM (upload).
-# 5.228.7.2: Inversion des icônes Importer/Exporter, éditeur hexadécimal virtualisé sur fichiers binaires, PREVIEW_REGISTRY extensible avec auto-ouverture débrayable et factorisation SSOT des langages.
 
 
 import sys
@@ -469,7 +469,7 @@ class EchoCodexUI(EchoUI):
         chatSelect.onchange = () => {{
           chatSelect.disabled = true;
           chatSpinner.style.display = 'block';
-          window.sendCodexAction({{action:'switch_chat', target_chat_id:chatSelect.value, workspace:currentWorkspace}});
+          window.sendCodexAction({{action:'switch_chat', chat_id:chatSelect.value, target_chat_id:chatSelect.value, workspace:currentWorkspace}});
         }};
 
         chatContainer.appendChild(chatSelect);
@@ -1472,6 +1472,20 @@ class EchoCodexUI(EchoUI):
 
       window.echoCodexNotify = (type, msg) => {{
         hideButtonSpinner();
+        const chatSel = document.getElementById(CODEX_ID + '-chat-select');
+        if (chatSel) {{
+          chatSel.disabled = false;
+          if (type === 'error') chatSel.value = activeChatId;
+        }}
+        const chatSpin = document.getElementById(CODEX_ID + '-chat-spinner');
+        if (chatSpin) chatSpin.style.display = 'none';
+        const wsSel = document.getElementById(CODEX_ID + '-workspace');
+        if (wsSel) {{
+          wsSel.disabled = false;
+          if (type === 'error') wsSel.value = currentWorkspace;
+        }}
+        const wsSpin = document.getElementById(CODEX_ID + '-ws-spinner');
+        if (wsSpin) wsSpin.style.display = 'none';
         if (type === 'saved') {{ updateStatus('💾 Sauvegardé • ' + msg); modified = false; renderFileTree(); }}
         else if (type === 'committed') {{
           updateStatus('✅ Commité • ' + msg); exitDiffMode();
