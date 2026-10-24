@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 5.229.7.3
+version: 5.230.0.1
 description: Permet au modèle de manipuler un espace de travail virtuel et asynchrone (Codex) avec versioning Git invisible, et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.230.0.1: Intégration de _emit_urn_directive (Haut SNR, 35 tokens) et rappel URN canonique dans les contrats wrap_tool_output.
 # 5.229.7.3: Harmonisation des signatures -> dict et enrichissement systématique des sorties LLM via wrap_tool_output.
 # 5.229.7.2: Introduction de la fonction-outil dédiée list_other_chats_ids et épuration de list_codex.
 # 5.229.7.1: Support Multi-Chat sélectif (découverte SSoT, UI hiérarchique, Read-Only strict et tooling transverse).
 # 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/codex_management.md.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -26,16 +26,18 @@ from echo_core import wrap_tool_output, wrap_cascade_output
 from echo_events import EchoEvents
 from echo_gemini_client import EchoGeminiClient
 from echo_state_manager import EchoStateManager
+from echo_aec import EchoAEC
 import echo_constants
 from echo_constants import (
     ECHO_API_MAX_RETRIES, get_generation_config, FILE_INGESTION_STATUS,
-    ECHO_USERS_ROOT, ECHO_SYNC_EXCLUDE_LIST
+    ECHO_USERS_ROOT, ECHO_SYNC_EXCLUDE_LIST, ECHO_CODEX_WORKSPACES
 )
 from echo_prompts import SYS_CODEX_EDIT, SYS_CODEX_SUMMARIZE
 from echo_codex_git import CodexRepo
 
 # Gestionnaire de verrous pour la concurrence intra-chat
 _codex_locks = defaultdict(asyncio.Lock)
+
 
 class Tools:
     class Valves(BaseModel):
@@ -83,6 +85,23 @@ class Tools:
                 return "\n".join(lines[1:-1])
         return raw
 
+    def _emit_urn_directive(self, state: EchoStateManager):
+        """Enregistre une directive AEC ultra-concise (Haut SNR, ~35 tokens) pour le prochain tour du Modèle."""
+        if not state:
+            return
+        ws_list = " | ".join(f"'{k}'" for k in ECHO_CODEX_WORKSPACES.keys())
+        directive_content = (
+            "Le Modèle DOIT citer tout fichier Codex sous la forme stricte "
+            "[libellé](codex:CHAT_SCOPE:WORKSPACE/CHEMIN_RELATIF) avec CHAT_SCOPE ∈ {'current', chat_id} "
+            f"et WORKSPACE ∈ {{{ws_list}}} (consulter tool_advisor('codex_management') pour le protocole complet)."
+        )
+        EchoAEC.record_event(
+            state_manager=state,
+            event_name="codex_urn_directive",
+            summary=directive_content,
+            resource_type="aec_directive"
+        )
+
     async def _update_registry(self, state, filename: str, lang: str, line_count: int, commit_hash: str, msg: str, workspace: str):
         """Met à jour le registre unifié (SQLite) en isolant la Sandbox."""
         if workspace != "sandbox":
@@ -128,9 +147,11 @@ class Tools:
             commit_hash = await asyncio.to_thread(repo.commit_file, filename, content, msg)
             await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
 
+        self._emit_urn_directive(state)
+        urn_ref = f"[{filename}](codex:current:{workspace}/{filename})"
         await events.status(f"✅ {filename} créé ({line_count} lignes, commit {commit_hash[:7]}).", done=True)
         return wrap_tool_output(
-            text=f"Fichier `{filename}` créé avec succès dans l'espace `{workspace}`.\n- Langage : {lang}\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`",
+            text=f"Fichier `{filename}` créé avec succès dans l'espace `{workspace}`.\n- Langage : {lang}\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`\n- URN : {urn_ref}",
             status={
                 "status": "success",
                 "filename": filename,
@@ -177,9 +198,11 @@ class Tools:
                 commit_hash = await asyncio.to_thread(repo.commit_file, filename, new_content, msg)
                 await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
 
+            self._emit_urn_directive(state)
+            urn_ref = f"[{filename}](codex:current:{workspace}/{filename})"
             await events.status(f"✅ {filename} modifié (commit {commit_hash[:7]}).", done=True)
             return wrap_tool_output(
-                text=f"Fichier `{filename}` modifié avec succès dans l'espace `{workspace}`.\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`",
+                text=f"Fichier `{filename}` modifié avec succès dans l'espace `{workspace}`.\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`\n- URN : {urn_ref}",
                 status={
                     "status": "success",
                     "mode": "direct_replacement",
@@ -236,9 +259,11 @@ class Tools:
                 commit_hash = await asyncio.to_thread(repo.commit_file, filename, modified, msg)
                 await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
 
+            self._emit_urn_directive(state)
+            urn_ref = f"[{filename}](codex:current:{workspace}/{filename})"
             await events.status(f"✅ Édition assistée terminée (commit {commit_hash[:7]}).", done=True)
             return wrap_cascade_output(
-                text=f"Fichier `{filename}` modifié par agent éditeur dans l'espace `{workspace}`.\n- Instructions : {instructions}\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`",
+                text=f"Fichier `{filename}` modifié par agent éditeur dans l'espace `{workspace}`.\n- Instructions : {instructions}\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`\n- URN : {urn_ref}",
                 model_requested=self.user_valves.CODEX_EDIT_MODEL,
                 model_used=model_key or "unknown",
                 status={
@@ -348,8 +373,11 @@ class Tools:
             content_subset = "\n".join(lines[s-1:e])
             range_info = f"lignes {s}-{e} (commit {commit_hash[:7]})"
             
+            self._emit_urn_directive(state)
+            urn_scope = cid if is_remote else "current"
+            urn_ref = f"[{filename}](codex:{urn_scope}:{workspace}/{filename})"
             return wrap_tool_output(
-                text=f"**{filename}**{remote_badge} ({lang}, {total_lines} lignes total, {range_info})\n\n```{lang}\n{content_subset}\n```",
+                text=f"**{filename}**{remote_badge} ({lang}, {total_lines} lignes total, {range_info})\n- URN : {urn_ref}\n\n```{lang}\n{content_subset}\n```",
                 status={
                     "status": "success",
                     "filename": filename,
@@ -377,8 +405,11 @@ class Tools:
             s_line = result["range"][0] if result["range"] else 1
             e_line = result["range"][1] if result["range"] else result['total_lines']
             lines_returned = len(result['content'].split('\n')) if result.get('content') else 0
+            self._emit_urn_directive(state)
+            urn_scope = cid if is_remote else "current"
+            urn_ref = f"[{filename}](codex:{urn_scope}:{workspace}/{filename})"
             return wrap_tool_output(
-                text=f"**{filename}**{remote_badge} ({lang}, {result['total_lines']} lignes total, {range_info})\n\n```{lang}\n{result['content']}\n```",
+                text=f"**{filename}**{remote_badge} ({lang}, {result['total_lines']} lignes total, {range_info})\n- URN : {urn_ref}\n\n```{lang}\n{result['content']}\n```",
                 status={
                     "status": "success",
                     "filename": filename,
@@ -653,6 +684,7 @@ class Tools:
             "> - Pour lire un fichier d'un chat distant en lecture seule : `read_codex(filename=\"...\", target_chat_id=\"<Chat ID>\")`"
         )
 
+        self._emit_urn_directive(EchoStateManager(user_id=uid, chat_id=cid))
         return wrap_tool_output(
             text="\n".join(lines) + footer,
             status={"status": "success", "count": len(others), "chats": chats_summary},
@@ -710,6 +742,7 @@ class Tools:
             )
 
         files_meta = [{"name": f["filename"], "type": f.get("type", "file"), "size": f["size_bytes"], "lang": f["lang"]} for f in files]
+        self._emit_urn_directive(state)
         return wrap_tool_output(
             text="\n".join(lines) + footer,
             status={"status": "success", "files_count": len(files), "workspace": workspace, "is_remote": is_remote, "files": files_meta},
@@ -772,7 +805,7 @@ class Tools:
     ) -> dict:
         """Ouvre le HUD Codex dans l'interface de l'Utilisateur pour afficher `filename` (à utiliser uniquement sur demande expresse ou relecture indispensable)."""
         events = EchoEvents(__event_emitter__, __event_call__)
-        
+
         chat_id = (__metadata__ or {}).get("chat_id", "")
         # CRITIQUE (Chat.svelte:1513-1724) : Ancrer l'Action sur le message UTILISATEUR immuable
         # du tour courant (_echo_user_msg_id / parent_id) et NON sur le message assistant en cours
@@ -787,15 +820,15 @@ class Tools:
         )
         model_id = (__model__ or {}).get("id", "echo_orchestrator")
         session_id = meta.get("session_id", "")
-        
+
         # 1. Injection de la cible
         target_payload = f"window._echoCodexTarget = {{ file: '{filename}', workspace: '{workspace}' }};\nreturn true;"
         await events.call_execute(target_payload, timeout=5.0)
-        
+
         # 2. Déclenchement de l'action native via la méthode factorisée ancrée sur user_msg_id
         await events.trigger_action("echo_codex_action", chat_id, user_msg_id, model_id, session_id)
         await events.status(f"Ouverture du Codex demandée pour {filename}...", done=True)
-        
+
         return wrap_tool_output(
             text=f"✅ Requête d'ouverture visuelle transmise pour `{filename}` dans l'espace `{workspace}`.",
             status={"status": "success", "action": "open_codex_ui", "filename": filename, "workspace": workspace},
@@ -803,4 +836,3 @@ class Tools:
             chat_id=__metadata__.get("chat_id") if __metadata__ else None,
             metadata=__metadata__
         )
-

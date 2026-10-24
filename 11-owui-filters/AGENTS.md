@@ -40,6 +40,14 @@ Ce dossier représente la **Conscience et l'Injection Contextuelle** de l'agent.
 **Rôle** : Grounding Utilisateur & Préférences Contextuelles (v5.227.1.1).
 - **Sémantique** : Injecte silencieusement dans `body["metadata"]` les préférences de partage du nom (`ENABLE_USER_NAME`) et la surcharge de localisation (`OVERRIDE_LOCATION`).
 
+### `codex_links_filter.py` (Inlet / Outlet - Priorité 30)
+**Rôle** : Navigation Interactive & Protocole URN Codex (v5.230.0.1).
+- **Sémantique** : Filtre bidirectionnel s'exécutant à la priorité 30 (en Inlet immédiatement après `new_context_filter` à 20, et en Outlet avant `conversation_rag_filter` à 100).
+- **Algorithme Clé** :
+  - **Inlet** : Injecte silencieusement et de manière idempotente l'écouteur DOM côté client via `EchoEvents.emit_execute` (`window._echoCodexLinkHandlerAttached`). Cet écouteur intercepte tout clic sur les ancres `#codex:<chat_id>:<workspace>:<path>`, prévient la navigation par défaut (`preventDefault`) et déclenche soit le pont RPC existant (`window.sendCodexAction`) si le HUD est actif, soit l'action native (`POST /api/chat/actions/echo_codex_action` avec `window._echoCodexTarget`) si le HUD est fermé.
+  - **Outlet** : Sanctuarise les blocs de code multilignes (` ```...``` `) par masquage réversible. Compile dynamiquement une Regex basée sur les clés de `ECHO_CODEX_WORKSPACES` (`main`, `sandbox`) pour capturer les URNs `[label](codex:scope:workspace/path)`. Valide physiquement l'existence du fichier dans l'arbre Git Dulwich (`CodexRepo.read_file()`) selon une politique Fail-Closed absolue : si le fichier existe, l'URN est mutée en ancre navigable `[📄 label](#codex:chat_id:workspace:path)` (ou `[🔒 label]` si multi-chat) ; si le fichier est absent ou fictif (anti-hallucination), le lien est neutralisé au profit du texte brut seul.
+
 ## 3. Dépendances Logiques
 - Ces filtres interagissent nativement avec le moteur de base de données Qdrant et SQLite.
 - Ils manipulent la structure `body` de l'API Open WebUI (FastAPI) et sont chargés de manière asynchrone par l'application.
+

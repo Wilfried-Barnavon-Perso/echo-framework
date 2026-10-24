@@ -1,16 +1,16 @@
 """
 title: ECHO Codex UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.229.7.3
+version: 5.230.0.1
 description: Composant système interne : Moteur de rendu HUD Monaco et Éditeur Hexadécimal pour ECHO Codex.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.230.0.1: Prise en charge de target_chat_id dans window._echoCodexTarget pour aiguillage multi-chat à l'ouverture à froid.
 # 5.229.7.3: Support de window.echoCodexUpdateChats pour actualisation à chaud des sessions multi-chat dans le select.
 # 5.229.7.2: Réarmement systématique des spinners et selects d'en-tête (echoCodexNotify) et émission dual-key (chat_id, target_chat_id).
 # 5.229.7.1: Intégration du sélecteur hiérarchique multi-chat, badge lecture seule et verrouillage d'édition contextuel.
 # 5.228.12.1: Héritage factorisé de EchoUI.get_hud_geometry_js (echoBindHudGeometry) et EchoUI.get_hud_rpc_bridge_js (echoCreateHudRpcBridge).
-# 5.228.10.1: Durcissement post-standby (estampille de fraîcheur lastReadyTs, pré-ping automatique avant ai_edit, relance de file dans reconnectCodexBackend et heartbeat adaptatif en arrière-plan).
 
 
 import sys
@@ -114,13 +114,26 @@ class EchoCodexUI(EchoUI):
       if (window._echoCodexTarget) {{
           currentWorkspace = window._echoCodexTarget.workspace || currentWorkspace;
           targetFileOverride = window._echoCodexTarget.file;
+          const initialTargetChat = window._echoCodexTarget.target_chat_id;
+          if (initialTargetChat && initialTargetChat !== CID) {{
+              activeChatId = initialTargetChat;
+              isReadOnly = true;
+          }}
           setTimeout(() => {{
               if (window.sendCodexAction) {{
-                  window.sendCodexAction({{
-                      action: "switch_workspace", 
-                      workspace: currentWorkspace, 
-                      current_file: targetFileOverride
-                  }});
+                  if (initialTargetChat && initialTargetChat !== CID) {{
+                      window.sendCodexAction({{
+                          action: "switch_chat",
+                          target_chat_id: initialTargetChat,
+                          target_file: targetFileOverride
+                      }});
+                  }} else {{
+                      window.sendCodexAction({{
+                          action: "switch_workspace",
+                          workspace: currentWorkspace,
+                          current_file: targetFileOverride
+                      }});
+                  }}
               }}
           }}, 100);
           window._echoCodexTarget = null;

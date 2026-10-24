@@ -1,11 +1,11 @@
 ---
 domain_id: codex_management
-version: 5.229.7.3
+version: 5.230.0.1
 updated_at: 2026-10-24
 name: Gestionnaire Documentaire & Versionnement Git (ECHO Codex)
 description: Création, édition directe ou assistée, lecture paginée/historique, recherche spatiale ou temporelle, navigation multi-chat et versionnement Git sur les espaces main et sandbox.
 tools: [create_codex, edit_codex, delete_codex, read_codex, restore_codex, search_codex, summarize_codex, list_codex, list_other_chats_ids, history_codex, open_codex_ui]
-keywords: [codex, document, fichier, git, commit, version, diff, edit_codex, create_codex, open_codex_ui, workspace, sandbox, multi_chat, target_chat_id, list_other_chats_ids, read_only, wrap_tool_output]
+keywords: [codex, document, fichier, git, commit, version, diff, edit_codex, create_codex, open_codex_ui, workspace, sandbox, multi_chat, target_chat_id, list_other_chats_ids, read_only, wrap_tool_output, urn, links]
 ---
 
 # MANUEL OPÉRATIONNEL : ECHO CODEX (`codex_management`)
@@ -73,4 +73,51 @@ Toutes les fonctions du Codex ECHO retournent systématiquement un dictionnaire 
 - **`result` (Markdown formaté)** : Restitution textuelle principale pour affichage et compréhension globale par l'agent ou l'utilisateur (tableaux, blocs de code, badges d'accès distant `🔒`).
 - **`status` (Métadonnées JSON directes)** : Contient les informations clés (`status: "success" | "error"`, `filename`, `workspace`, `lines`, `commit`, `is_remote`, `chats`, `files`, etc.) permettant une exploitation programmatique immédiate sans avoir à re-parser le corps textuel.
 - **`AEC_evenement_systeme`** : Drain automatique d'éventuels deltas d'événements et rappels cognitifs inter-outils.
+
+---
+
+## 5. PROTOCOLE DÉTERMINISTE DE CITATION URN ET LIENS INTERACTIFS
+
+### 5.1 Rôle et Objectif
+Pour offrir une expérience fluide sans rupture de contexte, toute mention d'un fichier ou livrable Codex dans la réponse du Modèle DOIT être cliquable par l'Utilisateur. Le clic déclenche l'ouverture immédiate du HUD Monaco/Hex sur le document ciblé, sans rechargement de page.
+
+### 5.2 Grammaire Formelle EBNF de l'URN
+Toute référence Codex DOIT adopter la syntaxe canonique stricte :
+`[libellé](codex:CHAT_SCOPE:WORKSPACE/CHEMIN_RELATIF)`
+
+```ebnf
+CODEX_URN       ::= "codex:" CHAT_SCOPE ":" WORKSPACE "/" CHEMIN_RELATIF
+CHAT_SCOPE      ::= "current" | CHAT_UUID
+WORKSPACE       ::= "main" | "sandbox"
+CHEMIN_RELATIF  ::= PATH_SEGMENT ("/" PATH_SEGMENT)*
+PATH_SEGMENT    ::= [a-zA-Z0-9_\-\.]+
+```
+
+#### Définition des Paramètres :
+1. **`CHAT_SCOPE`** :
+   - `'current'` : Désigne le dépôt Codex de la conversation active.
+   - `<chat_id>` : Identifiant UUID d'une autre conversation (découvert exclusivement via `list_other_chats_ids`).
+2. **`WORKSPACE`** :
+   - Strictement restreint aux clés de `ECHO_CODEX_WORKSPACES` (`'main'` ou `'sandbox'`).
+3. **`CHEMIN_RELATIF`** :
+   - Chemin POSIX normalisé sans barre oblique initiale (ex: `rapport.md` ou `src/utils.py`). Pas de `./` ni `../`.
+
+### 5.3 Matrice d'Exemples Concrets
+
+| Cas d'Usage | Syntaxe Émise par Le Modèle | Résolution et Rendu DOM | Comportement au Clic |
+| :--- | :--- | :--- | :--- |
+| **Livrable session active (`main`)** | `[Rapport d'Audit](codex:current:main/rapport_audit.md)` | `[📄 Rapport d'Audit](#codex:c-8f92a:main:rapport_audit.md)` | Ouvre le document dans Monaco (`main`) |
+| **Script session active (`sandbox`)** | `[Pipeline Test](codex:current:sandbox/test_etl.py)` | `[📄 Pipeline Test](#codex:c-8f92a:sandbox:test_etl.py)` | Ouvre le script dans Monaco (`sandbox`) |
+| **Sous-dossier hiérarchique** | `[Config Nginx](codex:current:main/conf/nginx.conf)` | `[📄 Config Nginx](#codex:c-8f92a:main:conf/nginx.conf)` | Ouvre l'arborescence et le fichier |
+| **Session Distante (Multi-Chat)** | `[Spécification](codex:b8f1d3c0-7e2a:main/specs.md)` | `[🔒 Spécification](#codex:b8f1d3c0-7e2a:main:specs.md)` | Bascule le HUD en `🔒 Lecture Seule` |
+
+### 5.4 Invariants de Sécurité et Mécanisme Fail-Closed
+1. **Sanitisation DOMPurify & Anti-Rupture OS** :
+   - Il est **STRICTEMENT PROSCRIT** d'émettre des liens `codex://...` ou `file://...`.
+   - Il est **STRICTEMENT PROSCRIT** d'émettre des ancres brutes (`#codex:...`). Le Modèle émet l'URN canonique, et le filtre Outbound opère la conversion.
+2. **Validation Fail-Closed Anti-Hallucination** :
+   - Le filtre Outbound (`codex_links_filter.py`) inspecte l'arbre Git réel (`CodexRepo.read_file()`).
+   - Si le fichier **existe** : le lien interactif enrichi est injecté dans le message.
+   - Si le fichier **n'existe pas** : le lien est **immédiatement purgé** et seul le `libellé` en texte brut est conservé.
+
 
