@@ -1,7 +1,7 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 5.228.8.2
+version: 5.229.7.1
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -23,11 +23,14 @@ from dulwich.repo import Repo
 from dulwich.objects import Tree
 from dulwich import porcelain
 
+import echo_constants
 from echo_constants import (
     CODEX_LANG_MAP,
     CODEX_DEFAULT_LANG,
     ECHO_SYNC_EXCLUDE_LIST,
     is_binary_file,
+    ECHO_USERS_ROOT,
+    ECHO_BASE_DATA_DIR,
 )
 from echo_paths import get_echo_session_path
 
@@ -722,3 +725,97 @@ class CodexRepo:
         """Détecte le langage Monaco depuis l'extension du fichier."""
         ext = os.path.splitext(filename)[1].lower()
         return CODEX_LANG_MAP.get(ext, CODEX_DEFAULT_LANG)
+
+    # =========================================================================
+    # MULTI-CHAT & DÉCOUVERTE SOUVERAINE
+    # =========================================================================
+
+    @classmethod
+    def validate_user_chat(cls, user_id: str, chat_id: str) -> bool:
+        """Valide qu'un chat_id appartient bien à l'utilisateur et ne présente aucun risque de traversée."""
+        if not user_id or not chat_id:
+            return False
+        safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
+        safe_cid = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_")
+        if not safe_uid or not safe_cid or safe_cid != str(chat_id).strip():
+            return False
+        users_root = getattr(echo_constants, "ECHO_USERS_ROOT", ECHO_USERS_ROOT)
+        chat_dir = os.path.join(users_root, safe_uid, "chats", safe_cid)
+        return os.path.exists(chat_dir)
+
+    @classmethod
+    def get_user_codex_chats(cls, user_id: str, current_chat_id: Optional[str] = None) -> dict:
+        """Découvre et résout les conversations de l'utilisateur ayant un Codex.
+        Exclut strictement current_chat_id de la liste others.
+        Retourne:
+        {
+            "current": {"id": current_chat_id, "title": <titre_actuel>},
+            "others": [
+                {"id": cid, "title": <titre>},  # Strictement != current_chat_id
+            ]
+        }
+        """
+        safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
+        users_root = getattr(echo_constants, "ECHO_USERS_ROOT", ECHO_USERS_ROOT)
+        base_data_dir = getattr(echo_constants, "ECHO_BASE_DATA_DIR", ECHO_BASE_DATA_DIR)
+        user_chats_dir = os.path.join(users_root, safe_uid, "chats")
+        cur_cid = str(current_chat_id or "").strip()
+
+        candidate_cids = set()
+        if os.path.exists(user_chats_dir):
+            with os.scandir(user_chats_dir) as entries:
+                for entry in entries:
+                    if entry.is_dir() and not entry.name.startswith("."):
+                        codex_path = os.path.join(entry.path, "codex")
+                        if os.path.exists(codex_path):
+                            has_content = False
+                            try:
+                                for ws in ("main", "sandbox"):
+                                    ws_dir = os.path.join(codex_path, ws)
+                                    if os.path.exists(ws_dir):
+                                        with os.scandir(ws_dir) as ws_entries:
+                                            if any(ws_entries):
+                                                has_content = True
+                                                break
+                            except Exception:
+                                has_content = True
+                            if has_content:
+                                candidate_cids.add(entry.name)
+
+        if cur_cid:
+            candidate_cids.add(cur_cid)
+
+        # Résolution atomique des titres depuis /app/backend/data/webui.db
+        titles_map = {}
+        webui_db = os.path.join(base_data_dir, "webui.db")
+        if os.path.exists(webui_db) and candidate_cids:
+            import sqlite3
+            try:
+                conn = sqlite3.connect(f"file:{webui_db}?mode=ro", uri=True)
+                cursor = conn.cursor()
+                placeholders = ",".join("?" for _ in candidate_cids)
+                cursor.execute(
+                    f"SELECT id, title FROM chat WHERE user_id = ? AND id IN ({placeholders})",
+                    [safe_uid] + list(candidate_cids)
+                )
+                for row in cursor.fetchall():
+                    if row[1]:
+                        titles_map[row[0]] = row[1]
+                conn.close()
+            except Exception:
+                pass
+
+        cur_title = titles_map.get(cur_cid, "Conversation Actuelle")
+        others = []
+        for cid in sorted(candidate_cids):
+            if cid == cur_cid:
+                continue  # EXCLUSION STRICTE DU CHAT ACTUEL
+            others.append({
+                "id": cid,
+                "title": titles_map.get(cid, f"Chat {cid[:8]}")
+            })
+
+        return {
+            "current": {"id": cur_cid, "title": cur_title},
+            "others": sorted(others, key=lambda x: x["title"].lower())
+        }

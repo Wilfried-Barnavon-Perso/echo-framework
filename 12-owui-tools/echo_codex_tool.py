@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 5.229.0.0
+version: 5.229.7.1
 description: Permet au modèle de manipuler un espace de travail virtuel et asynchrone (Codex) avec versioning Git invisible, et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.7.1: Support Multi-Chat sélectif (découverte SSoT, UI hiérarchique, Read-Only strict et tooling transverse).
 # 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/codex_management.md.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.15: Alignement du fallback model_id sur echo_orchestrator dans open_codex_ui.
 # 2.14: Remplacement de la distillation par MODEL_APOLLO (thinking: medium) dans summarize_codex pour fiabiliser la synthèse.
-# 2.13: Fix critique - Levée du blocage du 1er tour et ancrage déterministe de l'action sur le message utilisateur immuable (user_msg_id) pour éliminer le stale write-back (Chat.svelte:1724) et fiabiliser la réouverture du HUD.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -53,15 +53,17 @@ class Tools:
     # HELPERS
     # =========================================================================
 
-    def _get_context(self, __user__: dict, __metadata__: dict, workspace: str = "main"):
+    def _get_context(self, __user__: dict, __metadata__: dict, workspace: str = "main", target_chat_id: Optional[str] = None):
         """Extrait user_id, chat_id et initialise CodexRepo + StateManager."""
         uid = __user__.get("id", "anonymous") if __user__ else "anonymous"
         cid = (__metadata__ or {}).get("chat_id")
         if not cid:
-            return None, None, None, None
-        repo = CodexRepo(uid, cid, workspace)
-        state = EchoStateManager(user_id=uid, chat_id=cid)
-        return uid, cid, repo, state
+            return None, None, None, None, False
+        effective_cid = target_chat_id if target_chat_id else cid
+        is_remote = bool(target_chat_id and target_chat_id != cid)
+        repo = CodexRepo(uid, effective_cid, workspace)
+        state = EchoStateManager(user_id=uid, chat_id=effective_cid)
+        return uid, effective_cid, repo, state, is_remote
 
     def _extract_llm_text(self, data: dict) -> str:
         """Extrait le texte des candidates (filtrage thought parts)."""
@@ -106,7 +108,7 @@ class Tools:
     ) -> str:
         """Crée un nouveau fichier versionné dans le Codex (`workspace='main'` ou `'sandbox'`)."""
         events = EchoEvents(__event_emitter__, __event_call__)
-        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
+        uid, cid, repo, state, _ = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -141,7 +143,7 @@ class Tools:
     ) -> str:
         """Modifie un fichier existant du Codex par remplacement direct (`new_content`) OU par édition assistée (`instructions`, mutuellement exclusifs)."""
         events = EchoEvents(__event_emitter__, __event_call__)
-        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
+        uid, cid, repo, state, _ = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -226,7 +228,7 @@ class Tools:
     ) -> str:
         """Supprime un fichier du Codex (`main` ou `sandbox`) et met à jour le Registre Unifié."""
         events = EchoEvents(__event_emitter__, __event_call__)
-        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
+        uid, cid, repo, state, _ = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -257,23 +259,33 @@ class Tools:
         end_line: int = None,
         commit_hash: str = None,
         workspace: Literal["main", "sandbox"] = "main",
+        target_chat_id: Optional[str] = None,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """Lit le contenu d'un fichier du Codex (plage optionnelle `start_line`/`end_line` ou version historique `commit_hash`)."""
-        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
+        """Lit le contenu d'un fichier du Codex (optionnel: plage de lignes, commit_hash, ou target_chat_id en lecture seule)."""
+        uid = __user__.get("id", "anonymous") if __user__ else "anonymous"
+        cid = (__metadata__ or {}).get("chat_id")
+        if not cid:
+            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=uid, chat_id=None, metadata=__metadata__)
+
+        if target_chat_id and not CodexRepo.validate_user_chat(uid, target_chat_id):
+            return wrap_tool_output(text=f"❌ Identifiant de conversation `{target_chat_id}` invalide ou inaccessible.", status={"status": "error"}, user_id=uid, chat_id=cid, metadata=__metadata__)
+
+        uid, cid, repo, state, is_remote = self._get_context(__user__, __metadata__, workspace, target_chat_id)
         if not repo:
-            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=uid, chat_id=cid, metadata=__metadata__)
 
         lang = CodexRepo.detect_language(filename)
+        remote_badge = f" 🔒 [Lecture Seule - Chat `{cid}`]" if is_remote else ""
 
         if commit_hash:
             # Lecture historique
             content = await asyncio.to_thread(repo.get_file_at_commit, filename, commit_hash)
             if content is None:
-                return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable au commit `{commit_hash}`.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable au commit `{commit_hash}`.", status={"status": "error"}, user_id=uid, chat_id=cid, metadata=__metadata__)
             
             lines = content.split('\n')
             total_lines = len(lines)
@@ -283,16 +295,16 @@ class Tools:
             range_info = f"lignes {s}-{e} (commit {commit_hash[:7]})"
             
             return wrap_tool_output(
-                text=f"**{filename}** ({lang}, {total_lines} lignes total, {range_info})\n\n```{lang}\n{content_subset}\n```", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                text=f"**{filename}**{remote_badge} ({lang}, {total_lines} lignes total, {range_info})\n\n```{lang}\n{content_subset}\n```", user_id=uid, chat_id=cid, metadata=__metadata__)
         else:
             # Lecture classique (HEAD)
             result = await asyncio.to_thread(repo.read_file, filename, start_line, end_line)
             if not result:
-                return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable.", status={"status": "error"}, user_id=uid, chat_id=cid, metadata=__metadata__)
 
             range_info = f"lignes {result['range'][0]}-{result['range'][1]}" if result["range"] else "complet"
             return wrap_tool_output(
-                text=f"**{filename}** ({lang}, {result['total_lines']} lignes total, {range_info})\n\n```{lang}\n{result['content']}\n```", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                text=f"**{filename}**{remote_badge} ({lang}, {result['total_lines']} lignes total, {range_info})\n\n```{lang}\n{result['content']}\n```", user_id=uid, chat_id=cid, metadata=__metadata__)
 
     async def restore_codex(
         self,
@@ -306,7 +318,7 @@ class Tools:
     ) -> str:
         """Restaure un fichier du Codex à une version antérieure à partir de son `commit_hash`."""
         events = EchoEvents(__event_emitter__, __event_call__)
-        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
+        uid, cid, repo, state, _ = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -340,7 +352,7 @@ class Tools:
         __event_call__: Any = None,
     ) -> str:
         """Recherche un motif texte ou regex dans les fichiers actuels du Codex ou à travers l'historique des modifications (`trace_history=True`)."""
-        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
+        uid, cid, repo, state, _ = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -395,7 +407,7 @@ class Tools:
     ) -> str:
         """Génère un résumé technique structuré d'un fichier volumineux du Codex."""
         events = EchoEvents(__event_emitter__, __event_call__)
-        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
+        uid, cid, repo, state, _ = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -431,32 +443,64 @@ class Tools:
     async def list_codex(
         self,
         workspace: Literal["main", "sandbox"] = "main",
+        target_chat_id: Optional[str] = None,
+        list_all_chats: bool = False,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """Liste tous les fichiers présents dans le workspace Codex (`main` ou `sandbox`)."""
-        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
+        """Liste les fichiers d'un workspace Codex, avec exploration multi-chat optionnelle (`target_chat_id` ou cartographie `list_all_chats`)."""
+        uid = __user__.get("id", "anonymous") if __user__ else "anonymous"
+        cid = (__metadata__ or {}).get("chat_id")
+        if not cid:
+            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=uid, chat_id=None, metadata=__metadata__)
+
+        if list_all_chats:
+            chats_data = await asyncio.to_thread(CodexRepo.get_user_codex_chats, uid, cid)
+            lines = ["## 📚 Cartographie des Espaces Codex de l'Utilisateur\n"]
+            current = chats_data.get("current", {})
+            lines.append(f"- **Conversation Actuelle** : `{current.get('id')}` — *{current.get('title')}*")
+
+            others = chats_data.get("others", [])
+            if others:
+                lines.append("\n### Autres Conversations Disponibles (Lecture Seule) :")
+                lines.append("| Chat ID | Titre |")
+                lines.append("|---|---|")
+                for c in others:
+                    lines.append(f"| `{c['id']}` | {c['title']} |")
+            else:
+                lines.append("\nAucune autre conversation ne dispose d'un espace Codex.")
+
+            return wrap_tool_output(text="\n".join(lines), user_id=uid, chat_id=cid, metadata=__metadata__)
+
+        if target_chat_id and not CodexRepo.validate_user_chat(uid, target_chat_id):
+            return wrap_tool_output(text=f"❌ Identifiant de conversation `{target_chat_id}` invalide ou inaccessible.", status={"status": "error"}, user_id=uid, chat_id=cid, metadata=__metadata__)
+
+        uid, cid, repo, state, is_remote = self._get_context(__user__, __metadata__, workspace, target_chat_id)
         if not repo:
-            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=uid, chat_id=cid, metadata=__metadata__)
 
-        files = repo.list_files()
+        files = await asyncio.to_thread(repo.list_files)
+        remote_badge = " 🔒 [Lecture Seule]" if is_remote else ""
         if not files:
-            return wrap_tool_output(text="Le Codex de cette conversation est vide.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            msg = f"Le Codex de la conversation `{cid}` ({workspace}){remote_badge} est vide." if is_remote else f"Le Codex de cette conversation ({workspace}) est vide."
+            return wrap_tool_output(text=msg, user_id=uid, chat_id=cid, metadata=__metadata__)
 
-        lines = ["| Fichier | Langage | Lignes | Taille |"]
+        lines = [f"| Fichier | Langage | Lignes | Taille |{remote_badge}"]
         lines.append("|---|---|---|---|")
         for f in files:
             size_kb = f["size_bytes"] / 1024
             lines.append(f"| `{f['filename']}` | {f['lang']} | {f['lines']} | {size_kb:.1f} Ko |")
 
-        stats = repo.get_repo_stats()
+        stats = await asyncio.to_thread(repo.get_repo_stats)
         footer = f"\n**{stats['total_files']} fichiers**, {stats['total_commits']} commits"
         if stats["last_commit_message"]:
             footer += f", dernier : _{stats['last_commit_message']}_"
+        if is_remote:
+            footer += f"\n*(Session source distante : `{cid}` - Consultation en lecture seule)*"
 
-        return wrap_tool_output(text="\n".join(lines) + footer, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        return wrap_tool_output(text="\n".join(lines) + footer, user_id=uid, chat_id=cid, metadata=__metadata__)
 
     async def history_codex(
         self,
@@ -469,7 +513,7 @@ class Tools:
         __event_call__: Any = None,
     ) -> str:
         """Affiche l'historique des versions (`commit_hash`, message, date) du Codex global ou d'un fichier `filename`."""
-        uid, cid, repo, state = self._get_context(__user__, __metadata__, workspace)
+        uid, cid, repo, state, _ = self._get_context(__user__, __metadata__, workspace)
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 

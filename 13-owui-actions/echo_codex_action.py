@@ -1,17 +1,17 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 5.228.12.1
+version: 5.229.7.1
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.7.1: Support Multi-Chat sélectif (découverte SSoT, UI hiérarchique, Read-Only strict et tooling transverse).
 # 5.228.12.1: Délégation de la résolution Socket.IO et de l'attente RPC vers EchoEvents (resolve_live_session, wait_hud_action).
 # 5.228.10.1: Factorisation de la boucle de retry Socket.IO dans _resolve_live_events (mutualisée entre action reconnect_only et background_loop).
 # 5.228.9.1: Inversion de l'ordre d'appel echoCodexSetCurrentFile avant echoCodexSetContent dans switch_workspace.
 # 5.228.7.1: Prise en charge de is_binary lors du chargement, de l'import, de l'export et de la sauvegarde dans le Codex.
-# 5.228.6.2: Bascule de l'import UI sur la librairie dédiée echo_codex_ui (EchoCodexUI).
 
 import sys
 import uuid
@@ -38,6 +38,12 @@ from echo_constants import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Actions mutatives strictement interdites sur les sessions Codex distantes (Read-Only invariant)
+MUTATIVE_CODEX_ACTIONS = frozenset({
+    "save", "new_file", "delete_file", "rename_file",
+    "ai_edit", "accept_diff", "reset", "upload", "history_restore"
+})
 
 # Registre des boucles RPC actives par (user_id, chat_id) pour évincer proprement les anciennes boucles
 _ACTIVE_CODEX_LOOPS: dict[tuple[str, str], str] = {}
@@ -113,6 +119,12 @@ class Action:
 
         files_json = json.dumps(files).decode("utf-8")
 
+        # Résolution SSoT des conversations de l'utilisateur pour le sélecteur multi-chat
+        chats_data = await asyncio.to_thread(CodexRepo.get_user_codex_chats, uid, cid)
+        chats_json = json.dumps(chats_data).decode("utf-8")
+        active_chat_title = chats_data.get("current", {}).get("title", "Conversation Actuelle")
+        active_chat_id = cid
+
         # 1. Injection du HUD Monaco (sauf en cas de reconnexion transparente post-standby)
         if not reconnect_only:
             quick_actions_json = json.dumps(CODEX_QUICK_ACTIONS).decode("utf-8")
@@ -125,6 +137,9 @@ class Action:
                 cid,
                 mid,
                 model_id,
+                chats_json=chats_json,
+                active_chat_id=active_chat_id,
+                active_chat_title=active_chat_title,
             )
             await events.call_execute(hud_js)
             await events.status("HUD Codex injecté.", done=True, hidden=True)
@@ -135,11 +150,17 @@ class Action:
         # 2. Définition de la boucle événementielle bidirectionnelle (Détachée)
         async def background_loop():
             nonlocal files_json, current_workspace, repo, events
+            active_chat_id = cid
 
-            async def _refresh_tree():
+            async def _refresh_tree(is_read_only: Optional[bool] = None, target_cid: Optional[str] = None):
                 updated_files = await asyncio.to_thread(repo.list_files)
                 f_json = json.dumps(updated_files).decode("utf-8")
-                r_code = f"if(window.echoCodexRefreshTree) window.echoCodexRefreshTree({f_json}, '{current_workspace}');"
+                is_ro = (active_chat_id != cid) if is_read_only is None else is_read_only
+                effective_cid = target_cid or active_chat_id
+                r_code = (
+                    f"if(window.echoCodexRefreshTree) "
+                    f"window.echoCodexRefreshTree({f_json}, '{current_workspace}', '{effective_cid}', {'true' if is_ro else 'false'});"
+                )
                 await events.call_execute(r_code)
 
             async def _notify_error(e: Exception):
@@ -182,7 +203,7 @@ class Action:
                                 events, detected_ws = resolved
                                 if detected_ws in ECHO_CODEX_WORKSPACES and detected_ws != current_workspace:
                                     current_workspace = detected_ws
-                                    repo = CodexRepo(uid, cid, workspace=current_workspace)
+                                    repo = CodexRepo(uid, active_chat_id, workspace=current_workspace)
                                 continue
                         break
 
@@ -192,12 +213,58 @@ class Action:
                     if action_type == "close":
                         break
 
+                    # ---- GARDE SÉCURITÉ FAIL-CLOSED : INTERDICTION DES ACTIONS MUTATIVES SUR CHAT DISTANT ----
+                    if action_type in MUTATIVE_CODEX_ACTIONS and active_chat_id != cid:
+                        await _notify_error(PermissionError("Action interdite : la conversation distante est en lecture seule."))
+                        continue
+
+                    # ---- SWITCH CHAT ----
+                    elif action_type == "switch_chat":
+                        try:
+                            target_chat_id = response.get("chat_id")
+                            if not target_chat_id or not CodexRepo.validate_user_chat(uid, target_chat_id):
+                                await _notify_error(ValueError("Identifiant de conversation invalide ou inaccessible."))
+                                continue
+                            active_chat_id = target_chat_id
+                            repo = CodexRepo(uid, active_chat_id, workspace=current_workspace)
+                            is_ro = (active_chat_id != cid)
+                            current_state = await asyncio.to_thread(repo.get_latest_state)
+                            updated_files = await asyncio.to_thread(repo.list_files)
+                            files_json = json.dumps(updated_files).decode("utf-8")
+                            await _refresh_tree(is_read_only=is_ro, target_cid=active_chat_id)
+
+                            if updated_files:
+                                first_file_entry = next((f for f in updated_files if f.get("type") != "directory"), None)
+                                if first_file_entry:
+                                    first_file = first_file_entry["filename"]
+                                    result = await asyncio.to_thread(repo.read_file, first_file)
+                                    if result:
+                                        escaped_content = json.dumps(result["content"]).decode("utf-8")
+                                        escaped_name = json.dumps(first_file).decode("utf-8")
+                                        is_bin_js = "true" if result.get("is_binary") else "false"
+                                        load_code = (
+                                            f"if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile({escaped_name});"
+                                            f"if(window.echoCodexSetContent) window.echoCodexSetContent({escaped_content}, {escaped_name}, {is_bin_js});"
+                                        )
+                                        await events.call_execute(load_code)
+                                        continue
+
+                            clear_code = (
+                                "if(window.echoCodexSetCurrentFile) window.echoCodexSetCurrentFile('');"
+                                "if(window.echoCodexSetContent) window.echoCodexSetContent('', '', false);"
+                            )
+                            await events.call_execute(clear_code)
+                        except Exception as e:
+                            logger.error(f"[ECHO Codex] Switch chat failed: {e}")
+                            await _notify_error(e)
+                        continue
+
                     # ---- SWITCH WORKSPACE ----
                     elif action_type == "switch_workspace":
                         try:
                             current_workspace = response.get("workspace", "main")
                             requested_file = response.get("current_file")
-                            repo = CodexRepo(uid, cid, workspace=current_workspace)
+                            repo = CodexRepo(uid, active_chat_id, workspace=current_workspace)
                             current_state = await asyncio.to_thread(repo.get_latest_state)
                             updated_files = await asyncio.to_thread(repo.list_files)
                             files_json = json.dumps(updated_files).decode("utf-8")

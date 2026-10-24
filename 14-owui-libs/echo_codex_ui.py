@@ -1,7 +1,7 @@
 """
 title: ECHO Codex UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.228.12.1
+version: 5.229.7.1
 description: Composant système interne : Moteur de rendu HUD Monaco et Éditeur Hexadécimal pour ECHO Codex.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -36,7 +36,10 @@ class EchoCodexUI(EchoUI):
             current_workspace: str,
             chat_id: str,
             message_id: str = "",
-            model_id: str = "echo_orchestrator") -> str:
+            model_id: str = "echo_orchestrator",
+            chats_json: str = "{}",
+            active_chat_id: str = "",
+            active_chat_title: str = "") -> str:
         """Génère le script JS complet du HUD Monaco Codex.
         Injection via __event_call__({type: 'execute', data: {code: ...}})."""
         lang_to_ext_json = std_json.dumps(CODEX_LANG_TO_EXT).decode("utf-8")
@@ -46,6 +49,8 @@ class EchoCodexUI(EchoUI):
       const CODEX_ID = 'echo-codex-hud';
       {cls.get_mobile_guard_js("echo-codex-hud")}
       const CID = '{chat_id}';
+      let activeChatId = '{active_chat_id}' || CID;
+      let activeChatTitle = '{active_chat_title}';
       const MID = '{message_id}';
       const MODEL_ID = '{model_id}';
       const STATE_KEY = 'echo_codex_' + CID;
@@ -67,7 +72,10 @@ class EchoCodexUI(EchoUI):
       let files = {files_json};
       const quickActions = {quick_actions_json};
       const workspaces = {workspaces_json};
+      const rawChats = {chats_json};
+      const chatsData = (rawChats && rawChats.current) ? rawChats : {{ current: {{ id: CID, title: activeChatTitle || 'Conversation Actuelle' }}, others: [] }};
       let currentWorkspace = '{current_workspace}';
+      let isReadOnly = (activeChatId !== CID);
       // Mapping langage Monaco ↔ extension (injecté depuis echo_constants SSOT)
       const LANG_TO_EXT = {lang_to_ext_json};
       const EXT_TO_LANG = {ext_to_lang_json};
@@ -221,13 +229,14 @@ class EchoCodexUI(EchoUI):
       header.innerHTML = `
         <span style="font-weight:600; font-size:14px;">📝 ECHO Codex</span>
         <span style="flex:1;"></span>
+        <span id="${{CODEX_ID}}-readonly-badge" class="codex-readonly-badge" style="font-size:11px; padding:2px 8px; border-radius:4px; background:rgba(239,68,68,0.15); color:#ef4444; font-weight:600; border:1px solid rgba(239,68,68,0.3); display:inline-flex; align-items:center; gap:4px; margin-right:4px;">🔒 Lecture Seule</span>
         <select id="${{CODEX_ID}}-lang" style="background:transparent; border:1px solid ${{borderColor}};
           color:${{textColor}}; padding:2px 6px; border-radius:4px; font-size:12px;"></select>
-        <button id="${{CODEX_ID}}-import" title="Importer (PC → Codex)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' y1='15' x2='12' y2='3'/></svg></button>
+        <button id="${{CODEX_ID}}-import" class="codex-editable" title="Importer (PC → Codex)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' y1='15' x2='12' y2='3'/></svg></button>
         <button id="${{CODEX_ID}}-export" title="Exporter (Codex → PC)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='17 8 12 3 7 8'/><line x1='12' y1='3' x2='12' y2='15'/></svg></button>
         <button id="${{CODEX_ID}}-copy" title="Copier" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/></svg></button>
         <button id="${{CODEX_ID}}-refresh" title="Actualiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/></svg></button>
-        <button id="${{CODEX_ID}}-save" title="Sauvegarder (Ctrl+S)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1; opacity:0.3; transition:opacity 0.2s;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z'/><polyline points='17 21 17 13 7 13 7 21'/><polyline points='7 3 7 8 15 8'/></svg></button>
+        <button id="${{CODEX_ID}}-save" class="codex-editable" title="Sauvegarder (Ctrl+S)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1; opacity:0.3; transition:opacity 0.2s;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z'/><polyline points='17 21 17 13 7 13 7 21'/><polyline points='7 3 7 8 15 8'/></svg></button>
         <button id="${{CODEX_ID}}-preview-toggle" title="Prévisualisation" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px; opacity:0.4;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z'/><circle cx='12' cy='12' r='3'/></svg></button>
         <button id="${{CODEX_ID}}-fullscreen" title="Plein écran" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/></svg></button>
         <button id="${{CODEX_ID}}-minimize" title="Minimiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='5' y1='12' x2='19' y2='12'/></svg></button>
@@ -270,8 +279,8 @@ class EchoCodexUI(EchoUI):
           <span style="width:76px; flex-shrink:0; white-space:nowrap;">OFFSET</span>
           <span style="width:336px; flex-shrink:0; letter-spacing:0.5px; white-space:nowrap;">00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F</span>
           <span style="flex:1; min-width:48px; flex-shrink:0; white-space:nowrap;">ASCII</span>
-          <button id="${{CODEX_ID}}-hex-insert" title="Insérer un octet (0x00) après l'offset" style="background:transparent; border:1px solid ${{borderColor}}; color:${{textColor}}; border-radius:4px; padding:1px 6px; font-size:11px; cursor:pointer; flex-shrink:0; white-space:nowrap;">+ Octet</button>
-          <button id="${{CODEX_ID}}-hex-delete" title="Supprimer l'octet sélectionné" style="background:transparent; border:1px solid ${{borderColor}}; color:#f38ba8; border-radius:4px; padding:1px 6px; font-size:11px; cursor:pointer; flex-shrink:0; white-space:nowrap;">- Octet</button>
+          <button id="${{CODEX_ID}}-hex-insert" class="codex-editable" title="Insérer un octet (0x00) après l'offset" style="background:transparent; border:1px solid ${{borderColor}}; color:${{textColor}}; border-radius:4px; padding:1px 6px; font-size:11px; cursor:pointer; flex-shrink:0; white-space:nowrap;">+ Octet</button>
+          <button id="${{CODEX_ID}}-hex-delete" class="codex-editable" title="Supprimer l'octet sélectionné" style="background:transparent; border:1px solid ${{borderColor}}; color:#f38ba8; border-radius:4px; padding:1px 6px; font-size:11px; cursor:pointer; flex-shrink:0; white-space:nowrap;">- Octet</button>
         </div>
         <div id="${{CODEX_ID}}-hex-scroll" style="flex:1; overflow-y:auto; overflow-x:auto; position:relative; padding:0;">
           <div id="${{CODEX_ID}}-hex-spacer" style="position:relative; width:100%;">
@@ -319,6 +328,7 @@ class EchoCodexUI(EchoUI):
 
       // --- AI PANEL (mini-chat + quick actions + model selector) ---
       const aiPanel = document.createElement('div');
+      aiPanel.classList.add('codex-editable');
       aiPanel.style.cssText = `display:flex; flex-direction:column; gap:6px; padding:8px 12px;
         border-top:1px solid ${{borderColor}}; flex-shrink:0;`;
       aiPanel.innerHTML = `
@@ -343,12 +353,17 @@ class EchoCodexUI(EchoUI):
       const modelSelect = document.getElementById(CODEX_ID + '-model');
       if (modelSelect) modelSelect.onchange = () => {{ lastModel = modelSelect.value; }};
 
-      // --- MICRO-SPINNER (sur le bouton cliqué) ---
+      // --- STYLES & MICRO-SPINNER ---
       let spinnerTarget = null;
       let spinnerOriginal = '';
       const spinStyle = document.createElement('style');
-      spinStyle.textContent = '@keyframes echoCodexSpin {{ from {{ transform:rotate(0deg); }} to {{ transform:rotate(360deg); }} }}';
+      spinStyle.textContent = `
+        @keyframes echoCodexSpin {{ from {{ transform:rotate(0deg); }} to {{ transform:rotate(360deg); }} }}
+        #${{CODEX_ID}}.is-readonly .codex-editable {{ display: none !important; }}
+        #${{CODEX_ID}}:not(.is-readonly) .codex-readonly-badge {{ display: none !important; }}
+      `;
       document.head.appendChild(spinStyle);
+
       function showButtonSpinner(btn) {{
         if (!btn) return;
         spinnerTarget = btn;
@@ -366,6 +381,16 @@ class EchoCodexUI(EchoUI):
         }}
       }}
 
+      function setReadOnlyMode(readOnly) {{
+        isReadOnly = readOnly;
+        if (hud) hud.classList.toggle('is-readonly', isReadOnly);
+        if (editor) editor.updateOptions({{ readOnly: isReadOnly }});
+        const chatSel = document.getElementById(CODEX_ID + '-chat-select');
+        if (chatSel) {{
+          chatSel.style.color = (activeChatId === CID) ? '#2563eb' : '#ef4444';
+        }}
+      }}
+
       // --- STATUS BAR (historique ◀ ▶) ---
       const statusBar = document.createElement('div');
       statusBar.id = CODEX_ID + '-status';
@@ -378,7 +403,7 @@ class EchoCodexUI(EchoUI):
         <button id="${{CODEX_ID}}-hist-next" title="Version suivante" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 18 15 12 9 6'/></svg></button>
         <div id="${{CODEX_ID}}-hist-actions" style="display:none; gap:6px;">
           <button id="${{CODEX_ID}}-hist-pin" style="background:none; border:1px solid ${{borderColor}}; color:${{textColor}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 8l4 4-4 4M18 8l-4 4 4 4M12 4v16'/></svg> Revenir au pr\u00e9sent</button>
-          <button id="${{CODEX_ID}}-hist-restore" style="background:none; border:1px solid ${{borderColor}}; color:${{textColor}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 14 4 9 9 4'/><path d='M20 20v-7a4 4 0 0 0-4-4H4'/></svg> Restaurer</button>
+          <button id="${{CODEX_ID}}-hist-restore" class="codex-editable" style="background:none; border:1px solid ${{borderColor}}; color:${{textColor}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 14 4 9 9 4'/><path d='M20 20v-7a4 4 0 0 0-4-4H4'/></svg> Restaurer</button>
         </div>`;
       hud.appendChild(statusBar);
 
@@ -395,6 +420,7 @@ class EchoCodexUI(EchoUI):
       hud.appendChild(diffBar);
 
       document.body.appendChild(hud);
+      setReadOnlyMode(isReadOnly);
 
       // ===== FILE TREE =====
       function renderFileTree() {{
@@ -408,13 +434,55 @@ class EchoCodexUI(EchoUI):
             document.head.appendChild(style);
         }}
 
+        // --- 0. Chat Selector ---
+        const chatContainer = document.createElement('div');
+        chatContainer.style.cssText = `display:flex; align-items:center; background:${{headerBg}}; border-bottom:1px solid ${{borderColor}}; flex-shrink:0; padding:2px 4px;`;
+
+        const chatSelect = document.createElement('select');
+        chatSelect.id = CODEX_ID + '-chat-select';
+        chatSelect.style.cssText = `flex:1; padding:6px 4px; background:transparent; border:none; color:${{activeChatId === CID ? '#2563eb' : '#ef4444'}}; font-size:12px; font-weight:bold; outline:none; cursor:pointer; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; max-width:calc(100% - 24px);`;
+
+        // Option 1 : Conversation Actuelle (bleu foncé)
+        const curOpt = document.createElement('option');
+        curOpt.value = chatsData.current.id || CID;
+        curOpt.textContent = '💬 Conversation Actuelle' + (chatsData.current.title ? ' : ' + chatsData.current.title : '');
+        curOpt.style.cssText = 'color:#2563eb; font-weight:bold; background:#0f172a;';
+        if (activeChatId === (chatsData.current.id || CID)) curOpt.selected = true;
+        chatSelect.appendChild(curOpt);
+
+        // Options suivantes : Conversations tierces (rouge, strictement différentes)
+        if (chatsData.others && Array.isArray(chatsData.others)) {{
+          chatsData.others.forEach(c => {{
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = '💬 ' + (c.title || ('Chat ' + c.id.substring(0, 8)));
+            opt.style.cssText = 'color:#ef4444; font-weight:bold; background:#0f172a;';
+            if (activeChatId === c.id) opt.selected = true;
+            chatSelect.appendChild(opt);
+          }});
+        }}
+
+        const chatSpinner = document.createElement('div');
+        chatSpinner.id = CODEX_ID + '-chat-spinner';
+        chatSpinner.style.cssText = `display:none; width:14px; height:14px; margin-right:8px; border:2px solid ${{textColor}}; border-top-color:transparent; border-radius:50%; animation:codex-spin 1s linear infinite;`;
+
+        chatSelect.onchange = () => {{
+          chatSelect.disabled = true;
+          chatSpinner.style.display = 'block';
+          window.sendCodexAction({{action:'switch_chat', target_chat_id:chatSelect.value, workspace:currentWorkspace}});
+        }};
+
+        chatContainer.appendChild(chatSelect);
+        chatContainer.appendChild(chatSpinner);
+        sb.appendChild(chatContainer);
+
         // --- 1. Workspace Switcher ---
         const wsContainer = document.createElement('div');
-        wsContainer.style.cssText = `display:flex; align-items:center; background:${{headerBg}}; border-bottom:1px solid ${{borderColor}}; flex-shrink:0;`;
+        wsContainer.style.cssText = `display:flex; align-items:center; background:${{headerBg}}; border-bottom:1px solid ${{borderColor}}; flex-shrink:0; padding:2px 4px;`;
 
         const wsSelect = document.createElement('select');
         wsSelect.id = CODEX_ID + '-workspace';
-        wsSelect.style.cssText = `flex:1; padding:6px; background:transparent; border:none; color:${{textColor}}; font-size:12px; font-weight:bold; outline:none; cursor:pointer;`;
+        wsSelect.style.cssText = `flex:1; padding:6px 4px; background:transparent; border:none; color:${{textColor}}; font-size:12px; font-weight:bold; outline:none; cursor:pointer;`;
         
         Object.entries(workspaces).forEach(([key, label]) => {{
           const opt = document.createElement('option');
@@ -431,7 +499,7 @@ class EchoCodexUI(EchoUI):
         wsSelect.onchange = () => {{
           wsSelect.disabled = true;
           wsSpinner.style.display = 'block';
-          window.sendCodexAction({{action:'switch_workspace', workspace:wsSelect.value}});
+          window.sendCodexAction({{action:'switch_workspace', workspace:wsSelect.value, target_chat_id:activeChatId}});
         }};
         
         wsContainer.appendChild(wsSelect);
@@ -530,6 +598,7 @@ class EchoCodexUI(EchoUI):
 
                 // Folder actions
                 const actionGroup = document.createElement('div');
+                actionGroup.classList.add('codex-editable');
                 actionGroup.style.cssText = 'margin-left:auto; display:flex; gap:4px;';
                 
                 const renBtn = document.createElement('span');
@@ -642,6 +711,7 @@ class EchoCodexUI(EchoUI):
 
                 // Boutons d'action (fichier arboré)
                 const actionGroup = document.createElement('div');
+                actionGroup.classList.add('codex-editable');
                 actionGroup.style.cssText = 'margin-left:auto; display:flex; gap:4px; align-items:center;';
                 
                 const renBtn = document.createElement('span');
@@ -707,6 +777,7 @@ class EchoCodexUI(EchoUI):
 
         // + Créer
         const newBtn = document.createElement('div');
+        newBtn.classList.add('codex-editable');
         newBtn.style.cssText = `padding:8px 10px; cursor:pointer; font-size:12px; color:${{accentColor}}; border-top:1px solid ${{borderColor}}; margin-top:auto; font-weight:bold; flex-shrink:0;`;
         newBtn.textContent = '+ Créer';
         newBtn.onclick = () => {{
@@ -746,6 +817,7 @@ class EchoCodexUI(EchoUI):
 
         // Reset
         const resetBtn = document.createElement('div');
+        resetBtn.classList.add('codex-editable');
         resetBtn.style.cssText = `padding:8px 10px; cursor:pointer; font-size:12px; color:#f38ba8; border-top:1px dashed ${{borderColor}}; font-weight:bold; flex-shrink:0;`;
         resetBtn.textContent = '🗑️ Reset complet';
         resetBtn.onclick = () => {{
@@ -1369,6 +1441,10 @@ class EchoCodexUI(EchoUI):
 
       // Ctrl+S
       function doSave() {{
+        if (isReadOnly) {{
+          if (window.echoCodexNotify) window.echoCodexNotify('error', '🔒 Cette conversation est en lecture seule.');
+          return;
+        }}
         if (currentFile && (editor || isCurrentBinary)) {{
           window.sendCodexAction({{
             action: 'save',
@@ -1463,9 +1539,15 @@ class EchoCodexUI(EchoUI):
         }}
       }}
 
-      window.echoCodexRefreshTree = (newFiles, newWorkspace) => {{
+      window.echoCodexRefreshTree = (newFiles, newWorkspace, newActiveChatId, newIsReadOnly) => {{
         files = newFiles;
         if (newWorkspace) currentWorkspace = newWorkspace;
+        if (newActiveChatId) activeChatId = newActiveChatId;
+        if (typeof newIsReadOnly === 'boolean') {{
+          setReadOnlyMode(newIsReadOnly);
+        }} else {{
+          setReadOnlyMode(activeChatId !== CID);
+        }}
         renderFileTree();
       }};
 
@@ -1889,6 +1971,7 @@ class EchoCodexUI(EchoUI):
         const lang = detectFileLang(currentFile);
         editor = monaco.editor.create(monacoWrap, {{
           value: '', language: lang, theme: theme,
+          readOnly: isReadOnly,
           automaticLayout: true, minimap: {{enabled: true}},
           fontSize: 13, lineNumbers: 'on', wordWrap: 'on',
           scrollBeyondLastLine: false, renderWhitespace: 'selection',
