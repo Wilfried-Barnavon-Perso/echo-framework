@@ -1,26 +1,26 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 5.229.7.1
+version: 5.229.7.2
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.7.2: Résolution des SHA courts (resolve_commit) et traversée hiérarchique de Tree (lookup_path) pour read/restore/diff/log.
+# 5.229.7.1: Support Multi-Chat sélectif (découverte SSoT, UI hiérarchique, Read-Only strict et tooling transverse).
 # 5.228.8.2: Correction de commit_file (préservation LF stricte newline="" et textes Unicode hors plage Latin-1) et auto-réparation du décodage UTF-8/Latin-1 dans read_file.
 # 5.228.7.2: Support binaire sans perte (latin-1 bijection) dans read_file, commit_file, get_file_at_commit et list_directory via is_binary_file (echo_constants).
 # 5.228.2.1: Protection os.path.isfile dans read_file contre IsADirectoryError et découverte des dossiers physiques vides dans list_directory (workspace main).
-# 5.226.18.1: Ajout de restore_repo_to_timestamp pour restaurer l'arbre Git main lors d'un fork intermédiaire.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
 # desc.
 
 import os
 import re
 import shutil
-from typing import Optional, List
+from typing import Optional, List, Any
 
 from dulwich.repo import Repo
-from dulwich.objects import Tree
+from dulwich.objects import Tree, Commit
 from dulwich import porcelain
 
 import echo_constants
@@ -42,6 +42,7 @@ class CodexRepo:
 
     def __init__(self, user_id: str, chat_id: str, workspace: str = "main"):
         base_codex = get_echo_session_path(user_id, chat_id, "codex")
+        self.workspace = workspace
         self.repo_path = os.path.join(base_codex, workspace)
         os.makedirs(self.repo_path, exist_ok=True)
         self.repo = self._ensure_repo()
@@ -58,10 +59,15 @@ class CodexRepo:
     # =========================================================================
 
     def _secure_path(self, path: str) -> str:
-        """Sécurise un chemin relatif et empêche le path traversal."""
+        """Sécurise un chemin relatif, retire les préfixes redondants de workspace et empêche le path traversal."""
         path = path.replace("\\", "/").strip("/")
         if ".." in path.split("/"):
             raise ValueError("Path traversal non autorisé.")
+        if hasattr(self, "workspace") and self.workspace:
+            if path.startswith(f"codex/{self.workspace}/"):
+                path = path[len(f"codex/{self.workspace}/"):]
+            elif path.startswith(f"{self.workspace}/"):
+                path = path[len(f"{self.workspace}/"):]
         return path
 
     def create_directory(self, path: str) -> None:
@@ -537,16 +543,37 @@ class CodexRepo:
             pass
         return entries
 
-    def _file_in_commit(self, commit, filename: str) -> bool:
-        """Vérifie si un fichier existe dans l'arbre d'un commit."""
+    def resolve_commit(self, commit_ref: str) -> Optional[Any]:
+        """Résout une référence de commit (SHA-1 complet 40 caractères, SHA court 7..39 caractères)."""
+        if not commit_ref:
+            return None
+        ref_str = str(commit_ref).strip()
+        if len(ref_str) == 40:
+            try:
+                obj = self.repo[ref_str.encode("ascii")]
+                if isinstance(obj, Commit):
+                    return obj
+            except KeyError:
+                pass
         try:
-            tree = self.repo.object_store[commit.tree]
-            for item in tree.items():
-                if item.path.decode("utf-8") == filename:
-                    return True
-        except BaseException:
+            walker = self.repo.get_walker()
+            for entry in walker:
+                sha = entry.commit.id.decode("ascii")
+                if sha.startswith(ref_str):
+                    return entry.commit
+        except Exception:
             pass
-        return False
+        return None
+
+    def _file_in_commit(self, commit, filename: str) -> bool:
+        """Vérifie si un fichier existe dans l'arbre d'un commit (y compris dans les sous-dossiers)."""
+        try:
+            safe_name = self._secure_path(filename)
+            tree = self.repo[commit.tree]
+            _, _ = tree.lookup_path(self.repo.get_object, safe_name.encode("utf-8"))
+            return True
+        except (KeyError, Exception):
+            return False
 
     def get_diff(self, commit_a: str, commit_b: str = None) -> str:
         """Diff entre deux commits. Si commit_b=None, diff commit_a vs son parent."""
@@ -554,10 +581,14 @@ class CodexRepo:
             from dulwich.patch import write_tree_diff
             import io
 
-            obj_a = self.repo.object_store[commit_a.encode("ascii")]
+            obj_a = self.resolve_commit(commit_a)
+            if not obj_a:
+                return f"Erreur diff: commit '{commit_a}' introuvable."
 
             if commit_b:
-                obj_b = self.repo.object_store[commit_b.encode("ascii")]
+                obj_b = self.resolve_commit(commit_b)
+                if not obj_b:
+                    return f"Erreur diff: commit '{commit_b}' introuvable."
                 tree_b = obj_b.tree
             else:
                 # Parent du commit_a
@@ -579,22 +610,28 @@ class CodexRepo:
             self,
             filename: str,
             commit_hash: str) -> Optional[str]:
-        """Lit le contenu d'un fichier à un commit donné (checkout virtuel)."""
+        """Lit le contenu d'un fichier à un commit donné (checkout virtuel via SHA complet ou court)."""
         try:
-            safe_name = self._secure_path(filename)
-            commit = self.repo.object_store[commit_hash.encode("ascii")]
-            tree = self.repo.object_store[commit.tree]
+            commit = self.resolve_commit(commit_hash)
+            if not commit:
+                return None
 
-            for item in tree.items():
-                if item.path.decode("utf-8") == safe_name:
-                    blob = self.repo.object_store[item.sha]
-                    is_bin, _ = is_binary_file(safe_name, blob.data)
-                    if is_bin:
-                        return blob.data.decode("latin-1")
-                    try:
-                        return blob.data.decode("utf-8")
-                    except UnicodeDecodeError:
-                        return blob.data.decode("latin-1")
+            safe_name = self._secure_path(filename)
+            root_tree = self.repo[commit.tree]
+
+            try:
+                _, sha = root_tree.lookup_path(self.repo.get_object, safe_name.encode("utf-8"))
+            except KeyError:
+                return None
+
+            blob = self.repo[sha]
+            is_bin, _ = is_binary_file(safe_name, blob.data)
+            if is_bin:
+                return blob.data.decode("latin-1")
+            try:
+                return blob.data.decode("utf-8")
+            except UnicodeDecodeError:
+                return blob.data.decode("latin-1")
         except Exception:
             pass
         return None
