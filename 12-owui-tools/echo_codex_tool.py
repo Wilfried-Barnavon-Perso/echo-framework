@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 5.230.0.1
+version: 5.230.0.2
 description: Permet au modèle de manipuler un espace de travail virtuel et asynchrone (Codex) avec versioning Git invisible, et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.230.0.2: Inscription déterministe de l'AEC URN en début d'appel avec résolution SSoT sur la session active et déduplication intra-tour.
 # 5.230.0.1: Intégration de _emit_urn_directive (Haut SNR, 35 tokens) et rappel URN canonique dans les contrats wrap_tool_output.
 # 5.229.7.3: Harmonisation des signatures -> dict et enrichissement systématique des sorties LLM via wrap_tool_output.
 # 5.229.7.2: Introduction de la fonction-outil dédiée list_other_chats_ids et épuration de list_codex.
 # 5.229.7.1: Support Multi-Chat sélectif (découverte SSoT, UI hiérarchique, Read-Only strict et tooling transverse).
-# 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/codex_management.md.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -86,9 +86,20 @@ class Tools:
         return raw
 
     def _emit_urn_directive(self, state: EchoStateManager):
-        """Enregistre une directive AEC ultra-concise (Haut SNR, ~35 tokens) pour le prochain tour du Modèle."""
+        """Enregistre une directive AEC ultra-concise (Haut SNR, ~35 tokens) pour le prochain tour du Modèle avec protection anti-doublon intra-tour."""
         if not state:
             return
+        # Protection anti-doublon : ne pas réinscrire si une directive URN non encore drainée est déjà présente
+        try:
+            with state._get_connection() as conn:
+                existing = conn.execute(
+                    "SELECT 1 FROM echo_resources WHERE name = 'codex_urn_directive' AND resource_type = 'aec_directive' LIMIT 1"
+                ).fetchone()
+                if existing:
+                    return
+        except Exception:
+            pass
+
         ws_list = " | ".join(f"'{k}'" for k in ECHO_CODEX_WORKSPACES.keys())
         directive_content = (
             "Le Modèle DOIT citer tout fichier Codex sous la forme stricte "
@@ -134,6 +145,9 @@ class Tools:
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
+        # Inscription déterministe de la directive URN sur la session active dès l'entrée
+        self._emit_urn_directive(EchoStateManager(user_id=uid, chat_id=cid))
+
         if repo.read_file(filename):
             return wrap_tool_output(text=f"❌ Le fichier `{filename}` existe déjà dans l'espace `{workspace}`.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -147,7 +161,6 @@ class Tools:
             commit_hash = await asyncio.to_thread(repo.commit_file, filename, content, msg)
             await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
 
-        self._emit_urn_directive(state)
         urn_ref = f"[{filename}](codex:current:{workspace}/{filename})"
         await events.status(f"✅ {filename} créé ({line_count} lignes, commit {commit_hash[:7]}).", done=True)
         return wrap_tool_output(
@@ -183,6 +196,9 @@ class Tools:
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
+        # Inscription déterministe de la directive URN sur la session active dès l'entrée
+        self._emit_urn_directive(EchoStateManager(user_id=uid, chat_id=cid))
+
         # Vérification existence
         existing = repo.read_file(filename)
         if not existing:
@@ -198,7 +214,6 @@ class Tools:
                 commit_hash = await asyncio.to_thread(repo.commit_file, filename, new_content, msg)
                 await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
 
-            self._emit_urn_directive(state)
             urn_ref = f"[{filename}](codex:current:{workspace}/{filename})"
             await events.status(f"✅ {filename} modifié (commit {commit_hash[:7]}).", done=True)
             return wrap_tool_output(
@@ -259,7 +274,6 @@ class Tools:
                 commit_hash = await asyncio.to_thread(repo.commit_file, filename, modified, msg)
                 await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
 
-            self._emit_urn_directive(state)
             urn_ref = f"[{filename}](codex:current:{workspace}/{filename})"
             await events.status(f"✅ Édition assistée terminée (commit {commit_hash[:7]}).", done=True)
             return wrap_cascade_output(
@@ -350,6 +364,9 @@ class Tools:
         if not cid:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error", "error_code": "missing_context"}, user_id=uid, chat_id=None, metadata=__metadata__)
 
+        # Inscription déterministe de la directive URN sur la session active dès l'entrée
+        self._emit_urn_directive(EchoStateManager(user_id=uid, chat_id=cid))
+
         if target_chat_id and not CodexRepo.validate_user_chat(uid, target_chat_id):
             return wrap_tool_output(text=f"❌ Identifiant de conversation `{target_chat_id}` invalide ou inaccessible.", status={"status": "error", "error_code": "invalid_or_forbidden_chat", "target_chat_id": target_chat_id}, user_id=uid, chat_id=cid, metadata=__metadata__)
 
@@ -373,7 +390,6 @@ class Tools:
             content_subset = "\n".join(lines[s-1:e])
             range_info = f"lignes {s}-{e} (commit {commit_hash[:7]})"
             
-            self._emit_urn_directive(state)
             urn_scope = cid if is_remote else "current"
             urn_ref = f"[{filename}](codex:{urn_scope}:{workspace}/{filename})"
             return wrap_tool_output(
@@ -405,7 +421,6 @@ class Tools:
             s_line = result["range"][0] if result["range"] else 1
             e_line = result["range"][1] if result["range"] else result['total_lines']
             lines_returned = len(result['content'].split('\n')) if result.get('content') else 0
-            self._emit_urn_directive(state)
             urn_scope = cid if is_remote else "current"
             urn_ref = f"[{filename}](codex:{urn_scope}:{workspace}/{filename})"
             return wrap_tool_output(
@@ -625,6 +640,9 @@ class Tools:
         if not cid:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=uid, chat_id=None, metadata=__metadata__)
 
+        # Inscription déterministe de la directive URN sur la session active dès l'entrée
+        self._emit_urn_directive(EchoStateManager(user_id=uid, chat_id=cid))
+
         chats_data = await asyncio.to_thread(CodexRepo.get_user_codex_chats, uid, cid)
         others = chats_data.get("others", [])
         if not others:
@@ -684,7 +702,6 @@ class Tools:
             "> - Pour lire un fichier d'un chat distant en lecture seule : `read_codex(filename=\"...\", target_chat_id=\"<Chat ID>\")`"
         )
 
-        self._emit_urn_directive(EchoStateManager(user_id=uid, chat_id=cid))
         return wrap_tool_output(
             text="\n".join(lines) + footer,
             status={"status": "success", "count": len(others), "chats": chats_summary},
@@ -707,6 +724,9 @@ class Tools:
         cid = (__metadata__ or {}).get("chat_id")
         if not cid:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=uid, chat_id=None, metadata=__metadata__)
+
+        # Inscription déterministe de la directive URN sur la session active dès l'entrée
+        self._emit_urn_directive(EchoStateManager(user_id=uid, chat_id=cid))
 
         if target_chat_id and not CodexRepo.validate_user_chat(uid, target_chat_id):
             return wrap_tool_output(text=f"❌ Identifiant de conversation `{target_chat_id}` invalide ou inaccessible.", status={"status": "error"}, user_id=uid, chat_id=cid, metadata=__metadata__)
@@ -742,7 +762,6 @@ class Tools:
             )
 
         files_meta = [{"name": f["filename"], "type": f.get("type", "file"), "size": f["size_bytes"], "lang": f["lang"]} for f in files]
-        self._emit_urn_directive(state)
         return wrap_tool_output(
             text="\n".join(lines) + footer,
             status={"status": "success", "files_count": len(files), "workspace": workspace, "is_remote": is_remote, "files": files_meta},
