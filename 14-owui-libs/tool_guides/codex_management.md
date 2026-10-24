@@ -1,11 +1,11 @@
 ---
 domain_id: codex_management
-version: 5.229.7.1
+version: 5.229.7.3
 updated_at: 2026-10-24
 name: Gestionnaire Documentaire & Versionnement Git (ECHO Codex)
 description: Création, édition directe ou assistée, lecture paginée/historique, recherche spatiale ou temporelle, navigation multi-chat et versionnement Git sur les espaces main et sandbox.
-tools: [create_codex, edit_codex, delete_codex, read_codex, restore_codex, search_codex, summarize_codex, list_codex, history_codex, open_codex_ui]
-keywords: [codex, document, fichier, git, commit, version, diff, edit_codex, create_codex, open_codex_ui, workspace, sandbox, multi_chat, target_chat_id, list_all_chats, read_only]
+tools: [create_codex, edit_codex, delete_codex, read_codex, restore_codex, search_codex, summarize_codex, list_codex, list_other_chats_ids, history_codex, open_codex_ui]
+keywords: [codex, document, fichier, git, commit, version, diff, edit_codex, create_codex, open_codex_ui, workspace, sandbox, multi_chat, target_chat_id, list_other_chats_ids, read_only, wrap_tool_output]
 ---
 
 # MANUEL OPÉRATIONNEL : ECHO CODEX (`codex_management`)
@@ -43,8 +43,9 @@ Le Codex ECHO gère des fichiers texte et code versionnés sous Git et synchroni
 ## 3. LECTURE, RECHERCHE, MULTI-CHAT & VOYAGE TEMPOREL GIT
 
 ### 3.1 Lecture, Synthèse et Inventaire Multi-Chat
-- `list_codex(workspace="main", target_chat_id=None, list_all_chats=False)` :
-  - **Cartographie globale (`list_all_chats=True`)** : Découvre dynamiquement tous les espaces Codex de l'Utilisateur sur le serveur et dresse un tableau avec l'ID et le titre résolu depuis `webui.db`, en distinguant la conversation courante des autres conversations accessibles.
+- `list_other_chats_ids()` :
+  - **Découverte des sessions distantes** : Découvre dynamiquement les autres conversations de l'Utilisateur disposant d'un espace Codex et retourne un tableau Markdown avec leur identifiant `chat_id` et leur titre résolu depuis `webui.db`. La conversation courante est strictement exclue de cette liste. Utilisé en amont de `list_codex(target_chat_id=...)` et `read_codex(target_chat_id=...)`.
+- `list_codex(workspace="main", target_chat_id=None)` :
   - **Listing d'un chat distant (`target_chat_id="..."`)** : Liste les fichiers du workspace d'une autre conversation en lecture seule (badge `🔒 [Lecture Seule]`).
   - **Listing local (Défaut)** : Retourne un tableau Markdown de tous les fichiers du workspace courant (`Fichier`, `Langage`, `Lignes`, `Taille`) ainsi que les statistiques de commits.
 - `read_codex(filename, start_line=None, end_line=None, commit_hash=None, workspace="main", target_chat_id=None)` :
@@ -64,3 +65,12 @@ Le Codex ECHO gère des fichiers texte et code versionnés sous Git et synchroni
   - Restaure `filename` à l'état exact du commit `commit_hash` en créant un nouveau commit de restauration.
 - `delete_codex(filename, workspace="main")` :
   - Supprime un fichier ou dossier du Codex et purge son entrée du Registre Unifié.
+
+---
+
+## 4. CONTRAT DE SORTIE STRUCTURÉE (`wrap_tool_output`)
+Toutes les fonctions du Codex ECHO retournent systématiquement un dictionnaire issu de `wrap_tool_output` (ou `wrap_cascade_output`) :
+- **`result` (Markdown formaté)** : Restitution textuelle principale pour affichage et compréhension globale par l'agent ou l'utilisateur (tableaux, blocs de code, badges d'accès distant `🔒`).
+- **`status` (Métadonnées JSON directes)** : Contient les informations clés (`status: "success" | "error"`, `filename`, `workspace`, `lines`, `commit`, `is_remote`, `chats`, `files`, etc.) permettant une exploitation programmatique immédiate sans avoir à re-parser le corps textuel.
+- **`AEC_evenement_systeme`** : Drain automatique d'éventuels deltas d'événements et rappels cognitifs inter-outils.
+

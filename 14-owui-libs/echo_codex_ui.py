@@ -1,16 +1,16 @@
 """
 title: ECHO Codex UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.229.7.2
+version: 5.229.7.3
 description: Composant système interne : Moteur de rendu HUD Monaco et Éditeur Hexadécimal pour ECHO Codex.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.7.3: Support de window.echoCodexUpdateChats pour actualisation à chaud des sessions multi-chat dans le select.
 # 5.229.7.2: Réarmement systématique des spinners et selects d'en-tête (echoCodexNotify) et émission dual-key (chat_id, target_chat_id).
 # 5.229.7.1: Intégration du sélecteur hiérarchique multi-chat, badge lecture seule et verrouillage d'édition contextuel.
 # 5.228.12.1: Héritage factorisé de EchoUI.get_hud_geometry_js (echoBindHudGeometry) et EchoUI.get_hud_rpc_bridge_js (echoCreateHudRpcBridge).
 # 5.228.10.1: Durcissement post-standby (estampille de fraîcheur lastReadyTs, pré-ping automatique avant ai_edit, relance de file dans reconnectCodexBackend et heartbeat adaptatif en arrière-plan).
-# 5.228.9.1: Synchronisation atomique de currentFile dans echoCodexSetContent/echoCodexSetCurrentFile (fix preview lors de switch_workspace) et anti-wrap de l'en-tête Hex.
 
 
 import sys
@@ -73,7 +73,7 @@ class EchoCodexUI(EchoUI):
       const quickActions = {quick_actions_json};
       const workspaces = {workspaces_json};
       const rawChats = {chats_json};
-      const chatsData = (rawChats && rawChats.current) ? rawChats : {{ current: {{ id: CID, title: activeChatTitle || 'Conversation Actuelle' }}, others: [] }};
+      let chatsData = (rawChats && rawChats.current) ? rawChats : {{ current: {{ id: CID, title: activeChatTitle || 'Conversation Actuelle' }}, others: [] }};
       let currentWorkspace = '{current_workspace}';
       let isReadOnly = (activeChatId !== CID);
       // Mapping langage Monaco ↔ extension (injecté depuis echo_constants SSOT)
@@ -1563,6 +1563,34 @@ class EchoCodexUI(EchoUI):
           setReadOnlyMode(activeChatId !== CID);
         }}
         renderFileTree();
+      }};
+
+      window.echoCodexUpdateChats = (newChatsData) => {{
+        if (!newChatsData || !newChatsData.current) return;
+        chatsData = newChatsData;
+        const chatSelect = document.getElementById(CODEX_ID + '-chat-select');
+        if (!chatSelect) return;
+        chatSelect.innerHTML = '';
+
+        // Option 1 : Conversation Actuelle (bleu foncé)
+        const curOpt = document.createElement('option');
+        curOpt.value = chatsData.current.id || CID;
+        curOpt.textContent = '💬 Conversation Actuelle' + (chatsData.current.title ? ' : ' + chatsData.current.title : '');
+        curOpt.style.cssText = 'color:#2563eb; font-weight:bold; background:#0f172a;';
+        if (activeChatId === (chatsData.current.id || CID)) curOpt.selected = true;
+        chatSelect.appendChild(curOpt);
+
+        // Options suivantes : Conversations tierces (rouge, strictement différentes)
+        if (chatsData.others && Array.isArray(chatsData.others)) {{
+          chatsData.others.forEach(c => {{
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = '💬 ' + (c.title || ('Chat ' + c.id.substring(0, 8)));
+            opt.style.cssText = 'color:#ef4444; font-weight:bold; background:#0f172a;';
+            if (activeChatId === c.id) opt.selected = true;
+            chatSelect.appendChild(opt);
+          }});
+        }}
       }};
 
       window.echoCodexDownload = (name, content, isBinary) => {{

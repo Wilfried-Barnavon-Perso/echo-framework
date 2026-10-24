@@ -1,17 +1,17 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 5.229.7.2
+version: 5.229.7.3
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.7.3: Réactualisation dynamique du catalogue multi-chat (echoCodexUpdateChats) lors du refresh.
 # 5.229.7.2: Résolution dual-key (target_chat_id / chat_id) dans switch_chat et switch_workspace.
 # 5.229.7.1: Support Multi-Chat sélectif (découverte SSoT, UI hiérarchique, Read-Only strict et tooling transverse).
 # 5.228.12.1: Délégation de la résolution Socket.IO et de l'attente RPC vers EchoEvents (resolve_live_session, wait_hud_action).
 # 5.228.10.1: Factorisation de la boucle de retry Socket.IO dans _resolve_live_events (mutualisée entre action reconnect_only et background_loop).
-# 5.228.9.1: Inversion de l'ordre d'appel echoCodexSetCurrentFile avant echoCodexSetContent dans switch_workspace.
 
 import sys
 import uuid
@@ -441,8 +441,16 @@ class Action:
                     # ---- REFRESH (🔄 dans le header) ----
                     elif action_type == "refresh":
                         try:
-                            await _refresh_tree()
-                            # Recharger le fichier courant si spécifié
+                            # 1. Réactualiser dynamiquement la liste des conversations accessibles
+                            refreshed_chats = await asyncio.to_thread(CodexRepo.get_user_codex_chats, uid, cid)
+                            refreshed_chats_json = json.dumps(refreshed_chats).decode("utf-8")
+                            update_chats_code = f"if(window.echoCodexUpdateChats) window.echoCodexUpdateChats({refreshed_chats_json});"
+                            await events.call_execute(update_chats_code)
+
+                            # 2. Réactualiser l'arborescence des fichiers
+                            await _refresh_tree(is_read_only=(active_chat_id != cid), target_cid=active_chat_id)
+
+                            # 3. Recharger le fichier courant si spécifié
                             filename = response.get("filename", "")
                             if filename:
                                 result = await asyncio.to_thread(repo.read_file, filename)
