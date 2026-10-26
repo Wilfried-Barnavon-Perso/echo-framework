@@ -1,16 +1,16 @@
 """
 title: ECHO Identity Vault Tool
 author: ECHO
-version: 1.9
+version: 5.229.0.0
 description: Outil permettant à l'Agent de gérer le Identity Vault (ajout/suppression de serveurs distants ou N8N).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.9: Remplacement de auth_failure_instructions par user_required_instructions et correction Flake8.
 # 1.8: Filtrage croisé de configured_services et forçage sémantique du paramètre 'all'.
 # 1.7: Refonte JSON de list_identities_services.
-# 1.6: Remplacement de la vérification __event_call__ par ECHO_SUBAGENT_CONTEXT pour l'interdiction Headless.
-# 1.4: Refonte list_identities (tolérance aux fautes, import json global).
 import sys
 import json
 from typing import Any, Literal
@@ -47,12 +47,7 @@ class Tools:
         category_filter: Literal["all", "mcp_native", "mcp_resident", "mcp_ephemeral", "mcp_remote", "orchestration", "uncategorized"] = "all",
         __user__: dict = None
     ) -> str:
-        """
-        Interroge l'API pour extraire le catalogue des services de l'Identity Vault.
-
-        Args:
-            category_filter: Filtre sémantique. Sélectionner 'all' pour une découverte exhaustive.
-        """
+        """Liste le catalogue des services disponibles et configurés dans l'Identity Vault."""
         if not __user__:
             return "Erreur: Auth requise."
 
@@ -111,10 +106,7 @@ class Tools:
         return json.dumps(result_json, ensure_ascii=False, indent=2)
 
     async def list_identities(self, service: str, __user__: dict = None) -> str:
-        """
-        Interroge l'Identity Vault pour restituer les comptes tiers associés à un service spécifique.
-        L'argument 'service' est strictement requis. Invoquer 'list_identities_services' en cas d'ambiguïté.
-        """
+        """Liste les comptes et identifiants configurés pour un service spécifique de l'Identity Vault."""
         if not __user__:
             return "Erreur: Utilisateur inconnu."
         if not service:
@@ -152,13 +144,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """
-        Ajoute, modifie ou purge une identité applicative ou un serveur au sein de l'Identity Vault. Action autorisée : 'add', 'update' ou 'delete'.
-
-        RÈGLES POUR 'credentials_json' :
-        - Pour tous les services : Le JSON DOIT impérativement inclure une clé "description" explicitant la finalité.
-        - Spécifique à 'mcp_remote' : Le JSON DOIT contenir les clés "url" et "transport" ("sse" ou "streamable_http").
-        """
+        """Ajoute (`add`), met à jour (`update`) ou supprime (`delete`) une identité dans l'Identity Vault après accord utilisateur."""
         if not __user__:
             return "Erreur: Contexte OWUI manquant."
         from echo_constants import ECHO_SUBAGENT_CONTEXT

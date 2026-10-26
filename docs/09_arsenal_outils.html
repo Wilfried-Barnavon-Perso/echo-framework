@@ -19,7 +19,7 @@
       ECHO n'est pas un simple générateur de texte coincé dans une fenêtre de discussion. Il dispose d'un <strong>Arsenal</strong> : un ensemble d'outils (des "mains" et des "yeux") qui lui permettent d'interagir avec votre ordinateur, avec le Web et avec d'autres logiciels.
     </p>
     <p>
-      L'IA décide de manière autonome quand et comment utiliser ces outils pour répondre à vos besoins. Si vous lui posez une question complexe, elle peut enchaîner plusieurs actions (chercher sur le Web, lire un fichier, tester du code, générer un schéma) avant de vous fournir sa réponse finale.
+      L'IA décide de manière autonome quand et comment utiliser ces outils pour répondre à vos besoins. Afin de garder son esprit vif sans s'encombrer de dizaines de manuels techniques à chaque échange, ECHO ne conserve en tête qu'une définition concise de chaque outil et consulte à la demande son <strong>Conseiller Opérationnel interne</strong> lorsqu'elle doit orchestrer une procédure spécialisée.
     </p>
 
     <h2>Les 5 Piliers de l'Arsenal</h2>
@@ -42,13 +42,13 @@
 
       <div class="card">
         <h3>🎨 12. Édition &amp; Visuel</h3>
-        <p>ECHO modifie dynamiquement votre interface pour afficher des cartes mentales et des diagrammes interactifs. Il déploie également l'éditeur <strong>Codex</strong>, un véritable logiciel de traitement de texte vous permettant de travailler à quatre mains sur de vastes documents.</p>
+        <p>ECHO modifie dynamiquement votre interface pour afficher des cartes mentales et des diagrammes interactifs. Il déploie également l'éditeur <strong>Codex</strong> (texte, code, hexadécimal et aperçu visuel direct), accessible en un clic depuis les liens de fichiers dans vos conversations.</p>
         <a href="12_edition_visuelle.html">Explorer &rarr;</a>
       </div>
 
       <div class="card">
         <h3>🧠 13. Mémoire &amp; Actions</h3>
-        <p>Le système entretient une mémoire à long terme graduée de vos préférences et apprentissages (du signal faible jusqu'à l'Axiome). Vous disposez également de boutons d'Actions rapides (Cockpit) pour compacter sur place le contexte de la session, purger cette mémoire chirurgicalement ou exporter d'un clic vos conversations en document PDF.</p>
+        <p>Le système entretient une mémoire à long terme graduée de vos préférences et apprentissages (du signal faible jusqu'à l'Axiome). Vous disposez également de boutons d'Actions rapides (Cockpit) pour transférer et synthétiser une longue discussion vers une nouvelle conversation, purger la mémoire chirurgicalement ou exporter d'un clic vos échanges en document PDF.</p>
         <a href="13_memoire_actions.html">Explorer &rarr;</a>
       </div>
 
@@ -62,8 +62,9 @@
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Standards de Développement OWUI (<code>12-owui-tools/</code>)</h3>
+        <h3>1. Standards de Développement OWUI &amp; Séparation Interface / Connaissance (<code>12-owui-tools/</code> &amp; <code>echo_tool_guides.py</code> v5.229.0.1)</h3>
         <ul>
+          <li><strong>Architecture Minimaliste des Schémas (<code>v5.229.0.0</code>) :</strong> Les docstrings Python des 93 fonctions exposées dans les 19 fichiers de <code>12-owui-tools/</code> sont réduites à 1 phrase fonctionnelle pure (~80 % de réduction du schéma OpenAPI), et les retours d'outils sont purgés des directives prescriptives <code>IMPLIQUE</code>. La base de connaissances opérationnelle complète est externalisée dans 10 manuels Markdown versionnés (<code>14-owui-libs/tool_guides/*.md</code>) indexés par <code>EchoToolGuidesManager</code> et interrogés par l'Expert-Conseil Opérationnel Hybride <code>tool_advisor</code> (<code>generalist_tools.py</code> v5.229.2.1 sur <code>MODEL_APOLLO</code>, <code>override_thinking="medium"</code>).</li>
           <li><strong>Injection Native du Contexte :</strong> Chaque outil déclare obligatoirement <code>__user__</code> et <code>__metadata__</code> dans sa signature Python pour garantir l'injection authentifiée de la session par Open WebUI.</li>
           <li><strong>Propagation d'Identité Asynchrone (<code>ECHO_SUBAGENT_CONTEXT</code>) :</strong> La variable <code>contextvars.ContextVar</code> transporte de manière transparente l'identité des sous-agents (<code>sub_sid</code>, <code>is_subagent</code>, <code>sub_tools_names</code>) à travers les frontières asynchrones sans modifier les signatures inspectées par Open WebUI.</li>
           <li><strong>Protocole Multipart &amp; FIFO Destructif (<code>wrap_tool_output</code>) :</strong> Les payloads multimodaux sont encapsulés sous la clé standardisée <code>echo_tool_multiparts</code> (déballée par <code>unbox_tool_output()</code> dans <code>echo_core.py</code>), tandis que les événements système (<code>aec_event</code>, <code>aec_directive</code>) sont consommés selon un mécanisme FIFO destructif qui préserve intactes les ressources persistantes du registre.</li>
@@ -85,7 +86,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.226.5 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.15 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

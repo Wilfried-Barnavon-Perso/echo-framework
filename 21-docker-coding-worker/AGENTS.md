@@ -8,7 +8,7 @@ Ce dossier contient le code source de l'**API d'Exécution Multi-Langages Sécur
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `worker_api.py` (v3.7)
+### `worker_api.py` (v5.226.18.0)
 Fichier monolithique exposant une API Flask très légère.
 - **Sémantique** : Le serveur écoute sur le port **5000** et expose les endpoints HTTP `/execute`, `/kill`, `/poll_monitor` et `/update_payload`.
 - **Exécution depuis le Codex Sandbox & Pre-execution Linting** : Le script est exécuté depuis un fichier physique préalablement enregistré dans l'espace `sandbox` du Codex, après validation syntaxique immédiate (`py_compile` pour Python, `node -c` pour Node.js). La sortie textuelle est bornée dynamiquement par `max_output_length` (131 Ko par défaut, protection anti-OOM LLM).
@@ -22,7 +22,7 @@ Fichier monolithique exposant une API Flask très légère.
 - **Multiplexage** : Elle exploite le fichier `/sandbox/.echo_monitor.jsonl` en mode "append" (Multiplexage) pour gérer un fenêtrage multiple simultané (paramètre `window_id`).
 
 ### `Dockerfile` & `requirements.txt`
-- **Build** : Image hybride basée sur **`FROM python:3.14`** embarquant **Node.js 22.x LTS**, `npm` (packages globaux `axios`, `cheerio`, `js-yaml`, `lodash`, `papaparse`, `mathjs`, `zod`, `dotenv`, `moment`) et `bubblewrap`.
+- **Build** : Image hybride basée sur **`FROM python:3.14`** embarquant **Node.js 22.x LTS** (patché CVE-2026-111497 Brotli), `npm` (packages globaux `axios`, `cheerio`, `js-yaml`, `lodash`, `papaparse`, `mathjs`, `zod`, `dotenv`, `moment`) et `bubblewrap`.
 - **Dépendances** : Installe `Flask` pour l'API (avec `CMAKE_BUILD_PARALLEL_LEVEL=2`), ainsi que des librairies d'analyse lourdes fréquemment requêtées par l'agent (`pandas`, `numpy`, `matplotlib`).
 
 ## 3. Dépendances Logiques

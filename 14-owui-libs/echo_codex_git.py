@@ -1,36 +1,38 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 1.10
+version: 5.231.2.1
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.10: Application stricte de ECHO_SYNC_EXCLUDE_LIST pour prévenir le gel UI sur les gros dossiers sandbox.
-# 1.9: Modification de delete_file pour retourner le tuple (commit_hash, paths_to_rm) afin d'assurer la purge SQLite côté action.
-# 1.8: Correction de list_files dans main pour inclure correctement les fichiers dans les sous-dossiers.
-# 1.6: Asymétrie de parcours de fichiers (os.listdir vs os.walk) entre main et sandbox.
-# 1.5: Prise en charge des dossiers de workspaces isolés (main/sandbox).
+# 5.231.2.1: Filtrage SSoT strict dans get_user_codex_chats excluant les conversations orphelines supprimées de webui.db.
+# 5.230.0.1: Délégation factorisée de _secure_path vers normalize_codex_rel_path (echo_paths) avec décodage URL défensif (unquote).
+# 5.229.7.2: Résolution des SHA courts (resolve_commit) et traversée hiérarchique de Tree (lookup_path) pour read/restore/diff/log.
+# 5.229.7.1: Support Multi-Chat sélectif (découverte SSoT, UI hiérarchique, Read-Only strict et tooling transverse).
+# 5.228.8.2: Correction de commit_file (préservation LF stricte newline="" et textes Unicode hors plage Latin-1) et auto-réparation du décodage UTF-8/Latin-1 dans read_file.
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
 # desc.
 
 import os
 import re
 import shutil
-from typing import Optional, List
+from typing import Optional, List, Any
 
 from dulwich.repo import Repo
-from dulwich.objects import Tree
+from dulwich.objects import Tree, Commit
 from dulwich import porcelain
 
-from echo_constants import CODEX_LANG_MAP, CODEX_DEFAULT_LANG, ECHO_SYNC_EXCLUDE_LIST
-from echo_paths import get_echo_session_path
-
-# Mapping inversé langage Monaco → extension (première extension trouvée)
-CODEX_LANG_TO_EXT: dict[str, str] = {}
-for _ext, _lang in CODEX_LANG_MAP.items():
-    if _lang not in CODEX_LANG_TO_EXT:
-        CODEX_LANG_TO_EXT[_lang] = _ext
+import echo_constants
+from echo_constants import (
+    CODEX_LANG_MAP,
+    CODEX_DEFAULT_LANG,
+    ECHO_SYNC_EXCLUDE_LIST,
+    is_binary_file,
+    ECHO_USERS_ROOT,
+    ECHO_BASE_DATA_DIR,
+)
+from echo_paths import get_echo_session_path, normalize_codex_rel_path
 
 
 class CodexRepo:
@@ -40,6 +42,7 @@ class CodexRepo:
 
     def __init__(self, user_id: str, chat_id: str, workspace: str = "main"):
         base_codex = get_echo_session_path(user_id, chat_id, "codex")
+        self.workspace = workspace
         self.repo_path = os.path.join(base_codex, workspace)
         os.makedirs(self.repo_path, exist_ok=True)
         self.repo = self._ensure_repo()
@@ -56,11 +59,18 @@ class CodexRepo:
     # =========================================================================
 
     def _secure_path(self, path: str) -> str:
-        """Sécurise un chemin relatif et empêche le path traversal."""
-        path = path.replace("\\", "/").strip("/")
-        if ".." in path.split("/"):
+        """Sécurise un chemin relatif, décode les séquences URL éventuelles, retire les préfixes de workspace et empêche le path traversal."""
+        raw = (path or "").replace("\\", "/").strip("/")
+        if ".." in raw.split("/"):
             raise ValueError("Path traversal non autorisé.")
-        return path
+        ws = getattr(self, "workspace", "") or ""
+        rp = getattr(self, "repo_path", "") or ""
+        cleaned = normalize_codex_rel_path(raw, workspace=ws, repo_path=rp)
+        if cleaned is None:
+            if not raw:
+                return ""
+            raise ValueError("Path traversal non autorisé.")
+        return cleaned
 
     def create_directory(self, path: str) -> None:
         """Crée un répertoire vide (non tracké par Git mais visible dans l'UI)."""
@@ -74,14 +84,36 @@ class CodexRepo:
         os.makedirs(dirpath, exist_ok=True)
 
     def commit_file(self, filename: str, content: str, message: str,
-                    author: str = "ECHO Codex") -> Optional[str]:
+                    author: str = "ECHO Codex", is_binary: Optional[bool] = None) -> Optional[str]:
         """Crée ou met à jour un fichier, avec création automatique des sous-dossiers. Retourne le hash du commit."""
         safe_name = self._secure_path(filename)
         filepath = os.path.join(self.repo_path, safe_name)
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(content)
+        latin1_bytes = None
+        if isinstance(content, str):
+            try:
+                latin1_bytes = content.encode("latin-1")
+            except UnicodeEncodeError:
+                latin1_bytes = None
+                is_binary = False
+
+            if is_binary is None:
+                probe = b"\x00" if "\x00" in content else b""
+                is_binary, _ = is_binary_file(safe_name, probe)
+        elif isinstance(content, (bytes, bytearray)):
+            if is_binary is None:
+                is_binary, _ = is_binary_file(safe_name, bytes(content[:8192]))
+
+        if is_binary and latin1_bytes is not None:
+            with open(filepath, "wb") as f:
+                f.write(latin1_bytes)
+        elif is_binary and isinstance(content, (bytes, bytearray)):
+            with open(filepath, "wb") as f:
+                f.write(content)
+        else:
+            with open(filepath, "w", encoding="utf-8", newline="") as f:
+                f.write(content if isinstance(content, str) else content.decode("utf-8", errors="replace"))
 
         porcelain.add(self.repo_path, paths=[safe_name])
         commit_sha = porcelain.commit(
@@ -95,15 +127,31 @@ class CodexRepo:
 
     def read_file(self, filename: str, start_line: int = None,
                   end_line: int = None) -> Optional[dict]:
-        """Lit un fichier. Retourne {content, total_lines, range} ou None."""
+        """Lit un fichier. Retourne {content, total_lines, range, is_binary, mime, size_bytes} ou None."""
         safe_name = self._secure_path(filename)
         filepath = os.path.join(self.repo_path, safe_name)
-        if not os.path.exists(filepath):
+        if not os.path.isfile(filepath):
             return None
 
-        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
+        with open(filepath, "rb") as f:
+            raw_bytes = f.read()
 
+        is_bin, mime = is_binary_file(filepath, raw_bytes)
+        if is_bin:
+            return {
+                "content": raw_bytes.decode("latin-1"),
+                "total_lines": (len(raw_bytes) + 15) // 16,
+                "range": None,
+                "is_binary": True,
+                "mime": mime,
+                "size_bytes": len(raw_bytes),
+            }
+
+        try:
+            text_content = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            text_content = raw_bytes.decode("latin-1")
+        lines = text_content.splitlines(True)
         total = len(lines)
 
         if start_line is not None and end_line is not None:
@@ -114,11 +162,20 @@ class CodexRepo:
             return {
                 "content": content,
                 "total_lines": total,
-                "range": [
-                    s + 1,
-                    e]}
+                "range": [s + 1, e],
+                "is_binary": False,
+                "mime": mime,
+                "size_bytes": len(raw_bytes),
+            }
 
-        return {"content": "".join(lines), "total_lines": total, "range": None}
+        return {
+            "content": text_content,
+            "total_lines": total,
+            "range": None,
+            "is_binary": False,
+            "mime": mime,
+            "size_bytes": len(raw_bytes),
+        }
 
     def delete_file(self, path: str, message: str) -> Optional[tuple[str, list[str]]]:
         """Supprime un fichier ou un dossier vide et commit. Retourne le (hash, liste_fichiers_supprimes) ou None."""
@@ -236,10 +293,15 @@ class CodexRepo:
                     mtime = 0
 
                 line_count = 0
+                is_bin = False
                 if not is_dir:
                     try:
-                        with open(entry.path, "r", encoding="utf-8", errors="replace") as fh:
-                            line_count = sum(1 for _ in fh)
+                        is_bin, _ = is_binary_file(entry.path)
+                        if is_bin:
+                            line_count = (size + 15) // 16
+                        else:
+                            with open(entry.path, "r", encoding="utf-8", errors="replace") as fh:
+                                line_count = sum(1 for _ in fh)
                     except Exception:
                         pass
 
@@ -250,6 +312,7 @@ class CodexRepo:
                     "lines": line_count,
                     "size_bytes": size,
                     "mtime": mtime,
+                    "is_binary": is_bin,
                 })
         else:
             # Workspace MAIN (tracké Git)
@@ -281,11 +344,16 @@ class CodexRepo:
                     filepath = os.path.join(self.repo_path, tracked_file)
                     if not os.path.isfile(filepath):
                         continue
+                    is_bin = False
                     try:
-                        with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
-                            line_count = sum(1 for _ in fh)
                         size = os.path.getsize(filepath)
                         mtime = os.path.getmtime(filepath)
+                        is_bin, _ = is_binary_file(filepath)
+                        if is_bin:
+                            line_count = (size + 15) // 16
+                        else:
+                            with open(filepath, "r", encoding="utf-8", errors="replace") as fh:
+                                line_count = sum(1 for _ in fh)
                     except BaseException:
                         line_count = 0
                         size = 0
@@ -298,6 +366,7 @@ class CodexRepo:
                         "lines": line_count,
                         "size_bytes": size,
                         "mtime": mtime,
+                        "is_binary": is_bin,
                     })
                 else:
                     # Dossier immédiat
@@ -318,6 +387,29 @@ class CodexRepo:
                             "size_bytes": 0,
                             "mtime": mtime,
                         })
+
+            # Inclure également les dossiers physiques vides créés via l'UI (non indexés par Git)
+            try:
+                for entry in os.scandir(target_abs_path):
+                    if not entry.is_dir() or entry.name.startswith(".") or entry.name in ECHO_SYNC_EXCLUDE_LIST:
+                        continue
+                    immediate_dir = prefix + entry.name
+                    if immediate_dir not in dirs_found:
+                        dirs_found.add(immediate_dir)
+                        try:
+                            mtime = entry.stat().st_mtime
+                        except Exception:
+                            mtime = 0
+                        files.append({
+                            "filename": immediate_dir,
+                            "type": "directory",
+                            "lang": "folder",
+                            "lines": 0,
+                            "size_bytes": 0,
+                            "mtime": mtime,
+                        })
+            except Exception:
+                pass
 
         return sorted(files, key=lambda x: x["mtime"], reverse=True)
 
@@ -453,16 +545,37 @@ class CodexRepo:
             pass
         return entries
 
-    def _file_in_commit(self, commit, filename: str) -> bool:
-        """Vérifie si un fichier existe dans l'arbre d'un commit."""
+    def resolve_commit(self, commit_ref: str) -> Optional[Any]:
+        """Résout une référence de commit (SHA-1 complet 40 caractères, SHA court 7..39 caractères)."""
+        if not commit_ref:
+            return None
+        ref_str = str(commit_ref).strip()
+        if len(ref_str) == 40:
+            try:
+                obj = self.repo[ref_str.encode("ascii")]
+                if isinstance(obj, Commit):
+                    return obj
+            except KeyError:
+                pass
         try:
-            tree = self.repo.object_store[commit.tree]
-            for item in tree.items():
-                if item.path.decode("utf-8") == filename:
-                    return True
-        except BaseException:
+            walker = self.repo.get_walker()
+            for entry in walker:
+                sha = entry.commit.id.decode("ascii")
+                if sha.startswith(ref_str):
+                    return entry.commit
+        except Exception:
             pass
-        return False
+        return None
+
+    def _file_in_commit(self, commit, filename: str) -> bool:
+        """Vérifie si un fichier existe dans l'arbre d'un commit (y compris dans les sous-dossiers)."""
+        try:
+            safe_name = self._secure_path(filename)
+            tree = self.repo[commit.tree]
+            _, _ = tree.lookup_path(self.repo.get_object, safe_name.encode("utf-8"))
+            return True
+        except (KeyError, Exception):
+            return False
 
     def get_diff(self, commit_a: str, commit_b: str = None) -> str:
         """Diff entre deux commits. Si commit_b=None, diff commit_a vs son parent."""
@@ -470,10 +583,14 @@ class CodexRepo:
             from dulwich.patch import write_tree_diff
             import io
 
-            obj_a = self.repo.object_store[commit_a.encode("ascii")]
+            obj_a = self.resolve_commit(commit_a)
+            if not obj_a:
+                return f"Erreur diff: commit '{commit_a}' introuvable."
 
             if commit_b:
-                obj_b = self.repo.object_store[commit_b.encode("ascii")]
+                obj_b = self.resolve_commit(commit_b)
+                if not obj_b:
+                    return f"Erreur diff: commit '{commit_b}' introuvable."
                 tree_b = obj_b.tree
             else:
                 # Parent du commit_a
@@ -495,16 +612,28 @@ class CodexRepo:
             self,
             filename: str,
             commit_hash: str) -> Optional[str]:
-        """Lit le contenu d'un fichier à un commit donné (checkout virtuel)."""
+        """Lit le contenu d'un fichier à un commit donné (checkout virtuel via SHA complet ou court)."""
         try:
-            safe_name = self._secure_path(filename)
-            commit = self.repo.object_store[commit_hash.encode("ascii")]
-            tree = self.repo.object_store[commit.tree]
+            commit = self.resolve_commit(commit_hash)
+            if not commit:
+                return None
 
-            for item in tree.items():
-                if item.path.decode("utf-8") == safe_name:
-                    blob = self.repo.object_store[item.sha]
-                    return blob.data.decode("utf-8", errors="replace")
+            safe_name = self._secure_path(filename)
+            root_tree = self.repo[commit.tree]
+
+            try:
+                _, sha = root_tree.lookup_path(self.repo.get_object, safe_name.encode("utf-8"))
+            except KeyError:
+                return None
+
+            blob = self.repo[sha]
+            is_bin, _ = is_binary_file(safe_name, blob.data)
+            if is_bin:
+                return blob.data.decode("latin-1")
+            try:
+                return blob.data.decode("utf-8")
+            except UnicodeDecodeError:
+                return blob.data.decode("latin-1")
         except Exception:
             pass
         return None
@@ -519,6 +648,65 @@ class CodexRepo:
     # =========================================================================
     # ADMINISTRATION
     # =========================================================================
+
+    def restore_repo_to_timestamp(self, cutoff_ts: int) -> dict:
+        """Restaure le dépôt Git 'main' (working tree, index et HEAD) au dernier commit dont commit_time <= cutoff_ts.
+        Retourne {'restored_commit': sha_or_none, 'tracked_files': set_of_rel_paths}."""
+        try:
+            commits = self.get_log(limit=500)
+            if not commits:
+                return {"restored_commit": None, "tracked_files": set()}
+
+            # Sélection du commit le plus récent antérieur ou égal à cutoff_ts
+            target_commit = None
+            for c in commits:
+                if int(c.get("timestamp", 0)) <= int(cutoff_ts):
+                    target_commit = c
+                    break
+
+            # Nettoyage préalable de l'arbre de travail (hors .git)
+            for entry in os.listdir(self.repo_path):
+                if entry == ".git":
+                    continue
+                full_p = os.path.join(self.repo_path, entry)
+                if os.path.isdir(full_p) and not os.path.islink(full_p):
+                    shutil.rmtree(full_p)
+                else:
+                    os.remove(full_p)
+
+            if not target_commit:
+                # Aucun commit antérieur ou égal au point de fork : réinitialisation de l'index et des refs
+                idx_path = self.repo.index_path()
+                if os.path.exists(idx_path):
+                    os.remove(idx_path)
+                for ref in list(self.repo.refs.keys()):
+                    if ref.startswith(b"refs/heads/"):
+                        del self.repo.refs[ref]
+                return {"restored_commit": None, "tracked_files": set()}
+
+            from dulwich.index import build_index_from_tree
+            sha_bytes = target_commit["hash_full"].encode("ascii")
+            commit_obj = self.repo.object_store[sha_bytes]
+
+            # Reconstruction de l'index et du working tree depuis l'arbre du commit cible
+            build_index_from_tree(
+                self.repo_path,
+                self.repo.index_path(),
+                self.repo.object_store,
+                commit_obj.tree,
+            )
+
+            # Réalignement des références Git sur le commit cible
+            for ref in list(self.repo.refs.keys()):
+                if ref.startswith(b"refs/heads/"):
+                    self.repo.refs[ref] = sha_bytes
+            self.repo.refs[b"HEAD"] = sha_bytes
+
+            index = self.repo.open_index()
+            tracked = {f.decode("utf-8") for f in index}
+            return {"restored_commit": target_commit["hash_full"], "tracked_files": tracked}
+        except Exception as e:
+            return {"restored_commit": None, "tracked_files": set(), "error": str(e)}
 
     def reset_all(self) -> bool:
         """Supprime entièrement le dépôt. Irréversible."""
@@ -576,3 +764,107 @@ class CodexRepo:
         """Détecte le langage Monaco depuis l'extension du fichier."""
         ext = os.path.splitext(filename)[1].lower()
         return CODEX_LANG_MAP.get(ext, CODEX_DEFAULT_LANG)
+
+    # =========================================================================
+    # MULTI-CHAT & DÉCOUVERTE SOUVERAINE
+    # =========================================================================
+
+    @classmethod
+    def validate_user_chat(cls, user_id: str, chat_id: str) -> bool:
+        """Valide qu'un chat_id appartient bien à l'utilisateur et ne présente aucun risque de traversée."""
+        if not user_id or not chat_id:
+            return False
+        safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
+        safe_cid = "".join(x for x in str(chat_id) if x.isalnum() or x in "-_")
+        if not safe_uid or not safe_cid or safe_cid != str(chat_id).strip():
+            return False
+        users_root = getattr(echo_constants, "ECHO_USERS_ROOT", ECHO_USERS_ROOT)
+        chat_dir = os.path.join(users_root, safe_uid, "chats", safe_cid)
+        return os.path.exists(chat_dir)
+
+    @classmethod
+    def get_user_codex_chats(cls, user_id: str, current_chat_id: Optional[str] = None) -> dict:
+        """Découvre et résout les conversations de l'utilisateur ayant un Codex.
+        Exclut strictement current_chat_id de la liste others.
+        Retourne:
+        {
+            "current": {"id": current_chat_id, "title": <titre_actuel>},
+            "others": [
+                {"id": cid, "title": <titre>},  # Strictement != current_chat_id
+            ]
+        }
+        """
+        safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
+        users_root = getattr(echo_constants, "ECHO_USERS_ROOT", ECHO_USERS_ROOT)
+        base_data_dir = getattr(echo_constants, "ECHO_BASE_DATA_DIR", ECHO_BASE_DATA_DIR)
+        user_chats_dir = os.path.join(users_root, safe_uid, "chats")
+        cur_cid = str(current_chat_id or "").strip()
+
+        candidate_cids = set()
+        if os.path.exists(user_chats_dir):
+            with os.scandir(user_chats_dir) as entries:
+                for entry in entries:
+                    if entry.is_dir() and not entry.name.startswith("."):
+                        codex_path = os.path.join(entry.path, "codex")
+                        if os.path.exists(codex_path):
+                            has_content = False
+                            try:
+                                for ws in ("main", "sandbox"):
+                                    ws_dir = os.path.join(codex_path, ws)
+                                    if os.path.exists(ws_dir):
+                                        with os.scandir(ws_dir) as ws_entries:
+                                            if any(ws_entries):
+                                                has_content = True
+                                                break
+                            except Exception:
+                                has_content = True
+                            if has_content:
+                                candidate_cids.add(entry.name)
+
+        if cur_cid:
+            candidate_cids.add(cur_cid)
+
+        # Résolution atomique des titres depuis /app/backend/data/webui.db
+        titles_map = {}
+        valid_chat_ids = set()
+        db_verified = False
+        webui_db = os.path.join(base_data_dir, "webui.db")
+        if os.path.exists(webui_db) and candidate_cids:
+            import sqlite3
+            try:
+                conn = sqlite3.connect(f"file:{webui_db}?mode=ro", uri=True)
+                cursor = conn.cursor()
+                placeholders = ",".join("?" for _ in candidate_cids)
+                cursor.execute(
+                    f"SELECT id, title FROM chat WHERE user_id = ? AND id IN ({placeholders})",
+                    [safe_uid] + list(candidate_cids)
+                )
+                for row in cursor.fetchall():
+                    cid_db = str(row[0])
+                    valid_chat_ids.add(cid_db)
+                    title_db = (row[1] or "").strip()
+                    titles_map[cid_db] = title_db or f"Chat {cid_db[:8]}"
+                conn.close()
+                db_verified = True
+            except Exception:
+                db_verified = False
+
+        cur_title = titles_map.get(cur_cid, "Conversation Actuelle")
+        others = []
+        for cid in sorted(candidate_cids):
+            if cid == cur_cid:
+                continue  # EXCLUSION STRICTE DU CHAT ACTUEL
+
+            # Si webui.db a été vérifié avec succès, exclure les conversations orphelines (supprimées de webui.db)
+            if db_verified and cid not in valid_chat_ids:
+                continue
+
+            others.append({
+                "id": cid,
+                "title": titles_map.get(cid, f"Chat {cid[:8]}")
+            })
+
+        return {
+            "current": {"id": cur_cid, "title": cur_title},
+            "others": sorted(others, key=lambda x: x["title"].lower())
+        }

@@ -29,23 +29,23 @@
     <ul>
       <li><strong>Traitement accéléré sur ordinateur de bureau :</strong> Votre poste traite les vecteurs localement dans le navigateur avec un indicateur d'initialisation discret.</li>
       <li><strong>Soulagement du serveur :</strong> Plusieurs utilisateurs peuvent interroger et indexer des documents simultanément sans saturer le processeur du serveur central.</li>
-      <li><strong>Continuité transparente :</strong> Vous n'avez aucun logiciel ou extension à installer. Sur mobile ou si votre appareil ne dispose pas d'accélération compatible, le serveur prend immédiatement le relais sans interrompre votre session.</li>
+      <li><strong>Continuité transparente et zéro téléchargement inutile :</strong> Vous n'avez aucun logiciel ou extension à installer. Avant même d'afficher un indicateur ou de télécharger le moindre modèle IA dans votre navigateur, ECHO réalise un test matériel instantané : sur mobile ou si votre carte graphique ne dispose pas des capacités requises, le serveur prend immédiatement le relais sans ralentir votre navigation.</li>
     </ul>
 
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>Architecture de l'Edge Embedding Bridge (<code>edge_embed_bridge_filter.py</code> v1.26 &amp; <code>app.py</code> v2.4)</h3>
+        <h3>Architecture de l'Edge Embedding Bridge (<code>edge_embed_bridge_filter.py</code> v5.231.11.1 &amp; <code>app.py</code> v5.230.1.1)</h3>
         <p>Le pont d'inférence déporte le calcul des embeddings 1024D vers le navigateur Desktop via WebGPU / WebAssembly (WASM).</p>
 
-        <h3>1. Bypass Mobile &amp; Injection Desktop</h3>
-        <p>Le filtre Inlet (priorité 2) inspecte l'en-tête <code>User-Agent</code> : sur terminal mobile, il court-circuite toute injection JavaScript pour forcer le fallback CPU immédiat. Sur Desktop, il injecte un module JS doté d'un HUD d'initialisation centré horizontalement sur la zone de chat (<code>left: calc(50% + 125px)</code> sur desktop pour compenser la sidebar Open WebUI) et d'un auto-reload sur changement de version, chargeant <code>onnx-community/harrier-oss-v1-0.6b-ONNX</code> (quantification <code>q4f16</code>) via <em>Transformers.js</em>.</p>
+        <h3>1. Bypass Mobile, Sonde WebGPU Amont &amp; Injection Desktop</h3>
+        <p>Le filtre Inlet (priorité 3, exécuté après le Window Manager à priorité 2) inspecte l'en-tête <code>User-Agent</code> (<code>ECHO_MOBILE_UA_PATTERN</code>) : sur terminal mobile, il court-circuite toute injection JavaScript pour forcer le fallback CPU immédiat. Sur Desktop, il exécute en amont la sonde matérielle et fonctionnelle <code>window.echoProbeWebGPU</code> (<code>EchoUI.get_webgpu_probe_js</code>) qui valide <code>navigator.gpu</code>, l'absence d'adaptateur logiciel <code>isFallbackAdapter</code>, l'extension <code>shader-f16</code>, les limites de buffers (<code>maxStorageBufferBindingSize</code> et <code>maxBufferSize</code> &ge; 128 Mo) ainsi qu'un <strong>Compute Smoke Test WGSL <code>f16</code></strong> avant tout téléchargement ou création du HUD. Si la sonde réussit, le client charge <code>onnx-community/harrier-oss-v1-0.6b-ONNX</code> (<code>dtype: "fp16"</code>) via <em>Transformers.js</em> (importé via <code>window.echoImportModule</code> avec contournement CORS/COEP) tout en affichant un HUD d'initialisation positionné par <code>window.echoBindHudGeometry</code>.</p>
 
         <h3>2. Multiplexage Multi-Onglets &amp; WebSocket (<code>/ws/edge-embed</code>)</h3>
         <p>Chaque onglet s'identifie auprès du concentrateur FastAPI (<code>echo-embedding</code>, port 7997, IP <code>.30</code>) avec un <code>client_id</code> UUID et signale son état de visibilité (<code>visibility</code>) dans le registre <code>active_edge_clients</code> (statuts <code>connecting</code>, <code>active</code>, <code>incompatible</code>).</p>
 
-        <h3>3. Fallback CPU Asynchrone Instantané</h3>
-        <p>Si le matériel client est incompatible (<code>sendIncompatibleAndExit</code>) ou si la connexion WebSocket est rompue, le worker annule immédiatement les <code>asyncio.Future</code> en attente (<code>pending_edge_requests</code>) et bascule sur l'inférence CPU locale propulsée par <code>llama-cpp-python</code> (modèle <code>microsoft/Harrier-OSS-v1-0.6B</code>, fichier <code>harrier-oss-v1-0.6b.f16.gguf</code>, <code>MAX_LENGTH=4096</code>) avec <strong>CLS Token Pooling (index 0)</strong> et normalisation L2.</p>
+        <h3>3. Fallback CPU Asynchrone Instantané &amp; Persistance d'Incompatibilité</h3>
+        <p>Si la sonde WebGPU échoue ou si l'exécution ONNX lève une erreur (<code>reportIncompatibleAndAbort</code>), le navigateur notifie immédiatement le worker qui persiste l'état <code>incompatible</code> (<code>ws=None</code>) dans <code>active_edge_clients</code> à la fermeture du socket afin d'interdire toute ré-attente de grâce sur les requêtes suivantes, annule immédiatement les <code>asyncio.Future</code> en attente (<code>pending_edge_requests</code>) et bascule sans latence sur l'inférence CPU locale propulsée par <code>llama-cpp-python</code> (modèle <code>microsoft/Harrier-OSS-v1-0.6B</code>, fichier <code>harrier-oss-v1-0.6b.f16.gguf</code>, <code>MAX_LENGTH=4096</code>) avec <strong>CLS Token Pooling (index 0)</strong> et normalisation L2.</p>
       </div>
     </details>
 
@@ -56,7 +56,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.226.5 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.15 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

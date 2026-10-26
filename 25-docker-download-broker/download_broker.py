@@ -1,9 +1,12 @@
 """
 title: ECHO Download Broker
 author: Wilfried BARNAVON
-version: 1.0
+version: 5.226.18.0
 description: Composant du système ECHO : Download Broker.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 import asyncio, os, shutil, sys
 from pathlib import Path
 

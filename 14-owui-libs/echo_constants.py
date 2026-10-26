@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.89
+version: 5.230.1.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.89: Ajout des constantes de compactage contextuel in-place (ECHO_COMPACTION_*, CONTEXT_COMPACTION_*) pilotées par MODEL_APOLLO (32768 tokens).
-# 5.88: Alignement documentaire interne sur echo_orchestrator.
-# 5.87: Mise à jour des modèles ECHO ZEPHYR et ECHO DISTILLATION vers Gemini 3.5 Flash-Lite.
-# 5.86: Alignement des User-Agents (ECHO_AGY_USER_AGENT, ECHO_USER_AGENT) et de ECHO_CLIENT_METADATA sur Antigravity Desktop v2.24.0 (cl=1000335682).
-# 5.85: Passage PROMETHEUS en "gemini-4-argon". Factorisation de get_descending_cascade et forçage thinkingLevel="high" sur repli 429 dans get_generation_config.
+# 5.230.0.3: Définition SSOT du protocole URN Codex et ancres UI (CODEX_URN_PATTERN, CODEX_ANCHOR_PATTERN avec icônes ✏️/👁️, CODEX_HUD_ID, CODEX_ACTION_ID).
+# 5.229.1.1: Définition de DELEGATE_AGENT_SYSTEM_TOOLS garantissant la disponibilité des outils système pour tout sous-agent.
+# 5.228.9.1: Alignement de la version globale ECHO.
+# 5.228.8.2: Résolution MIME déterministe dans is_binary_file (sans écrasement text/plain par get_gemini_mime) et détection des octets de contrôle C0.
+# 5.228.7.1: Factorisation SSOT de CODEX_LANG_TO_EXT, is_text_mime et is_binary_file pour le support binaire/hexadécimal du Codex.
 
 
 import os
@@ -72,9 +72,16 @@ ECHO_AGY_USER_AGENT         = (
 ECHO_STEALTH_USER_AGENT     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 
 # Points d'accès Locaux (Souveraineté)
-ECHO_EMBEDDING_URL = "http://echo-embedding:7997/v1"
+ECHO_EMBEDDING_BASE_URL = "http://echo-embedding:7997"
+ECHO_EMBEDDING_URL = f"{ECHO_EMBEDDING_BASE_URL}/v1"
 ECHO_N8N_WORKER_URL = "http://echo-n8n-worker:5003"
 MODEL_EMBEDDING = "microsoft/Harrier-OSS-v1-0.6B"
+ECHO_EDGE_ONNX_REPO = "onnx-community/harrier-oss-v1-0.6b-ONNX"
+ECHO_EDGE_HUD_TITLE = "Harrier 0.6B"
+ECHO_EDGE_MODEL_CACHE_VERSION = "2.1"
+ECHO_EDGE_DTYPE = "fp16"
+ECHO_EDGE_MIN_BUFFER_BYTES = 134217728  # 128 Mo min pour maxBufferSize / maxStorageBufferBindingSize
+ECHO_MOBILE_UA_PATTERN = r"mobi|android|iphone|ipad|ipod"
 
 # ==============================================================================
 # 1. PROTOCOLE ANTIGRAVITY 2.1 — AUTH UNIFIÉE
@@ -207,38 +214,38 @@ ECHO_RETRY_JITTER_MAX    = 1.3
 AEC_REMINDERS = [
     {
         "id": "context_hygiene",
-        "token_threshold": 120000,
-        "tool_calls_threshold": 40,
+        "token_threshold": 140000,
+        "tool_calls_threshold": 65,
         "message": "Rappel : Charge contextuelle élevée. Le Modèle DOIT recentrer son attention sur le vecteur thématique principal et consolider le Méta-Artéfact Résumé. Appliquer le PGCU."
     },
     {
         "id": "kernel",
-        "token_threshold": 88000,
-        "tool_calls_threshold": 30,
+        "token_threshold": 100000,
+        "tool_calls_threshold": 50,
         "message": "Rappel : L'alignement sur le Kernel et la rigueur d'analyse sont FONDAMENTAUX."
     },
     {
         "id": "factuality",
-        "token_threshold": 55000,
-        "tool_calls_threshold": 25,
+        "token_threshold": 70000,
+        "tool_calls_threshold": 35,
         "message": "Rappel : Toute hypothèse non vérifiée est présumée incertaine. Le Modèle DOIT sourcer rigoureusement et vérifier via recherche Web ou inspection de code si un doute subsiste. Appliquer le PRAF."
     },
     {
-        "id": "alignment",
-        "token_threshold": 34000,
-        "tool_calls_threshold": 15,
-        "message": "Rappel : Le Modèle DOIT s'assurer de maintenir et respecter scrupuleusement le Profil d'Alignement et les préférences de l'Utilisateur. Appliquer le PACP."
-    },
-    {
         "id": "strategy",
-        "token_threshold": 34000,
-        "tool_calls_threshold": 15,
+        "token_threshold": 60000,
+        "tool_calls_threshold": 30,
         "message": "Rappel : Le Modèle DOIT s'assurer de mettre à jour judicieusement, et appliquer, ses Hypothèses d'Apprentissage et le plan stratégique en cours pour éviter la vision tunnel. Appliquer le PRAC."
     },
     {
+        "id": "alignment",
+        "token_threshold": 55000,
+        "tool_calls_threshold": 28,
+        "message": "Rappel : Le Modèle DOIT s'assurer de maintenir et respecter scrupuleusement le Profil d'Alignement et les préférences de l'Utilisateur. Appliquer le PACP."
+    },
+    {
         "id": "efficiency",
-        "token_threshold": 22000,
-        "tool_calls_threshold": 9,
+        "token_threshold": 44000,
+        "tool_calls_threshold": 18,
         "message": "Rappel : Le Modèle DOIT privilégier l'usage de Sous-Agents pour économiser son contexte. Appliquer le PARE."
     }
 ]
@@ -283,7 +290,7 @@ ECHO_MODELS_REGISTRY = {
             "temperature": 1.0,
             "topP": 0.9,
             "maxOutputTokens": 65535,
-            "thinkingConfig": {"thinkingLevel": "medium"}
+            "thinkingConfig": {"thinkingLevel": "high"}
         }
     },
     "MODEL_DISTILLATION": {
@@ -304,6 +311,10 @@ MODEL_PROMETHEUS          = "MODEL_PROMETHEUS"
 MODEL_APOLLO        = "MODEL_APOLLO"
 MODEL_ZEPHYR         = "MODEL_ZEPHYR"
 MODEL_DISTILLATION = "MODEL_DISTILLATION"
+
+# Modèle Maître d'orchestration dans Open WebUI (Pipe maître ECHO)
+# Distinct des modèles cognitifs LLM (ECHO_MODELS_REGISTRY) : identifiant d'enregistrement du pipe dans Open WebUI.
+OWUI_ORCHESTRATOR_MODEL   = "echo_orchestrator"
 
 ECHO_SAFETY_SETTINGS = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -475,23 +486,48 @@ ECHO_CODEX_MAX_AI_PASSES = 5        # Nombre max de passes auto-continue IA (0 �
 
 # Nom du sous-dossier Codex dans le vault utilisateur
 CODEX_DIR_NAME = "codex"
+CODEX_DEFAULT_WORKSPACE = "main"
+CODEX_HUD_ID = "echo-codex-hud"
+CODEX_ACTION_ID = "echo_codex_action"
+
+# Protocole URN & Ancres UI Codex (Inlet / Outlet / Bridge JS)
+CODEX_URN_SCHEME = "codex:"
+CODEX_ANCHOR_PREFIX = "#codex:"
+CODEX_SCOPE_CURRENT = "current"
+CODEX_ICON_LOCAL = "✏️"
+CODEX_ICON_REMOTE = "👁️"
+CODEX_URN_PATTERN = (
+    r"\[(?P<label>(?:[^\[\]\n]|\[[^\[\]\n]*\])+)\]\(codex:(?P<scope>current|[a-zA-Z0-9_\-]+):(?P<ws>[a-zA-Z0-9_\-]+)/(?P<path>(?:[^\(\)\n]|\([^\(\)\n]*\))+)\)"
+)
+CODEX_ANCHOR_PATTERN = (
+    r"\[(?P<icon>✏️|👁️)\s+(?P<label>(?:[^\[\]\n]|\[[^\[\]\n]*\])+)\]\(#codex:(?P<target_chat>[a-zA-Z0-9_\-]+):(?P<ws>[a-zA-Z0-9_\-]+):(?P<path>[^\)\s]+)\)"
+)
+ECHO_CODE_FENCE_PATTERN = r"```[\s\S]*?```"
 
 # Mapping extension → langage Monaco Editor
 CODEX_LANG_MAP = {
-    ".py": "python", ".js": "javascript", ".ts": "typescript",
+    ".py": "python", ".js": "javascript", ".jsx": "javascript", ".ts": "typescript", ".tsx": "typescript",
     ".c": "c", ".cpp": "cpp", ".h": "c", ".hpp": "cpp",
     ".java": "java", ".go": "go", ".rs": "rust", ".rb": "ruby",
     ".php": "php", ".swift": "swift", ".kt": "kotlin",
     ".cs": "csharp", ".vb": "vb",
-    ".sh": "shell", ".bash": "shell", ".ps1": "powershell", ".bat": "bat",
+    ".sh": "shell", ".bash": "shell", ".ps1": "powershell", ".bat": "bat", ".cmd": "bat",
     ".html": "html", ".htm": "html", ".css": "css",
-    ".json": "json", ".xml": "xml", ".yaml": "yaml", ".yml": "yaml",
+    ".json": "json", ".xml": "xml", ".svg": "xml", ".yaml": "yaml", ".yml": "yaml",
     ".toml": "toml", ".ini": "ini", ".conf": "plaintext",
-    ".md": "markdown", ".txt": "plaintext", ".log": "plaintext", ".pdf": "pdf",
+    ".md": "markdown", ".txt": "plaintext", ".log": "plaintext", ".csv": "plaintext", ".pdf": "pdf",
+    ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image",
+    ".webp": "image", ".bmp": "image", ".ico": "image",
     ".sql": "sql", ".r": "r", ".lua": "lua", ".pl": "perl",
     ".dockerfile": "dockerfile",
 }
 CODEX_DEFAULT_LANG = "plaintext"
+
+# Mapping inversé langage Monaco → extension (première extension canonique trouvée)
+CODEX_LANG_TO_EXT: dict[str, str] = {}
+for _ext, _lang in CODEX_LANG_MAP.items():
+    if _lang not in CODEX_LANG_TO_EXT and _lang not in ("pdf", "image"):
+        CODEX_LANG_TO_EXT[_lang] = _ext
 
 # Les prompts de la librairie CODEX ont été migrés vers 14-owui-libs/echo_prompts.py
 
@@ -535,6 +571,15 @@ DEEP_RESEARCH_MAX_CALLS_DEFAULT = 200
 #
 # NB : Le budget (MAX_AGENT_FUNCTION_CALLS) compte les DÉCISIONS d'appel
 #      de l'agent — pas les opérations internes des outils appelés.
+# ==============================================================================
+# OUTILS SYSTÈME PERMANENTS DES SOUS-AGENTS (WHITELIST SYSTÈME)
+# ==============================================================================
+# Outils vitaux injectés d'office à tout sous-agent (prévalent sur allowed_tools,
+# mais strictement subordonnés aux interdictions absolues de DELEGATE_AGENT_BLACKLIST).
+DELEGATE_AGENT_SYSTEM_TOOLS: frozenset = frozenset({
+    "tool_advisor",
+})
+
 #      consult_council appelé par l'agent = 1 unité de budget,
 #      quelles que soient les itérations internes du conseil.
 DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
@@ -702,14 +747,14 @@ MIME_MAPPING_TXT = {
         ".editorconfig", ".env", ".gitignore", ".go", ".h", ".hpp", ".ini",
         ".java", ".js", ".json", ".kt", ".log", ".lua", ".md", ".php", ".pl",
         ".ps1", ".py", ".r", ".rb", ".rs", ".sh", ".sql", ".swift", ".toml",
-        ".ts", ".txt", ".vb", ".xml", ".yaml", ".yml", "dockerfile", "makefile"
+        ".ts", ".tsx", ".jsx", ".txt", ".vb", ".xml", ".svg", ".yaml", ".yml", "dockerfile", "makefile"
     ],
     "text/html": [".html", ".htm"]
 }
 
 MIME_MAPPING_BIN = {
     "application/pdf": [".pdf"],
-    "image/png": [".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".bmp", ".gif", ".tiff"],
+    "image/png": [".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".bmp", ".gif", ".tiff", ".ico"],
     "audio/mpeg": [".mp3"],
     "audio/wav": [".wav"],
     "audio/mp3": [".aac", ".flac", ".ogg", ".m4a", ".opus"],
@@ -723,19 +768,6 @@ MIME_MAPPING_BIN = {
 # ==============================================================================
 # 9. SEUILS COGNITIFS ET DÉFENSE PASSIVE (V5)
 # ==============================================================================
-CHARS_PER_TOKEN = 4
-ECHO_MAX_CONTEXT_SIZE = 1000000  # Limite technique 1M (on peut cibler plus bas si Gemini Flash/Pro a des limites strictes pour ECHO)
-CONTEXT_WARNING_THRESHOLD = 0.80  # 80% : Toast d'alerte jaune (Compactage de session conseillé)
-CONTEXT_TRUNCATE_THRESHOLD = 0.90 # 90% : Troncature silencieuse
-
-# --- COMPACTAGE DE CONTEXTE IN-PLACE (CHECKPOINTING) ---
-ECHO_COMPACTION_ENABLED_DEFAULT: bool = False          # UserValve ENABLE_AUTO_COMPACTION désactivée par défaut
-CONTEXT_COMPACTION_TRIGGER_RATIO: float = 0.45         # 45% de ECHO_MAX_CONTEXT_SIZE (450 000 tokens) : Déclenchement auto
-CONTEXT_COMPACTION_TARGET_RATIO: float = 0.25          # 25% de ECHO_MAX_CONTEXT_SIZE (250 000 tokens) : Cible post-compactage
-ECHO_COMPACTION_MIN_TURNS_TO_KEEP: int = 2             # Minimum de tours complets conservés dans la queue active
-ECHO_COMPACTION_MODEL: str = MODEL_APOLLO              # Modèle de synthèse haute capacité (Gemini 3.8 Flash, thinkingLevel="high", fenêtre 1M)
-ECHO_COMPACTION_MAX_OUTPUT_TOKENS: int = 32768         # Plafond de sortie du Checkpoint (inclut thoughtsTokenCount + synthèse Markdown)
-
 # Seuils de saturation pour l'outil context_gauge (déclencheurs d'escalade)
 CONTEXT_LOAD_WARNING_THRESHOLD = 40.0
 CONTEXT_LOAD_CRITICAL_THRESHOLD = 60.0
@@ -801,6 +833,73 @@ def get_gemini_mime(file_path: str) -> tuple[str, bool]:
 
     # 6. Le Rejet et Fallback Sécuritaire (Binaires purs)
     return "application/octet-stream", False
+
+
+def is_text_mime(mime: str, ext: str = "") -> bool:
+    """Détermine de manière unifiée si un type MIME (et extension optionnelle) correspond à un contenu textuel."""
+    if not mime:
+        return False
+    m = mime.lower()
+    e = ext.lower() if ext else ""
+    return (
+        m.startswith("text/")
+        or m in ("application/json", "application/xml", "application/javascript", "image/svg+xml")
+        or "xml" in m
+        or e in (".md", ".csv", ".svg", ".json", ".xml", ".yaml", ".yml", ".toml", ".ini", ".conf", ".env")
+    )
+
+
+def is_binary_file(file_path: str = "", raw_bytes: bytes = None) -> tuple[bool, str]:
+    """
+    Détermine de manière unifiée (SSOT) si un fichier (sur disque ou en mémoire) est binaire.
+    Retourne le tuple (is_binary: bool, mime_type: str).
+    """
+    ext = os.path.splitext(file_path)[1].lower().strip() if file_path else ""
+    filename = os.path.basename(file_path).lower() if file_path else ""
+
+    # 1. Résolution MIME déterministe (priorité au registre SSOT ECHO)
+    mime = None
+    for m, exts in MIME_MAPPING_TXT.items():
+        if ext in exts or filename in exts:
+            mime = m
+            break
+    if not mime:
+        for m, exts in MIME_MAPPING_BIN.items():
+            if ext in exts:
+                mime = m
+                break
+    if not mime and ext in CONVERTIBLE_OFFICE_EXTENSIONS:
+        mime = CONVERTIBLE_OFFICE_EXTENSIONS[ext]
+    if not mime and file_path:
+        mime, _ = mimetypes.guess_type(file_path)
+
+    # Lecture d'un échantillon de 8 Ko si nécessaire
+    sample = raw_bytes[:8192] if raw_bytes is not None else None
+    if sample is None and file_path and os.path.isfile(file_path):
+        try:
+            with open(file_path, "rb") as f:
+                sample = f.read(8192)
+        except Exception:
+            sample = b""
+
+    if not mime and sample and filetype:
+        kind = filetype.guess(sample[:2048])
+        if kind:
+            mime = kind.mime
+    if not mime:
+        mime = "text/plain"
+
+    # 2. Si le MIME est explicitement non-textuel (ex: application/pdf, image/*, audio/*, video/*, octet-stream)
+    if not is_text_mime(mime, ext):
+        return True, mime
+
+    # 3. Épreuve sur les octets bruts (octet nul 0x00 ou octets de contrôle C0 binaires 0x01..0x08, 0x0E..0x1F hors ESC)
+    # Préserve intégralement l'UTF-8 et les caractères accentués ISO-8859-1 / Windows-1252 (>= 0x80)
+    if sample:
+        if b"\x00" in sample or any((1 <= b <= 8) or (14 <= b <= 31 and b != 27) for b in sample):
+            return True, "application/octet-stream"
+
+    return False, mime
 
 # ==============================================================================
 # DIRECTIVES DE DISTILLATION SENSORIELLE (UNIFIÉES)

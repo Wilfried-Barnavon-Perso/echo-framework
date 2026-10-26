@@ -1,36 +1,31 @@
 """
 title: ECHO User Native Context Filter
 author: ECHO Framework
-version: 1.1
+version: 5.231.11.1
 description: Composant système interne : Paramétrages personnels du contexte.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.11.1: Réétagement de la priorité à 20 (après context_gauge_filter à 10 et avant new_context_filter à 30).
+# 5.227.1.1: Suppression de la UserValve ENABLE_AUTO_COMPACTION et de _echo_auto_compaction_enabled.
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.1: Ajout de la UserValve ENABLE_AUTO_COMPACTION (False par défaut) pour le compactage contextuel automatique.
 # 1.0: Création du filtre pour déléguer les UserValves et invisibiliser le New Context Filter.
 
-import sys
 from pydantic import BaseModel, Field
 from typing import Optional
-
-sys.path.append("/app/backend/echo_libs")
-from echo_constants import ECHO_COMPACTION_ENABLED_DEFAULT
 
 
 class Filter:
     class Valves(BaseModel):
         priority: int = Field(
-            default=10,
-            description="Priorité d'exécution (0 = premier)."
+            default=20,
+            description="Priorité d'exécution (20 = après context_gauge_filter à 10 et avant new_context_filter à 30)."
         )
 
     class UserValves(BaseModel):
         ENABLE_USER_NAME: bool = Field(default=False, description="🔒 Partager mon nom avec le modèle.")
         OVERRIDE_LOCATION: str = Field(default="", description="📍 Surcharger ma position géographique (Ex: Paris, France).")
-        ENABLE_AUTO_COMPACTION: bool = Field(
-            default=ECHO_COMPACTION_ENABLED_DEFAULT,
-            description="🗜️ Activer le compactage automatique du contexte (seuil 45% ➔ cible 25% via MODEL_APOLLO)."
-        )
 
     def __init__(self):
         self.valves = self.Valves()
@@ -45,12 +40,10 @@ class Filter:
             u_v = __user__.get("valves") if __user__ else self.user_valves
             enable_name = getattr(u_v, "ENABLE_USER_NAME", False)
             override_location = getattr(u_v, "OVERRIDE_LOCATION", "")
-            enable_auto_compaction = getattr(u_v, "ENABLE_AUTO_COMPACTION", ECHO_COMPACTION_ENABLED_DEFAULT)
 
             body.setdefault("metadata", {})
             body["metadata"]["_echo_user_name_enabled"] = enable_name
             body["metadata"]["_echo_override_location"] = override_location
-            body["metadata"]["_echo_auto_compaction_enabled"] = bool(enable_auto_compaction)
 
             return body
         except Exception as e:

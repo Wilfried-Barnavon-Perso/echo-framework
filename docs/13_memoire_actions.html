@@ -36,7 +36,7 @@
         <ul>
           <li><strong>Export PDF :</strong> Transforme l'intégralité d'une conversation (avec ses diagrammes et tableaux) en un document PDF mis en page en un clic.</li>
           <li><strong>Purge de la Mémoire :</strong> Ouvre un panneau visuel permettant d'effacer chirurgicalement certains souvenirs à long terme.</li>
-          <li><strong>Compacter le contexte de la session :</strong> Condense sur place l'historique ancien d'une longue discussion dans un Checkpoint cognitif sans quitter la conversation.</li>
+          <li><strong>Poursuivre dans une nouvelle conversation :</strong> Transfère une longue discussion vers une nouvelle session avec synthèse en deux passes, conservation automatique de vos étiquettes (tags) de classement, transfert des fichiers du Codex et clonage de la mémoire vectorielle de session.</li>
           <li><strong>Supervision des Agents &amp; Rejeu Web :</strong> Permet d'observer en direct l'arbre de travail des sous-agents et de revoir la navigation du navigateur autonome.</li>
         </ul>
       </div>
@@ -48,26 +48,26 @@
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Memory &amp; RAG Tool (<code>memory_and_rag_tool.py</code> v2.30)</h3>
+        <h3>1. Memory &amp; RAG Tool (<code>memory_and_rag_tool.py</code> v5.229.2.2)</h3>
         <p>Offre au LLM une API complète sur les deux collections Qdrant (<code>echo_meta_artifacts</code> et <code>echo_session_rag</code>) :</p>
         <ul>
-          <li><strong>Outils RAG Organique :</strong> <code>update_meta_artifact</code> (qualification obligatoire de <code>importance: Literal["1", "2", "3", "4", "5"]</code> sans valeur par défaut, alignée sur <code>PACP</code>/<code>PRAC</code>, fusion sémantique préservant le score maximal <code>max(existing_imp, imp_val)</code> et restitution explicite du label via <code>MEMORY_IMPORTANCE_LABELS</code>), <code>search_meta_artifacts</code> (recherche hybride et cartographie d'index avec Reranking <code>MEMORY_IMPORTANCE_WEIGHTS</code> : <code>0.55</code>, <code>0.75</code>, <code>1.00</code>, <code>1.30</code>, <code>1.70</code>), <code>delete_meta_artifact_item</code>.</li>
-          <li><strong>Outils Session RAG :</strong> <code>save_session_context</code>, <code>search_sessions_context</code> (incluant le paramètre <code>global_search</code> pour étendre la recherche à tout l'historique inter-sessions sur marqueurs temporels) et <code>delete_session_context_source</code>.</li>
+          <li><strong>Outils RAG Organique :</strong> <code>update_meta_artifact</code> (qualification obligatoire de <code>importance: Literal["1", "2", "3", "4", "5"]</code> sans valeur par défaut, alignée sur <code>PACP</code>/<code>PRAC</code>, fusion sémantique préservant le score maximal <code>max(existing_imp, imp_val)</code> et restitution explicite du label via <code>MEMORY_IMPORTANCE_LABELS</code>), <code>search_meta_artifacts</code> (fusion de la recherche sémantique ciblée et de la cartographie d'index avec Reranking <code>MEMORY_IMPORTANCE_WEIGHTS</code> : <code>0.55</code>, <code>0.75</code>, <code>1.00</code>, <code>1.30</code>, <code>1.70</code>), <code>delete_meta_artifact_item</code>.</li>
+          <li><strong>Outils Session RAG :</strong> <code>save_session_context</code>, <code>search_sessions_context</code> (fusionnant recherche vectorielle, cartographie globale, paramètre <code>global_search</code> inter-sessions et filtrage par étiquette <code>tag</code> résolu en temps réel via la table SSoT <code>webui.db::tag</code>) et <code>delete_session_context_source</code>.</li>
         </ul>
 
-        <h3>2. Actions Interactives &amp; Compactage de Session (<code>13-owui-actions/</code>)</h3>
+        <h3>2. Actions Interactives &amp; Migration de Session (<code>13-owui-actions/</code>)</h3>
         <ul>
-          <li><strong>Export PDF (<code>print_pdf_action.py</code> v8.19) :</strong> Capture complète Client-Side incluant les <code>&lt;iframe&gt;</code> Data Island (avec permission <code>allow-modals</code>).</li>
-          <li><strong>Purge Vectorielle (<code>purge_memory_action.py</code> v5.9) :</strong> Interface scrollable d'inspection et de suppression ciblée dans <code>echo_meta_artifacts</code> avec gestion stricte de l'annulation modale.</li>
-          <li><strong>Compactage Contextuel In-Place (<code>compact_context_action.py</code> v1.1) :</strong> Affiche systématiquement une modale de diagnostic chiffré au clic (y compris lorsque la fenêtre active compte <code>&lt;= 2</code> tours selon <code>ECHO_COMPACTION_MIN_TURNS_TO_KEEP</code>), déploie le HUD de progression <code>#echo-compaction-hud</code> pendant l'appel à <code>EchoCompactionEngine.execute_compaction(..., force_manual=True)</code>, condense les tours anciens de la session dans un Checkpoint cognitif consolidé (<code>&lt;artifact id="AEC_context_checkpoint"&gt;</code> via <code>MODEL_APOLLO</code>, budget <code>32768</code> tokens) sans quitter la conversation tout en préservant l'intégralité de la Mémoire Vectorisée de Session, et met à jour le badge <code>#echo-nav-checkpoint-badge</code> (<code>🗜️ #N</code>).</li>
-          <li><strong>Agent Monitor (<code>agent_monitor_action.py</code> v1.3) &amp; Replay (<code>web_navigation_replay_action.py</code> v10.22) :</strong> Supervision arborescente temps réel des sous-agents et lecteur de rejeu Playwright avec zoom <code>Ctrl+Molette</code>.</li>
+          <li><strong>Export PDF (<code>print_pdf_action.py</code> v5.226.18.0) :</strong> Capture complète Client-Side incluant les <code>&lt;iframe&gt;</code> Data Island (avec permission <code>allow-modals</code>).</li>
+          <li><strong>Purge Vectorielle (<code>purge_memory_action.py</code> v5.226.18.0) :</strong> Interface scrollable d'inspection et de suppression ciblée dans <code>echo_meta_artifacts</code> avec gestion stricte de l'annulation modale.</li>
+          <li><strong>Migration &amp; Reprise de Session (<code>resume_in_new_chat_action.py</code> v5.229.2.1) :</strong> Extrait l'intégralité de la branche active via <code>Chats.get_chat_by_id</code> (incluant les sorties d'outils <code>m["output"]</code>), construit les transcriptions hors de l'Event Loop (<code>_prepare_transcripts</code>), exécute une distillation en 2 passes via <code>EchoGeminiClient.call_distillation</code> (<code>USR_ACTION_RESUME_GLOBAL</code> et <code>USR_ACTION_RESUME_RECENT</code>) avec HUD de progression <code>#echo-resume-hud</code>, crée la nouvelle conversation via <code>Chats.insert_new_chat</code>, propage les étiquettes (tags) du chat source via <code>Chats.add_chat_tag_by_id</code>, duplique les domaines et le Codex via <code>echo_session_clone.sync_resumed_session</code> et clone par pagination les vecteurs Qdrant <code>COLLECTION_SESSION_RAG</code> (<code>duplicate_session_rag</code>).</li>
+          <li><strong>Agent Monitor (<code>agent_monitor_action.py</code> v5.228.12.1) &amp; Replay (<code>web_navigation_replay_action.py</code> v5.228.12.1) :</strong> Supervision arborescente temps réel des sous-agents et lecteur de rejeu Playwright avec zoom <code>Ctrl+Molette</code>.</li>
         </ul>
 
         <h3>3. Jauge de Contexte, Registre &amp; Outils Généralistes</h3>
         <ul>
-          <li><strong>Context Gauge (<code>context_gauge.py</code> v10.7) :</strong> <code>get_context_load</code> lit la saturation de la fenêtre dans le registre KV unifié <code>echo_settings</code> (seuils d'alerte <code>40%</code> et critique <code>60%</code>).</li>
-          <li><strong>Generalist Tools (<code>generalist_tools.py</code> v1.31) :</strong> <code>wait_timer</code> programmable (plafonné à 180 s), <code>ask_user_input</code> (modale non-bloquante <code>window.echoCustomPrompt</code> avec boutons <em>pills</em>), <code>list_ui_folders</code>, gestion des automatisations UI (<code>create_ui_automation</code>, <code>update_ui_automation</code>, <code>read_ui_automations</code>, <code>list_ui_automations</code>, <code>delete_ui_automation</code>), calendrier Open WebUI (<code>create_ui_calendar_event</code>, <code>update_ui_calendar_event</code>, <code>read_ui_calendar_events</code>, <code>list_ui_calendar_events</code>, <code>search_ui_calendar_events</code>, <code>delete_ui_calendar_event</code>), et <code>delegate_to_tool_consultant</code> (Agent Stratège Stateless exécuté sur <code>MODEL_PROMETHEUS</code> et récupérant <code>_TOOLS_CACHE</code> depuis <code>sys.modules["function_echo_orchestrator"]</code>).</li>
-          <li><strong>Query Registry (<code>query_registry_tool.py</code> v1.11) :</strong> Consultation obligatoire de <code>echo_resources</code> et des statuts <code>FILE_INGESTION_STATUS</code> avant manipulation de fichiers.</li>
+          <li><strong>Context Gauge (<code>context_gauge.py</code> v5.229.0.0) :</strong> <code>get_context_load</code> lit la saturation de la fenêtre dans le registre KV unifié <code>echo_settings</code> (seuils d'alerte <code>40%</code> et critique <code>60%</code>).</li>
+          <li><strong>Generalist Tools (<code>generalist_tools.py</code> v5.229.2.1) :</strong> <code>wait_timer</code> programmable (plafonné à 180 s), <code>ask_user</code> (modale non-bloquante <code>window.echoCustomPrompt</code> avec boutons <em>pills</em>), <code>list_ui_folders</code>, <code>list_ui_tags</code>, gestion des automatisations UI (<code>create_ui_automation</code>, <code>update_ui_automation</code> avec fixation déterministe sur <code>OWUI_ORCHESTRATOR_MODEL</code>, <code>read_ui_automations</code>, <code>list_ui_automations</code>, <code>delete_ui_automation</code>), calendrier Open WebUI (<code>create_ui_calendar_event</code>, <code>update_ui_calendar_event</code>, <code>read_ui_calendar_events</code>, <code>list_ui_calendar_events</code>, <code>search_ui_calendar_events</code>, <code>delete_ui_calendar_event</code>), et <code>tool_advisor</code> (Agent Conseiller Opérationnel Hybride exécuté sur <code>MODEL_APOLLO</code> avec <code>override_thinking="medium"</code>, adossé aux 10 manuels <code>14-owui-libs/tool_guides/*.md</code> via <code>EchoToolGuidesManager</code>).</li>
+          <li><strong>Query Registry (<code>query_registry_tool.py</code> v5.229.0.0) :</strong> Consultation obligatoire de <code>echo_resources</code> et des statuts <code>FILE_INGESTION_STATUS</code> avant manipulation de fichiers.</li>
         </ul>
       </div>
     </details>
@@ -79,7 +79,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.226.5 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.15 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

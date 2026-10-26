@@ -1,16 +1,16 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 2.30
+version: 5.229.2.2
 description: ECHO Toolbox pour gestion RAG (Sessions & Codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 2.30: Paramètre importance obligatoire (Literal["1".."5"]), alignement PACP/PRAC et énonciation impersonnelle stricte.
-# 2.29: Suppression des emojis dans les retours de l'outil delete_session_context_source pour maximiser le signal/bruit.
-# 2.28: Utilisation de ECHO_SUBAGENT_CONTEXT pour l'isolation asynchrone du RAG.
-# 2.27: Isolation du RAG pour les sous-agents (filtrage strict par sub_sid).
-# 2.26: Fix RAG (Purge idempotente pré-indexation, bridage de l'overlap max_chunk).
+# 5.229.2.2: Ajout du paramètre tag dans search_sessions_context avec résolution SSoT par chat_id.
+# 5.229.2.1: Détente des seuils certainty_map (0.34/0.52/0.63/0.81) et extension de l'aperçu de cartographie à 120 caractères.
+# 5.229.0.0: Compression des docstrings OpenAPI et externalisation de la documentation vers 14-owui-libs/tool_guides/memory_and_rag.md.
+# 5.228.0.1: Précision d'usage de search_sessions_context par un sous-agent pour distillation en phase prospective.
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
@@ -32,6 +32,11 @@ from echo_constants import (
     ECHO_QDRANT_URL
 )
 from echo_prompts import SYS_RAG_DISTILL
+
+try:
+    from open_webui.models.chats import Chats
+except ImportError:
+    Chats = None
 
 # Configuration du Logger
 logging.basicConfig(level=logging.INFO)
@@ -98,21 +103,7 @@ class Tools:
         __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None
     ) -> dict:
-        """
-        Permet au Modèle de consigner de manière persistante une information dans un Méta-Artéfact (PACP ou PRAC).
-        Cet outil retourne le memory_id généré, indispensable pour permettre au Modèle de supprimer ou de cibler ce fait ultérieurement via delete_meta_artifact_item.
-
-        Échelle des niveaux d'importance autorisés (sélection obligatoire) :
-        - "1" (Trivial) : Fait atomique ponctuel, observation isolée ou indice faible non confirmé (Pondération 0.6x, TTL 30j sans accès, éligible à la consolidation nocturne Lvl1 -> Lvl2).
-        - "2" (Mineur) : Hypothèse de travail récurrente, préférence contextuelle secondaire ou synthèse consolidée (Pondération 0.8x, TTL 30j sans accès).
-        - "3" (Utile) : Fait vérifié, contexte technique récurrent ou habitude opérationnelle établie (Pondération 1.0x, TTL 30j sans accès).
-        - "4" (Majeur) : Préférence forte validée, architecture clé ou règle métier structurante (Pondération 1.3x, permanent hors TTL).
-        - "5" (Axiome) : Directive absolue de l'Utilisateur, contrainte critique de sécurité ou invariant identitaire (Pondération 1.6x, sanctuarisé hors TTL).
-
-        :param artifact_name: Le nom du Méta-Artéfact cible ("Profil d'Alignement" ou "Hypothèses d'Apprentissage").
-        :param fact: L'énoncé factuel, la préférence ou l'hypothèse à persister.
-        :param importance: Le niveau d'importance obligatoire choisi parmi "1", "2", "3", "4", "5".
-        """
+        """Consigne de manière persistante un fait (`fact`) dans un Méta-Artéfact (`Profil d'Alignement` ou `Hypothèses d'Apprentissage`) avec niveau d'importance obligatoire de '1' à '5', et retourne son `memory_id`."""
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id") or not __metadata__:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -132,7 +123,7 @@ class Tools:
 
         user_id = __user__.get("id")
         chat_id = __metadata__.get("chat_id")
-        await events.status("🧠 Distillation contextuelle et enregistrement dans la base vectorielle...")
+        await events.status(f"🧠 Mémorisation dans le Méta-Artéfact ({artifact_name})...")
         try:
             # Extraction memory_id + tags via LLM
             distilled = await EchoGeminiClient.call_distillation(
@@ -192,20 +183,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None
     ) -> dict:
-        """
-        Interface de lecture de la mémoire vectorielle persistante (Méta-Artéfacts inter-sessions).
-        Retourne systématiquement le contenu détaillé des faits mémorisés. Le mode d'extraction s'adapte selon la présence de 'query'.
-
-        Règle de résolution :
-        - Mode "Recherche Ciblée" (query renseigné) : Extraction sémantique vectorielle. Renvoie les souvenirs les plus pertinents par rapport au concept, pondérés par leur niveau d'importance.
-        - Mode "Lecture Globale" (query omis) : Extraction chronologique neutre. Renvoie les N derniers faits mémorisés dans leur intégralité pour s'imprégner du contexte général sans biais sémantique.
-
-        :param query: Optionnel. Le concept ou mot-clé ciblé. Omettre pour une lecture globale et temporelle.
-        :param artifact_name: Optionnel. Restreint la lecture à un Méta-Artéfact spécifique.
-        :param limit: Optionnel. Nombre maximum de faits retournés. Défaut: 20.
-        :param start_date: Optionnel. Borne chronologique inférieure (ISO 8601).
-        :param end_date: Optionnel. Borne chronologique supérieure (ISO 8601).
-        """
+        """Recherche par similarité sémantique (`query` défini) ou lit chronologiquement (`query` omis) les faits stockés dans les Méta-Artéfacts long-terme."""
 
         events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
@@ -348,7 +326,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __metadata__: Optional[dict] = None,
     ) -> dict:
-        """Permet au Modèle de supprimer une information obsolète ou erronée d'un Méta-Artéfact à partir de son memory_id."""
+        """Supprime définitivement un fait d'un Méta-Artéfact long-terme à partir de son `memory_id`."""
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id"):
             return wrap_tool_output(text="❌ Erreur : Utilisateur non identifié.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -390,7 +368,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None
     ) -> dict:
-        """Sauvegarde éphémère dans le RAG Temporaire (Contexte de la session en cours)."""
+        """Vectorise et sauvegarde un texte (`text`) sous l'identifiant `source_id` dans la Mémoire Vectorielle de la session."""
         events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -433,13 +411,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None
     ) -> dict:
-        """
-        Suppression intégrale et irréversible d'une source du RAG Éphémère.
-        Permet d'éliminer le contexte d'un fichier, d'une page web ou d'une session obsolète de la mémoire de travail.
-        Attention : Purge strictement locale à la source nommée. Une suppression globale de session est impossible via cet outil.
-
-        :param source_id: Obligatoire. L'identifiant strict de la source (ex: nom de fichier, UUID de session, slug libre) à purger de la mémoire.
-        """
+        """Supprime tous les vecteurs associés à `source_id` dans la Mémoire Vectorielle de la session active."""
         events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -499,6 +471,7 @@ class Tools:
         certainty_level: str,
         query: Optional[str] = None,
         source_id: str = "",
+        tag: Optional[str] = None,
         global_search: bool = False,
         limit: int = 32,
         sort_by_time: bool = False,
@@ -509,39 +482,42 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None
     ) -> dict:
-        """
-        Interface d'exploration de la mémoire vectorielle de travail (RAG).
-        Mode sémantique (query défini) : Extraction de fragments textuels complets.
-        Mode index (query omis) : Cartographie des sources indexées (aperçu 60 chars).
-
-        :param certainty_level: Obligatoire. Niveau de certitude cosinus attendu ("BROAD", "STANDARD", "STRICT", "EXACT").
-               - BROAD : Tolérance maximale (exploration, concepts vagues).
-               - STANDARD : Équilibre pertinence/bruit.
-               - STRICT : Correspondance sémantique forte (factuel).
-               - EXACT : Correspondance quasi-littérale.
-        :param query: Optionnel. Concept ciblé. Omettre pour cartographier l'index.
-        :param source_id: Optionnel. UUID de la source pour filtrage strict.
-        :param global_search: Optionnel. Booléen. Défaut: False (restreint à la session active).
-                              Définir sur True pour étendre la recherche à l'intégralité de l'historique inter-sessions.
-                              Déclencheur d'activation : référence explicite de l'utilisateur à des données antérieures ("hier", "précédemment", "autre session").
-        :param limit: Optionnel. Nombre maximum de fragments uniques. Défaut: 32.
-        :param sort_by_time: Optionnel. Si True, force le tri chronologique (historique). Si False (défaut), trie par pertinence (score).
-        :param start_date: Optionnel. Borne chronologique inférieure (ISO 8601).
-        :param end_date: Optionnel. Borne chronologique supérieure (ISO 8601).
-        """
+        """Explore la Mémoire Vectorielle de la session (`global_search=False`), de toutes les sessions (`global_search=True`) ou filtrée par étiquette (`tag`), selon `certainty_level`, ou cartographie les sources indexées (`query` omis)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
             return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         user_id = __user__.get("id")
         chat_id = __metadata__.get("chat_id")
+
+        matching_chat_ids = None
+        if tag and tag.strip():
+            clean_tag = tag.strip()
+            try:
+                matching_chats = await Chats.get_chat_list_by_user_id_and_tag_name(
+                    user_id=user_id, tag_name=clean_tag, skip=0, limit=100
+                ) if Chats and hasattr(Chats, "get_chat_list_by_user_id_and_tag_name") else []
+                matching_chat_ids = [c.id for c in matching_chats]
+                if not matching_chat_ids:
+                    return wrap_tool_output(
+                        text=f"Aucune conversation associée au tag '{clean_tag}' n'a été trouvée.",
+                        status={"status": "success", "results": []},
+                        user_id=user_id, chat_id=chat_id, metadata=__metadata__
+                    )
+            except Exception as e:
+                return wrap_tool_output(
+                    text=f"❌ Erreur résolution du tag '{clean_tag}': {str(e)}",
+                    status={"status": "error"},
+                    user_id=user_id, chat_id=chat_id, metadata=__metadata__
+                )
+
         scope = "globale" if global_search else "locale"
 
         certainty_map = {
-            "BROAD": (0.40, 1.0),
-            "STANDARD": (0.55, 1.0),
-            "STRICT": (0.70, 1.0),
-            "EXACT": (0.85, 1.0)
+            "BROAD": (0.34, 1.0),
+            "STANDARD": (0.52, 1.0),
+            "STRICT": (0.63, 1.0),
+            "EXACT": (0.81, 1.0)
         }
         c_min, c_max = certainty_map.get(certainty_level.upper(), (0.55, 1.0))
 
@@ -549,7 +525,10 @@ class Tools:
             from echo_constants import COLLECTION_SESSION_RAG
             async with httpx.AsyncClient(timeout=self.valves.RECALL_TIMEOUT) as client:
                 must_filters = [{"key": "user_id", "match": {"value": user_id}}]
-                if not global_search:
+                if matching_chat_ids is not None:
+                    must_filters.append({"key": "chat_id", "match": {"any": matching_chat_ids}})
+                    scope = f"filtrée sur tag '{tag.strip()}' ({len(matching_chat_ids)} chats)"
+                elif not global_search:
                     must_filters.append({"key": "chat_id", "match": {"value": chat_id}})
                 if source_id:
                     must_filters.append({"key": "source_id", "match": {"value": source_id}})
@@ -659,7 +638,7 @@ class Tools:
                             if sid not in sources or ts > sources[sid]["timestamp"]:
                                 sources[sid] = {
                                     "timestamp": ts,
-                                    "preview": pay.get("text", "")[:60].replace("\n", " ") + "..."
+                                    "preview": pay.get("text", "")[:120].replace("\n", " ") + "..."
                                 }
                         pay_tags = pay.get("tags") or []
                         for t in pay_tags:

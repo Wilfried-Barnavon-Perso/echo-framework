@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 192.88
+version: 5.231.15.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 192.88: Transmission des métriques de Checkpoint Cognitif actif (compaction_count, compacted_turns) à EchoUI.deploy_context_gauge.
-# 192.87: Support de <artifact id="AEC_context_checkpoint"> sur le message pivot (préservation bit-perfect du shadow et séparation PGCU).
-# 192.86: Renommage du composant en echo_orchestrator.py (Écho / ECHO - Orchestrateur).
-# 192.85: Affichage du modèle technique lors du transfert cognitif (_get_ui_display) dans le statut UI.
-# 192.84: Réactivation du rafraîchissement asynchrone des quotas OAuth2 et affichage HUD des quotas 5h et hebdomadaire.
+# 5.231.15.1: Sanctuarisation de promptTokenCount en cascade cognitive pour immuniser la persistance contre les faux deltas négatifs.
+# 5.231.13.1: Suppression de la double écriture SSE de save_context_stats et correction du cumul de promptTokenCount/cachedContentTokenCount en cascade.
+# 5.231.10.2: Déport du HUD contextuel vers context_gauge_filter, transmission de (user_id, chat_id) à EchoEvents et persistance auto-archivée.
+# 5.231.10.1: Suppression de detect_verbal_escalation et déduplication de la docstring de new_cognitive_level vis-à-vis du PCD.
+# 5.231.8.1: Reformulation haut SNR de la description et des paramètres de new_cognitive_level (style PAS, conformité Gemini 3/4).
 
 
 # ==============================================================================
@@ -22,8 +22,9 @@ import secrets
 import re
 import time
 import codecs
+import json
 import orjson as std_json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import List, Dict, Optional, AsyncGenerator, Literal, Any, Union
 
 # Importations ECHO Strictes (Volume Docker)
@@ -40,16 +41,20 @@ from echo_core import (
     resolve_placeholders,
     ensure_gemini_parts,
     unbox_tool_output,
-    convert_owui_tools
+    convert_owui_tools,
+    attach_thought_signature,
 )
 from echo_gemini_client import EchoGeminiClient
+from echo_http import FatalAPIError
 from echo_logger import DebugLogger
-from echo_protocol import get_ca_model_id
-from echo_ui import EchoUI
 try:
     from echo_audio import register_echo_audio_routes
 except ImportError:
     register_echo_audio_routes = None
+try:
+    from echo_window_manager import register_echo_wm_routes
+except ImportError:
+    register_echo_wm_routes = None
 from echo_constants import (
     MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS,
     FILE_INGESTION_STATUS,
@@ -57,8 +62,7 @@ from echo_constants import (
     ECHO_TOOLS_CACHE_MAX_SIZE,
     ECHO_MODELS_REGISTRY, get_model_identity, get_generation_config,
     get_descending_cascade, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN,
-    AUTH_DATA_USER_EMAIL, AUTH_DATA_USER_TIER, AUTH_DATA_PROJECT_ID,
-    AUTH_METHOD_OAUTH2, AEC_REMINDERS
+    AEC_REMINDERS
 )
 from echo_auth import EchoAuth
 
@@ -165,7 +169,7 @@ class Orchestrator:
     def _mutate_context_identity(self, context: List[Dict], new_model: str, old_model: str):
         """
         Mutation chirurgicale de l'AEC XML dans le contexte (<artifact id="AEC_modele">).
-        Patche exclusivement la dernière occurrence (tour courant) afin de préserver 
+        Patche exclusivement la dernière occurrence (tour courant) afin de préserver
         le cache des préfixes de l'API Gemini sur les tours historiques.
         Met à jour self.model_origin pour les prochains resolve_placeholders.
         """
@@ -257,11 +261,6 @@ class Orchestrator:
                 i += 1; continue
 
             # --- PRIORITÉ 1 : SHADOW BIT-PERFECT (ID + TIMESTAMP) ---
-            checkpoint_xml_on_msg = None
-            if role == "user" and isinstance(content, str) and '<artifact id="AEC_context_checkpoint"' in content:
-                from echo_core import EchoCompactionEngine
-                checkpoint_xml_on_msg, content = EchoCompactionEngine.strip_checkpoint_tag(content)
-
             if msg_id and updated_at:
                 shadow_data = self.user_data_manager.get_shadow(msg_id, updated_at)
                 if shadow_data:
@@ -274,15 +273,6 @@ class Orchestrator:
                         i += 1; continue
                     else:
                         # Shadow Classique (Parts uniquement)
-                        if checkpoint_xml_on_msg and isinstance(shadow_data, list):
-                            first_txt = shadow_data[0].get("text", "") if shadow_data and isinstance(shadow_data[0], dict) else ""
-                            if checkpoint_xml_on_msg not in first_txt:
-                                cleaned_shadow = [
-                                    p for p in shadow_data
-                                    if not (isinstance(p, dict) and '<artifact id="AEC_context_checkpoint"' in str(p.get("text", "")))
-                                ]
-                                shadow_data = [{"text": checkpoint_xml_on_msg + "\n\n"}] + cleaned_shadow
-                                self.user_data_manager.save_shadow(msg_id, updated_at, shadow_data, chat_id, role)
                         role_gemini = "model" if role in ["assistant", "model"] else "user"
                         final_contents.append({"role": role_gemini, "parts": shadow_data})
                         inv_hash = self.user_data_manager.calculate_invariant(role, shadow_data)
@@ -304,14 +294,14 @@ class Orchestrator:
                     aggregated_tool_parts.extend(rich_tool_parts)
                     i += 1
                 restored_parts = aggregated_tool_parts
-                role_gemini = "user" # Les réponses d'outils sont toujours 'user' pour Gemini
+                role_gemini = "user"  # Les réponses d'outils sont toujours 'user' pour Gemini
 
             else:
                 # USER / ASSISTANT
                 if role in ["assistant", "model"]:
                     content, _ = split_thought_process(content if isinstance(content, str) else str(content))
 
-                draft_parts = meta.get("_echo_user_parts_draft") if (role == "user" and i == len(messages)-1) else None
+                draft_parts = meta.get("_echo_user_parts_draft") if (role == "user" and i == len(messages) - 1) else None
 
                 if role == "user":
                     if draft_parts is not None:
@@ -323,8 +313,6 @@ class Orchestrator:
                         for p in restored_parts:
                             if "text" in p:
                                 p["text"] = f"<REQUETE_UTILISATEUR>\n{p['text']}\n</REQUETE_UTILISATEUR>"
-                        if checkpoint_xml_on_msg:
-                            restored_parts = [{"text": checkpoint_xml_on_msg + "\n\n"}] + restored_parts
                 else:
                     # Assistant
                     tool_calls = m.get("tool_calls", [])
@@ -363,18 +351,11 @@ class Orchestrator:
                         if tool_io:
                             restored_parts = [{"functionCall": {"name": tc["name"], "args": tc["args"], **({"id": tc["id"]} if "id" in tc else {})}} for tc in tool_io.get("calls", [])] + restored_parts
 
-                    if sig and restored_parts:
-                        for p in restored_parts:
-                            if "functionCall" in p:
-                                p["thoughtSignature"] = sig; break
-                        else:
-                            for p in restored_parts:
-                                if "text" in p:
-                                    p["thoughtSignature"] = sig; break
-                    elif tool_calls:
-                        for p in restored_parts:
-                            if "functionCall" in p:
-                                p["thoughtSignature"] = MAGIC_KEY_SKIP_VALIDATION; break
+                    attach_thought_signature(
+                        restored_parts,
+                        sig,
+                        fallback_magic_key=MAGIC_KEY_SKIP_VALIDATION if tool_calls else None,
+                    )
 
                 restored_parts = ensure_gemini_parts(restored_parts, model_id, self.model_origin)
                 i += 1
@@ -396,7 +377,7 @@ class Orchestrator:
             max_tokens = getattr(self.valves, "MAX_CONTEXT_SIZE", ECHO_MAX_CONTEXT_SIZE)
 
             if size > max_tokens * CONTEXT_WARNING_THRESHOLD:
-                await events.toast("⚠️ Approche de la limite contextuelle. Compactage recommandé (Action 'Compacter le contexte de la session' ou UserValve Auto-Compaction).", "warning", "ECHO V5")
+                await events.toast("⚠️ Approche de la limite contextuelle. Migration de session recommandée (Action 'Poursuivre dans une nouvelle conversation').", "warning", "ECHO V5")
 
             if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
                 system_parts = final_contents[0] if final_contents and final_contents[0].get("role") == "system" else None
@@ -465,6 +446,7 @@ class StreamProcessor:
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False; buffer = ""; decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
         buffered_lines = []
+        pending_tool_deltas = []
         async for chunk in response.aiter_bytes():
             buffer += decoder.decode(chunk, final=False)
             while "\n" in buffer:
@@ -482,7 +464,6 @@ class StreamProcessor:
                             if self.usage_stats is None:
                                 self.usage_stats = {}
                             self.usage_stats.update(target["usageMetadata"])
-                            self.user_data_manager.save_context_stats(self.usage_stats)
 
                         cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
                         if cand:
@@ -498,7 +479,7 @@ class StreamProcessor:
                                     yield f"\n\n> ⚠️ï¸  **Interruption de génération par Google API** (Motif : `{finish_reason}`)\n"
                                     return
                             if content:
-                                for part in content["parts"]:
+                                for part in content.get("parts", []):
                                     if "thoughtSignature" in part:
                                         self.captured_sig = part["thoughtSignature"]
                                     if part.get("thought"):
@@ -512,14 +493,17 @@ class StreamProcessor:
                                         self.is_generating_tool = True
                                         if in_think:
                                             in_think = False
+                                        if self.escalation_requested:
+                                            self.is_generating_tool = False
+                                            continue
                                         tool_call = self._create_tool_call_part(part["functionCall"], len(self.accumulated_calls))
                                         if tool_call:
-                                            yield {"choices": [{"index": 0, "delta": {"tool_calls": [tool_call]}}]}
-                                        else:
-                                            return # Escalade
+                                            pending_tool_deltas.append({"choices": [{"index": 0, "delta": {"tool_calls": [tool_call]}}]})
                                         # [AUTO-CONTINUE] Libération du verrou après complétion de l'appel d'outil
                                         self.is_generating_tool = False
                                     elif "text" in part:
+                                        if self.escalation_requested:
+                                            continue
                                         if in_think:
                                             in_think = False
                                         raw_t = part["text"].replace("<think>", "").replace("</think>", "")
@@ -539,6 +523,9 @@ class StreamProcessor:
                         yield f"\n\n> ❌ **Erreur critique de décodage du flux API** : {str(e)}\n"
         if in_think:
             in_think = False
+        if not self.escalation_requested and pending_tool_deltas:
+            for delta_chunk in pending_tool_deltas:
+                yield delta_chunk
         if self.logger:
             self.logger.log("api_response", self.full_raw_accumulator)
 
@@ -571,6 +558,7 @@ class Pipe:
     class Valves(BaseModel):
         DEBUG_MODE: bool = Field(default=False, description="Active le mode de débogage avancé (logs détaillés dans data_dir).")
         MAX_CONTEXT_SIZE: int = Field(default=1048576, description="Taille maximale du contexte absorbable en tokens.")
+
     class UserValves(BaseModel):
         SHOW_CONTEXT_METRICS: bool = Field(default=True)
         MODEL_SELECTION: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "AUTO", "AUTO_PROM"] = Field(default="AUTO")
@@ -588,6 +576,11 @@ class Pipe:
                 register_echo_audio_routes()
             except Exception as e:
                 print(f"[Écho] ⚠️ Échec enregistrement routes audio : {e}")
+        if register_echo_wm_routes is not None:
+            try:
+                register_echo_wm_routes()
+            except Exception as e:
+                print(f"[Écho] ⚠️ Échec enregistrement routes Window Manager : {e}")
 
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, __request__: Optional[Any] = None, __tools__: list = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
 
@@ -625,6 +618,37 @@ class Pipe:
             if task_id in ["title_generation", "tags_generation", "follow_up_generation"]:
                 generation_config["responseMimeType"] = "application/json"
 
+            if task_id == "tags_generation":
+                user_id = __user__.get("id") if __user__ else None
+                chat_id = safe_metadata.get("chat_id")
+                known_user_tags = []
+                current_chat_tags = []
+                try:
+                    from open_webui.models.tags import Tags
+                    from open_webui.models.chats import Chats
+                    if user_id:
+                        user_tag_objs = await Tags.get_tags_by_user_id(user_id) if hasattr(Tags, "get_tags_by_user_id") else []
+                        known_user_tags = [t.name for t in user_tag_objs]
+                    if chat_id and user_id:
+                        chat_obj = await Chats.get_chat_by_id_and_user_id(chat_id, user_id) if hasattr(Chats, "get_chat_by_id_and_user_id") else None
+                        current_chat_tags = (chat_obj.meta or {}).get("tags", []) if chat_obj else []
+                except Exception as tag_ctx_err:
+                    log.warning(f"[ECHO-ORCHESTRATOR] Impossible de charger le contexte tags: {tag_ctx_err}")
+
+                reconcile_directive = (
+                    "\n\n### Réconciliation et Cohérence des Étiquettes\n"
+                    f"- Catalogue des étiquettes existantes de l'Utilisateur : {json.dumps(known_user_tags, ensure_ascii=False)}\n"
+                    f"- Étiquettes actuelles de cette discussion : {json.dumps(current_chat_tags, ensure_ascii=False)}\n"
+                    "Directives strictes :\n"
+                    "1. Rédiger TOUTES les étiquettes EXCLUSIVEMENT en anglais (minuscules, tiret du bas '_' au singulier).\n"
+                    "2. Granularité : Privilégier des étiquettes informatives et distinctives (technologies, méthodes, outils, concepts métiers, objets d'étude).\n"
+                    "3. Le catalogue sert de référence d'harmonisation pour réutiliser les termes exacts et éviter les quasi-synonymes, mais DOIT laisser place à de NOUVELLES étiquettes distinctives dès qu'un concept clé distinct le justifie.\n"
+                    "4. CONSERVER les étiquettes actuelles de cette discussion si les thèmes correspondants demeurent pertinents dans l'échange.\n"
+                    "5. Quota : retourner un objet JSON contenant entre 2 et 16 étiquettes au total."
+                )
+                if gemini_contents and gemini_contents[-1]["parts"]:
+                    gemini_contents[-1]["parts"].append({"text": reconcile_directive})
+
             payload = {
                 "contents": gemini_contents,
                 "generationConfig": generation_config
@@ -658,11 +682,11 @@ class Pipe:
         # ==============================================================================
         # SUITE NORMALE DU PIPE ECHO (Agentivité, RAG, Outils...)
         # ==============================================================================
-        events = EchoEvents(__event_emitter__)
         if not __user__:
             yield "❌ Identité manquante."; return
         user_valves = __user__.get("valves") or self.UserValves()
         chat_id = kwargs.get("__chat_id__") or body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
+        events = EchoEvents(__event_emitter__, user_id=__user__["id"], chat_id=chat_id)
         orch = Orchestrator(self.valves, user_valves, self.data_dir, __user__["id"], chat_id)
         # auth = AuthService(user_id=__user__["id"])  # [192.36] DÉSACTIVÉ : AuthService n'existe plus.
         echo_auth = EchoAuth(user_id=__user__["id"])
@@ -789,7 +813,7 @@ class Pipe:
                 ok, auth_url, server_ip, ssh_port, cb_port, temp_pwd = \
                     await auth.initiate_pkce_flow(request=__request__)
                 if not ok:
-                    yield f"\u274c Impossible de lancer le flow PKCE.\n\n" + auth.get_auth_prompt()
+                    yield "\u274c Impossible de lancer le flow PKCE.\n\n" + auth.get_auth_prompt()
                     return
 
                 # Persister l'URL pour les messages suivants
@@ -905,8 +929,9 @@ class Pipe:
         # [NOUVEAU] HISTORIQUE DE CASCADE POUR SUTURE & SHADOW
         cascade_history = []
         current_cumul = body.get("_echo_last_cumul")
-        user_msg_id = (__metadata__ or {}).get("_echo_user_msg_id")
-        asst_msg_id = kwargs.get("__message_id__")
+        meta_init = {**(__metadata__ or {}), **body.get("metadata", {})}
+        user_msg_id = meta_init.get("_echo_user_msg_id") or meta_init.get("user_message_id")
+        asst_msg_id = kwargs.get("__message_id__") or meta_init.get("message_id")
         failed_models_this_turn = set()
         applied_model = target_model
         is_fallback_cascade = False
@@ -972,37 +997,37 @@ class Pipe:
                     escalation_tool = {
                         "name": "new_cognitive_level",
                         "description": (
-                            "Outil d'ajustement cognitif. Le Modèle est tenu d'appeler cet outil AVANT "
-                            "toute tâche nécessitant d'adapter le niveau cognitif pour garantir la "
-                            "qualité de la réponse ou optimiser les ressources.\n\n"
-                            "## Règles de sélection\n"
-                            "- **MODEL_ZEPHYR** (Réflexe — défaut) : Salutations, remerciements, extractions simples, "
-                            "traduction courte, le simple réflexe ou la simple conversation. L'inertie "
-                            "en ZEPHYR est proscrite et demande une évaluation silencieuse.\n"
-                            "- **MODEL_APOLLO** (Exécution — moteur agentique) : Escalade requise pour toute "
-                            "tâche non-triviale (Recherche web, code, analyse, orchestration d'outils, "
-                            "planification, raisonnement multi-étapes).\n"
-                            "  \u2192 Le Modèle escalade vers APOLLO systématiquement dès que la tâche dépasse "
-                            "le simple réflexe. L'inertie en APOLLO est proscrite et demande une évaluation silencieuse.\n"
-                            "- **MODEL_PROMETHEUS** (Expertise & Réflexion Profonde) : Dès qu'une tâche nécessite un "
-                            "raisonnement cognitif poussé, une anticipation structurelle ou une logique formelle. "
-                            "Privilégier de manière proactive.\n"
-                            "  → Le Modèle justifie le moindre besoin d'analyse et redescend vers APOLLO ou ZEPHYR "
-                            "une fois la tâche complexe accomplie.\n"
-                            "(Note : Le modèle actuel est exclu de l'enum).\n\n"
-                            "## Corrélation contextuelle\n"
-                            "La saturation contextuelle est atténuée par la Mémoire Vectorisée de Session. "
-                            "Vigilance accrue à haute charge (> 50%) — préférer alors APOLLO ou PROMETHEUS."
+                            "Outil de transition cognitive dynamique exécutant le Protocole PCD (le niveau actif est exclu de l'enum `niveau_requis`).\n\n"
+                            "## Règles d'invocation\n"
+                            "1. **Exclusivité d'appel d'outil** : `new_cognitive_level` DOIT être l'UNIQUE appel d'outil émis dans le tour. "
+                            "Le Modèle DOIT invoquer cet outil SANS autre appel parallèle ; tout autre outil requis DOIT être exécuté APRÈS la transition par le Modèle cible.\n"
+                            "2. **Prohibition de l'inertie et redescente** : Conformément au PCD, l'inertie en `MODEL_ZEPHYR` (dès qu'une action outillée ou analytique est requise) "
+                            "comme en `MODEL_APOLLO` (face à un besoin d'architecture, de logique formelle ou d'orchestration profonde relevant de `MODEL_PROMETHEUS`) est ABSOLUMENT INTERDITE. "
+                            "Le Modèle DOIT également redescendre vers `MODEL_APOLLO` ou `MODEL_ZEPHYR` dès qu'une phase critique en `MODEL_PROMETHEUS` est close.\n"
+                            "3. **Charge contextuelle** : Au-delà de 50 % de charge contextuelle, le Modèle DOIT privilégier `MODEL_APOLLO` ou `MODEL_PROMETHEUS`."
                         ),
                         "parameters": {
                             "type": "object",
                             "properties": {
-                                "niveau_requis": {"type": "string", "enum": menu_escalade},
-                                "plan_de_transfert": {"type": "string", "description": "Plan Markdown structuré (Objectif, Analyse, Stratégie, Contraintes)."},
-                                "raison": {"type": "string"}
+                                "niveau_requis": {
+                                    "type": "string",
+                                    "enum": menu_escalade,
+                                    "description": "Identifiant du niveau cognitif cible requis pour traiter la tâche.",
+                                },
+                                "plan_de_transfert": {
+                                    "type": "string",
+                                    "description": (
+                                        "Plan de relais Markdown à haut SNR transmis au niveau cible. DOIT structurer : "
+                                        "1) Objectif, 2) Analyse de l'état courant, 3) Stratégie et outils à mobiliser, 4) Contraintes."
+                                    ),
+                                },
+                                "raison": {
+                                    "type": "string",
+                                    "description": "Justification synthétique du changement de niveau cognitif.",
+                                },
                             },
-                            "required": ["niveau_requis", "plan_de_transfert"]
-                        }
+                            "required": ["niveau_requis", "plan_de_transfert"],
+                        },
                     }
                     if not tools:
                         tools = [{"functionDeclarations": []}]
@@ -1034,6 +1059,11 @@ class Pipe:
                         yield chunk
             except Exception as e:
                 log.error(f"[PipeEngine] Erreur API lors de l'appel Gemini: {e}")
+                # Payload rejeté (400) : le contexte est invalide pour TOUS les modèles.
+                # Une cascade ne peut pas corriger l'erreur et masquerait la cause réelle.
+                if isinstance(e, FatalAPIError):
+                    yield f"❌ Requête rejetée par l'API (400, payload invalide), sans cascade. ({str(e)})"
+                    break
                 # GESTION DES ÉCHECS TECHNIQUES — CASCADE DESCENDANTE
                 if is_auto and cascade_attempt < max_cascade_attempts:
                     cascade_order = get_descending_cascade(target_model, include_start=False)
@@ -1069,8 +1099,16 @@ class Pipe:
 
             # --- [NOUVEAU] ACCUMULATION DES TOKENS (SOUVERAINETÉ) ---
             if proc.usage_stats:
-                for k in cumulative_usage_stats:
-                    cumulative_usage_stats[k] += proc.usage_stats.get(k, 0)
+                # Sanctuarisation du promptTokenCount conversationnel initial :
+                # Ne pas écraser avec le prompt temporaire gonflé des cascades cognitives internes (relais, schémas).
+                if cumulative_usage_stats["promptTokenCount"] == 0:
+                    cumulative_usage_stats["promptTokenCount"] = proc.usage_stats.get("promptTokenCount", 0)
+                cumulative_usage_stats["cachedContentTokenCount"] = proc.usage_stats.get("cachedContentTokenCount", cumulative_usage_stats["cachedContentTokenCount"])
+                cumulative_usage_stats["candidatesTokenCount"] += proc.usage_stats.get("candidatesTokenCount", 0)
+                cumulative_usage_stats["totalTokenCount"] = (
+                    cumulative_usage_stats["promptTokenCount"]
+                    + cumulative_usage_stats["candidatesTokenCount"]
+                )
 
             # --- [NOUVEAU] GESTION DE LA CASCADE ---
             if is_auto and proc.escalation_requested:
@@ -1080,7 +1118,7 @@ class Pipe:
                 # Mapping explicite pour gérer la montée ET la redescente
                 new_target = get_model_identity(target_req)
 
-                if not new_target:
+                if not new_target or new_target == "UNKNOWN":
                     sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
                     # Signalement d'erreur de paramètre au modèle actuel
                     context.append({
@@ -1154,10 +1192,7 @@ class Pipe:
                 # Injection de la thoughtSignature requise par l'API Gemini 3+
                 # Selon la spec, pour des appels parallèles, seul le PREMIER functionCall doit recevoir la signature.
                 # (https://ai.google.dev/gemini-api/docs/thinking#signatures)
-                for part in model_parts:
-                    if "functionCall" in part:
-                        part["thoughtSignature"] = sig_to_apply
-                        break
+                attach_thought_signature(model_parts, sig_to_apply)
 
                 # [NOUVEAU] INDEXATION INTERMÉDIAIRE (SUTURE)
                 model_msg = {"role": "model", "parts": model_parts}
@@ -1175,17 +1210,23 @@ class Pipe:
                     "model_used": target_req,  # À ce stade l'escalade est approuvée (clamping fait en amont)
                 }
                 msg = f"Transfert effectué vers {target_req}."
+                if proc.accumulated_text and proc.accumulated_text.strip():
+                    msg += (
+                        " Le préambule textuel précédent a déjà été affiché à l'Utilisateur : "
+                        "poursuivez directement le traitement de la requête sans répéter les salutations ni l'annonce de transition."
+                    )
                 user_resp_parts = [{"functionResponse": {"name": "new_cognitive_level", "response": {**escalation_status, "message": msg, "plan": plan_md}, "id": sys_tc_id}}]
 
                 # Annulation formelle des appels parallèles orphelins pour préserver le schéma strict
                 if proc.accumulated_calls:
                     for c in proc.accumulated_calls:
-                        user_resp_parts.append({
-                            "functionResponse": {
-                                "name": c["name"],
-                                "response": {"status": "error", "message": "Exécution annulée (Escalade cognitive prioritaire). Veuillez relancer cet outil."}
-                            }
-                        })
+                        cancel_resp = {
+                            "name": c["name"],
+                            "response": {"status": "error", "message": "Exécution annulée (Escalade cognitive prioritaire). Veuillez relancer cet outil."},
+                        }
+                        if "id" in c:
+                            cancel_resp["id"] = c["id"]
+                        user_resp_parts.append({"functionResponse": cancel_resp})
 
                 user_msg = {"role": "user", "parts": user_resp_parts}
                 inv_u = orch.user_data_manager.calculate_invariant("user", user_resp_parts)
@@ -1216,7 +1257,7 @@ class Pipe:
                         model_parts.append({"functionCall": call_part})
 
                 if model_parts:
-                    model_parts[0]["thoughtSignature"] = sig_to_apply
+                    attach_thought_signature(model_parts, sig_to_apply)
                     model_msg = {"role": "model", "parts": model_parts}
                     inv = orch.user_data_manager.calculate_invariant("model", model_parts, tool_io=tool_io)
                     new_cumul = orch.user_data_manager.calculate_cumulative(inv, current_cumul)
@@ -1275,7 +1316,11 @@ class Pipe:
                 full_user_parts = ensure_gemini_parts(user_draft, target_model, orch.model_origin)
                 # Guard : si content est une liste (multipart OWUI), le texte est déjà dans user_draft.
                 # Sans ce guard, la liste entière serait passée à resolve_placeholders, corrompant le shadow.
-                if isinstance(user_text, str) and user_text.strip():
+                has_req_tag = any(
+                    isinstance(p, dict) and "<REQUETE_UTILISATEUR>" in str(p.get("text", ""))
+                    for p in full_user_parts
+                )
+                if isinstance(user_text, str) and user_text.strip() and not has_req_tag:
                     full_user_parts.append({"text": resolve_placeholders(user_text, target_model, orch.model_origin)})
                 orch.user_data_manager.save_shadow(user_msg_id, user_updated_at, full_user_parts, chat_id, "user")
 
@@ -1318,7 +1363,7 @@ class Pipe:
                 final_shadow_content = proc._filter_cascade_for_shadow(cascade_history)
                 if final_shadow_content:
                     orch.user_data_manager.save_shadow(asst_msg_id, int(time.time()), final_shadow_content, chat_id, "assistant")
-            user_msg_id = __metadata__.get("_echo_user_msg_id") if __metadata__ else None
+            user_msg_id = meta.get("_echo_user_msg_id") or meta.get("user_message_id")
             if cascade_history and user_msg_id:
                 try:
                     orch.user_data_manager.state_manager.save_auth_data(f"cascade_{user_msg_id}", std_json.dumps(cascade_history).decode('utf-8'))
@@ -1329,128 +1374,8 @@ class Pipe:
             for c in proc.accumulated_calls:
                 orch.user_data_manager.save_call_bridge(c["id"], proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION, c["name"], c["args"])
 
-        # --- HUD METRICS ---
-        if user_valves.SHOW_CONTEXT_METRICS:
-            # Rafraîchissement intelligent des quotas (OAuth2 uniquement) - ASYNCHRONE NON BLOQUANT
-            if auth_providers and auth_providers[0].get("type") == AUTH_METHOD_OAUTH2:
-                import asyncio
-                if '_BACKGROUND_TASKS' not in globals():
-                    _BACKGROUND_TASKS = set()
-                q_task = asyncio.create_task(auth.refresh_quota_if_needed())
-                _BACKGROUND_TASKS.add(q_task)
-                q_task.add_done_callback(_BACKGROUND_TASKS.discard)
-
-            p_t = cumulative_usage_stats.get("promptTokenCount", 0)
-            c_t = cumulative_usage_stats.get("cachedContentTokenCount", 0)
-            g_t = cumulative_usage_stats.get("candidatesTokenCount", 0)
-
-            max_t = self.valves.MAX_CONTEXT_SIZE
-
-            # Nom de la source active (via le registre des fournisseurs d'accès)
-            source_label = auth_providers[0]['type'].replace('_', ' ').title() if auth_providers else "ECHO"
-            plan_name = f"Accès {source_label}"
-            credits_val = "∞"
-            quota_str = ""
-
-            # Métadonnées d'identité pour l'infobulle (INFO GEMINI CODE ASSIST)
-            email = echo_auth.get_auth_data(AUTH_DATA_USER_EMAIL)
-            tier = echo_auth.get_auth_data(AUTH_DATA_USER_TIER)
-            proj = echo_auth.get_auth_data(AUTH_DATA_PROJECT_ID)
-
-            # Quota spécifique au modèle CA courant (5h + Hebdomadaire)
-            ca_model_id = get_ca_model_id(target_model)
-            model_quota = echo_auth.get_model_quota(ca_model_id)
-            q_summary = echo_auth.get_quota_summary(ca_model_id)
-
-            def _format_quota_reset(raw_iso: str) -> str:
-                if not raw_iso or "T" not in raw_iso:
-                    return raw_iso or "N/A"
-                try:
-                    reset_dt = datetime.fromisoformat(raw_iso.replace("Z", "+00:00"))
-                    diff_sec = (reset_dt - datetime.now(timezone.utc)).total_seconds()
-                    if diff_sec <= 0:
-                        return "Imminent"
-                    diff_min = int(diff_sec / 60)
-                    if diff_min >= 1440:
-                        days = diff_min // 1440
-                        hours = (diff_min % 1440) // 60
-                        return f"{reset_dt.strftime('%d/%m %H:%M')} ({days}j {hours}h)"
-                    if diff_min >= 60:
-                        hours = diff_min // 60
-                        mins = diff_min % 60
-                        return f"{reset_dt.strftime('%H:%M')} ({hours}h{mins:02d})"
-                    return f"{reset_dt.strftime('%H:%M')} ({diff_min}')"
-                except Exception:
-                    return raw_iso
-
-            q5_info = q_summary.get("5h", {})
-            qw_info = q_summary.get("weekly", {})
-
-            q5_disabled = bool(q5_info.get("quotaDisabled", False))
-            q5_frac = float(q5_info.get("remainingFraction", 1.0)) if q5_info else None
-            q5_reset = _format_quota_reset(str(q5_info.get("resetTime", "N/A"))) if q5_info else "N/A"
-
-            qw_frac = float(qw_info.get("remainingFraction", 1.0)) if qw_info else None
-            qw_reset = _format_quota_reset(str(qw_info.get("resetTime", "N/A"))) if qw_info else "N/A"
-
-            # Calcul de la fraction globale pour l'anneau SVG (minimum des quotas actifs)
-            active_fracs = []
-            if q5_frac is not None and not q5_disabled:
-                active_fracs.append(q5_frac)
-            if qw_frac is not None:
-                active_fracs.append(qw_frac)
-
-            if active_fracs:
-                q_fraction = min(active_fracs)
-                q_reset = qw_reset if (qw_frac is not None and q_fraction == qw_frac) else q5_reset
-            else:
-                q_fraction = float(model_quota.get("remainingFraction",
-                                   float(echo_auth.get_auth_data("google_quota_fraction") or 1.0)))
-                q_reset_raw = str(model_quota.get("resetTime",
-                                  echo_auth.get_auth_data("google_quota_reset") or "N/A"))
-                q_reset = _format_quota_reset(q_reset_raw)
-
-            q_type = echo_auth.get_auth_data("google_quota_type") or "CODE_ASSIST"
-
-            # Crédits AI (source : loadCodeAssist HEALTH_CHECK)
-            credits_raw = echo_auth.get_auth_data("google_credits_total") or echo_auth.get_auth_data("google_g1_credits")
-            credits_val = credits_raw if (credits_raw is not None and credits_raw != "") else "0"
-
-            # Champs détaillés du quota modèle (RPD / RPM)
-            q_rpd_rem = str(model_quota.get("requestsPerDayRemaining", "N/A"))
-            q_rpd_lim = str(model_quota.get("requestsPerDayLimit",      "N/A"))
-            q_rpm_rem = str(model_quota.get("requestsPerMinuteRemaining", "N/A"))
-            q_rpm_lim = str(model_quota.get("requestsPerMinuteLimit",     "N/A"))
-            q_model_label = ca_model_id or "—"
-
-            # Liste des fournisseurs d'accès résolus pour le HUD
-            sources = [s['type'].replace('google_', '').replace('_', ' ').upper() for s in auth_providers] if auth_providers else []
-
-            active_p_t = max(0, p_t - c_t)
-            cache_pct = min(100, (c_t / max_t) * 100)
-            prompt_pct = min(100, (active_p_t / max_t) * 100)
-            gen_pct = min(100, (g_t / max_t) * 100)
-
-            from echo_core import EchoCompactionEngine
-            _cp_state = EchoCompactionEngine.get_compaction_state(orch.user_data_manager.state_manager) if chat_id else None
-            _cp_count = int(_cp_state.get("compaction_count", 0)) if _cp_state else 0
-            _cp_turns = int(_cp_state.get("compacted_turns", 0)) if _cp_state else 0
-
-            await EchoUI.deploy_context_gauge(
-                events=events, plan_name=plan_name, credits_val=credits_val, quota_str=quota_str,
-                c_t=c_t, active_p_t=active_p_t, g_t=g_t, max_t=max_t,
-                cache_pct=cache_pct, prompt_pct=prompt_pct, gen_pct=gen_pct,
-                user_email=email, user_tier=tier, project_id=proj,
-                auth_sources=sources,
-                quota_fraction=q_fraction, quota_reset=q_reset, quota_type=q_type,
-                quota_model=q_model_label,
-                quota_rpd_rem=q_rpd_rem, quota_rpd_lim=q_rpd_lim,
-                quota_rpm_rem=q_rpm_rem, quota_rpm_lim=q_rpm_lim,
-                quota_5h_fraction=q5_frac, quota_5h_reset=q5_reset, quota_5h_disabled=q5_disabled,
-                quota_weekly_fraction=qw_frac, quota_weekly_reset=qw_reset,
-                compaction_count=_cp_count, compacted_turns=_cp_turns,
-            )
-
+        # --- PERSISTANCE DES MÉTRIQUES CONTEXTUELLES ---
         if cumulative_usage_stats.get("totalTokenCount", 0) > 0:
+            orch.user_data_manager.save_context_stats(cumulative_usage_stats)
             yield {"usage": {"prompt_tokens": cumulative_usage_stats.get("promptTokenCount", 0), "completion_tokens": cumulative_usage_stats.get("candidatesTokenCount", 0), "total_tokens": cumulative_usage_stats.get("totalTokenCount", 0)}}
         yield ""

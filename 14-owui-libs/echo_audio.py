@@ -2,16 +2,16 @@
 """
 title: ECHO In-Process Audio Bridge
 author: ECHO Framework
-version: 1.4
+version: 5.226.18.0
 description: Pont audio in-process (STT Gemini MODEL_ZEPHYR & TTS Edge Vivienne).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.4: Intégration du paramètre pitch (-2Hz) et rétablissement de la vitesse nominale 1.0.
 # 1.3: Ajustement de la vitesse d'élocution TTS par défaut à 1.06 (106%).
 # 1.2: Ajustement de la vitesse d'élocution TTS par défaut à 1.1 (110%).
 # 1.1: Restauration température STT par défaut, maxOutputTokens=8192, thinkingLevel=minimal et vitesse 1.25.
-# 1.0: Implémentation initiale du pont in-process (STT Gemini MODEL_ZEPHYR & TTS Edge Vivienne).
 
 import os
 import sys

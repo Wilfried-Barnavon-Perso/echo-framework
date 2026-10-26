@@ -1,29 +1,19 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 9.31 (Séparation session_id RAM vs chat_id Drop-Zone)
+VERSION : 5.226.18.0
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-10-17
 
-CHANGELOG 9.31 :
-- FIX: Séparation entre `sid` (isolation Playwright en RAM par `sub_sid`) et `chat_id` (routage des téléchargements `/app/downloads/<user_id>/<chat_id>/browser`) pour garantir l'ingestion par `download_broker.py` lors d'un appel par sous-agent.
-
-CHANGELOG 9.30 :
-- FIX: Settle asynchrone post-scroll et Lidar Check (recalibrage instantané de Bounding Box) pour annuler les clics ratés lors de Layout Shifts.
-
-CHANGELOG 9.29 :
-- FEAT: Vision Grid Optimisée (Bicolore Magenta/Cyan, crénelures de quarts) pour supprimer le biais d'interpolation IA.
-- FIX: Iframe DOM Map Offset bug (Calibration exacte via locator("html").bounding_box() pour gérer les iframes avec scale, bordures et paddings, annulant l'offset visuel).
-
-CHANGELOG 9.27 :
-- REFACTOR: JS Constants (no f-strings), Dedicated overlay context.
-- FEAT: Real CDP zoom (clip.scale) with absolute grid.
-- FEAT: Hit tests (elementFromPoint) before clicks.
-- FEAT: Generational DOM index, auto-cleanup.
-- FEAT: LRU session eviction (max 20).
-- FEAT: Human wheel scrolling & strict wait_for_settle.
 ================================================================================
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 9.31: FIX: Séparation entre `sid` (isolation Playwright en RAM par `sub_sid`) et `chat_id` (routage des téléchargements `/app/downloads/<user_id>/<chat_id>/browser`) pour garantir l'ingestion par `download_broker.py` lors d'un appel par sous-agent.
+# 9.30: FIX: Settle asynchrone post-scroll et Lidar Check (recalibrage instantané de Bounding Box) pour annuler les clics ratés lors de Layout Shifts.
+# 9.29: FEAT: Vision Grid Optimisée (Bicolore Magenta/Cyan, crénelures de quarts) pour supprimer le biais d'interpolation IA. FIX: Iframe DOM Map Offset bug (Calibration exacte via locator("html").bounding_box() pour gérer les iframes avec scale, bordures et paddings, annulant l'offset visuel).
+# 9.27: REFACTOR: JS Constants (no f-strings), Dedicated overlay context. FEAT: Real CDP zoom (clip.scale) with absolute grid. FEAT: Hit tests (elementFromPoint) before clicks. FEAT: Generational DOM index, auto-cleanup. FEAT: LRU session eviction (max 20). FEAT: Human wheel scrolling & strict wait_for_settle.
 
 import asyncio
 import pybase64 as base64

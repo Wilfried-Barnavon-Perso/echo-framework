@@ -61,7 +61,7 @@ flowchart TD
 
   subgraph CORTEX ["🧠 Cerveau Cognitif (ECHO)"]
     direction TB
-    F("Filtres Inlet<br/>(Contexte & Compaction)")
+    F("Filtres Inlet<br/>(Contexte & Ingestion)")
     P("Echo Orchestrator<br/>(Cortex & Suture)")
     F --> P
   end
@@ -119,25 +119,25 @@ flowchart TD
     <div class="hld-diagram" style="background: #0b0e14; border: 1px solid #2d3748; border-radius: 12px; padding: 20px; font-family: monospace; overflow-x: auto;">
     <div style="display: flex; gap: 20px; flex-wrap: wrap; align-items: stretch;">
         <div style="flex: 1; min-width: 200px; background: #0f172a; border: 1px dashed #64748b; border-radius: 8px; padding: 15px;">
-    <div style="color: #94a3b8; font-size: 12px; text-align: center; margin-bottom: 15px; letter-spacing: 1px;">11-owui-filters</div>
+    <div style="color: #94a3b8; font-size: 12px; text-align: center; margin-bottom: 15px; letter-spacing: 1px;">11-owui-filters &amp; 15-owui-events</div>
     <div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">build_environment_domain.py</div>
     <div style="color: #64748b; font-size: 11px;">Amorçage domaines (Priorité 0)</div>
 </div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
-    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">tcp_keepalive_filter.py</div>
-    <div style="color: #64748b; font-size: 11px;">Maintien des connexions longues</div>
+    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">tcp_keepalive &amp; window_manager</div>
+    <div style="color: #64748b; font-size: 11px;">Keep-Alive &amp; Fenêtres EchoWM (P1/P2)</div>
 </div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">edge_embed_bridge_filter.py</div>
-    <div style="color: #64748b; font-size: 11px;">Inférence WebGPU dans le navigateur</div>
+    <div style="color: #64748b; font-size: 11px;">Sonde &amp; Inférence WebGPU (Priorité 3)</div>
 </div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
-    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">user_native_context_filter.py</div>
-    <div style="color: #64748b; font-size: 11px;">Ancrage réglages utilisateur</div>
+    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">context_gauge &amp; user_native</div>
+    <div style="color: #64748b; font-size: 11px;">Jauge Quotas &amp; Ancrage (P10/P20)</div>
 </div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
-    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">context_compaction_filter.py</div>
-    <div style="color: #64748b; font-size: 11px;">Rejeu Checkpoints &amp; Compaction (Priorité 15)</div>
+    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_chat_cloned_event.py</div>
+    <div style="color: #64748b; font-size: 11px;">Synchronisation Clonage &amp; Fork (Event)</div>
 </div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
-    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">new_context_filter.py</div>
-    <div style="color: #64748b; font-size: 11px;">Smart Context, PIS &amp; AEC XML</div>
+    <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">new_context &amp; codex_links</div>
+    <div style="color: #64748b; font-size: 11px;">Smart Context, AEC XML &amp; URNs (P30/P40)</div>
 </div><div style="background: #1e293b; border: 1px solid #64748b; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #94a3b8; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">conversation_rag_filter.py</div>
     <div style="color: #64748b; font-size: 11px;">Indexation RAG O(1) asynchrone</div>
@@ -150,13 +150,13 @@ flowchart TD
     <div style="color: #60a5fa; font-size: 12px; text-align: center; margin-bottom: 15px; letter-spacing: 1px;">14-owui-libs</div>
     <div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_auth.py</div>
-    <div style="color: #64748b; font-size: 11px;">Authentification &amp; Sécurité</div>
+    <div style="color: #64748b; font-size: 11px;">Authentification &amp; Quotas 5h/Sem</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_protocol.py</div>
     <div style="color: #64748b; font-size: 11px;">Traducteur universel API</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
-    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_state_manager.py</div>
-    <div style="color: #64748b; font-size: 11px;">Gestion mémoire SQLite &amp; KV</div>
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_state_manager &amp; session_clone</div>
+    <div style="color: #64748b; font-size: 11px;">Gestion SQLite KV &amp; Clonage</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_constants.py</div>
     <div style="color: #64748b; font-size: 11px;">Registre SSOT &amp; Constantes</div>
@@ -171,10 +171,10 @@ flowchart TD
     <div style="color: #64748b; font-size: 11px;">Moteur Git Dulwich multi-workspaces</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_core.py</div>
-    <div style="color: #64748b; font-size: 11px;">Fonctions cognitives, Compaction &amp; FIFO</div>
+    <div style="color: #64748b; font-size: 11px;">Fonctions cognitives, Outils &amp; FIFO</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
-    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_events.py</div>
-    <div style="color: #64748b; font-size: 11px;">Moteur d'événements UI &amp; UCTP</div>
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_events &amp; window_manager</div>
+    <div style="color: #64748b; font-size: 11px;">Événements UI, UCTP &amp; EchoWM</div>
 </div>
 </div>
         <div style="flex: 1; min-width: 200px; background: #0f172a; border: 1px dashed #3b82f6; border-radius: 8px; padding: 15px;">
@@ -196,13 +196,13 @@ flowchart TD
     <div style="color: #64748b; font-size: 11px;">Traçabilité et logs</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_paths.py</div>
-    <div style="color: #64748b; font-size: 11px;">Gestion des chemins système</div>
+    <div style="color: #64748b; font-size: 11px;">Chemins &amp; Validation Codex</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_pkce_server.py</div>
     <div style="color: #64748b; font-size: 11px;">Serveur d'autorisation local</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
-    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_prompts.py</div>
-    <div style="color: #64748b; font-size: 11px;">Gabarits de prompts système</div>
+    <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_prompts &amp; tool_guides</div>
+    <div style="color: #64748b; font-size: 11px;">Prompts &amp; 10 Manuels d'Outils</div>
 </div><div style="background: #1e293b; border: 1px solid #3b82f6; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
     <div style="color: #60a5fa; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_skills.py</div>
     <div style="color: #64748b; font-size: 11px;">Gestionnaire de compétences</div>
@@ -227,8 +227,8 @@ flowchart TD
             <div style="background: #0d1117; border: 1px dashed #0d9488; border-radius: 8px; padding: 15px;">
                 <div style="color: #0f766e; font-size: 12px; text-align: center; margin-bottom: 15px; letter-spacing: 1px;">Interface HUD</div>
                 <div style="background: #0f172a; border: 1px solid #0d9488; border-radius: 6px; padding: 10px; margin-bottom: 10px;">
-                    <div style="color: #2dd4bf; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_ui.py</div>
-                    <div style="color: #64748b; font-size: 11px;">Jauge de Tokens, Quotas &amp; HUD</div>
+                    <div style="color: #2dd4bf; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_ui.py &amp; echo_codex_ui.py</div>
+                    <div style="color: #64748b; font-size: 11px;">Jauge Quotas, HUD &amp; Codex Hex/Monaco</div>
                 </div>
                 <div style="background: #0f172a; border: 1px solid #0d9488; border-radius: 6px; padding: 10px;">
                     <div style="color: #2dd4bf; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">echo_visuals.py</div>
@@ -299,7 +299,7 @@ flowchart TD
         <h3>📡 L'AEC (Artéfacts Environnementaux et Contextuels)</h3>
         <p><strong>Nature :</strong> Vecteurs proprioceptifs structurés en XML.</p>
         <p>
-          Informe le modèle en temps réel de son environnement d'exécution : directives système prioritaires (initialisation, mises à niveau, rappels d'alignement), identité cognitive, temporalité, localisation, contexte documentaire distillé, Checkpoint de continuité et événements système asynchrones.
+          Informe le modèle en temps réel de son environnement d'exécution : directives système prioritaires (initialisation, mises à niveau, rappels d'alignement), identité cognitive, temporalité, localisation, contexte documentaire distillé et événements système asynchrones.
         </p>
       </div>
       <div class="card">
@@ -400,8 +400,8 @@ sequenceDiagram
   U->>OWUI: Prompt + Fichiers (HTTPS)
   OWUI->>F: Interception hook.inlet()
 
-  note over F,DB: PHASE 1 : PRÉPARATION, COMPACTION & DRAFT (PGCU)
-  F->>DB: Rejeu / Compaction de Checkpoint (Priorité 15) & Vérification version
+  note over F,DB: PHASE 1 : PRÉPARATION, INGESTION & DRAFT (PGCU)
+  F->>DB: Attente verrou clonage & Vérification version (echo_settings)
   F->>F: Sniffing MIME & Conversion Office (MarkItDown)
   F->>F: Moulage fichiers (32 Ko texte / 1 Mo média) → echo_session_rag
   F-->>OWUI: Injection AEC XML natif (Priorité 20) + Draft (metadata)
@@ -579,7 +579,7 @@ erDiagram
     integer updated_at "Horodatage"
   }
   ECHO_SETTINGS {
-    string key PK "turn_origin_model, context_stats, compaction_state..."
+    string key PK "turn_origin_model, context_stats, previous_context_stats, wm_state..."
     string value "Valeur sérialisée KV"
     integer updated_at "Horodatage"
   }
@@ -594,21 +594,21 @@ erDiagram
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications (Librairies Partagées)</summary>
       <div>
-        <h3>1. Authentification, Quotas &amp; Crédits Cloud (<code>echo_auth.py</code>, <code>echo_pkce_server.py</code>, <code>echo_ssh_tunnel.py</code>)</h3>
-        <p>Gère le cycle OAuth2 headless via <strong>Authorization Code + PKCE (RFC 7636)</strong> sur tunnel SSH éphémère (ports 8020–8024), le rafraîchissement proactif des tokens à 55 minutes et le fallback sur clés AI Studio. Interroge de manière non-bloquante l'endpoint <code>:retrieveUserQuotaSummary</code> (cache <code>google_quota_summary</code>) pour extraire les quotas glissants <strong>5 heures</strong> (<code>quota_5h_fraction</code>, <code>quota_5h_reset</code>, <code>quota_5h_disabled</code>) et <strong>Hebdomadaire</strong> (<code>quota_weekly_fraction</code>, <code>quota_weekly_reset</code>), en gérant la convention d'omission Protobuf v3 (<code>remainingFraction=0.0</code> par défaut lorsque le champ est absent) au profit de la Context Gauge.</p>
+        <h3>1. Authentification, Quotas &amp; Crédits Cloud (<code>echo_auth.py</code> v5.231.13.1, <code>echo_pkce_server.py</code>, <code>echo_ssh_tunnel.py</code>)</h3>
+        <p>Gère le cycle OAuth2 headless via <strong>Authorization Code + PKCE (RFC 7636)</strong> sur tunnel SSH éphémère (ports 8020–8024), le rafraîchissement proactif des tokens à 55 minutes et le fallback sur clés AI Studio. Interroge de manière non-bloquante l'endpoint <code>:retrieveUserQuotaSummary</code> (cache <code>google_quota_summary</code>, via <code>refresh_quota_if_needed()</code>) pour extraire les quotas glissants <strong>5 heures</strong> (<code>quota_5h_fraction</code>, <code>quota_5h_reset</code>, <code>quota_5h_disabled</code>) et <strong>Hebdomadaire</strong> (<code>quota_weekly_fraction</code>, <code>quota_weekly_reset</code>), en gérant la convention d'omission Protobuf v3 (<code>remainingFraction=0.0</code> par défaut lorsque le champ est absent) au profit du filtre <code>context_gauge_filter.py</code>.</p>
 
-        <h3>2. Moteur de Protocole, Suture Bit-Perfect &amp; Compaction (<code>echo_protocol.py</code>, <code>echo_core.py</code> &amp; <code>echo_aec.py</code>)</h3>
+        <h3>2. Moteur de Protocole, Suture Bit-Perfect, Window Manager &amp; Clonage (<code>echo_protocol.py</code>, <code>echo_core.py</code> v5.231.10.1, <code>echo_aec.py</code>, <code>echo_window_manager.py</code> v5.231.13.1 &amp; <code>echo_session_clone.py</code> v5.228.4.1)</h3>
         <ul>
-          <li><strong>Suture, Signatures &amp; Drainage AEC :</strong> <code>Orchestrator.prepare_context()</code> reconstruit l'historique depuis <code>message_shadows</code> (dans <code>/users/{uid}/chats/{cid}/session.db</code>) sous contrôle du Verrou de Version (<code>message_id + updated_at</code>) et du Verrou de Tour (<code>turn_origin_model</code>), extrait la dernière <code>thoughtSignature</code> de <code>cognitive_signatures</code> par tri déterministe (<code>ORDER BY updated_at DESC LIMIT 1</code>, rattachée au premier <code>functionCall</code>), assemble le brouillon <code>metadata._echo_user_parts_draft</code> et draine atomiquement les directives et événements XML (<code>&lt;artifact id="AEC_..."&gt;</code>) via <code>EchoAEC.drain_pending_directives()</code>.</li>
-          <li><strong>Traduction, Moulage &amp; Pondération RAG :</strong> Convertit les identifiants abstraits ECHO vers le backend actif (AI Studio ou Code Assist) et normalise les schémas d'outils en <code>camelCase</code> (<code>convert_owui_tools</code>). Le pipeline <code>echo_ingestion.py</code> convertit les documents via <code>MarkItDown</code>, distille via <code>MODEL_DISTILLATION</code> dans <code>&lt;artifact id="AEC_smart_context"&gt;</code> et vectorise dans <code>echo_session_rag</code> ou <code>echo_meta_artifacts</code> (<code>http://echo-embedding:7997/v1</code>). Le reranking de <code>echo_meta_artifacts</code> applique <code>score_pondéré = cos_score &times; MEMORY_IMPORTANCE_WEIGHTS[lvl]</code> (où un <em>Axiome</em> niveau 5 à <code>1.70</code> surclasse un <em>Trivial</em> niveau 1 à <code>0.55</code>).</li>
-          <li><strong>Déballage Multimodal &amp; FIFO Destructif :</strong> <code>unbox_tool_output</code> et <code>wrap_tool_output</code> extraient les médias <code>echo_tool_multiparts</code> et purgent les événements transitoires <code>aec_event</code> / <code>aec_directive</code> sans toucher aux ressources persistantes.</li>
-          <li><strong>Compactage Contextuel In-Place (<code>EchoCompactionEngine</code>) :</strong> Déclenché automatiquement (seuil <code>45% &rarr; 25%</code> de <code>ECHO_MAX_CONTEXT_SIZE</code> via <code>context_compaction_filter.py</code>, Priorité 15) ou manuellement (<code>compact_context_action.py</code>), le moteur opère une consolidation téléscopique à encombrement borné (<code>MODEL_APOLLO</code>, budget <code>32768</code> tokens) scellée dans <code>echo_settings</code> (clé <code>compaction_state</code>). Le filtre rejoue de manière déterministe la balise <code>&lt;artifact id="AEC_context_checkpoint"&gt;</code> sur le message pivot, tandis que <code>echo_orchestrator.py</code> re-scelle l'ombre dans <code>message_shadows</code> après nettoyage de la balise (<code>strip_checkpoint_tag</code>) pour préserver la pureté de la Suture.</li>
+          <li><strong>Suture, Signatures &amp; Drainage AEC :</strong> <code>Orchestrator.prepare_context()</code> reconstruit l'historique depuis <code>message_shadows</code> (dans <code>/users/{uid}/chats/{cid}/session.db</code>) sous contrôle du Verrou de Version (<code>message_id + updated_at</code>) et du Verrou de Tour (<code>turn_origin_model</code>), extrait la dernière <code>thoughtSignature</code> de <code>cognitive_signatures</code> par tri déterministe (<code>ORDER BY updated_at DESC LIMIT 1</code>, rattachée via <code>attach_thought_signature</code> exclusivement au premier <code>functionCall</code> ou à la première part <code>text</code>), assemble le brouillon <code>metadata._echo_user_parts_draft</code> et draine atomiquement les directives et événements XML (<code>&lt;artifact id="AEC_..."&gt;</code>) via <code>EchoAEC.drain_pending_directives()</code>.</li>
+          <li><strong>Traduction, Moulage &amp; Pondération RAG :</strong> Convertit les identifiants abstraits ECHO vers le backend actif (AI Studio ou Code Assist) et normalise les schémas d'outils en <code>camelCase</code> (<code>convert_owui_tools</code>). Le pipeline <code>echo_ingestion.py</code> (v5.228.7.1) convertit les documents via <code>MarkItDown</code>, distille via <code>MODEL_DISTILLATION</code> dans <code>&lt;artifact id="AEC_smart_context"&gt;</code> et vectorise dans <code>echo_session_rag</code> ou <code>echo_meta_artifacts</code> (<code>http://echo-embedding:7997/v1</code>). Le reranking de <code>echo_meta_artifacts</code> applique <code>score_pondéré = cos_score &times; MEMORY_IMPORTANCE_WEIGHTS[lvl]</code> (où un <em>Axiome</em> niveau 5 à <code>1.70</code> surclasse un <em>Trivial</em> niveau 1 à <code>0.55</code>).</li>
+          <li><strong>Déballage Multimodal, EchoWindowManager &amp; FIFO Destructif :</strong> <code>unbox_tool_output</code> et <code>wrap_tool_output</code> extraient les médias <code>echo_tool_multiparts</code> et purgent les événements transitoires <code>aec_event</code> / <code>aec_directive</code>. Le singleton <code>EchoWindowManager</code> (<code>echo_window_manager.py</code> v5.231.13.1) et <code>echo_events.py</code> (v5.231.5.1) assurent le double transport non-destructif (Socket.IO + SSE/RPC <code>/echo/v1/wm/*</code>) et la persistance multi-chats des fenêtres HUD dans <code>echo_settings['wm_state']</code>.</li>
+          <li><strong>Clonage Atomique &amp; Migration de Session (<code>echo_session_clone.py</code> v5.228.4.1 &amp; <code>resume_in_new_chat_action.py</code> v5.229.2.1) :</strong> Mutualisé entre l'événement <code>echo_chat_cloned_event.py</code> (<code>sync_cloned_session</code>) et l'action <code>resume_in_new_chat_action.py</code> (<code>sync_resumed_session</code>, <code>duplicate_session_rag</code>), ce moteur duplique atomiquement <code>session.db</code> via <code>sqlite3.Connection.backup()</code> sous verrou asyncio (<code>get_chat_clone_lock</code>), propage les étiquettes (<code>tags</code>), réassigne les identifiants composites, aligne le dépôt Git <code>codex/main</code> en cas de fork intermédiaire et clone par pagination les vecteurs <code>echo_session_rag</code> lors d'une migration de session.</li>
         </ul>
 
-        <h3>3. Gestionnaire de Compétences (<code>echo_skills.py</code>)</h3>
-        <p>Extrait les métadonnées sémantiques des fichiers de compétences dans l'espace utilisateur global et alimente dynamiquement les outils <code>search_skill</code>, <code>read_skill</code> et <code>forge_skill</code>.</p>
+        <h3>3. Gestionnaire de Compétences (<code>echo_skills.py</code>) &amp; Guides d'Outils (<code>echo_tool_guides.py</code> v5.229.0.1)</h3>
+        <p><code>echo_skills.py</code> extrait les métadonnées sémantiques des compétences utilisateur (<code>search_skill</code>, <code>read_skill</code>, <code>forge_skill</code>), tandis qu'<code>EchoToolGuidesManager</code> indexe les 10 manuels opérationnels Markdown (<code>14-owui-libs/tool_guides/*.md</code>) interrogés par l'Expert-Conseil <code>tool_advisor</code>.</p>
 
-        <h3>4. Algorithmes de Hachage Merkle (<code>echo_state_manager.py</code>)</h3>
+        <h3>4. Algorithmes de Hachage Merkle (<code>echo_state_manager.py</code> v5.231.13.1)</h3>
         <p><strong>1. Invariant Hash :</strong> <code>SHA-256(role + content_sorted + tool_io)</code>. Identité pure du tour, indépendante de sa position dans l'historique.</p>
         <p><strong>2. Cumulative Hash :</strong> <code>SHA-256(invariant_hash + parent_cumulative_hash)</code>. ADN de la conversation. Tout changement dans l'historique invalide les hashes suivants.</p>
         <div class="audit-note">
@@ -616,7 +616,7 @@ erDiagram
           <p>Le <strong>Verrou de Version</strong> compare le couple <code>(message_id, updated_at)</code> lors de la Suture. Si un message est modifié manuellement dans Open WebUI, l'Ombre SQLite correspondante est écartée, les événements postérieurs au <code>t_pivot</code> sont purgés via <code>EchoAEC.purge_orphaned_events()</code>, et le Pipe bascule en <strong>Cold Recovery</strong> tout en préservant la continuité de la session.</p>
         </div>
 
-        <h3>5. Pont Audio In-Process (<code>echo_audio.py</code> v1.4)</h3>
+        <h3>5. Pont Audio In-Process (<code>echo_audio.py</code> v5.226.18.0)</h3>
         <p>Injecté de manière idempotente en position <code>0</code> du routeur FastAPI d'Open WebUI via <code>register_echo_audio_routes()</code> (pour devancer le catch-all <code>SPAStaticFiles</code>), ce module expose les endpoints compatibles OpenAI sous <code>/echo/v1/audio</code> : transcription STT (<code>/transcriptions</code>) relayée vers Gemini <code>MODEL_ZEPHYR</code> (<code>maxOutputTokens=8192</code>, <code>thinkingLevel="minimal"</code>, plafond <code>14 Mo</code>, détection binaire des conteneurs WebM/WAV/OGG/FLAC/MP3/MP4 par <code>sniff_audio_mime_type</code>) et synthèse vocale TTS en streaming <code>audio/mpeg</code> (<code>/speech</code>) via Microsoft Edge Read-Aloud (<code>edge-tts</code>, voix <code>fr-FR-VivienneMultilingualNeural</code>, vitesse nominale <code>1.0</code>, pitch feutré <code>-2Hz</code>).</p>
       </div>
     </details>
@@ -628,7 +628,7 @@ erDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.226.5 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.15 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

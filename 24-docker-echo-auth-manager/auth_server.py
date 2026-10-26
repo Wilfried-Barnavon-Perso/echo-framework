@@ -1,11 +1,15 @@
 """
 ================================================================================
 MODULE : ECHO AUTH MANAGER
-VERSION : 1.6 (Passage 403 vers 401 pour session OWUI)
+VERSION : 5.226.18.0
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-09-14
 ================================================================================
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 1.6: Passage 403 vers 401 pour session OWUI
 import os
 import sqlite3
 import httpx

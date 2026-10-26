@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 1.28
+version: 5.229.6.1
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.28: Alignement du cache d'outils sur sys.modules["function_echo_orchestrator"].
-# 1.27: Bascule de la synthèse d'agent vers MODEL_APOLLO (medium) au lieu de MODEL_DISTILLATION.
-# 1.26: Résolution robuste de chat_id depuis __metadata__ et propagation de __metadata__ dans infra_kwargs des sous-agents.
-# 1.25: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
-# 1.24: Injection des sub_tools_names dans ECHO_SUBAGENT_CONTEXT pour permettre le filtrage dynamique par les outils internes (ex: Tool Consultant).
+# 5.229.6.1: Remplacement du circuit breaker réactif par un Tool Stripping proactif en fin de budget avec achèvement du lot parallèle.
+# 5.229.1.2: Factorisation SSOT via DELEGATE_AGENT_SYSTEM_TOOLS garantissant la disponibilité des outils système pour tout sous-agent.
+# 5.229.0.1: Précision de la condition de fermeture de session dans la docstring de close_agent_session.
+# 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/agent_orchestration.md.
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 import sys
 import uuid
@@ -34,6 +34,7 @@ from echo_state_manager import EchoStateManager
 from echo_constants import (
     ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES,
     DELEGATE_AGENT_BLACKLIST,
+    DELEGATE_AGENT_SYSTEM_TOOLS,
     CONTEXT_TRUNCATE_THRESHOLD,
     ECHO_MAX_CONTEXT_SIZE,
     get_generation_config
@@ -94,21 +95,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> str:
-        """
-        Délégation experte par agent autonome.
-        CAS D'USAGE PRINCIPAUX :
-        1. Exécuter des tâches isolées et spécialisées via des Skills dédiés.
-        2. Protéger et ne pas encombrer inutilement le contexte de l'Orchestrateur (offload cognitif pour les opérations verbeuses ou répétitives).
-        
-        INFO ORCHESTRATEUR : si le système_prompt est vide, ainsi que le skill, alors c'est le système prompt de l'Orchestrateur qui est transmis.
-        
-        :param task: Mission ou réponse (si reprise).
-        :param system_prompt: (Optionnel) Directives comportementales additionnelles.
-        :param skill_id: (Optionnel) Identifiant de Skill (se combine avec system_prompt si les deux sont fournis).
-        :param sub_sid: (Optionnel) ID de session pour reprise.
-        :param with_context_distillate: (Bool) Injection du résumé de branche.
-        :param target_model_key: (Optionnel) Enum des modèles (echo_constants).
-        """
+        """Délègue une tâche isolée ou multi-outils à un sous-agent autonome outillé (avec `skill_id` optionnel et reprise possible via `sub_sid`)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = (__user__ or {}).get("id", "system")
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id") or ""
@@ -130,7 +117,7 @@ class Tools:
             skill_content = get_skill_content(user_id, skill_id)
             if not skill_content:
                 return wrap_tool_output(
-                    text=f"❌ Skill '{skill_id}' introuvable. IMPLIQUE `forge_skill`.",
+                    text=f"❌ Skill '{skill_id}' introuvable.",
                     status={"status": "error", "message": f"Skill '{skill_id}' not found"}
                 , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             
@@ -220,16 +207,22 @@ class Tools:
         sub_tools: dict = {}
         if _tools_dict:
             # Filtrage de la blacklist : certains outils ne doivent pas être délégués
-            # (ex: delegate_to_agent lui-même pour éviter les récursions infinies)
+            # (ex: delegate_to_agent lui-même pour éviter les récursions infinies).
+            # DELEGATE_AGENT_SYSTEM_TOOLS traverse le filtre allowed_tools pour rester disponible à tout sous-agent.
             sub_tools = {
                 k: v for k, v in _tools_dict.items()
-                if k not in DELEGATE_AGENT_BLACKLIST and (not allowed_tools or k in allowed_tools)
+                if k not in DELEGATE_AGENT_BLACKLIST and (
+                    not allowed_tools or k in allowed_tools or k in DELEGATE_AGENT_SYSTEM_TOOLS
+                )
             }
         elif _body_tools_specs:
             # Source 3 : reconstruction depuis sys.modules (valves par défaut)
             sub_tools = _resolve_sub_tools_from_sys_modules(_body_tools_specs, __user__)
             if allowed_tools:
-                sub_tools = {k: v for k, v in sub_tools.items() if k in allowed_tools}
+                sub_tools = {
+                    k: v for k, v in sub_tools.items()
+                    if k in allowed_tools or k in DELEGATE_AGENT_SYSTEM_TOOLS
+                }
 
         _callable_count = sum(1 for v in sub_tools.values() if v.get("callable") is not None)
         _log.debug(
@@ -298,7 +291,7 @@ class Tools:
         __event_emitter__: Any = None,
         __metadata__: dict = {},
     ) -> str:
-        """Liste des sessions d'agents actives."""
+        """Liste toutes les sessions de sous-agents actives (`sub_sid`) dans la conversation."""
         user_id = (__user__ or {}).get("id", "system")
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
         if not chat_id:
@@ -349,9 +342,7 @@ class Tools:
         __event_emitter__: Any = None,
         __metadata__: dict = {},
     ) -> str:
-        """Ferme définitivement une session d'agent et purge son historique (irréversible).
-        :param sub_sid: Identifiant strict de la session.
-        """
+        """Ferme définitivement une session de sous-agent (`sub_sid`) et purge son historique, à n'appeler que si aucune reprise ultérieure de son travail n'est requise."""
         user_id = (__user__ or {}).get("id", "system")
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
         if not chat_id:
@@ -386,9 +377,7 @@ class Tools:
         __metadata__: Optional[dict] = None,
         __event_emitter__: Any = None,
     ) -> str:
-        """Résumé structuré d'une session d'agent.
-        :param sub_sid: Identifiant strict de la session.
-        """
+        """Génère un résumé structuré (Tâche, Outils utilisés, Résultats, Conclusion) de l'historique d'une session de sous-agent (`sub_sid`)."""
         events = EchoEvents(__event_emitter__)
         user_id = (__user__ or {}).get("id", "system")
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
@@ -498,7 +487,10 @@ async def _run_agent_loop(
 
     while True:
         # 1. Construction des function_declarations (source A : sub_tools, B : body_tools_specs)
-        fn_decls = _build_function_declarations(sub_tools, body_tools_specs)
+        # Si le budget d'appels d'outils est atteint ou dépassé (calls_used >= max_calls),
+        # Tool Stripping proactif : la liste d'outils est vidée pour forcer mécaniquement
+        # le LLM à formuler sa synthèse finale en texte pur sans outil.
+        fn_decls = _build_function_declarations(sub_tools, body_tools_specs) if calls_used < max_calls else []
 
         # 1.5. Défense passive : Troncature de l'historique de l'agent
         current_size = estimate_token_size(history) + estimate_token_size(final_system)
@@ -593,7 +585,7 @@ async def _run_agent_loop(
                 state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", model_raw, _sig(model_raw))
 
                 return wrap_tool_output(
-                    text=f"⚠️ Agent [{sid}] bloqué. IMPLIQUE clarification utilisateur.",
+                    text=f"⚠️ Agent [{sid}] en attente de clarification : {question}",
                     status={
                         "status": "pending_question",
                         "sid": sid,
@@ -612,8 +604,43 @@ async def _run_agent_loop(
             state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", model_raw, _sig(model_raw))
 
             final_text = text or "(Réponse vide)"
+            status_dict = {
+                "status": "success",
+                "sid": sid,
+                "calls_remaining": max(0, max_calls - calls_used),
+                "model_used": model_used,
+            }
+            if calls_used >= max_calls:
+                status_dict["warning"] = "budget_exhausted"
+                await events.status(
+                    f"🛑 Agent [{sid}] — budget d'outils atteint ou dépassé "
+                    f"({calls_used}/{max_calls} appels). Synthèse terminée.",
+                    done=True
+                )
+            else:
+                await events.status(
+                    f"✅ Agent [{sid}] terminé ({calls_used}/{max_calls} appels).",
+                    done=True
+                )
+            return wrap_tool_output(
+                text=final_text,
+                status=status_dict,
+                user_id=__user__.get("id", "system") if __user__ else "system",
+                chat_id=__metadata__.get("chat_id") if __metadata__ else None,
+                metadata=__metadata__
+            )
+
+        # =====================================================================
+        # CAS 4 : Garde-fou hallucination — tool call sur tour stripped (calls_used >= max_calls)
+        # =====================================================================
+        if calls_used >= max_calls and real_fc:
+            final_text = text or "(Synthèse finale — budget d'outils atteint ou dépassé)"
+            model_raw = raw_parts if raw_parts else [{"text": final_text}]
+            history.append({"role": "model", "parts": model_raw})
+            state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", model_raw, _sig(model_raw))
             await events.status(
-                f"✅ Agent [{sid}] terminé ({calls_used}/{max_calls} appels).",
+                f"🛑 Agent [{sid}] — budget d'outils atteint ou dépassé "
+                f"({calls_used}/{max_calls} appels). Synthèse terminée.",
                 done=True
             )
             return wrap_tool_output(
@@ -621,66 +648,14 @@ async def _run_agent_loop(
                 status={
                     "status": "success",
                     "sid": sid,
-                    "calls_remaining": max_calls - calls_used,
-                    "model_used": model_used,
-                }
-            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-
-        # =====================================================================
-        # CAS 4 : Circuit breaker — budget dépassé avant exécution
-        # =====================================================================
-        if calls_used + len(real_fc) > max_calls:
-            budget_warning = (
-                f"⚠️ Budget de {max_calls} appels épuisé ({calls_used} utilisés). "
-                "Produis immédiatement ta meilleure réponse finale avec les informations "
-                "disponibles — aucun outil supplémentaire ne peut être appelé."
-            )
-            history.append({"role": "user", "parts": [{"text": budget_warning}]})
-
-            # Dernier appel sans outils (conclusion forcée)
-            forced_text = "(Conclusion forcée — budget épuisé)"
-            try:
-                forced_payload: dict = {
-                    "contents": history,
-                    "systemInstruction": {"parts": [{"text": final_system}]},
-                    "generationConfig": get_generation_config("MODEL_APOLLO"),
-                }
-                data2, _, _ = await EchoGeminiClient.call_cascade(
-                    target_model_key=current_model_key,
-                    payload=forced_payload,
-                    user_id=user_id,
-                    metadata=__metadata__,
-                    events=events,
-                    threshold=valves.KEY_SWITCH_THRESHOLD,
-                    max_retries=valves.MAX_RETRIES,
-                    timeout=120,
-                    include_thoughts=False,
-                )
-                if data2:
-                    cands2 = data2.get("candidates", [])
-                    if cands2 and cands2[0].get("content"):
-                        forced_text = "".join(
-                            p.get("text", "")
-                            for p in cands2[0]["content"].get("parts", [])
-                            if "text" in p and not p.get("thought")
-                        ) or forced_text
-            except Exception:
-                pass
-
-            await events.status(
-                f"⚠️ Agent [{sid}] — budget épuisé ({max_calls}/{max_calls} appels).",
-                done=True
-            )
-            return wrap_tool_output(
-                text=forced_text,
-                status={
-                    "status": "success",
-                    "sid": sid,
                     "warning": "budget_exhausted",
-                    "calls_remaining": max_calls - calls_used,
+                    "calls_remaining": 0,
                     "model_used": model_used,
-                }
-            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                },
+                user_id=__user__.get("id", "system") if __user__ else "system",
+                chat_id=__metadata__.get("chat_id") if __metadata__ else None,
+                metadata=__metadata__
+            )
 
         # =====================================================================
         # CAS 5 : Exécution des outils (appels linéaires ou parallèles)
@@ -779,7 +754,7 @@ async def _run_agent_loop(
 
         # Règle API : le message user après une functionCall doit contenir
         # UNIQUEMENT des functionResponse parts — pas de text mélangé.
-        # Le budget est géré par l'infrastructure (circuit breaker CAS 4),
+        # Le budget est géré par l'infrastructure (Tool Stripping au tour suivant si calls_used >= max_calls),
         # pas par le LLM sous-agent via l'historique.
         history.append({"role": "user", "parts": response_parts})
         state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx + 1, "user", response_parts)

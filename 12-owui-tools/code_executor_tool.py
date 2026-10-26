@@ -1,18 +1,16 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 7.10
+version: 5.229.0.0
 description: Composant système interne : ECHO Code Executor (Python & Node.js).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 7.10: Implémentation du Supervisor Pattern & JS Heartbeat (fermeture/crash automatique).
 # 7.9: Implémentation du Bidi Polling asynchrone (Temps Réel UI<->Sandbox) et outil kill_sandbox_execution.
 # 7.8: Injection dynamique de la constante ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS au worker pour l'anti-OOM.
-# 7.7: Implémentation du canal passe-plat descendant asynchrone via `fetch_ui_payload` (UI -> Sandbox) sans impact LLM.
-# 7.6: Encapsulation du code JS (ECHO Monitor) en IIFE asynchrone pour isolation (correction return global via eval).
-# 7.5: Fix Monitor - Injection de EchoUI.get_floating_monitor_js() (fonction absente côté navigateur), sérialisation JSON des paramètres JS.
-# 7.3: Allègement de la docstring via intégration de la documentation /sandbox-agent-readme.txt.
 
 # ECHO CONFIG NAME : ECHO Code Sandbox
 
@@ -39,10 +37,7 @@ class Tools:
         __user__: Optional[dict] = None,
         __metadata__: Optional[dict] = None
     ) -> str:
-        """
-        Permet au modèle d'interrompre de force l'exécution en cours d'une Sandbox.
-        Détruit immédiatement le processus distant orphelin ou bloqué associé à la session courante.
-        """
+        """Interrompt immédiatement le processus en cours dans la Sandbox de la session."""
         __user__ = __user__ or {}
         __metadata__ = __metadata__ or {}
         uid = __user__.get("id", "system")
@@ -69,30 +64,7 @@ class Tools:
         __event_call__: Any = None,
         __metadata__: Optional[dict] = None
     ) -> str:
-        """
-        Permet au modèle d'exécuter du code (Python ou Node.js) dans une Sandbox isolée.
-        Le modèle DOIT STRICTEMENT écrire le code dans le workspace `sandbox` du Codex avant d'appeler cet outil.
-        L'exécution est déterminée par l'extension du fichier (.py ou .js).
-
-        Permet de lancer un calcul avec un pont bidirectionnel temps-réel. La Sandbox et le navigateur (UI) s'échangent des données à la volée.
-        Le retour de l'outil inclura un objet `task_review` détaillant la télémétrie asynchrone de l'exécution (statut final, nombre de cycles UI synchronisés).
-
-        S'il y a des dépendances externes requises non pré-installées, l'agent DOIT les lister dans l'argument `dependencies` (ex: ["requests", "pandas"] ou ["axios", "express"]).
-
-        L'utilisation de la librairie d'interface "ECHO Monitor" et la liste exhaustive des dépendances pré-installées
-        sont documentées dans le fichier en lecture seule `/sandbox-agent-readme.txt` (lisible depuis la Sandbox).
-
-        Le script s'exécute avec les accès stricts suivants :
-        - '/files' : Dossier en Lecture seule contenant les fichiers (pièces jointes) du Registre.
-        - '/main' : Dossier en Lecture seule contenant le code versionné (Codex workspace main).
-        - '/sandbox' : Espace d'écriture persistant visible dans le Codex (workspace sandbox).
-
-        Args:
-            file_path (str): Le chemin relatif du fichier à exécuter dans la sandbox (ex: "script.py" ou "dossier/app.js").
-            dependencies (list[str]): Liste des paquets pip/npm additionnels à installer avant l'exécution.
-            timeout_sec (int): Délai maximum accordé au script.
-            fetch_ui_payload (bool): Initialise le payload avec les données UI avant l'exécution (le flux temps-réel prend ensuite le relais).
-        """
+        """Exécute un script Python (.py) ou Node.js (.js) préalablement écrit dans le workspace `sandbox` du Codex."""
         __user__ = __user__ or {}
         __metadata__ = __metadata__ or {}
         dependencies = dependencies or []

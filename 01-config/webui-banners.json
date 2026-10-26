@@ -1,27 +1,27 @@
 [
   {
-    "id": "echo-banner-capabilities-v2",
+    "id": "echo-banner-codex-multichat-links-20261025",
     "type": "success",
-    "title": "Moteur cognitif enrichi",
-    "content": "**Moteur cognitif enrichi** : Écho bénéficie d'une **puissance de raisonnement accrue** et du **compactage automatique** de vos longues conversations *(bêta)*.",
+    "title": "ECHO Codex Multi-Chat & Liens Directs",
+    "content": "**ECHO Codex Multi-Chat & Liens** : Vous pouvez désormais consulter les fichiers de vos autres sessions en lecture seule (👁️) et modifier ceux du chat local (✏️). Les liens dans les messages ouvrent directement l'éditeur Codex sur le document ciblé !",
     "dismissible": true,
-    "timestamp": 1729242000
+    "timestamp": 1729862400
   },
   {
-    "id": "echo-banner-workspace-m365-v2",
+    "id": "echo-banner-subagent-budget-20261025",
     "type": "info",
-    "title": "Google Workspace & Microsoft 365",
-    "content": "**Google Workspace & Microsoft 365** : Vos outils du quotidien sont désormais connectables. Demandez à Écho de vous guider pour **synchroniser vos agendas et documents** Google Workspace / Microsoft 365, en toute sécurité. Écho peut aussi planifier des **tâches agentiques** et gérer votre **calendrier intégré**.",
+    "title": "Délégation des Sous-Agents & Budget",
+    "content": "**Délégation des Sous-Agents fiabilisée** : La gestion du budget d'outils alloué aux sous-agents est désormais stricte. Dès la limite atteinte, l'agent achève proprement sa synthèse sans boucle d'appels superflue, garantissant une exécution maîtrisée et sans surcoût de quota.",
     "dismissible": true,
-    "timestamp": 1729242000
+    "timestamp": 1729862400
   },
   {
-    "id": "echo-banner-mode-guidance-v2",
-    "type": "warning",
-    "title": "Gestion des modes & quotas",
-    "content": "**Gestion des modes & quotas** : Le mode **AUTO** offre le meilleur équilibre vitesse/quota. Activez **AUTO_PROM** uniquement pour les tâches de conception avancée ou les raisonnements stratégiques. Pour en savoir plus <a href=\"https://docs.echo-ai.eu/02_manuel_utilisateur.html#2-selection-du-mode-cognitif\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"underline font-semibold\">cliquez ici</a>.",
+    "id": "echo-banner-tags-rag-20261023",
+    "type": "info",
+    "title": "Mémoire & Tags de discussion",
+    "content": "**Mémoire ciblée par tags** : Vous pouvez désormais organiser vos conversations avec des étiquettes (tags). Écho sait provisionner automatiquement mais aussi lister vos tags et **restreindre ses recherches en mémoire** aux discussions portant le tag de votre choix.",
     "dismissible": true,
-    "timestamp": 1729242000
+    "timestamp": 1729683543
   }
 ]
 

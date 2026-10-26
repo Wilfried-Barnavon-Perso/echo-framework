@@ -1,16 +1,26 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 1.14 (Interception ciblée AuthRequiredError)
+VERSION : 5.228.9.2
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-10-13
+DATE MAJ : 2026-10-21
 ================================================================================
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.228.9.2: Schéma jobs_omnisearch enrichi avec directives APEC (DataDome), LinkedIn (li_at) et WTTJ.
+# 5.228.9.1: Directives France Travail (OAuth2 francetravail.io) et champs WTTJ dans jobs_omnisearch.
+# 5.228.0.1: Directive PAS exhaustive pour google_workspace (anti-localhost:8001, mode In production).
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 1.14: Interception ciblée AuthRequiredError
 import logging
 import uvicorn
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, JSONResponse
-from mcp.server import MCPServer
+try:
+    from mcp.server import MCPServer
+except ImportError:
+    from mcp.server.fastmcp import FastMCP as MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
 from core.security import user_id_var
@@ -66,8 +76,61 @@ SERVICE_SCHEMAS = {
     "jobs_omnisearch": {
         "category": "mcp_native",
         "name": "Emplois & Carrières (Omnisearch)",
+        "user_required_instructions": (
+            "DIRECTIVES DE CONFIGURATION DU SERVICE JOBS OMNISEARCH :\n\n"
+            "1. FRANCE TRAVAIL (FRANCETRAVAIL.IO) :\n"
+            "   1. Se rendre sur https://francetravail.io/ et se connecter (compte développeur gratuit).\n"
+            "   2. Dans 'Mes applications', créer une application et associer le package 'Offres d'emploi v2'.\n"
+            "   3. Consigner dans l'Identity Vault pour le service 'jobs_omnisearch' :\n"
+            "      - 'FRANCE_TRAVAIL_CLIENT_ID' : Votre Client ID\n"
+            "      - 'FRANCE_TRAVAIL_CLIENT_SECRET' : Votre Client Secret\n\n"
+            "2. WELCOME TO THE JUNGLE (WTTJ) :\n"
+            "   - Pleinement opérationnel nativement via la clé publique Algolia intégrée.\n"
+            "   - En cas de rotation d'index, renseigner optionnellement 'WTTJ_ALGOLIA_API_KEY'.\n\n"
+            "3. APEC :\n"
+            "   - Les offres cadres de l'APEC sont automatiquement indexées dans le flux France Travail.\n"
+            "   - En direct, apec.fr applique un défi anti-bot (DataDome). "
+            "Pour débloquer l'accès direct, enregistrer optionnellement le cookie sous 'APEC_DATADOME_COOKIE'.\n\n"
+            "4. LINKEDIN :\n"
+            "   - Opérationnel en mode public invité.\n"
+            "   - Pour un volume accru, enregistrer optionnellement le cookie sous 'LINKEDIN_SESSION_COOKIE'."
+        ),
         "fields": [
-            {"id": "description", "label": "Notes (Optionnel)", "type": "text", "help": "Module autonome (scraping Apec/LinkedIn). Laissez vide et enregistrez pour l'activer."}
+            {
+                "id": "FRANCE_TRAVAIL_CLIENT_ID",
+                "label": "Client ID France Travail",
+                "type": "text",
+                "required": False,
+                "help": "Obtenu sur francetravail.io"
+            },
+            {
+                "id": "FRANCE_TRAVAIL_CLIENT_SECRET",
+                "label": "Client Secret France Travail",
+                "type": "password",
+                "required": False,
+                "help": "Obtenu sur francetravail.io"
+            },
+            {
+                "id": "WTTJ_ALGOLIA_API_KEY",
+                "label": "Clé Algolia WTTJ (Optionnelle)",
+                "type": "password",
+                "required": False,
+                "help": "Clé publique WTTJ (si rotation)"
+            },
+            {
+                "id": "APEC_DATADOME_COOKIE",
+                "label": "Cookie DataDome APEC (Optionnel)",
+                "type": "password",
+                "required": False,
+                "help": "Valeur du cookie 'datadome' issu d'apec.fr (contournement défi anti-bot)"
+            },
+            {
+                "id": "LINKEDIN_SESSION_COOKIE",
+                "label": "Cookie Session LinkedIn li_at (Optionnel)",
+                "type": "password",
+                "required": False,
+                "help": "Cookie de session li_at pour requêtes LinkedIn authentifiées"
+            }
         ]
     },
     "academic": {
@@ -82,17 +145,31 @@ SERVICE_SCHEMAS = {
         "name": "Google Workspace MCP (Résident)",
         "command": "workspace-mcp",
         "user_required_instructions": (
-            "Le Modèle DOIT guider l'Utilisateur pour configurer Google Workspace si les identifiants sont manquants ou invalides : "
-            "1. Créer un projet sur Google Cloud Console, activer les APIs (Calendar, Gmail, Drive, etc.) et créer un identifiant OAuth 'Application Web' "
-            "avec l'URI de redirection `https://developers.google.com/oauthplayground`. "
-            "2. Se rendre sur ce lien Playground et cliquer sur l'engrenage (Paramètres) en haut à droite. "
-            "3. Cocher 'Use your own OAuth credentials' et y insérer son Client ID et Client Secret. "
-            "4. Dans 'Input your own scopes', coller `openid https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email "
+            "DIRECTIVES IMPÉRATIVES D'AUTHENTIFICATION GOOGLE WORKSPACE :\n"
+            "1. PROSCRIPTION LOCALE : Le Modèle a l'INTERDICTION STRICTE de proposer ou d'afficher des URLs de redirection locales "
+            "(ex: http://localhost:8001/oauth2callback). L'infrastructure opère dans un conteneur headless isolé inaccessible depuis le navigateur de l'Utilisateur.\n"
+            "2. PRÉREQUIS GOOGLE CLOUD CONSOLE (SI PREMIÈRE CONFIGURATION) :\n"
+            "   a. L'Utilisateur DOIT créer un projet sur Google Cloud Console et activer les APIs requises "
+            "(Calendar, Gmail, Drive, Contacts, Sheets, Docs, Slides, Tasks).\n"
+            "   b. Dans 'Identifiants', créer un ID client OAuth de type 'Application Web' et déclarer impérativement l'URI de redirection autorisée : "
+            "https://developers.google.com/oauthplayground\n"
+            "3. PÉRENNITÉ DU JETON (ANTI-EXPIRATION 7 JOURS) :\n"
+            "   Dans Google Cloud Console > 'Écran de consentement OAuth' (Google Auth Platform > Audience), l'Utilisateur DOIT basculer le statut "
+            "de publication de 'Testing' (Test) à 'In production' (En production). Sans cette action, Google invalide déterministement "
+            "le Refresh Token tous les 7 jours (erreur invalid_grant).\n"
+            "4. GÉNÉRATION / RÉGÉNÉRATION DU REFRESH TOKEN (OAuth Playground) :\n"
+            "   a. L'Utilisateur DOIT accéder à https://developers.google.com/oauthplayground\n"
+            "   b. Ouvrir les paramètres (icône engrenage en haut à droite), cocher 'Use your own OAuth credentials' et renseigner le 'OAuth Client ID' et le 'OAuth Client secret'.\n"
+            "   c. Dans 'Step 1 - Select & authorize APIs' > champ 'Input your own scopes', coller la liste exhaustive suivante :\n"
+            "      openid https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email "
             "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify "
             "https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts https://www.googleapis.com/auth/spreadsheets "
-            "https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/presentations https://www.googleapis.com/auth/tasks`. "
-            "5. Autoriser les APIs, échanger le code contre les tokens, et récupérer le 'Refresh token'. "
-            "6. Enregistrer dans l'Identity Vault sous le service 'google_workspace' les 4 clés exactes suivantes : "
+            "https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/presentations https://www.googleapis.com/auth/tasks\n"
+            "   d. Cliquer sur 'Authorize APIs' et valider l'accès avec le compte Google cible.\n"
+            "   e. Dans 'Step 2 - Exchange authorization code for tokens', cliquer sur 'Exchange authorization code for tokens' et copier la valeur de 'Refresh token'.\n"
+            "5. CONSIGNATION DANS L'IDENTITY VAULT :\n"
+            "   Les 4 clés exactes suivantes DOIVENT être enregistrées dans l'Identity Vault sous le service 'google_workspace' "
+            "(ou mettre à jour 'GOOGLE_OAUTH_REFRESH_TOKEN' s'il s'agit d'un simple renouvellement) : "
             "'USER_GOOGLE_EMAIL', 'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'GOOGLE_OAUTH_REFRESH_TOKEN'."
         ),
         "fields": [

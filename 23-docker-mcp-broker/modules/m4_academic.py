@@ -1,7 +1,22 @@
+# -*- coding: utf-8 -*-
+"""
+================================================================================
+MODULE : ECHO - M4 ACADEMIC
+VERSION : 5.229.1.1
+================================================================================
+"""
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.229.1.1: Ajout de l'import manquant xml.etree.ElementTree (ET).
+# 5.228.9.1: Fallback d'import MCPServer (compatibilité MCP 1.x et 2.x).
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 import json
-import httpx
 import xml.etree.ElementTree as ET
-from mcp.server import MCPServer
+import httpx
+try:
+    from mcp.server import MCPServer
+except ImportError:
+    from mcp.server.fastmcp import FastMCP as MCPServer
 
 def register_academic_tools(mcp: MCPServer):
     

@@ -2,13 +2,16 @@
 """
 title: ECHO Echo Auth
 author: Wilfried BARNAVON
-version: 1.2
+version: 5.231.13.1
 description: Gestion de l'authentification et OAuth2.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.2: Extraction des quotas 5h et semaine (retrieveUserQuotaSummary), correction Protobuf v3 (0.0) dans fetchAvailableModels et refresh OAuth2 proactif dans refresh_quota_if_needed.
-# 1.1: Restauration de l'usage d'AuthService pour le support PKCE et API keys.
+# 5.231.13.1: Support de la clé disabled dans get_ui_quota_snapshot et rafraîchissement Cloud réactif (60s / échéance Imminent) dans refresh_quota_if_needed.
+# 5.231.12.1: Résolution systématique de ca_model_id et suppression du court-circuit de get_quota_summary dans get_ui_quota_snapshot.
+# 5.231.10.1: Factorisation de format_quota_reset_time, get_active_auth_providers et get_ui_quota_snapshot pour le HUD.
+# 5.228.3.2: Traçabilité typée des erreurs réseau httpx, verrouillage Circuit Breaker sur RequestError, Auto-Heal unlock_agy_endpoint sur 200 OK et ciblage prioritaire Gemini dans le fallback fetch_available_models.
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 import os
 import time
 import sqlite3
@@ -98,12 +101,32 @@ class EchoAuth:
         except Exception:
             return {}
 
-    async def get_ordered_auth_providers(self, user_id: str) -> List[Dict]:
-        """Résout le registre des fournisseurs d'accès aux modèles par priorité (OAuth2 > Clé Primaire > Clé Secondaire)."""
+    @staticmethod
+    def format_quota_reset_time(raw_iso: str) -> str:
+        """Convertit un timestamp ISO UTC en délai relatif lisible pour le HUD."""
+        if not raw_iso or "T" not in raw_iso:
+            return raw_iso or "N/A"
+        try:
+            from datetime import datetime, timezone
+            reset_dt = datetime.fromisoformat(raw_iso.replace("Z", "+00:00"))
+            diff_sec = (reset_dt - datetime.now(timezone.utc)).total_seconds()
+            if diff_sec <= 0:
+                return "Imminent"
+            diff_min = int(diff_sec / 60)
+            if diff_min >= 1440:
+                days, hours = diff_min // 1440, (diff_min % 1440) // 60
+                return f"{reset_dt.strftime('%d/%m %H:%M')} ({days}j {hours}h)"
+            if diff_min >= 60:
+                hours, mins = diff_min // 60, diff_min % 60
+                return f"{reset_dt.strftime('%H:%M')} ({hours}h{mins:02d})"
+            return f"{reset_dt.strftime('%H:%M')} ({diff_min}')"
+        except Exception:
+            return raw_iso
+
+    def get_active_auth_providers(self, user_id: str = None) -> List[Dict]:
+        """Résout de manière synchrone le registre des fournisseurs d'accès depuis identity.db."""
         uid = user_id or self.user_id
         providers = []
-        
-        # 1. Vérification OAuth2 (Prioritaire)
         refresh_token = self.get_auth_data("google_oauth2_refresh_token", uid)
         if refresh_token:
             providers.append({
@@ -114,14 +137,78 @@ class EchoAuth:
                 "tier_id": self.get_auth_data(AUTH_DATA_USER_TIER, uid),
                 "g1_credits": self.get_auth_data("google_g1_credits", uid)
             })
-
-        # 2. Vérification des Clés API (Standard/Fallback)
         for method in [AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_KEY_SECONDARY]:
             key_val = self.get_auth_data(method, uid)
             if key_val:
                 providers.append({"type": method, "key": key_val})
-
         return providers
+
+    async def get_ordered_auth_providers(self, user_id: str) -> List[Dict]:
+        """Résout le registre des fournisseurs d'accès aux modèles par priorité (OAuth2 > Clé Primaire > Clé Secondaire)."""
+        return self.get_active_auth_providers(user_id)
+
+    def get_ui_quota_snapshot(self, ca_model_id: str = "", auth_providers: Optional[List[Dict]] = None) -> dict:
+        """Fournit le snapshot consolidé et prêt à l'emploi des quotas et de l'identité pour le HUD."""
+        providers = auth_providers if auth_providers is not None else self.get_active_auth_providers()
+        resolved_ca_model = ca_model_id
+        if not resolved_ca_model:
+            raw_models = self.get_auth_data("google_quota_by_model")
+            if raw_models:
+                try:
+                    import json as _j
+                    models_dict = _j.loads(raw_models)
+                    if isinstance(models_dict, dict) and models_dict:
+                        resolved_ca_model = next(iter(models_dict.keys()))
+                except Exception:
+                    pass
+            if not resolved_ca_model:
+                resolved_ca_model = "gemini-3.8-flash-high"
+
+        model_quota = self.get_model_quota(resolved_ca_model) if resolved_ca_model else {}
+        q_summary = self.get_quota_summary(resolved_ca_model)
+
+        q5_info = q_summary.get("5h", {})
+        qw_info = q_summary.get("weekly", {})
+        q5_disabled = bool(q5_info.get("quotaDisabled", q5_info.get("disabled", False)))
+        q5_frac = float(q5_info.get("remainingFraction", 1.0)) if q5_info else None
+        q5_reset = self.format_quota_reset_time(str(q5_info.get("resetTime", "N/A"))) if q5_info else "N/A"
+        qw_frac = float(qw_info.get("remainingFraction", 1.0)) if qw_info else None
+        qw_reset = self.format_quota_reset_time(str(qw_info.get("resetTime", "N/A"))) if qw_info else "N/A"
+
+        active_fracs = []
+        if q5_frac is not None and not q5_disabled:
+            active_fracs.append(q5_frac)
+        if qw_frac is not None:
+            active_fracs.append(qw_frac)
+
+        if active_fracs:
+            q_fraction = min(active_fracs)
+            q_reset = qw_reset if (qw_frac is not None and q_fraction == qw_frac) else q5_reset
+        else:
+            q_fraction = float(model_quota.get("remainingFraction", float(self.get_auth_data("google_quota_fraction") or 1.0)))
+            q_reset = self.format_quota_reset_time(str(model_quota.get("resetTime", self.get_auth_data("google_quota_reset") or "N/A")))
+
+        credits_raw = self.get_auth_data("google_credits_total") or self.get_auth_data("google_g1_credits")
+        return {
+            "auth_sources": [s["type"].replace("google_", "").replace("_", " ").upper() for s in providers] if providers else [],
+            "user_email": self.get_auth_data(AUTH_DATA_USER_EMAIL),
+            "user_tier": self.get_auth_data(AUTH_DATA_USER_TIER),
+            "project_id": self.get_auth_data(AUTH_DATA_PROJECT_ID),
+            "credits_val": str(credits_raw) if (credits_raw is not None and credits_raw != "") else "0",
+            "quota_fraction": q_fraction,
+            "quota_reset": q_reset,
+            "quota_type": self.get_auth_data("google_quota_type") or "CODE_ASSIST",
+            "quota_model": resolved_ca_model or "—",
+            "quota_rpd_rem": str(model_quota.get("requestsPerDayRemaining", "N/A")),
+            "quota_rpd_lim": str(model_quota.get("requestsPerDayLimit", "N/A")),
+            "quota_rpm_rem": str(model_quota.get("requestsPerMinuteRemaining", "N/A")),
+            "quota_rpm_lim": str(model_quota.get("requestsPerMinuteLimit", "N/A")),
+            "quota_5h_fraction": q5_frac,
+            "quota_5h_reset": q5_reset,
+            "quota_5h_disabled": q5_disabled,
+            "quota_weekly_fraction": qw_frac,
+            "quota_weekly_reset": qw_reset,
+        }
 
     async def refresh_google_oauth_token(self, refresh_token: str, user_id: str = None) -> Optional[str]:
         """Rafraîchit silencieusement le jeton d'accès Google OAuth2."""
@@ -142,7 +229,7 @@ class EchoAuth:
                     self.save_api_key("google_oauth2_last_refresh", str(time.time()), user_id)
                     return new_access_token
         except Exception as e:
-            print(f"[EchoAuth] Erreur Refresh OAuth2: {e}")
+            print(f"[EchoAuth] Erreur Refresh OAuth2: {type(e).__name__}: {str(e) or repr(e)}")
         return None
 
     def save_api_key(self, key_name: str, value: str, user_id: str = None):
@@ -808,8 +895,13 @@ class AuthService:
                         if not g1_found:
                             self.echo_auth.save_api_key("google_g1_credits", "0")
 
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[AuthService] Erreur HealthCheck ({base_url}): {type(e).__name__}: {str(e) or repr(e)}")
+                if isinstance(e, httpx.RequestError):
+                    from datetime import datetime, timedelta, timezone
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+                    state_mgr.lock_agy_endpoint(idx, reset)
+                    continue
 
             
 
@@ -842,6 +934,7 @@ class AuthService:
                 if q_resp.status_code == 200:
 
                     data     = q_resp.json()
+                    state_mgr.unlock_agy_endpoint(idx)
 
                     # Structure Protobuf JSON de retrieveUserQuotaSummary :
                     # { groups: [ { displayName, description, buckets: [ { bucketId, window, remainingFraction, resetTime, disabled, description } ] } ] }
@@ -964,9 +1057,13 @@ class AuthService:
 
             except Exception as e:
 
-                print(f"[AuthService] Erreur récupération quota: {e}")
+                print(f"[AuthService] Erreur récupération quota ({base_url}): {type(e).__name__}: {str(e) or repr(e)}")
 
-                pass
+                if isinstance(e, httpx.RequestError):
+                    from datetime import datetime, timedelta, timezone
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+                    state_mgr.lock_agy_endpoint(idx, reset)
+                    continue
 
 
 
@@ -1033,6 +1130,7 @@ class AuthService:
                 if resp.status_code == 200:
 
                     raw = resp.json()
+                    state_mgr.unlock_agy_endpoint(idx)
 
                     print(f"[AuthService] fetchAvailableModels raw response: {str(raw)[:300]}")
 
@@ -1098,7 +1196,11 @@ class AuthService:
                         # Fallback legacy uniquement si retrieveUserQuotaSummary n'a pas déjà renseigné google_quota_summary
                         if not self.echo_auth.get_auth_data("google_quota_summary"):
 
-                            first_qi = next(iter(quota_map.values()))
+                            gemini_qis = [
+                                v for k, v in quota_map.items()
+                                if k.lower().startswith("gemini")
+                            ]
+                            first_qi = gemini_qis[0] if gemini_qis else next(iter(quota_map.values()))
 
                             self.echo_auth.save_api_key("google_quota_fraction",   str(first_qi["remainingFraction"]))
 
@@ -1114,17 +1216,20 @@ class AuthService:
 
             except Exception as e:
 
-                print(f"[AuthService] Erreur fetch_available_models: {e}")
+                print(f"[AuthService] Erreur fetch_available_models ({base_url}): {type(e).__name__}: {str(e) or repr(e)}")
 
-                pass
+                if isinstance(e, httpx.RequestError):
+                    from datetime import datetime, timedelta, timezone
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+                    state_mgr.lock_agy_endpoint(idx, reset)
 
         return []
 
 
 
-    async def refresh_quota_if_needed(self):
+    async def refresh_quota_if_needed(self, force: bool = False):
 
-        """Rafraîchit les métriques si OAuth2 est actif (Threshold: 10 min)."""
+        """Rafraîchit les métriques si OAuth2 est actif (Threshold: 60s ou échéance Imminent)."""
 
         refresh_token = self.echo_auth.get_auth_data("google_oauth2_refresh_token")
 
@@ -1144,7 +1249,12 @@ class AuthService:
 
 
 
-        if time.time() - last_fetch < 600:
+        snap = self.echo_auth.get_ui_quota_snapshot()
+        is_imminent = (
+            snap.get("quota_5h_reset") == "Imminent"
+            or snap.get("quota_weekly_reset") == "Imminent"
+        )
+        if not force and not is_imminent and (time.time() - last_fetch < 60):
 
             return
 
@@ -1288,6 +1398,7 @@ class AuthService:
                 if resp.status_code == 200:
 
                     data       = resp.json()
+                    state_mgr.unlock_agy_endpoint(idx)
 
                     project_id = _extract_project_id(data)
 
@@ -1405,9 +1516,12 @@ class AuthService:
 
             except Exception as e:
 
-                print(f"[AuthService] Erreur Provisioning Critique: {e}")
+                print(f"[AuthService] Erreur Provisioning Critique ({base_url}): {type(e).__name__}: {str(e) or repr(e)}")
 
-                pass
+                if isinstance(e, httpx.RequestError):
+                    from datetime import datetime, timedelta, timezone
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+                    state_mgr.lock_agy_endpoint(idx, reset)
 
 
 

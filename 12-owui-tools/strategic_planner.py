@@ -1,17 +1,16 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 1.14
+version: 5.229.0.0
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression des docstrings OpenAPI et externalisation de la documentation vers 14-owui-libs/tool_guides/strategic_planner.md.
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.14: Sanctuarisation du thinkingLevel "high" sur build_plan et analyze_plan.
 # 1.13: Refonte UX complète (zéro émoji), statut "proposed" par défaut, retrait des modales build/update, et ajout de l'outil analyze_plan.
 # 1.11: Affichage des instructions de pointage dans l'évènement UI de update_tasks.
-# 1.9: Création de process_plan, modale optionnelle, verrouillage frontend de update_plan contre les démarrages illicites.
-# 1.6: Nettoyage du code : suppression des imports inutilisés (PEP8).
-# 1.4: Registre Unifié V2 — Plans stockés dans le Codex (Git) au lieu du dossier plans/.
 
 import sys
 import orjson as json
@@ -49,17 +48,7 @@ from echo_constants import (
 
 
 class Tools:
-    """
-    OUTILS DE PLANIFICATION STRATEGIQUE ET TACTIQUE (ECHO PLANNER)
-    Permet a l'Orchestrateur de construire, consulter et maintenir un plan d'action formel.
-    
-    DIRECTIVE ORCHESTRATEUR (OBLIGATION DE SUIVI ET VALIDATION) :
-    1. Validation : L'outil build_plan sauvegarde nativement la stratégie et les tâches dans le Codex (statut 'proposed'). L'Orchestrateur DOIT présenter le plan à l'Utilisateur.
-    2. Amorçage : Le lancement de l'exécution DOIT OBLIGATOIREMENT ÊTRE EXPLICITEMENT DEMANDÉ PAR L'UTILISATEUR. L'Orchestrateur a l'OBLIGATION ABSOLUE d'invoquer `process_plan` pour déclencher la modale de validation officielle et basculer le système en exécution.
-    3. Execution Sequentielle : L'Orchestrateur DOIT executer les phases du plan chronologiquement.
-    4. Suivi Tactique : L'Orchestrateur a l'OBLIGATION STRICTE de pointer l'avancement via `update_tasks`.
-    5. Pivot Strategique : Le modèle utilise `update_plan` pour modifier un plan (uniquement s'il est au statut 'proposed').
-    """
+    """Outils de planification stratégique et de suivi tactique (ECHO Planner)."""
     class Valves(BaseModel):
         PLANNER_TIMEOUT: int = Field(
             default=180,
@@ -151,18 +140,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None,
     ) -> dict:
-        """
-        Création d'un plan d'action stratégique et de sa liste de tâches associée.
-        ATTENTION ORCHESTRATEUR : L'outil génère automatiquement DEUX fichiers dans le Codex (Git), liés par le même identifiant :
-        1. Le fichier de Stratégie (plan_xxx.md)
-        2. Le fichier des Tâches (tasks_xxx.md)
-        
-        Une fois exécuté, le Modèle DOIT présenter les grandes lignes à l'Utilisateur et obtenir son accord explicite avant de démarrer l'exécution.
-        Le `plan_id` retourné est la clé unique pour interagir ensuite avec `update_plan` (pour la stratégie) ou `update_tasks` (pour la tactique).
-        
-        :param goal: Objectif final mesurable.
-        :param context: Contraintes et périmètre.
-        """
+        """Conçoit un plan stratégique formel et sa liste de tâches dans le Codex (statut `proposed`) et retourne son `plan_id`."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
@@ -278,10 +256,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None,
     ) -> dict:
-        """
-        Lecture du contenu complet d'un plan stratégique existant.
-        :param plan_id: Identifiant unique du plan (obtenu lors de la creation ou via query_registry).
-        """
+        """Lit le document de stratégie et la liste des tâches associés à un `plan_id`."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
@@ -315,13 +290,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None,
     ) -> dict:
-        """
-        Outil STRATÉGIQUE pour modifier le plan d'action (stratégie).
-        Ne DOIT PAS être utilisé pour le pointage des tâches (utiliser update_tasks).
-        
-        :param plan_id: Identifiant unique du plan (obtenu lors de la creation ou via query_registry).
-        :param instructions: Ordres precis (ex: "Ajoute un resume de mise en oeuvre a la fin").
-        """
+        """Modifie la stratégie d'un plan d'action existant (autorisé uniquement au statut `proposed`)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
@@ -421,20 +390,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None,
     ) -> dict:
-        """
-        Outil TACTIQUE EXCLUSIF pour pointer l'état d'avancement des tâches (tasks_XXX.md).
-        Permet de modifier le statut des tâches sans bloquer le flux d'exécution. Ne DOIT PAS être utilisé pour changer la stratégie globale.
-        
-        Codification stricte des statuts à respecter dans les instructions :
-        - [ ] : Tâche en attente (Non commencée)
-        - [/] : Tâche en cours d'exécution
-        - [x] : Tâche terminée avec succès
-        - [!] : Tâche échouée ou bloquée (nécessite attention)
-        - [-] : Tâche ignorée ou obsolète
-        
-        :param plan_id: Identifiant unique du plan (lie le plan et les tâches).
-        :param instructions: Ordres précis de modification de statut (ex: 'Passe la sous-tâche 1.1 au statut [x] et la 1.2 au statut [/]').
-        """
+        """Met à jour le statut des tâches (`[ ]`, `[/]`, `[x]`, `[!]`, `[-]`) dans le fichier de tâches d'un plan (`plan_id`)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
@@ -511,13 +467,7 @@ class Tools:
         __user__: Optional[dict] = None, __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None, __event_call__: Optional[Any] = None,
     ) -> dict:
-        """
-        Outil D'AMORÇAGE OBLIGATOIRE. Déclenche l'exécution officielle d'un plan.
-        Le Modèle DOIT invoquer cet outil AVANT de commencer la première tâche d'un plan.
-        
-        :param plan_id: Identifiant unique du plan.
-        :param user_already_validated: Booléen (défaut False). Mettre à True UNIQUEMENT si l'Utilisateur a formellement validé le plan lors d'un échange explicite dans la conversation (ex: "OK pour le plan, vas-y"). Si False, une modale de confirmation demandera formellement l'accord de l'utilisateur.
-        """
+        """Amorçage obligatoire déclenchant la validation et le passage d'un plan `proposed` au statut `executing` avant l'exécution de ses tâches."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
@@ -609,7 +559,7 @@ Le plan `{plan_id}` est officiellement EN COURS D'EXÉCUTION.
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None,
     ) -> dict:
-        """Supprime définitivement un plan stratégique (fichier + registre)."""
+        """Supprime définitivement un plan stratégique (`plan_id`) du Codex et du Registre Unifié."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
@@ -647,14 +597,7 @@ Le plan `{plan_id}` est officiellement EN COURS D'EXÉCUTION.
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None,
     ) -> dict:
-        """
-        Outil D'ANALYSE NON MODIFICATRICE d'un plan stratégique.
-        Permet à l'Orchestrateur de déléguer l'audit d'un plan pour vérifier sa robustesse et sa cohérence.
-        
-        :param plan_id: Identifiant unique du plan.
-        :param focus: (Optionnel) Points d'attention spécifiques pour l'analyse.
-        :param context_info: (Optionnel) Informations de contexte supplémentaires justifiant les choix du plan.
-        """
+        """Exécute un audit critique non modificateur sur la robustesse et la cohérence d'un plan (`plan_id`)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")

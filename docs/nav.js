@@ -63,7 +63,8 @@ document.addEventListener('DOMContentLoaded', () => {
       { text: "17. Inférence Distante", href: "17_edge_inference.html" },
       { text: "18. Annexes Techniques", href: "18_annexes.html" },
       { text: "19. Crédits", href: "19_credits.html" },
-      { text: "20. Registre d'Audit", href: "20_registre_audit.html" }
+      { text: "20. Registre d'Audit", href: "20_registre_audit.html" },
+      { text: "21. Mentions Légales & CGU", href: "21_mentions_legales.html" }
     ]
   }
 ];

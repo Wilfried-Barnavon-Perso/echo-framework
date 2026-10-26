@@ -96,16 +96,16 @@
       contexte, mais leur influence sur la génération devient négligeable. Au-delà de <strong>50 %</strong>,
       la dégradation est critique.
     </p>
-    <p>Face à l'allongement d'une conversation, ECHO y répond en combinant le <strong>Compactage Contextuel sur Place (Checkpoint Cognitif)</strong> et <strong>deux mémoires complémentaires</strong> :</p>
+    <p>Face à l'allongement d'une conversation, ECHO y répond en combinant la <strong>Migration de Session Distillée</strong> et <strong>deux mémoires complémentaires</strong> :</p>
     <ul>
       <li>
-        <strong>Compactage Contextuel sur Place (Checkpoint Cognitif)</strong> : compresse automatiquement ou sur demande les anciens tours de parole en un résumé structuré (Checkpoint) injecté directement dans la discussion en cours, libérant la fenêtre d'attention sans jamais perdre le fil ni quitter la session.
+        <strong>Migration et Bifurcation de Session (Continuité Cognitive)</strong> : transfère sur demande une discussion longue vers une nouvelle session vierge accompagnée d'une synthèse structurée en deux passes (contexte global et derniers échanges), de ses étiquettes de classement, des fichiers du Codex et de la mémoire vectorielle de session. De même, le clonage ou la bifurcation (<em>Fork</em>) depuis n'importe quel message passé duplique et réaligne automatiquement l'état des fichiers à cet instant précis, vous permettant d'explorer une hypothèse alternative sans crainte d'altérer votre travail principal.
       </li>
       <li>
         <strong>Mémoire Organique à Long Terme (Mémoire Globale)</strong> : mémoire permanente de vos préférences, contraintes et décisions d'architecture, qui survit d'une session à l'autre. Inspirée de la psychologie cognitive humaine, elle capte les signaux faibles dès la première observation (<em>Trivial</em>), les renforce par récurrence (<em>Mineur</em>, <em>Utile</em>, <em>Majeur</em>) ou les sanctuarise immédiatement sur consigne explicite (<em>Axiome</em>), tout en consolidant chaque nuit les observations récurrentes en souvenirs durables.
       </li>
       <li>
-        <strong>Mémoire Vectorisée de Session</strong> : mémoire de travail dédiée à la discussion en cours (et interrogeable à travers l'historique), permettant de décharger les documents massifs et l'historique conversationnel sans saturer l'attention du modèle.
+        <strong>Mémoire Vectorisée de Session</strong> : mémoire de travail dédiée à la discussion en cours (et interrogeable à travers l'historique ou par étiquette de sujet), permettant de décharger les documents massifs et l'historique conversationnel sans saturer l'attention du modèle.
       </li>
     </ul>
 
@@ -114,7 +114,7 @@
       La vectorisation (transformation du texte en mémoire mathématique) est une opération exigeante en calcul. ECHO intègre un mécanisme de déport de calcul : sur ordinateur de bureau, le traitement vectoriel est confié directement à la carte graphique de votre navigateur.
     </p>
     <p>
-      Sur appareil mobile, ou si votre poste ne dispose pas d'accélération graphique compatible, le serveur détecte immédiatement la configuration et bascule sans délai sur son propre moteur de calcul local. Cela préserve les ressources du serveur d'auto-hébergement tout en garantissant une réactivité constante sur tous les terminaux.
+      Afin de préserver le confort visuel et la réactivité, le navigateur vérifie silencieusement les capacités réelles de votre carte graphique avant tout téléchargement. Sur appareil mobile, ou si votre poste ne dispose pas d'accélération matérielle compatible, le serveur prend immédiatement le relais sans afficher d'indicateur superflu ni ralentir votre navigation.
     </p>
 
     <h2>Standards de Développement</h2>
@@ -126,17 +126,17 @@
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Collections Vectorielles Qdrant, Compaction &amp; Escalade</h3>
+        <h3>1. Collections Vectorielles Qdrant, Migration de Session &amp; Escalade</h3>
         <ul>
           <li><strong>RAG Organique (<code>echo_meta_artifacts</code>) :</strong> indexé par <code>user_id</code> avec qualification obligatoire sur 5 niveaux d'importance (<code>MEMORY_IMPORTANCE_WEIGHTS</code> et <code>MEMORY_IMPORTANCE_LABELS</code> de <code>1 - Trivial</code> à <code>5 - Axiome</code>, alignés sur les protocoles <code>PACP</code>/<code>PRAC</code>) et consolidation nocturne par centroïde L2-normalisé (<code>Lvl1 &rarr; Lvl2</code>). Manipulé via <code>update_meta_artifact</code>, <code>search_meta_artifacts</code> et <code>delete_meta_artifact_item</code>.</li>
-          <li><strong>Session RAG (<code>echo_session_rag</code>) &amp; Mémoire Épisodique Active :</strong> indexé par <code>user_id + chat_id + source_id</code> via <code>save_session_context</code>, <code>search_sessions_context</code> (avec support <code>global_search</code> inter-sessions) et <code>delete_session_context_source</code>. En complément du Session RAG, le filtre <code>context_compaction_filter.py</code> (Priorité 15) et l'action <code>compact_context_action.py</code> opèrent un <strong>Compactage Contextuel In-Place</strong> (<code>45% &rarr; 25%</code> de <code>ECHO_MAX_CONTEXT_SIZE</code> via <code>MODEL_APOLLO</code>, budget <code>32768</code> tokens) consolidant les tours anciens dans <code>&lt;artifact id="AEC_context_checkpoint"&gt;</code>.</li>
+          <li><strong>Session RAG (<code>echo_session_rag</code>) &amp; Mémoire Épisodique Active :</strong> indexé par <code>user_id + chat_id + source_id</code> via <code>save_session_context</code>, <code>search_sessions_context</code> (avec support <code>global_search</code> inter-sessions et filtrage par <code>tag</code> via SSoT <code>webui.db</code>) et <code>delete_session_context_source</code>. En complément du Session RAG, l'action <code>resume_in_new_chat_action.py</code> (v5.229.2.1) et le module <code>echo_session_clone.py</code> (v5.228.4.1, mutualisé avec <code>echo_chat_cloned_event.py</code> v5.227.1.1) opèrent une migration de session par distillation en 2 passes (<code>USR_ACTION_RESUME_GLOBAL</code> et <code>USR_ACTION_RESUME_RECENT</code> via <code>MODEL_DISTILLATION</code>), propagation des étiquettes (<code>Chats.add_chat_tag_by_id</code>), duplication atomique des domaines et du Codex Git, et clonage paginé des vecteurs Qdrant.</li>
           <li><strong>Corrélation contextuelle :</strong> Au-delà des seuils de charge contextuelle (<code>CONTEXT_LOAD_WARNING_THRESHOLD = 40%</code>, <code>CONTEXT_LOAD_CRITICAL_THRESHOLD = 60%</code>), l'outil <code>new_cognitive_level</code> permet au modèle actif de déclencher une escalade cognitive vers <code>MODEL_APOLLO</code> ou <code>MODEL_PROMETHEUS</code>.</li>
         </ul>
 
-        <h3>2. Pont d'Inférence Edge (<code>edge_embed_bridge_filter.py</code>)</h3>
+        <h3>2. Pont d'Inférence Edge (<code>edge_embed_bridge_filter.py</code> v5.231.11.1)</h3>
         <ul>
-          <li><strong>Exécution Desktop :</strong> Le filtre Inlet (priorité 2) injecte le pont WebSocket (<code>/ws/edge-embed</code>) exécutant <code>onnx-community/harrier-oss-v1-0.6b-ONNX</code> (quantification <code>q4f16</code>, 1024 dimensions) dans le navigateur client avec gestion multi-onglets (UUID <code>client_id</code> et visibilité).</li>
-          <li><strong>Bypass Mobile &amp; Fallback CPU :</strong> L'inspection serveur du <code>User-Agent</code> court-circuite l'injection JS sur mobile. En l'absence de client WebGPU actif ou en cas d'incompatibilité matérielle, <code>echo-embedding</code> (port 7997) bascule instantanément les <code>asyncio.Future</code> sur <code>llama-cpp-python</code> (<code>harrier-oss-v1-0.6b.f16.gguf</code>, CLS Token Pooling et normalisation L2).</li>
+          <li><strong>Sonde WebGPU &amp; Exécution Desktop :</strong> Le filtre Inlet (priorité 3) exécute en amont la sonde matérielle et fonctionnelle <code>window.echoProbeWebGPU</code> (<code>EchoUI.get_webgpu_probe_js</code> validant <code>navigator.gpu</code>, l'adaptateur physique non-fallback, l'extension <code>shader-f16</code>, les limites de buffers &ge; 128 Mo et un <strong>Compute Smoke Test WGSL <code>f16</code></strong>) <em>avant</em> tout téléchargement ou création du HUD, puis connecte le pont WebSocket (<code>/ws/edge-embed</code>) exécutant <code>onnx-community/harrier-oss-v1-0.6b-ONNX</code> (<code>dtype: 'fp16'</code>, 1024 dimensions) dans le navigateur client avec gestion multi-onglets (UUID <code>client_id</code> et visibilité).</li>
+          <li><strong>Bypass Mobile &amp; Fallback CPU Instantané :</strong> L'inspection serveur du <code>User-Agent</code> court-circuite l'injection JS sur mobile. En cas d'incompatibilité matérielle (<code>reportIncompatibleAndAbort</code> persisté dans <code>active_edge_clients</code> sur <code>echo-embedding</code> v5.230.1.1, port 7997) ou d'absence de client WebGPU actif, le worker bascule instantanément les <code>asyncio.Future</code> sur <code>llama-cpp-python</code> (<code>harrier-oss-v1-0.6b.f16.gguf</code>, CLS Token Pooling et normalisation L2).</li>
         </ul>
       </div>
     </details>
@@ -148,7 +148,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.226.5 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.15 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

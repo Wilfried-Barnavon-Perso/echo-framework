@@ -1,15 +1,16 @@
 """
 title: ECHO Context Gauge
 author: Wilfried BARNAVON
-version: 3.6
+version: 5.229.0.0
 description: Composant système interne : ECHO Context Gauge.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 3.6: Alignement sur la nomenclature cognitive (MODEL_PROMETHEUS).
 # 3.5: Migration SQL : Lecture des métriques depuis le registre KV unifié echo_settings au lieu de la table dédiée context_stats.
 # 3.3: Bascule des seuils cognitifs (WARNING/CRITICAL) sur les constantes définies dans echo_constants.py.
-# 3.2: Alignement sur le standard de retour minimaliste (wrap_tool_output).
 
 from pydantic import BaseModel, Field
 import os
@@ -43,9 +44,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """
-        Surveillance de la saturation du contexte (Tokens). Déclencheur d'escalade cognitive : si statut CRITICAL, RECOMMANDE l'usage de 'new_cognitive_level' (PROMETHEUS). Retourne un JSON détaillé (context_load_percent, used_tokens, status).
-        """
+        """Mesure le taux d'occupation de la fenêtre de contexte (tokens utilisés et statut SAFE/WARNING/CRITICAL)."""
         limit = self.valves.context_limit
         real_stats = None
         source = "MISSING_DATA"

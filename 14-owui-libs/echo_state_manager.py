@@ -2,14 +2,16 @@
 """
 title: ECHO Echo State Manager
 author: Wilfried BARNAVON
-version: 1.4
+version: 5.231.13.1
 description: Gestionnaire d'état SQLite et RAG.
+"""
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.13.1: Séparation de archive_previous_context_stats (début de tour) et save_context_stats (fusion sans écrasement de previous_context_stats).
+# 5.231.10.1: Auto-archivage de previous_context_stats et méthode get_previous_context_stats pour le calcul de différentiel.
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.4: Délégation de la création d'environnement à un filtre Inlet WebUI.
 # 1.3: Résolution du deadlock de sauvegarde du contexte en permettant l'injection de connexion dans save_session_setting.
-# 1.2: Factorisation du KV session : Remplacement des tables redondantes (session_state, context_stats) par le registre unifié echo_settings.
-# 1.1: Correction du get_agy_endpoint pour fallback sur l'URL de secours (1) au lieu de 0 en cas de verrouillage global.
-"""
 import os
 import time
 import sqlite3
@@ -357,11 +359,28 @@ class EchoStateManager:
         """Déverrouille proactivement une URL sur un succès HTTP (Auto-Heal)."""
         self.save_setting(f"agy_locked_url_{idx}", "")
 
+    def archive_previous_context_stats(self):
+        """Archive l'état final du tour précédent au tout début d'un nouveau tour utilisateur."""
+        old_dict = self.get_last_context_stats()
+        if old_dict and old_dict.get("totalTokenCount", 0) > 0:
+            self.save_session_setting('previous_context_stats', std_json.dumps(old_dict).decode('utf-8'))
+
     def save_context_stats(self, stats: dict):
-        self.save_session_setting('context_stats', std_json.dumps(stats).decode('utf-8'))
+        """Met à jour context_stats par fusion sans écraser previous_context_stats en cours de tour."""
+        merged = self.get_last_context_stats()
+        merged.update(stats)
+        self.save_session_setting('context_stats', std_json.dumps(merged).decode('utf-8'))
 
     def get_last_context_stats(self) -> dict:
         data = self.get_session_setting('context_stats')
+        if data:
+            try:
+                return std_json.loads(data)
+            except: pass
+        return {}
+
+    def get_previous_context_stats(self) -> dict:
+        data = self.get_session_setting('previous_context_stats')
         if data:
             try:
                 return std_json.loads(data)
@@ -816,9 +835,8 @@ class EchoStateManager:
                 cursor = conn.execute("UPDATE message_shadows SET is_embedded = 1 WHERE message_id = ?", (message_id,))
                 if cursor.rowcount == 0:
                     conn.execute("""
-                        INSERT INTO message_shadows (message_id, chat_id, role, full_parts_json, updated_at, is_embedded) 
+                        INSERT INTO message_shadows (message_id, chat_id, role, full_parts_json, updated_at, is_embedded)
                         VALUES (?, ?, ?, ?, ?, ?)
                     """, (message_id, self.chat_id or "unknown", "assistant", "[]", int(time.time()), 1))
                 conn.commit()
         except: pass
-

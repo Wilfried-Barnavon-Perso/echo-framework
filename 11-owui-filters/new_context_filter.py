@@ -2,16 +2,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 7.61
+version: 5.231.11.1
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 7.61: Compatibilité avec context_compaction_filter (offset _echo_compacted_user_turns sur tour_conversation et préservation de AEC_context_checkpoint).
-# 7.60: Ajustement sémantique de l'AEC_directive de mise à niveau (notification du passage de l'ancienne à la nouvelle version).
-# 7.59: Injection dynamique de l'AEC_directive d'initialisation de session (PIS) ou de mise à niveau dans rich_parts.
-# 7.58: Correction du fallback ZoneInfo (TypeError sur import pytz as ZoneInfo -> from pytz import timezone).
-# 7.57: Refactorisation algorithmique PGCU et renommage (current_user_multipart_payload).
+# 5.231.11.1: Réétagement de la priorité à 30 (après user_native_context_filter à 20 et avant codex_links_filter à 40).
+# 5.231.7.1: Ajout du fallback sur metadata.user_message_id et timestamp courant pour garantir le scellement Shadow du message utilisateur.
+# 5.227.1.1: Suppression de l'extraction de AEC_context_checkpoint et de l'offset _echo_compacted_user_turns.
+# 5.226.18.1: Attente du verrou de clonage (wait_for_chat_clone) avant l'instanciation de EchoStateManager.
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 
 from pydantic import BaseModel, Field
@@ -27,7 +27,7 @@ from datetime import datetime
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
-from echo_paths import resolve_upload_file_path
+from echo_paths import resolve_upload_file_path, wait_for_chat_clone
 from echo_auth import EchoAuth
 from echo_constants import (
     GOOGLE_API_KEY_REGEX,
@@ -41,7 +41,7 @@ logger = logging.getLogger("ECHO-FILTER")
 
 class Filter:
     class Valves(BaseModel):
-        priority: int = Field(default=20, hidden=True, description="Priorité d'exécution (0 = premier).")
+        priority: int = Field(default=30, hidden=True, description="Priorité d'exécution (30 = après user_native_context_filter à 20 et avant codex_links_filter à 40).")
         ENABLE_SMART_CONTEXT: bool = Field(default=True, description="Active le résumé intelligent des fichiers volumineux via Gemini Flash.")
         SMART_CONTEXT_CHUNK_LIMIT: int = Field(default=10, ge=2, le=50, description="🧠 Nombre de passages extraits pour la Synthèse Guidée par RAG (2-50).")
         ENABLE_OFFICE_CONVERSION: bool = Field(default=True, description="📄 Convertit automatiquement les fichiers Office (Word, Excel, PowerPoint) en texte pour l'analyse.")
@@ -71,6 +71,7 @@ class Filter:
             # Factorisation : Création anticipée du DOMAIN (Vault) Utilisateur-Chat
             state_manager = None
             if chat_id:
+                await wait_for_chat_clone(chat_id)
                 state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
 
             all_files_dict = {}
@@ -225,8 +226,7 @@ class Filter:
 
             idx = -1
             current_user_multipart_payload = []  # Payload hybride courant (texte + inline_data)
-            extracted_checkpoint_xml = None
-            for i in range(len(msgs)-1, -1, -1):
+            for i in range(len(msgs) - 1, -1, -1):
                 if msgs[i].get("role") == "user":
                     idx = i
                     orig_content = msgs[i].get("content")
@@ -240,11 +240,6 @@ class Filter:
                                     pass
                                 elif p.get("type") == "text":
                                     txt_val = p.get("text", "")
-                                    if '<artifact id="AEC_context_checkpoint"' in txt_val:
-                                        from echo_core import EchoCompactionEngine
-                                        cp_xml, txt_val = EchoCompactionEngine.strip_checkpoint_tag(txt_val)
-                                        if cp_xml:
-                                            extracted_checkpoint_xml = cp_xml
                                     if txt_val.strip():
                                         current_user_multipart_payload.append({"text": f"<REQUETE_UTILISATEUR>\n{txt_val}\n</REQUETE_UTILISATEUR>"})
                                 else:
@@ -253,11 +248,6 @@ class Filter:
                                     current_user_multipart_payload.append(p)
                     else:
                         txt_val = str(orig_content or "")
-                        if '<artifact id="AEC_context_checkpoint"' in txt_val:
-                            from echo_core import EchoCompactionEngine
-                            cp_xml, txt_val = EchoCompactionEngine.strip_checkpoint_tag(txt_val)
-                            if cp_xml:
-                                extracted_checkpoint_xml = cp_xml
                         if txt_val.strip():
                             current_user_multipart_payload.append({"text": f"<REQUETE_UTILISATEUR>\n{txt_val}\n</REQUETE_UTILISATEUR>"})
                     break
@@ -272,8 +262,7 @@ class Filter:
                 u_loc = meta.get("_echo_override_location", "")
                 final_loc = u_loc if u_loc else sys_loc
 
-                compacted_offset = int(body.get("metadata", {}).get("_echo_compacted_user_turns", 0))
-                tour_conversation = compacted_offset + sum(1 for m in msgs if m.get("role") == "user")
+                tour_conversation = sum(1 for m in msgs if m.get("role") == "user")
 
                 # === AEC : Méta-données brutes ===
                 date_heure = meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu")
@@ -292,8 +281,6 @@ class Filter:
                 from echo_aec import EchoAEC
 
                 rich_parts = []
-                if extracted_checkpoint_xml:
-                    rich_parts.append({"text": extracted_checkpoint_xml + "\n\n"})
                 rich_parts.append({"text": EchoAEC.render_model_context(model_id, model_origin, version)})
                 rich_parts.append({"text": EchoAEC.render_identity_context(display_name)})
                 rich_parts.append({"text": EchoAEC.render_time_context(date_heure, timezone, tour_conversation)})
@@ -411,8 +398,8 @@ class Filter:
                             rich_parts.append({"inline_data": {"mime_type": res["content"]["mime"], "data": res["content"]["data"]}})
 
                 body["metadata"]["_echo_user_parts_draft"] = rich_parts
-                body["metadata"]["_echo_user_msg_id"] = msgs[idx].get("id")
-                body["metadata"]["_echo_user_msg_updated_at"] = msgs[idx].get("updated_at")
+                body["metadata"]["_echo_user_msg_id"] = msgs[idx].get("id") or meta.get("user_message_id")
+                body["metadata"]["_echo_user_msg_updated_at"] = msgs[idx].get("updated_at") or meta.get("user_message", {}).get("updated_at") or int(time.time())
                 body["metadata"]["_echo_files_to_seal"] = results_to_seal
 
             if all_files:

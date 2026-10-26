@@ -16,7 +16,7 @@
     <p>
       ECHO est conçu pour transformer une machine standard en un serveur d'intelligence souveraine.
       Le scénario nominal consiste à utiliser un poste Windows 11 Pro comme hôte matériel,
-      exécutant une Machine Virtuelle Ubuntu 24.04 isolée via Hyper-V. La totalité de la pile Docker
+      exécutant une Machine Virtuelle Ubuntu 26.04 isolée via Hyper-V. La totalité de la pile Docker
       ECHO s'exécute dans cette VM, garantissant une étanchéité totale entre les outils quotidiens
       de l'utilisateur et son infrastructure IA personnelle.
     </p>
@@ -193,12 +193,12 @@ sudo bash 00-echo-scripts/install-stack.sh
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Configuration Hyper-V &amp; Provisioning (<code>install-hyperv.ps1</code> v5.210.0)</h3>
+        <h3>1. Configuration Hyper-V &amp; Provisioning (<code>install-hyperv.ps1</code> v5.226.18.0)</h3>
         <p>
-          Lors du déploiement Windows, <code>install-hyperv.ps1</code> crée une archive ZIP pointant par défaut sur la branche <code>dev</code> du projet (hors <code>.git</code>, <code>.venv</code>, <code>node_modules</code>), génère un disque CIDATA de 64 Mo contenant <code>user-data</code>, <code>meta-data</code>, <code>vendor-data</code> et <code>source.zip</code>, puis provisionne une VM Hyper-V Génération 2 sous <strong>Ubuntu 24.04</strong> (4 vCPUs, 8 Go de RAM au démarrage avec allocation dynamique 4 Go – 10 Go, et VHDX dynamique de 100 Go). Au premier démarrage, Subiquity exécute cloud-init, installe Docker Compose v2, <code>jq</code>, <code>yq</code>, <code>git</code> et lance <code>sync-echo.sh</code> puis <code>install-stack.sh</code>.
+          Lors du déploiement Windows, <code>install-hyperv.ps1</code> crée une archive ZIP pointant par défaut sur la branche <code>dev</code> du projet (hors <code>.git</code>, <code>.venv</code>, <code>node_modules</code>), génère un disque CIDATA de 64 Mo contenant <code>user-data</code>, <code>meta-data</code>, <code>vendor-data</code> et <code>source.zip</code>, puis provisionne une VM Hyper-V Génération 2 sous <strong>Ubuntu 26.04</strong> (4 vCPUs, 8 Go de RAM au démarrage avec allocation dynamique 4 Go – 10 Go, et VHDX dynamique de 100 Go). Au premier démarrage, Subiquity exécute cloud-init, installe Docker Compose v2, <code>jq</code>, <code>yq</code>, <code>git</code> et lance <code>sync-echo.sh</code> puis <code>install-stack.sh</code>.
         </p>
 
-        <h3>2. Cartographie Déclarative des Sources (<code>sync-echo.sh</code> v4.11)</h3>
+        <h3>2. Cartographie Déclarative des Sources (<code>sync-echo.sh</code> v5.226.18.0)</h3>
         <table>
           <thead>
             <tr><th>Source (dépôt git)</th><th>Destination sur la VM</th><th>Contenu</th></tr>
@@ -212,7 +212,8 @@ sudo bash 00-echo-scripts/install-stack.sh
             <tr><td><code>11-owui-filters/</code></td><td><code>/opt/ECHO/owui-filters/</code></td><td>Filtres Inlet &amp; Outlet</td></tr>
             <tr><td><code>12-owui-tools/</code></td><td><code>/opt/ECHO/owui-tools/</code></td><td>Outils de l'Arsenal</td></tr>
             <tr><td><code>13-owui-actions/</code></td><td><code>/opt/ECHO/owui-actions/</code></td><td>Actions interactives HUD</td></tr>
-            <tr><td><code>14-owui-libs/</code></td><td><code>/opt/ECHO/owui-libs/</code> et <code>/app/backend/echo_libs/</code></td><td>Librairies centrales partagées</td></tr>
+            <tr><td><code>14-owui-libs/</code></td><td><code>/opt/ECHO/owui-libs/</code> et <code>/app/backend/echo_libs/</code></td><td>Librairies centrales partagées (et guides opérationnels <code>tool_guides/</code>)</td></tr>
+            <tr><td><code>15-owui-events/</code></td><td><code>/opt/ECHO/owui-events/</code></td><td>Fonctions événementielles Open WebUI (<code>chat_clone_sync_event.py</code>)</td></tr>
             <tr><td><code>20-docker-admin-manager/</code></td><td><code>/opt/ECHO/docker-admin-manager/</code></td><td>Console Admin Manager (Port 3001)</td></tr>
             <tr><td><code>21-docker-coding-worker/</code></td><td><code>/opt/ECHO/docker-coding-worker/</code></td><td>Sandbox Code Python 3.14 / Node 22 (Port 5000)</td></tr>
             <tr><td><code>22-docker-browser-worker/</code></td><td><code>/opt/ECHO/docker-browser-worker/</code></td><td>Browser Worker Playwright (Port 5002)</td></tr>
@@ -225,14 +226,14 @@ sudo bash 00-echo-scripts/install-stack.sh
         </table>
         <p>Le script applique un nettoyage conditionnel <code>sed</code> des caractères CRLF/BOM uniquement sur les fichiers impactés afin de préserver les horodatages (<code>mtime</code>) et le cache Docker BuildKit.</p>
 
-        <h3>3. Séquençage Docker &amp; Autosafety (<code>stack-echo.yml</code> v9.83 &amp; <code>install-stack.sh</code> v6.33)</h3>
+        <h3>3. Séquençage Docker &amp; Autosafety (<code>stack-echo.yml</code> v5.227.1.1 &amp; <code>install-stack.sh</code> v5.226.18.0)</h3>
         <ul>
           <li><strong>Tier 1 (Fondations) :</strong> Qdrant (<code>v1.19.1</code>, IP <code>.103</code>), SearXNG (<code>.101</code>), Watchtower (<code>.102</code>).</li>
           <li><strong>Tier 2 (Workers) :</strong> Embedding (<code>.30</code>), Coding Worker (<code>.21</code> sur <code>echo-sandbox</code>), Browser Worker (<code>.22</code>), MCP Broker (<code>.23</code>, volume persistant <code>echo-mcp-cache</code>), Download Broker (<code>.25</code>), N8N Worker (<code>.26</code>).</li>
-          <li><strong>Tier 3 (Cortex) :</strong> Open WebUI (<code>main-slim</code>, IP <code>.100</code>, <code>ENABLE_CONTEXT_COMPACTION=false</code> neutralisant la compaction native d'Open WebUI au profit du moteur ECHO, label <code>bunkerweb.MAX_CLIENT_SIZE=4096m</code>, cache persistant <code>PIP_CACHE_DIR=/app/backend/data/.cache/pip</code>, <code>mgzip</code>, <code>dulwich</code>, <code>markitdown[all]</code>, <code>h2</code>, <code>pybase64</code>, <code>edge-tts</code>).</li>
+          <li><strong>Tier 3 (Cortex) :</strong> Open WebUI (<code>main-slim</code>, IP <code>.100</code>, <code>ENABLE_CONTEXT_COMPACTION=false</code> neutralisant la compaction native d'Open WebUI pour préserver l'intégrité du Shadow Suture SQLite et des signatures cognitives, label <code>bunkerweb.MAX_CLIENT_SIZE=4096m</code>, cache persistant <code>PIP_CACHE_DIR=/app/backend/data/.cache/pip</code>, <code>mgzip</code>, <code>dulwich</code>, <code>markitdown[all]</code>, <code>h2</code>, <code>pybase64</code>, <code>edge-tts</code>).</li>
           <li><strong>Tier 4 (Gouvernance) :</strong> Admin Manager (<code>.20</code>, montages Hot-Reload en lecture seule <code>:ro</code> de <code>server.py</code>, <code>core/</code>, <code>services/</code>, <code>routes/</code>, <code>templates/</code> et accès aux 5 volumes de données dont <code>echo-n8n-data</code> et <code>echo-mcp-cache</code>) et ECHO Auth Manager (<code>.24</code>).</li>
         </ul>
-        <p><code>install-stack.sh</code> configure l'<strong>Autosafety Docker</strong> (logs max 10 Mo, cron quotidien <code>/etc/cron.daily/clean-echo</code>), compile l'image socle <code>echo-python-base:latest</code> avec <code>CMAKE_BUILD_PARALLEL_LEVEL=2</code> et un throttle de 30 jours (<code>.last_base_pull</code>), puis exécute <code>config-owui.sh</code> (<code>v7.69</code>) qui synchronise <code>webui-settings.json</code> et <code>webui-banners.json</code>, purge les modèles fantômes obsolètes en base SQLite et enregistre l'Orchestrateur Cognitif <code>echo_orchestrator</code> ainsi que les filtres, outils et actions HUD. Les conteneurs labellisés <code>echo.hot-reload=true</code> sont rechargés à chaud par <code>update-echo</code>, tandis que <code>rebuild-echo</code> (<code>upgrade-echo.sh</code> v2.8) exige une double saisie de sécurité (<code>CONFIRMER</code> puis <code>DETRUIRE</code>).</p>
+        <p><code>install-stack.sh</code> configure l'<strong>Autosafety Docker</strong> (logs max 10 Mo, cron quotidien <code>/etc/cron.daily/clean-echo</code>), compile l'image socle <code>echo-python-base:latest</code> avec <code>CMAKE_BUILD_PARALLEL_LEVEL=2</code> et un throttle de 30 jours (<code>.last_base_pull</code>), puis exécute <code>config-owui.sh</code> (<code>v5.226.18.1</code>) qui synchronise <code>webui-settings.json</code> et <code>webui-banners.json</code>, purge les modèles fantômes obsolètes en base SQLite et enregistre l'Orchestrateur Cognitif <code>echo_orchestrator</code> ainsi que les filtres, outils, actions HUD et fonctions événementielles (<code>Event</code>). Les conteneurs labellisés <code>echo.hot-reload=true</code> sont rechargés à chaud par <code>update-echo</code>, tandis que <code>rebuild-echo</code> (<code>upgrade-echo.sh</code> v5.226.18.0) exige une double saisie de sécurité (<code>CONFIRMER</code> puis <code>DETRUIRE</code>).</p>
       </div>
     </details>
 
@@ -243,7 +244,7 @@ sudo bash 00-echo-scripts/install-stack.sh
     </div>
 
     <footer>
-      ECHO Framework - Version 5.226.5 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.15 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

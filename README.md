@@ -1,11 +1,11 @@
 <div align="center">
   <img src="docs/logo-echo-full.png" alt="ECHO Framework Logo" width="350">
   
-  # 🧠 ECHO Framework v5.226.5
+  # 🧠 ECHO Framework v5.231.15
   
   **The Sovereign Intelligence Orchestrator**
   
-  [![Version](https://img.shields.io/badge/version-5.226.5-blue.svg)](#)
+  [![Version](https://img.shields.io/badge/version-5.231.15-blue.svg)](#)
   [![Open WebUI](https://img.shields.io/badge/Powered%20by-Open%20WebUI-4CAF50.svg)](#)
   [![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-F9AB00.svg)](#)
   [![License](https://img.shields.io/badge/license-Apache%202.0-purple.svg)](#)
@@ -37,8 +37,8 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
 │                          CORTEX (OPEN WEBUI)                            │
 │   • Echo Orchestrator : routage cognitif, suture SQLite bit-perfect     │
 │   • SSOT Registry : gouvernance unifiée (PROMETHEUS, APOLLO, ZEPHYR)    │
-│   • Filtres & Contexte : Compaction In-Place, Smart Context, AEC XML    │
-│   • HUD & UI Engine : interfaces dynamiques et réactives sur mobile     │
+│   • Filtres & Contexte : Migration/Fork Session, Smart Context, AEC XML │
+│   • Window Manager & HUD : fenêtres multi-chats, jauge quotas, Codex UI │
 └──────────────────┬───────────────────────────────────┬──────────────────┘
                    │                                   │
  ┌─────────────────▼─────────────────┐   ┌─────────────▼─────────────────┐
@@ -57,8 +57,8 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
 ## ✨ Fonctionnalités Clés
 
 - 🔒 **Souveraineté & Sécurité Périmétrique** : Vos bases vectorielles (Qdrant), votre historique de session (SQLite) et vos fichiers (Codex) restent confinés localement sur des réseaux Docker isolés. L'accès est protégé par **ECHO Auth** (IdP natif avec MFA/TOTP et SSO) placé derrière un reverse-proxy WAF **BunkerWeb**, et supervisé par un **Admin Manager** dédié (monitoring temps réel et sauvegardes automatisées sur NAS / Cloud).
-- 🧠 **Mémoire Biomimétique & Edge Bridge** : Fini l'amnésie des LLMs. Calquée sur la mémoire humaine, l'architecture hiérarchise les souvenirs selon leur importance et consolide automatiquement les apprentissages récurrents. L'indexation vectorielle s'appuie sur un **Edge Embedding Bridge** exploitant l'accélération matérielle (`WebGPU` / `WASM`) du navigateur client, relayé côté serveur par le modèle local **Harrier-OSS-v1-0.6B** sous `llama.cpp`.
-- 🪢 **Suture Sémantique (Bit-perfect) & Compactage sur Place** : L'**Echo Orchestrator** garantit une continuité de session chirurgicale et pilote dynamiquement l'escalade cognitive entre les modèles (`PROMETHEUS`, `APOLLO`, `ZEPHYR`) avec bascule instantanée (Circuit Breaker OAuth2 en HTTP/2). Lorsque la conversation s'allonge, le **Compactage Contextuel sur Place** synthétise l'historique ancien dans un Checkpoint cognitif sans jamais quitter la discussion.
+- 🧠 **Mémoire Biomimétique & Edge Bridge** : Fini l'amnésie des LLMs. Calquée sur la mémoire humaine, l'architecture hiérarchise les souvenirs selon leur importance et consolide automatiquement les apprentissages récurrents. L'indexation vectorielle s'appuie sur un **Edge Embedding Bridge** exploitant l'accélération matérielle (`WebGPU` / `WASM` en `fp16`, validée en amont par une sonde matérielle et un smoke test de calcul avant tout téléchargement) du navigateur client, relayé côté serveur par le modèle local **Harrier-OSS-v1-0.6B** sous `llama.cpp`.
+- 🪢 **Suture Sémantique (Bit-perfect) & Continuité de Session** : L'**Echo Orchestrator** garantit une continuité de session chirurgicale et pilote dynamiquement l'escalade cognitive entre les modèles (`PROMETHEUS`, `APOLLO`, `ZEPHYR`) avec bascule instantanée (Circuit Breaker OAuth2 en HTTP/2). Lorsque la conversation s'allonge ou que vous souhaitez explorer une piste alternative, l'action **Poursuivre dans une nouvelle conversation** (distillation en deux passes et conservation des étiquettes) ainsi que le support natif du **Clonage et de la Bifurcation (Fork)** transfèrent et alignent automatiquement vos fichiers, votre Codex Git et la mémoire vectorielle de session.
 - 🔐 **Identity Vault & Sécurité Applicative** : Coffre-fort de secrets intégré permettant de connecter des services tiers, des workflows N8N ou des serveurs Model Context Protocol (MCP) sans jamais exposer vos clés en clair au modèle.
 - 🛠️ **Sovereign Toolbox & Workers Dédiés** :
   - **ECHO N8N Orchestrator** : Conception, test en Sandbox et déploiement de workflows d'automatisation autonomes directement pilotés par l'IA.
@@ -66,8 +66,8 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
   - **Pont Audio Intégré (STT & TTS)** : Transcription vocale multimodale haute précision et synthèse vocale neuronale fluide en streaming.
   - **Coding Worker Sandbox** : Exécution hermétique de code multi-langages (Python, Node.js) avec retour visuel et supervision en temps réel.
   - **Browser Worker** : Navigation web autonome asynchrone propulsée par Playwright avec contournement anti-bot et ciblage visuel de précision.
-  - **ECHO Codex & Delphi** : Éditeur de code intégré (Monaco) avec versionnement Git multi-workspaces, tables rondes multi-agents parallélisées (`consult_council`, `consult_supervised_workers`) et gestionnaire de compétences (`Skills`).
-  - **Moteur de Rendu UI & HUD** : Cockpit de pilotage cognitif (jauges de contexte et de quotas Cloud, tiroir d'actions rapides, fenêtres flottantes) optimisé pour mobile et desktop.
+  - **ECHO Codex, Liens Interactifs & Delphi** : Éditeur de code intégré (Monaco) doublé d'un **Éditeur Hexadécimal virtualisé**, prévisualisation multimédia en direct (Markdown, HTML, SVG, PDF, images), consultation inter-conversations en lecture seule, **liens Codex cliquables** directement dans les réponses de l'IA, tables rondes multi-agents parallélisées (`consult_council`, `consult_supervised_workers`) et gestionnaire de compétences (`Skills`).
+  - **Window Manager (`EchoWM`), HUD & Conseiller d'Outils** : Gestionnaire de fenêtres multi-chats et multi-navigateurs parquant et restaurant vos outils sans perte d'état lors des changements de discussion, **Jauge Contextuelle & Quotas Cloud (5h / Semaine)** avec suivi différentiel par tour, et **Expert-Conseil Opérationnel (`tool_advisor`)** adossé à 10 manuels spécialisés réduisant de 80 % l'empreinte des 93 outils.
 
 ---
 
@@ -86,7 +86,7 @@ curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Perso/echo-framew
 ```
 
 **Sur Hyper-V (Windows) :**
-*(Provisionne et configure automatiquement une VM Linux dédiée sous Ubuntu 24.04 avec Cloud-Init)*
+*(Provisionne et configure automatiquement une VM Linux dédiée sous Ubuntu 26.04 avec Cloud-Init)*
 ```powershell
 .\install-hyperv.ps1
 ```

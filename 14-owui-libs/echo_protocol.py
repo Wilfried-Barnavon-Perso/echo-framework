@@ -1,11 +1,12 @@
 """
 title: ECHO Protocol Adapter
 author: Wilfried BARNAVON
-version: 1.3
+version: 5.226.18.0
 description: Couche de traduction parametres ECHO -> format API Gemini. Deux backends : AI Studio (cle API) et Code Assist v1internal (OAuth2). Fonctions pures -- aucun appel reseau, aucun etat. Point de modification unique pour adapter les requetes CA.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.3: Alignement documentaire interne sur echo_orchestrator.py.
 # 1.2: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.1: CA_EXCLUDED_GEN_CONF_FIELDS vide -- thinkingConfig doit passer

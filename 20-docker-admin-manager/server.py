@@ -2,10 +2,14 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER SERVER (ENTRYPOINT)
-VERSION : 5.137 (Rapport Nocturne Complet Sauvegarde/Externalisation & Compteur session.db)
+VERSION : 5.226.18.0
 AUTEUR : Wilfried BARNAVON
 ================================================================================
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 5.137: Rapport Nocturne Complet Sauvegarde/Externalisation & Compteur session.db
 from core.config import app, HAS_PSUTIL, HAS_SCHEDULER, psutil, backup_scheduler
 import core.security  # noqa: F401
 import routes.routes  # noqa: F401

@@ -1,9 +1,13 @@
 """
 title: ECHO Delegate to Data Broker
 author: ECHO
-version: 1.6
+version: 5.229.0.0
 description: Délégation de collecte de données externes structurées au Data Broker autonome.
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 from pydantic import BaseModel, Field
 from typing import Any
 import sys
@@ -32,12 +36,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """
-        Permet au modèle de déléguer une recherche d'informations ou une extraction
-        complexe de données externes structurées à l'Agent Data Broker d'ECHO. Cet agent
-        décharge le Modèle et est optimisé pour la recherche de données.
-        Exige une requête détaillée en langage naturel décrivant l'objectif de la recherche.
-        """
+        """Délègue la collecte multi-sources de données externes (MCP et Web) à l'Agent Data Broker."""
         if not __user__:
             return "Erreur : contexte OWUI manquant."
 

@@ -2,12 +2,13 @@
 ECHO Ingestion Pipeline
 Gestion unifiée, asynchrone et Zéro-RAM de l'ingestion des fichiers (CAS 1, 2, 3, 4).
 Factorisé à partir de new_context_filter.py pour permettre le traitement en arrière-plan.
-Version: 1.5 (Correction de l'instruction système du smart_context pour guider vers semantic_probe sur les binaires)
-version: 1.3
+version: 5.228.7.1
 description: Composant du système ECHO : Echo Ingestion.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.228.7.1: Factorisation de la détection textuelle via is_text_mime (echo_constants).
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.3: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 1.2: SSOT AEC : Remplacement du hardcoding XML par EchoAEC.render_smart_context.
 
@@ -30,7 +31,7 @@ from echo_gemini_client import EchoGeminiClient
 from echo_state_manager import EchoStateManager
 from echo_prompts import SYS_INGEST_EXTRACT, USR_INGEST_SYNTHESIS
 from echo_constants import (
-    get_gemini_mime, 
+    get_gemini_mime, is_text_mime,
     FILE_INGESTION_STATUS,
     MAX_DIRECT_TEXT_INJECT_SIZE, MAX_DIRECT_MMEDIA_INJECT_SIZE,
     CONVERTIBLE_OFFICE_EXTENSIONS, OOXML_IMAGE_EXTENSIONS, DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB,
@@ -547,12 +548,13 @@ class EchoIngestionPipeline:
                 size = await asyncio.to_thread(os.path.getsize, path)
                 logger.info(f"🔄 Fichier {filename} converti et re-routé comme {mime} ({size} octets)")
 
-        if is_supported and ("text/" in mime or "application/json" in mime):
+        is_txt = is_text_mime(mime, ext)
+        if is_supported and is_txt:
             path = await self._move_to_codex_and_commit(path, filename, file_id, mime, user_id, chat_id)
             if os.path.exists(path):
                 size = await asyncio.to_thread(os.path.getsize, path)
 
-        if is_supported and size < MAX_DIRECT_TEXT_INJECT_SIZE and ("text/" in mime or "application/json" in mime):
+        if is_supported and size < MAX_DIRECT_TEXT_INJECT_SIZE and is_txt:
             try:
                 def read_text():
                     with open(path, "r", encoding="utf-8", errors="ignore") as f: return f.read()
@@ -585,9 +587,8 @@ class EchoIngestionPipeline:
 
         if is_supported and getattr(self.valves, 'ENABLE_SMART_CONTEXT', True):
             try:
-                is_text = ("text/" in mime or "application/json" in mime)
                 return await self._index_and_summarize_streamed(
-                    file_id, filename, mime, user_id, chat_id, events, path, is_text
+                    file_id, filename, mime, user_id, chat_id, events, path, is_txt
                 )
             except Exception as e:
                 logger.error(f"!! Exception CAS 3 pour {filename}: {e}")

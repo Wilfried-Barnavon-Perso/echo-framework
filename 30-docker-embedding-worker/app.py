@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO EMBEDDING WORKER (Llama.cpp / GGUF)
-VERSION : 2.4 (Statuts Edge)
+VERSION : 5.230.1.1
 AUTEUR : Wilfried BARNAVON
 DATE : 2026-09-02
 
@@ -9,16 +9,15 @@ ROLE : Serveur d'embedding texte compatible OpenAI (Harrier-OSS GGUF)
        Multilingue, dimensions natives, 8192 tokens max.
        Support de l'Edge Embedding (WebGPU) via WebSocket Proxy.
 
-CHANGELOG :
-  1.5 : Support Edge Embedding WebGPU (WebSocket proxy & Fallback).
-  1.6 : Correction critique : passage au CLS Token Pooling (index 0) au lieu du Last-Token.
-  2.0 : Migration majeure vers llama.cpp (GGUF) pour réduire l'empreinte RAM. Suppression de PyTorch.
-  2.1 : Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
-  2.2 : Rate-Limit Healthcheck.
-  2.3 : Suppression de la propriété 'dim' hardcodée dans le /health pour permettre la dimension dynamique selon le modèle.
-  2.4 : Exposition des statuts connecting et incompatible pour le filtre Edge.
 ================================================================================
 """
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 1.5: Support Edge Embedding WebGPU (WebSocket proxy & Fallback).
+# 1.6: Correction critique : passage au CLS Token Pooling (index 0) au lieu du Last-Token.
+# 2.0: Migration majeure vers llama.cpp (GGUF) pour réduire l'empreinte RAM. Suppression de PyTorch.
+# 2.1: Ajout d'un filtre de logs limitant l'affichage des requêtes /health (1/5min).
 
 import os
 import logging
@@ -78,7 +77,7 @@ logging.getLogger("uvicorn.access").addFilter(RateLimitHealthCheckFilter())
 app = FastAPI(
     title="ECHO Harrier Embedding Worker",
     description="Worker souverain pour embeddings texte multilingues (Harrier-OSS) & Edge WebGPU",
-    version="1.5"
+    version="5.230.1.1"
 )
 
 # Verrou asynchrone global pour sérialiser l'inférence
@@ -151,6 +150,11 @@ async def websocket_edge_embed(websocket: WebSocket):
             
             if msg_type == "ready":
                 active_edge_clients[user_id][client_id]["state"] = "active"
+                for stale_cid in [
+                    cid for cid, c in active_edge_clients[user_id].items()
+                    if cid != client_id and c.get("state") == "incompatible"
+                ]:
+                    active_edge_clients[user_id].pop(stale_cid, None)
                 logger.info(f"✅ WebGPU Client Ready | User: {user_id} | Client: {client_id}")
             
             elif msg_type == "visibility":
@@ -162,7 +166,10 @@ async def websocket_edge_embed(websocket: WebSocket):
                 
             elif msg_type == "incompatible":
                 active_edge_clients[user_id][client_id]["state"] = "incompatible"
-                logger.warning(f"⚠️ WebGPU Client Incompatible | User: {user_id} | Client: {client_id}")
+                active_edge_clients[user_id][client_id]["ws"] = None
+                reason = data.get("reason", "non spécifiée")
+                logger.warning(f"⚠️ WebGPU Client Incompatible | User: {user_id} | Client: {client_id} | Reason: {reason}")
+                break
                 
             elif msg_type == "result":
                 req_id = data.get("request_id")
@@ -174,7 +181,8 @@ async def websocket_edge_embed(websocket: WebSocket):
     except Exception as e:
         logger.warning(f"🔌 WebGPU Client Disconnected | User: {user_id} | Client: {client_id} | Reason: {e}")
     finally:
-        client_data = active_edge_clients.get(user_id, {}).pop(client_id, None)
+        user_clients = active_edge_clients.get(user_id, {})
+        client_data = user_clients.get(client_id)
         if client_data:
             # Cancel all pending futures for this client to trigger instant CPU fallback
             for req_id in list(client_data["pending"]):
@@ -182,6 +190,11 @@ async def websocket_edge_embed(websocket: WebSocket):
                 if future and not future.done():
                     future.cancel()
                     logger.warning(f"🛑 Future {req_id} cancelled due to disconnect | Fallback CPU instantané")
+            if client_data.get("state") == "incompatible":
+                client_data["ws"] = None
+                client_data["pending"].clear()
+            else:
+                user_clients.pop(client_id, None)
         
         if user_id in active_edge_clients and not active_edge_clients[user_id]:
             active_edge_clients.pop(user_id, None)
@@ -192,12 +205,12 @@ async def edge_status(user_id: str):
     clients = active_edge_clients.get(user_id, {})
     if any(c.get("state") in ["active", "ready"] for c in clients.values()):
         return {"status": "ready"}
-    if any(c.get("state") == "incompatible" for c in clients.values()):
-        return {"status": "incompatible"}
     if any(c.get("state") == "connecting" for c in clients.values()):
         return {"status": "connecting"}
     if any(c.get("state") == "idle" for c in clients.values()):
         return {"status": "idle"}
+    if any(c.get("state") == "incompatible" for c in clients.values()):
+        return {"status": "incompatible"}
     return {"status": "unknown"}
 
 def download_gguf_model():
@@ -254,7 +267,10 @@ async def create_embeddings(request: EmbeddingRequest, req: Request):
 
         # 1. TENTATIVE EDGE EMBEDDING (WebGPU)
         clients = active_edge_clients.get(user_id, {})
-        active_client_id = next((cid for cid, c in clients.items() if c["state"] in ["active", "ready"]), None)
+        active_client_id = next(
+            (cid for cid, c in clients.items() if c.get("state") in ["active", "ready"] and c.get("ws") is not None),
+            None
+        )
         
         if active_client_id:
             client_data = clients[active_client_id]

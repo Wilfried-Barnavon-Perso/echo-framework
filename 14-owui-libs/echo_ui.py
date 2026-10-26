@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.107
+version: 5.231.15.1
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.107: Affichage du badge et de la ligne de Checkpoint Cognitif actif dans deploy_context_gauge.
-# 5.106: Affichage du Tier, déduplication du Project ID Tenant et intégration des jauges Quota 5h et Quota Semaine dans deploy_context_gauge.
-# 5.105: Alignement du sélecteur de modèle Codex HUD sur la nomenclature cognitive (Apollo, Prometheus, Zephyr).
-# 5.104: Rollback de la factorisation globale (5.102/5.103) suite à des lenteurs massives et instabilités. Retour à la version 5.101 (état validé avant factorisation du clamping).
-# 5.101: Fix Identity Vault - Injection de EchoUI.get_floating_window_class_js() dans _generate_identity_vault_js (TypeError: window.EchoFloatingWindow is not a constructor hors chargement préalable du Monitor).
+# 5.231.15.1: Formatage fixe à 2 décimales dans la capsule, libellés unifiés Empreinte tour et élimination des inversions de signes.
+# 5.231.14.2: Neutralisation de la capsule différentielle (style sobre slate-400 et affichage du pourcentage seul).
+# 5.231.14.1: Calcul de la croissance du contexte sur promptTokenCount (Option A) et gestion dynamique Gain/Perte de capacité (fix double tiret).
+# 5.231.13.2: Suppression de la garde if (!window.echoRenderContextGauge) pour autoriser le Hot-Update direct du renderer JS.
+# 5.231.13.1: Épuration du tooltip différentiel (suppression de l'affichage Δ Prompt/Gen et Δ Cache).
 
 
 import sys
@@ -21,7 +21,15 @@ from fastapi.responses import HTMLResponse
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 
-from echo_constants import ECHO_GLOBAL_TENANT_PROJECT_ID
+from echo_constants import (
+    ECHO_GLOBAL_TENANT_PROJECT_ID,
+    ECHO_MAX_CONTEXT_SIZE,
+    ECHO_EDGE_ONNX_REPO,
+    ECHO_EDGE_HUD_TITLE,
+    ECHO_EDGE_MODEL_CACHE_VERSION,
+    ECHO_EDGE_DTYPE,
+    ECHO_EDGE_MIN_BUFFER_BYTES,
+)
 
 
 class EchoRichUI:
@@ -46,7 +54,8 @@ class EchoRichUI:
         "Play": "<polygon points='5 3 19 12 5 21 5 3'/>",
         "Rewind": "<polygon points='11 19 2 12 11 5 11 19'/><polygon points='22 19 13 12 22 5 22 19'/>",
         "Pause": "<rect x='6' y='4' width='4' height='16'/><rect x='14' y='4' width='4' height='16'/>",
-        "Crop": "<path d='M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/>"
+        "Crop": "<path d='M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/>",
+        "Cpu": "<rect x='4' y='4' width='16' height='16' rx='2' ry='2'/><rect x='9' y='9' width='6' height='6'/><line x1='9' y1='1' x2='9' y2='4'/><line x1='15' y1='1' x2='15' y2='4'/><line x1='9' y1='20' x2='9' y2='23'/><line x1='15' y1='20' x2='15' y2='23'/><line x1='20' y1='9' x2='23' y2='9'/><line x1='20' y1='14' x2='23' y2='14'/><line x1='1' y1='9' x2='4' y2='9'/><line x1='1' y1='14' x2='4' y2='14'/>"
     }
 
     @staticmethod
@@ -57,6 +66,1015 @@ class EchoRichUI:
         return f"<svg width='{size}' height='{size}' viewBox='0 0 24 24' fill='none' stroke='{color}' stroke-width='{stroke_width}' stroke-linecap='round' stroke-linejoin='round'{cls}>{path}</svg>"
 
     @staticmethod
+    def get_esm_loader_js() -> str:
+        """Génère le chargeur ESM universel isolé en <script type='module' crossorigin='anonymous'> (immunisé contre crossorigin='use-credentials')."""
+        return """
+        if (!window.echoImportModule) {
+            window.echoImportModule = function(url) {
+                return new Promise((resolve, reject) => {
+                    const cbId = '_echoModCb_' + Math.random().toString(36).slice(2) + '_' + Date.now();
+                    const s = document.createElement('script');
+                    s.type = 'module';
+                    s.crossOrigin = 'anonymous';
+                    window[cbId] = function(mod, err) {
+                        delete window[cbId];
+                        try { s.remove(); } catch (e) {}
+                        if (err) reject(err);
+                        else resolve(mod);
+                    };
+                    s.textContent = (
+                        'import(' + JSON.stringify(String(url)) + ').then('
+                        + 'm => window.' + cbId + ' && window.' + cbId + '(m, null), '
+                        + 'e => window.' + cbId + ' && window.' + cbId + '(null, e));'
+                    );
+                    s.onerror = function() {
+                        if (window[cbId]) window[cbId](null, new Error('Failed to load module script: ' + url));
+                    };
+                    (document.head || document.documentElement).appendChild(s);
+                });
+            };
+        }
+        """
+
+    @staticmethod
+    def get_webgpu_probe_js() -> str:
+        """Génère la sonde matérielle et fonctionnelle WebGPU factorisée (window.echoProbeWebGPU)."""
+        return """
+        if (!window.echoProbeWebGPU) {
+            window.echoProbeWebGPU = async function(opts) {
+                opts = opts || {};
+                const requireFp16 = opts.requireFp16 !== false;
+                const minBufferBytes = opts.minBufferBytes || 134217728;
+                const timeoutMs = opts.timeoutMs || 4000;
+                const cacheKey = (requireFp16 ? 'fp16' : 'fp32') + '_' + minBufferBytes;
+
+                if (window._echoWebGPUProbeResult && window._echoWebGPUProbeResult.key === cacheKey) {
+                    return window._echoWebGPUProbeResult.result;
+                }
+
+                const runProbe = async () => {
+                    if (typeof navigator === 'undefined' || !navigator.gpu) {
+                        return { compatible: false, reason: 'WebGPU non exposé par le navigateur' };
+                    }
+
+                    let adapter = null;
+                    try {
+                        adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+                    } catch (e) {
+                        return { compatible: false, reason: 'Erreur lors de requestAdapter WebGPU' };
+                    }
+
+                    if (!adapter) {
+                        return { compatible: false, reason: 'Adaptateur WebGPU refusé par le pilote' };
+                    }
+                    if (adapter.isFallbackAdapter || (adapter.info && adapter.info.isFallbackAdapter)) {
+                        return { compatible: false, reason: 'Adaptateur WebGPU logiciel (Fallback) rejeté' };
+                    }
+                    if (requireFp16 && (!adapter.features || !adapter.features.has('shader-f16'))) {
+                        return { compatible: false, reason: 'Extension matérielle shader-f16 non supportée par le GPU' };
+                    }
+
+                    const limits = adapter.limits || {};
+                    if (
+                        (limits.maxBufferSize && limits.maxBufferSize < minBufferBytes) ||
+                        (limits.maxStorageBufferBindingSize && limits.maxStorageBufferBindingSize < minBufferBytes)
+                    ) {
+                        return { compatible: false, reason: 'Limites de buffer VRAM insuffisantes (< 128 Mo)' };
+                    }
+
+                    let device = null;
+                    let testBuffer = null;
+                    try {
+                        const reqFeatures = requireFp16 ? ['shader-f16'] : [];
+                        device = await adapter.requestDevice({ requiredFeatures: reqFeatures });
+                        if (!device) {
+                            return { compatible: false, reason: 'Allocation du GPUDevice refusée' };
+                        }
+
+                        device.pushErrorScope('validation');
+                        device.pushErrorScope('out-of-memory');
+
+                        const wgsl = requireFp16
+                            ? 'enable f16;\\n@group(0) @binding(0) var<storage, read_write> data: array<f16>;\\n@compute @workgroup_size(1) fn main() { data[0] = f16(1.0) + f16(1.0); }'
+                            : '@group(0) @binding(0) var<storage, read_write> data: array<f32>;\\n@compute @workgroup_size(1) fn main() { data[0] = 1.0 + 1.0; }';
+
+                        const shaderModule = device.createShaderModule({ code: wgsl });
+                        const pipeline = await device.createComputePipelineAsync({
+                            layout: 'auto',
+                            compute: { module: shaderModule, entryPoint: 'main' }
+                        });
+
+                        testBuffer = device.createBuffer({
+                            size: 16,
+                            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+                        });
+
+                        const bindGroup = device.createBindGroup({
+                            layout: pipeline.getBindGroupLayout(0),
+                            entries: [{ binding: 0, resource: { buffer: testBuffer } }]
+                        });
+
+                        const commandEncoder = device.createCommandEncoder();
+                        const passEncoder = commandEncoder.beginComputePass();
+                        passEncoder.setPipeline(pipeline);
+                        passEncoder.setBindGroup(0, bindGroup);
+                        passEncoder.dispatchWorkgroups(1);
+                        passEncoder.end();
+                        device.queue.submit([commandEncoder.finish()]);
+                        await device.queue.onSubmittedWorkDone();
+
+                        const oomErr = await device.popErrorScope();
+                        const valErr = await device.popErrorScope();
+                        if (oomErr || valErr) {
+                            const errMsg = (oomErr && oomErr.message) || (valErr && valErr.message) || 'Erreur GPU Compute';
+                            return { compatible: false, reason: 'Échec du Compute Smoke Test (' + errMsg + ')' };
+                        }
+                        return { compatible: true, reason: 'OK' };
+                    } catch (gpuErr) {
+                        return {
+                            compatible: false,
+                            reason: 'Échec Compute WebGPU (' + (gpuErr && gpuErr.message ? gpuErr.message : String(gpuErr)) + ')'
+                        };
+                    } finally {
+                        try { if (testBuffer) testBuffer.destroy(); } catch (e) {}
+                        try { if (device) device.destroy(); } catch (e) {}
+                    }
+                };
+
+                let result;
+                try {
+                    result = await Promise.race([
+                        runProbe(),
+                        new Promise(resolve => setTimeout(() => resolve({
+                            compatible: false,
+                            reason: 'Timeout lors du test matériel WebGPU'
+                        }), timeoutMs))
+                    ]);
+                } catch (err) {
+                    result = { compatible: false, reason: 'Exception sonde WebGPU' };
+                }
+
+                window._echoWebGPUProbeResult = { key: cacheKey, result: result };
+                return result;
+            };
+        }
+        """
+
+    @staticmethod
+    def get_edge_embedding_bridge_js(
+        script_version: str,
+        target_repo: str = ECHO_EDGE_ONNX_REPO,
+        hud_title: str = ECHO_EDGE_HUD_TITLE,
+        model_cache_version: str = ECHO_EDGE_MODEL_CACHE_VERSION,
+        target_dtype: str = ECHO_EDGE_DTYPE,
+        min_buffer_bytes: int = ECHO_EDGE_MIN_BUFFER_BYTES,
+    ) -> str:
+        """Génère le pont JS d'offload Edge Embedding avec validation matérielle WebGPU stricte en amont."""
+        cpu_icon_16 = EchoRichUI.get_icon("Cpu", size=16)
+        cpu_icon_18 = EchoRichUI.get_icon("Cpu", size=18)
+        esm_js = EchoRichUI.get_esm_loader_js()
+        probe_js = EchoRichUI.get_webgpu_probe_js()
+        geo_js = EchoRichUI.get_hud_geometry_js()
+
+        bridge_template = """
+        (async function initEdgeEmbedding() {
+            const INJECTED_SCRIPT_VERSION = "__INJECTED_SCRIPT_VERSION__";
+            const MODEL_CACHE_VERSION = "__MODEL_CACHE_VERSION__";
+            const TARGET_REPO = "__TARGET_REPO__";
+            const TARGET_DTYPE = "__TARGET_DTYPE__";
+            const MIN_BUFFER_BYTES = __MIN_BUFFER_BYTES__;
+            const HUD_TITLE = "__HUD_TITLE__";
+
+            // 1. Verrou Singleton Intelligent & Auto-Reload SPA
+            if (window._echoEdgeScriptVersion) {
+                if (window._echoEdgeScriptVersion !== INJECTED_SCRIPT_VERSION) {
+                    console.warn(`🔄 [ECHO] Mise à jour du script détectée (${window._echoEdgeScriptVersion} -> ${INJECTED_SCRIPT_VERSION}). Hard Reload de la SPA en cours...`);
+                    location.reload();
+                    return;
+                }
+                return;
+            }
+            window._echoEdgeScriptVersion = INJECTED_SCRIPT_VERSION;
+
+            const clientId = crypto.randomUUID();
+            let isFatalError = false;
+
+            // Fonction factorisée unique d'interruption et de repli CPU
+            function reportIncompatibleAndAbort(reason, activeWs, hudEl) {
+                isFatalError = true;
+                window._echoEdgeIncompatible = true;
+                console.warn(`⚠️ ECHO Edge: ${reason}. Interruption de la suite et Fallback CPU immédiat.`);
+                if (hudEl && hudEl.isConnected) {
+                    hudEl.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+                    setTimeout(() => {
+                        hudEl.style.opacity = '0';
+                        setTimeout(() => { try { hudEl.remove(); } catch (e) {} }, 300);
+                    }, 1500);
+                }
+                try {
+                    const payload = JSON.stringify({ type: 'incompatible', reason: reason });
+                    if (activeWs && activeWs.readyState === WebSocket.OPEN) {
+                        activeWs.send(payload);
+                        setTimeout(() => { try { activeWs.close(); } catch (e) {} }, 150);
+                    } else {
+                        const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                        const wsUrl = `${protocol}//${location.host}/ws/edge-embed?client_id=${clientId}`;
+                        const ws = new WebSocket(wsUrl);
+                        ws.onopen = () => {
+                            ws.send(payload);
+                            setTimeout(() => { try { ws.close(); } catch (e) {} }, 150);
+                        };
+                    }
+                } catch (e) {}
+            }
+
+            // 2. TEST DE COMPATIBILITÉ WEBGPU EN AMONT (avant cache, HUD, WSS et téléchargement modèle)
+            const probe = await window.echoProbeWebGPU({
+                requireFp16: TARGET_DTYPE === 'fp16',
+                minBufferBytes: MIN_BUFFER_BYTES
+            });
+            if (!probe || !probe.compatible) {
+                reportIncompatibleAndAbort((probe && probe.reason) || "Matériel WebGPU non compatible", null, null);
+                return;
+            }
+
+            console.log(`🚀 Initialisation ECHO Edge Bridge | Script v${INJECTED_SCRIPT_VERSION} | Modèle v${MODEL_CACHE_VERSION} | Client: ${clientId}`);
+
+            // 3. GESTION DU CACHE CONDITIONNELLE (exécutée uniquement si le GPU est compatible)
+            const storedVersion = localStorage.getItem('ECHO_EDGE_MODEL_VERSION');
+            if (storedVersion !== MODEL_CACHE_VERSION) {
+                console.log(`🔄 Nouveau modèle détecté (${storedVersion} -> ${MODEL_CACHE_VERSION}). Purge du cache...`);
+                if (window.caches) {
+                    try {
+                        await caches.delete('transformers-cache');
+                        console.log("🧹 Cache Transformers purgé avec succès.");
+                    } catch (e) {
+                        console.warn("Impossible de vider le cache:", e);
+                    }
+                }
+                localStorage.setItem('ECHO_EDGE_MODEL_VERSION', MODEL_CACHE_VERSION);
+            }
+
+            // 4. INJECTION CSS & CRÉATION DU HUD (factorisé avec EchoUI)
+            const styleId = 'echo-edge-styles';
+            if (!document.getElementById(styleId)) {
+                const style = document.createElement('style');
+                style.id = styleId;
+                style.innerHTML = `
+                    @keyframes echoComputePulse {
+                        0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7); scale: 0.95; }
+                        70% { box-shadow: 0 0 0 8px rgba(56, 189, 248, 0); scale: 1; }
+                        100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); scale: 0.95; }
+                    }
+                    .echo-gpu-computing {
+                        animation: echoComputePulse 1s infinite !important;
+                        opacity: 1 !important;
+                        background: rgba(56, 189, 248, 0.15) !important;
+                        border-color: rgba(56, 189, 248, 0.8) !important;
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+
+            const hudId = 'echo-edge-hud-' + Date.now();
+            const hud = document.createElement('div');
+            hud.id = hudId;
+            hud.setAttribute('data-echo-scope', 'global');
+            hud.style.cssText = `
+                position: fixed;
+                top: 65px;
+                left: calc(100vw - 270px);
+                width: 250px;
+                background: rgba(15, 23, 42, 0.85);
+                backdrop-filter: blur(8px);
+                border: 1px solid rgba(56, 189, 248, 0.25);
+                border-radius: 8px;
+                padding: 12px 14px;
+                color: #cbd5e1;
+                font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                font-size: 12px;
+                z-index: 10000;
+                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.15);
+                transition: width 0.4s ease, height 0.4s ease, border-radius 0.4s ease, opacity 0.4s ease;
+                overflow: hidden;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                cursor: grab;
+                user-select: none;
+            `;
+
+            const headerRow = document.createElement('div');
+            headerRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; width: 100%;';
+
+            const titleBox = document.createElement('div');
+            titleBox.style.cssText = 'display: flex; align-items: center; gap: 8px; font-weight: 600; color: #38bdf8;';
+            titleBox.innerHTML = `__CPU_ICON_16__<span>ECHO VRAM Loader</span>`;
+            headerRow.appendChild(titleBox);
+
+            const textRow = document.createElement('div');
+            textRow.id = hudId + '-text';
+            textRow.style.color = '#94a3b8';
+            textRow.style.lineHeight = '1.4';
+            textRow.innerHTML = 'Initialisation WSS...';
+
+            const progressContainer = document.createElement('div');
+            progressContainer.style.cssText = 'width: 100%; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden; margin-top: 2px;';
+
+            const progressBar = document.createElement('div');
+            progressBar.id = hudId + '-bar';
+            progressBar.style.cssText = 'width: 0%; height: 100%; background: #38bdf8; transition: width 0.1s linear;';
+            progressContainer.appendChild(progressBar);
+
+            const waitRow = document.createElement('div');
+            waitRow.style.color = '#64748b';
+            waitRow.style.fontSize = '11px';
+            waitRow.style.marginTop = '6px';
+            waitRow.style.fontStyle = 'italic';
+            waitRow.innerHTML = 'Cette opération peut prendre quelques instants...<br><strong style="color:#38bdf8">Il est fortement recommandé de laisser le modèle charger.</strong>';
+
+            hud.appendChild(headerRow);
+            hud.appendChild(textRow);
+            hud.appendChild(progressContainer);
+            hud.appendChild(waitRow);
+            document.body.appendChild(hud);
+
+            const hudGeo = window.echoBindHudGeometry(hud, hud, {
+                defaultW: '250px',
+                defaultH: 'auto',
+                defaultX: Math.max(10, (window.innerWidth || 1280) - 270) + 'px',
+                defaultY: '65px',
+                defaultTx: 'none',
+                minW: '36px',
+                minH: '36px',
+                allowResize: false
+            });
+
+            // 5. CONNEXION WEBSOCKET & CHARGEMENT DU MODÈLE
+            let wsRef = null;
+            let isConnecting = false;
+            let globalTokenizer = null;
+            let globalModel = null;
+            let isModelLoaded = false;
+
+            document.addEventListener("visibilitychange", () => {
+                if (isFatalError || window._echoEdgeIncompatible) return;
+                const state = document.hidden ? 'idle' : 'active';
+                if (wsRef && wsRef.readyState === WebSocket.OPEN) {
+                    wsRef.send(JSON.stringify({ type: 'visibility', state: state }));
+                }
+                if (!document.hidden && (!wsRef || wsRef.readyState === WebSocket.CLOSED)) {
+                    connectWebSocket();
+                }
+            });
+
+            async function connectWebSocket() {
+                if (isFatalError || window._echoEdgeIncompatible || isConnecting || (wsRef && wsRef.readyState === WebSocket.OPEN)) return;
+                isConnecting = true;
+
+                try {
+                    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+                    const wsUrl = `${protocol}//${location.host}/ws/edge-embed?client_id=${clientId}`;
+                    const ws = new WebSocket(wsUrl);
+                    wsRef = ws;
+
+                    ws.onopen = async () => {
+                        isConnecting = false;
+                        console.log("✅ WebSocket ECHO Edge connecté");
+                        textRow.innerHTML = 'Préparation Harrier-OSS...';
+                        hud.style.borderColor = 'rgba(56, 189, 248, 0.25)';
+
+                        try {
+                            const tfUrl = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3/dist/transformers.min.js';
+                            const transformers = await (window.echoImportModule ? window.echoImportModule(tfUrl) : import(tfUrl));
+                            transformers.env.allowLocalModels = false;
+
+                            if (!isModelLoaded) {
+                                globalTokenizer = await transformers.AutoTokenizer.from_pretrained(TARGET_REPO);
+                                globalModel = await transformers.AutoModel.from_pretrained(TARGET_REPO, {
+                                    device: 'webgpu',
+                                    dtype: TARGET_DTYPE,
+                                    progress_callback: (x) => {
+                                        if (ws.readyState !== WebSocket.OPEN) return;
+                                        if (x.status === 'downloading' || x.status === 'progress') {
+                                            const percent = x.total ? Math.round((x.loaded / x.total) * 100) : 0;
+                                            textRow.innerHTML = `Chargement modèle: <b>${percent}%</b>`;
+                                            progressBar.style.width = `${percent}%`;
+                                        }
+                                    }
+                                });
+                                isModelLoaded = true;
+                            } else {
+                                textRow.innerHTML = `Modèle en mémoire: <b>Ready</b>`;
+                                progressBar.style.width = `100%`;
+                            }
+
+                            if (ws.readyState !== WebSocket.OPEN) return;
+
+                            ws.send(JSON.stringify({ type: 'ready' }));
+                            if (!document.hidden) ws.send(JSON.stringify({ type: 'visibility', state: 'active' }));
+
+                            if (hud.style.width !== '36px') {
+                                hud.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;color:#38bdf8;">__CPU_ICON_18__</div>`;
+                                hud.style.width = '36px';
+                                hud.style.height = '36px';
+                                hud.style.padding = '0';
+                                hud.style.borderRadius = '50%';
+                                hud.style.background = 'rgba(15, 23, 42, 0.9)';
+                                hud.style.border = '1px solid rgba(56, 189, 248, 0.6)';
+                                hud.style.top = '12px';
+                                hud.style.bottom = 'auto';
+                                hud.style.right = 'auto';
+                                hud.style.left = 'calc(50% + 125px)';
+                                hud.style.transform = 'none';
+                                hud.style.opacity = '0.85';
+                                hud.title = `ECHO Edge WebGPU actif (${HUD_TITLE})`;
+                                if (hudGeo && hudGeo.normalBounds) {
+                                    hudGeo.normalBounds.w = '36px';
+                                    hudGeo.normalBounds.h = '36px';
+                                    hudGeo.normalBounds.x = 'calc(50% + 125px)';
+                                    hudGeo.normalBounds.y = '12px';
+                                    hudGeo.normalBounds.tx = 'none';
+                                }
+                            }
+
+                            ws.onmessage = async (event) => {
+                                try {
+                                    const payload = JSON.parse(event.data);
+                                    if (payload.type === 'embed' && payload.texts && payload.request_id) {
+                                        hud.classList.add('echo-gpu-computing');
+                                        try {
+                                            const texts = Array.isArray(payload.texts) ? payload.texts : [payload.texts];
+                                            const inputs = globalTokenizer(texts, { padding: true, truncation: true });
+                                            const outputs = await globalModel(inputs);
+
+                                            const tensor = outputs.sentence_embedding || outputs.last_hidden_state || Object.values(outputs)[0];
+                                            const dims = tensor.dims;
+                                            const batch_size = dims[0];
+
+                                            const is3D = dims.length >= 3;
+                                            const seq_len = is3D ? dims[1] : 1;
+                                            const embed_dim = is3D ? dims[2] : dims[1];
+
+                                            const embeddings = [];
+                                            for (let i = 0; i < batch_size; i++) {
+                                                const vec_start = is3D ? (i * seq_len) * embed_dim : i * embed_dim;
+                                                const vec_end = vec_start + embed_dim;
+                                                const vector = tensor.data.slice(vec_start, vec_end);
+
+                                                let sum_sq = 0;
+                                                for (let j = 0; j < embed_dim; j++) sum_sq += vector[j] * vector[j];
+                                                const norm = Math.sqrt(sum_sq);
+
+                                                const norm_vec = new Array(embed_dim);
+                                                for (let j = 0; j < embed_dim; j++) {
+                                                    const val = Number(vector[j]);
+                                                    norm_vec[j] = (isNaN(val) ? 0 : val) / (norm || 1);
+                                                }
+                                                embeddings.push(norm_vec);
+                                            }
+
+                                            ws.send(JSON.stringify({
+                                                type: 'result',
+                                                request_id: payload.request_id,
+                                                embedding: embeddings
+                                            }));
+                                        } finally {
+                                            hud.classList.remove('echo-gpu-computing');
+                                        }
+                                    }
+                                } catch (err) {
+                                    console.error("❌ Erreur inférence Edge:", err);
+                                }
+                            };
+                        } catch (modelError) {
+                            reportIncompatibleAndAbort(
+                                modelError && modelError.message ? modelError.message : String(modelError),
+                                ws,
+                                hud
+                            );
+                        }
+                    };
+
+                    ws.onerror = (err) => {
+                        console.error("🔌 Erreur WebSocket ECHO Edge:", err);
+                    };
+
+                    ws.onclose = () => {
+                        isConnecting = false;
+                        if (isFatalError || window._echoEdgeIncompatible) return;
+                        console.warn("🔌 Socket fermée. Reconnexion en cours...");
+                        hud.classList.remove('echo-gpu-computing');
+                        hud.style.borderColor = '#f59e0b';
+                        setTimeout(connectWebSocket, 5000);
+                    };
+                } catch (error) {
+                    isConnecting = false;
+                    if (!isFatalError && !window._echoEdgeIncompatible) {
+                        setTimeout(connectWebSocket, 5000);
+                    }
+                }
+            }
+
+            connectWebSocket();
+        })();
+        """
+
+        bridge_js = (
+            bridge_template
+            .replace("__INJECTED_SCRIPT_VERSION__", str(script_version))
+            .replace("__MODEL_CACHE_VERSION__", str(model_cache_version))
+            .replace("__TARGET_REPO__", str(target_repo))
+            .replace("__TARGET_DTYPE__", str(target_dtype))
+            .replace("__MIN_BUFFER_BYTES__", str(int(min_buffer_bytes)))
+            .replace("__HUD_TITLE__", str(hud_title))
+            .replace("__CPU_ICON_16__", cpu_icon_16)
+            .replace("__CPU_ICON_18__", cpu_icon_18)
+        )
+        return esm_js + "\n" + probe_js + "\n" + geo_js + "\n" + bridge_js
+
+    @staticmethod
+    def get_hud_geometry_js() -> str:
+        """Génère le contrôleur géométrique universel (Drag SVG-safe, Clamping Viewport, Minimize, Fullscreen, ResizeObserver filtré)."""
+        return """
+        {
+            window.echoBindHudGeometry = function(hud, header, opts) {
+                if (header && !opts && (typeof header === 'object') && !header.nodeType) {
+                    opts = header;
+                    header = null;
+                }
+                opts = opts || {};
+                if (header && typeof header.setAttribute === 'function') header.setAttribute('data-echo-hud-header', '1');
+                if (typeof document !== 'undefined' && document.head && !document.getElementById('echo-hud-geometry-style')) {
+                    const st = document.createElement('style');
+                    st.id = 'echo-hud-geometry-style';
+                    st.textContent = '[data-echo-minimized="1"] > :not([data-echo-hud-header="1"]) { display: none !important; }';
+                    document.head.appendChild(st);
+                }
+                const defaultW = opts.defaultW || '700px';
+                const defaultH = opts.defaultH || '500px';
+                const defaultX = opts.defaultX !== undefined ? opts.defaultX : '50%';
+                const defaultY = opts.defaultY !== undefined ? opts.defaultY : '60px';
+                const defaultTx = opts.defaultTx !== undefined ? opts.defaultTx : (defaultX === '50%' ? 'translateX(-50%)' : 'none');
+                const minW = opts.minW || '200px';
+                const minH = opts.minH || '100px';
+                const minCollapsedH = opts.minimizedH || 'auto';
+                const minCollapsedMinH = opts.minimizedMinH || '0';
+                const fsW = opts.fsW || '95vw';
+                const fsH = opts.fsH || '95vh';
+                const fsX = opts.fsX !== undefined ? opts.fsX : '2.5vw';
+                const fsY = opts.fsY !== undefined ? opts.fsY : '2.5vh';
+                const allowResize = opts.allowResize !== false;
+
+                const isInvalidDim = (v) => !v || v === 'auto' || v === '42px' || v === '0px' || v === '95vw' || v === '95vh' || v === '100vw' || v === '100vh' || (typeof v === 'string' && v.endsWith('px') && parseFloat(v) < parseFloat(minH));
+                const isInvalidW = (v) => !v || v === 'auto' || v === '95vw' || v === '100vw' || (typeof v === 'string' && v.endsWith('px') && parseFloat(v) < parseFloat(minW));
+                const isGlobalHud = Boolean(hud && hud.getAttribute && hud.getAttribute('data-echo-scope') === 'global');
+                const wmBounds = (!isGlobalHud && window.EchoWM && typeof window.EchoWM.loadGeometry === 'function' && hud && hud.id) ? (window.EchoWM.loadGeometry(hud) || {}) : {};
+                const init = Object.assign({}, wmBounds, opts.initialBounds || {});
+                const fmtCoord = (v, def) => (v !== undefined && v !== null && v !== '') ? (typeof v === 'number' ? v + 'px' : String(v)) : def;
+                const hasSavedX = init.x !== undefined && init.x !== null && init.x !== '';
+
+                const normalBounds = {
+                    w: isInvalidW(init.w) ? defaultW : String(init.w),
+                    h: isInvalidDim(init.h) ? defaultH : String(init.h),
+                    x: fmtCoord(init.x, defaultX),
+                    y: fmtCoord(init.y, defaultY),
+                    tx: hasSavedX ? (String(init.x) === '50%' ? 'translateX(-50%)' : 'none') : defaultTx
+                };
+
+                const ctrl = {
+                    isMinimized: false,
+                    isFullscreen: false,
+                    isDragging: false,
+                    normalBounds: normalBounds,
+                    applyNormalBounds: function() {
+                        if (typeof hud.removeAttribute === 'function') hud.removeAttribute('data-echo-minimized');
+                        hud.style.maxWidth = '98vw';
+                        hud.style.maxHeight = '96vh';
+                        hud.style.minWidth = minW;
+                        hud.style.minHeight = minH;
+                        hud.style.width = normalBounds.w;
+                        hud.style.height = normalBounds.h;
+                        hud.style.left = normalBounds.x;
+                        hud.style.top = normalBounds.y;
+                        hud.style.transform = normalBounds.tx || 'none';
+                        if (allowResize && !opts.customResizer) hud.style.resize = 'both';
+                    },
+                    captureNormalBounds: function() {
+                        if (ctrl.isMinimized || ctrl.isFullscreen) return;
+                        if (hud.offsetWidth >= parseFloat(minW)) normalBounds.w = hud.offsetWidth + 'px';
+                        else if (!isInvalidW(hud.style.width)) normalBounds.w = hud.style.width;
+                        if (hud.offsetHeight >= parseFloat(minH)) normalBounds.h = hud.offsetHeight + 'px';
+                        else if (!isInvalidDim(hud.style.height)) normalBounds.h = hud.style.height;
+                        if (hud.style.left) normalBounds.x = hud.style.left;
+                        if (hud.style.top) normalBounds.y = hud.style.top;
+                        normalBounds.tx = hud.style.transform || 'none';
+                    },
+                    clampToViewport: function() {
+                        if (ctrl.isFullscreen || !hud.isConnected) return;
+                        if (hud.style.transform && hud.style.transform.includes('translateX')) return;
+                        const vw = window.innerWidth || 1280;
+                        const vh = window.innerHeight || 800;
+                        const w = hud.offsetWidth || parseFloat(normalBounds.w) || 600;
+                        const maxX = Math.max(0, vw - Math.min(w, vw));
+                        const maxY = Math.max(0, vh - 44);
+                        let curX = parseFloat(hud.style.left);
+                        let curY = parseFloat(hud.style.top);
+                        if (!isNaN(curX)) {
+                            curX = Math.max(0, Math.min(curX, maxX));
+                            hud.style.left = curX + 'px';
+                            normalBounds.x = hud.style.left;
+                        }
+                        if (!isNaN(curY)) {
+                            curY = Math.max(0, Math.min(curY, maxY));
+                            hud.style.top = curY + 'px';
+                            normalBounds.y = hud.style.top;
+                        }
+                    },
+                    save: function() {
+                        ctrl.captureNormalBounds();
+                        if (typeof opts.onSave === 'function') opts.onSave(normalBounds, ctrl);
+                        if (!isGlobalHud && window.EchoWM && typeof window.EchoWM.saveGeometry === 'function' && hud && hud.id) window.EchoWM.saveGeometry(hud, normalBounds, ctrl);
+                    },
+                    close: function() {
+                        if (ctrl.isMinimized) {
+                            ctrl.isMinimized = false;
+                            if (!isGlobalHud && window.EchoWM && typeof window.EchoWM.saveGeometry === 'function' && hud && hud.id) {
+                                window.EchoWM.saveGeometry(hud, normalBounds, ctrl);
+                            }
+                        }
+                        if (typeof opts.onClose === 'function') opts.onClose(ctrl);
+                    },
+                    toggleMinimize: function() {
+                        if (!ctrl.isMinimized) {
+                            ctrl.captureNormalBounds();
+                            ctrl.isMinimized = true;
+                            if (typeof hud.setAttribute === 'function') hud.setAttribute('data-echo-minimized', '1');
+                            hud.style.resize = 'none';
+                            hud.style.minHeight = minCollapsedMinH;
+                            hud.style.height = minCollapsedH;
+                        } else {
+                            ctrl.isMinimized = false;
+                            if (typeof hud.removeAttribute === 'function') hud.removeAttribute('data-echo-minimized');
+                            if (ctrl.isFullscreen) {
+                                hud.style.maxWidth = '100vw';
+                                hud.style.maxHeight = '100vh';
+                                hud.style.minHeight = minH;
+                                hud.style.width = fsW;
+                                hud.style.height = fsH;
+                                hud.style.resize = 'none';
+                            } else {
+                                hud.style.maxWidth = '98vw';
+                                hud.style.maxHeight = '96vh';
+                                hud.style.minHeight = minH;
+                                hud.style.width = normalBounds.w;
+                                hud.style.height = normalBounds.h;
+                                if (allowResize && !opts.customResizer) hud.style.resize = 'both';
+                                ctrl.clampToViewport();
+                            }
+                        }
+                        if (typeof opts.onMinimize === 'function') opts.onMinimize(ctrl.isMinimized, ctrl);
+                        ctrl.save();
+                        return ctrl.isMinimized;
+                    },
+                    toggleFullscreen: function() {
+                        if (ctrl.isMinimized) {
+                            ctrl.isMinimized = false;
+                            if (typeof hud.removeAttribute === 'function') hud.removeAttribute('data-echo-minimized');
+                            if (typeof opts.onMinimize === 'function') opts.onMinimize(false, ctrl);
+                        }
+                        if (!ctrl.isFullscreen) {
+                            ctrl.captureNormalBounds();
+                            ctrl.isFullscreen = true;
+                            hud.style.maxWidth = '100vw';
+                            hud.style.maxHeight = '100vh';
+                            hud.style.minHeight = minH;
+                            hud.style.width = fsW;
+                            hud.style.height = fsH;
+                            hud.style.left = fsX;
+                            hud.style.top = fsY;
+                            hud.style.transform = 'none';
+                            hud.style.resize = 'none';
+                        } else {
+                            ctrl.isFullscreen = false;
+                            ctrl.applyNormalBounds();
+                            ctrl.clampToViewport();
+                        }
+                        if (typeof opts.onFullscreen === 'function') opts.onFullscreen(ctrl.isFullscreen, ctrl);
+                        ctrl.save();
+                        return ctrl.isFullscreen;
+                    },
+                    resetSize: function() {
+                        ctrl.isFullscreen = false;
+                        ctrl.isMinimized = false;
+                        if (typeof hud.removeAttribute === 'function') hud.removeAttribute('data-echo-minimized');
+                        normalBounds.w = defaultW;
+                        normalBounds.h = defaultH;
+                        ctrl.applyNormalBounds();
+                        if (typeof opts.onMinimize === 'function') opts.onMinimize(false, ctrl);
+                        if (typeof opts.onFullscreen === 'function') opts.onFullscreen(false, ctrl);
+                        ctrl.save();
+                    }
+                };
+
+                const savedIsMin = Boolean(init && init.isMinimized);
+                const savedIsFs = Boolean(init && init.isFullscreen);
+
+                if (savedIsMin) {
+                    ctrl.isMinimized = true;
+                    if (typeof hud.setAttribute === 'function') hud.setAttribute('data-echo-minimized', '1');
+                    hud.style.resize = 'none';
+                    hud.style.minHeight = minCollapsedMinH;
+                    hud.style.height = minCollapsedH;
+                    if (typeof opts.onMinimize === 'function') opts.onMinimize(true, ctrl);
+                } else if (savedIsFs) {
+                    if (typeof hud.removeAttribute === 'function') hud.removeAttribute('data-echo-minimized');
+                    ctrl.isFullscreen = true;
+                    hud.style.maxWidth = '100vw';
+                    hud.style.maxHeight = '100vh';
+                    hud.style.minHeight = minH;
+                    hud.style.width = fsW;
+                    hud.style.height = fsH;
+                    hud.style.left = fsX;
+                    hud.style.top = fsY;
+                    hud.style.transform = 'none';
+                    hud.style.resize = 'none';
+                    if (typeof opts.onFullscreen === 'function') opts.onFullscreen(true, ctrl);
+                } else {
+                    if (typeof hud.removeAttribute === 'function') hud.removeAttribute('data-echo-minimized');
+                    ctrl.applyNormalBounds();
+                    ctrl.clampToViewport();
+                    if (typeof opts.onMinimize === 'function') opts.onMinimize(false, ctrl);
+                    if (typeof opts.onFullscreen === 'function') opts.onFullscreen(false, ctrl);
+                }
+
+                if (header) {
+                    header.onmousedown = function(e) {
+                        if (e.target && e.target.closest && e.target.closest('button, input, select, textarea, a, .no-drag')) return;
+                        if (e.target && (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
+                        if (ctrl.isFullscreen) return;
+                        if (e.preventDefault) e.preventDefault();
+                        if (hud.style.transform && hud.style.transform !== 'none') {
+                            const rect = hud.getBoundingClientRect ? hud.getBoundingClientRect() : null;
+                            const realLeft = (rect && rect.width > 0) ? rect.left : hud.offsetLeft;
+                            const realTop = (rect && rect.height > 0) ? rect.top : hud.offsetTop;
+                            hud.style.transform = 'none';
+                            hud.style.left = realLeft + 'px';
+                            hud.style.top = realTop + 'px';
+                            normalBounds.tx = 'none';
+                            normalBounds.x = hud.style.left;
+                            normalBounds.y = hud.style.top;
+                        }
+                        ctrl.isDragging = true;
+                        const startLeft = parseFloat(hud.style.left) || hud.offsetLeft || 0;
+                        const startTop = parseFloat(hud.style.top) || hud.offsetTop || 0;
+                        const dragOffsetX = e.clientX - startLeft;
+                        const dragOffsetY = e.clientY - startTop;
+                        hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
+
+                        const onMove = function(me) {
+                            if (!ctrl.isDragging) return;
+                            const vw = window.innerWidth || 1280;
+                            const vh = window.innerHeight || 800;
+                            const maxX = Math.max(0, vw - (hud.offsetWidth || 200));
+                            const maxY = Math.max(0, vh - 44);
+                            const newX = Math.max(0, Math.min(me.clientX - dragOffsetX, maxX));
+                            const newY = Math.max(0, Math.min(me.clientY - dragOffsetY, maxY));
+                            hud.style.left = newX + 'px';
+                            hud.style.top = newY + 'px';
+                            normalBounds.x = hud.style.left;
+                            normalBounds.y = hud.style.top;
+                            normalBounds.tx = 'none';
+                        };
+                        const onUp = function() {
+                            document.removeEventListener('mousemove', onMove);
+                            document.removeEventListener('mouseup', onUp);
+                            if (ctrl.isDragging) {
+                                ctrl.isDragging = false;
+                                hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
+                                ctrl.save();
+                            }
+                        };
+                        document.addEventListener('mousemove', onMove);
+                        document.addEventListener('mouseup', onUp);
+                    };
+                }
+
+                if (typeof ResizeObserver !== 'undefined') {
+                    new ResizeObserver(function() {
+                        if (!ctrl.isMinimized && !ctrl.isFullscreen && !ctrl.isDragging) {
+                            const w = hud.style.width;
+                            const h = hud.style.height;
+                            if (!isInvalidW(w)) normalBounds.w = w;
+                            if (!isInvalidDim(h)) normalBounds.h = h;
+                            if (typeof opts.onSave === 'function') opts.onSave(normalBounds, ctrl);
+                            if (!isGlobalHud && window.EchoWM && typeof window.EchoWM.saveGeometry === 'function' && hud && hud.id) window.EchoWM.saveGeometry(hud, normalBounds, ctrl);
+                        }
+                    }).observe(hud);
+                }
+
+                window.addEventListener('resize', function() {
+                    ctrl.clampToViewport();
+                });
+
+                return ctrl;
+            };
+        }
+        """
+
+    @staticmethod
+    def get_hud_rpc_bridge_js() -> str:
+        """Génère le pont RPC résilient universel (file d'attente, heartbeat 5s/25s anti-timeout 60s, reconnexion post-standby et garde-fou SPA)."""
+        return """
+        {
+            window.echoCreateHudRpcBridge = function(cfg) {
+                const hudId = cfg.hudId;
+                const actionId = cfg.actionId;
+                const resolveVar = cfg.resolveVar;
+                const sendFn = cfg.sendFn;
+                const readyFn = cfg.readyFn;
+                const cid = cfg.cid || '';
+                const mid = cfg.mid || '';
+                const modelId = cfg.modelId || 'echo_orchestrator';
+                const prePingActions = cfg.prePingActions || [];
+                const noWatchdogActions = cfg.noWatchdogActions || ['close'];
+                const visiblePingMs = cfg.visiblePingMs || 25000;
+                const hiddenPingMs = cfg.hiddenPingMs || 25000;
+                const watchdogMs = cfg.watchdogMs || 8000;
+
+                let actionQueue = [];
+                let isReconnecting = false;
+                let pendingReconnectUi = false;
+                let inFlightPayload = null;
+                let inFlightWatchdog = null;
+                let waitResolveTimer = null;
+                let lastReadyTs = Date.now();
+                let lastPingTs = 0;
+
+                function isOwnedHudAlive() {
+                    const el = document.getElementById(hudId);
+                    if (!el) return false;
+                    const elCid = (window.EchoWM && typeof window.EchoWM.getElementChatId === 'function')
+                        ? window.EchoWM.getElementChatId(el)
+                        : (el.getAttribute('data-echo-chat-id') || el.getAttribute('data-chat-id') || '');
+                    if (cid && elCid && elCid !== cid) return false;
+                    return true;
+                }
+
+                if (window.EchoWM && window.EchoWM.isReplaying) {
+                    window[resolveVar] = null;
+                }
+
+                async function reconnectBackend() {
+                    if (isReconnecting || !isOwnedHudAlive()) return;
+                    isReconnecting = true;
+                    pendingReconnectUi = true;
+                    if (typeof cfg.onReconnectStart === 'function') cfg.onReconnectStart();
+                    try {
+                        const token = localStorage.token ? localStorage.token.replace(/^"|"$/g, '') : '';
+                        let msgId = mid;
+                        if (!msgId) {
+                            const msgs = document.querySelectorAll('[id^="message-"]');
+                            for (let i = msgs.length - 1; i >= 0; i--) {
+                                const rawId = msgs[i].id.replace(/^message-/, '');
+                                if (rawId && !rawId.includes('input') && !rawId.includes('edit') && !rawId.includes('feedback')) {
+                                    msgId = rawId;
+                                    break;
+                                }
+                            }
+                        }
+                        const extra = (typeof cfg.getExtraReconnect === 'function') ? (cfg.getExtraReconnect() || {}) : {};
+                        await fetch('/api/chat/actions/' + actionId, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                            body: JSON.stringify(Object.assign({
+                                chat_id: cid, model: modelId, id: msgId || 'hud-reconnect', session_id: '', messages: [],
+                                reconnect_only: true
+                            }, extra))
+                        });
+                    } catch (e) {
+                        console.error('[ECHO HUD] Reconnect error (' + actionId + '):', e);
+                    } finally {
+                        setTimeout(() => {
+                            isReconnecting = false;
+                            if (actionQueue.length > 0 && typeof window[resolveVar] !== 'function') {
+                                flushQueue();
+                            }
+                        }, 2000);
+                    }
+                }
+
+                function getPingPayload() {
+                    return (typeof cfg.getPingPayload === 'function') ? cfg.getPingPayload() : { action: 'ping' };
+                }
+
+                function flushQueue() {
+                    if (actionQueue.length === 0) return;
+                    if (typeof window[resolveVar] === 'function' && lastReadyTs > 0 && (Date.now() - lastReadyTs > 45000)) {
+                        window[resolveVar] = null;
+                    }
+                    if (typeof window[resolveVar] === 'function') {
+                        if (actionQueue[0] && prePingActions.indexOf(actionQueue[0].action) !== -1 && (Date.now() - lastReadyTs > 10000)) {
+                            actionQueue.unshift(getPingPayload());
+                        }
+                        if (waitResolveTimer) { clearTimeout(waitResolveTimer); waitResolveTimer = null; }
+                        const resolveFn = window[resolveVar];
+                        window[resolveVar] = null;
+                        const payload = actionQueue.shift();
+                        inFlightPayload = payload;
+                        resolveFn(payload);
+
+                        if (inFlightWatchdog) clearTimeout(inFlightWatchdog);
+                        if (payload && noWatchdogActions.indexOf(payload.action) === -1) {
+                            inFlightWatchdog = setTimeout(() => {
+                                if (typeof window[resolveVar] !== 'function') {
+                                    if (inFlightPayload && inFlightPayload.action !== 'ping') {
+                                        actionQueue.unshift(inFlightPayload);
+                                    } else if (typeof cfg.onWatchdogFallback === 'function') {
+                                        const fb = cfg.onWatchdogFallback();
+                                        if (fb) actionQueue.push(fb);
+                                    }
+                                    inFlightPayload = null;
+                                    reconnectBackend();
+                                }
+                            }, watchdogMs);
+                        }
+                    } else {
+                        if (!waitResolveTimer) {
+                            waitResolveTimer = setTimeout(() => {
+                                waitResolveTimer = null;
+                                if (typeof window[resolveVar] !== 'function' && actionQueue.length > 0) {
+                                    reconnectBackend();
+                                }
+                            }, 1000);
+                        }
+                    }
+                }
+
+                window[readyFn] = function() {
+                    if (inFlightWatchdog) { clearTimeout(inFlightWatchdog); inFlightWatchdog = null; }
+                    if (waitResolveTimer) { clearTimeout(waitResolveTimer); waitResolveTimer = null; }
+                    inFlightPayload = null;
+                    isReconnecting = false;
+                    lastReadyTs = Date.now();
+                    if (pendingReconnectUi) {
+                        pendingReconnectUi = false;
+                        if (typeof cfg.onReconnectEnd === 'function') {
+                            try { cfg.onReconnectEnd(); } catch (e) {}
+                        }
+                    }
+                    flushQueue();
+                };
+
+                window[sendFn] = function(payload) {
+                    if (!payload) return;
+                    if (payload.action === 'ping') {
+                        if (actionQueue.length > 0 || inFlightPayload) return;
+                    } else {
+                        actionQueue = actionQueue.filter(p => p.action !== 'ping');
+                    }
+                    actionQueue.push(payload);
+                    flushQueue();
+                };
+
+                const pingInterval = setInterval(() => {
+                    if (!isOwnedHudAlive()) { clearInterval(pingInterval); return; }
+                    const el = document.getElementById(hudId);
+                    const now = Date.now();
+                    const isParked = el.getAttribute('data-echo-parked') === '1';
+                    const threshold = (document.hidden || isParked) ? hiddenPingMs : visiblePingMs;
+                    if (now - lastPingTs >= threshold) {
+                        lastPingTs = now;
+                        window[sendFn](getPingPayload());
+                    }
+                }, Math.min(5000, visiblePingMs));
+
+                const wakeUpHandler = () => {
+                    if (!isOwnedHudAlive()) {
+                        document.removeEventListener('visibilitychange', wakeUpHandler);
+                        window.removeEventListener('focus', wakeUpHandler);
+                        return;
+                    }
+                    if (!document.hidden) {
+                        window[sendFn](getPingPayload());
+                    }
+                };
+                document.addEventListener('visibilitychange', wakeUpHandler);
+                window.addEventListener('focus', wakeUpHandler);
+
+                return {
+                    send: window[sendFn],
+                    cleanup: () => {
+                        clearInterval(pingInterval);
+                        document.removeEventListener('visibilitychange', wakeUpHandler);
+                        window.removeEventListener('focus', wakeUpHandler);
+                    }
+                };
+            };
+        }
+        """
+
+    @staticmethod
     def get_floating_window_class_js() -> str:
         """
         # ==============================================================================
@@ -65,7 +1083,7 @@ class EchoRichUI:
         # pour gérer nativement le rendu Glassmorphism, le Drag, Resize et les contrôles.
         # ==============================================================================
         """
-        return """
+        return EchoRichUI.get_hud_geometry_js() + """
         if (!window.EchoFloatingWindow) {
             window.EchoFloatingWindow = class {
                 constructor(config) {
@@ -88,7 +1106,7 @@ class EchoRichUI:
                     
                     this.isMinimized = false;
                     this.isFullscreen = false;
-                    this.oldState = {};
+                    this.geo = null;
                 }
                 
                 render() {
@@ -97,7 +1115,7 @@ class EchoRichUI:
                     
                     hud = document.createElement('div');
                     hud.id = this.id;
-                    hud.style.cssText = `position:fixed; left:${this.posX}px; top:${this.posY}px; width:${this.width}; height:${this.height}; z-index:10000; background:rgba(12,12,12,0.98); backdrop-filter:blur(25px); border:1px solid #333; border-radius:12px; box-shadow:0 25px 70px rgba(0,0,0,0.9); color:white; font-family:system-ui,sans-serif; display:flex; flex-direction:column; overflow:hidden; min-width:${this.minWidth}; min-height:${this.minHeight};`;
+                    hud.style.cssText = `position:fixed; left:${this.posX}px; top:${this.posY}px; width:${this.width}; height:${this.height}; max-width:98vw; max-height:96vh; z-index:10000; background:rgba(12,12,12,0.98); backdrop-filter:blur(25px); border:1px solid #333; border-radius:12px; box-shadow:0 25px 70px rgba(0,0,0,0.9); color:white; font-family:system-ui,sans-serif; display:flex; flex-direction:column; overflow:hidden; min-width:${this.minWidth}; min-height:${this.minHeight};`;
                     
                     const iconHtml = this.icon ? `<span style="font-size:14px; padding:3px 8px; border-radius:8px; background:rgba(0,212,255,0.1); color:#00d4ff;">${this.icon}</span>` : '';
                     
@@ -135,31 +1153,30 @@ class EchoRichUI:
                     });
                     
                     const header = document.getElementById(this.id + '-header');
-                    let isDragging = false, startX, startY, initialLeft, initialTop;
-                    
-                    header.onmousedown = (e) => {
-                        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.closest('button')) return;
-                        e.preventDefault();
-                        isDragging = true;
-                        startX = e.clientX;
-                        startY = e.clientY;
-                        initialLeft = hud.offsetLeft;
-                        initialTop = hud.offsetTop;
-                        hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
-                    };
-                    
-                    document.addEventListener('mousemove', (e) => {
-                        if (isDragging) {
-                            e.preventDefault();
-                            hud.style.left = (initialLeft + (e.clientX - startX)) + 'px';
-                            hud.style.top = (initialTop + (e.clientY - startY)) + 'px';
-                        }
-                    });
-                    
-                    document.addEventListener('mouseup', () => {
-                        if (isDragging) {
-                            isDragging = false;
-                            hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
+                    const body = document.getElementById(this.id + '-body');
+                    this.geo = window.echoBindHudGeometry(hud, header, {
+                        defaultW: this.width,
+                        defaultH: this.height,
+                        defaultX: this.posX + 'px',
+                        defaultY: this.posY + 'px',
+                        defaultTx: 'none',
+                        minW: this.minWidth,
+                        minH: this.minHeight,
+                        minimizedH: 'auto',
+                        minimizedMinH: '0',
+                        fsW: '100vw',
+                        fsH: '100vh',
+                        fsX: '0px',
+                        fsY: '0px',
+                        allowResize: this.allowResize,
+                        customResizer: true,
+                        onMinimize: (isMin) => {
+                            this.isMinimized = isMin;
+                            if (body) body.style.display = isMin ? 'none' : 'flex';
+                            if (this.onMinimize) this.onMinimize(isMin);
+                        },
+                        onFullscreen: (isFs) => {
+                            this.isFullscreen = isFs;
                         }
                     });
                     
@@ -172,16 +1189,16 @@ class EchoRichUI:
                             isResizing = true;
                             rStartX = e.clientX;
                             rStartY = e.clientY;
-                            startW = hud.offsetWidth;
-                            startH = hud.offsetHeight;
+                            startW = hud.offsetWidth || parseInt(hud.style.width) || 500;
+                            startH = hud.offsetHeight || parseInt(hud.style.height) || 400;
                             hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
                         };
                         
                         document.addEventListener('mousemove', (e) => {
                             if (isResizing) {
                                 e.preventDefault();
-                                hud.style.width = (startW + (e.clientX - rStartX)) + 'px';
-                                hud.style.height = (startH + (e.clientY - rStartY)) + 'px';
+                                hud.style.width = Math.max(parseInt(this.minWidth) || 200, startW + (e.clientX - rStartX)) + 'px';
+                                hud.style.height = Math.max(parseInt(this.minHeight) || 100, startH + (e.clientY - rStartY)) + 'px';
                             }
                         });
                         
@@ -189,6 +1206,7 @@ class EchoRichUI:
                             if (isResizing) {
                                 isResizing = false;
                                 hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
+                                if (this.geo) this.geo.save();
                             }
                         });
                     }
@@ -198,38 +1216,17 @@ class EchoRichUI:
                         if (this.onClose) this.onClose();
                     };
                     
-                    const body = document.getElementById(this.id + '-body');
                     document.getElementById(this.id + '-btn-min').onclick = (e) => {
                         e.stopPropagation();
-                        this.isMinimized = !this.isMinimized;
-                        body.style.display = this.isMinimized ? 'none' : 'flex';
-                        if (this.isMinimized) {
-                            hud.style.height = 'auto';
-                            hud.style.minHeight = '0';
-                        } else {
-                            hud.style.height = this.height;
-                            hud.style.minHeight = this.minHeight;
-                        }
-                        if (this.onMinimize) this.onMinimize(this.isMinimized);
+                        this.geo.toggleMinimize();
                     };
                     
                     document.getElementById(this.id + '-btn-zoom').onclick = () => {
-                        if (!this.isFullscreen) {
-                            this.oldState = { w: hud.style.width, h: hud.style.height, l: hud.style.left, t: hud.style.top };
-                            hud.style.width = '100vw'; hud.style.height = '100vh';
-                            hud.style.left = '0'; hud.style.top = '0';
-                            this.isFullscreen = true;
-                        } else {
-                            hud.style.width = this.oldState.w; hud.style.height = this.oldState.h;
-                            hud.style.left = this.oldState.l; hud.style.top = this.oldState.t;
-                            this.isFullscreen = false;
-                        }
+                        this.geo.toggleFullscreen();
                     };
                     
                     document.getElementById(this.id + '-btn-reset').onclick = () => {
-                        hud.style.width = this.width;
-                        hud.style.height = this.height;
-                        this.isFullscreen = false;
+                        this.geo.resetSize();
                     };
                 }
             };
@@ -673,6 +1670,7 @@ class EchoUI(EchoRichUI):
           }});
 
           header.onmousedown = (e) => {{
+            if (e.target.closest && e.target.closest('button, input, select, a')) return;
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
             e.preventDefault();
             let ox = e.clientX, oy = e.clientY;
@@ -859,18 +1857,240 @@ class EchoUI(EchoRichUI):
         await events.emit_execute(js_code)
 
     @staticmethod
+    def calculate_context_delta(
+        current: Optional[Dict[str, Any]],
+        previous: Optional[Dict[str, Any]],
+        max_context_size: int = ECHO_MAX_CONTEXT_SIZE
+    ) -> Dict[str, Any]:
+        """Calcule le différentiel unitaire de tokens et l'impact capacitaire entre deux tours."""
+        cur = current or {}
+        prev = previous or {}
+
+        c_prompt = int(cur.get("promptTokenCount", 0))
+        c_candidates = int(cur.get("candidatesTokenCount", 0))
+        c_cache = int(cur.get("cachedContentTokenCount", 0))
+        c_total = int(cur.get("totalTokenCount", 0))
+
+        p_prompt = int(prev.get("promptTokenCount", 0))
+        p_candidates = int(prev.get("candidatesTokenCount", 0))
+        p_cache = int(prev.get("cachedContentTokenCount", 0))
+        p_total = int(prev.get("totalTokenCount", 0))
+
+        has_prev = p_total > 0
+
+        delta_total = (c_total - p_total) if has_prev else 0
+        delta_prompt = (c_prompt - p_prompt) if has_prev else 0
+        delta_candidates = (c_candidates - p_candidates) if has_prev else 0
+        delta_cache = (c_cache - p_cache) if has_prev else 0
+
+        max_size = max(1, int(max_context_size or ECHO_MAX_CONTEXT_SIZE))
+        capacity_lost_pct = (delta_total / max_size) * 100.0 if has_prev else 0.0
+
+        if has_prev and p_prompt > 0:
+            growth_pct = (delta_prompt / p_prompt) * 100.0
+        elif has_prev and p_total > 0:
+            growth_pct = (delta_total / p_total) * 100.0
+        else:
+            growth_pct = 0.0
+
+        p_q5 = prev.get("quota_5h_fraction")
+        c_q5 = cur.get("quota_5h_fraction")
+        delta_q5 = round((float(c_q5) - float(p_q5)) * 100.0, 1) if (p_q5 is not None and c_q5 is not None) else None
+
+        p_qw = prev.get("quota_weekly_fraction")
+        c_qw = cur.get("quota_weekly_fraction")
+        delta_qw = round((float(c_qw) - float(p_qw)) * 100.0, 1) if (p_qw is not None and c_qw is not None) else None
+
+        return {
+            "has_delta": has_prev,
+            "delta_total": delta_total,
+            "delta_prompt": delta_prompt,
+            "delta_candidates": delta_candidates,
+            "delta_cache": delta_cache,
+            "capacity_lost_pct": round(capacity_lost_pct, 3),
+            "growth_pct": round(growth_pct, 1),
+            "delta_quota_5h": delta_q5,
+            "delta_quota_weekly": delta_qw,
+            "is_first_turn": not has_prev,
+        }
+
+    @staticmethod
+    def get_context_gauge_renderer_js() -> str:
+        """Génère la fonction globale window.echoRenderContextGauge(stats)
+        idempotente et Hot-Updatable, réutilisée à la fois par le loader à froid et par le filtre à chaud."""
+        return """
+  window.echoRenderContextGauge = function(stats) {
+    if (!stats || typeof stats !== 'object') return;
+    var max_t = stats.max_tokens || 1048576;
+    var c_t = stats.cachedContentTokenCount || 0;
+    var active_p_t = Math.max(0, (stats.promptTokenCount || 0) - c_t);
+    var g_t = stats.candidatesTokenCount || 0;
+    var total_t = stats.totalTokenCount || (c_t + active_p_t + g_t);
+    var is_pending = !!stats.is_pending;
+    var chatId = stats.chat_id || (window.EchoWM && window.EchoWM.getCurrentChatId ? window.EchoWM.getCurrentChatId() : '');
+
+    var cache_pct = (c_t / max_t) * 100;
+    var prompt_pct = (active_p_t / max_t) * 100;
+    var gen_pct = (g_t / max_t) * 100;
+    var quota_frac = typeof stats.quota_fraction === 'number' ? stats.quota_fraction : 1.0;
+
+    function _color_for_frac(f) {
+      if (f < 0.2) return "#ef4444";
+      if (f < 0.5) return "#f59e0b";
+      return "#10b981";
+    }
+    function _format_quota_delta(deltaVal) {
+      if (typeof deltaVal !== 'number') return '<span style="color:#94a3b8;">—</span>';
+      if (deltaVal < 0) return `<span style="color:#ef4444;font-weight:bold;">${deltaVal}%</span>`;
+      if (deltaVal > 0) return `<span style="color:#10b981;font-weight:bold;">+${deltaVal}%</span>`;
+      return '<span style="color:#94a3b8;">0%</span>';
+    }
+    var q_color = _color_for_frac(quota_frac);
+    var dash_array = 2 * Math.PI * 8;
+    var dash_offset = dash_array * (1 - quota_frac);
+
+    var styleId = 'echo-hud-styles';
+    if (!document.getElementById(styleId)) {
+      var style = document.createElement('style');
+      style.id = styleId;
+      style.innerHTML = `
+        .echo-tooltip { position: relative; display: flex; align-items: center; }
+        .echo-tooltip .tooltip-box {
+          visibility: hidden; width: 280px; background: rgba(15, 23, 42, 0.98);
+          backdrop-filter: blur(12px); color: #f8fafc; text-align: left;
+          border-radius: 8px; padding: 12px; position: absolute; z-index: 9999;
+          top: 120%; left: 50%; transform: translateX(-50%); opacity: 0;
+          transition: opacity 0.3s, transform 0.3s; border: 1px solid rgba(0, 212, 255, 0.4);
+          box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); font-size: 11px; pointer-events: none;
+        }
+        .echo-tooltip:hover .tooltip-box { visibility: visible; opacity: 1; transform: translateX(-50%) translateY(-5px); }
+        .tooltip-title { color: #00d4ff; font-weight: bold; margin-bottom: 8px; border-bottom: 1px solid rgba(0, 212, 255, 0.2); padding-bottom: 4px; text-transform: uppercase; }
+        .tooltip-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+        .echo-delta-badge {
+          display: inline-flex; align-items: center; font-size: 10px; font-weight: 500;
+          padding: 1px 6px; border-radius: 10px; margin-left: 6px; white-space: nowrap;
+          background: rgba(148, 163, 184, 0.12); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.25);
+        }
+        @media (max-width: 768px) { .tooltip-box { width: 90vw !important; left: 50% !important; transform: translateX(-50%) translateY(-5px) !important; white-space: normal !important; } }
+      `;
+      document.head.appendChild(style);
+    }
+
+    var hudWrapper = document.getElementById('echo-nav-context-hud-wrapper');
+    if (!hudWrapper) {
+      hudWrapper = document.createElement('div');
+      hudWrapper.id = 'echo-nav-context-hud-wrapper';
+      hudWrapper.style.cssText = 'position:fixed;left:50%;top:22px;transform:translateX(-50%);width:auto;min-width:300px;display:flex;justify-content:center;align-items:center;z-index:9999;pointer-events:none;';
+      document.body.appendChild(hudWrapper);
+    }
+
+    if (chatId) {
+      hudWrapper.setAttribute('data-chat-id', chatId);
+      hudWrapper.setAttribute('data-echo-chat-id', chatId);
+    }
+
+    var hud = document.getElementById('echo-nav-context-hud');
+    if (!hud) {
+      hud = document.createElement('div');
+      hud.id = 'echo-nav-context-hud';
+      hud.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:12px;pointer-events:auto;background:rgba(0,0,0,0.2);padding:4px 12px;border-radius:20px;backdrop-filter:blur(4px);';
+      hudWrapper.appendChild(hud);
+    }
+
+    var tier_html = stats.user_tier ? `<div class="tooltip-row"><span>💎 Tier:</span> <span style="color:#38bdf8;font-weight:bold;">${stats.user_tier}</span></div>` : '';
+    var proj_html = (stats.project_id && stats.project_id !== stats.tenant_id) ? `<div class="tooltip-row"><span>🏗️ Projet Perso:</span> <span>${stats.project_id}</span></div>` : '';
+
+    var q_rows_html = '';
+    var d5 = (stats.delta && typeof stats.delta.delta_quota_5h === 'number') ? stats.delta.delta_quota_5h : null;
+    var dw = (stats.delta && typeof stats.delta.delta_quota_weekly === 'number') ? stats.delta.delta_quota_weekly : null;
+    var has_5h = stats.quota_5h_fraction != null || stats.quota_5h_disabled;
+    var has_w = stats.quota_weekly_fraction != null;
+
+    if (has_5h || has_w) {
+      var tbody_rows = '';
+      if (stats.quota_5h_disabled) {
+        tbody_rows += '<tr><td style="padding:2px 4px;">⏱️ 5h</td><td style="padding:2px 4px;text-align:right;color:#94a3b8;">Off</td><td style="padding:2px 4px;text-align:right;color:#94a3b8;">—</td><td style="padding:2px 4px;text-align:right;color:#94a3b8;">—</td></tr>';
+      } else if (stats.quota_5h_fraction != null) {
+        var c5 = _color_for_frac(stats.quota_5h_fraction);
+        var v5 = Math.round(stats.quota_5h_fraction * 100) + '%';
+        var d5_str = _format_quota_delta(d5);
+        var r5_clean = (['N/A', '—', ''].indexOf(stats.quota_5h_reset) !== -1) ? '—' : stats.quota_5h_reset;
+        tbody_rows += `<tr><td style="padding:2px 4px;">⏱️ 5h</td><td style="padding:2px 4px;text-align:right;"><b style="color:${c5};">${v5}</b></td><td style="padding:2px 4px;text-align:right;">${d5_str}</td><td style="padding:2px 4px;text-align:right;color:#94a3b8;font-size:9px;">${r5_clean}</td></tr>`;
+      }
+      if (stats.quota_weekly_fraction != null) {
+        var cw = _color_for_frac(stats.quota_weekly_fraction);
+        var vw = Math.round(stats.quota_weekly_fraction * 100) + '%';
+        var dw_str = _format_quota_delta(dw);
+        var rw_clean = (['N/A', '—', ''].indexOf(stats.quota_weekly_reset) !== -1) ? '—' : stats.quota_weekly_reset;
+        tbody_rows += `<tr><td style="padding:2px 4px;">📅 Hebdo</td><td style="padding:2px 4px;text-align:right;"><b style="color:${cw};">${vw}</b></td><td style="padding:2px 4px;text-align:right;">${dw_str}</td><td style="padding:2px 4px;text-align:right;color:#94a3b8;font-size:9px;">${rw_clean}</td></tr>`;
+      }
+      q_rows_html = `<table style="width:100%;margin-top:6px;margin-bottom:6px;border-collapse:collapse;font-size:10px;text-align:left;"><thead><tr style="border-bottom:1px solid rgba(255,255,255,0.15);color:#94a3b8;"><th style="padding:2px 4px;">Quota</th><th style="padding:2px 4px;text-align:right;">Dispo</th><th style="padding:2px 4px;text-align:right;">Δ Tour</th><th style="padding:2px 4px;text-align:right;">Reset</th></tr></thead><tbody>${tbody_rows}</tbody></table>`;
+    } else {
+      var r_str = (['N/A', '—', ''].indexOf(stats.quota_reset) !== -1) ? '' : ` <span style="color:#94a3b8;font-size:10px;">(🔄 ${stats.quota_reset})</span>`;
+      q_rows_html = `<div class="tooltip-row"><span>📊 Quota:</span> <span><b style="color:${q_color};">${(quota_frac * 100).toFixed(1)}%</b>${r_str}</span></div>`;
+    }
+
+    var rpd_html = (stats.quota_rpd_rem && stats.quota_rpd_rem !== 'N/A') ? `<div class="tooltip-row"><span>📆 Req/jour:</span> <span>${stats.quota_rpd_rem} / ${stats.quota_rpd_lim}</span></div>` : '';
+    var rpm_html = (stats.quota_rpm_rem && stats.quota_rpm_rem !== 'N/A') ? `<div class="tooltip-row"><span>⚡ Req/min:</span> <span>${stats.quota_rpm_rem} / ${stats.quota_rpm_lim}</span></div>` : '';
+
+    var deltaBadge = '';
+    var deltaTooltipRows = '';
+    if (stats.delta && stats.delta.has_delta) {
+      var dTot = stats.delta.delta_total || 0;
+      var capLost = stats.delta.capacity_lost_pct || 0;
+      var sign = dTot > 0 ? '+' : '';
+      var capLostFixed = Math.abs(capLost).toFixed(2);
+      var badgeText = (capLost > 0 ? '+' : (capLost < 0 ? '-' : '')) + capLostFixed + '%';
+      deltaBadge = `<span class="echo-delta-badge">${badgeText}</span>`;
+
+      var signGrowth = (stats.delta.growth_pct > 0 ? '+' : '') + stats.delta.growth_pct + '%';
+      var growthLabel = (stats.delta.growth_pct < 0) ? 'Variation contexte:' : 'Croissance contexte:';
+
+      var capRow = '';
+      if (capLost > 0) {
+        capRow = `<div class="tooltip-row"><span>Empreinte tour:</span> <b style="color:#ef4444;">+${capLostFixed}%</b></div>`;
+      } else if (capLost < 0) {
+        capRow = `<div class="tooltip-row"><span>Empreinte tour:</span> <b style="color:#10b981;">-${capLostFixed}% (libéré)</b></div>`;
+      } else {
+        capRow = `<div class="tooltip-row"><span>Empreinte tour:</span> <span>0%</span></div>`;
+      }
+
+      deltaTooltipRows = `
+        <div class="tooltip-title" style="margin-top:8px;border-top:1px solid rgba(0,212,255,0.2);padding-top:6px;">DIFFÉRENTIEL (DERNIER TOUR)</div>
+        <div class="tooltip-row"><span>Δ Tokens Total:</span> <span style="font-weight:bold;">${sign}${dTot}</span></div>
+        ${capRow}
+        <div class="tooltip-row"><span>${growthLabel}</span> <span>${signGrowth}</span></div>
+      `;
+    }
+
+    var pulseStyle = is_pending ? 'animation: echo-pulse 1.5s infinite;' : '';
+
+    var iconHtml = `<div class="echo-tooltip"><svg width="20" height="20" viewBox="0 0 20 20" style="${pulseStyle}"><circle cx="10" cy="10" r="8" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2" /><circle cx="10" cy="10" r="8" fill="none" stroke="${q_color}" stroke-width="2" stroke-dasharray="${dash_array}" stroke-dashoffset="${dash_offset}" transform="rotate(-90 10 10)" stroke-linecap="round" /><path d="M10 6a2.5 2.5 0 00-2.5 2.5V10h5V8.5A2.5 2.5 0 0010 6zm3.5 4H6.5a1 1 0 00-1 1v4a1 1 0 001 1h7a1 1 0 001-1v-4a1 1 0 00-1-1z" fill="white" opacity="0.9" /></svg><div class="tooltip-box" style="width:310px;"><div class="tooltip-title">AUTHENTIFICATION</div><div class="tooltip-row"><span>🔐 Source:</span> <span>${stats.auth_sources ? stats.auth_sources.join(', ') : 'N/A'}</span></div><div class="tooltip-row"><span>👤 Compte:</span> <span>${stats.user_email || 'N/A'}</span></div>${tier_html}${proj_html}<div class="tooltip-row"><span>🌐 Tenant:</span> <span style="color:#10b981;">${stats.tenant_id || 'ECHO'}</span></div><div class="tooltip-title" style="margin-top:8px;border-top:1px solid rgba(0,212,255,0.2);padding-top:6px;">QUOTAS</div><div class="tooltip-row"><span>💳 Crédits IA:</span> <b style="color:#10b981;">${stats.credits_val || 'N/A'}</b></div><div class="tooltip-row"><span>🤖 Modèle CA:</span> <span style="color:#a3a3a3;font-size:10px;">${stats.quota_model || '—'}</span></div>${q_rows_html}${rpd_html}${rpm_html}<div class="tooltip-row"><span>🏷️ Type:</span> <span style="color:#a3a3a3;font-size:10px;">${stats.quota_type || 'UNKNOWN'}</span></div></div></div>`;
+
+    var barHtml = `<div class="echo-tooltip" style="min-width:180px;"><div style="display:flex;width:100%;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;"><div style="width:${cache_pct}%;background:#8b5cf6;"></div><div style="width:${prompt_pct}%;background:#10b981;"></div><div style="width:${gen_pct}%;background:#f59e0b;"></div></div>${deltaBadge}<div class="tooltip-box" style="width:260px;"><div class="tooltip-title">CONTEXTE ${is_pending ? '(CALCUL EN COURS...)' : ''}</div><div class="tooltip-row"><span>Cache:</span> <span>${c_t}</span></div><div class="tooltip-row"><span>Prompt:</span> <span>${active_p_t}</span></div><div class="tooltip-row"><span>Génération:</span> <span>${g_t}</span></div><div class="tooltip-row" style="font-weight:bold;margin-top:4px;"><span>Total:</span> <span>${total_t} / ${max_t}</span></div>${deltaTooltipRows}</div></div>`;
+
+    hud.innerHTML = iconHtml + barHtml;
+
+    if (window.EchoWM && window.EchoWM.registerMountedWindow && chatId) {
+      window.EchoWM.registerMountedWindow('echo-nav-context-hud-wrapper', chatId);
+    }
+  };
+"""
+
+    @staticmethod
     async def deploy_context_gauge(
             events: Any,
-            plan_name: str,
-            credits_val: str,
-            quota_str: str,
-            c_t: int,
-            active_p_t: int,
-            g_t: int,
-            max_t: int,
-            cache_pct: float,
-            prompt_pct: float,
-            gen_pct: float,
+            plan_name: str = "",
+            credits_val: str = "N/A",
+            quota_str: str = "",
+            c_t: int = 0,
+            active_p_t: int = 0,
+            g_t: int = 0,
+            max_t: int = ECHO_MAX_CONTEXT_SIZE,
+            cache_pct: float = 0.0,
+            prompt_pct: float = 0.0,
+            gen_pct: float = 0.0,
             user_email: Optional[str] = None,
             user_tier: Optional[str] = None,
             project_id: Optional[str] = None,
@@ -888,104 +2108,50 @@ class EchoUI(EchoRichUI):
             quota_5h_disabled: bool = False,
             quota_weekly_fraction: Optional[float] = None,
             quota_weekly_reset: str = "N/A",
-            compaction_count: int = 0,
-            compacted_turns: int = 0):
-        """Déploie le HUD ECHO flottant avec tooltips en dessous."""
-        auth_list = ", ".join(auth_sources) if auth_sources else "N/A"
-        total_t = c_t + active_p_t + g_t
-
-        def _color_for_frac(f: float) -> str:
-            if f < 0.2:
-                return "#ef4444"
-            if f < 0.5:
-                return "#f59e0b"
-            return "#10b981"
-
-        q_color = _color_for_frac(quota_fraction)
-        dash_array = 2 * 3.14159 * 8
-        dash_offset = dash_array * (1 - quota_fraction)
-
-        tier_html = f'<div class="tooltip-row"><span>💎 Tier:</span> <span style="color:#38bdf8;font-weight:bold;">{user_tier}</span></div>' if user_tier else ""
-        proj_html = f'<div class="tooltip-row"><span>🏗️ Projet Perso:</span> <span>{project_id}</span></div>' if (project_id and project_id != ECHO_GLOBAL_TENANT_PROJECT_ID) else ""
-
-        if quota_5h_fraction is not None or quota_weekly_fraction is not None:
-            q5_rows = ""
-            if quota_5h_disabled:
-                q5_rows = '<div class="tooltip-row"><span>⏱️ Quota 5h:</span> <span style="color:#94a3b8;">Désactivé</span></div>'
-            elif quota_5h_fraction is not None:
-                c5 = _color_for_frac(quota_5h_fraction)
-                r5_str = "" if quota_5h_reset in ("N/A", "—", "") else f' <span style="color:#94a3b8;font-size:10px;">(🔄 {quota_5h_reset})</span>'
-                q5_rows = f'<div class="tooltip-row"><span>⏱️ Quota 5h:</span> <span><b style="color:{c5};">{quota_5h_fraction * 100:.0f}%</b>{r5_str}</span></div>'
-
-            qw_rows = ""
-            if quota_weekly_fraction is not None:
-                cw = _color_for_frac(quota_weekly_fraction)
-                rw_str = "" if quota_weekly_reset in ("N/A", "—", "") else f' <span style="color:#94a3b8;font-size:10px;">(🔄 {quota_weekly_reset})</span>'
-                qw_rows = f'<div class="tooltip-row"><span>📅 Quota Sem.:</span> <span><b style="color:{cw};">{quota_weekly_fraction * 100:.0f}%</b>{rw_str}</span></div>'
-
-            q_rows_html = q5_rows + qw_rows
-        else:
-            r_str = "" if quota_reset in ("N/A", "—", "") else f' <span style="color:#94a3b8;font-size:10px;">(🔄 {quota_reset})</span>'
-            q_rows_html = f'<div class="tooltip-row"><span>📊 Quota:</span> <span><b style="color:{q_color};">{quota_fraction * 100:.1f}%</b>{r_str}</span></div>'
-
-        rpd_html = f'<div class="tooltip-row"><span>📆 Req/jour:</span> <span>{quota_rpd_rem} / {quota_rpd_lim}</span></div>' if quota_rpd_rem != "N/A" else ""
-        rpm_html = f'<div class="tooltip-row"><span>⚡ Req/min:</span> <span>{quota_rpm_rem} / {quota_rpm_lim}</span></div>' if quota_rpm_rem != "N/A" else ""
-
-        cp_row_html = (
-            f'<div class="tooltip-row"><span>🗜️ Checkpoint:</span> <span style="color:#38bdf8;font-weight:bold;">#{compaction_count} ({compacted_turns} tours)</span></div>'
-            if compaction_count > 0
-            else ""
-        )
-        cp_badge_html = (
-            f'<span id="echo-nav-checkpoint-badge" title="Checkpoint Cognitif #{compaction_count} actif ({compacted_turns} tours condensés)" '
-            f'style="font-size:10px;font-weight:700;color:#38bdf8;background:rgba(56,189,248,0.15);border:1px solid rgba(56,189,248,0.35);padding:1px 6px;border-radius:10px;white-space:nowrap;">🗜️ #{compaction_count}</span>'
-            if compaction_count > 0
-            else ""
-        )
-
+            delta: Optional[Dict[str, Any]] = None,
+            is_pending: bool = False,
+            chat_id: Optional[str] = None):
+        """Déploie ou met à jour le HUD contextuel ECHO de façon unifiée et non-bloquante."""
+        payload = {
+            "chat_id": chat_id or (getattr(events, "chat_id", None) if events else None),
+            "tenant_id": ECHO_GLOBAL_TENANT_PROJECT_ID,
+            "plan_name": plan_name,
+            "credits_val": credits_val,
+            "quota_str": quota_str,
+            "cachedContentTokenCount": c_t,
+            "promptTokenCount": (c_t + active_p_t),
+            "candidatesTokenCount": g_t,
+            "totalTokenCount": (c_t + active_p_t + g_t),
+            "max_tokens": max_t,
+            "user_email": user_email,
+            "user_tier": user_tier,
+            "project_id": project_id,
+            "auth_sources": auth_sources or [],
+            "quota_fraction": quota_fraction,
+            "quota_reset": quota_reset,
+            "quota_type": quota_type,
+            "quota_model": quota_model,
+            "quota_rpd_rem": quota_rpd_rem,
+            "quota_rpd_lim": quota_rpd_lim,
+            "quota_rpm_rem": quota_rpm_rem,
+            "quota_rpm_lim": quota_rpm_lim,
+            "quota_5h_fraction": quota_5h_fraction,
+            "quota_5h_reset": quota_5h_reset,
+            "quota_5h_disabled": quota_5h_disabled,
+            "quota_weekly_fraction": quota_weekly_fraction,
+            "quota_weekly_reset": quota_weekly_reset,
+            "delta": delta or {},
+            "is_pending": is_pending,
+        }
+        json_payload = std_json.dumps(payload).decode("utf-8")
         js_code = f"""
-    (function() {{
-      var container = document.querySelector('nav div.flex.items-center.w-full.max-w-full') ||
-                      document.querySelector('nav div.flex.items-center.w-full.pl-1\\\\.5.pr-1') ||
-                      document.querySelector('header nav');
-      if (!container) return;
-      var hudWrapper = document.getElementById('echo-nav-context-hud-wrapper');
-      if (hudWrapper) hudWrapper.remove();
-      var styleId = 'echo-hud-styles';
-      if (!document.getElementById(styleId)) {{
-        var style = document.createElement('style');
-        style.id = styleId;
-        style.innerHTML = `
-          .echo-tooltip {{ position: relative; display: flex; align-items: center; }}
-          .echo-tooltip .tooltip-box {{
-            visibility: hidden; width: 260px; background: rgba(15, 23, 42, 0.98);
-            backdrop-filter: blur(12px); color: #f8fafc; text-align: left;
-            border-radius: 8px; padding: 12px; position: absolute; z-index: 9999;
-            top: 120%; left: 50%; transform: translateX(-50%); opacity: 0;
-            transition: opacity 0.3s, transform 0.3s; border: 1px solid rgba(0, 212, 255, 0.4);
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); font-size: 11px; pointer-events: none;
-          }}
-          .echo-tooltip:hover .tooltip-box {{ visibility: visible; opacity: 1; transform: translateX(-50%) translateY(-5px); }}
-          .tooltip-title {{ color: #00d4ff; font-weight: bold; margin-bottom: 8px; border-bottom: 1px solid rgba(0, 212, 255, 0.2); padding-bottom: 4px; text-transform: uppercase; }}
-          .tooltip-row {{ display: flex; justify-content: space-between; margin-bottom: 4px; }}
-          .dot {{ width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }}
-          @media (max-width: 768px) {{ .tooltip-box {{ width: 90vw !important; left: 50% !important; transform: translateX(-50%) translateY(-5px) !important; white-space: normal !important; }} }}
-        `;
-        document.head.appendChild(style);
-      }}
-      hudWrapper = document.createElement('div');
-      hudWrapper.id = 'echo-nav-context-hud-wrapper';
-      hudWrapper.style.cssText = 'position:fixed;left:50%;top:22px;transform:translateX(-50%);width:auto;min-width:300px;display:flex;justify-content:center;align-items:center;z-index:9999;pointer-events:none;';
-      var hud = document.createElement('div');
-      hud.id = 'echo-nav-context-hud';
-      hud.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:12px;pointer-events:auto;background:rgba(0,0,0,0.2);padding:4px 12px;border-radius:20px;backdrop-filter:blur(4px);';
-      var iconHtml = `<div class="echo-tooltip"><svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2" /><circle cx="10" cy="10" r="8" fill="none" stroke="{q_color}" stroke-width="2" stroke-dasharray="{dash_array}" stroke-dashoffset="{dash_offset}" transform="rotate(-90 10 10)" stroke-linecap="round" /><path d="M10 6a2.5 2.5 0 00-2.5 2.5V10h5V8.5A2.5 2.5 0 0010 6zm3.5 4H6.5a1 1 0 00-1 1v4a1 1 0 001 1h7a1 1 0 001-1v-4a1 1 0 00-1-1z" fill="white" opacity="0.9" /></svg><div class="tooltip-box" style="width:310px;"><div class="tooltip-title">AUTHENTIFICATION</div><div class="tooltip-row"><span>🔐 Source:</span> <span>{auth_list}</span></div><div class="tooltip-row"><span>👤 Compte:</span> <span>{user_email or 'N/A'}</span></div>{tier_html}{proj_html}<div class="tooltip-row"><span>🌐 Tenant:</span> <span style="color:#10b981;">{ECHO_GLOBAL_TENANT_PROJECT_ID}</span></div><div class="tooltip-title" style="margin-top:8px;border-top:1px solid rgba(0,212,255,0.2);padding-top:6px;">QUOTAS</div><div class="tooltip-row"><span>💳 Crédits IA:</span> <b style="color:#10b981;">{credits_val}</b></div><div class="tooltip-row"><span>🤖 Modèle CA:</span> <span style="color:#a3a3a3;font-size:10px;">{quota_model or "—"}</span></div>{q_rows_html}{rpd_html}{rpm_html}<div class="tooltip-row"><span>🏷️ Type:</span> <span style="color:#a3a3a3;font-size:10px;">{quota_type}</span></div></div></div>`;
-      var barHtml = `<div class="echo-tooltip" style="min-width:180px;"><div style="display:flex;width:100%;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;"><div style="width:{cache_pct}%;background:#8b5cf6;"></div><div style="width:{prompt_pct}%;background:#10b981;"></div><div style="width:{gen_pct}%;background:#f59e0b;"></div></div><div class="tooltip-box" style="width:240px;"><div class="tooltip-title">CONTEXTE</div><div class="tooltip-row"><span>Cache:</span> <span>{c_t}</span></div><div class="tooltip-row"><span>Prompt:</span> <span>{active_p_t}</span></div><div class="tooltip-row"><span>Génération:</span> <span>{g_t}</span></div>{cp_row_html}<div class="tooltip-row" style="font-weight:bold;margin-top:4px;"><span>Total:</span> <span>{total_t} / {max_t}</span></div></div></div>`;
-      hud.innerHTML = iconHtml + barHtml + `{cp_badge_html}`;
-      hudWrapper.appendChild(hud);
-      document.body.appendChild(hudWrapper);
-    }})();
-    """
+(function() {{
+  {EchoUI.get_context_gauge_renderer_js().strip()}
+  if (typeof window.echoRenderContextGauge === 'function') {{
+    window.echoRenderContextGauge({json_payload});
+  }}
+}})();
+"""
         await events.emit_execute(js_code)
 
     @staticmethod
@@ -1198,7 +2364,7 @@ return new Promise(function(resolve) {{
 """
 
     # =====================================================================
-    # ECHO CODEX — HUD Monaco Editor
+    # ECHO DOM SECURITY, MODALS & SANDBOX MONITOR
     # =====================================================================
 
     @staticmethod
@@ -1474,1469 +2640,17 @@ return new Promise(function(resolve) {{
       };
       """
 
-    @staticmethod
-    def _generate_codex_js(
-            files_json: str,
-            quick_actions_json: str,
-            workspaces_json: str,
-            current_workspace: str,
-            chat_id: str) -> str:
-        """Génère le script JS complet du HUD Monaco Codex.
-        Injection via __event_call__({type: 'execute', data: {code: ...}})."""
-        return f"""
-    (function() {{
-      const CODEX_ID = 'echo-codex-hud';
-      {EchoUI.get_mobile_guard_js("echo-codex-hud")}
-      const CID = '{chat_id}';
-      const STATE_KEY = 'echo_codex_' + CID;
-      const MONACO_CDN = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min';
-
-      let existingHud = document.getElementById(CODEX_ID);
-      if (existingHud) {{ existingHud.remove(); }}
-
-      // --- State ---
-      let files = {files_json};
-      const quickActions = {quick_actions_json};
-      const workspaces = {workspaces_json};
-      let currentWorkspace = '{current_workspace}';
-      // Mapping langage Monaco → extension (pour rename)
-      const LANG_TO_EXT = {{
-        python:'.py', javascript:'.js', typescript:'.ts', c:'.c', cpp:'.cpp',
-        java:'.java', go:'.go', rust:'.rs', ruby:'.rb', php:'.php', swift:'.swift',
-        kotlin:'.kt', csharp:'.cs', vb:'.vb', shell:'.sh', powershell:'.ps1',
-        bat:'.bat', html:'.html', css:'.css', json:'.json', xml:'.xml',
-        yaml:'.yaml', toml:'.toml', ini:'.ini', markdown:'.md', plaintext:'.txt',
-        sql:'.sql', r:'.r', lua:'.lua', perl:'.pl', dockerfile:'.dockerfile',
-      }};
-      let targetFileOverride = null;
-      if (window._echoCodexTarget) {{
-          currentWorkspace = window._echoCodexTarget.workspace || currentWorkspace;
-          targetFileOverride = window._echoCodexTarget.file;
-          setTimeout(() => {{
-              if (window.sendCodexAction) {{
-                  window.sendCodexAction({{
-                      action: "switch_workspace", 
-                      workspace: currentWorkspace, 
-                      current_file: targetFileOverride
-                  }});
-              }}
-          }}, 100);
-          window._echoCodexTarget = null;
-      }}
-      let currentFile = targetFileOverride || (files.length > 0 ? files[0].filename : null);
-      let editor = null;
-      let diffEditor = null;
-      let isDiffMode = false;
-      let isHistoryMode = false;
-      let historyContent = null;
-      let lastInstruction = '';
-      let lastModel = 'MODEL_APOLLO';
-      let modified = false;
-      let previewOpen = false;
-      let editorRatio = 33;
-      let previewRatio = 67;
-      const PREVIEW_LANGS = ['markdown', 'html', 'css', 'xml', 'pdf'];
-      let markedLoaded = false;
-      let previewDebounceTimer = null;
-
-      // --- COMMUNICATION PROXY (Race Condition Guard) ---
-      window.sendCodexAction = function(payload) {{
-        if (typeof window.echoCodexResolve === 'function') {{
-          const resolveFn = window.echoCodexResolve;
-          window.echoCodexResolve = null; // Verrouille immédiatement
-          resolveFn(payload);
-        }} else {{
-          // Retry dans 50ms pour les actions vitales, ignore les pings
-          if (payload && payload.action !== 'ping') {{
-             setTimeout(() => window.sendCodexAction(payload), 50);
-          }}
-        }}
-      }};
-
-      // --- Restore position ---
-      let savedState = {{}};
-      try {{ savedState = JSON.parse(localStorage.getItem(STATE_KEY) || '{{}}'); }} catch(e) {{}}
-      if (savedState.previewOpen !== undefined) previewOpen = savedState.previewOpen;
-      if (savedState.editorRatio) editorRatio = savedState.editorRatio;
-      if (savedState.previewRatio) previewRatio = savedState.previewRatio;
-      let sidebarWidth = savedState.sidebarWidth || 150;
-
-      // --- Theme Detection ---
-      const isDark = document.documentElement.classList.contains('dark') ||
-                     window.matchMedia('(prefers-color-scheme: dark)').matches;
-      const theme = isDark ? 'vs-dark' : 'vs';
-      const bgColor = isDark ? '#1e1e2e' : '#ffffff';
-      const borderColor = isDark ? '#444' : '#ddd';
-      const textColor = isDark ? '#cdd6f4' : '#333';
-      const headerBg = isDark ? 'rgba(30,30,46,0.95)' : 'rgba(245,245,245,0.95)';
-      const sidebarBg = isDark ? '#181825' : '#f0f0f0';
-      const statusBg = isDark ? '#11111b' : '#e8e8e8';
-      const accentColor = '#89b4fa';
-      const hoverBg = isDark ? 'rgba(137,180,250,0.1)' : 'rgba(0,0,0,0.05)';
-      const historyBg = isDark ? 'rgba(250,179,135,0.15)' : 'rgba(255,200,100,0.2)';
-
-      // --- Custom Scrollbars ---
-      if (!document.getElementById(CODEX_ID + '-scrollbars')) {{
-        const scrollStyle = document.createElement('style');
-        scrollStyle.id = CODEX_ID + '-scrollbars';
-        scrollStyle.textContent = `
-          #${{CODEX_ID}} *::-webkit-scrollbar {{ width: 10px; height: 10px; }}
-          #${{CODEX_ID}} *::-webkit-scrollbar-track {{ background: ${{isDark ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.05)'}}; border-radius: 4px; }}
-          #${{CODEX_ID}} *::-webkit-scrollbar-thumb {{ background: ${{isDark ? '#555' : '#ccc'}}; border-radius: 4px; }}
-          #${{CODEX_ID}} *::-webkit-scrollbar-thumb:hover {{ background: ${{accentColor}}; }}
-          #${{CODEX_ID}} *::-webkit-scrollbar-corner {{ background: transparent; }}
-        `;
-        document.head.appendChild(scrollStyle);
-      }}
-
-      // --- Custom Dialogs ---
-      {EchoUI.get_custom_modals_js()}
-
-      // --- HUD Container ---
-      const hud = document.createElement('div');
-      hud.id = CODEX_ID;
-      hud.style.cssText = `position:fixed; z-index:10001; display:flex; flex-direction:column;
-        background:${{bgColor}}; border:1px solid ${{borderColor}}; border-radius:12px;
-        box-shadow:0 20px 60px rgba(0,0,0,0.4); font-family:'Segoe UI',system-ui,sans-serif;
-        color:${{textColor}}; overflow:hidden; resize:both; min-width:600px; min-height:400px;
-        width:${{savedState.w || '900px'}}; height:${{savedState.h || '600px'}};
-        top:${{savedState.y || '60px'}}; left:${{savedState.x || '50%'}};
-        ${{savedState.x ? '' : 'transform:translateX(-50%);'}}`;
-
-      // --- HEADER (draggable) ---
-      const header = document.createElement('div');
-      header.id = CODEX_ID + '-header';
-      header.style.cssText = `display:flex; align-items:center; padding:8px 12px; gap:8px;
-        background:${{headerBg}}; border-bottom:1px solid ${{borderColor}}; cursor:move;
-        user-select:none; flex-shrink:0;`;
-      header.innerHTML = `
-        <span style="font-weight:600; font-size:14px;">📝 ECHO Codex</span>
-        <span style="flex:1;"></span>
-        <select id="${{CODEX_ID}}-lang" style="background:transparent; border:1px solid ${{borderColor}};
-          color:${{textColor}}; padding:2px 6px; border-radius:4px; font-size:12px;"></select>
-        <button id="${{CODEX_ID}}-import" title="Importer (PC → Codex)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='17 8 12 3 7 8'/><line x1='12' y1='3' x2='12' y2='15'/></svg></button>
-        <button id="${{CODEX_ID}}-export" title="Exporter (Codex → PC)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' y1='15' x2='12' y2='3'/></svg></button>
-        <button id="${{CODEX_ID}}-copy" title="Copier" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/></svg></button>
-        <button id="${{CODEX_ID}}-refresh" title="Actualiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/></svg></button>
-        <button id="${{CODEX_ID}}-save" title="Sauvegarder (Ctrl+S)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1; opacity:0.3; transition:opacity 0.2s;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z'/><polyline points='17 21 17 13 7 13 7 21'/><polyline points='7 3 7 8 15 8'/></svg></button>
-        <button id="${{CODEX_ID}}-preview-toggle" title="Prévisualisation" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px; opacity:0.4;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z'/><circle cx='12' cy='12' r='3'/></svg></button>
-        <button id="${{CODEX_ID}}-fullscreen" title="Plein écran" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/></svg></button>
-        <button id="${{CODEX_ID}}-minimize" title="Minimiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='5' y1='12' x2='19' y2='12'/></svg></button>
-        <button id="${{CODEX_ID}}-close" title="Fermer" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:18px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='18' y1='6' x2='6' y2='18'/><line x1='6' y1='6' x2='18' y2='18'/></svg></button>`;
-      hud.appendChild(header);
-
-      // --- BODY (sidebar + editor) ---
-      const body = document.createElement('div');
-      body.id = CODEX_ID + '-body';
-      body.style.cssText = 'display:flex; flex:1; overflow:hidden;';
-
-      // Sidebar (file tree)
-      const sidebar = document.createElement('div');
-      sidebar.id = CODEX_ID + '-sidebar';
-      sidebar.style.cssText = `width:${{sidebarWidth}}px; background:${{sidebarBg}}; border-right:1px solid ${{borderColor}};
-        overflow-y:auto; flex-shrink:0; display:flex; flex-direction:column; padding:6px 0;`;
-
-      // Sidebar Splitter
-      const sidebarSplitter = document.createElement('div');
-      sidebarSplitter.id = CODEX_ID + '-sidebar-splitter';
-      sidebarSplitter.style.cssText = `width:5px; cursor:col-resize; background:${{borderColor}}; flex-shrink:0; transition:background 0.15s;`;
-      sidebarSplitter.onmouseenter = () => sidebarSplitter.style.background = accentColor;
-      sidebarSplitter.onmouseleave = () => sidebarSplitter.style.background = borderColor;
-
-      // Editor container
-      const editorWrap = document.createElement('div');
-      editorWrap.id = CODEX_ID + '-editor';
-      editorWrap.style.cssText = `flex:${{previewOpen ? editorRatio : 100}} 1 0%; overflow:hidden; position:relative; min-width:0;`;
-
-      // Splitter (entre éditeur et preview)
-      const splitter = document.createElement('div');
-      splitter.id = CODEX_ID + '-splitter';
-      splitter.style.cssText = `width:5px; cursor:col-resize; background:${{borderColor}}; flex-shrink:0; display:none; transition:background 0.15s;`;
-      splitter.onmouseenter = () => splitter.style.background = accentColor;
-      splitter.onmouseleave = () => splitter.style.background = borderColor;
-
-      // Preview panel (panneau latéral droit)
-      const previewPanel = document.createElement('div');
-      previewPanel.id = CODEX_ID + '-preview';
-      previewPanel.style.cssText = `flex:${{previewRatio}} 1 0%; min-width:0; display:none; flex-direction:column; overflow:hidden; background:${{bgColor}};`;
-      previewPanel.innerHTML = `
-        <div style="padding:6px 10px; font-size:11px; color:${{isDark ? '#a6adc8' : '#888'}}; border-bottom:1px solid ${{borderColor}}; user-select:none; flex-shrink:0; display:flex; align-items:center; gap:8px;">
-          <button id="${{CODEX_ID}}-preview-copy" title="Copier le rendu" style="background:none; border:none; color:${{textColor}}; cursor:pointer; padding:0; display:none; align-items:center; opacity:0.8; transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          </button>
-          <button id="${{CODEX_ID}}-preview-print" title="Print / PDF" style="background:none; border:none; color:${{textColor}}; cursor:pointer; padding:0; display:none; align-items:center; opacity:0.8; transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><polyline points="9 15 12 18 15 15"/></svg>
-          </button>
-          <span id="${{CODEX_ID}}-preview-label" style="flex:1;">Preview</span>
-        </div>
-        <div id="${{CODEX_ID}}-preview-content" style="flex:1; padding:12px; overflow:auto; font-size:14px; line-height:1.6; min-width:0;"></div>
-      `;
-
-      body.appendChild(sidebar);
-      body.appendChild(sidebarSplitter);
-      body.appendChild(editorWrap);
-      body.appendChild(splitter);
-      body.appendChild(previewPanel);
-      hud.appendChild(body);
-
-      // --- AI PANEL (mini-chat + quick actions + model selector) ---
-      const aiPanel = document.createElement('div');
-      aiPanel.style.cssText = `display:flex; flex-direction:column; gap:6px; padding:8px 12px;
-        border-top:1px solid ${{borderColor}}; flex-shrink:0;`;
-      aiPanel.innerHTML = `
-        <div style="display:flex; gap:6px;">
-          <input id="${{CODEX_ID}}-ai-input" type="text" placeholder="Instruction instantan\u00e9e pour l'IA..."
-            style="flex:1; background:transparent; border:1px solid ${{borderColor}}; color:${{textColor}};
-            padding:6px 10px; border-radius:6px; font-size:13px; outline:none;"
-          />
-          <select id="${{CODEX_ID}}-model" title="Mod\u00e8le AI" style="background:transparent; border:1px solid ${{borderColor}};
-            color:${{textColor}}; padding:2px 6px; border-radius:4px; font-size:11px; max-width:90px;">
-            <option value="MODEL_APOLLO" selected>Apollo</option>
-            <option value="MODEL_PROMETHEUS">Prometheus</option>
-            <option value="MODEL_ZEPHYR">Zephyr</option>
-          </select>
-          <button id="${{CODEX_ID}}-ai-send" style="background:${{accentColor}}; border:none; color:#1e1e2e;
-            padding:6px 14px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600;">Envoyer</button>
-        </div>
-        <div id="${{CODEX_ID}}-quick" style="display:flex; gap:4px; flex-wrap:wrap;"></div>`;
-      hud.appendChild(aiPanel);
-
-      // Tracker le choix utilisateur sur le dropdown modèle
-      const modelSelect = document.getElementById(CODEX_ID + '-model');
-      if (modelSelect) modelSelect.onchange = () => {{ lastModel = modelSelect.value; }};
-
-      // --- MICRO-SPINNER (sur le bouton cliqué) ---
-      let spinnerTarget = null;
-      let spinnerOriginal = '';
-      const spinStyle = document.createElement('style');
-      spinStyle.textContent = '@keyframes echoCodexSpin {{ from {{ transform:rotate(0deg); }} to {{ transform:rotate(360deg); }} }}';
-      document.head.appendChild(spinStyle);
-      function showButtonSpinner(btn) {{
-        if (!btn) return;
-        spinnerTarget = btn;
-        spinnerOriginal = btn.innerHTML;
-        btn.disabled = true;
-        btn.innerHTML = `<span style="display:inline-block; width:14px; height:14px; border:2px solid ${{borderColor}};
-          border-top-color:${{accentColor}}; border-radius:50%; animation:echoCodexSpin 0.7s linear infinite;"></span>`;
-      }}
-      function hideButtonSpinner() {{
-        if (spinnerTarget) {{
-          spinnerTarget.innerHTML = spinnerOriginal;
-          spinnerTarget.disabled = false;
-          spinnerTarget = null;
-          spinnerOriginal = '';
-        }}
-      }}
-
-      // --- STATUS BAR (historique ◀ ▶) ---
-      const statusBar = document.createElement('div');
-      statusBar.id = CODEX_ID + '-status';
-      statusBar.style.cssText = `display:flex; align-items:center; padding:4px 12px; gap:8px;
-        background:${{statusBg}}; border-top:1px solid ${{borderColor}}; font-size:11px;
-        font-family:monospace; flex-shrink:0; min-height:28px;`;
-      statusBar.innerHTML = `
-        <button id="${{CODEX_ID}}-hist-prev" title="Version pr\u00e9c\u00e9dente" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='15 18 9 12 15 6'/></svg></button>
-        <span id="${{CODEX_ID}}-status-text" style="flex:1; color:${{isDark ? '#a6adc8' : '#666'}};">Pr\u00eat</span>
-        <button id="${{CODEX_ID}}-hist-next" title="Version suivante" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 18 15 12 9 6'/></svg></button>
-        <div id="${{CODEX_ID}}-hist-actions" style="display:none; gap:6px;">
-          <button id="${{CODEX_ID}}-hist-pin" style="background:none; border:1px solid ${{borderColor}}; color:${{textColor}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 8l4 4-4 4M18 8l-4 4 4 4M12 4v16'/></svg> Revenir au pr\u00e9sent</button>
-          <button id="${{CODEX_ID}}-hist-restore" style="background:none; border:1px solid ${{borderColor}}; color:${{textColor}}; cursor:pointer; padding:1px 8px; border-radius:4px; font-size:11px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='9 14 4 9 9 4'/><path d='M20 20v-7a4 4 0 0 0-4-4H4'/></svg> Restaurer</button>
-        </div>`;
-      hud.appendChild(statusBar);
-
-      // --- DIFF ACTIONS (hidden by default) ---
-      const diffBar = document.createElement('div');
-      diffBar.id = CODEX_ID + '-diff-bar';
-      diffBar.style.cssText = `display:none; justify-content:center; gap:12px; padding:8px;
-        border-top:1px solid ${{borderColor}}; flex-shrink:0;`;
-      diffBar.innerHTML = `
-        <button id="${{CODEX_ID}}-diff-accept" style="background:#a6e3a1; border:none; color:#1e1e2e;
-          padding:6px 20px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600;">✅ Accepter</button>
-        <button id="${{CODEX_ID}}-diff-reject" style="background:#f38ba8; border:none; color:#1e1e2e;
-          padding:6px 20px; border-radius:6px; font-size:13px; cursor:pointer; font-weight:600;">❌ Rejeter</button>`;
-      hud.appendChild(diffBar);
-
-      document.body.appendChild(hud);
-
-      // ===== FILE TREE =====
-      function renderFileTree() {{
-        const sb = document.getElementById(CODEX_ID + '-sidebar');
-        sb.innerHTML = '';
-
-        if (!document.getElementById('codex-spin-style')) {{
-            const style = document.createElement('style');
-            style.id = 'codex-spin-style';
-            style.textContent = '@keyframes codex-spin {{ 100% {{ transform: rotate(360deg); }} }}';
-            document.head.appendChild(style);
-        }}
-
-        // --- 1. Workspace Switcher ---
-        const wsContainer = document.createElement('div');
-        wsContainer.style.cssText = `display:flex; align-items:center; background:${{headerBg}}; border-bottom:1px solid ${{borderColor}}; flex-shrink:0;`;
-
-        const wsSelect = document.createElement('select');
-        wsSelect.id = CODEX_ID + '-workspace';
-        wsSelect.style.cssText = `flex:1; padding:6px; background:transparent; border:none; color:${{textColor}}; font-size:12px; font-weight:bold; outline:none; cursor:pointer;`;
-        
-        Object.entries(workspaces).forEach(([key, label]) => {{
-          const opt = document.createElement('option');
-          opt.value = key;
-          opt.textContent = '📦 ' + label;
-          if (key === currentWorkspace) opt.selected = true;
-          wsSelect.appendChild(opt);
-        }});
-        
-        const wsSpinner = document.createElement('div');
-        wsSpinner.id = CODEX_ID + '-ws-spinner';
-        wsSpinner.style.cssText = `display:none; width:14px; height:14px; margin-right:8px; border:2px solid ${{textColor}}; border-top-color:transparent; border-radius:50%; animation:codex-spin 1s linear infinite;`;
-
-        wsSelect.onchange = () => {{
-          wsSelect.disabled = true;
-          wsSpinner.style.display = 'block';
-          window.sendCodexAction({{action:'switch_workspace', workspace:wsSelect.value}});
-        }};
-        
-        wsContainer.appendChild(wsSelect);
-        wsContainer.appendChild(wsSpinner);
-        sb.appendChild(wsContainer);
-
-        // Afficher la Timeline Git (historique) pour TOUS les espaces (main et sandbox)
-        const statusBar = document.getElementById(CODEX_ID + '-status');
-        if (statusBar) statusBar.style.display = 'flex';
-
-        // --- 2 & 3. Render Files ---
-        const treeContainer = document.createElement('div');
-        treeContainer.style.cssText = 'overflow-y:auto; flex:1; padding-bottom:6px;';
-        // Mode Universel : Arborescence dynamique (Lazy Loading)
-        const treeMap = {{ '': {{ isDir: true, children: {{}}, mtime: 0, isLoaded: true }} }};
-        
-        function injectFilesToTree(fileList) {{
-          fileList.forEach(f => {{
-            const parts = f.filename.split('/');
-            let currentPath = '';
-            let parentNode = treeMap[''];
-            
-            if (f.mtime && f.mtime > parentNode.mtime) parentNode.mtime = f.mtime;
-
-            for (let i = 0; i < parts.length; i++) {{
-              const part = parts[i];
-              currentPath = currentPath ? currentPath + '/' + part : part;
-              const isLast = (i === parts.length - 1);
-              
-              if (!parentNode.children[part]) {{
-                parentNode.children[part] = {{
-                  name: part,
-                  path: currentPath,
-                  isDir: isLast ? (f.type === 'directory') : true,
-                  file: isLast && f.type === 'file' ? f : null,
-                  children: {{}},
-                  mtime: f.mtime || 0,
-                  isLoaded: false
-                }};
-              }} else {{
-                if (f.mtime && f.mtime > parentNode.children[part].mtime) {{
-                  parentNode.children[part].mtime = f.mtime;
-                }}
-                if (!isLast) {{
-                  parentNode.children[part].isDir = true;
-                }}
-              }}
-              parentNode = parentNode.children[part];
-            }}
-          }});
-        }}
-
-        injectFilesToTree(files);
-
-        window.echoCodexAppendNodes = function(targetDir, newFiles) {{
-           injectFilesToTree(newFiles);
-           
-           const parts = targetDir.split('/');
-           let node = treeMap[''];
-           if (targetDir !== "") {{
-               for (const part of parts) {{
-                   if (node.children[part]) node = node.children[part];
-                   else return;
-               }}
-           }}
-           
-           const containerId = 'codex-dir-' + encodeURIComponent(targetDir);
-           const childrenContainer = document.getElementById(containerId);
-           if (childrenContainer) {{
-               childrenContainer.innerHTML = '';
-               node.isLoaded = true;
-               
-               const summary = childrenContainer.previousElementSibling;
-               if (summary) {{
-                   const span = summary.querySelector('.lazy-loading-span');
-                   if (span) span.remove();
-               }}
-               
-               renderNode(node, childrenContainer, targetDir === "" ? 0 : parts.length);
-           }}
-        }};
-
-        function renderNode(node, container, level) {{
-          Object.values(node.children).sort((a,b) => {{
-            if(a.isDir && !b.isDir) return -1;
-            if(!a.isDir && b.isDir) return 1;
-            return (b.mtime || 0) - (a.mtime || 0);
-          }}).forEach(child => {{
-              if (child.isDir) {{
-                const details = document.createElement('details');
-                // N'ouvre le dossier que si le fichier actif s'y trouve
-                details.open = currentFile && currentFile.startsWith(child.path + '/');
-                const summary = document.createElement('summary');
-                summary.style.cssText = `padding:4px 10px; padding-left:${{10 + level * 10}}px; cursor:pointer; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; user-select:none; font-weight:600; color:${{isDark ? '#cba6f7' : '#8839ef'}};`;
-                summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{child.name}}</span>`;
-
-                // Folder actions
-                const actionGroup = document.createElement('div');
-                actionGroup.style.cssText = 'margin-left:auto; display:flex; gap:4px;';
-                
-                const renBtn = document.createElement('span');
-                renBtn.innerHTML = '✏️';
-                renBtn.title = 'Renommer le dossier ' + child.path;
-                renBtn.style.cssText = `opacity:0; color:${{isDark ? '#f9e2af' : '#df8e1d'}}; cursor:pointer; font-size:12px; padding:0 4px; transition:opacity 0.15s;`;
-                renBtn.onclick = (e) => {{
-                  e.preventDefault();
-                  const input = document.createElement('input');
-                  input.type = 'text';
-                  input.value = child.name;
-                  input.style.cssText = `flex:1; background:rgba(0,0,0,0.4); border:1px solid ${{isDark ? '#cba6f7' : '#8839ef'}}; color:inherit; font-family:inherit; font-size:inherit; padding:1px 4px; outline:none; border-radius:3px; margin-right:8px;`;
-                  input.onclick = (ev) => ev.preventDefault();
-                  const finalize = () => {{
-                    if (input.parentNode && !input.disabled) {{
-                      const newName = input.value.trim();
-                      if (newName && newName !== child.name) {{
-                        input.disabled = true;
-                        const parentPath = child.path.substring(0, child.path.lastIndexOf('/') + 1);
-                        window.sendCodexAction({{action:'rename_file', old_name:child.path, new_name: parentPath + newName, current_file:currentFile}});
-                        summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{newName}}</span>`;
-                        summary.appendChild(actionGroup);
-                      }} else {{
-                        summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{child.name}}</span>`;
-                        summary.appendChild(actionGroup);
-                      }}
-                    }}
-                  }};
-                  input.onblur = finalize;
-                  input.onkeydown = (ev) => {{
-                    if (ev.key === 'Enter') {{ ev.preventDefault(); finalize(); }}
-                    if (ev.key === 'Escape') {{ 
-                      summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{child.name}}</span>`;
-                      summary.appendChild(actionGroup);
-                    }}
-                  }};
-                  summary.innerHTML = `<span style="margin-right:4px;">📁</span>`;
-                  summary.appendChild(input);
-                  input.focus();
-                  input.select();
-                }};
-                
-                const delBtn = document.createElement('span');
-                delBtn.innerHTML = '🗑️';
-                delBtn.title = 'Supprimer le dossier ' + child.path;
-                delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:12px; padding:0 4px; transition:opacity 0.15s;`;
-                delBtn.onclick = (e) => {{
-                  e.preventDefault();
-                  window.echoCustomConfirm('Supprimer le dossier ' + child.path + ' ?', (agreed) => {{
-                    if (agreed) window.sendCodexAction({{action:'delete_file', filename:child.path, current_file:currentFile}});
-                  }});
-                }};
-
-                summary.onmouseenter = () => {{ renBtn.style.opacity = '1'; delBtn.style.opacity = '1'; }};
-                summary.onmouseleave = () => {{ renBtn.style.opacity = '0'; delBtn.style.opacity = '0'; }};
-                actionGroup.appendChild(renBtn);
-                actionGroup.appendChild(delBtn);
-                summary.appendChild(actionGroup);
-
-                details.appendChild(summary);
-                const childrenContainer = document.createElement('div');
-                childrenContainer.id = 'codex-dir-' + encodeURIComponent(child.path);
-
-                details.ontoggle = (e) => {{
-                    if (details.open) {{
-                        if (!child.isLoaded) {{
-                            child.isLoaded = true;
-                            const loadSpan = document.createElement('span');
-                            loadSpan.className = 'lazy-loading-span';
-                            loadSpan.style.cssText = `display:inline-block; width:10px; height:10px; margin-left:8px; border:2px solid ${{isDark ? '#cba6f7' : '#8839ef'}}; border-top-color:transparent; border-radius:50%; animation:codex-spin 0.8s linear infinite;`;
-                            summary.appendChild(loadSpan);
-                            window.sendCodexAction({{action: 'load_directory', path: child.path}});
-                        }}
-                    }} else {{
-                        // Purge DOM et JS pour libérer la RAM
-                        child.isLoaded = false;
-                        child.children = {{}}; 
-                        childrenContainer.innerHTML = '';
-                    }}
-                }};
-
-                // Si le dossier doit être ouvert par défaut (focus fichier)
-                if (details.open && !child.isLoaded) {{
-                    child.isLoaded = true;
-                            const loadSpan = document.createElement('span');
-                            loadSpan.className = 'lazy-loading-span';
-                            loadSpan.style.cssText = `display:inline-block; width:10px; height:10px; margin-left:8px; border:2px solid ${{isDark ? '#cba6f7' : '#8839ef'}}; border-top-color:transparent; border-radius:50%; animation:codex-spin 0.8s linear infinite;`;
-                            summary.appendChild(loadSpan);
-                    window.sendCodexAction({{action: 'load_directory', path: child.path}});
-                }}
-
-                if (child.isLoaded) {{
-                    renderNode(child, childrenContainer, level + 1);
-                }}
-                
-                details.appendChild(childrenContainer);
-                container.appendChild(details);
-              }} else {{
-                // Fichier
-                const f = child.file;
-                const item = document.createElement('div');
-                const isActive = f.filename === currentFile;
-                item.style.cssText = `padding:4px 10px; padding-left:${{10 + level * 10}}px; cursor:pointer; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; background:${{isActive ? hoverBg : 'transparent'}}; border-left:${{isActive ? '3px solid ' + accentColor : '3px solid transparent'}};`;
-                const nameSpan = document.createElement('span');
-                nameSpan.style.cssText = 'flex:1; overflow:hidden; text-overflow:ellipsis;';
-                nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + child.name}}`;
-                nameSpan.title = f.filename + ' (' + f.lang + ', ' + f.lines + ' lines)';
-                nameSpan.onclick = () => switchFile(f.filename);
-                item.appendChild(nameSpan);
-
-                // Boutons d'action (fichier arboré)
-                const actionGroup = document.createElement('div');
-                actionGroup.style.cssText = 'margin-left:auto; display:flex; gap:4px; align-items:center;';
-                
-                const renBtn = document.createElement('span');
-                renBtn.innerHTML = '✏️';
-                renBtn.title = 'Renommer ' + f.filename;
-                renBtn.style.cssText = `opacity:0; color:${{isDark ? '#f9e2af' : '#df8e1d'}}; cursor:pointer; font-size:12px; padding:0 4px; transition:opacity 0.15s;`;
-                renBtn.onclick = (e) => {{
-                  e.stopPropagation();
-                  const input = document.createElement('input');
-                  input.type = 'text';
-                  input.value = child.name;
-                  input.style.cssText = `flex:1; background:rgba(0,0,0,0.4); border:1px solid ${{accentColor}}; color:inherit; font-family:inherit; font-size:inherit; padding:1px 4px; outline:none; border-radius:3px; margin-right:8px;`;
-                  input.onclick = (ev) => ev.stopPropagation();
-                  const finalize = () => {{
-                    if (input.parentNode && !input.disabled) {{
-                      const newName = input.value.trim();
-                      if (newName && newName !== child.name) {{
-                        input.disabled = true;
-                        const parentPath = f.filename.substring(0, f.filename.lastIndexOf('/') + 1);
-                        window.sendCodexAction({{action:'rename_file', old_name:f.filename, new_name: parentPath + newName, current_file:currentFile}});
-                        nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + newName}}`;
-                      }} else {{
-                        nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + child.name}}`;
-                      }}
-                    }}
-                  }};
-                  input.onblur = finalize;
-                  input.onkeydown = (ev) => {{
-                    if (ev.key === 'Enter') {{ ev.preventDefault(); finalize(); }}
-                    if (ev.key === 'Escape') {{ 
-                      nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + child.name}}`;
-                    }}
-                  }};
-                  nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span>`;
-                  nameSpan.appendChild(input);
-                  input.focus();
-                  input.select();
-                }};
-
-                const delBtn = document.createElement('span');
-                delBtn.innerHTML = '×';
-                delBtn.title = 'Supprimer ' + f.filename;
-                delBtn.style.cssText = `opacity:0; color:#f38ba8; cursor:pointer; font-size:14px; font-weight:bold; padding:0 4px; transition:opacity 0.15s;`;
-                delBtn.onclick = (e) => {{
-                  e.stopPropagation();
-                  window.echoCustomConfirm('Supprimer ' + f.filename + ' ?', (agreed) => {{
-                    if (agreed) window.sendCodexAction({{action:'delete_file', filename:f.filename, current_file:currentFile}});
-                  }});
-                }};
-                
-                item.onmouseenter = () => {{ renBtn.style.opacity = '1'; delBtn.style.opacity = '1'; }};
-                item.onmouseleave = () => {{ renBtn.style.opacity = '0'; delBtn.style.opacity = '0'; }};
-                actionGroup.appendChild(renBtn);
-                actionGroup.appendChild(delBtn);
-                item.appendChild(actionGroup);
-                container.appendChild(item);
-              }}
-            }});
-          }}
-          renderNode(treeMap[''], treeContainer, 0);
-
-        sb.appendChild(treeContainer);
-
-        // + Créer
-        const newBtn = document.createElement('div');
-        newBtn.style.cssText = `padding:8px 10px; cursor:pointer; font-size:12px; color:${{accentColor}}; border-top:1px solid ${{borderColor}}; margin-top:auto; font-weight:bold; flex-shrink:0;`;
-        newBtn.textContent = '+ Créer';
-        newBtn.onclick = () => {{
-          newBtn.textContent = '';
-          const input = document.createElement('input');
-          input.type = 'text';
-          input.placeholder = 'ex: src/main.py';
-          input.style.cssText = `width:100%; background:rgba(0,0,0,0.2); border:1px solid ${{borderColor}}; color:${{textColor}}; padding:4px 6px; border-radius:4px; font-size:12px; outline:none; font-family:monospace;`;
-
-          const submitFile = () => {{
-            const name = input.value.trim();
-            if (name) window.sendCodexAction({{action:'new_file', filename:name}});
-            else renderFileTree();
-          }};
-
-          input.onkeydown = (e) => {{
-            if (e.key === 'Enter') submitFile();
-            if (e.key === 'Escape') renderFileTree();
-          }};
-          input.onblur = () => submitFile();
-
-          newBtn.appendChild(input);
-          input.focus();
-          newBtn.onclick = null;
-        }};
-        sb.appendChild(newBtn);
-
-        // Reset
-        const resetBtn = document.createElement('div');
-        resetBtn.style.cssText = `padding:8px 10px; cursor:pointer; font-size:12px; color:#f38ba8; border-top:1px dashed ${{borderColor}}; font-weight:bold; flex-shrink:0;`;
-        resetBtn.textContent = '🗑️ Reset complet';
-        resetBtn.onclick = () => {{
-          window.echoCustomConfirm(`⚠️ Vider intégralement le workspace "{current_workspace}" ? Irréversible.`, (agreed) => {{
-            if (agreed) {{
-              window.sendCodexAction({{action:'reset'}});
-            }}
-          }});
-        }};
-        sb.appendChild(resetBtn);
-      }}
-
-      function switchFile(filename) {{
-        if (modified && currentFile) {{
-          window.echoCustomConfirm('Modifications non sauvegardées. Continuer ?', (agreed) => {{
-            if (agreed) {{
-              modified = false;
-              switchFile(filename);
-            }}
-          }});
-          return;
-        }}
-        currentFile = filename;
-        modified = false;
-        renderFileTree();
-        updateStatus(filename + ' \u2022 chargement...');
-        // Demander le contenu au backend Python
-        window.sendCodexAction({{action:'load_file', filename:filename}});
-      }}
-
-      // ===== QUICK ACTIONS =====
-      const quickDiv = document.getElementById(CODEX_ID + '-quick');
-      Object.entries(quickActions).forEach(([key, instruction]) => {{
-        const btn = document.createElement('button');
-        btn.textContent = key.charAt(0).toUpperCase() + key.slice(1);
-        btn.style.cssText = `background:transparent; border:1px solid ${{borderColor}}; color:${{textColor}};
-          padding:2px 10px; border-radius:4px; font-size:11px; cursor:pointer;`;
-        btn.onmouseenter = () => btn.style.background = hoverBg;
-        btn.onmouseleave = () => btn.style.background = 'transparent';
-        btn.onclick = () => sendAiEdit(instruction, btn);
-        quickDiv.appendChild(btn);
-      }});
-
-      // ===== AI EDIT =====
-      function sendAiEdit(instruction, triggerBtn) {{
-        if (!currentFile || !editor) return;
-        const selection = editor.getModel().getValueInRange(editor.getSelection());
-        lastInstruction = instruction;
-        showButtonSpinner(triggerBtn || document.getElementById(CODEX_ID + '-ai-send'));
-        const modelSelect = document.getElementById(CODEX_ID + '-model');
-        window.sendCodexAction({{
-          action: 'ai_edit',
-          instruction: instruction,
-          content: editor.getValue(),
-          selection: selection || null,
-          filename: currentFile,
-          language: files.find(f => f.filename === currentFile)?.lang || 'plaintext',
-          model: modelSelect ? modelSelect.value : 'MODEL_APOLLO',
-        }});
-      }}
-
-      document.getElementById(CODEX_ID + '-ai-send').onclick = () => {{
-        const input = document.getElementById(CODEX_ID + '-ai-input');
-        const sendBtn = document.getElementById(CODEX_ID + '-ai-send');
-        if (input.value.trim()) {{ sendAiEdit(input.value.trim(), sendBtn); input.value = ''; }}
-      }};
-      document.getElementById(CODEX_ID + '-ai-input').onkeydown = (e) => {{
-        if (e.key === 'Enter') document.getElementById(CODEX_ID + '-ai-send').click();
-      }};
-
-      // ===== STATUS =====
-      function updateStatus(text) {{
-        const el = document.getElementById(CODEX_ID + '-status-text');
-        if (el) el.textContent = text;
-      }}
-
-      // ===== DRAG (clampé aux limites du viewport) =====
-      let isDragging = false, dragX, dragY;
-      header.onmousedown = (e) => {{
-        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'SELECT') return;
-        isDragging = true;
-        dragX = e.clientX - hud.offsetLeft;
-        dragY = e.clientY - hud.offsetTop;
-        hud.style.transform = 'none';
-      }};
-      document.onmousemove = (e) => {{
-        if (!isDragging) return;
-        const maxX = window.innerWidth - hud.offsetWidth;
-        const maxY = window.innerHeight - 44; // Header height (~44px) toujours visible
-        let newX = Math.max(0, Math.min(e.clientX - dragX, maxX));
-        let newY = Math.max(0, Math.min(e.clientY - dragY, maxY));
-        hud.style.left = newX + 'px';
-        hud.style.top = newY + 'px';
-      }};
-      document.onmouseup = () => {{
-        isDragging = false;
-        saveState();
-      }};
-
-      // ===== HEADER BUTTONS =====
-      document.getElementById(CODEX_ID + '-close').onclick = () => {{
-        saveState();
-        hud.remove();
-        window.sendCodexAction({{action:'close'}});
-      }};
-      let isMinimized = false;
-      document.getElementById(CODEX_ID + '-minimize').onclick = () => {{
-        isMinimized = !isMinimized;
-        // Collapse : on masque tout sauf le header, et on fixe la taille
-        body.style.display = isMinimized ? 'none' : 'flex';
-        aiPanel.style.display = isMinimized ? 'none' : 'flex';
-        statusBar.style.display = isMinimized ? 'none' : 'flex';
-        if (!isMinimized && isDiffMode) diffBar.style.display = 'flex';
-        else diffBar.style.display = 'none';
-        hud.style.resize = isMinimized ? 'none' : 'both';
-        hud.style.height = isMinimized ? 'auto' : (savedState.h || '600px');
-        hud.style.minHeight = isMinimized ? '0' : '400px';
-      }};
-
-      // Fullscreen Toggle
-      let isFullscreen = false;
-      let preFsState = {{}};
-      const fsBtn = document.getElementById(CODEX_ID + '-fullscreen');
-      if (fsBtn) {{
-        fsBtn.onclick = () => {{
-          if (!isFullscreen) {{
-            preFsState = {{ w: hud.style.width, h: hud.style.height, t: hud.style.top, l: hud.style.left, tx: hud.style.transform }};
-            hud.style.width = '95vw'; hud.style.height = '95vh'; hud.style.top = '2.5vh'; hud.style.left = '2.5vw'; hud.style.transform = 'none'; hud.style.resize = 'none';
-            isFullscreen = true;
-          }} else {{
-            hud.style.width = '50vw'; hud.style.height = '50vh'; hud.style.top = '25vh'; hud.style.left = '25vw'; hud.style.transform = 'none'; hud.style.resize = 'both';
-            isFullscreen = false;
-          }}
-        }};
-      }};
-
-      // Import (PC → Codex)
-      document.getElementById(CODEX_ID + '-import').onclick = () => {{
-        const inp = document.createElement('input');
-        inp.type = 'file';
-        inp.multiple = true;
-        inp.onchange = async () => {{
-          const filesData = [];
-          for (const file of inp.files) {{
-            const text = await file.text();
-            filesData.push({{filename: file.name, content: text}});
-          }}
-          if (filesData.length > 0) {{
-            window.sendCodexAction({{action:'upload', files: filesData}});
-          }}
-        }};
-        inp.click();
-      }};
-
-      // Export (Codex → PC)
-      document.getElementById(CODEX_ID + '-export').onclick = () => {{
-        if (currentFile) window.sendCodexAction({{action:'download', filename:currentFile}});
-      }};
-
-      // ===== CLIPBOARD UTILS =====
-      function copyPlainText(text) {{
-        if (navigator.clipboard && window.isSecureContext) {{
-          navigator.clipboard.writeText(text).then(() => updateStatus('📋 Code copi\u00e9 !')).catch(() => fallbackCopyText(text));
-        }} else {{
-          fallbackCopyText(text);
-        }}
-      }}
-      function fallbackCopyText(text) {{
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.cssText = 'position:fixed;left:-9999px;opacity:0;';
-        document.body.appendChild(ta);
-        ta.select();
-        try {{
-          document.execCommand('copy');
-          updateStatus('📋 Code copi\u00e9 (Fallback HTTP) !');
-        }} catch (e) {{ updateStatus('❌ Erreur de copie'); }}
-        document.body.removeChild(ta);
-      }}
-      function copyRichText(html, text) {{
-        if (navigator.clipboard && window.ClipboardItem && window.isSecureContext) {{
-          try {{
-            const blobHtml = new Blob([html], {{ type: 'text/html' }});
-            const blobText = new Blob([text], {{ type: 'text/plain' }});
-            const data = [new ClipboardItem({{ 'text/html': blobHtml, 'text/plain': blobText }})];
-            navigator.clipboard.write(data).then(() => {{
-              updateStatus('📋 Rendu copi\u00e9 (Rich Text) !');
-            }}).catch(() => fallbackCopyRichText(html));
-          }} catch(e) {{ fallbackCopyRichText(html); }}
-        }} else {{
-          fallbackCopyRichText(html);
-        }}
-      }}
-      function fallbackCopyRichText(html) {{
-        const div = document.createElement('div');
-        div.innerHTML = html;
-        div.style.cssText = 'position:fixed;left:-9999px;opacity:0;pointer-events:none;';
-        document.body.appendChild(div);
-        const selection = window.getSelection();
-        const range = document.createRange();
-        range.selectNodeContents(div);
-        selection.removeAllRanges();
-        selection.addRange(range);
-        try {{
-          document.execCommand('copy');
-          updateStatus('📋 Rendu copi\u00e9 (Fallback HTTP) !');
-        }} catch (e) {{ updateStatus('❌ Erreur de copie'); }}
-        selection.removeAllRanges();
-        document.body.removeChild(div);
-      }}
-
-      // ===== COPY BINDINGS =====
-      document.getElementById(CODEX_ID + '-copy').onclick = () => {{
-        if (!editor) return;
-        copyPlainText(editor.getValue());
-      }};
-
-      const previewCopyBtn = document.getElementById(CODEX_ID + '-preview-copy');
-      if (previewCopyBtn) {{
-        previewCopyBtn.onclick = () => {{
-          if (!currentFile) return;
-          const lang = files.find(f => f.filename === currentFile)?.lang;
-          const content = editor ? editor.getValue() : '';
-
-          if (lang === 'markdown') {{
-            const container = document.getElementById(CODEX_ID + '-preview-content');
-            copyRichText(container.innerHTML, container.innerText);
-          }} else {{
-            copyPlainText(content);
-          }}
-        }};
-      }}
-
-      // History ◀ ▶
-      document.getElementById(CODEX_ID + '-hist-prev').onclick = () => {{
-        if (currentFile) window.sendCodexAction({{action:'history_prev', filename:currentFile}});
-      }};
-      document.getElementById(CODEX_ID + '-hist-next').onclick = () => {{
-        if (currentFile) window.sendCodexAction({{action:'history_next', filename:currentFile}});
-      }};
-
-      // Refresh 🔄
-      document.getElementById(CODEX_ID + '-refresh').onclick = () => {{
-        window.sendCodexAction({{action:'refresh', filename:currentFile || ''}});
-      }};
-      document.getElementById(CODEX_ID + '-hist-pin').onclick = () => {{
-        if (currentFile) window.sendCodexAction({{action:'history_exit', filename:currentFile}});
-      }};
-      document.getElementById(CODEX_ID + '-hist-restore').onclick = () => {{
-        if (currentFile && historyContent !== null) {{
-          window.sendCodexAction({{action:'history_restore', filename:currentFile, content:historyContent, source_hash:document.getElementById(CODEX_ID+'-status-text').dataset.hash||''}});
-        }}
-      }};
-
-      // ===== DIFF ACCEPT/REJECT =====
-      document.getElementById(CODEX_ID + '-diff-accept').onclick = () => {{
-        if (diffEditor) {{
-          const content = diffEditor.getModifiedEditor().getValue();
-          window.sendCodexAction({{action:'accept_diff', filename:currentFile, content:content, instruction:lastInstruction}});
-        }}
-      }};
-      document.getElementById(CODEX_ID + '-diff-reject').onclick = () => {{
-        window.sendCodexAction({{action:'reject_diff'}});
-      }};
-
-      // ===== SAVE STATE =====
-      function saveState() {{
-        try {{
-          localStorage.setItem(STATE_KEY, JSON.stringify({{
-            x: hud.style.left, y: hud.style.top,
-            w: hud.style.width, h: hud.style.height,
-            previewOpen: previewOpen,
-            editorRatio: editorRatio,
-            previewRatio: previewRatio,
-            sidebarWidth: sidebarWidth,
-          }}));
-        }} catch(e) {{}}
-      }}
-
-      // Ctrl+S
-      function doSave() {{
-        if (currentFile && editor) {{
-          window.sendCodexAction({{
-            action: 'save',
-            filename: currentFile,
-            content: editor.getValue(),
-            language: files.find(f => f.filename === currentFile)?.lang || 'plaintext'
-          }});
-          
-          modified = false;
-          renderFileTree();
-          updateSaveButton();
-        }}
-      }}
-      // Mise à jour visuelle du bouton save
-      function updateSaveButton() {{
-        const btn = document.getElementById(CODEX_ID + '-save');
-        if (!btn) return;
-        btn.style.opacity = modified ? '1' : '0.3';
-        btn.style.color = modified ? accentColor : textColor;
-      }}
-      document.getElementById(CODEX_ID + '-save').onclick = () => doSave();
-
-      // ===== GLOBAL API (callable from Python) =====
-
-      window.echoCodexNotify = (type, msg) => {{
-        hideButtonSpinner();
-        if (type === 'saved') {{ updateStatus('\ud83d\udcbe Sauvegard\u00e9 \u2022 ' + msg); modified = false; renderFileTree(); }}
-        else if (type === 'committed') {{
-          updateStatus('\u2705 Commit\u00e9 \u2022 ' + msg); exitDiffMode();
-          modified = false; renderFileTree();
-          // Reload géré côté Python (push echoCodexSetContent)
-        }}
-        else if (type === 'restored') {{ updateStatus('\u2934\ufe0f Restaur\u00e9 \u2022 ' + msg); exitHistoryMode(); }}
-        else {{ updateStatus(msg); }}
-      }};
-
-      // Repositionner le dropdown sur le modèle effectif (après cascade)
-      window.echoCodexSetModel = (modelKey) => {{
-        lastModel = modelKey;
-        const sel = document.getElementById(CODEX_ID + '-model');
-        if (!sel) return;
-        for (let i = 0; i < sel.options.length; i++) {{
-          if (sel.options[i].value === modelKey) {{
-            sel.selectedIndex = i;
-            return;
-          }}
-        }}
-      }};
-
-      window.echoCodexShowDiff = (modifiedContent) => {{
-        hideButtonSpinner();
-        isDiffMode = true;
-        // Masquer le preview pendant le diff
-        document.getElementById(CODEX_ID + '-preview').style.display = 'none';
-        document.getElementById(CODEX_ID + '-splitter').style.display = 'none';
-        editorWrap.innerHTML = '';
-        diffEditor = monaco.editor.createDiffEditor(editorWrap, {{
-          theme: theme, readOnly: false, renderSideBySide: true,
-          automaticLayout: true, minimap: {{enabled: false}},
-          accessibilitySupport: 'off'
-        }});
-        const originalModel = monaco.editor.createModel(editor ? editor.getValue() : '', files.find(f=>f.filename===currentFile)?.lang||'plaintext');
-        const modifiedModel = monaco.editor.createModel(modifiedContent, files.find(f=>f.filename===currentFile)?.lang||'plaintext');
-        diffEditor.setModel({{ original: originalModel, modified: modifiedModel }});
-        document.getElementById(CODEX_ID + '-diff-bar').style.display = 'flex';
-        aiPanel.style.display = 'none';
-      }};
-
-      window.echoCodexRevertDiff = () => {{
-        hideButtonSpinner();
-        exitDiffMode();
-        // Reload géré côté Python (push echoCodexSetContent)
-      }};
-
-      function exitDiffMode() {{
-        if (!isDiffMode) return;
-        isDiffMode = false;
-        diffEditor = null;
-        document.getElementById(CODEX_ID + '-diff-bar').style.display = 'none';
-        aiPanel.style.display = 'flex';
-        initEditor();
-        // Restaurer la sélection modèle après réaffichage du panel
-        window.echoCodexSetModel(lastModel);
-        // Restaurer le preview si ouvert
-        if (previewOpen && getPreviewLang()) {{
-          document.getElementById(CODEX_ID + '-preview').style.display = 'flex';
-          document.getElementById(CODEX_ID + '-splitter').style.display = 'block';
-          setTimeout(updatePreview, 100);
-        }}
-      }}
-
-      window.echoCodexRefreshTree = (newFiles, newWorkspace) => {{
-        files = newFiles;
-        if (newWorkspace) currentWorkspace = newWorkspace;
-        renderFileTree();
-      }};
-
-      window.echoCodexDownload = (name, content) => {{
-        const blob = new Blob([content], {{type: 'text/plain'}});
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = name;
-        a.click();
-        URL.revokeObjectURL(a.href);
-      }};
-
-      window.echoCodexReset = () => {{ hud.remove(); }};
-
-      window.echoCodexSetCurrentFile = (filename) => {{
-        currentFile = filename;
-      }};
-
-      // Chargement de contenu depuis le backend Python
-      window.echoCodexSetContent = (content, filename) => {{
-        if (editor) {{
-          const lang = files.find(f => f.filename === filename)?.lang || 'plaintext';
-          const model = monaco.editor.createModel(content, lang);
-          editor.setModel(model);
-          editor.onDidChangeModelContent(() => {{
-            modified = true; renderFileTree(); updateSaveButton();
-            if (previewOpen) {{
-              clearTimeout(previewDebounceTimer);
-              previewDebounceTimer = setTimeout(updatePreview, 400);
-            }}
-          }});
-          modified = false;
-          // Mettre à jour le sélecteur de langage
-          const langSelect = document.getElementById(CODEX_ID + '-lang');
-          if (langSelect) langSelect.value = lang;
-          updateStatus(filename + ' \u2022 charg\u00e9');
-          // Preview : mise à jour du bouton et du rendu
-          updatePreviewButton();
-          if (previewOpen && !PREVIEW_LANGS.includes(lang)) {{
-            togglePreview(false);
-          }} else if (previewOpen) {{
-            updatePreview();
-          }}
-        }}
-      }};
-
-      window.echoCodexLoadVersion = (content, info, idx, total) => {{
-        isHistoryMode = true;
-        historyContent = content;
-        if (editor) {{
-          editor.setValue(content);
-          editor.updateOptions({{readOnly: true}});
-        }}
-        editorWrap.style.background = historyBg;
-        const statusText = document.getElementById(CODEX_ID + '-status-text');
-        statusText.textContent = `(${{idx+1}}/${{total}}) ${{info.hash}} "${{info.message}}"`;
-        statusText.dataset.hash = info.hash;
-        document.getElementById(CODEX_ID + '-hist-actions').style.display = 'flex';
-      }};
-
-      window.echoCodexExitHistory = () => {{ exitHistoryMode(); }};
-
-      function exitHistoryMode() {{
-        isHistoryMode = false;
-        historyContent = null;
-        if (editor) editor.updateOptions({{readOnly: false}});
-        editorWrap.style.background = 'transparent';
-        document.getElementById(CODEX_ID + '-hist-actions').style.display = 'none';
-        updateStatus(currentFile ? currentFile + ' \u2022 HEAD' : 'Pr\u00eat');
-      }}
-
-      // ===== PREVIEW PANEL =====
-
-      // Styles prose pour le rendu Markdown
-      if (!document.getElementById(CODEX_ID + '-prose-styles')) {{
-        const _ps = document.createElement('style');
-        _ps.id = CODEX_ID + '-prose-styles';
-        _ps.textContent = `
-          .echo-codex-prose {{ color: ${{textColor}}; line-height: 1.7; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; word-wrap: break-word; }}
-          .echo-codex-prose h1 {{ font-size: 1.8em; margin: 0.8em 0 0.4em; border-bottom: 1px solid ${{borderColor}}; padding-bottom: 0.3em; }}
-          .echo-codex-prose h2 {{ font-size: 1.5em; margin: 0.7em 0 0.3em; }}
-          .echo-codex-prose h3 {{ font-size: 1.25em; margin: 0.6em 0 0.3em; }}
-          .echo-codex-prose h4 {{ font-size: 1.1em; margin: 0.5em 0 0.2em; }}
-          .echo-codex-prose p {{ margin: 0.5em 0; }}
-          .echo-codex-prose code {{ background: rgba(127,127,127,0.15); padding: 2px 5px; border-radius: 3px; font-size: 0.9em; font-family: 'Cascadia Code', 'Fira Code', monospace; }}
-          .echo-codex-prose pre {{ background: ${{isDark ? 'rgba(0,0,0,0.4)' : 'rgba(0,0,0,0.06)'}}; padding: 12px; border-radius: 6px; overflow-x: auto; }}
-          .echo-codex-prose pre code {{ background: none; padding: 0; }}
-          .echo-codex-prose blockquote {{ border-left: 3px solid ${{accentColor}}; padding-left: 12px; margin-left: 0; opacity: 0.85; font-style: italic; }}
-          .echo-codex-prose table {{ border-collapse: collapse; width: 100%; margin: 0.5em 0; }}
-          .echo-codex-prose th, .echo-codex-prose td {{ border: 1px solid ${{borderColor}}; padding: 6px 10px; text-align: left; }}
-          .echo-codex-prose th {{ background: ${{isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'}}; font-weight: 600; }}
-          .echo-codex-prose img {{ max-width: 100%; border-radius: 4px; }}
-          .echo-codex-prose a {{ color: ${{accentColor}}; text-decoration: none; }}
-          .echo-codex-prose a:hover {{ text-decoration: underline; }}
-          .echo-codex-prose ul, .echo-codex-prose ol {{ padding-left: 1.5em; }}
-          .echo-codex-prose li {{ margin: 0.25em 0; }}
-          .echo-codex-prose hr {{ border: none; border-top: 1px solid ${{borderColor}}; margin: 1em 0; }}
-        `;
-        document.head.appendChild(_ps);
-      }}
-
-      function getPreviewLang() {{
-        if (!currentFile) return null;
-        const lang = files.find(f => f.filename === currentFile)?.lang || 'plaintext';
-        return PREVIEW_LANGS.includes(lang) ? lang : null;
-      }}
-
-      function updatePreviewButton() {{
-        const btn = document.getElementById(CODEX_ID + '-preview-toggle');
-        if (!btn) return;
-        const lang = getPreviewLang();
-        if (lang) {{
-          btn.disabled = false;
-          btn.style.opacity = previewOpen ? '1' : '0.6';
-          btn.style.color = previewOpen ? accentColor : textColor;
-          btn.title = 'Pr\u00e9visualisation ' + lang.toUpperCase();
-        }} else {{
-          btn.disabled = true;
-          btn.style.opacity = '0.25';
-          btn.style.color = textColor;
-          btn.title = 'Pr\u00e9visualisation indisponible';
-        }}
-      }}
-
-      function togglePreview(forceState) {{
-        const panel = document.getElementById(CODEX_ID + '-preview');
-        const split = document.getElementById(CODEX_ID + '-splitter');
-        if (!panel || !split) return;
-
-        previewOpen = forceState !== undefined ? forceState : !previewOpen;
-
-        if (previewOpen && !getPreviewLang()) {{
-          previewOpen = false;
-          return;
-        }}
-
-        panel.style.display = previewOpen ? 'flex' : 'none';
-        split.style.display = previewOpen ? 'block' : 'none';
-        if (previewOpen) {{
-          editorWrap.style.flex = `${{editorRatio}} 1 0%`;
-          panel.style.flex = `${{previewRatio}} 1 0%`;
-        }} else {{
-          editorWrap.style.flex = `1 1 0%`;
-        }}
-
-        updatePreviewButton();
-        saveState();
-
-        if (previewOpen) updatePreview();
-      }}
-
-      function updatePreview() {{
-        const lang = getPreviewLang();
-        if (!lang || !previewOpen) return;
-
-        const content = editor ? editor.getValue() : '';
-        const container = document.getElementById(CODEX_ID + '-preview-content');
-        const label = document.getElementById(CODEX_ID + '-preview-label');
-        const printBtn = document.getElementById(CODEX_ID + '-preview-print');
-        const copyBtn = document.getElementById(CODEX_ID + '-preview-copy');
-        if (!container) return;
-
-        if (printBtn) printBtn.style.display = (lang === 'markdown' || lang === 'html') ? 'flex' : 'none';
-        if (copyBtn) copyBtn.style.display = PREVIEW_LANGS.includes(lang) ? 'flex' : 'none';
-
-        if (lang === 'markdown') {{
-          if (label) label.textContent = 'Markdown Preview';
-          renderMarkdown(content, container);
-        }} else if (lang === 'html') {{
-          if (label) label.textContent = 'HTML Preview';
-          renderHTML(content, container);
-        }} else if (lang === 'css') {{
-          if (label) label.textContent = 'CSS Preview';
-          renderCSS(content, container);
-        }} else if (lang === 'xml') {{
-          if (label) label.textContent = 'SVG Preview';
-          renderSVG(content, container);
-        }} else if (lang === 'pdf') {{
-          if (label) label.textContent = 'PDF Preview';
-          renderPDF(content, container);
-        }}
-      }}
-
-      function renderMarkdown(content, container) {{
-        container.style.padding = '12px';
-        const oldIframe = container.querySelector('iframe');
-        if (oldIframe) oldIframe.remove();
-        if (window.marked) {{
-          container.innerHTML = '<div class="echo-codex-prose">' + window.marked.parse(content) + '</div>';
-        }} else if (!markedLoaded) {{
-          container.innerHTML = '<div style="color:' + (isDark ? '#a6adc8' : '#888') + '; padding:20px;">Chargement marked.js...</div>';
-          loadMarked(() => renderMarkdown(content, container));
-        }} else {{
-          container.innerHTML = '<div style="color:#f38ba8; padding:12px;">\u274c marked.js non disponible</div>';
-        }}
-      }}
-
-      function renderHTML(content, container) {{
-        container.style.padding = '0';
-        let iframe = container.querySelector('iframe');
-        if (!iframe) {{
-          container.innerHTML = '';
-          iframe = document.createElement('iframe');
-          iframe.sandbox = 'allow-scripts allow-modals';
-          iframe.style.cssText = 'width:100%; height:100%; border:none; background:white;';
-          container.appendChild(iframe);
-        }}
-        iframe.srcdoc = '<script>window.addEventListener("message", function(e) {{ if (e.data === "echo-print") window.print(); }});</script>' + content;
-      }}
-
-      function renderCSS(content, container) {{
-        container.style.padding = '0';
-        let iframe = container.querySelector('iframe');
-        if (!iframe) {{
-          container.innerHTML = '';
-          iframe = document.createElement('iframe');
-          iframe.sandbox = 'allow-scripts allow-modals';
-          iframe.style.cssText = 'width:100%; height:100%; border:none; background:white;';
-          container.appendChild(iframe);
-        }}
-        iframe.srcdoc = '<!DOCTYPE html><html><head><script>window.addEventListener("message", function(e) {{ if (e.data === "echo-print") window.print(); }});</script><style>' + content + '</style></head><body>' +
-          '<h1>Heading 1</h1><h2>Heading 2</h2><h3>Heading 3</h3>' +
-          '<p>Paragraph with <strong>bold</strong>, <em>italic</em>, and <a href="#">link</a>.</p>' +
-          '<ul><li>Item 1</li><li>Item 2</li><li>Item 3</li></ul>' +
-          '<blockquote>Blockquote example</blockquote>' +
-          '<pre><code>code {{ display: block; }}</code></pre>' +
-          '<table><tr><th>Header</th><th>Header</th></tr><tr><td>Cell</td><td>Cell</td></tr></table>' +
-          '<button>Button</button> <input type="text" placeholder="Input" />' +
-          '<div class="demo">Demo div</div></body></html>';
-      }}
-
-      function renderSVG(content, container) {{
-        container.style.padding = '12px';
-        const oldIframe = container.querySelector('iframe');
-        if (oldIframe) oldIframe.remove();
-        const cleaned = content.replace(/<script[\\s\\S]*?<\\/script>/gi, '');
-        container.innerHTML = '<div style="display:flex; align-items:center; justify-content:center; min-height:200px;">' + cleaned + '</div>';
-        const svg = container.querySelector('svg');
-        if (svg) {{
-          svg.style.maxWidth = '100%';
-          svg.style.height = 'auto';
-        }}
-      }}
-
-      function renderPDF(content, container) {{
-        container.style.padding = '0';
-        try {{
-          const bytes = new Uint8Array(content.length);
-          for (let i = 0; i < content.length; i++) {{
-              bytes[i] = content.charCodeAt(i) & 0xff;
-          }}
-          const blob = new Blob([bytes], {{ type: 'application/pdf' }});
-          const url = URL.createObjectURL(blob);
-          
-          const oldIframe = container.querySelector('iframe');
-          if (oldIframe) {{
-              if (oldIframe.src.startsWith('blob:')) {{
-                  URL.revokeObjectURL(oldIframe.src);
-              }}
-              oldIframe.remove();
-          }}
-          
-          container.innerHTML = '';
-          const iframe = document.createElement('iframe');
-          iframe.style.cssText = 'width:100%; height:100%; border:none; background:white;';
-          iframe.src = url;
-          container.appendChild(iframe);
-        }} catch (e) {{
-          container.innerHTML = '<div style="color:#f38ba8; padding:12px;">\u274c Erreur lors du rendu du PDF (encodage invalide)</div>';
-        }}
-      }}
-
-      function loadMarked(callback) {{
-        if (markedLoaded) {{ if (window.marked) callback(); return; }}
-        // import() ESM natif : bypasse totalement l'AMD loader de Monaco
-        // qui intercepte les script tags UMD via define/require
-        import('https://cdn.jsdelivr.net/npm/marked@15/+esm')
-          .then(m => {{
-            window.marked = m;
-            markedLoaded = true;
-            callback();
-          }})
-          .catch(err => {{
-            markedLoaded = true;
-            const c = document.getElementById(CODEX_ID + '-preview-content');
-            if (c) c.innerHTML = '<div style="color:#f38ba8; padding:12px;">\u274c marked.js: ' + err.message + '</div>';
-          }});
-      }}
-
-      // Toggle preview
-      document.getElementById(CODEX_ID + '-preview-toggle').onclick = () => {{
-        togglePreview();
-      }};
-
-      // Print Preview
-      document.getElementById(CODEX_ID + '-preview-print').onclick = () => {{
-        const isolationFn = function() {{
-          {EchoUI.get_print_isolation_js('#echo-codex-hud-preview-content')}
-        }};
-        isolationFn();
-      }};
-
-      // Splitter drag logic
-      let isDraggingSplit = false;
-      let isDraggingSidebarSplit = false;
-      document.getElementById(CODEX_ID + '-splitter').onmousedown = (e) => {{
-        e.preventDefault();
-        isDraggingSplit = true;
-        document.body.style.cursor = 'col-resize';
-        document.body.style.userSelect = 'none';
-        // Bloquer les events sur l'iframe du preview (sinon elle capture les mousemove)
-        document.getElementById(CODEX_ID + '-preview').style.pointerEvents = 'none';
-        editorWrap.style.pointerEvents = 'none';
-      }};
-      document.getElementById(CODEX_ID + '-sidebar-splitter').onmousedown = (e) => {{
-        e.preventDefault();
-        isDraggingSidebarSplit = true;
-        document.body.style.cursor = 'col-resize';
-        document.body.style.userSelect = 'none';
-        document.getElementById(CODEX_ID + '-preview').style.pointerEvents = 'none';
-        editorWrap.style.pointerEvents = 'none';
-      }};
-      document.addEventListener('mousemove', (e) => {{
-        if (isDraggingSidebarSplit) {{
-          const hudRect = hud.getBoundingClientRect();
-          let newW = e.clientX - hudRect.left;
-          newW = Math.max(50, Math.min(newW, hudRect.width / 2));
-          sidebarWidth = newW;
-          document.getElementById(CODEX_ID + '-sidebar').style.width = newW + 'px';
-        }}
-        if (isDraggingSplit) {{
-          const hudRect = hud.getBoundingClientRect();
-          const sidebarW = document.getElementById(CODEX_ID + '-sidebar').offsetWidth;
-          const avail = hudRect.width - sidebarW - 10;
-          let edW = e.clientX - (hudRect.left + sidebarW + 5);
-          edW = Math.max(200, Math.min(edW, avail - 200));
-          const prevW = avail - edW;
-          editorRatio = (edW / avail) * 100;
-          previewRatio = (prevW / avail) * 100;
-          editorWrap.style.flex = `${{editorRatio}} 1 0%`;
-          document.getElementById(CODEX_ID + '-preview').style.flex = `${{previewRatio}} 1 0%`;
-        }}
-      }});
-      document.addEventListener('mouseup', () => {{
-        if (isDraggingSplit || isDraggingSidebarSplit) {{
-          isDraggingSplit = false;
-          isDraggingSidebarSplit = false;
-          document.body.style.cursor = '';
-          document.body.style.userSelect = '';
-          document.getElementById(CODEX_ID + '-preview').style.pointerEvents = '';
-          editorWrap.style.pointerEvents = '';
-          saveState();
-        }}
-      }});
-
-      // Restaurer l'état du preview
-      if (previewOpen) {{
-        const _pp = document.getElementById(CODEX_ID + '-preview');
-        const _sp = document.getElementById(CODEX_ID + '-splitter');
-        if (_pp) _pp.style.display = 'flex';
-        if (_sp) _sp.style.display = 'block';
-        editorWrap.style.flex = `${{editorRatio}} 1 0%`;
-        if (_pp) _pp.style.flex = `${{previewRatio}} 1 0%`;
-      }}
-      updatePreviewButton();
-
-      // ===== MONACO LOADER =====
-      function initEditor() {{
-        editorWrap.innerHTML = '';
-        const lang = files.find(f => f.filename === currentFile)?.lang || 'plaintext';
-        editor = monaco.editor.create(editorWrap, {{
-          value: '', language: lang, theme: theme,
-          automaticLayout: true, minimap: {{enabled: true}},
-          fontSize: 13, lineNumbers: 'on', wordWrap: 'on',
-          scrollBeyondLastLine: false, renderWhitespace: 'selection',
-          accessibilitySupport: 'off'
-        }});
-        editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {{
-          doSave();
-        }});
-        editor.onDidChangeModelContent(() => {{
-          modified = true; renderFileTree(); updateSaveButton();
-          if (previewOpen) {{
-            clearTimeout(previewDebounceTimer);
-            previewDebounceTimer = setTimeout(updatePreview, 400);
-          }}
-        }});
-
-        // Populate lang selector
-        const langSelect = document.getElementById(CODEX_ID + '-lang');
-        langSelect.innerHTML = '';
-        const langs = monaco.languages.getLanguages();
-        langs.sort((a,b) => a.id.localeCompare(b.id));
-        langs.forEach(l => {{
-          const opt = document.createElement('option');
-          opt.value = l.id;
-          opt.textContent = l.id;
-          if (l.id === lang) opt.selected = true;
-          langSelect.appendChild(opt);
-        }});
-        langSelect.onchange = () => {{
-          const newLang = langSelect.value;
-          if (editor) monaco.editor.setModelLanguage(editor.getModel(), newLang);
-          // Proposer le rename si l'extension correspond à un langage connu
-          if (currentFile && LANG_TO_EXT[newLang]) {{
-            const baseName = currentFile.replace(/\\.[^.]+$/, '');
-            const newExt = LANG_TO_EXT[newLang];
-            const newFilename = baseName + newExt;
-            if (newFilename !== currentFile) {{
-              window.echoCustomConfirm('Renommer ' + currentFile + ' \u2192 ' + newFilename + ' ?', (agreed) => {{
-                if (agreed) {{
-                  window.sendCodexAction({{action:'rename_file', old_name:currentFile, new_name:newFilename, current_file:currentFile}});
-                }}
-              }});
-            }}
-          }}
-          // Mise à jour preview
-          updatePreviewButton();
-          if (previewOpen) updatePreview();
-        }};
-
-        // Demande de chargement initial asynchrone (Pull)
-        const checkReady = setInterval(() => {{
-          if (typeof window.echoCodexResolve === 'function') {{
-            clearInterval(checkReady);
-            if (currentFile) {{
-              updateStatus(currentFile + ' \u2022 chargement...');
-              window.sendCodexAction({{action:'load_file', filename: currentFile}});
-            }}
-          }}
-        }}, 50);
-      }}
-
-      function loadMonaco() {{
-        if (window.monaco) {{ initEditor(); renderFileTree(); return; }}
-        const loaderScript = document.createElement('script');
-        loaderScript.src = MONACO_CDN + '/vs/loader.js';
-        loaderScript.onload = () => {{
-          require.config({{ paths: {{ vs: MONACO_CDN + '/vs' }} }});
-          require(['vs/editor/editor.main'], () => {{
-            initEditor();
-            renderFileTree();
-          }});
-        }};
-        document.head.appendChild(loaderScript);
-      }}
-
-      // ===== PING HEARTBEAT =====
-      setInterval(() => {{
-        if (!document.hidden) {{
-            window.sendCodexAction({{action: 'ping', current_file: currentFile}});
-          }}
-      }}, 5000);
-
-      loadMonaco();
-    }})();
-    """
-
     # =====================================================================
     # ECHO COGNITIVE MONITOR — HUD Sub-Agent Visualization
     # =====================================================================
 
     @staticmethod
-    def _generate_agent_monitor_js(threads_json: str, chat_id: str) -> str:
+    def _generate_agent_monitor_js(
+        threads_json: str,
+        chat_id: str,
+        message_id: str = "",
+        model_id: str = "echo_orchestrator",
+    ) -> str:
         """Génère le script JS complet du HUD Cognitive Monitor.
         Injection via __event_call__(type: 'execute', data: code: ...).
 
@@ -2946,8 +2660,13 @@ return new Promise(function(resolve) {{
 
         return (
             "(function() {\n"
-            "  const HUD_ID = 'echo-cognitive-monitor';\n" + EchoUI.get_mobile_guard_js('echo-cognitive-monitor') + "\n"
+            "  const HUD_ID = 'echo-cognitive-monitor';\n"
+            + EchoUI.get_mobile_guard_js('echo-cognitive-monitor') + "\n"
+            + EchoUI.get_hud_geometry_js() + "\n"
+            + EchoUI.get_hud_rpc_bridge_js() + "\n"
             "  const CID = '" + chat_id + "';\n"
+            "  const MID = '" + message_id + "';\n"
+            "  const MODEL_ID = '" + model_id + "';\n"
             "  const STATE_KEY = 'echo_cogmon_' + CID;\n"
             "\n"
             "  var existing = document.getElementById(HUD_ID);\n"
@@ -2959,13 +2678,10 @@ return new Promise(function(resolve) {{
             "  var expandedNodes = {};\n"
             "  var autoRefreshTimer = null;\n"
             "  var isMinimized = false;\n"
+            "  var geoCtrl = null;\n"
             "\n"
             "  var saved = {};\n"
             "  try { saved = JSON.parse(localStorage.getItem(STATE_KEY) || '{}'); } catch(e) {}\n"
-            "  var posX = saved.x || 60;\n"
-            "  var posY = saved.y || 60;\n"
-            "  var hudW = saved.w || '720px';\n"
-            "  var hudH = saved.h || '500px';\n"
             "  var autoInterval = saved.interval || 5;\n"
             "  var autoEnabled = saved.autoOn || false;\n"
             "  // Forcé à false au lancement pour éviter le bug de la fenêtre vide après restauration\n"
@@ -2973,6 +2689,18 @@ return new Promise(function(resolve) {{
             "  if (saved.activeIdx !== undefined) activeThreadIdx = saved.activeIdx;\n"
             "  if (activeThreadIdx >= threads.length) activeThreadIdx = Math.max(0, threads.length - 1);\n"
             "  if (saved.expanded) try { expandedNodes = JSON.parse(saved.expanded); } catch(e) {}\n"
+            "\n"
+            "  var rpcBridge = window.echoCreateHudRpcBridge({\n"
+            "    hudId: HUD_ID,\n"
+            "    actionId: 'agent_monitor_action',\n"
+            "    resolveVar: 'echoAgentResolve',\n"
+            "    sendFn: 'sendAgentAction',\n"
+            "    readyFn: '_echoAgentOnReady',\n"
+            "    cid: CID,\n"
+            "    mid: MID,\n"
+            "    modelId: MODEL_ID,\n"
+            "    onRouteClose: function() { if (autoRefreshTimer) clearInterval(autoRefreshTimer); }\n"
+            "  });\n"
             "\n"
             "  var isDark = document.documentElement.classList.contains('dark') ||\n"
             "               window.matchMedia('(prefers-color-scheme: dark)').matches;\n"
@@ -3002,24 +2730,13 @@ return new Promise(function(resolve) {{
             "  function saveState() {\n"
             "    var hud = document.getElementById(HUD_ID);\n"
             "    if (!hud) return;\n"
+            "    var nb = geoCtrl ? geoCtrl.normalBounds : { x: '60px', y: '60px', w: '720px', h: '500px' };\n"
             "    localStorage.setItem(STATE_KEY, JSON.stringify({\n"
-            "      x: posX, y: posY,\n"
-            "      w: hud.style.width, h: hud.style.height,\n"
+            "      x: nb.x, y: nb.y,\n"
+            "      w: nb.w, h: nb.h,\n"
             "      interval: autoInterval, autoOn: autoEnabled, min: isMinimized,\n"
             "      activeIdx: activeThreadIdx, expanded: JSON.stringify(expandedNodes)\n"
             "    }));\n"
-            "  }\n"
-            "  function clampHud() {\n"
-            "    var hud = document.getElementById(HUD_ID);\n"
-            "    if (!hud) return;\n"
-            "    var vw = window.innerWidth, vh = window.innerHeight;\n"
-            "    var w = hud.offsetWidth, h = hud.offsetHeight;\n"
-            "    if (posX < 0) posX = 0;\n"
-            "    if (posY < 0) posY = 0;\n"
-            "    if (posX + w > vw) posX = Math.max(0, vw - w);\n"
-            "    if (posY + h > vh) posY = Math.max(0, vh - h);\n"
-            "    hud.style.left = posX + 'px';\n"
-            "    hud.style.top = posY + 'px';\n"
             "  }\n"
             "\n"
             "  // =============== SIDEBAR ONGLETS VERTICAUX ===============\n"
@@ -3137,11 +2854,11 @@ return new Promise(function(resolve) {{
             "  // =============== CONSTRUCTION DU HUD ===============\n"
             "  var hud = document.createElement('div');\n"
             "  hud.id = HUD_ID;\n"
+            "  hud.setAttribute('data-chat-id', CID);\n"
             "  hud.style.cssText = 'position:fixed; z-index:10001; display:flex; flex-direction:column;'\n"
             "    + ' background:' + C.bg + '; border:1px solid ' + C.border + '; border-radius:12px;'\n"
             "    + ' box-shadow:0 20px 60px rgba(0,0,0,0.4); font-family:Segoe UI,system-ui,sans-serif;'\n"
-            "    + ' color:' + C.text + '; overflow:hidden; resize:both; min-width:500px; min-height:200px;'\n"
-            "    + ' width:' + hudW + '; height:' + hudH + '; left:' + posX + 'px; top:' + posY + 'px;';\n"
+            "    + ' color:' + C.text + '; overflow:hidden; resize:both; min-width:500px; min-height:200px;';\n"
             "\n"
             "  // --- HEADER ---\n"
             "  var header = document.createElement('div');\n"
@@ -3197,36 +2914,28 @@ return new Promise(function(resolve) {{
             "  document.body.appendChild(hud);\n"
             "\n"
             "  // =============== ÉVÉNEMENTS ===============\n"
-            "\n"
-            "  // Draggable\n"
-            "  header.onmousedown = function(e) {\n"
-            "    if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;\n"
-            "    e.preventDefault();\n"
-            "    var ox = e.clientX, oy = e.clientY;\n"
-            "    function move(me) {\n"
-            "      posX += (me.clientX - ox); posY += (me.clientY - oy);\n"
-            "      ox = me.clientX; oy = me.clientY;\n"
-            "      clampHud();\n"
+            "  geoCtrl = window.echoBindHudGeometry(hud, header, {\n"
+            "    defaultW: '720px',\n"
+            "    defaultH: '500px',\n"
+            "    defaultX: '60px',\n"
+            "    defaultY: '60px',\n"
+            "    defaultTx: 'none',\n"
+            "    minW: '500px',\n"
+            "    minH: '200px',\n"
+            "    minimizedH: '42px',\n"
+            "    minimizedMinH: '42px',\n"
+            "    initialBounds: saved,\n"
+            "    onSave: function() { saveState(); },\n"
+            "    onMinimize: function(isMin) {\n"
+            "      isMinimized = isMin;\n"
+            "      body.style.display = isMin ? 'none' : 'flex';\n"
+            "      statusBar.style.display = isMin ? 'none' : 'flex';\n"
             "    }\n"
-            "    function up() {\n"
-            "      document.removeEventListener('mousemove', move);\n"
-            "      document.removeEventListener('mouseup', up);\n"
-            "      saveState();\n"
-            "    }\n"
-            "    document.addEventListener('mousemove', move);\n"
-            "    document.addEventListener('mouseup', up);\n"
-            "  };\n"
-            "\n"
-            "  window.addEventListener('resize', clampHud);\n"
+            "  });\n"
             "\n"
             "  // Refresh\n"
             "  document.getElementById(HUD_ID + '-refresh').onclick = function() {\n"
-            "    if (window.echoAgentResolve) {\n"
-            "      window.echoAgentResolve({action: 'refresh'});\n"
-            "    } else {\n"
-            "      var btn = document.getElementById(HUD_ID + '-refresh');\n"
-            "      if (btn) { btn.textContent = '\\u23f3'; setTimeout(function() { if (btn) btn.textContent = '\\ud83d\\udd04'; }, 1000); }\n"
-            "    }\n"
+            "    window.sendAgentAction({action: 'refresh'});\n"
             "  };\n"
             "\n"
             "  // Auto-refresh\n"
@@ -3246,7 +2955,7 @@ return new Promise(function(resolve) {{
             "    if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }\n"
             "    if (autoEnabled) {\n"
             "      autoRefreshTimer = setInterval(function() {\n"
-            "        if (window.echoAgentResolve) window.echoAgentResolve({action: 'refresh'});\n"
+            "        window.sendAgentAction({action: 'refresh'});\n"
             "      }, autoInterval * 1000);\n"
             "    }\n"
             "    saveState();\n"
@@ -3262,28 +2971,15 @@ return new Promise(function(resolve) {{
             "\n"
             "  // Minimize\n"
             "  document.getElementById(HUD_ID + '-minimize').onclick = function() {\n"
-            "    isMinimized = !isMinimized;\n"
-            "    body.style.display = isMinimized ? 'none' : 'flex';\n"
-            "    statusBar.style.display = isMinimized ? 'none' : 'flex';\n"
-            "    hud.style.minHeight = isMinimized ? '42px' : '200px';\n"
-            "    hud.style.height = isMinimized ? '42px' : hudH;\n"
-            "    hud.style.resize = isMinimized ? 'none' : 'both';\n"
-            "    saveState();\n"
+            "    geoCtrl.toggleMinimize();\n"
             "  };\n"
             "\n"
-            "  // Close — resolve pour sortir de la boucle Python\n"
             "  document.getElementById(HUD_ID + '-close').onclick = function() {\n"
+            "    if (rpcBridge) rpcBridge.cleanup();\n"
             "    if (autoRefreshTimer) clearInterval(autoRefreshTimer);\n"
             "    hud.remove();\n"
-            "    if (window.echoAgentResolve) window.echoAgentResolve({action: 'close'});\n"
+            "    window.sendAgentAction({action: 'close'});\n"
             "  };\n"
-            "\n"
-            "  // Resize persistence\n"
-            "  new ResizeObserver(function() {\n"
-            "    hudW = hud.style.width;\n"
-            "    hudH = hud.style.height;\n"
-            "    saveState();\n"
-            "  }).observe(hud);\n"
             "\n"
             "  // =============== STATUS BAR UPDATE ===============\n"
             "  function updateStatusBar() {\n"
@@ -3313,7 +3009,6 @@ return new Promise(function(resolve) {{
             "  };\n"
             "\n"
             "  // =============== INIT ===============\n"
-            "  clampHud();\n"
             "  renderSidebar();\n"
             "  renderTree();\n"
             "  updateAutoState();\n"
@@ -3328,16 +3023,33 @@ return new Promise(function(resolve) {{
     @staticmethod
     def _generate_identity_vault_js(
             accounts_json: str,
-            schemas_json: str = "{}") -> str:
+            schemas_json: str = "{}",
+            chat_id: str = "",
+            message_id: str = "",
+            model_id: str = "echo_orchestrator") -> str:
         """Génère le script JS complet du HUD ECHO Identity Vault avec schémas dynamiques."""
 
         return (
             "(function() {\n"
             "  const HUD_ID = 'echo-vault-identity';\n"
+            "  const CID = '" + chat_id + "';\n"
+            "  const MID = '" + message_id + "';\n"
+            "  const MODEL_ID = '" + model_id + "';\n"
             + EchoUI.get_mobile_guard_js('echo-vault-identity') + "\n"
             + EchoUI.get_floating_window_class_js() + "\n"
+            + EchoUI.get_hud_rpc_bridge_js() + "\n"
             + EchoUI.get_sanitize_html_js() + "\n"
             "  if (document.getElementById(HUD_ID)) document.getElementById(HUD_ID).remove();\n"
+            "  const rpcBridge = window.echoCreateHudRpcBridge({\n"
+            "    hudId: HUD_ID,\n"
+            "    actionId: 'echo_identity_vault_action',\n"
+            "    resolveVar: 'echoVaultResolve',\n"
+            "    sendFn: 'sendVaultAction',\n"
+            "    readyFn: '_echoVaultOnReady',\n"
+            "    cid: CID,\n"
+            "    mid: MID,\n"
+            "    modelId: MODEL_ID\n"
+            "  });\n"
             "  let accounts = JSON.parse('" + accounts_json.replace("\\", "\\\\").replace("'", "\\'") + "');\n"
             "  let schemas = JSON.parse('" + schemas_json.replace("\\", "\\\\").replace("'", "\\'") + "');\n"
             "  const isDark = document.documentElement.classList.contains('dark') || document.documentElement.classList.contains('oled-dark');\n"
@@ -3414,9 +3126,11 @@ return new Promise(function(resolve) {{
             "      width: '500px',\n"
             "      height: '80vh',\n"
             "      bodyHtml: bodyHtml,\n"
-            "      onClose: () => { if(window.echoVaultResolve) window.echoVaultResolve({action: 'close'}); }\n"
+            "      onClose: () => { if (rpcBridge) rpcBridge.cleanup(); window.sendVaultAction({action: 'close'}); }\n"
             "  });\n"
             "  monitor.render();\n"
+            "  const vaultEl = document.getElementById(HUD_ID);\n"
+            "  if (vaultEl && CID) vaultEl.setAttribute('data-chat-id', CID);\n"
             "  monitor.attachBaseEvents();\n"
             "  \n"
             "  // Populate Select Service & Dynamic Fields\n"
@@ -3565,7 +3279,7 @@ return new Promise(function(resolve) {{
             "      const credStr = JSON.stringify(credObj);\n"
             "      document.querySelectorAll('.vault-dynamic-input').forEach(input => input.value = '');\n"
             "      resetForm();\n"
-            "      if(window.echoVaultResolve) window.echoVaultResolve({action: 'add_account', service: service, account_id: account_id, credentials: credStr});\n"
+            "      window.sendVaultAction({action: 'add_account', service: service, account_id: account_id, credentials: credStr});\n"
             "    };\n"
             "    \n"
             "    if(missingField) {\n"
@@ -3579,7 +3293,7 @@ return new Promise(function(resolve) {{
             "  \n"
             "  window.echoVaultDelete = function(service, alias) {\n"
             "    vaultConfirm('Supprimer les identifiants pour ' + service + ' ?', function(agreed) {\n"
-            "      if(agreed && window.echoVaultResolve) window.echoVaultResolve({action: 'delete_account', service: service, account_id: alias});\n"
+            "      if(agreed) window.sendVaultAction({action: 'delete_account', service: service, account_id: alias});\n"
             "    });\n"
             "  };\n"
             "  \n"

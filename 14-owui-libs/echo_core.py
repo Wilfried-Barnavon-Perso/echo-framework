@@ -2,19 +2,19 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 1.11
+version: 5.231.10.1
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 1.11: Ajout de progress_callback dans EchoCompactionEngine.execute_compaction pour le pilotage temps-réel du HUD de progression.
-# 1.10: Ajout de EchoCompactionEngine pour le compactage contextuel in-place (auto et manuel) via MODEL_APOLLO.
-# 1.9: Renommage souverain des modèles cognitifs (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS) et politique AUTO_PROM.
-# 1.8: Correction d'un bug majeur (dict copy sur scalaires) dans unbox_tool_output et extraction de payload.
-# 1.7: Normalisation stricte en camelCase des outils pour le backend Code Assist (functionDeclarations).
+# 5.231.10.1: Suppression de detect_verbal_escalation ; conservation de attach_thought_signature (conformité Gemini 3/4).
+# 5.231.7.1: Factorisation de attach_thought_signature (conformité Gemini 3/4).
+# 5.227.1.1: Suppression de EchoCompactionEngine suite au remplacement du compactage in-place par resume_in_new_chat_action.
+# 5.227.0.1: Fiabilisation de EchoCompactionEngine (regex ALL_AEC_PATTERN multi-attributs, désambiguïsation par index attendu dans resolve_active_window, mise à l'échelle télémétrique dans find_split_index et extraction des outils Open WebUI m['output']).
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple
 from echo_state_manager import EchoStateManager
@@ -53,7 +53,8 @@ def ensure_gemini_parts(content: Any, model_id: str = "unknown", model_origin: s
                     try:
                         mime, b64 = url.split(";", 1)[0].replace("data:", ""), url.split(",", 1)[1]
                         new_part["inlineData"] = {"mimeType": mime, "data": b64}
-                    except: pass
+                    except Exception:
+                        pass
             elif "inlineData" in p: 
                 new_part["inlineData"] = p["inlineData"]
             elif "inline_data" in p: 
@@ -317,7 +318,7 @@ def unbox_tool_output(name: str, content: Any, model_id: str, model_origin: str 
         try:
             # Utilisation du lecteur Python sécurisé (ast) pour gérer les guillemets simples du stockage SQL
             content = ast.literal_eval(content)
-        except:
+        except Exception:
             # Échec total de lecture : marquage comme donnée non structurée
             content = {"text": str(content), "status": {"status": "unstructured_data"}}
     
@@ -402,366 +403,34 @@ def convert_owui_tools(tools: Optional[List[Dict]], model_policy: str = "AUTO") 
     return [{"functionDeclarations": funcs}] if funcs else None
 
 
-class EchoCompactionEngine:
-    """Moteur unifié de compactage contextuel In-Place (Filtre Automatique & Action Manuelle)."""
+def attach_thought_signature(
+    parts: List[Dict[str, Any]],
+    signature: Optional[str],
+    fallback_magic_key: Optional[str] = None,
+) -> None:
+    """
+    Attache la thoughtSignature sur les parts d'un message 'model' selon la norme stricte Gemini 3/4 :
+    - Si au moins un 'functionCall' est présent, SEUL le premier 'functionCall' reçoit la signature.
+    - Sinon (réponse purement textuelle), le premier bloc 'text' reçoit la signature si elle est fournie.
+    """
+    if not parts:
+        return
+    sig_to_use = signature or fallback_magic_key
+    if not sig_to_use:
+        return
 
-    SETTING_KEY = "compaction_state"
-    B64_PATTERN = re.compile(r"data:[a-zA-Z0-9/+-.]+;base64,[a-zA-Z0-9+/]+={0,2}")
-    AEC_CHECKPOINT_PATTERN = re.compile(
-        r'<artifact id="AEC_context_checkpoint"[^>]*>.*?</artifact>\s*',
-        re.DOTALL,
-    )
-    ALL_AEC_PATTERN = re.compile(r'<artifact id="AEC_[^"]*">.*?</artifact>\s*', re.DOTALL)
+    for p in parts:
+        if isinstance(p, dict):
+            p.pop("thoughtSignature", None)
 
-    @classmethod
-    def strip_checkpoint_tag(cls, text: str) -> Tuple[Optional[str], str]:
-        """Extrait (<artifact id="AEC_context_checkpoint">...</artifact>, texte_nettoyé)."""
-        if not isinstance(text, str) or '<artifact id="AEC_context_checkpoint"' not in text:
-            return None, text
-        match = cls.AEC_CHECKPOINT_PATTERN.search(text)
-        if not match:
-            return None, text
-        checkpoint_xml = match.group(0).strip()
-        cleaned = cls.AEC_CHECKPOINT_PATTERN.sub("", text).strip()
-        return checkpoint_xml, cleaned
-
-    @classmethod
-    def extract_text_from_message(cls, msg: Dict, strip_aec: bool = True) -> str:
-        """Extrait le texte lisible d'un message (str ou list) en masquant les blobs Base64."""
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            parts_txt = []
-            for p in content:
-                if isinstance(p, dict):
-                    if p.get("type") == "text" and p.get("text"):
-                        parts_txt.append(str(p["text"]))
-                    elif "text" in p and p["text"]:
-                        parts_txt.append(str(p["text"]))
-            text = "\n".join(parts_txt)
-        else:
-            text = str(content or "")
-
-        if strip_aec:
-            text = cls.ALL_AEC_PATTERN.sub("", text)
-        text = cls.B64_PATTERN.sub("[MÉDIA BASE64 MASQUÉ]", text)
-        return text.strip()
-
-    @classmethod
-    def group_messages_into_turns(cls, messages: List[Dict]) -> Tuple[List[Dict], List[List[Dict]]]:
-        """
-        Sépare les messages système et regroupe les échanges en tours atomiques.
-        Chaque tour commence par un message de rôle 'user' authentique (et inclut les 'assistant'/'tool' suivants).
-        """
-        system_msgs = []
-        turns = []
-        current_turn = []
-        for m in messages:
-            role = m.get("role", "user")
-            if role == "system":
-                system_msgs.append(m)
-                continue
-            if role == "user":
-                if current_turn:
-                    turns.append(current_turn)
-                current_turn = [m]
-            else:
-                if not current_turn:
-                    current_turn = [m]
-                else:
-                    current_turn.append(m)
-        if current_turn:
-            turns.append(current_turn)
-        return system_msgs, turns
-
-    @classmethod
-    def compute_turn_signature(cls, turn: List[Dict]) -> Tuple[str, str]:
-        """Retourne (msg_id, content_hash) du message utilisateur ouvrant le tour."""
-        import hashlib
-        if not turn:
-            return "", ""
-        first_msg = turn[0]
-        msg_id = str(first_msg.get("id") or "")
-        clean_txt = cls.extract_text_from_message(first_msg, strip_aec=True)
-        content_hash = hashlib.sha256(clean_txt.encode("utf-8")).hexdigest()[:32]
-        return msg_id, content_hash
-
-    @classmethod
-    def get_compaction_state(cls, state_manager: EchoStateManager) -> Optional[Dict]:
-        """Charge l'état de compactage actif depuis echo_settings."""
-        raw = state_manager.get_session_setting(cls.SETTING_KEY)
-        if not raw:
-            return None
-        try:
-            data = std_json.loads(raw)
-            return data if isinstance(data, dict) else None
-        except Exception:
-            return None
-
-    @classmethod
-    def resolve_active_window(
-        cls, state_manager: EchoStateManager, turns: List[List[Dict]]
-    ) -> Tuple[List[List[Dict]], Optional[Dict], int]:
-        """
-        Applique le Checkpoint existant sur la liste des tours.
-        Retourne (active_turns, state_dict_if_valid, evicted_turns_count).
-        Si l'utilisateur a supprimé/édité en amont du pivot (rewind), invalide le state.
-        """
-        state = cls.get_compaction_state(state_manager)
-        if not state or not turns:
-            return turns, None, 0
-
-        target_id = state.get("pivot_msg_id")
-        target_hash = state.get("pivot_hash")
-        pivot_turn_idx = -1
-
-        for idx, turn in enumerate(turns):
-            m_id, m_hash = cls.compute_turn_signature(turn)
-            if target_id and m_id and m_id == target_id:
-                pivot_turn_idx = idx
-                break
-            if target_hash and m_hash == target_hash:
-                pivot_turn_idx = idx
-                break
-
-        if pivot_turn_idx <= 0:
-            if pivot_turn_idx == -1:
-                state_manager.save_session_setting(cls.SETTING_KEY, "")
-            return turns, None, 0
-
-        return turns[pivot_turn_idx:], state, pivot_turn_idx
-
-    @classmethod
-    def estimate_active_tokens(
-        cls,
-        active_turns: List[List[Dict]],
-        active_state: Optional[Dict],
-        state_manager: EchoStateManager,
-    ) -> int:
-        """Estime le nombre de tokens actifs (max entre heuristique et télémétrie Gemini récente)."""
-        flat_msgs = [m for t in active_turns for m in t]
-        heuristic_tokens = estimate_token_size(flat_msgs)
-        if active_state and active_state.get("summary_xml"):
-            heuristic_tokens += estimate_token_size(active_state["summary_xml"])
-
-        stats_raw = state_manager.get_session_setting("context_stats")
-        telemetry_tokens = 0
-        if stats_raw:
-            try:
-                stats = std_json.loads(stats_raw)
-                telemetry_tokens = int(stats.get("promptTokenCount", 0))
-            except Exception:
-                telemetry_tokens = 0
-
-        return max(heuristic_tokens, telemetry_tokens)
-
-    @classmethod
-    def find_split_index(
-        cls,
-        active_turns: List[List[Dict]],
-        target_tokens: int,
-        min_turns_to_keep: int,
-        force_manual: bool = False,
-    ) -> int:
-        """
-        Détermine l'index de coupe `split_idx` dans `active_turns` :
-        - `active_turns[:split_idx]` sera compacté dans le nouveau Checkpoint.
-        - `active_turns[split_idx:]` restera intact dans la fenêtre active (avec `active_turns[split_idx][0]` comme nouveau pivot).
-        """
-        total_turns = len(active_turns)
-        if total_turns <= min_turns_to_keep:
-            return 0
-
-        max_split = total_turns - min_turns_to_keep
-        accumulated_tokens = 0
-        split_idx = max_split
-
-        for i in range(total_turns - 1, -1, -1):
-            turn_tokens = estimate_token_size(active_turns[i])
-            if accumulated_tokens + turn_tokens > target_tokens:
-                split_idx = min(i + 1, max_split)
-                break
-            accumulated_tokens += turn_tokens
-        else:
-            # Tout `active_turns` tient sous `target_tokens` (25%)
-            if force_manual:
-                split_idx = max_split
-            else:
-                return 0
-
-        return max(0, min(split_idx, max_split))
-
-    @classmethod
-    def format_turns_for_compaction(cls, turns_to_compact: List[List[Dict]]) -> str:
-        """Formate intégralement les tours à compacter sans troncature des messages User/Assistant."""
-        blocks = []
-        for idx, turn in enumerate(turns_to_compact, start=1):
-            turn_lines = [f"--- TOUR #{idx} ---"]
-            for m in turn:
-                role = m.get("role", "user").upper()
-                txt = cls.extract_text_from_message(m, strip_aec=True)
-                files = m.get("files") or []
-                file_names = [
-                    f.get("name") or f.get("file", {}).get("name", "fichier")
-                    for f in files
-                    if isinstance(f, dict)
-                ]
-                file_suffix = f" [Fichiers joints : {', '.join(file_names)}]" if file_names else ""
-
-                tool_calls = m.get("tool_calls") or []
-                tc_summary = ""
-                if tool_calls:
-                    tc_names = [
-                        tc.get("function", {}).get("name", "unknown")
-                        for tc in tool_calls
-                        if isinstance(tc, dict)
-                    ]
-                    tc_summary = f"\n[Appels d'outils déclenchés : {', '.join(tc_names)}]"
-
-                if txt or file_suffix or tc_summary:
-                    turn_lines.append(f"[{role}]{file_suffix}:\n{txt}{tc_summary}".strip())
-            blocks.append("\n\n".join(turn_lines))
-        return "\n\n".join(blocks)
-
-    @classmethod
-    def inject_checkpoint_into_turn(cls, pivot_turn: List[Dict], summary_xml: str) -> None:
-        """Préfixe le message utilisateur d'ouverture du tour pivot avec <artifact id="AEC_context_checkpoint">."""
-        if not pivot_turn or not summary_xml:
+    for p in parts:
+        if isinstance(p, dict) and "functionCall" in p:
+            p["thoughtSignature"] = sig_to_use
             return
-        pivot_msg = pivot_turn[0]
-        content = pivot_msg.get("content", "")
-        if isinstance(content, list):
-            cleaned_parts = [
-                p for p in content
-                if not (isinstance(p, dict) and '<artifact id="AEC_context_checkpoint"' in str(p.get("text", "")))
-            ]
-            pivot_msg["content"] = [{"type": "text", "text": summary_xml.strip() + "\n\n"}] + cleaned_parts
-        else:
-            _, clean_str = cls.strip_checkpoint_tag(str(content or ""))
-            pivot_msg["content"] = f"{summary_xml.strip()}\n\n{clean_str}"
-        pivot_msg["_echo_is_compaction_pivot"] = True
 
-    @classmethod
-    async def execute_compaction(
-        cls,
-        messages: List[Dict],
-        user_id: str,
-        chat_id: str,
-        __user__: Optional[Dict] = None,
-        __metadata__: Optional[Dict] = None,
-        force_manual: bool = False,
-        events: Optional[Any] = None,
-        progress_callback: Optional[Any] = None,
-    ) -> Optional[Dict]:
-        """
-        Exécute un cycle complet de compactage cognitif via MODEL_APOLLO (Consolidation Téléscopique).
-        Retourne le nouveau dictionnaire `compaction_state` scellé dans `session.db`, ou None si non applicable/échec.
-        """
-        from echo_constants import (
-            ECHO_MAX_CONTEXT_SIZE,
-            CONTEXT_COMPACTION_TARGET_RATIO,
-            ECHO_COMPACTION_MIN_TURNS_TO_KEEP,
-            ECHO_COMPACTION_MODEL,
-            ECHO_COMPACTION_MAX_OUTPUT_TOKENS,
-        )
-        from echo_prompts import SYS_CONTEXT_COMPACTION, USR_CONTEXT_COMPACTION
-        from echo_gemini_client import EchoGeminiClient
-
-        state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
-        _, all_turns = cls.group_messages_into_turns(messages)
-        if len(all_turns) <= ECHO_COMPACTION_MIN_TURNS_TO_KEEP:
-            return None
-
-        active_turns, prev_state, already_evicted_count = cls.resolve_active_window(state_manager, all_turns)
-        target_tokens = int(ECHO_MAX_CONTEXT_SIZE * CONTEXT_COMPACTION_TARGET_RATIO)
-
-        split_idx = cls.find_split_index(
-            active_turns=active_turns,
-            target_tokens=target_tokens,
-            min_turns_to_keep=ECHO_COMPACTION_MIN_TURNS_TO_KEEP,
-            force_manual=force_manual,
-        )
-        if split_idx <= 0:
-            return None
-
-        turns_to_compact = active_turns[:split_idx]
-        remaining_turns = active_turns[split_idx:]
-        if not remaining_turns:
-            return None
-
-        if progress_callback:
-            await progress_callback(20, f"🔍 Préparation de {len(turns_to_compact)} tour(s) à condenser...")
-
-        prev_summary_raw = prev_state.get("summary_raw", "") if prev_state else ""
-        prev_count = int(prev_state.get("compaction_count", 0)) if prev_state else 0
-        new_compaction_count = prev_count + 1
-        total_compacted_turns = already_evicted_count + len(turns_to_compact)
-
-        transcript_text = cls.format_turns_for_compaction(turns_to_compact)
-        user_prompt = USR_CONTEXT_COMPACTION.format(
-            compaction_index=new_compaction_count,
-            compacted_turns_total=total_compacted_turns,
-            previous_checkpoint=prev_summary_raw if prev_summary_raw else "Aucun (Première compression de la session).",
-            transcript_to_compact=transcript_text,
-        )
-
-        if progress_callback:
-            await progress_callback(45, "🧠 Synthèse téléscopique via MODEL_APOLLO en cours...")
-
-        summary_md = await EchoGeminiClient.call_distillation(
-            prompt=user_prompt,
-            __user__=__user__ or {"id": user_id},
-            __metadata__=__metadata__ or {"chat_id": chat_id},
-            is_json=False,
-            max_tokens=ECHO_COMPACTION_MAX_OUTPUT_TOKENS,
-            target_model=ECHO_COMPACTION_MODEL,
-            system_instruction=SYS_CONTEXT_COMPACTION,
-        )
-
-        if not isinstance(summary_md, str) or not summary_md.strip():
-            return None
-
-        if progress_callback:
-            await progress_callback(85, "💾 Scellement du Checkpoint Cognitif dans SQLite...")
-
-        summary_md = summary_md.strip()
-        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        summary_xml = EchoAEC.render_context_checkpoint(
-            summary=summary_md,
-            compacted_turns=total_compacted_turns,
-            updated_at_str=now_str,
-            compaction_count=new_compaction_count,
-        )
-
-        pivot_id, pivot_hash = cls.compute_turn_signature(remaining_turns[0])
-        tokens_before = cls.estimate_active_tokens(active_turns, prev_state, state_manager)
-        tokens_after = estimate_token_size([m for t in remaining_turns for m in t]) + estimate_token_size(summary_xml)
-
-        new_state = {
-            "pivot_msg_id": pivot_id,
-            "pivot_hash": pivot_hash,
-            "summary_raw": summary_md,
-            "summary_xml": summary_xml,
-            "compacted_turns": total_compacted_turns,
-            "compaction_count": new_compaction_count,
-            "updated_at": now_str,
-            "tokens_before": tokens_before,
-            "tokens_after": tokens_after,
-        }
-
-        state_manager.save_session_setting(cls.SETTING_KEY, std_json.dumps(new_state).decode("utf-8"))
-        # Réinitialise le compteur télémétrique pour éviter un re-déclenchement immédiat avant le retour API Gemini
-        state_manager.save_session_setting(
-            "context_stats",
-            std_json.dumps({"promptTokenCount": tokens_after, "totalTokenCount": tokens_after}).decode("utf-8"),
-        )
-
-        EchoAEC.record_event(
-            state_manager=state_manager,
-            event_name="context_compaction",
-            status="completed",
-            summary=f"Checkpoint Cognitif #{new_compaction_count} généré ({total_compacted_turns} tours condensés, {tokens_before} -> {tokens_after} tokens).",
-            resource_type="aec_event",
-        )
-
-        return new_state
+    if signature:
+        for p in parts:
+            if isinstance(p, dict) and "text" in p:
+                p["thoughtSignature"] = signature
+                return
 

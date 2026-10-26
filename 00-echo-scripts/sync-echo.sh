@@ -1,16 +1,19 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : sync-echo.sh
-# VERSION : 4.11
+# VERSION : 5.226.18.0
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
-# CHANGELOG 4.11 : Ajout d'un encart visuel de versioning Git interactif (Avant/Après).
-# CHANGELOG 4.10 : Déploiement déclaratif automatique via boucle regex. Suppression des fantômes.
-# CHANGELOG 4.9 : Nettoyage conditionnel (sed) des caractères CRLF/BOM pour préserver le cache BuildKit.
 # ROLE : 
 # 1. SYNCHRONISATION DU CODE SOURCE (GitHub -> Local Source)
 # 2. DÉPLOIEMENT DES FICHIERS (Local Source -> /opt/ECHO/...)
 # ==============================================================================
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 4.11: Ajout d'un encart visuel de versioning Git interactif (Avant/Après).
+# 4.10: Déploiement déclaratif automatique via boucle regex. Suppression des fantômes.
+# 4.9: Nettoyage conditionnel (sed) des caractères CRLF/BOM pour préserver le cache BuildKit.
 
 # --- 0. INITIALISATION CORE ---
 ECHO_ROOT="/opt/ECHO"

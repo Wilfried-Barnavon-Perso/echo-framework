@@ -40,20 +40,20 @@
     </p>
     <ul>
       <li><strong>Gestion de votre Calendrier :</strong> Vous pouvez demander à ECHO de lister ou lire vos événements, de vérifier vos disponibilités, de rechercher un rendez-vous, de planifier ou modifier un événement (avec titre, lieu, description et horaires) ou d'annuler un créneau devenu obsolète.</li>
-      <li><strong>Programmation de Tâches Récurrentes (CRON Cognitif) :</strong> Vous pouvez ordonner à ECHO de programmer, lister, inspecter, modifier ou supprimer ses propres missions différées ou périodiques (par exemple : <em>« Tous les lundis à 8h, fais une synthèse des nouvelles vulnérabilités critiques et classe-la dans mon dossier Veille »</em>). À chaque échéance, le système crée automatiquement une nouvelle discussion dédiée dans le dossier choisi et exécute la mission sans que vous ayez à intervenir.</li>
+      <li><strong>Programmation de Tâches Récurrentes (CRON Cognitif) &amp; Organisation :</strong> Vous pouvez ordonner à ECHO de programmer, lister, inspecter, modifier ou supprimer ses propres missions différées ou périodiques (par exemple : <em>« Tous les lundis à 8h, fais une synthèse des nouvelles vulnérabilités critiques et classe-la dans mon dossier Veille »</em>), mais aussi d'explorer vos dossiers et les étiquettes (tags) de vos discussions pour retrouver instantanément le bon espace de classement. À chaque échéance, le système crée automatiquement une nouvelle discussion dédiée dans le dossier choisi et exécute la mission sans que vous ayez à intervenir.</li>
     </ul>
 
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Strategic Planner (<code>strategic_planner.py</code> v1.14)</h3>
+        <h3>1. Strategic Planner (<code>strategic_planner.py</code> v5.229.0.0)</h3>
         <ul>
           <li><strong>Conception &amp; Persistance Git :</strong> <code>build_plan</code> (propulsé par <code>MODEL_PROMETHEUS</code> avec <code>override_thinking="high"</code>) génère deux fichiers liés dans le Codex Git (<code>main</code>) et les indexe dans la table SQLite <code>echo_resources</code> : le document stratégique <code>{plan_id}_{slug}.md</code> (statut initial <code>proposed</code>) et la liste de tâches <code>tasks_{plan_id}_{slug}.md</code>.</li>
           <li><strong>Validation, Suivi Tactique &amp; Analyse :</strong> <code>process_plan</code> soumet le plan via une modale de confirmation interactive (transition <code>proposed</code> &rarr; <code>executing</code>). <code>update_plan</code> permet de réviser la stratégie tant qu'elle est au statut <code>proposed</code>, tandis que <code>update_tasks</code> (<code>MODEL_APOLLO</code>) assure le suivi tactique des cases à cocher (<code>[ ]</code>, <code>[/]</code>, <code>[x]</code>, <code>[!]</code>, <code>[-]</code>), complétés par <code>read_plan</code>, <code>delete_plan</code> et <code>analyze_plan</code> (<code>MODEL_PROMETHEUS</code>, <code>override_thinking="high"</code>).</li>
           <li><strong>Proprioception :</strong> Le modèle consulte l'état des plans à la demande via <code>query_registry</code> afin de préserver la fenêtre contextuelle.</li>
         </ul>
 
-        <h3>2. Coding Worker &amp; Code Executor (<code>worker_api.py</code> v6.11 &amp; <code>code_executor_tool.py</code> v7.10)</h3>
+        <h3>2. Coding Worker &amp; Code Executor (<code>worker_api.py</code> v5.226.18.0 &amp; <code>code_executor_tool.py</code> v5.229.0.0)</h3>
         <p>Micro-service Docker isolé (<code>echo-coding-worker</code>, IP <code>.21</code> sur <code>echo-sandbox</code>, Flask Port 5000) exécutant Python et Node.js.</p>
         <ul>
           <li><strong>Confinement Bubblewrap (<code>bwrap</code>) &amp; Linting Pré-Exécution :</strong> Chaque script est validé syntaxiquement avant lancement (<code>py_compile</code> pour Python, <code>node -c</code> pour Node.js) puis exécuté depuis l'espace <code>sandbox</code> du Codex dans un namespace isolé avec montages contrôlés (<code>/sandbox</code>, <code>/main</code>, <code>/files</code>, <code>/echo_libs_sandbox</code>, <code>/sandbox-agent-readme.txt</code> et <code>.tmp</code>). La sortie texte est plafonnée par <code>ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS = 131 072</code> octets (131 Ko, protection anti-OOM).</li>
@@ -61,11 +61,11 @@
           <li><strong>Supervisor Pattern &amp; JS Heartbeat (Anti-Zombie) :</strong> Un pacemaker JS surveille la fenêtre du Sandbox Monitor. En cas de fermeture par l'utilisateur, d'expiration du Boot Timeout ou d'appel à l'outil <code>kill_sandbox_execution</code>, le superviseur invoque la route distante <code>/kill</code> qui détruit immédiatement l'arbre de processus (PID tracking dans <code>_active_sandboxes</code>).</li>
         </ul>
 
-        <h3>3. Pilotage du Calendrier &amp; Automatisations Open WebUI (<code>generalist_tools.py</code> v1.31)</h3>
+        <h3>3. Pilotage du Calendrier, Étiquettes &amp; Automatisations Open WebUI (<code>generalist_tools.py</code> v5.229.2.1)</h3>
         <p>Les fonctions natives d'Open WebUI sont encapsulées de manière sécurisée par le proxy <code>safe_owui_call</code> (filtrage dynamique de signature via <code>inspect.signature</code> et retour normalisé <code>wrap_tool_output</code>) :</p>
         <ul>
           <li><strong>Calendrier UI :</strong> <code>create_ui_calendar_event</code> (titre, description, lieu, dates <code>start</code>/<code>end</code> au format strict ISO 8601), <code>update_ui_calendar_event</code>, <code>read_ui_calendar_events</code>, <code>list_ui_calendar_events</code>, <code>search_ui_calendar_events</code> et <code>delete_ui_calendar_event</code>.</li>
-          <li><strong>CRON Cognitif &amp; Consultant Stratège :</strong> <code>create_ui_automation</code> programme des tâches de fond récurrentes ou ponctuelles selon la norme iCalendar <code>RRULE</code> (avec <code>DTSTART</code> obligatoire si <code>COUNT</code> est défini) et résout ou crée automatiquement le dossier cible (<code>target_folder_name</code>, assisté de <code>list_ui_folders</code>). Chaque déclenchement instancie un chat indépendant. Complété par <code>update_ui_automation</code>, <code>read_ui_automations</code>, <code>list_ui_automations</code>, <code>delete_ui_automation</code>, <code>wait_timer</code> et <code>delegate_to_tool_consultant</code> (Agent Stratège Stateless sur <code>MODEL_PROMETHEUS</code>, <code>override_thinking="medium"</code>).</li>
+          <li><strong>CRON Cognitif, Tags &amp; Conseiller Opérationnel Hybride :</strong> <code>create_ui_automation</code> programme des tâches de fond récurrentes ou ponctuelles selon la norme iCalendar <code>RRULE</code> (avec <code>DTSTART</code> obligatoire si <code>COUNT</code> est défini, modèle fixé sur <code>OWUI_ORCHESTRATOR_MODEL</code> / <code>echo_orchestrator</code>) et résout ou crée automatiquement le dossier cible (<code>target_folder_name</code>, assisté de <code>list_ui_folders</code>). Chaque déclenchement instancie un chat indépendant. Complété par <code>update_ui_automation</code> (re-verrouillage automatique du modèle), <code>read_ui_automations</code>, <code>list_ui_automations</code>, <code>delete_ui_automation</code>, <code>list_ui_tags</code> (interrogation de la table SSoT <code>webui.db::tag</code> pour la conversation courante ou l'ensemble des conversations), <code>wait_timer</code>, <code>ask_user</code> et <code>tool_advisor</code> (Agent Conseiller Opérationnel Hybride exécuté sur <code>MODEL_APOLLO</code> avec <code>override_thinking="medium"</code>, pré-injecté avec la table des matières des 10 manuels <code>14-owui-libs/tool_guides/*.md</code> via <code>EchoToolGuidesManager</code>).</li>
         </ul>
       </div>
     </details>
@@ -77,7 +77,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.226.5 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.15 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

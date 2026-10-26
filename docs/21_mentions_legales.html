@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Conditions Générales d'Utilisation, Politique de Confidentialité et Cadre Juridique du Framework Open Source ECHO v5.">
+  <title>ECHO v5 - 21. Mentions Légales, CGU &amp; Confidentialité</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>21. Mentions Légales, CGU &amp; Confidentialité</h1>
+
+    <p>
+      Ce document formalise le cadre juridique, contractuel et réglementaire régissant le projet open-source <strong>ECHO</strong> (<em>Espace Cognitif Heuristique Opérationnel</em>), les conditions d'utilisation de son infrastructure logicielle, ainsi que la politique de traitement et de protection des données à caractère personnel applicable aux instances déployées.
+    </p>
+
+    <hr>
+
+    <div class="didactic-box">
+      <h4>Synthèse de Souveraineté &amp; Zéro Télémétrie</h4>
+      <p>
+        ECHO est une suite logicielle libre conçue pour l'<strong>auto-hébergement souverain</strong>. L'Auteur et les mainteneurs du projet ne fournissent aucun service SaaS centralisé, n'hébergent aucune donnée utilisateur et ne collectent <strong>aucune métrique, télémétrie ou information d'usage</strong> depuis les instances déployées. Chaque déploiement constitue un système autonome placé sous l'autorité exclusive de son opérateur.
+      </p>
+    </div>
+
+    <h2>1. Cadre Juridique et Licence Open Source</h2>
+    <p>
+      Le Framework ECHO est un projet libre développé par <strong>Wilfried BARNAVON</strong> et ses contributeurs, distribué sous les termes de la licence <strong>Apache License 2.0</strong>.
+    </p>
+    <div class="note-box">
+      <p><strong>Stipulation de Garantie et Limitation de Responsabilité (Apache 2.0, Art. 7 &amp; 8) :</strong></p>
+      <p>
+        Le logiciel est fourni « EN L'ÉTAT » (<em>AS IS</em>), sans garantie d'aucune sorte, expresse ou implicite. En aucun cas l'Auteur ou les contributeurs ne pourront être tenus responsables de tout préjudice direct ou indirect (notamment pertes de données, altérations de code, interruptions de service ou failles de sécurité) résultant de l'installation, du fonctionnement ou de l'exploitation de l'infrastructure logicielle.
+      </p>
+    </div>
+
+    <h2>2. Conditions Générales d'Utilisation (CGU)</h2>
+    <p>
+      Les présentes conditions définissent les responsabilités respectives des acteurs intervenant dans le cycle de déploiement et d'usage d'ECHO :
+    </p>
+    <ul>
+      <li>
+        <strong>L'Auteur et les Mainteneurs :</strong> Mettent à disposition le code source public du projet. Ils n'exploitent aucun serveur applicatif pour le compte d'autrui, n'exercent aucun contrôle sur les instances tierces et n'assument aucune obligation d'assistance, de maintenance ou de support opérationnel.
+      </li>
+      <li>
+        <strong>L'Opérateur d'Instance (Hébergeur / Administrateur) :</strong> Toute personne physique ou morale déployant l'infrastructure ECHO sur son matériel, sa machine virtuelle (Hyper-V, Linux, WSL2) ou son hébergement cloud. L'Opérateur est seul responsable de l'administration système, du durcissement de la sécurité réseau, de la garde des clés d'API tierces, de la gestion des comptes et de la sauvegarde des bases de données.
+      </li>
+      <li>
+        <strong>L'Utilisateur Final :</strong> Toute personne physique accédant à l'interface conversationnelle (Open WebUI) d'une instance. L'Utilisateur est seul responsable des instructions, données, documents et secrets qu'il transmet au système.
+      </li>
+    </ul>
+
+    <h3>Règles d'Usage et Décharge de Responsabilité</h3>
+    <p>
+      L'usage d'ECHO pour des activités illicites (ingénierie malveillante, génération de logiciels malveillants, atteintes aux systèmes automatisés de données, violation de droits de propriété intellectuelle) est formellement prohibé.
+    </p>
+    <p>
+      Conformément au <strong>Méta-Principe de Sécurité et d'Intégrité (MPSI)</strong> défini dans le Kernel de base, le système opère dans un périmètre local souverain au sein duquel l'Utilisateur est présumé propriétaire légitime et consentant des données manipulées. En conséquence, l'Utilisateur assume l'entière responsabilité légale, déontologique et financière des requêtes qu'il formule et des autorisations d'action qu'il accorde au système.
+    </p>
+
+    <h2>3. Encadrement Spécifique des Agents Autonomes</h2>
+    <p>
+      ECHO intègre des mécanismes d'agentivité capables d'exécuter des actions techniques programmatiques. Leur emploi est soumis à des règles impératives :
+    </p>
+    <div class="warning-box">
+      <p><strong>Supervision Humaine Obligatoire (Human-in-the-Loop) :</strong></p>
+      <p>
+        L'Utilisateur demeure l'autorité décisionnelle finale. Toute modification de fichiers sur le Codex Git (<code>echo_codex_tool</code>), toute exécution de commandes ou de scripts dans le conteneur d'exécution (<code>code_executor_tool</code>), et tout déploiement de scénarios automatisés (<code>n8n_orchestrator_tool</code>) requièrent la validation ou la délégation expresse et avertie de l'Utilisateur. L'Auteur décline toute responsabilité en cas de perte de données ou de dysfonctionnement survenu suite à l'exécution de code ou de commandes générées par les modèles.
+      </p>
+    </div>
+    <p>
+      Les réponses et raisonnements produits par les modèles de langage présentent une nature stochastique et probabiliste. Malgré les règles d'ancrage factuel (PRAF) appliquées par le Framework, l'Utilisateur est tenu de vérifier l'exactitude des résultats avant tout emploi en environnement critique, professionnel ou de production.
+    </p>
+
+    <h2>4. Politique de Confidentialité &amp; Protection des Données (RGPD)</h2>
+    <p>
+      Cette section informe les utilisateurs sur les modalités de traitement des données à caractère personnel conformément au Règlement Général sur la Protection des Données (Règlement UE 2016/679) et à la Loi Informatique et Libertés.
+    </p>
+
+    <h3>Qualification du Responsable de Traitement</h3>
+    <p>
+      Pour toute instance déployée, le <strong>Responsable du Traitement</strong> au sens de l'Article 4(7) du RGPD est l'<strong>Opérateur de l'Instance</strong> qui a mis en œuvre le système et défini les accès. L'Auteur du logiciel libre n'a aucun statut de responsable ni de sous-traitant à l'égard des données traitées par les instances tierces.
+    </p>
+
+    <h3>Cartographie des Données Locales et Souveraines</h3>
+    <p>
+      Les traitements suivants demeurent strictement confinés à l'infrastructure locale de l'instance hôte :
+    </p>
+    <ul>
+      <li><strong>Comptes et Sessions :</strong> Identifiants, courriels et empreintes cryptographiques des mots de passe gérés au sein de la base interne d'Open WebUI.</li>
+      <li><strong>Historique Conversationnel :</strong> Échanges textuels, contextes enrichis et signatures cognitives persistés dans la table <code>message_shadows</code> de la base SQLite locale <code>session.db</code>.</li>
+      <li><strong>Mémoire Sémantique à Long Terme :</strong> Profils de préférences (PACP), hypothèses d'apprentissage (PRAC) et résumés vectorisés stockés dans la base vectorielle locale <strong>Qdrant</strong>.</li>
+      <li><strong>Espaces de Travail et Fichiers :</strong> Dépôts Git locaux du Codex hébergeant les documents et plans de travail.</li>
+      <li><strong>Coffre-fort d'Identités (Identity Vault) :</strong> Chiffrement et stockage local des clés et identifiants secondaires délégués par l'utilisateur.</li>
+      <li><strong>Journaux de Sécurité :</strong> Adresses IP et en-têtes analysés localement par le pare-feu applicatif <strong>BunkerWeb</strong> pour la prévention des attaques et la limitation de débit.</li>
+    </ul>
+
+    <h3>Inférence Vectorielle Déportée (Edge Computing)</h3>
+    <p>
+      Pour la vectorisation des documents et de l'historique conversationnel (RAG), ECHO privilégie l'inférence directement sur le poste de l'utilisateur via la passerelle <code>edge_embed_bridge_filter.py</code>. Sur tout navigateur compatible WebGPU, le modèle d'embedding (Harrier ONNX FP16) s'exécute dans la mémoire GPU locale du client. Aucun texte n'est transmis à un service externe pour la génération d'embeddings. En cas d'indisponibilité matérielle, le traitement bascule sur le conteneur CPU local de l'hôte.
+    </p>
+
+    <h2>5. Services Tiers et Inférence Cloud (Google Gemini)</h2>
+    <p>
+      L'orchestration des modèles de raisonnement profonds fait appel aux interfaces de programmation externes de <strong>Google LLC</strong> :
+    </p>
+    <ul>
+      <li><strong>Données Transmises :</strong> Seuls les éléments nécessaires à la formulation de la réponse (prompts système, mémoires sémantiques contextuelles pertinentes, historique de la session courante et requête utilisateur) sont transmis de manière sécurisée (HTTPS/HTTP2) aux serveurs de l'API.</li>
+      <li><strong>Régime de Confidentialité selon le Type d'Accès :</strong>
+        <ul>
+          <li><em>Google AI Studio (Abonnement Payant / Pay-as-you-go) :</em> Les flux ne font l'objet d'aucun réentraînement ni d'examen humain par Google.</li>
+          <li><em>Google AI Studio (Tier Gratuit) :</em> Les conditions d'utilisation de Google stipulent que les données peuvent être échantillonnées et relues pour l'amélioration de ses modèles.</li>
+          <li><em>Google Cloud Vertex AI / Code Assist (OAuth2) :</em> Régime contractuel d'entreprise assurant la stricte conformité RGPD et la non-réutilisation des données.</li>
+        </ul>
+      </li>
+    </ul>
+
+    <div class="warning-box">
+      <p><strong>Avertissement Impératif sur l'Évolutivité des Conditions Google :</strong></p>
+      <p>
+        Les conditions d'utilisation, politiques de confidentialité et accords de traitement de données (DPA) de Google LLC sont régis exclusivement par cette société et sont <strong>susceptibles d'évoluer unilatéralement et régulièrement</strong>. Il appartient à chaque Opérateur d'instance et à chaque Utilisateur de <strong>consulter et relire périodiquement la documentation juridique officielle de Google</strong> afin de vérifier l'adéquation continue des conditions de service avec leurs impératifs de confidentialité, de conformité réglementaire ou de secret d'affaires.
+      </p>
+    </div>
+
+    <h2>6. Exercice des Droits des Personnes</h2>
+    <p>
+      Conformément aux Articles 15 à 22 du RGPD, chaque utilisateur dispose d'un droit d'accès, de rectification, de limitation, d'opposition, de portabilité et d'effacement de ses données personnelles.
+    </p>
+    <p>
+      Ces droits s'exercent directement :
+    </p>
+    <ul>
+      <li>Auprès de l'<strong>Opérateur de l'instance</strong> concernée, qui détient l'accès d'administration aux bases de données.</li>
+      <li>Via les fonctionnalités natives intégrées dans ECHO, notamment l'action <code>purge_memory_action</code> permettant à l'utilisateur de purger ses souvenirs vectoriels dans Qdrant, ou les options de suppression d'historique dans Open WebUI.</li>
+    </ul>
+    <p>
+      L'Auteur du Framework ne détenant aucun accès aux environnements privés déployés, il est techniquement et légalement dans l'impossibilité de traiter les demandes relatives aux données hébergées sur une instance tierce.
+    </p>
+
+    <!-- ENCART INGÉNIEUR UNIQUE -->
+    <details class="tech-spec" id="dossier-ingenierie">
+      <summary>⚙️ Dossier d'Ingénierie : Frontières Réseau, Stockage et Conformité</summary>
+
+      <h3>Cartographie des Flux et Frontières de Confidentialité</h3>
+      <div class="mermaid">
+flowchart TD
+    subgraph Client["Périmètre Poste Utilisateur"]
+        Browser["Navigateur Web (Open WebUI)"]
+        WebGPU["WebGPU In-Browser Harrier ONNX (fp16)<br/>Embeddings sans fuite réseau"]
+    end
+
+    subgraph HostVM["Périmètre Hôte / VM Souveraine"]
+        WAF["BunkerWeb WAF (Reverse Proxy / TLS)"]
+        OWUI["Open WebUI Core (SQLite WAL)"]
+        StateManager["ECHO State Manager (session.db SQLite)"]
+        QdrantDB["Qdrant Vector DB (Stockage mémoires PACP/PRAC)"]
+        CodexGit["Codex Git Local (/app/backend/data/users/{uid}/chats/{cid}/codex)"]
+        VaultDB["Identity Vault (Secrets chiffrés locaux)"]
+        WorkerCode["21-docker-coding-worker (Sandbox isolée)"]
+        WorkerN8N["26-docker-n8n-worker (Automatisations locales)"]
+    end
+
+    subgraph ExternalCloud["Périmètre Fournisseurs Tiers"]
+        GoogleAPI["Google Gemini API (Inférence LLM chiffrée)"]
+        SearxngDDG["Méta-recherche (SearXNG / DuckDuckGo)"]
+    end
+
+    Browser -->|TLS / Port 443| WAF
+    WAF --> OWUI
+    OWUI <--> StateManager
+    StateManager <--> QdrantDB
+    StateManager <--> CodexGit
+    StateManager <--> VaultDB
+    OWUI <--> WorkerCode
+    OWUI <--> WorkerN8N
+    WebGPU -.->|Vecteurs bruts via WS/HTTP| OWUI
+    StateManager -->|HTTPS / HTTP2 Stealth| GoogleAPI
+    StateManager -->|HTTP / Interne| SearxngDDG
+      </div>
+
+      <h3>Matrice Technique de Persistance et d'Isolation</h3>
+      <table class="audit-table">
+        <thead>
+          <tr>
+            <th>Composant</th>
+            <th>Type de Stockage</th>
+            <th>Chemin / Volume Interne</th>
+            <th>Données Traitées</th>
+            <th>Portée Réseau</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>BunkerWeb</strong></td>
+            <td>Logs fichiers / Cache Nginx</td>
+            <td><code>bw_data</code></td>
+            <td>IPs clientes, User-Agents, requêtes d'accès</td>
+            <td>Exposé WAN/LAN (Ports 80, 443)</td>
+          </tr>
+          <tr>
+            <td><strong>Open WebUI</strong></td>
+            <td>SQLite (WAL mode)</td>
+            <td><code>/app/backend/data</code></td>
+            <td>Comptes, mots de passe salés, chats, réglages</td>
+            <td>Réseau interne Docker bridge</td>
+          </tr>
+          <tr>
+            <td><strong>Session State</strong></td>
+            <td>SQLite (WAL mode)</td>
+            <td><code>/app/backend/data/users/{uid}/chats/{cid}/session.db</code></td>
+            <td>Shadows de messages, métriques tokens, HUDs WM</td>
+            <td>Réseau interne Docker bridge</td>
+          </tr>
+          <tr>
+            <td><strong>Mémoire Vectorielle</strong></td>
+            <td>Qdrant (Vecteurs + Payload)</td>
+            <td><code>/qdrant/storage</code></td>
+            <td>Souvenirs, vecteurs PACP/PRAC, smart context</td>
+            <td>Port interne 6333 isolé</td>
+          </tr>
+          <tr>
+            <td><strong>Codex Git</strong></td>
+            <td>Système de fichiers / Git</td>
+            <td><code>/app/backend/data/users/{uid}/chats/{cid}/codex</code></td>
+            <td>Code source projets, documents de travail, plans</td>
+            <td>Montage local sécurisé</td>
+          </tr>
+          <tr>
+            <td><strong>Inférence Edge</strong></td>
+            <td>Mémoire GPU Client (VRAM)</td>
+            <td>Cache navigateur (IndexedDB ONNX)</td>
+            <td>Modèle Harrier ONNX 0.6B FP16, chunks textuels</td>
+            <td>Strictement local au navigateur</td>
+          </tr>
+          <tr>
+            <td><strong>Sandbox Exécution</strong></td>
+            <td>Conteneur éphémère</td>
+            <td>Volume temporaire sandbox</td>
+            <td>Scripts Python / Bash générés et exécutés</td>
+            <td>Réseau Docker isolé sans accès hôte direct</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Recommandations de Déploiement en Environnement d'Entreprise</h3>
+      <ul>
+        <li><strong>Désignation d'un DPO :</strong> Toute organisation déployant ECHO pour ses collaborateurs doit consigner le système au Registre des Traitements et désigner le point de contact DPO interne.</li>
+        <li><strong>Sélection du Tier d'Inférence :</strong> Il est recommandé d'utiliser exclusivement des identifiants Google Cloud Vertex AI ou Google Cloud Code Assist d'entreprise pour bénéficier d'un accord formel de sous-traitance (DPA).</li>
+        <li><strong>Politique de Secrets :</strong> L'outil <code>identity_vault_tool</code> doit être réservé aux environnements dont le chiffrement des disques au repos (BitLocker / LUKS) est activé.</li>
+      </ul>
+    </details>
+
+    <div class="transition-text">
+      <a href="20_registre_audit.html">&larr; 20. Registre d'Audit</a>
+    </div>
+
+    <footer>
+      ECHO Framework - Version 5.231.15 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+    </footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+</html>

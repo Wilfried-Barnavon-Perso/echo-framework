@@ -7,8 +7,8 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Installation de NodeJS (le reste est dans la base partagée) et Git pour les paquets Python
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+# Installation de NodeJS 22.x LTS (le reste est dans la base partagée) et Git pour les paquets Python
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs git \
     && rm -rf /var/lib/apt/lists/*
 

@@ -8,7 +8,7 @@ Ce dossier contient le code source de l'**API Playwright**. Il s'agit d'un conte
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `browser_api.py` (v9.31)
+### `browser_api.py` (v5.226.18.0)
 Fichier monolithique (environ 57Ko) exposant l'API de contrôle du navigateur asynchrone (FastAPI).
 
 #### A. Pilotage Asynchrone (Playwright)

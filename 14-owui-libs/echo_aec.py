@@ -2,16 +2,16 @@
 """
 title: ECHO AEC Manager
 author: Wilfried BARNAVON
-version: 2.5
+version: 5.227.1.1
 description: Composant système interne : ECHO AEC Manager.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.227.1.1: Suppression de render_context_checkpoint suite à la suppression du compactage in-place.
+# 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.5: Ajout de render_context_checkpoint pour l'encapsulation XML déterministe de <artifact id="AEC_context_checkpoint">.
 # 2.4: Ajout de render_directive pour le formatage XML natif des directives système ponctuelles (PIS et mise à niveau).
 # 2.3: Ajout de drain_pending_directives (transaction atomique), purge_orphaned_events et status optionnel dans record_event.
-# 2.2: Rendu spécifique de <artifact id="AEC_directive"> pour les types aec_directive.
-# 2.1: Refonte totale de render_system_events pour supporter le XML natif et migration globale vers <artifact>.
 
 import time
 import sqlite3
@@ -186,23 +186,5 @@ class EchoAEC:
             f'<artifact id="AEC_smart_context" filename="{filename}" mime_type="{mime}" mode="{mode}" source_id="{source_id}">\n'
             f'{summary}\n\n{sys_msg}\n'
             f'</artifact>'
-        )
-
-    @staticmethod
-    def render_context_checkpoint(summary: str, compacted_turns: int, updated_at_str: str, compaction_count: int = 1) -> str:
-        """Génère la balise XML <artifact id="AEC_context_checkpoint"> pour le compactage contextuel in-place."""
-        return (
-            f'<artifact id="AEC_context_checkpoint" source="Systeme" compaction_count="{compaction_count}" '
-            f'compacted_turns="{compacted_turns}" timestamp="{updated_at_str}">\n'
-            f'  <directive_continuite_rag>\n'
-            f'    Les {compacted_turns} premiers tours de cette session (en amont de ce message pivot) ont été condensés dans ce Checkpoint Cognitif (#{compaction_count}).\n'
-            f'    AUCUNE DONNÉE N\'EST PERDUE : l\'intégralité des échanges verbatims antérieurs demeure indexée dans la Mémoire Vectorisée de Session.\n'
-            f'    - Si un détail verbatim, un extrait de code exact ou un log antérieur est requis, le Modèle DOIT impérativement interroger `search_sessions_context(query=...)`.\n'
-            f'    - Pour consulter l\'état exhaustif, réel et à jour des ressources (fichiers, ECHO Codex, plans stratégiques, workflows N8N), le Modèle DOIT IMPÉRATIVEMENT utiliser l\'outil `query_registry`.\n'
-            f'  </directive_continuite_rag>\n'
-            f'  <synthese_consolidee>\n'
-            f'{summary.strip()}\n'
-            f'  </synthese_consolidee>\n'
-            f'</artifact>\n\n'
         )
 

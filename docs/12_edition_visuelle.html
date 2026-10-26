@@ -36,6 +36,9 @@
     </p>
     <ul>
       <li><strong>Travail à quatre mains :</strong> L'IA peut modifier une partie spécifique du texte, et vous pouvez aussitôt cliquer dedans pour corriger une phrase à la main, tout cela dans la même fenêtre.</li>
+      <li><strong>Ouverture directe depuis vos messages (<code>✏️</code> / <code>👁️</code>) :</strong> Dès qu'ECHO crée ou modifie un fichier, son nom devient cliquable dans la conversation. Un clic dessus ouvre immédiatement l'éditeur sur le bon fichier ou la bonne révision, sans avoir à chercher dans une arborescence.</li>
+      <li><strong>Aperçu visuel automatique &amp; Inspection binaire :</strong> Les documents mis en forme (Markdown, pages HTML, feuilles de style CSS, graphiques SVG, PDF et images) s'affichent directement en mode aperçu dès l'ouverture (bascule instantanée vers le code source via le bouton <code>👁️</code>), tandis que les fichiers binaires bénéficient d'un éditeur hexadécimal dédié.</li>
+      <li><strong>Consultation inter-conversations protégée :</strong> Un sélecteur vous permet de parcourir les fichiers créés dans vos autres discussions. Pour vous éviter toute modification accidentelle hors contexte, ces fichiers externes s'ouvrent automatiquement avec un badge <code>🔒 Lecture Seule</code>.</li>
       <li><strong>Machine à remonter le temps :</strong> Le Codex sauvegarde automatiquement l'historique complet de vos versions. Si une modification proposée par l'IA ne vous convient pas, vous pouvez naviguer dans le passé et restaurer la version précédente en un clic.</li>
       <li><strong>Actions rapides :</strong> Vous disposez de 8 commandes directes (<em>Raccourcir, Allonger, Commenter, Décommenter, Refactoriser, Corriger, Générer des tests, Optimiser</em>) qui ordonnent à l'IA d'agir sur le bloc de texte ou de code sélectionné, sans avoir à rédiger de consigne dans le chat.</li>
     </ul>
@@ -43,15 +46,16 @@
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Visual Intelligence (<code>universal_visual_generator.py</code> v5.15 &amp; <code>echo_visuals.py</code> v6.3)</h3>
+        <h3>1. Visual Intelligence (<code>universal_visual_generator.py</code> v5.229.0.0 &amp; <code>echo_visuals.py</code> v5.226.18.0)</h3>
         <p>Le générateur s'appuie sur le pattern <strong>Data Island</strong>. Il produit la spécification interactive (Mermaid, ECharts, Markmap, D3.js, vis-network, Leaflet) et l'injecte dans le DOM via <code>window.echoRenderVisual</code> avec support natif du zoom, pan et drag.</p>
 
-        <h3>2. Architecture ECHO Codex Multi-Workspaces</h3>
-        <p>L'éditeur Codex repose sur trois composants synchronisés :</p>
+        <h3>2. Architecture ECHO Codex Multi-Workspaces &amp; Cross-Chat</h3>
+        <p>L'éditeur Codex repose sur quatre composants synchronisés :</p>
         <ul>
-          <li><strong>Le Moteur Git (<code>echo_codex_git.py</code> v1.10) :</strong> Surcouche Python pure autour de <code>dulwich</code> gérant deux espaces de travail distincts (<code>ECHO_CODEX_WORKSPACES</code> : <code>main</code> versionné sous Git et <code>sandbox</code> dédié à l'exécution). Il intègre un contrôle d'état en <strong>O(1) (<code>get_latest_state</code>)</strong>, filtre les répertoires massifs via <code>ECHO_SYNC_EXCLUDE_LIST</code> (<code>node_modules</code>, <code>.venv</code>, etc.) pour prévenir tout gel de l'arborescence UI, et retourne <code>(commit_hash, paths_to_rm)</code> lors d'un <code>delete_file</code> pour purger récursivement SQLite.</li>
-          <li><strong>L'Interface HUD (<code>echo_codex_action.py</code> v3.17) :</strong> Injection de <strong>Monaco Editor</strong> propulsée par le protocole <strong>UCTP</strong> (<code>EchoEvents</code>), avec gestion native des dossiers (colonne <code>item_type = file | directory</code> dans <code>echo_resources</code>), lecteur <strong>PDF WYSIWYG</strong> par reconstruction Blob, verrou logiciel anti-Race Condition à la sauvegarde et ping <code>heartbeat</code> déporté via <code>asyncio.to_thread</code>.</li>
-          <li><strong>L'Outil LLM (<code>echo_codex_tool.py</code> v2.15) :</strong> Expose 10 primitives d'édition et de voyage temporel (<code>create_codex</code>, <code>read_codex</code>, <code>edit_codex</code>, <code>delete_codex</code>, <code>list_codex</code>, <code>search_codex</code> incluant le mode <code>trace_history</code>, <code>history_codex</code>, <code>restore_codex</code>, <code>summarize_codex</code> exécuté sur <code>MODEL_APOLLO</code> avec <code>thinking="medium"</code> et <code>maxOutputTokens: 8192</code>) ainsi que le trigger <strong><code>open_codex_ui</code></strong> permettant d'ouvrir directement un fichier ciblé (<code>current_file</code>) sur l'écran de l'utilisateur via <code>events.trigger_action()</code> en ancrant <code>message_id</code> sur le message utilisateur immuable (<code>_echo_user_msg_id</code>) pour prévenir tout écrasement asynchrone par le write-back de <code>Chat.svelte:1724</code>.</li>
+          <li><strong>Le Moteur Git (<code>echo_codex_git.py</code> v5.231.2.1) :</strong> Surcouche Python pure autour de <code>dulwich</code> gérant deux espaces de travail distincts (<code>ECHO_CODEX_WORKSPACES</code> : <code>main</code> versionné sous Git et <code>sandbox</code> dédié à l'exécution). Il intègre un contrôle d'état en <strong>O(1) (<code>get_latest_state</code>)</strong>, filtre les répertoires massifs via <code>ECHO_SYNC_EXCLUDE_LIST</code> (<code>node_modules</code>, <code>.venv</code>, etc.), supporte la lecture de fichiers binaires encodés en Base64 (<code>read_file_binary</code> jusqu'à 10 Mo) et retourne <code>(commit_hash, paths_to_rm)</code> lors d'un <code>delete_file</code> pour purger récursivement SQLite.</li>
+          <li><strong>L'Interface HUD &amp; Action (<code>echo_codex_ui.py</code> v5.231.6.1 &amp; <code>echo_codex_action.py</code> v5.231.6.1) :</strong> Injection de <strong>Monaco Editor</strong> (propulsé par le Window Manager UCTP/SSE/RPC), avec aperçu multi-format (Markdown via <code>marked.js</code> chargé en isolation CommonJS UMD, HTML Sandboxed Iframe, CSS Palette &amp; Typography Inspector, SVG Zoom/Pan, Images et PDF WYSIWYG) activé par défaut (<code>DEFAULT_PREVIEW_EXTS</code>), <strong>Éditeur Hexadécimal Binaire</strong>, sélecteur de conversation Cross-Chat (actions <code>switch_chat</code> et <code>list_chats</code>) verrouillant l'interface en lecture seule (<code>isReadOnlyChat</code>) lorsque <code>currentChatId !== activeChatId</code>, et verrou logiciel anti-Race Condition à la sauvegarde.</li>
+          <li><strong>L'Outil LLM (<code>echo_codex_tool.py</code> v5.231.5.1) :</strong> Expose 11 primitives d'édition, d'exploration inter-conversations et de voyage temporel (<code>create_codex</code>, <code>read_codex</code>, <code>edit_codex</code>, <code>delete_codex</code>, <code>list_codex</code>, <code>list_other_chats_ids</code>, <code>search_codex</code> incluant le mode <code>trace_history</code>, <code>history_codex</code>, <code>restore_codex</code>, <code>summarize_codex</code> exécuté sur <code>MODEL_APOLLO</code> avec <code>thinking="medium"</code> et <code>maxOutputTokens: 8192</code>, et <code>open_codex_ui</code> supportant <code>target_chat_id</code> et <code>commit_hash</code>). Chaque opération retourne une directive URN (<code>_emit_urn_directive</code>) guidant le modèle vers la syntaxe <code>[nom_du_fichier](codex:scope:workspace/chemin)</code>.</li>
+          <li><strong>Le Filtre de Liens Interactifs (<code>codex_links_filter.py</code> v5.231.11.1) :</strong> Vérifie l'existence physique via <code>check_codex_file_exists</code> (<code>echo_paths.py</code> v5.230.0.1), transforme en Outlet les URNs en ancres <code>#codex:...</code> interceptées par <code>window.echoOpenCodex</code> (et neutralise les liens vers des fichiers inexistants), puis les restaure bijectivement en Inlet pour préserver le hash d'invariant de Suture.</li>
         </ul>
       </div>
     </details>
@@ -63,7 +67,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.226.5 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.15 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
