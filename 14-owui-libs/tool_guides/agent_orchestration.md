@@ -1,7 +1,7 @@
 ---
 domain_id: agent_orchestration
-version: 5.229.0.1
-updated_at: 2026-10-22
+version: 5.231.22.1
+updated_at: 2026-10-27
 name: Orchestration Multi-Agents, Sous-Agents Autonomes, Data Broker & Skills
 description: Délégation à un sous-agent outillé (delegate_to_agent), Table Ronde Delphi (consult_council), Ouvriers Supervisés (consult_supervised_workers), Data Broker et gestion des Skills.
 tools: [delegate_to_agent, list_agent_sessions, close_agent_session, summarize_agent_session, consult_council, consult_supervised_workers, list_councils, close_council, list_supervised_tasks, close_supervised_task, forge_skill, list_skills, read_skill, search_skill, delete_user_skill, ask_data_broker]
@@ -47,7 +47,7 @@ Les **Skills** définissent l'expertise métier et la méthodologie d'un sous-ag
 - **Administration des sessions d'agents** :
   - `list_agent_sessions()` : Liste toutes les sessions de sous-agents actives dans la conversation (`sub_sid`, type `agent`/`expert`/`council`/`supervisor`, nombre d'étapes).
   - `summarize_agent_session(sub_sid)` : Génère via `MODEL_APOLLO` un résumé structuré en 4 sections (*Tâche initiale, Outils utilisés, Résultats clés, Conclusion*) de l'historique d'un sous-agent sans le fermer.
-  - `close_agent_session(sub_sid)` : Ferme définitivement la session `sub_sid` et purge son historique SQLite.
+  - `close_agent_session(sub_sid)` : Ferme définitivement la session `sub_sid` et purge son historique de session.
     - **Règle de cycle de vie** : Ne DOIT être appelée QUE lorsque la tâche du sous-agent est réputée définitivement close et validée. Tant qu'il est potentiellement utile de reprendre son travail, d'approfondir ou de lui poser une question de clarification, la session DOIT rester ouverte afin de préserver son fil d'outils et de permettre sa reprise via `delegate_to_agent(..., sub_sid=sub_sid)`.
 
 ### 3.2 Table Ronde Delphi (`consult_council`, `list_councils`, `close_council`)

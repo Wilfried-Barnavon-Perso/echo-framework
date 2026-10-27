@@ -1,17 +1,17 @@
 """
 title: ECHO Identity Vault
 author: ECHO
-version: 5.228.12.1
+version: 5.231.21.3
 description: Coffre-fort universel pour l'authentification des agents (MCP et N8N).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xMiAyMnM4LTQgOC0xMFY1bC04LTMtOCAzdjdjMCA2IDggMTAgOCAxMHoiLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.21.3: Délégation CRUD chiffré à EchoStateManager, correction de l'auto-provisionnement remote_mcp et échappement JSON sûr pour echoVaultUpdate.
 # 5.228.12.1: Résilience RPC post-standby et anti-timeout 60s via EchoEvents (resolve_live_session, wait_hud_action, support ping et reconnect_only).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.1: Suppression totale de la notion d'accès RO/RW (access_level).
 # 1.4: Suppression de la notion d'Alias (multicompte) pour simplifier en accès unique.
-# 1.3: Remplacement de la saisie manuelle des services par une découverte dynamique (API /schemas du MCP Broker).
 
 import sys
 import uuid
@@ -22,11 +22,12 @@ from typing import Any, Optional, List, Dict
 import httpx
 
 sys.path.append("/app/backend/echo_libs")
-from echo_events import EchoEvents
-from echo_state_manager import EchoStateManager
-from echo_ui import EchoUI
+from echo_events import EchoEvents  # noqa: E402
+from echo_state_manager import EchoStateManager  # noqa: E402
+from echo_ui import EchoUI  # noqa: E402
 
 _ACTIVE_VAULT_LOOPS: dict[str, str] = {}
+
 
 class Action:
     class Valves(BaseModel):
@@ -36,45 +37,20 @@ class Action:
         self.valves = self.Valves()
 
     def _init_vault(self, user_id: str) -> EchoStateManager:
-        state = EchoStateManager(user_id=user_id)
-        with state._get_connection() as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS identity_vault (
-                    user_id TEXT, 
-                    service TEXT, 
-                    account_id TEXT, 
-                    credentials TEXT, 
-                    PRIMARY KEY (user_id, service, account_id)
-                )
-            """)
-            conn.commit()
-        return state
+        return EchoStateManager(user_id=user_id)
 
     def _get_accounts(self, state: EchoStateManager) -> List[Dict]:
-        with state._get_connection() as conn:
-            cursor = conn.execute("SELECT service, account_id FROM identity_vault WHERE user_id = ?", (state.user_id,))
-            rows = cursor.fetchall()
-            return [{"service": r[0], "account_id": r[1]} for r in rows]
+        return state.list_vault_accounts()
 
     def _save_account(self, state: EchoStateManager, service: str, account_id: str, credentials: str):
-        with state._get_connection() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO identity_vault (user_id, service, account_id, credentials) VALUES (?, ?, ?, ?)",
-                (state.user_id, service, account_id, credentials)
-            )
-            conn.commit()
+        state.save_vault_credential(service, account_id, credentials)
 
     def _delete_account(self, state: EchoStateManager, service: str, account_id: str):
-        with state._get_connection() as conn:
-            conn.execute(
-                "DELETE FROM identity_vault WHERE user_id = ? AND service = ? AND account_id = ?",
-                (state.user_id, service, account_id)
-            )
-            conn.commit()
+        state.delete_vault_credential(service, account_id)
 
     async def action(self, body: dict, __user__: Optional[dict] = None, __event_emitter__: Any = None, __event_call__: Any = None, __metadata__: Optional[dict] = None, **kwargs):
         events = EchoEvents(__event_emitter__, __event_call__)
-        
+
         if not __event_call__:
             return None
 
@@ -109,7 +85,7 @@ class Action:
                         schemas = resp.json()
             except Exception:
                 pass
-            
+
             # Injection du schéma générique N8N
             schemas["n8n_workflows"] = {
                 "category": "orchestration",
@@ -118,7 +94,7 @@ class Action:
                     {"id": "credentials", "label": "N8N Secret", "type": "text", "help": "Valeur du secret."}
                 ]
             }
-            
+
             if not schemas:
                 schemas = {
                     "default": {
@@ -131,7 +107,7 @@ class Action:
             # 2. Récupération des comptes et génération du HUD JS
             accounts = self._get_accounts(state)
             accounts_json = json.dumps(accounts).decode("utf-8")
-            
+
             hud_js = EchoUI._generate_identity_vault_js(accounts_json, schemas_json, chat_id, mid, model_id)
             await events.call_execute(hud_js)
             await events.status("🔐 ECHO Identity Vault actif.", True)
@@ -168,64 +144,74 @@ class Action:
             elif action_type == "add_account":
                 service = response.get("service")
                 account_id = response.get("account_id")
-                
+
                 # Encodage JSON des champs dynamiques générés par le Schéma
+                dynamic_data = {}
                 if "credentials" in response:
                     credentials = response["credentials"]
+                    try:
+                        parsed = json.loads(credentials)
+                        if isinstance(parsed, dict):
+                            dynamic_data = parsed
+                    except Exception:
+                        pass
                 else:
                     reserved = {"action", "service", "account_id"}
                     dynamic_data = {k: v for k, v in response.items() if k not in reserved}
-                    
-                    # Auto-provisionnement Sémantique si la description est vide
-                    if service == "remote_mcp" and not dynamic_data.get("description"):
-                        try:
-                            url = dynamic_data.get("url", "")
-                            async with httpx.AsyncClient() as client:
-                                rpc = {"jsonrpc": "2.0", "method": "tools/list", "id": 1}
-                                resp = await client.post(url, json=rpc, timeout=5.0)
-                                tools_schema = resp.text
-                                
-                            from echo_gemini_client import EchoGeminiClient
-                            prompt = (
-                                "Objectif : Rédiger une description sémantique d'UNE SEULE PHRASE (maximum 15 mots) "
-                                "définissant le cas d'usage d'un serveur MCP distant, à partir de ses capacités brutes.\n"
-                                f"Capacités extraites : {tools_schema}\n"
-                                "Contrainte : Style impersonnel, direct et technique (ex: 'Fournit la météo et les prévisions mondiales.'). "
-                                "Aucun texte additionnel n'est autorisé."
-                            )
-                            dynamic_data["description"] = await EchoGeminiClient.call_distillation(
-                                prompt=prompt, __user__=__user__, __metadata__={}, is_json=False
-                            )
-                        except Exception as _e:
-                            dynamic_data["description"] = "Serveur MCP distant (Auto-provisionnement échoué)."
-                            
                     credentials = json.dumps(dynamic_data).decode("utf-8") if dynamic_data else ""
-                
+
+                # Auto-provisionnement Sémantique si la description est vide
+                if service == "remote_mcp" and isinstance(dynamic_data, dict) and not dynamic_data.get("description"):
+                    try:
+                        url = dynamic_data.get("url", "")
+                        async with httpx.AsyncClient() as client:
+                            rpc = {"jsonrpc": "2.0", "method": "tools/list", "id": 1}
+                            resp = await client.post(url, json=rpc, timeout=5.0)
+                            tools_schema = resp.text
+
+                        from echo_gemini_client import EchoGeminiClient
+                        prompt = (
+                            "Objectif : Rédiger une description sémantique d'UNE SEULE PHRASE (maximum 15 mots) "
+                            "définissant le cas d'usage d'un serveur MCP distant, à partir de ses capacités brutes.\n"
+                            f"Capacités extraites : {tools_schema}\n"
+                            "Contrainte : Style impersonnel, direct et technique (ex: 'Fournit la météo et les prévisions mondiales.'). "
+                            "Aucun texte additionnel n'est autorisé."
+                        )
+                        dynamic_data["description"] = await EchoGeminiClient.call_distillation(
+                            prompt=prompt, __user__=__user__, __metadata__={}, is_json=False
+                        )
+                    except Exception:
+                        dynamic_data["description"] = "Serveur MCP distant (Auto-provisionnement échoué)."
+                    credentials = json.dumps(dynamic_data).decode("utf-8")
+
                 if service and account_id and credentials:
                     self._save_account(state, service, account_id, credentials)
                     await events.toast(f"✅ Compte {account_id} enregistré pour {service}.", "success")
-                
+
                 # Refresh list
                 accounts = self._get_accounts(state)
                 accounts_json = json.dumps(accounts).decode("utf-8")
-                update_js = f"if(window.echoVaultUpdate) window.echoVaultUpdate('{accounts_json}');"
+                accounts_arg = json.dumps(accounts_json).decode("utf-8")
+                update_js = f"if(window.echoVaultUpdate) window.echoVaultUpdate({accounts_arg});"
                 await events.call_execute(update_js)
 
             elif action_type == "delete_account":
                 service = response.get("service")
                 account_id = response.get("account_id") or "default"
-                
+
                 if service:
                     self._delete_account(state, service, account_id)
                     await events.toast(f"🗑️ Compte supprimé pour {service}.", "success")
-                
+
                 # Refresh list
                 accounts = self._get_accounts(state)
                 accounts_json = json.dumps(accounts).decode("utf-8")
-                update_js = f"if(window.echoVaultUpdate) window.echoVaultUpdate('{accounts_json}');"
+                accounts_arg = json.dumps(accounts_json).decode("utf-8")
+                update_js = f"if(window.echoVaultUpdate) window.echoVaultUpdate({accounts_arg});"
                 await events.call_execute(update_js)
 
             else:
                 break
 
         return {"status": "success"}
+

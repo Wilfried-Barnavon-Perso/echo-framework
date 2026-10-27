@@ -1,18 +1,20 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 5.229.0.0
+version: 5.231.20.1
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Synchronisation par verrou partagé get_codex_lock(user_id, chat_id), déportation asyncio.to_thread des accès Dulwich et suffixe UUID anti-collision sur plan_id.
 # 5.229.0.0: Compression des docstrings OpenAPI et externalisation de la documentation vers 14-owui-libs/tool_guides/strategic_planner.md.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.14: Sanctuarisation du thinkingLevel "high" sur build_plan et analyze_plan.
 # 1.13: Refonte UX complète (zéro émoji), statut "proposed" par défaut, retrait des modales build/update, et ajout de l'outil analyze_plan.
-# 1.11: Affichage des instructions de pointage dans l'évènement UI de update_tasks.
 
 import sys
+import uuid
+import asyncio
 import orjson as json
 import re
 import time
@@ -32,6 +34,7 @@ from echo_prompts import (
     SYS_PLANNER_UPDATE_TASKS, SYS_PLANNER_ANALYZE
 )
 from echo_codex_git import CodexRepo
+from echo_paths import get_codex_lock
 from echo_ui import EchoUI
 from echo_constants import (
     PLAN_STATUS, get_generation_config,
@@ -96,6 +99,12 @@ class Tools:
         return None
 
     @staticmethod
+    async def _read_plan_from_codex_async(uid: str, chat_id: str, plan_id: str) -> Optional[dict]:
+        """Version asynchrone protégée par le verrou Codex de session."""
+        async with get_codex_lock(uid, chat_id):
+            return await asyncio.to_thread(Tools._read_plan_from_codex, uid, chat_id, plan_id)
+
+    @staticmethod
     def _build_tools_summary(tools_dict: Optional[dict]) -> str:
         """Extrait les noms et descriptions des outils disponibles depuis __tools__."""
         if not tools_dict:
@@ -151,7 +160,7 @@ class Tools:
         await events.status("🗂️ Préparation du plan stratégique...")
 
         # Génération des identifiants
-        plan_id = f"plan-{int(time.time())}"
+        plan_id = f"plan-{int(time.time())}-{uuid.uuid4().hex[:4]}"
         slug = self._slugify(goal)
         filename = f"{plan_id}_{slug}.md"
         iso_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
@@ -218,9 +227,10 @@ class Tools:
         tasks_filename = f"tasks_{plan_id}_{slug}.md"
 
         # Persistance dans le Codex (Git)
-        repo = CodexRepo(user_id, chat_id)
-        repo.commit_file(plan_filename, plan_part, f"Strategy {plan_id}: {goal[:60]}")
-        repo.commit_file(tasks_filename, tasks_part, f"Tasks {plan_id}: {goal[:60]}")
+        async with get_codex_lock(user_id, chat_id):
+            repo = CodexRepo(user_id, chat_id)
+            await asyncio.to_thread(repo.commit_file, plan_filename, plan_part, f"Strategy {plan_id}: {goal[:60]}")
+            await asyncio.to_thread(repo.commit_file, tasks_filename, tasks_part, f"Tasks {plan_id}: {goal[:60]}")
 
         # Enregistrement dans le registre unifié
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
@@ -264,7 +274,7 @@ class Tools:
         if not chat_id:
             return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        result = self._read_plan_from_codex(user_id, chat_id, plan_id)
+        result = await self._read_plan_from_codex_async(user_id, chat_id, plan_id)
         if not result:
             return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -272,8 +282,9 @@ class Tools:
         tasks_filename = "tasks_" + result["filename"]
         
         # Lecture silencieuse des tâches
-        repo = CodexRepo(user_id, chat_id)
-        tasks_result = repo.read_file(tasks_filename)
+        async with get_codex_lock(user_id, chat_id):
+            repo = CodexRepo(user_id, chat_id)
+            tasks_result = await asyncio.to_thread(repo.read_file, tasks_filename)
         tasks_text = tasks_result["content"] if tasks_result else "- [ ] Fichier de tâches introuvable."
         
         full_content = f"=== STRATÉGIE (Fichier: {result['filename']}) ===\n{plan_content}\n\n=== TÂCHES (Fichier: {tasks_filename}) ===\n{tasks_text}"
@@ -298,7 +309,7 @@ class Tools:
         if not chat_id:
             return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        result = self._read_plan_from_codex(user_id, chat_id, plan_id)
+        result = await self._read_plan_from_codex_async(user_id, chat_id, plan_id)
         if not result:
             return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -362,8 +373,9 @@ class Tools:
             )
 
         # Application silencieuse de la modification
-        repo = CodexRepo(user_id, chat_id)
-        repo.commit_file(plan_filename, new_content, f"Update plan {plan_id}")
+        async with get_codex_lock(user_id, chat_id):
+            repo = CodexRepo(user_id, chat_id)
+            await asyncio.to_thread(repo.commit_file, plan_filename, new_content, f"Update plan {plan_id}")
         if new_status and new_status in PLAN_STATUS:
             state.update_resource_status(plan_id, new_status)
         
@@ -399,7 +411,7 @@ class Tools:
             return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # 1. Vérifier que le plan existe pour obtenir le nom de fichier
-        result = self._read_plan_from_codex(user_id, chat_id, plan_id)
+        result = await self._read_plan_from_codex_async(user_id, chat_id, plan_id)
         if not result:
             return wrap_tool_output(text=f"Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         
@@ -407,8 +419,9 @@ class Tools:
         tasks_filename = "tasks_" + plan_filename
 
         # 2. Lecture des tâches
-        repo = CodexRepo(user_id, chat_id)
-        tasks_result = repo.read_file(tasks_filename)
+        async with get_codex_lock(user_id, chat_id):
+            repo = CodexRepo(user_id, chat_id)
+            tasks_result = await asyncio.to_thread(repo.read_file, tasks_filename)
         current_tasks = tasks_result["content"] if tasks_result else "- [ ] Aucune tâche trouvée."
 
         # 3. Appel du modèle
@@ -444,7 +457,8 @@ class Tools:
             return wrap_tool_output(text="Erreur : aucune tâche générée.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         # 4. Commit silencieux
-        repo.commit_file(tasks_filename, new_tasks_content, f"Update tasks {plan_id}")
+        async with get_codex_lock(user_id, chat_id):
+            await asyncio.to_thread(repo.commit_file, tasks_filename, new_tasks_content, f"Update tasks {plan_id}")
 
         # 5. Évènement de notification UI
         short_inst = instructions.replace('\n', ' ')
@@ -477,7 +491,7 @@ class Tools:
             return wrap_tool_output(text="Erreur : Aucun chat_id détecté.", user_id=user_id, chat_id=None, metadata=__metadata__)
 
         # 1. Vérification d'existence
-        result = self._read_plan_from_codex(user_id, chat_id, plan_id)
+        result = await self._read_plan_from_codex_async(user_id, chat_id, plan_id)
         if not result:
             await events.status(f"Erreur : Plan {plan_id} introuvable.", done=True)
             return wrap_tool_output(text=f"Erreur : Plan `{plan_id}` introuvable.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
@@ -517,18 +531,18 @@ class Tools:
                 return wrap_tool_output(text="Refus : L'Utilisateur a refusé de lancer l'exécution du plan. Attendez ses consignes.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
 
         # 3. Remplacement du statut dans le frontmatter (proposed -> executing)
-        import re
         new_plan_content = re.sub(r"^status:\s*(\w+)", "status: executing", plan_content, flags=re.MULTILINE)
         
-        repo = CodexRepo(user_id, chat_id)
-        repo.commit_file(plan_filename, new_plan_content, f"Start execution {plan_id}")
+        async with get_codex_lock(user_id, chat_id):
+            repo = CodexRepo(user_id, chat_id)
+            await asyncio.to_thread(repo.commit_file, plan_filename, new_plan_content, f"Start execution {plan_id}")
+            # 5. Lecture silencieuse des tâches
+            tasks_result = await asyncio.to_thread(repo.read_file, tasks_filename)
 
         # 4. Mise à jour de l'état SQLite
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
         state.update_resource_status(plan_id, 'executing')
 
-        # 5. Lecture silencieuse des tâches
-        tasks_result = repo.read_file(tasks_filename)
         tasks_text = tasks_result["content"] if tasks_result else "- [ ] Fichier de tâches introuvable."
 
         # 6. Évènement UI
@@ -567,15 +581,18 @@ Le plan `{plan_id}` est officiellement EN COURS D'EXÉCUTION.
         if not chat_id:
             return wrap_tool_output(text="Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        result = self._read_plan_from_codex(user_id, chat_id, plan_id)
+        result = await self._read_plan_from_codex_async(user_id, chat_id, plan_id)
         if not result:
             return wrap_tool_output(text=f"Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
         plan_filename = result["filename"]
+        tasks_filename = "tasks_" + plan_filename
 
         # 1. Suppression dans le Codex (Git)
-        repo = CodexRepo(user_id, chat_id)
-        repo.delete_file(plan_filename, f"Delete plan {plan_id}")
+        async with get_codex_lock(user_id, chat_id):
+            repo = CodexRepo(user_id, chat_id)
+            await asyncio.to_thread(repo.delete_file, plan_filename, f"Delete plan {plan_id}")
+            await asyncio.to_thread(repo.delete_file, tasks_filename, f"Delete tasks {plan_id}")
 
         # 2. Nettoyage du registre unifié
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
@@ -606,15 +623,16 @@ Le plan `{plan_id}` est officiellement EN COURS D'EXÉCUTION.
             return wrap_tool_output(text="Erreur: Aucun chat_id détecté.", user_id=user_id, chat_id=None, metadata=__metadata__)
 
         # 1. Vérification d'existence
-        result = self._read_plan_from_codex(user_id, chat_id, plan_id)
+        result = await self._read_plan_from_codex_async(user_id, chat_id, plan_id)
         if not result:
             return wrap_tool_output(text=f"Plan `{plan_id}` introuvable.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
 
         # 2. Lecture des tâches associées
         plan_content = result["content"]
         tasks_filename = "tasks_" + result["filename"]
-        repo = CodexRepo(user_id, chat_id)
-        tasks_result = repo.read_file(tasks_filename)
+        async with get_codex_lock(user_id, chat_id):
+            repo = CodexRepo(user_id, chat_id)
+            tasks_result = await asyncio.to_thread(repo.read_file, tasks_filename)
         tasks_content = tasks_result["content"] if tasks_result else "- [ ] Aucune tâche."
 
         await events.status(f"Analyse du plan {plan_id} en cours...")

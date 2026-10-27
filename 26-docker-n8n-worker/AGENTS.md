@@ -8,11 +8,11 @@ Ce dossier contient le sous-système **Headless N8N Worker**. Il s'agit d'un con
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `n8n_api.py` (v5.226.18.0)
+### `n8n_api.py` (v5.231.20.1)
 Le contrôleur Python (FastAPI).
 - **Sémantique** : Il agit comme une couche d'abstraction (middleware) entre l'outil `n8n_orchestrator_tool.py` exécuté par l'agent et l'API/CLI interne de n8n.
-- **Auto-Configuration du Service Account (`get_or_create_n8n_api_key`)** : S'authentifie sur `/rest/login` (`emailOrLdapLoginId: "system@echo.local"`), interroge dynamiquement les scopes autorisés via `GET /rest/api-keys/scopes` (compatibilité N8N v2.8.4+ Community Edition), génère la clé maîtresse et extrait le secret non masqué via `rawApiKey`.
-- **Rôle Actif & Déploiement en 2 Étapes** : Permet d'exécuter des workflows One-Shot isolés (`N8N_USER_FOLDER` dédié contre `SQLITE_BUSY`) et de déployer des démons permanents (`/deploy`) en deux étapes conformes à N8N v2.34+ (`POST /api/v1/workflows` sans champ `active` mais avec `"settings": {}`, suivi de `POST /api/v1/workflows/{id}/activate`). Écrit systématiquement un `deployment_report.json` dans la drop-zone du Download Broker.
+- **Auto-Configuration du Service Account (`get_or_create_n8n_api_key`)** : Protégée par le verrou asynchrone `_N8N_AUTH_LOCK` contre les conditions de course au démarrage, s'authentifie sur `/rest/login` (`emailOrLdapLoginId: "system@echo.local"`), interroge dynamiquement les scopes autorisés via `GET /rest/api-keys/scopes` (compatibilité N8N v2.8.4+ Community Edition), génère la clé maîtresse et extrait le secret non masqué via `rawApiKey`.
+- **Rôle Actif & Déploiement en 2 Étapes** : Permet d'exécuter des workflows One-Shot isolés par `execution_id` (`N8N_USER_FOLDER = .n8n_isolated_<execution_id>` avec purge `shutil.rmtree` dans `finally:`) et de déployer des démons permanents (`/deploy`) préfixés par `[ECHO:<user_id>] ` en deux étapes conformes à N8N v2.34+ (`POST /api/v1/workflows` sans champ `active` mais avec `"settings": {}`, suivi de `POST /api/v1/workflows/{id}/activate`). Écrit systématiquement un `deployment_report.json` dans la drop-zone du Download Broker.
 - **Garbage Collection (`/prune` & `DELETE /workflow/{id}`)** : Stoppe proprement les triggers actifs via l'API REST puis purge la base SQLite native de N8N (y compris les `staticData` orphelines par Whitelist lors de l'élagage nocturne déclenché par l'Admin Manager). Intègre le filtre `RateLimitHealthCheckFilter` (1 log / 5 min sur `/health`).
 
 ### `n8n_architecture.md`

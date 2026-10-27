@@ -1,18 +1,20 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 5.228.9.2
+VERSION : 5.231.20.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-10-21
+DATE MAJ : 2026-10-27
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Extraction et décodage de l'en-tête x-echo-credentials dans WebUIUserMiddleware (credentials_var).
 # 5.228.9.2: Schéma jobs_omnisearch enrichi avec directives APEC (DataDome), LinkedIn (li_at) et WTTJ.
 # 5.228.9.1: Directives France Travail (OAuth2 francetravail.io) et champs WTTJ dans jobs_omnisearch.
 # 5.228.0.1: Directive PAS exhaustive pour google_workspace (anti-localhost:8001, mode In production).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.14: Interception ciblée AuthRequiredError
+import base64
+import json
 import logging
 import uvicorn
 from starlette.requests import Request
@@ -23,7 +25,7 @@ except ImportError:
     from mcp.server.fastmcp import FastMCP as MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
-from core.security import user_id_var
+from core.security import user_id_var, credentials_var
 from modules.m5_proxy_mcp import proxy_mcp_request, AuthRequiredError
 from modules.m2_jobs_omnisearch import setup_jobs_omnisearch_mcp
 from modules.m3_corporate import register_corporate_tools
@@ -247,6 +249,22 @@ class WebUIUserMiddleware:
 
             if user_id:
                 user_id_var.set(user_id)
+
+            b64_creds = headers.get(b"x-echo-credentials", b"").decode("utf-8")
+            parsed_creds = {}
+            if b64_creds:
+                try:
+                    raw_creds = base64.b64decode(b64_creds).decode("utf-8")
+                    if raw_creds:
+                        try:
+                            parsed_creds = json.loads(raw_creds)
+                            if not isinstance(parsed_creds, dict):
+                                parsed_creds = {"OAUTH2_TOKEN": str(parsed_creds)}
+                        except Exception:
+                            parsed_creds = {"OAUTH2_TOKEN": raw_creds}
+                except Exception:
+                    parsed_creds = {}
+            credentials_var.set(parsed_creds)
 
         await self.app(scope, receive, send)
 

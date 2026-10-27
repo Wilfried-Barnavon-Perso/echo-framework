@@ -2,16 +2,16 @@
 """
 title: ECHO Echo State Manager
 author: Wilfried BARNAVON
-version: 5.231.13.1
+version: 5.231.21.3
 description: Gestionnaire d'état SQLite et RAG.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.21.3: Centralisation CRUD chiffré AES-256-GCM de identity_vault via _get_identity_connection (lecture seule pure sans Lazy Migration).
 # 5.231.13.1: Séparation de archive_previous_context_stats (début de tour) et save_context_stats (fusion sans écrasement de previous_context_stats).
 # 5.231.10.1: Auto-archivage de previous_context_stats et méthode get_previous_context_stats pour le calcul de différentiel.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.4: Délégation de la création d'environnement à un filtre Inlet WebUI.
-# 1.3: Résolution du deadlock de sauvegarde du contexte en permettant l'injection de connexion dans save_session_setting.
 import os
 import time
 import sqlite3
@@ -44,6 +44,19 @@ class EchoStateManager:
         conn = sqlite3.connect(self.db_path, timeout=10.0)
         conn.execute("PRAGMA journal_mode=WAL;"); return conn
 
+    def _get_identity_connection(self) -> sqlite3.Connection:
+        """Retourne une connexion pointant exclusivement vers identity.db (indépendamment de self.chat_id)."""
+        os.makedirs(self.user_dir, exist_ok=True)
+        id_db_path = os.path.join(self.user_dir, "identity.db")
+        conn = sqlite3.connect(id_db_path, timeout=10.0)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS identity_vault ("
+            "user_id TEXT, service TEXT, account_id TEXT, credentials TEXT, "
+            "PRIMARY KEY (user_id, service, account_id))"
+        )
+        return conn
+
     def _init_db(self):
         try:
             with self._get_connection() as conn:
@@ -68,6 +81,8 @@ class EchoStateManager:
                 conn.execute("CREATE TABLE IF NOT EXISTS processed_files (chat_id TEXT, file_id TEXT, filename TEXT, mime TEXT, mode TEXT, timestamp INTEGER, file_content TEXT, message_id TEXT, PRIMARY KEY (chat_id, file_id))")
                 conn.execute("CREATE TABLE IF NOT EXISTS call_bridge (call_id TEXT PRIMARY KEY, signature TEXT NOT NULL, function_name TEXT NOT NULL, args_json TEXT, timestamp INTEGER)")
                 conn.execute("CREATE TABLE IF NOT EXISTS auth_data (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
+                if not self.chat_id:
+                    conn.execute("CREATE TABLE IF NOT EXISTS identity_vault (user_id TEXT, service TEXT, account_id TEXT, credentials TEXT, PRIMARY KEY (user_id, service, account_id))")
                 # Préférences Pipe propagées aux outils (politique modèle, crédits) et KV session unifié
                 conn.execute("CREATE TABLE IF NOT EXISTS echo_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
 
@@ -289,6 +304,88 @@ class EchoStateManager:
                 conn.execute("INSERT OR REPLACE INTO auth_data (key, value, updated_at) VALUES (?, ?, ?)", (key, value, int(time.time())))
                 conn.commit()
         except: pass
+
+    # =========================================================================
+    # IDENTITY VAULT (CRUD CHIFFRÉ AES-256-GCM ISOLÉ SUR IDENTITY.DB)
+    # =========================================================================
+
+    def _decrypt_vault_row(self, service: str, account_id: str, raw_creds: str) -> str:
+        """Déchiffre en lecture seule pure une entrée du Vault (retourne '' si l'entrée est corrompue)."""
+        from echo_crypto import decrypt_vault_payload
+        try:
+            return decrypt_vault_payload(raw_creds, self.user_id, service, account_id)
+        except Exception:
+            return ""
+
+    def save_vault_credential(self, service: str, account_id: str, credentials: str) -> None:
+        """Chiffre en AES-256-GCM (AAD=user_id:service:account_id) et persiste une identité dans identity_vault."""
+        from echo_crypto import encrypt_vault_payload
+        enc_creds = encrypt_vault_payload(credentials, self.user_id, service, account_id)
+        with self._get_identity_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO identity_vault (user_id, service, account_id, credentials) VALUES (?, ?, ?, ?)",
+                (self.user_id, service, account_id, enc_creds),
+            )
+            conn.commit()
+
+    def get_vault_credential(self, service: str, account_id: Optional[str] = None) -> str:
+        """Récupère et déchiffre une identité depuis identity_vault (supporte account_id optionnel)."""
+        with self._get_identity_connection() as conn:
+            if account_id:
+                row = conn.execute(
+                    "SELECT account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ? AND account_id = ? LIMIT 1",
+                    (self.user_id, service, account_id),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ? LIMIT 1",
+                    (self.user_id, service),
+                ).fetchone()
+            if not row or not row[1]:
+                return ""
+            return self._decrypt_vault_row(service, row[0], row[1])
+
+    def list_vault_credentials(self, service: str) -> List[tuple]:
+        """Retourne [(account_id, decrypted_credentials), ...] pour un service donné."""
+        results = []
+        with self._get_identity_connection() as conn:
+            rows = conn.execute(
+                "SELECT account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ?",
+                (self.user_id, service),
+            ).fetchall()
+            for acc_id, raw_creds in rows:
+                results.append((acc_id, self._decrypt_vault_row(service, acc_id, raw_creds or "")))
+        return results
+
+    def list_vault_services(self) -> List[str]:
+        """Liste les services disposant d'au moins une identité configurée."""
+        with self._get_identity_connection() as conn:
+            rows = conn.execute("SELECT DISTINCT service FROM identity_vault WHERE user_id = ?", (self.user_id,)).fetchall()
+            return [r[0] for r in rows] if rows else []
+
+    def list_vault_accounts(self) -> List[dict]:
+        """Liste les couples {service, account_id} sans lire ni déchiffrer la colonne credentials."""
+        with self._get_identity_connection() as conn:
+            rows = conn.execute("SELECT service, account_id FROM identity_vault WHERE user_id = ?", (self.user_id,)).fetchall()
+            return [{"service": r[0], "account_id": r[1]} for r in rows]
+
+    def has_vault_credential(self, service: str, account_id: str) -> bool:
+        """Vérifie en O(1) l'existence d'un secret non vide dans identity_vault."""
+        with self._get_identity_connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM identity_vault WHERE user_id = ? AND service = ? AND account_id = ? AND credentials IS NOT NULL AND credentials != ''",
+                (self.user_id, service, account_id),
+            ).fetchone()
+            return row is not None
+
+    def delete_vault_credential(self, service: str, account_id: str) -> None:
+        """Supprime une identité de identity_vault."""
+        with self._get_identity_connection() as conn:
+            conn.execute(
+                "DELETE FROM identity_vault WHERE user_id = ? AND service = ? AND account_id = ?",
+                (self.user_id, service, account_id),
+            )
+            conn.commit()
 
     def save_setting(self, key: str, value: str):
         """Persiste une préférence Pipe dans echo_settings (identity.db)."""

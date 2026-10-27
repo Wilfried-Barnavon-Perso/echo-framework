@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 5.229.6.1
+version: 5.231.20.2
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.2: Support hybride des outils synchrones/asynchrones via asyncio.to_thread et rafraîchissement non-mutatif des closures (__event_emitter__, __event_call__, __metadata__, __user__) par copie locale de functools.partial.
 # 5.229.6.1: Remplacement du circuit breaker réactif par un Tool Stripping proactif en fin de budget avec achèvement du lot parallèle.
 # 5.229.1.2: Factorisation SSOT via DELEGATE_AGENT_SYSTEM_TOOLS garantissant la disponibilité des outils système pour tout sous-agent.
 # 5.229.0.1: Précision de la condition de fermeture de session dans la docstring de close_agent_session.
 # 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/agent_orchestration.md.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 import sys
 import uuid
@@ -18,6 +18,7 @@ import re
 import time
 import datetime
 import inspect
+import asyncio
 from pydantic import BaseModel, Field
 from typing import Optional, Any, List
 
@@ -689,25 +690,36 @@ async def _run_agent_loop(
                 }
             else:
                 try:
+                    import functools
                     infra_kwargs = {
                         "__user__": __user__,
                         "__chat_id__": chat_id,
                         "__metadata__": __metadata__,
                         "__event_emitter__": __event_emitter__,
-                        "__event_call__": None,
+                        "__event_call__": __event_call__,
                     }
-                    # Filtrage des params infra acceptés par le callable.
-                    # Les callables OWUI (depuis _echo_tools_dict) sont des functools.partial
-                    # avec __user__, __event_emitter__, etc. déjà frozen — on les exclut
-                    # pour éviter "got multiple values for argument".
+                    # Filtrage des params infra acceptés par le callable sans muter en place _TOOLS_CACHE[chat_id].
+                    exec_callable = callable_fn
                     try:
+                        target_fn = getattr(callable_fn, "func", callable_fn)
                         sig = inspect.signature(callable_fn)
-                        already_frozen = getattr(callable_fn, "keywords", {})
+                        already_frozen = getattr(callable_fn, "keywords", None)
+                        if isinstance(already_frozen, dict):
+                            local_frozen = dict(already_frozen)
+                            for _k, _v in infra_kwargs.items():
+                                if _k in local_frozen and _v is not None:
+                                    local_frozen[_k] = _v
+                            exec_callable = functools.partial(
+                                callable_fn.func,
+                                *(getattr(callable_fn, "args", ()) or ()),
+                                **local_frozen,
+                            )
                         accepted_infra = {
                             k: v for k, v in infra_kwargs.items()
-                            if k in sig.parameters and k not in already_frozen
+                            if k in sig.parameters and not (isinstance(already_frozen, dict) and k in already_frozen)
                         }
                     except (ValueError, TypeError):
+                        target_fn = getattr(callable_fn, "func", callable_fn)
                         accepted_infra = {}  # Partial OWUI — ne pas passer d'infra
 
                     # Injection asynchrone de l'identité du sous-agent (contournement du proxy OWUI)
@@ -718,7 +730,10 @@ async def _run_agent_loop(
                         "sub_tools_names": list(sub_tools.keys())
                     })
                     try:
-                        result = await callable_fn(**fn_args, **accepted_infra)
+                        if inspect.iscoroutinefunction(target_fn):
+                            result = await exec_callable(**fn_args, **accepted_infra)
+                        else:
+                            result = await asyncio.to_thread(exec_callable, **fn_args, **accepted_infra)
                     finally:
                         # Réinitialisation stricte du contexte asynchrone
                         ECHO_SUBAGENT_CONTEXT.reset(token)
@@ -796,13 +811,13 @@ def _resolve_sub_tools_from_sys_modules(body_tools_specs: list, __user__: Option
                     })
                 except Exception:
                     pass  # Non-bloquant : user_valves defaults si échec
-            # Scanner les méthodes async publiques
+            # Scanner les méthodes d'outils publiques (async et sync)
             for attr_name in dir(instance):
-                if attr_name.startswith("_"):
+                if attr_name.startswith("_") or attr_name in ("valves", "user_valves", "Valves", "UserValves"):
                     continue
                 try:
                     attr = getattr(instance, attr_name)
-                    if _asyncio.iscoroutinefunction(attr):
+                    if _asyncio.iscoroutinefunction(attr) or (callable(attr) and not isinstance(attr, type)):
                         fn_to_callable[attr_name] = attr
                 except Exception:
                     continue

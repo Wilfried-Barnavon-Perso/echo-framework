@@ -1,16 +1,16 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 5.229.2.2
+version: 5.231.20.1
 description: ECHO Toolbox pour gestion RAG (Sessions & Codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Isolation inter-sous-agents par sub_sid dans search_sessions_context et préservation du score memory_importance maximal dans update_meta_artifact.
 # 5.229.2.2: Ajout du paramètre tag dans search_sessions_context avec résolution SSoT par chat_id.
 # 5.229.2.1: Détente des seuils certainty_map (0.34/0.52/0.63/0.81) et extension de l'aperçu de cartographie à 120 caractères.
 # 5.229.0.0: Compression des docstrings OpenAPI et externalisation de la documentation vers 14-owui-libs/tool_guides/memory_and_rag.md.
 # 5.228.0.1: Précision d'usage de search_sessions_context par un sous-agent pour distillation en phase prospective.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
@@ -145,6 +145,17 @@ class Tools:
 
             async with httpx.AsyncClient(timeout=self.valves.RECALL_TIMEOUT) as client:
                 await self._ensure_collection(client)
+                # Préservation du score memory_importance maximal en cas de mise à jour concurrente/itérative
+                try:
+                    existing_resp = await client.get(
+                        f"{ECHO_QDRANT_URL}/collections/{COLLECTION_META_ARTIFACTS}/points/{point_id}"
+                    )
+                    if existing_resp.status_code == 200:
+                        existing_payload = existing_resp.json().get("result", {}).get("payload", {})
+                        existing_imp = int(existing_payload.get("memory_importance", 1))
+                        imp_val = max(imp_val, existing_imp)
+                except Exception:
+                    pass
                 upsert_payload = {"points": [{
                     "id": point_id, "vector": vector,
                     "payload": {
@@ -522,7 +533,8 @@ class Tools:
         c_min, c_max = certainty_map.get(certainty_level.upper(), (0.55, 1.0))
 
         try:
-            from echo_constants import COLLECTION_SESSION_RAG
+            from echo_constants import COLLECTION_SESSION_RAG, ECHO_SUBAGENT_CONTEXT
+            sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
             async with httpx.AsyncClient(timeout=self.valves.RECALL_TIMEOUT) as client:
                 must_filters = [{"key": "user_id", "match": {"value": user_id}}]
                 if matching_chat_ids is not None:
@@ -532,6 +544,13 @@ class Tools:
                     must_filters.append({"key": "chat_id", "match": {"value": chat_id}})
                 if source_id:
                     must_filters.append({"key": "source_id", "match": {"value": source_id}})
+                if sub_ctx and sub_ctx.get("is_subagent") and sub_ctx.get("sub_sid"):
+                    must_filters.append({
+                        "should": [
+                            {"is_empty": {"key": "sub_sid"}},
+                            {"key": "sub_sid", "match": {"value": sub_ctx["sub_sid"]}},
+                        ]
+                    })
 
                 ts_start = self._parse_iso_date(start_date, False)
                 ts_end = self._parse_iso_date(end_date, True)

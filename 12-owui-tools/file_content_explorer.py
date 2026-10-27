@@ -1,16 +1,16 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.229.0.0
+version: 5.231.20.1
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Isolation multi-chat du viewer d'image via transmission de chat_id à EchoUI.show_image_js.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.228.7.1: Factorisation de la détection textuelle via is_text_mime (echo_constants).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.109.32: Fix thinking medium explicite sur semantic_probe et read_multimedia_file (MODEL_APOLLO).
-# 5.109.31: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 
 import os
 import sys
@@ -391,7 +391,7 @@ class Tools:
                 title = f"Espace Personnel : {os.path.basename(fpath)}"
 
             # Injection JS pure dans le DOM Open WebUI — aucun retour HTMLResponse
-            js_code = EchoUI.show_image_js(b64, mime, title)
+            js_code = EchoUI.show_image_js(b64, mime, title, chat_id=__metadata__.get("chat_id") if __metadata__ else None)
             if events and (events.caller or events.emitter):
                 await events.call_execute(js_code)
             

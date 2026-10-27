@@ -2,11 +2,12 @@
 """
 ================================================================================
 MODULE : ECHO - CACHE MANAGER
-VERSION : 5.226.18.0
+VERSION : 5.231.20.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Isolation multi-user des clés de cache SQLite via user_id_var.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 import aiosqlite
 import json
@@ -14,9 +15,10 @@ import time
 import hashlib
 from typing import Optional, Any
 import os
-import asyncio
+from core.security import user_id_var
 
 CACHE_DB_PATH = os.getenv("MCP_CACHE_DB_PATH", "/app/data/mcp_cache.db")
+
 
 async def _init_cache_db():
     try:
@@ -32,10 +34,12 @@ async def _init_cache_db():
     except Exception as e:
         print(f"[CacheManager] Erreur d'initialisation: {e}")
 
-async def get_cache(tool_name: str, arguments: dict) -> Optional[Any]:
+
+async def get_cache(tool_name: str, arguments: dict, user_id: Optional[str] = None) -> Optional[Any]:
+    uid = user_id or user_id_var.get() or "anonymous"
     arg_str = json.dumps(arguments, sort_keys=True)
-    tool_hash = hashlib.md5(f"{tool_name}_{arg_str}".encode()).hexdigest()
-    
+    tool_hash = hashlib.md5(f"{uid}_{tool_name}_{arg_str}".encode()).hexdigest()
+
     try:
         async with aiosqlite.connect(CACHE_DB_PATH) as db:
             async with db.execute("SELECT result, expires_at FROM cache_entries WHERE tool_hash = ?", (tool_hash,)) as cursor:
@@ -52,9 +56,11 @@ async def get_cache(tool_name: str, arguments: dict) -> Optional[Any]:
         print(f"[CacheManager] Erreur de lecture: {e}")
     return None
 
-async def set_cache(tool_name: str, arguments: dict, result: Any, ttl_seconds: int = 3600):
+
+async def set_cache(tool_name: str, arguments: dict, result: Any, ttl_seconds: int = 3600, user_id: Optional[str] = None):
+    uid = user_id or user_id_var.get() or "anonymous"
     arg_str = json.dumps(arguments, sort_keys=True)
-    tool_hash = hashlib.md5(f"{tool_name}_{arg_str}".encode()).hexdigest()
+    tool_hash = hashlib.md5(f"{uid}_{tool_name}_{arg_str}".encode()).hexdigest()
     expires_at = time.time() + ttl_seconds
     
     try:

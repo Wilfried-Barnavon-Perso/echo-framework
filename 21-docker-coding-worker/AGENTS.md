@@ -8,12 +8,12 @@ Ce dossier contient le code source de l'**API d'Exécution Multi-Langages Sécur
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `worker_api.py` (v5.226.18.0)
+### `worker_api.py` (v5.231.20.1)
 Fichier monolithique exposant une API Flask très légère.
 - **Sémantique** : Le serveur écoute sur le port **5000** et expose les endpoints HTTP `/execute`, `/kill`, `/poll_monitor` et `/update_payload`.
 - **Exécution depuis le Codex Sandbox & Pre-execution Linting** : Le script est exécuté depuis un fichier physique préalablement enregistré dans l'espace `sandbox` du Codex, après validation syntaxique immédiate (`py_compile` pour Python, `node -c` pour Node.js). La sortie textuelle est bornée dynamiquement par `max_output_length` (131 Ko par défaut, protection anti-OOM LLM).
-- **Exécution Isolée & Temps Réel (Bidi Polling)** : Utilise `subprocess.Popen` + `multiprocessing` pour exécuter le payload de façon non-bloquante. Le système implémente un "Pipe Bidirectionnel" en exploitant la porosité du *Bind Mount* de Bubblewrap sur `/sandbox` : le parent lit `.echo_monitor.jsonl` (Flux Remontant) et met à jour atomiquement `.echo_ui_payload.json` (Flux Descendant) via `os.replace`, avec double purge de sécurité (Pre-Run / Post-Run).
-- **Sécurité (Anti-Zombie & Sandbox)** : Isolation totale via `bwrap` avec montages sémantiques (`/sandbox`, `/main`, `/files`, `/echo_libs_sandbox`, `/sandbox-agent-readme.txt` et bind-mount physique `.tmp` anti-OOM-DoS). Intègre le tracking par PID dans le registre `_active_sandboxes` permettant la destruction de processus orphelins (`os.kill`) via la route `/kill`.
+- **Exécution Isolée & Temps Réel (Bidi Polling)** : Utilise `subprocess.Popen` + `multiprocessing` pour exécuter le payload de façon non-bloquante, sérialisé par session via `_get_session_sandbox_lock(user_id, chat_id)` pour éviter toute collision concurrente sur les fichiers `.echo_monitor.jsonl` et `.echo_ui_payload.json`. Le système implémente un "Pipe Bidirectionnel" en exploitant la porosité du *Bind Mount* de Bubblewrap sur `/sandbox` : le parent lit `.echo_monitor.jsonl` (Flux Remontant) et met à jour atomiquement `.echo_ui_payload.json` (Flux Descendant) via `os.replace`, avec double purge de sécurité (Pre-Run / Post-Run).
+- **Sécurité (Anti-Zombie & Sandbox)** : Isolation totale via `bwrap` avec montages sémantiques (`/sandbox`, `/main`, `/files`, `/echo_libs_sandbox`, `/sandbox-agent-readme.txt` et bind-mount physique `.tmp` anti-OOM-DoS). Intègre le tracking par `run_id` (ou `(user_id, chat_id)`) dans le registre `_active_sandboxes` permettant la destruction ciblée de processus orphelins (`os.kill`) via la route `/kill`.
 
 ### ECHO Sandbox Monitor (`echo_monitor`)
 - **Sémantique** : La librairie native `echo_monitor` permet au modèle de transmettre des interfaces HTML/JS complexes vers Open WebUI via UCTP.

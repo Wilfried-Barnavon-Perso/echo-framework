@@ -1,19 +1,19 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 5.226.18.0
+VERSION : 5.231.20.1
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-10-07
+DATE MAJ : 2026-10-27
 
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Sérialisation par verrou de session (_SANDBOX_LOCKS) des exécutions concurrentes d'un même chat et harmonisation pid/pids sur /kill.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 3.7: Hotfix NameError : Déplacement de la purge ECHO Monitor et création du fichier payload avant bwrap. Fix Flake8 : Suppression du préfixe f-string inutile.
 # 3.6: Baisse de la troncature Anti-OOM (via paramètre dynamique max_output_length ou 131Ko) pour protéger le contexte LLM.
 # 3.5: Implémentation du Passe-Plat multiplexé (Frontend vers Sandbox) avec double purge de sécurité du fichier .echo_ui_payload.json
-# 3.4: Fix NameError critique : remplacement de json.loads par orjson.loads pour le Monitor Payload.
 
 import logging
 import logging.config
@@ -22,6 +22,7 @@ import orjson
 import os
 import queue
 import subprocess
+import threading
 import time
 
 from flask import Flask, jsonify, request  # pyright: ignore[reportMissingImports]
@@ -59,6 +60,16 @@ logging.getLogger("werkzeug").addFilter(RateLimitHealthCheckFilter())
 app = Flask(__name__)
 
 _active_sandboxes = {}
+_SANDBOX_LOCKS = {}
+_SANDBOX_LOCKS_GUARD = threading.Lock()
+
+
+def _get_session_sandbox_lock(user_id, chat_id):
+    key = f"{user_id}:{chat_id}"
+    with _SANDBOX_LOCKS_GUARD:
+        if key not in _SANDBOX_LOCKS:
+            _SANDBOX_LOCKS[key] = threading.Lock()
+        return _SANDBOX_LOCKS[key]
 
 def _get_sandbox_dir(user_id, chat_id):
     if user_id != 'system' and chat_id:
@@ -307,29 +318,32 @@ def execute_code():
         global_files_dir = f"/app/backend/data/users/{safe_uid}/files"
         deps_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/dependencies"
 
-    # Création d'un processus OS distinct
-    q_result = multiprocessing.Queue()
-    p = multiprocessing.Process(target=run_isolated_process, args=(file_path, dependencies, q_result, sandbox_dir, files_dir, global_files_dir, deps_dir, timeout, ui_payload, max_output_length))
-    p.start()
-    
-    run_id = data.get('run_id')
-    sandbox_key = f"{user_id}:{chat_id}:{run_id}"
-    _active_sandboxes[sandbox_key] = {"process": p, "queue": q_result}
-    
-    try:
-        # On lit la queue avec un timeout. Si le buffer Base64 dépasse 64ko, 
-        # le child bloquerait si le parent fait un p.join() au lieu de lire la queue (Deadlock Linux Pipe).
-        res = q_result.get(timeout=timeout)
-        p.join()
-    except queue.Empty:
-        if p.is_alive():
-            p.terminate()
+    # Verrouillage par session (user_id, chat_id) pour isoler les fichiers .echo_monitor.jsonl et .echo_ui_payload.json
+    session_lock = _get_session_sandbox_lock(user_id, chat_id)
+    with session_lock:
+        # Création d'un processus OS distinct
+        q_result = multiprocessing.Queue()
+        p = multiprocessing.Process(target=run_isolated_process, args=(file_path, dependencies, q_result, sandbox_dir, files_dir, global_files_dir, deps_dir, timeout, ui_payload, max_output_length))
+        p.start()
+        
+        run_id = data.get('run_id')
+        sandbox_key = f"{user_id}:{chat_id}:{run_id}"
+        _active_sandboxes[sandbox_key] = {"process": p, "queue": q_result}
+        
+        try:
+            # On lit la queue avec un timeout. Si le buffer Base64 dépasse 64ko, 
+            # le child bloquerait si le parent fait un p.join() au lieu de lire la queue (Deadlock Linux Pipe).
+            res = q_result.get(timeout=timeout)
             p.join()
-        logger.warning(f"⏰ Timeout | User: {user_id}")
-        return jsonify({'status': 'error', 'error': f'Timeout ({timeout}s).'})
-    finally:
-        if sandbox_key in _active_sandboxes:
-            del _active_sandboxes[sandbox_key]
+        except queue.Empty:
+            if p.is_alive():
+                p.terminate()
+                p.join()
+            logger.warning(f"⏰ Timeout | User: {user_id}")
+            return jsonify({'status': 'error', 'error': f'Timeout ({timeout}s).'})
+        finally:
+            if sandbox_key in _active_sandboxes:
+                del _active_sandboxes[sandbox_key]
     
     if res is not None:
         status = res.get('status', 'unknown')
@@ -366,7 +380,7 @@ def kill_sandbox():
         del _active_sandboxes[k]
         
     if killed_pids:
-        return jsonify({"status": "killed", "pids": killed_pids})
+        return jsonify({"status": "killed", "pid": killed_pids[0], "pids": killed_pids})
     return jsonify({"status": "not_found"})
 
 @app.route('/poll_monitor', methods=['GET'])

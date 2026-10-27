@@ -1,17 +1,20 @@
 """
 title: ECHO Universal MCP Tool
 author: ECHO
-version: 5.229.0.0
+version: 5.231.21.1
 description: Outil universel permettant au Modèle d'interroger et d'exécuter des requêtes sur l'infrastructure MCP via un routage dynamique.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.21.1: Délégation de _fetch_credentials au CRUD chiffré AES-256-GCM de EchoStateManager (get_vault_credential).
+# 5.231.20.1: Isolation multi-user des credentials sur mcp_native et support multi-compte optionnel (account_id).
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 import sys
 import json
+import base64
 import httpx
-from typing import Any
+from typing import Any, Optional
 from pydantic import BaseModel
 
 sys.path.append("/app/backend/echo_libs")
@@ -39,9 +42,18 @@ class Tools:
         except Exception:
             return "uncategorized"
 
+    def _fetch_credentials(self, user_id: str, service: str, account_id: Optional[str] = None) -> str:
+        """Extrait les credentials de l'Identity Vault pour l'utilisateur et le compte spécifiés."""
+        try:
+            from echo_state_manager import EchoStateManager
+            return EchoStateManager(user_id=user_id).get_vault_credential(service, account_id)
+        except Exception:
+            return ""
+
     async def list_mcp_functions(
         self,
         service: str,
+        account_id: Optional[str] = None,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -57,25 +69,18 @@ class Tools:
         await events.status(f"🌐 Routage dynamique pour l'interrogation de '{service}'...")
 
         category = await self._get_category(service)
-
-        try:
-            from echo_state_manager import EchoStateManager
-            state = EchoStateManager(user_id=__user__["id"])
-            with state._get_connection() as conn:
-                cursor = conn.execute(
-                    "SELECT credentials FROM identity_vault WHERE user_id = ? AND service = ? LIMIT 1",
-                    (__user__["id"], service)
-                )
-                row = cursor.fetchone()
-                credentials = row[0] if row else ""
-        except Exception:
-            credentials = ""
+        credentials = self._fetch_credentials(__user__["id"], service, account_id)
 
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 if category == "mcp_native":
                     rpc = {"jsonrpc": "2.0", "method": "tools/list", "id": 1}
-                    resp = await client.post(self.mcp_native_url, json=rpc)
+                    b64_creds = base64.b64encode(credentials.encode("utf-8")).decode("ascii") if credentials else ""
+                    headers = {
+                        "x-openwebui-user-id": str(__user__["id"]),
+                        "x-echo-credentials": b64_creds,
+                    }
+                    resp = await client.post(self.mcp_native_url, json=rpc, headers=headers)
                     resp.raise_for_status()
                     data = resp.json()
                     status_val = "success"
@@ -83,6 +88,7 @@ class Tools:
                     payload = {
                         "user_id": __user__["id"],
                         "service": service,
+                        "account_id": account_id,
                         "credentials": credentials,
                         "rpc_request": {"jsonrpc": "2.0", "method": "tools/list", "id": 1}
                     }
@@ -123,6 +129,7 @@ class Tools:
         service: str,
         function_name: str,
         arguments: dict = None,
+        account_id: Optional[str] = None,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -139,19 +146,7 @@ class Tools:
 
         arguments = arguments or {}
         category = await self._get_category(service)
-
-        try:
-            from echo_state_manager import EchoStateManager
-            state = EchoStateManager(user_id=__user__["id"])
-            with state._get_connection() as conn:
-                cursor = conn.execute(
-                    "SELECT credentials FROM identity_vault WHERE user_id = ? AND service = ? LIMIT 1",
-                    (__user__["id"], service)
-                )
-                row = cursor.fetchone()
-                credentials = row[0] if row else ""
-        except Exception:
-            credentials = ""
+        credentials = self._fetch_credentials(__user__["id"], service, account_id)
 
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -162,7 +157,12 @@ class Tools:
                         "params": {"name": function_name, "arguments": arguments},
                         "id": 1,
                     }
-                    resp = await client.post(self.mcp_native_url, json=rpc)
+                    b64_creds = base64.b64encode(credentials.encode("utf-8")).decode("ascii") if credentials else ""
+                    headers = {
+                        "x-openwebui-user-id": str(__user__["id"]),
+                        "x-echo-credentials": b64_creds,
+                    }
+                    resp = await client.post(self.mcp_native_url, json=rpc, headers=headers)
                     resp.raise_for_status()
                     data = resp.json()
                     status_val = "success"
@@ -170,6 +170,7 @@ class Tools:
                     payload = {
                         "user_id": __user__["id"],
                         "service": service,
+                        "account_id": account_id,
                         "credentials": credentials,
                         "rpc_request": {
                             "jsonrpc": "2.0",

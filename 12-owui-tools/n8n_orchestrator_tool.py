@@ -1,18 +1,19 @@
 """
 title: ECHO N8N Orchestrator
 author: ECHO
-version: 5.229.0.0
+version: 5.231.21.3
 description: Outil agentique de cycle de vie et d'exécution N8N (Phase 2 & 3). Refactorisation institutionnelle et N8N Grapher.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.21.3: Délégation Vault chiffré à EchoStateManager, désencapsulation/échappement JSON dans _inject_secrets, masquage des secrets dans les logs et alignement ask_user.
+# 5.231.20.2: Conversion en async def des 6 outils synchrones, remplacement de httpx.Client bloquant par httpx.AsyncClient, sécurisation anti-traversal des IDs et alignement de allowed_tools (code_executor) dans delegate_to_n8n_grapher.
 # 5.229.0.0: Compression des docstrings OpenAPI et externalisation de la documentation vers 14-owui-libs/tool_guides/n8n_workflows.md.
 # 5.226.18.1: Alignement global ECHO et harmonisation impersonnelle (PAS) du docstring de run_n8n_oneshot_workflow.
 # 1.18: Nomenclature : Alignement de la délégation N8N Grapher sur MODEL_PROMETHEUS.
-# 1.17: Documentation : Ajout des directives d'usage de la macro __ECHO_DOWNLOAD_DIR__ et obligation de validation One-Shot avant déploiement.
-# 1.16: Correction : Protection contre la valeur NULL (NoneType) du statut lors de la suppression d'un workflow en base SQLite.
 
 import sys
+import asyncio
 import orjson as json
 import uuid
 import re
@@ -25,26 +26,33 @@ from echo_state_manager import EchoStateManager
 from echo_core import wrap_tool_output
 from echo_events import EchoEvents
 from echo_constants import ECHO_N8N_WORKER_URL
+from echo_paths import sanitize_echo_id
+
 
 class Tools:
     def __init__(self):
         self.valves = None
 
     def _get_template_path(self, user_id: str, template_id: str) -> Path:
-        base = Path("/app/backend/data/users") / user_id / "n8n_workflow_templates"
+        safe_uid = sanitize_echo_id(user_id)
+        safe_tid = sanitize_echo_id(template_id, fallback="template")
+        base = Path("/app/backend/data/users") / safe_uid / "n8n_workflow_templates"
         base.mkdir(parents=True, exist_ok=True)
-        return base / f"{template_id}.json"
+        return base / f"{safe_tid}.json"
 
     def _get_workflow_path(self, user_id: str, chat_id: str, workflow_id: str) -> Path:
-        base = Path("/app/backend/data/users") / user_id / "chats" / chat_id / "n8n_workflows"
+        safe_uid = sanitize_echo_id(user_id)
+        safe_cid = sanitize_echo_id(chat_id)
+        safe_wid = sanitize_echo_id(workflow_id, fallback="workflow")
+        base = Path("/app/backend/data/users") / safe_uid / "chats" / safe_cid / "n8n_workflows"
         base.mkdir(parents=True, exist_ok=True)
-        return base / f"{workflow_id}.json"
+        return base / f"{safe_wid}.json"
 
     # =========================================================================
     # A. GESTION DES TEMPLATES (GLOBALE)
     # =========================================================================
     
-    def create_n8n_template(self, template_id: str, content: str, __user__: dict = None, __metadata__: dict = None) -> dict:
+    async def create_n8n_template(self, template_id: str, content: str, __user__: dict = None, __metadata__: dict = None) -> dict:
         """Enregistre un JSON N8N comme template global réutilisable sous `template_id`."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
@@ -58,7 +66,7 @@ class Tools:
             
         try:
             parsed = json.loads(content)
-            path.write_text(json.dumps(parsed).decode('utf-8'), encoding="utf-8")
+            await asyncio.to_thread(path.write_text, json.dumps(parsed).decode('utf-8'), "utf-8")
             
             state = EchoStateManager(user_id=uid)
             wf_name = parsed.get("name", template_id)
@@ -70,7 +78,7 @@ class Tools:
         except Exception as e:
             return wrap_tool_output(f"Erreur lors de la création : {str(e)}", user_id=uid, chat_id=cid, metadata=__metadata__)
 
-    def modify_n8n_template(self, template_id: str, new_content: str, __user__: dict = None, __metadata__: dict = None) -> dict:
+    async def modify_n8n_template(self, template_id: str, new_content: str, __user__: dict = None, __metadata__: dict = None) -> dict:
         """Remplace la structure JSON d'un template N8N global existant (`template_id`)."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
@@ -84,7 +92,7 @@ class Tools:
             
         try:
             parsed = json.loads(new_content)
-            path.write_text(json.dumps(parsed).decode('utf-8'), encoding="utf-8")
+            await asyncio.to_thread(path.write_text, json.dumps(parsed).decode('utf-8'), "utf-8")
             
             state = EchoStateManager(user_id=uid)
             state.update_resource_fields(template_id, name=parsed.get("name", template_id))
@@ -92,7 +100,7 @@ class Tools:
         except Exception as e:
             return wrap_tool_output(f"Erreur lors de la modification : {str(e)}", user_id=uid, chat_id=cid, metadata=__metadata__)
 
-    def delete_n8n_template(self, template_id: str, __user__: dict = None, __metadata__: dict = None) -> dict:
+    async def delete_n8n_template(self, template_id: str, __user__: dict = None, __metadata__: dict = None) -> dict:
         """Supprime un template N8N global (`template_id`) de l'espace utilisateur."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
@@ -102,7 +110,7 @@ class Tools:
             
         path = self._get_template_path(uid, template_id)
         if path.exists():
-            path.unlink()
+            await asyncio.to_thread(path.unlink)
             state = EchoStateManager(user_id=uid)
             state.delete_resource(template_id)
             return wrap_tool_output(f"Succès : Template '{template_id}' supprimé.", user_id=uid, chat_id=cid, metadata=__metadata__)
@@ -145,21 +153,16 @@ class Tools:
         matches = re.findall(r'__ECHO_SECRET_([A-Z0-9_]+)__', content_str)
         if matches:
             state = EchoStateManager(user_id=user_id)
-            with state._get_connection() as conn:
-                for key in matches:
-                    cursor = conn.execute(
-                        "SELECT 1 FROM identity_vault WHERE user_id = ? AND service = 'n8n_workflows' AND account_id = ?",
-                        (user_id, key)
-                    )
-                    if not cursor.fetchone():
-                        errors.append(f"Macro manquante : Le secret '{key}' est requis mais absent de l'ECHO Identity Vault de l'Utilisateur.")
+            for key in matches:
+                if not state.has_vault_credential("n8n_workflows", key):
+                    errors.append(f"Macro manquante : Le secret '{key}' est requis mais absent de l'ECHO Identity Vault de l'Utilisateur.")
                         
         if errors:
             final_err = " | ".join(errors)
-            return f"[Action Requise] Violation architecturale bloquante : {final_err}\nLe Modèle DOIT utiliser `ask_user_input` pour collecter l'information, l'enregistrer via `manage_identity` (service='n8n_workflows'), puis injecter la macro __ECHO_SECRET_...__."
+            return f"[Action Requise] Violation architecturale bloquante : {final_err}\nLe Modèle DOIT utiliser `ask_user` pour collecter l'information, l'enregistrer via `manage_identity` (service='n8n_workflows'), puis injecter la macro __ECHO_SECRET_...__."
         return None
 
-    def prepare_n8n_workflow(self, content: str = None, from_template_id: str = None, __user__: dict = None, __metadata__: dict = None) -> dict:
+    async def prepare_n8n_workflow(self, content: str = None, from_template_id: str = None, __user__: dict = None, __metadata__: dict = None) -> dict:
         """Instancie et valide un workflow N8N pour la session (depuis un JSON `content` ou un `from_template_id`) et retourne son `n8n_workflow_id`."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
@@ -174,7 +177,7 @@ class Tools:
             tpl_path = self._get_template_path(uid, from_template_id)
             if not tpl_path.exists():
                 return wrap_tool_output(f"Erreur : Template '{from_template_id}' introuvable.", user_id=uid, chat_id=cid, metadata=__metadata__)
-            workflow_content = tpl_path.read_text(encoding="utf-8")
+            workflow_content = await asyncio.to_thread(tpl_path.read_text, "utf-8")
         elif content:
             workflow_content = content
         else:
@@ -189,7 +192,7 @@ class Tools:
             parsed = json.loads(workflow_content) # Valide le format
             wf_id = str(uuid.uuid4())
             path = self._get_workflow_path(uid, cid, wf_id)
-            path.write_text(json.dumps(parsed).decode('utf-8'), encoding="utf-8")
+            await asyncio.to_thread(path.write_text, json.dumps(parsed).decode('utf-8'), "utf-8")
             
             state = EchoStateManager(user_id=uid, chat_id=cid)
             wf_name = parsed.get("name", wf_id)
@@ -201,7 +204,7 @@ class Tools:
         except Exception as e:
             return wrap_tool_output(f"Erreur : {str(e)}", user_id=uid, chat_id=cid, metadata=__metadata__)
 
-    def modify_n8n_workflow(self, n8n_workflow_id: str, new_content: str, __user__: dict = None, __metadata__: dict = None) -> dict:
+    async def modify_n8n_workflow(self, n8n_workflow_id: str, new_content: str, __user__: dict = None, __metadata__: dict = None) -> dict:
         """Met à jour le JSON complet d'un workflow de session instancié (`n8n_workflow_id`)."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
@@ -222,7 +225,7 @@ class Tools:
             
         try:
             parsed = json.loads(new_content)
-            path.write_text(json.dumps(parsed).decode('utf-8'), encoding="utf-8")
+            await asyncio.to_thread(path.write_text, json.dumps(parsed).decode('utf-8'), "utf-8")
             
             state = EchoStateManager(user_id=uid, chat_id=cid)
             state.update_resource_fields(n8n_workflow_id, name=parsed.get("name", n8n_workflow_id))
@@ -230,7 +233,7 @@ class Tools:
         except Exception as e:
             return wrap_tool_output(f"Erreur : {str(e)}", user_id=uid, chat_id=cid, metadata=__metadata__)
 
-    def delete_n8n_workflow(self, n8n_workflow_id: str, __user__: dict = None, __metadata__: dict = None) -> dict:
+    async def delete_n8n_workflow(self, n8n_workflow_id: str, __user__: dict = None, __metadata__: dict = None) -> dict:
         """Supprime un workflow de session (`n8n_workflow_id`), arrête ses processus/démons actifs et purge ses fichiers générés."""
         uid = __user__.get("id", "system") if __user__ else "system"
         cid = __metadata__.get("chat_id") if __metadata__ else None
@@ -244,7 +247,7 @@ class Tools:
         
         logs = []
         if path.exists():
-            path.unlink()
+            await asyncio.to_thread(path.unlink)
             state = EchoStateManager(user_id=uid, chat_id=cid)
             
             # Extraction du statut pour vérifier si c'est un démon (deployed_as_xxx)
@@ -259,10 +262,13 @@ class Tools:
             if status.startswith("deployed_as_"):
                 target_delete_id = status.replace("deployed_as_", "")
             
-            # Appel API synchrone pour tuer les process N8N en cours ou purger le démon
+            # Appel API asynchrone non-bloquant pour tuer les process N8N en cours ou purger le démon
             try:
-                with httpx.Client(timeout=15.0) as client:
-                    resp = client.delete(f"{ECHO_N8N_WORKER_URL}/workflow/{target_delete_id}")
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    resp = await client.delete(
+                        f"{ECHO_N8N_WORKER_URL}/workflow/{target_delete_id}",
+                        params={"user_id": uid, "chat_id": cid},
+                    )
                     if resp.status_code == 200:
                         data = resp.json()
                         logs.append(f"Processus N8N tués: {data.get('killed_processes', 0)}")
@@ -301,16 +307,51 @@ class Tools:
     # C. EXECUTION (BOUCLE FERMEE)
     # =========================================================================
 
+    @staticmethod
+    def _extract_raw_n8n_secret(val: str) -> str:
+        """Extrait la valeur brute d'un secret N8N (qu'il soit stocké en chaîne brute ou encapsulé en JSON par le HUD/Tool)."""
+        if not val:
+            return ""
+        try:
+            parsed = json.loads(val)
+            if isinstance(parsed, dict):
+                for k in ("value", "credentials", "secret", "token"):
+                    if k in parsed and parsed[k] is not None:
+                        return str(parsed[k])
+        except Exception:
+            pass
+        return val
+
     def _inject_secrets(self, content_str: str, user_id: str) -> str:
         state = EchoStateManager(user_id=user_id)
-        with state._get_connection() as conn:
-            def replace_secret(match):
-                key = match.group(1)
-                cursor = conn.execute("SELECT credentials FROM identity_vault WHERE user_id = ? AND service = 'n8n_workflows' AND account_id = ?", (user_id, key))
-                row = cursor.fetchone()
-                return row[0] if row else match.group(0)
-                
-            return re.sub(r'__ECHO_SECRET_([A-Z0-9_]+)__', replace_secret, content_str)
+
+        def replace_secret(match):
+            key = match.group(1)
+            val = state.get_vault_credential("n8n_workflows", key)
+            secret_str = self._extract_raw_n8n_secret(val)
+            if not secret_str:
+                return match.group(0)
+            return json.dumps(secret_str).decode("utf-8")[1:-1]
+
+        return re.sub(r'__ECHO_SECRET_([A-Z0-9_]+)__', replace_secret, content_str)
+
+    def _redact_injected_secrets(self, text: str, user_id: str, original_content: str) -> str:
+        """Masque toute occurrence littérale d'un secret injecté dans les logs/erreurs retournés au Modèle."""
+        if not text or not original_content:
+            return text
+        keys = set(re.findall(r'__ECHO_SECRET_([A-Z0-9_]+)__', original_content))
+        if not keys:
+            return text
+        state = EchoStateManager(user_id=user_id)
+        redacted = text
+        for key in keys:
+            val = state.get_vault_credential("n8n_workflows", key)
+            secret_str = self._extract_raw_n8n_secret(val)
+            if secret_str and len(secret_str) >= 4:
+                placeholder = f"[MASQUÉ:__ECHO_SECRET_{key}__]"
+                escaped_str = json.dumps(secret_str).decode("utf-8")[1:-1]
+                redacted = redacted.replace(secret_str, placeholder).replace(escaped_str, placeholder)
+        return redacted
 
     def _apply_override(self, data: dict, overrides: dict) -> dict:
         """Surcharge intelligente des paramètres des noeuds N8N : overrides = {'Nom du Noeud': {'param': 'valeur'}}"""
@@ -350,12 +391,22 @@ class Tools:
                 return wrap_tool_output(f"Erreur lors de la surcharge: {str(e)}", user_id=uid, chat_id=cid, metadata=__metadata__)
                 
         # 2. Injection des Secrets via Vault
-        workflow_json = self._inject_secrets(workflow_json, uid)
+        original_workflow_json = workflow_json
+        try:
+            workflow_json = self._inject_secrets(workflow_json, uid)
+        except Exception as e:
+            return wrap_tool_output(f"Erreur de déchiffrement Vault lors de l'injection des secrets: {str(e)}", user_id=uid, chat_id=cid, metadata=__metadata__)
         
-        # Vérification qu'aucun secret n'a été laissé
+        # Vérification qu'aucun secret ni macro non résolue n'a été laissé
         missing = self._check_secrets(workflow_json, uid)
         if missing:
             return wrap_tool_output(missing, user_id=uid, chat_id=cid, metadata=__metadata__)
+        leftover = re.findall(r'__ECHO_SECRET_([A-Z0-9_]+)__', workflow_json)
+        if leftover:
+            return wrap_tool_output(
+                f"[Action Requise] Impossible de résoudre ou déchiffrer les secrets Vault suivants : {', '.join(leftover)}.",
+                user_id=uid, chat_id=cid, metadata=__metadata__
+            )
 
         # 3. Appel du Worker API
         state = EchoStateManager(user_id=uid, chat_id=cid)
@@ -378,6 +429,7 @@ class Tools:
                     if sync:
                         state.update_resource_status(n8n_workflow_id, "ready")
                         logs = res.get("stdout", "") + "\n" + res.get("stderr", "")
+                        logs = self._redact_injected_secrets(logs, uid, original_workflow_json)
                         if len(logs.encode('utf-8')) >= 8192:
                             err_msg = "[Erreur Système] Payload excessif (>8Ko) bloqué en mode Synchrone. Le Modèle DOIT réexécuter l'instance en mode asynchrone (sync=False) ou modifier l'architecture du graphe N8N pour filtrer/stocker la donnée en interne."
                             return wrap_tool_output(err_msg, user_id=uid, chat_id=cid, metadata=__metadata__)
@@ -389,7 +441,8 @@ class Tools:
                         return wrap_tool_output(f"[N8N EXECUTION : ASYNCHRONE DÉMARRÉE]\nL'exécution de la tâche (ID: {exec_id}) a bien été lancée en tâche de fond.\n\n[INFO SYSTEM] Le workflow N8N tourne en arrière-plan. Ses résultats (et ses logs stdout/stderr) seront écrits dans des fichiers qui seront automatiquement ingérés dès la fin du traitement. Le Modèle PEUT passer à la tâche suivante.", user_id=uid, chat_id=cid, metadata=__metadata__)
                 else:
                     state.update_resource_status(n8n_workflow_id, "ready")
-                    return wrap_tool_output(f"Erreur API Worker HTTP {resp.status_code}: {resp.text}", user_id=uid, chat_id=cid, metadata=__metadata__)
+                    safe_err = self._redact_injected_secrets(resp.text, uid, original_workflow_json)
+                    return wrap_tool_output(f"Erreur API Worker HTTP {resp.status_code}: {safe_err}", user_id=uid, chat_id=cid, metadata=__metadata__)
                     
         except Exception as e:
             state.update_resource_status(n8n_workflow_id, "ready")
@@ -414,7 +467,21 @@ class Tools:
         workflow_json = path.read_text(encoding="utf-8")
         
         # 1. Injection des Secrets via Vault (En dur dans le JSON)
-        workflow_json = self._inject_secrets(workflow_json, uid)
+        original_workflow_json = workflow_json
+        try:
+            workflow_json = self._inject_secrets(workflow_json, uid)
+        except Exception as e:
+            return wrap_tool_output(f"Erreur de déchiffrement Vault lors de l'injection des secrets: {str(e)}", user_id=uid, chat_id=cid, metadata=__metadata__)
+
+        missing = self._check_secrets(workflow_json, uid)
+        if missing:
+            return wrap_tool_output(missing, user_id=uid, chat_id=cid, metadata=__metadata__)
+        leftover = re.findall(r'__ECHO_SECRET_([A-Z0-9_]+)__', workflow_json)
+        if leftover:
+            return wrap_tool_output(
+                f"[Action Requise] Impossible de résoudre ou déchiffrer les secrets Vault suivants : {', '.join(leftover)}.",
+                user_id=uid, chat_id=cid, metadata=__metadata__
+            )
         
         # 2. Appel au Worker API pour le déploiement
         try:
@@ -428,7 +495,8 @@ class Tools:
                 resp = await client.post(f"{ECHO_N8N_WORKER_URL}/deploy", json=payload)
 
                 if resp.status_code != 200:
-                    return wrap_tool_output(f"Erreur Déploiement HTTP {resp.status_code} : {resp.text}", user_id=uid, chat_id=cid, metadata=__metadata__)
+                    safe_err = self._redact_injected_secrets(resp.text, uid, original_workflow_json)
+                    return wrap_tool_output(f"Erreur Déploiement HTTP {resp.status_code} : {safe_err}", user_id=uid, chat_id=cid, metadata=__metadata__)
 
                 result = resp.json()
                 status = result.get("status")
@@ -453,7 +521,8 @@ class Tools:
                         user_id=uid, chat_id=cid, metadata=__metadata__
                     )
                 else:
-                    return wrap_tool_output(f"Erreur Déploiement : {resp.text}", user_id=uid, chat_id=cid, metadata=__metadata__)
+                    safe_err = self._redact_injected_secrets(resp.text, uid, original_workflow_json)
+                    return wrap_tool_output(f"Erreur Déploiement : {safe_err}", user_id=uid, chat_id=cid, metadata=__metadata__)
         except Exception as e:
             return wrap_tool_output(f"Exception : {repr(e)}", user_id=uid, chat_id=cid, metadata=__metadata__)
 
@@ -517,7 +586,7 @@ class Tools:
                 name = data.get("name", "Sans nom")
                 
                 # Délégation interne pour la création
-                creation_response = self.create_n8n_template(
+                creation_response = await self.create_n8n_template(
                     template_id=template_id,
                     content=json.dumps(workflow_node).decode('utf-8'),
                     __user__=__user__,
@@ -588,15 +657,15 @@ class Tools:
         
         events = EchoEvents(__event_emitter__, __event_call__)
 
-        # Arsenal complet N8N Grapher
+        # Arsenal complet N8N Grapher (aligné sur les noms de fonctions-outils réels d'ECHO)
         allowed = [
             "prepare_n8n_workflow", "run_n8n_oneshot_workflow", "deploy_n8n_daemon",
             "modify_n8n_workflow", "delete_n8n_workflow", "query_n8n_documentation",
             "create_n8n_template", "modify_n8n_template", "delete_n8n_template",
             "search_n8n_hub", "download_n8n_hub_template",
-            "ask_user_input", "manage_identity", "list_identities", "list_identities_services", 
-            "async_wait_timer", "query_registry",
-            "code_executor", "create_codex_file", "read_codex_file", "update_codex_file", "search_codex"
+            "list_identities", "list_identities_services",
+            "wait_timer", "query_registry",
+            "code_executor", "create_codex", "read_codex", "edit_codex", "list_codex", "search_codex"
         ]
 
         import sys

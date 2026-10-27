@@ -1,7 +1,7 @@
 ---
 domain_id: codex_management
-version: 5.231.5.0
-updated_at: 2026-10-25
+version: 5.231.22.1
+updated_at: 2026-10-27
 name: Gestionnaire Documentaire & Versionnement Git (ECHO Codex)
 description: Création, édition directe ou assistée, lecture paginée/historique, recherche spatiale ou temporelle, navigation multi-chat et versionnement Git sur les espaces main et sandbox.
 tools: [create_codex, edit_codex, delete_codex, read_codex, restore_codex, search_codex, summarize_codex, list_codex, list_other_chats_ids, history_codex, open_codex_ui]
@@ -18,7 +18,7 @@ Le Codex ECHO gère des fichiers texte et code versionnés sous Git et synchroni
 - **Navigation Transverse Multi-Chat (Lecture Seule)** :
   - Chaque conversation de l'Utilisateur possède son propre dépôt Codex isolé sous `chats/{chat_id}/codex/`.
   - Le Modèle et l'Interface peuvent explorer et lire les fichiers de n'importe quelle autre conversation du même utilisateur sans quitter la session active.
-  - **Invariant Inviolable (Read-Only)** : Toute consultation d'une conversation distante (`target_chat_id != current_chat_id`) s'effectue strictement en lecture seule. Aucune action mutative n'est autorisée sur un dépôt distant et aucune ressource n'est injectée dans la table SQLite `echo_resources` de la session active afin de préserver l'étanchéité du RAG contextuel.
+  - **Invariant Inviolable (Read-Only)** : Toute consultation d'une conversation distante (`target_chat_id != current_chat_id`) s'effectue strictement en lecture seule. Aucune action mutative n'est autorisée sur un dépôt distant et aucune ressource n'est injectée dans le Registre Unifié de la session active afin de préserver l'étanchéité du RAG contextuel.
 
 ---
 
@@ -46,7 +46,7 @@ Le Codex ECHO gère des fichiers texte et code versionnés sous Git et synchroni
 
 ### 3.1 Lecture, Synthèse et Inventaire Multi-Chat
 - `list_other_chats_ids()` :
-  - **Découverte des sessions distantes** : Découvre dynamiquement les autres conversations de l'Utilisateur disposant d'un espace Codex et retourne un tableau Markdown avec leur identifiant `chat_id` et leur titre résolu depuis `webui.db`. La conversation courante est strictement exclue de cette liste. Utilisé en amont de `list_codex(target_chat_id=...)` et `read_codex(target_chat_id=...)`.
+  - **Découverte des sessions distantes** : Découvre dynamiquement les autres conversations de l'Utilisateur disposant d'un espace Codex et retourne un tableau Markdown avec leur identifiant `chat_id` et leur titre résolu par l'environnement. La conversation courante est strictement exclue de cette liste. Utilisé en amont de `list_codex(target_chat_id=...)` et `read_codex(target_chat_id=...)`.
 - `list_codex(workspace="main", target_chat_id=None)` :
   - **Listing d'un chat distant (`target_chat_id="..."`)** : Liste les fichiers du workspace d'une autre conversation en lecture seule (badge `🔒 [Lecture Seule]`).
   - **Listing local (Défaut)** : Retourne un tableau Markdown de tous les fichiers du workspace courant (`Fichier`, `Langage`, `Lignes`, `Taille`) ainsi que les statistiques de commits.

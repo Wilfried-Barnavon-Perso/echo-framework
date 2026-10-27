@@ -1,23 +1,23 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 5.231.5.1
+version: 5.231.20.1
 description: Permet au modèle de manipuler un espace virtuel (Codex) avec versioning Git invisible et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Centralisation du verrou Git via get_codex_lock (echo_paths), déportation asyncio.to_thread des lectures Dulwich et garde OCC SHA-256 anti-Lost Update dans edit_codex (assisted_edition).
 # 5.231.5.1: Factorisation de _resolve_and_verify_file et support multi-chat/commit dans open_codex_ui.
 # 5.230.0.2: Inscription déterministe de l'AEC URN en début d'appel avec résolution SSoT sur la session active et déduplication intra-tour.
 # 5.230.0.1: Intégration de _emit_urn_directive (Haut SNR, 35 tokens) et rappel URN canonique dans les contrats wrap_tool_output.
 # 5.229.7.3: Harmonisation des signatures -> dict et enrichissement systématique des sorties LLM via wrap_tool_output.
-# 5.229.7.2: Introduction de la fonction-outil dédiée list_other_chats_ids et épuration de list_codex.
 
 # ECHO CONFIG NAME : ECHO Codex
 
 import os
 import sys
+import hashlib
 import asyncio
-from collections import defaultdict
 from pydantic import BaseModel, Field
 from typing import Optional, Any, Literal
 
@@ -34,9 +34,7 @@ from echo_constants import (
 )
 from echo_prompts import SYS_CODEX_EDIT, SYS_CODEX_SUMMARIZE
 from echo_codex_git import CodexRepo
-
-# Gestionnaire de verrous pour la concurrence intra-chat
-_codex_locks = defaultdict(asyncio.Lock)
+from echo_paths import get_codex_lock
 
 
 class Tools:
@@ -265,16 +263,16 @@ class Tools:
         # Inscription déterministe de la directive URN sur la session active dès l'entrée
         self._emit_urn_directive(EchoStateManager(user_id=uid, chat_id=cid))
 
-        if repo.read_file(filename):
-            return wrap_tool_output(text=f"❌ Le fichier `{filename}` existe déjà dans l'espace `{workspace}`.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        async with get_codex_lock(uid, cid):
+            if await asyncio.to_thread(repo.read_file, filename):
+                return wrap_tool_output(text=f"❌ Le fichier `{filename}` existe déjà dans l'espace `{workspace}`.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        await events.status(f"📝 Création de {filename}...", done=False)
+            await events.status(f"📝 Création de {filename}...", done=False)
 
-        lang = language or CodexRepo.detect_language(filename)
-        msg = commit_message or f"Create {filename}"
-        line_count = content.count("\n") + 1
+            lang = language or CodexRepo.detect_language(filename)
+            msg = commit_message or f"Create {filename}"
+            line_count = content.count("\n") + 1
 
-        async with _codex_locks[f"{uid}:{cid}"]:
             commit_hash = await asyncio.to_thread(repo.commit_file, filename, content, msg)
             await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
 
@@ -317,7 +315,8 @@ class Tools:
         self._emit_urn_directive(EchoStateManager(user_id=uid, chat_id=cid))
 
         # Vérification existence
-        existing = repo.read_file(filename)
+        async with get_codex_lock(uid, cid):
+            existing = await asyncio.to_thread(repo.read_file, filename)
         if not existing:
             return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable dans l'espace `{workspace}`.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -327,7 +326,7 @@ class Tools:
         if new_content is not None:
             msg = commit_message or f"Edit {filename}"
             line_count = new_content.count("\n") + 1
-            async with _codex_locks[f"{uid}:{cid}"]:
+            async with get_codex_lock(uid, cid):
                 commit_hash = await asyncio.to_thread(repo.commit_file, filename, new_content, msg)
                 await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
 
@@ -354,6 +353,7 @@ class Tools:
             await events.status(f"🧠 Édition assistée de {filename}...", done=False)
 
             content = existing["content"]
+            original_sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
             user_prompt = f"## Document complet\n```{lang}\n{content}\n```\n\n## Instructions\n{instructions}"
 
             payload = {
@@ -387,7 +387,17 @@ class Tools:
 
             msg = commit_message or f"AI edit: {instructions[:60]}"
             line_count = modified.count("\n") + 1
-            async with _codex_locks[f"{uid}:{cid}"]:
+            async with get_codex_lock(uid, cid):
+                current_doc = await asyncio.to_thread(repo.read_file, filename)
+                if current_doc and hashlib.sha256(current_doc.get("content", "").encode("utf-8")).hexdigest() != original_sha:
+                    await events.status("❌ Conflit d'édition concurrente détecté.", done=True)
+                    return wrap_tool_output(
+                        text=f"❌ Conflit d'édition concurrente (OCC) : Le fichier `{filename}` a été modifié pendant l'édition assistée. Relisez le fichier avant de réappliquer vos modifications.",
+                        status={"status": "error", "error_code": "concurrent_modification_conflict", "filename": filename},
+                        user_id=uid,
+                        chat_id=cid,
+                        metadata=__metadata__,
+                    )
                 commit_hash = await asyncio.to_thread(repo.commit_file, filename, modified, msg)
                 await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
 
@@ -430,7 +440,7 @@ class Tools:
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        async with _codex_locks[f"{uid}:{cid}"]:
+        async with get_codex_lock(uid, cid):
             try:
                 delete_result = await asyncio.to_thread(repo.delete_file, filename, f"Delete {filename}")
             except ValueError as e:
@@ -566,7 +576,7 @@ class Tools:
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        async with _codex_locks[f"{uid}:{cid}"]:
+        async with get_codex_lock(uid, cid):
             old_content = await asyncio.to_thread(repo.get_file_at_commit, filename, commit_hash)
             if old_content is None:
                 return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable au commit `{commit_hash}`.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
@@ -644,7 +654,8 @@ class Tools:
             
         else:
             # Mode Spatial (Grep) dans le Codex
-            all_files = [f["filename"] for f in repo.list_files() if f["type"] == "file"]
+            raw_files = await asyncio.to_thread(repo.list_files)
+            all_files = [f["filename"] for f in raw_files if f["type"] == "file"]
             if target_paths:
                 files_to_check = [f for f in all_files if any(f.startswith(p) for p in target_paths)]
             else:
@@ -694,7 +705,7 @@ class Tools:
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        result = repo.read_file(filename)
+        result = await asyncio.to_thread(repo.read_file, filename)
         if not result:
             return wrap_tool_output(text=f"❌ Fichier `{filename}` introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
@@ -892,7 +903,7 @@ class Tools:
         if not repo:
             return wrap_tool_output(text="❌ Contexte manquant (chat_id).", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        log = repo.get_log(filename=filename, limit=limit)
+        log = await asyncio.to_thread(repo.get_log, filename, limit)
         if not log:
             scope = f"de `{filename}`" if filename else "du Codex"
             return wrap_tool_output(

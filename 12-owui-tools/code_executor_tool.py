@@ -1,16 +1,16 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 5.229.0.0
+version: 5.231.20.1
 description: Composant système interne : ECHO Code Executor (Python & Node.js).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Multiplexage des exécutions concurrentes par run_id et isolation des payloads/HUDs de monitoring par chat_id.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 7.10: Implémentation du Supervisor Pattern & JS Heartbeat (fermeture/crash automatique).
 # 7.9: Implémentation du Bidi Polling asynchrone (Temps Réel UI<->Sandbox) et outil kill_sandbox_execution.
-# 7.8: Injection dynamique de la constante ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS au worker pour l'anti-OOM.
 
 # ECHO CONFIG NAME : ECHO Code Sandbox
 
@@ -34,6 +34,7 @@ class Tools:
 
     async def kill_sandbox_execution(
         self,
+        run_id: Optional[str] = None,
         __user__: Optional[dict] = None,
         __metadata__: Optional[dict] = None
     ) -> str:
@@ -46,11 +47,12 @@ class Tools:
         
         import httpx
         async with httpx.AsyncClient() as client:
-            res = await client.post(url, json={"user_id": uid, "chat_id": cid})
+            res = await client.post(url, json={"user_id": uid, "chat_id": cid, "run_id": run_id})
             
         data = res.json()
         if data.get("status") == "killed":
-            return wrap_tool_output(text=f"Processus Sandbox (PID {data.get('pid')}) détruit avec succès.", user_id=uid, chat_id=cid, metadata=__metadata__)
+            pids = data.get("pids") or ([data["pid"]] if "pid" in data else [])
+            return wrap_tool_output(text=f"Processus Sandbox (PID {', '.join(str(p) for p in pids)}) détruit avec succès.", user_id=uid, chat_id=cid, metadata=__metadata__)
         return wrap_tool_output(text="Aucune exécution Sandbox active trouvée pour cette session.", user_id=uid, chat_id=cid, metadata=__metadata__)
 
     async def code_executor(
@@ -69,12 +71,14 @@ class Tools:
         __metadata__ = __metadata__ or {}
         dependencies = dependencies or []
 
-        events = EchoEvents(__event_emitter__, __event_call__)
+        uid = __user__.get("id", "system")
+        cid = __metadata__.get("chat_id")
+        events = EchoEvents(__event_emitter__, __event_call__, user_id=uid, chat_id=cid)
 
         if timeout_sec > ECHO_MAX_CODE_EXECUTION_TIMEOUT:
             err_msg = f"timeout_sec ({timeout_sec}s) dépasse la limite autorisée ({ECHO_MAX_CODE_EXECUTION_TIMEOUT}s)."
             await events.status(f"Erreur: {err_msg}", done=True)
-            return wrap_tool_output(text="", status={"status": "error", "error": err_msg}, user_id=__user__.get("id", "system"), chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
+            return wrap_tool_output(text="", status={"status": "error", "error": err_msg}, user_id=uid, chat_id=cid, metadata=__metadata__)
 
         actual_timeout = timeout_sec
 
@@ -84,19 +88,17 @@ class Tools:
 
         try:
             import httpx
-            
+            cid_js = json.dumps(cid or "")
             ui_payload_data = None
             if fetch_ui_payload:
                 try:
-                    raw = await events.call_execute("return typeof window._echoGetAggregatedPayload === 'function' ? window._echoGetAggregatedPayload() : null;")
+                    raw = await events.call_execute(f"return typeof window._echoGetAggregatedPayload === 'function' ? window._echoGetAggregatedPayload({cid_js}) : null;")
                     ui_payload_data = raw if isinstance(raw, dict) else (json.loads(raw) if raw else None)
                 except Exception:
                     pass
                     
             task_audit = {"status": "running", "polls": 0, "payloads_pushed": 0, "payloads_pulled": 0}
             sandbox_base = ECHO_CODING_WORKER_URL.replace("/execute", "")
-            uid = __user__.get("id", "system")
-            cid = __metadata__.get("chat_id")
             
             import uuid
             run_id = str(uuid.uuid4())
@@ -117,9 +119,9 @@ class Tools:
                     async with httpx.AsyncClient() as pclient:
                         while asyncio.get_event_loop().time() - start_t < actual_timeout:
                             task_audit["polls"] += 1
-                            # 1. Descente Multiplexée
+                            # 1. Descente Multiplexée (isolée par chat_id)
                             try:
-                                raw = await events.call_execute("return typeof window._echoGetAggregatedPayload === 'function' ? window._echoGetAggregatedPayload() : null;")
+                                raw = await events.call_execute(f"return typeof window._echoGetAggregatedPayload === 'function' ? window._echoGetAggregatedPayload({cid_js}) : null;")
                                 ui_data = raw if isinstance(raw, dict) else (json.loads(raw) if raw else None)
                                 if ui_data:
                                     if ui_data.get("_echo_signal") == "abort":
@@ -156,9 +158,9 @@ class Tools:
                             except Exception:
                                 pass
 
-                            # 2. Remontée Temps Réel
+                            # 2. Remontée Temps Réel (isolée par run_id et chat_id)
                             try:
-                                pr = await pclient.get(f"{sandbox_base}/poll_monitor", params={"user_id": uid, "chat_id": cid, "offset": offset}, timeout=2.0)
+                                pr = await pclient.get(f"{sandbox_base}/poll_monitor", params={"user_id": uid, "chat_id": cid, "run_id": run_id, "offset": offset}, timeout=2.0)
                                 if pr.status_code == 200:
                                     pdata = pr.json()
                                     offset = pdata.get("offset", offset)
@@ -181,7 +183,7 @@ class Tools:
                                                 const bin = atob({b64});
                                                 const htmlContent = new TextDecoder('utf-8').decode(Uint8Array.from(bin, c => c.charCodeAt(0)));
                                                 const [wid, title, width, height] = [{args}];
-                                                window.echoCreateFloatingMonitor(wid, title, htmlContent, width, height);
+                                                window.echoCreateFloatingMonitor(wid, title, htmlContent, width, height, {cid_js});
                                             }})();
                                         '''
                                         await events.emit_execute(js_code)
@@ -232,7 +234,7 @@ class Tools:
                     return wrap_tool_output(text="", status={"status": "critical_error", "code": response.status_code, "error": err_msg}, user_id=uid, chat_id=cid, metadata=__metadata__)
             except asyncio.CancelledError:
                 # Interception du Stop Generating (Utilisateur) ou Abort (Navigateur)
-                await events.emit_execute("if(window._echoGetAggregatedPayload){ window._echoGetAggregatedPayload()._echo_signal = null; }")
+                await events.emit_execute(f"if(window._echoGetAggregatedPayload){{ const p = window._echoGetAggregatedPayload({cid_js}); if(p) p._echo_signal = null; }}")
                 async with httpx.AsyncClient() as client:
                     await client.post(f"{sandbox_base}/kill", json={"user_id": uid, "chat_id": cid, "run_id": run_id})
                 task_audit["status"] = "killed"
@@ -271,7 +273,7 @@ class Tools:
                                 const bin = atob({b64});
                                 const htmlContent = new TextDecoder('utf-8').decode(Uint8Array.from(bin, c => c.charCodeAt(0)));
                                 const [wid, title, width, height] = [{args}];
-                                window.echoCreateFloatingMonitor(wid, title, htmlContent, width, height);
+                                window.echoCreateFloatingMonitor(wid, title, htmlContent, width, height, {cid_js});
                             }})();
                         '''
                         await events.emit_execute(js_code)

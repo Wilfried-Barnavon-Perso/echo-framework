@@ -1,12 +1,13 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : echo-globals.sh
-# VERSION : 5.226.18.1
+# VERSION : 5.231.21.2
 # AUTEUR : Wilfried BARNAVON
 # ROLE : Centralisation des constantes de chemins pour le framework ECHO
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.21.2: Factorisation de generate_secret (sans SIGPIPE sous pipefail) et ensure_echo_secrets incluant ECHO_VAULT_ENCRYPTION_KEY (64 chars).
 # 5.226.18.1: Ajout de la constante ECHO_OWUI_EVENTS pour le sous-système 15-owui-events.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 
@@ -49,3 +50,27 @@ export ECHO_SERVICE_ACCOUNT="install-stack@echo.local"
 export ECHO_NET_BW_UNIVERSE_PREFIX="10.20.30"
 export ECHO_NET_MAIN_PREFIX="10.20.40"
 export ECHO_NET_SANDBOX_PREFIX="10.20.50"
+
+# --- GESTION CENTRALISÉE DES SECRETS (.env) ---
+generate_secret() {
+    local key=$1
+    local length=$2
+    local target_env="${ENV_FILE:-$ECHO_ENV_FILE}"
+    (umask 077 && touch "$target_env")
+    chmod 600 "$target_env"
+    if ! grep -qE "^${key}=[^\"'[:space:]]+" "$target_env" 2>/dev/null; then
+        local secret
+        secret=$(dd if=/dev/urandom bs=512 count=1 2>/dev/null | LC_ALL=C tr -dc 'A-Za-z0-9' | head -c "$length")
+        sed -i "/^${key}=/d" "$target_env" 2>/dev/null || true
+        echo "${key}=${secret}" >> "$target_env"
+        echo "   🔑 Génération du secret : $key"
+    fi
+}
+
+ensure_echo_secrets() {
+    generate_secret "BW_DB_PASSWORD" 24
+    generate_secret "SEARXNG_SECRET" 64
+    generate_secret "ECHO_SSO_SECRET" 32
+    generate_secret "N8N_ENCRYPTION_KEY" 64
+    generate_secret "ECHO_VAULT_ENCRYPTION_KEY" 64
+}

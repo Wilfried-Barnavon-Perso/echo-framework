@@ -1,13 +1,14 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : enable-bunkerweb.sh
-# VERSION : 5.226.18.0
+# VERSION : 5.231.21.2
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Activation de la couche de sécurité BunkerWeb (Secure Edge).
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.21.2: Délégation de la génération des secrets .env (dont ECHO_VAULT_ENCRYPTION_KEY) à ensure_echo_secrets (y compris en sortie idempotente).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 4.2: Sécurisation de la création IPAM dynamique pour echo-network et echo-sandbox.
 # 4.1: Correction du grep pour le parsing de echo-open-webui.
@@ -96,6 +97,7 @@ if [ -n "$BW_RUNNING" ] && [ "$CURRENT_DOMAIN" = "$DOMAIN" ]; then
     echo ""
     read -r -p "Forcer la reconfiguration complète ? (y/N) : " FORCE
     if [[ "$FORCE" != "y" && "$FORCE" != "Y" ]]; then
+        ensure_echo_secrets
         echo "✅ Reconfiguration Open WebUI uniquement..."
         if [ -f "$ECHO_SCRIPTS/config-owui.sh" ]; then
             /bin/bash "$ECHO_SCRIPTS/config-owui.sh"
@@ -139,19 +141,7 @@ update_env "ECHO_DETECTED_ORIGINS" "$ECHO_DETECTED_ORIGINS"
 update_env "ECHO_JWT_EXPIRES_IN" "-1"
 
 # Génération des secrets si absents
-generate_secret() {
-    local key=$1
-    local length=$2
-    if ! grep -q "^$key=" "$ENV_FILE" 2>/dev/null; then
-        local secret
-        secret=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$length")
-        echo "$key=$secret" >> "$ENV_FILE"
-        echo "   🔑 Génération du secret : $key"
-    fi
-}
-
-generate_secret "BW_DB_PASSWORD" 24
-generate_secret "SEARXNG_SECRET" 64
+ensure_echo_secrets
 
 export ECHO_DETECTED_ORIGINS="$ECHO_DETECTED_ORIGINS"
 

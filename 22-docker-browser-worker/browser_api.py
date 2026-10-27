@@ -1,19 +1,19 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 5.226.18.0
+VERSION : 5.231.20.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-10-17
+DATE MAJ : 2026-10-27
 
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Synchronisation dynamique de chat_id dans /action et /start_session pour routage multi-chat des téléchargements en sessions éphémères ou sous-agents.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 9.31: FIX: Séparation entre `sid` (isolation Playwright en RAM par `sub_sid`) et `chat_id` (routage des téléchargements `/app/downloads/<user_id>/<chat_id>/browser`) pour garantir l'ingestion par `download_broker.py` lors d'un appel par sous-agent.
 # 9.30: FIX: Settle asynchrone post-scroll et Lidar Check (recalibrage instantané de Bounding Box) pour annuler les clics ratés lors de Layout Shifts.
 # 9.29: FEAT: Vision Grid Optimisée (Bicolore Magenta/Cyan, crénelures de quarts) pour supprimer le biais d'interpolation IA. FIX: Iframe DOM Map Offset bug (Calibration exacte via locator("html").bounding_box() pour gérer les iframes avec scale, bordures et paddings, annulant l'offset visuel).
-# 9.27: REFACTOR: JS Constants (no f-strings), Dedicated overlay context. FEAT: Real CDP zoom (clip.scale) with absolute grid. FEAT: Hit tests (elementFromPoint) before clicks. FEAT: Generational DOM index, auto-cleanup. FEAT: LRU session eviction (max 20). FEAT: Human wheel scrolling & strict wait_for_settle.
 
 import asyncio
 import pybase64 as base64
@@ -862,8 +862,11 @@ async def screencast_latest(request: Request):
 async def browser_action(request: Request):
     data = await request.json()
     sid, action, params = data.get("session_id"), data.get("action"), data.get("params", {})
+    chat_id = data.get("chat_id")
     session = SESSIONS.get(sid)
     if not session: return {"status": "error", "error_type": "SESSION_NOT_FOUND", "message": "RESTART_REQUIRED"}
+    if chat_id:
+        session.chat_id = chat_id
     session.last_activity = time.time()
 
     try:

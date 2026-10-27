@@ -1,16 +1,16 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 5.229.0.0
+version: 5.231.20.1
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Isolation des sessions Playwright par sub_sid/sid dans delegate_web_browsing et close_web_thread, sessions éphémères parallélisables dans analyze/archive_web_page et nommage anti-écrasement des archives.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 11.43: Séparation stricte entre chat_id (persistance SQLite/Vault) et browser_session_id (isolation Playwright par sub_sid) pour empêcher la création de dossiers chats/<sub_sid> orphelins.
 # 11.42: Ajustement du thinking level de analyze_web_page à medium.
-# 11.41: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 
 import os
 import time
@@ -136,12 +136,14 @@ class Tools:
         # Récupération de l'identité du sous-agent via contextvars
         sub_context = ECHO_SUBAGENT_CONTEXT.get()
         chat_id = (__metadata__ or {}).get("chat_id", "default_session")
-        sub_sid = sub_context.get("sub_sid")
-        
-        # Isolation Playwright en RAM via browser_session_id, persistance SQLite/Vault stricte sur chat_id
-        browser_session_id = sub_sid if sub_sid else chat_id
-        
         uid = (__user__ or {}).get("id", "anonymous")
+        events = EchoEvents(__event_emitter__, __event_call__, user_id=uid, chat_id=chat_id)
+        sub_sid = sub_context.get("sub_sid")
+        sid = f"thread_web_{uuid.uuid4().hex[:8]}"
+        
+        # Isolation Playwright en RAM via browser_session_id dédié, persistance SQLite/Vault stricte sur chat_id
+        browser_session_id = sub_sid if sub_sid else sid
+        
         u_valves = (__user__ or {}).get("valves", self.UserValves())
         use_vision = getattr(u_valves, 'USE_MULTIMODAL_VISION', True)
 
@@ -149,10 +151,9 @@ class Tools:
         if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, browser_session_id, uid, u_valves, events, chat_id=chat_id):
             return wrap_tool_output(text="❌ Navigateur indisponible.", status={"status": "error"}, user_id=(__user__ or {}).get("id", "system"), chat_id=(__metadata__ or {}).get("chat_id"), metadata=__metadata__)
 
-        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, browser_session_id, uid, vision_grid_step=getattr(u_valves, 'VISION_GRID_STEP', DEFAULT_VISION_GRID_STEP))
+        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, browser_session_id, uid, vision_grid_step=getattr(u_valves, 'VISION_GRID_STEP', DEFAULT_VISION_GRID_STEP), chat_id=chat_id)
         registry = browser.get_registry()
         
-        sid = f"thread_web_{uuid.uuid4().hex[:8]}"
         state = EchoStateManager(user_id=uid, chat_id=chat_id)
 
         if start_url:
@@ -539,24 +540,31 @@ class Tools:
 
     async def analyze_web_page(self, url: str, query: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
         """Extrait et analyse sémantiquement le contenu d'une URL connue pour répondre à une directive précise."""
-        events = EchoEvents(__event_emitter__, __event_call__)
         chat_id = (__metadata__ or {}).get("chat_id", "default_session")
+        uid = (__user__ or {}).get("id", "anonymous")
+        events = EchoEvents(__event_emitter__, __event_call__, user_id=uid, chat_id=chat_id)
         sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
         sub_sid = sub_ctx.get("sub_sid") if sub_ctx else None
-        browser_session_id = sub_sid if sub_sid else chat_id
-        uid = __user__.get("id", "anonymous")
-        u_valves = __user__.get("valves", self.UserValves())
+        base_session_id = sub_sid if sub_sid else chat_id
+        ephem_session_id = f"{base_session_id}_analyze_{uuid.uuid4().hex[:6]}"
+        u_valves = (__user__ or {}).get("valves", self.UserValves())
         
-        if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, browser_session_id, uid, u_valves, events, chat_id=chat_id):
+        if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, ephem_session_id, uid, u_valves, events, chat_id=chat_id):
             return wrap_tool_output(text="Erreur critique : Session perdue.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, browser_session_id, uid)
-        await events.status(f"🌐 Navigation vers {url}...")
-        await browser.action_browser_control(command="navigate", value=url)
-        
-        await events.status("🧠 Extraction sémantique Markdown...")
-        res_action = await browser.action_inspect_page(target="read_text")
-        markdown_text = res_action.get("content", "")
+        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, ephem_session_id, uid, chat_id=chat_id)
+        try:
+            await events.status(f"🌐 Navigation vers {url}...")
+            await browser.action_browser_control(command="navigate", value=url)
+            
+            await events.status("🧠 Extraction sémantique Markdown...")
+            res_action = await browser.action_inspect_page(target="read_text")
+            markdown_text = res_action.get("content", "")
+        finally:
+            try:
+                await browser.reset_session()
+            except Exception:
+                pass
         
         vault_dir = get_echo_session_path(uid, chat_id, "files")
         os.makedirs(vault_dir, exist_ok=True)
@@ -593,31 +601,39 @@ class Tools:
 
     async def archive_web_page(self, url: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
         """Archive le texte intégral d'une page Web en tâche de fond dans la Mémoire Vectorielle de la session."""
-        events = EchoEvents(__event_emitter__, __event_call__)
         chat_id = (__metadata__ or {}).get("chat_id", "default_session")
+        uid = (__user__ or {}).get("id", "anonymous")
+        events = EchoEvents(__event_emitter__, __event_call__, user_id=uid, chat_id=chat_id)
         sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
         sub_sid = sub_ctx.get("sub_sid") if sub_ctx else None
-        browser_session_id = sub_sid if sub_sid else chat_id
-        uid = __user__.get("id", "anonymous")
-        u_valves = __user__.get("valves", self.UserValves())
+        base_session_id = sub_sid if sub_sid else chat_id
+        ephem_session_id = f"{base_session_id}_archive_{uuid.uuid4().hex[:6]}"
+        u_valves = (__user__ or {}).get("valves", self.UserValves())
         
-        if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, browser_session_id, uid, u_valves, events, chat_id=chat_id):
+        if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, ephem_session_id, uid, u_valves, events, chat_id=chat_id):
             return wrap_tool_output(text="Erreur critique : Session perdue.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
-        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, browser_session_id, uid)
-        await events.status(f"🌐 Navigation vers {url}...")
-        await browser.action_browser_control(command="navigate", value=url)
-        
-        await events.status("🧠 Extraction sémantique (Markdown)...")
-        res_action = await browser.action_inspect_page(target="read_text")
-        markdown_text = res_action.get("content", "")
+        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, ephem_session_id, uid, chat_id=chat_id)
+        try:
+            await events.status(f"🌐 Navigation vers {url}...")
+            await browser.action_browser_control(command="navigate", value=url)
+            
+            await events.status("🧠 Extraction sémantique (Markdown)...")
+            res_action = await browser.action_inspect_page(target="read_text")
+            markdown_text = res_action.get("content", "")
+        finally:
+            try:
+                await browser.reset_session()
+            except Exception:
+                pass
         
         if not markdown_text:
             return wrap_tool_output(text="Erreur : Échec de l'extraction du texte.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
             
-        domain = urllib.parse.urlparse(url).netloc.replace(".", "_")
-        file_id = f"ARCHIVE_{domain}_{uuid.uuid4().hex[:6]}"
-        filename = f"{domain}_archive.md"
+        domain = urllib.parse.urlparse(url).netloc.replace(".", "_") or "web_page"
+        short_uuid = uuid.uuid4().hex[:6]
+        file_id = f"ARCHIVE_{domain}_{short_uuid}"
+        filename = f"{domain}_{short_uuid}_archive.md"
         
         vault_dir = get_echo_session_path(uid, chat_id, "files")
         os.makedirs(vault_dir, exist_ok=True)
@@ -645,15 +661,15 @@ class Tools:
         sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
         sub_sid = sub_ctx.get("sub_sid") if sub_ctx else None
         browser_session_id = sub_sid if sub_sid else chat_id
-        uid = __user__.get("id", "anonymous")
-        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, browser_session_id, uid)
+        uid = (__user__ or {}).get("id", "anonymous")
+        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, browser_session_id, uid, chat_id=chat_id)
         res = await browser.reset_session()
         return wrap_tool_output(text="🚀 Navigateur réinitialisé.", status=res, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
     async def close_web_thread(self, sub_sid: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
         """Ferme définitivement une session de navigation web (`thread_web_*`) et purge son historique."""
-        chat_id = __metadata__.get("chat_id", "default_session")
-        uid = __user__.get("id", "anonymous")
+        chat_id = (__metadata__ or {}).get("chat_id", "default_session")
+        uid = (__user__ or {}).get("id", "anonymous")
         
         state = EchoStateManager(user_id=uid, chat_id=chat_id)
         threads = state.list_threads(chat_id)
@@ -667,8 +683,8 @@ class Tools:
             
         state.delete_thread(sub_sid)
         
-        # Fermeture physique de la session Playwright
-        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, chat_id, uid)
+        # Fermeture physique de la session Playwright du sous-agent ciblé (et non du chat_id parent)
+        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, sub_sid, uid, chat_id=chat_id)
         await browser.reset_session()
         
         return wrap_tool_output(

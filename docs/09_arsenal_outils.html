@@ -64,7 +64,7 @@
       <div>
         <h3>1. Standards de Développement OWUI &amp; Séparation Interface / Connaissance (<code>12-owui-tools/</code> &amp; <code>echo_tool_guides.py</code> v5.229.0.1)</h3>
         <ul>
-          <li><strong>Architecture Minimaliste des Schémas (<code>v5.229.0.0</code>) :</strong> Les docstrings Python des 93 fonctions exposées dans les 19 fichiers de <code>12-owui-tools/</code> sont réduites à 1 phrase fonctionnelle pure (~80 % de réduction du schéma OpenAPI), et les retours d'outils sont purgés des directives prescriptives <code>IMPLIQUE</code>. La base de connaissances opérationnelle complète est externalisée dans 10 manuels Markdown versionnés (<code>14-owui-libs/tool_guides/*.md</code>) indexés par <code>EchoToolGuidesManager</code> et interrogés par l'Expert-Conseil Opérationnel Hybride <code>tool_advisor</code> (<code>generalist_tools.py</code> v5.229.2.1 sur <code>MODEL_APOLLO</code>, <code>override_thinking="medium"</code>).</li>
+          <li><strong>Architecture Minimaliste des Schémas (<code>v5.229.0.0</code>) :</strong> Les docstrings Python des 93 fonctions exposées dans les 19 fichiers de <code>12-owui-tools/</code> sont réduites à 1 phrase fonctionnelle pure (~80 % de réduction du schéma OpenAPI), et les retours d'outils sont purgés des directives prescriptives <code>IMPLIQUE</code>. La base de connaissances opérationnelle complète est externalisée dans 10 manuels Markdown versionnés (<code>14-owui-libs/tool_guides/*.md</code>, jusqu'à v5.231.22.2) indexés par <code>EchoToolGuidesManager</code> et interrogés par l'Expert-Conseil Opérationnel Hybride <code>tool_advisor</code> (<code>generalist_tools.py</code> v5.231.20.1 sur <code>MODEL_APOLLO</code>, <code>override_thinking="medium"</code>).</li>
           <li><strong>Injection Native du Contexte :</strong> Chaque outil déclare obligatoirement <code>__user__</code> et <code>__metadata__</code> dans sa signature Python pour garantir l'injection authentifiée de la session par Open WebUI.</li>
           <li><strong>Propagation d'Identité Asynchrone (<code>ECHO_SUBAGENT_CONTEXT</code>) :</strong> La variable <code>contextvars.ContextVar</code> transporte de manière transparente l'identité des sous-agents (<code>sub_sid</code>, <code>is_subagent</code>, <code>sub_tools_names</code>) à travers les frontières asynchrones sans modifier les signatures inspectées par Open WebUI.</li>
           <li><strong>Protocole Multipart &amp; FIFO Destructif (<code>wrap_tool_output</code>) :</strong> Les payloads multimodaux sont encapsulés sous la clé standardisée <code>echo_tool_multiparts</code> (déballée par <code>unbox_tool_output()</code> dans <code>echo_core.py</code>), tandis que les événements système (<code>aec_event</code>, <code>aec_directive</code>) sont consommés selon un mécanisme FIFO destructif qui préserve intactes les ressources persistantes du registre.</li>
@@ -86,7 +86,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.18 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.22 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -249,7 +249,7 @@ flowchart TD
       <ul>
         <li><strong>Désignation d'un DPO :</strong> Toute organisation déployant ECHO pour ses collaborateurs doit consigner le système au Registre des Traitements et désigner le point de contact DPO interne.</li>
         <li><strong>Sélection du Tier d'Inférence :</strong> Il est recommandé d'utiliser exclusivement des identifiants Google Cloud Vertex AI ou Google Cloud Code Assist d'entreprise pour bénéficier d'un accord formel de sous-traitance (DPA).</li>
-        <li><strong>Politique de Secrets :</strong> L'outil <code>identity_vault_tool</code> doit être réservé aux environnements dont le chiffrement des disques au repos (BitLocker / LUKS) est activé.</li>
+        <li><strong>Politique de Secrets :</strong> L'outil <code>identity_vault_tool</code> chiffre applicativement chaque secret en AEAD <code>AES-256-GCM</code> (avec dérivation <code>HKDF-SHA256</code> par utilisateur à partir de <code>ECHO_VAULT_ENCRYPTION_KEY</code> et liaison <code>AAD = user_id:service:account_id</code> dans <code>identity.db</code>) et doit être complété par le chiffrement des disques au repos (BitLocker / LUKS) sur l'hôte.</li>
       </ul>
     </details>
 
@@ -258,7 +258,7 @@ flowchart TD
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.18 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.22 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

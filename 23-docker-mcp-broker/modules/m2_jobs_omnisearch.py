@@ -1,15 +1,15 @@
 """
 title: Jobs Omnisearch MCP Module
-version: 5.228.9.4
+version: 5.231.20.1
 description: Module MCP Omnisearch Jobs avec filtrage dynamique de séniorité, France Travail et WTTJ.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Résolution prioritaire des credentials par utilisateur (credentials_var) et isolation multi-user du cache OAuth2 France Travail.
 # 5.228.9.4: WTTJ Algolia out-of-the-box, pacing humanisé séquentiel APEC et neutralisation de la pollution de debug.
 # 5.228.9.3: Persistance atomique du jeton OAuth2 France Travail sur le volume echo-mcp-cache.
 # 5.228.9.2: Intégration de France Travail (OAuth2 v2) et Welcome to the Jungle (WTTJ).
 # 5.228.9.1: Ajout du filtrage de séniorité LinkedIn (f_E), résolution sémantique et standardisation PAS des docstrings.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 import asyncio
 import json
 import logging
@@ -17,6 +17,7 @@ import os
 import random
 import re
 import time
+import uuid
 from typing import Optional
 import httpx
 from bs4 import BeautifulSoup
@@ -25,7 +26,18 @@ try:
 except ImportError:
     from mcp.server.fastmcp import FastMCP as MCPServer
 
+from core.security import user_id_var, credentials_var
+
 logger = logging.getLogger(__name__)
+
+
+def _get_cred(key: str, default: str = "") -> str:
+    """Résout un secret depuis le contexte utilisateur courant (Identity Vault) avec repli sur os.environ."""
+    creds = credentials_var.get() or {}
+    val = creds.get(key)
+    if val is not None and str(val).strip():
+        return str(val).strip()
+    return os.environ.get(key, default).strip()
 
 # Constants
 DEFAULT_HEADERS = {
@@ -232,7 +244,7 @@ async def _search_apec(keywords: str, location: str, limit: int) -> list:
     headers["Origin"] = "https://www.apec.fr"
     headers["Referer"] = "https://www.apec.fr/candidat/recherche-emploi.html"
     
-    datadome_cookie = os.environ.get("APEC_DATADOME_COOKIE", "").strip()
+    datadome_cookie = _get_cred("APEC_DATADOME_COOKIE")
     if datadome_cookie:
         headers["Cookie"] = f"datadome={datadome_cookie}"
     
@@ -264,7 +276,7 @@ async def _details_apec(job_id: str) -> str:
     headers = DEFAULT_HEADERS.copy()
     headers["Referer"] = "https://www.apec.fr/candidat/recherche-emploi.html"
     
-    datadome_cookie = os.environ.get("APEC_DATADOME_COOKIE", "").strip()
+    datadome_cookie = _get_cred("APEC_DATADOME_COOKIE")
     if datadome_cookie:
         headers["Cookie"] = f"datadome={datadome_cookie}"
 
@@ -311,31 +323,34 @@ async def _details_apec(job_id: str) -> str:
 # ==========================================
 MCP_CACHE_ROOT = os.environ.get("ECHO_MCP_CACHE_DIR", "/app/mcp_cache")
 FT_CACHE_DIR = os.path.join(MCP_CACHE_ROOT, "jobs_omnisearch")
-FT_CACHE_FILE = os.path.join(FT_CACHE_DIR, "ft_token.json")
 
-_FT_TOKEN_CACHE = {
-    "access_token": None,
-    "expires_at": 0.0,
-}
+_FT_TOKEN_CACHE: dict[str, dict] = {}
+
+
+def _get_ft_user_key() -> str:
+    raw_uid = user_id_var.get() or "anonymous"
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in str(raw_uid)) or "anonymous"
 
 
 def _load_cached_ft_token() -> Optional[str]:
-    """Charge le jeton persistant depuis le volume echo-mcp-cache si encore valide."""
+    """Charge le jeton persistant par utilisateur depuis le volume echo-mcp-cache si encore valide."""
     now = time.time()
-    # 1. Vérification en RAM
-    if _FT_TOKEN_CACHE["access_token"] and now < (_FT_TOKEN_CACHE["expires_at"] - 60):
-        return _FT_TOKEN_CACHE["access_token"]
+    ukey = _get_ft_user_key()
+    # 1. Vérification en RAM par utilisateur
+    entry = _FT_TOKEN_CACHE.get(ukey)
+    if entry and entry.get("access_token") and now < (entry.get("expires_at", 0.0) - 60):
+        return entry["access_token"]
 
     # 2. Vérification sur le volume disque echo-mcp-cache
-    if os.path.isfile(FT_CACHE_FILE):
+    cache_file = os.path.join(FT_CACHE_DIR, f"ft_token_{ukey}.json")
+    if os.path.isfile(cache_file):
         try:
-            with open(FT_CACHE_FILE, "r", encoding="utf-8") as f:
+            with open(cache_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
             token = data.get("access_token")
             expires_at = float(data.get("expires_at", 0.0))
             if token and now < (expires_at - 60):
-                _FT_TOKEN_CACHE["access_token"] = token
-                _FT_TOKEN_CACHE["expires_at"] = expires_at
+                _FT_TOKEN_CACHE[ukey] = {"access_token": token, "expires_at": expires_at}
                 return token
         except Exception as e:
             logger.warning(f"Lecture du cache disque France Travail ignorée : {e}")
@@ -343,15 +358,16 @@ def _load_cached_ft_token() -> Optional[str]:
 
 
 def _save_cached_ft_token(token: str, expires_at: float) -> None:
-    """Enregistre le jeton en RAM et sur le volume disque echo-mcp-cache."""
-    _FT_TOKEN_CACHE["access_token"] = token
-    _FT_TOKEN_CACHE["expires_at"] = expires_at
+    """Enregistre le jeton en RAM et sur le volume disque echo-mcp-cache par utilisateur."""
+    ukey = _get_ft_user_key()
+    _FT_TOKEN_CACHE[ukey] = {"access_token": token, "expires_at": expires_at}
+    cache_file = os.path.join(FT_CACHE_DIR, f"ft_token_{ukey}.json")
     try:
         os.makedirs(FT_CACHE_DIR, exist_ok=True)
-        temp_file = f"{FT_CACHE_FILE}.tmp.{os.getpid()}"
+        temp_file = f"{cache_file}.tmp.{os.getpid()}.{uuid.uuid4().hex[:6]}"
         with open(temp_file, "w", encoding="utf-8") as f:
             json.dump({"access_token": token, "expires_at": expires_at}, f)
-        os.replace(temp_file, FT_CACHE_FILE)
+        os.replace(temp_file, cache_file)
     except Exception as e:
         logger.warning(f"Écriture du cache disque France Travail ignorée : {e}")
 
@@ -362,8 +378,8 @@ async def _get_france_travail_token(client: httpx.AsyncClient) -> Optional[str]:
     if cached_token:
         return cached_token
 
-    client_id = os.environ.get("FRANCE_TRAVAIL_CLIENT_ID", "").strip()
-    client_secret = os.environ.get("FRANCE_TRAVAIL_CLIENT_SECRET", "").strip()
+    client_id = _get_cred("FRANCE_TRAVAIL_CLIENT_ID")
+    client_secret = _get_cred("FRANCE_TRAVAIL_CLIENT_SECRET")
 
     if not client_id or not client_secret:
         return None
@@ -496,8 +512,8 @@ async def _search_wttj(
 ) -> list:
     """Recherche d'offres WTTJ via index Algolia officiel avec clé publique et fallback sécurisé."""
     results = []
-    app_id = os.environ.get("WTTJ_ALGOLIA_APP_ID", WTTJ_DEFAULT_ALGOLIA_APP_ID).strip()
-    api_key = os.environ.get("WTTJ_ALGOLIA_API_KEY", WTTJ_DEFAULT_ALGOLIA_API_KEY).strip()
+    app_id = _get_cred("WTTJ_ALGOLIA_APP_ID", WTTJ_DEFAULT_ALGOLIA_APP_ID)
+    api_key = _get_cred("WTTJ_ALGOLIA_API_KEY", WTTJ_DEFAULT_ALGOLIA_API_KEY)
 
     url = f"https://{app_id}-dsn.algolia.net/1/indexes/wttj_jobs_production_fr/query"
     headers = {
@@ -546,8 +562,8 @@ async def _search_wttj(
 
 async def _details_wttj(job_id: str) -> str:
     """Extrait le descriptif exhaustif d'une offre WTTJ via son identifiant Algolia ou fallback."""
-    app_id = os.environ.get("WTTJ_ALGOLIA_APP_ID", WTTJ_DEFAULT_ALGOLIA_APP_ID).strip()
-    api_key = os.environ.get("WTTJ_ALGOLIA_API_KEY", WTTJ_DEFAULT_ALGOLIA_API_KEY).strip()
+    app_id = _get_cred("WTTJ_ALGOLIA_APP_ID", WTTJ_DEFAULT_ALGOLIA_APP_ID)
+    api_key = _get_cred("WTTJ_ALGOLIA_API_KEY", WTTJ_DEFAULT_ALGOLIA_API_KEY)
     url = f"https://{app_id}-dsn.algolia.net/1/indexes/wttj_jobs_production_fr/{job_id}"
     headers = {
         "X-Algolia-Application-Id": app_id,

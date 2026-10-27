@@ -1,11 +1,12 @@
 """
 title: ECHO Skills Manager
 author: ECHO Framework
-version: 5.226.18.0
+version: 5.231.20.1
 description: Composant système interne : ECHO Skills Manager.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Sécurisation anti-Path Traversal de skill_id via sanitize_echo_id et vérification d'arborescence.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.4: Ajout de la fonction delete_skill (suppression physique de dossier).
 # 1.3: Alignement avec le Hotfix Core 6.9.
@@ -14,13 +15,27 @@ import os
 import shutil
 import re
 from typing import List, Dict, Optional
-from echo_paths import get_echo_global_path
+from echo_paths import get_echo_global_path, sanitize_echo_id
+
 
 def get_skills_dir(user_id: str) -> str:
     """Retourne le chemin du répertoire des skills de l'utilisateur."""
     skills_dir = get_echo_global_path(user_id, "skills")
     os.makedirs(skills_dir, exist_ok=True)
     return skills_dir
+
+
+def _resolve_safe_skill_dir(user_id: str, skill_id: str) -> Optional[str]:
+    """Résout et valide le chemin d'un skill pour empêcher tout Path Traversal hors du dossier utilisateur."""
+    safe_skill_id = sanitize_echo_id(skill_id, fallback="")
+    if not safe_skill_id:
+        return None
+    skills_root = os.path.abspath(get_skills_dir(user_id))
+    target_dir = os.path.abspath(os.path.join(skills_root, safe_skill_id))
+    if not target_dir.startswith(skills_root + os.sep):
+        return None
+    return target_dir
+
 
 def parse_skill_metadata(content: str) -> Dict:
     """Extrait manuellement le frontmatter YAML sans dépendance externe."""
@@ -34,14 +49,15 @@ def parse_skill_metadata(content: str) -> Dict:
                 metadata[key.strip().lower()] = val.strip()
     return metadata
 
+
 def get_all_skills(user_id: str) -> List[Dict]:
     """Liste tous les skills disponibles pour un utilisateur."""
     skills_dir = get_skills_dir(user_id)
     skills = []
-    
+
     if not os.path.exists(skills_dir):
         return skills
-        
+
     for skill_folder in os.listdir(skills_dir):
         folder_path = os.path.join(skills_dir, skill_folder)
         if os.path.isdir(folder_path):
@@ -50,36 +66,41 @@ def get_all_skills(user_id: str) -> List[Dict]:
                 try:
                     with open(skill_file, 'r', encoding='utf-8') as f:
                         content = f.read()
-                    
+
                     metadata = parse_skill_metadata(content)
                     metadata['id'] = skill_folder
                     skills.append(metadata)
                 except Exception as e:
                     print(f"Error reading skill {skill_folder}: {e}")
-                    
+
     return skills
+
 
 def get_skill_content(user_id: str, skill_id: str) -> Optional[str]:
     """Récupère le contenu complet d'un skill (incluant les instructions)."""
-    skills_dir = get_skills_dir(user_id)
-    skill_file = os.path.join(skills_dir, skill_id, "SKILL.md")
-    
+    skill_path = _resolve_safe_skill_dir(user_id, skill_id)
+    if not skill_path:
+        return None
+    skill_file = os.path.join(skill_path, "SKILL.md")
+
     if os.path.exists(skill_file):
         try:
             with open(skill_file, 'r', encoding='utf-8') as f:
                 return f.read()
-        except:
+        except Exception:
             pass
     return None
 
+
 def save_skill(user_id: str, skill_id: str, name: str, description: str, instructions: str):
     """Sauvegarde ou modifie un skill au format SKILL.md."""
-    skills_dir = get_skills_dir(user_id)
-    skill_path = os.path.join(skills_dir, skill_id)
+    skill_path = _resolve_safe_skill_dir(user_id, skill_id)
+    if not skill_path:
+        raise ValueError(f"Identifiant de skill invalide : {skill_id}")
     os.makedirs(skill_path, exist_ok=True)
-    
+
     skill_file = os.path.join(skill_path, "SKILL.md")
-    
+
     content = f"""---
 name: {name}
 description: {description}
@@ -87,17 +108,19 @@ description: {description}
 
 {instructions}
 """
-    
+
     with open(skill_file, 'w', encoding='utf-8') as f:
         f.write(content.strip() + "\n")
-    
+
     return True
+
 
 def delete_skill(user_id: str, skill_id: str) -> bool:
     """Supprime physiquement le dossier du skill et tout son contenu (SKILL.md)."""
-    skills_dir = get_skills_dir(user_id)
-    skill_path = os.path.join(skills_dir, skill_id)
-    
+    skill_path = _resolve_safe_skill_dir(user_id, skill_id)
+    if not skill_path:
+        return False
+
     if os.path.exists(skill_path) and os.path.isdir(skill_path):
         try:
             shutil.rmtree(skill_path)

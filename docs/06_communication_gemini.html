@@ -88,10 +88,10 @@
           </tbody>
         </table>
 
-        <h3>3. Client HTTP/2, Cascade Cognitive &amp; Circuit Breaker OAuth2 (<code>EchoGeminiClient</code> v5.226.18.0 &amp; <code>echo_orchestrator.py</code> v5.231.15.1)</h3>
+        <h3>3. Client HTTP/2, Cascade Cognitive &amp; Circuit Breaker OAuth2 (<code>EchoGeminiClient</code> v5.231.20.1 &amp; <code>echo_orchestrator.py</code> v5.231.20.2)</h3>
         <ul>
-          <li><strong>Multiplexage HTTP/2 :</strong> Connexion persistante via <code>httpx.AsyncClient(http2=True)</code> (<code>ECHO_HTTP_CLIENT_TIMEOUT = 600s</code>), streaming Base64 Zéro-RAM par blocs de 3 Mo, attachement conforme Gemini 3/4 de la <code>thoughtSignature</code> via <code>attach_thought_signature</code> (<code>echo_core.py</code> v5.231.10.1) et normalisation stricte en <code>camelCase</code> (<code>inlineData</code>, <code>functionDeclarations</code>, <code>functionCallingConfig</code>).</li>
-          <li><strong>Cascade Cognitive &amp; Distillation :</strong> Lors d'une cascade descendante consécutive à un échec API (<code>429</code>/<code>503</code>), <code>get_generation_config(..., is_fallback_cascade=True)</code> force <code>thinkingLevel: "high"</code> sur le modèle de repli pour compenser la réduction de palier, tandis qu'une transition cognitive volontaire (<code>new_cognitive_level</code>) ou un clamping initial préserve le niveau nominal. En outre, l'utilitaire <code>call_distillation</code> filtre strictement les blocs de pensée (<code>if not p.get("thought")</code>) lors de l'extraction de la réponse textuelle.</li>
+          <li><strong>Multiplexage HTTP/2 &amp; Isolation RAG :</strong> Connexion persistante via <code>httpx.AsyncClient(http2=True)</code> (<code>ECHO_HTTP_CLIENT_TIMEOUT = 600s</code>), streaming Base64 Zéro-RAM par blocs de 3 Mo, attachement conforme Gemini 3/4 de la <code>thoughtSignature</code> via <code>attach_thought_signature</code> (<code>echo_core.py</code> v5.231.10.1), normalisation stricte en <code>camelCase</code> (<code>inlineData</code>, <code>functionDeclarations</code>, <code>functionCallingConfig</code>) et isolation par <code>sub_sid</code> dans le seed UUID5 de <code>index_text_in_ephemeral_rag</code>.</li>
+          <li><strong>Cascade Cognitive, Rafraîchissement des Closures &amp; Distillation :</strong> Lors d'une cascade descendante consécutive à un échec API (<code>429</code>/<code>503</code>), <code>get_generation_config(..., is_fallback_cascade=True)</code> force <code>thinkingLevel: "high"</code> sur le modèle de repli pour compenser la réduction de palier, tandis qu'une transition cognitive volontaire (<code>new_cognitive_level</code>) ou un clamping initial préserve le niveau nominal. À chaque tour de <code>pipe()</code>, l'orchestrateur rafraîchit systématiquement les closures <code>__user__</code>, <code>__metadata__</code>, <code>__event_emitter__</code> et <code>__event_call__</code> sur les callables <code>functools.partial</code> de <code>_TOOLS_CACHE[chat_id]</code>. En outre, l'utilitaire <code>call_distillation</code> filtre strictement les blocs de pensée (<code>if not p.get("thought")</code>) lors de l'extraction de la réponse textuelle.</li>
           <li><strong>Fast-Failover Intra-Retry :</strong> Lors d'une erreur HTTP <code>401</code>, <code>420</code>, <code>429</code> ou <code>503</code> en OAuth2, le client verrouille immédiatement l'endpoint fautif via <code>state_mgr.lock_agy_endpoint</code> (pendant <code>ECHO_ENDPOINT_LOCK_TIMEOUT_MIN = 2</code> min) et pivote sans délai sur l'URL saine du pool <code>AGY_BASE_URLS</code> (Prod / Daily Canary) avant d'appliquer le backoff exponentiel (<code>ECHO_RETRY_BASE_DELAY = 3.0s</code>, <code>ECHO_RETRY_MULTIPLIER = 1.5</code>, <code>ECHO_API_MAX_RETRIES = 5</code>, <code>ECHO_API_KEY_RETRIES = 2</code>).</li>
         </ul>
       </div>
@@ -104,7 +104,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.18 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.22 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

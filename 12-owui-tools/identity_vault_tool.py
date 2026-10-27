@@ -1,17 +1,18 @@
 """
 title: ECHO Identity Vault Tool
 author: ECHO
-version: 5.229.0.0
+version: 5.231.21.2
 description: Outil permettant à l'Agent de gérer le Identity Vault (ajout/suppression de serveurs distants ou N8N).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.21.2: Délégation CRUD chiffré à EchoStateManager, masquage des secrets bruts dans list_identities, schéma n8n_workflows et échappement HTML.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.9: Remplacement de auth_failure_instructions par user_required_instructions et correction Flake8.
 # 1.8: Filtrage croisé de configured_services et forçage sémantique du paramètre 'all'.
-# 1.7: Refonte JSON de list_identities_services.
 import sys
+import html
 import json
 from typing import Any, Literal
 from pydantic import BaseModel
@@ -30,17 +31,7 @@ class Tools:
         self.valves = self.Valves()
 
     def _init_vault(self, user_id: str) -> EchoStateManager:
-        state = EchoStateManager(user_id=user_id)
-        with state._get_connection() as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS identity_vault (
-                    user_id TEXT, service TEXT, account_id TEXT,
-                    credentials TEXT,
-                    PRIMARY KEY (user_id, service, account_id)
-                )
-            """)
-            conn.commit()
-        return state
+        return EchoStateManager(user_id=user_id)
 
     async def list_identities_services(
         self,
@@ -61,6 +52,11 @@ class Tools:
         except Exception:
             pass
 
+        schemas.setdefault(
+            "n8n_workflows",
+            {"category": "orchestration", "name": "N8N Orchestration"}
+        )
+
         available_services_list = []
         for svc_id, data in schemas.items():
             cat = data.get("category", "uncategorized")
@@ -75,20 +71,12 @@ class Tools:
                 available_services_list.append(svc_data)
 
         state = self._init_vault(__user__["id"])
-        with state._get_connection() as conn:
-            cursor = conn.execute("SELECT DISTINCT service FROM identity_vault WHERE user_id = ?", (__user__["id"],))
-            rows = cursor.fetchall()
+        services = state.list_vault_services()
 
         configured_services = []
-        if rows:
-            for r in rows:
-                svc = r[0]
-                if category_filter == "all":
-                    configured_services.append(svc)
-                else:
-                    cat = schemas.get(svc, {}).get("category", "uncategorized")
-                    if cat == category_filter:
-                        configured_services.append(svc)
+        for svc in services:
+            if category_filter == "all" or schemas.get(svc, {}).get("category", "uncategorized") == category_filter:
+                configured_services.append(svc)
 
         result_json = {
             "categories_services": {
@@ -112,22 +100,17 @@ class Tools:
         if not service:
             return "Erreur: L'argument 'service' est strictement requis. Invoquez 'list_identities_services' en cas de doute."
         state = self._init_vault(__user__["id"])
-        with state._get_connection() as conn:
-            cursor = conn.execute(
-                "SELECT service, account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ?",
-                (__user__["id"], service)
-            )
-            rows = cursor.fetchall()
+        rows = state.list_vault_credentials(service)
 
         result = []
-        for r in rows:
-            account = r[1]
-            creds = r[2]
+        for account, creds in rows:
+            desc = "Identifiants configurés (masqués)"
             try:
                 data = json.loads(creds)
-                desc = data.get("description", creds)
+                if isinstance(data, dict) and data.get("description"):
+                    desc = str(data["description"])
             except Exception:
-                desc = creds
+                pass
             result.append(f"[Compte: {account} : {desc}]")
 
         if not result:
@@ -153,12 +136,19 @@ class Tools:
 
         events = EchoEvents(__event_emitter__, __event_call__)
 
+        safe_acc = html.escape(str(account_id))
+        safe_svc = html.escape(str(service))
+
         if action in ["add", "update"]:
             try:
                 payload_dict = json.loads(credentials_json)
-                payload_html = "<ul>" + "".join([f"<li><i>{k}</i> : {str(v)}</li>" for k, v in payload_dict.items()]) + "</ul>"
+                items = [
+                    f"<li><i>{html.escape(str(k))}</i> : {html.escape(str(v))}</li>"
+                    for k, v in payload_dict.items()
+                ]
+                payload_html = "<ul>" + "".join(items) + "</ul>"
             except Exception:
-                payload_html = f"<code>{credentials_json}</code>"
+                payload_html = f"<code>{html.escape(str(credentials_json))}</code>"
 
             if action == "add":
                 action_fr = "ajouter"
@@ -166,9 +156,9 @@ class Tools:
                 action_fr = "mettre à jour"
 
             if service == "mcp":
-                action_desc = f"L'Agent souhaite <b>{action_fr}</b> le Serveur MCP distant nommé <b>{account_id}</b> :"
+                action_desc = f"L'Agent souhaite <b>{action_fr}</b> le Serveur MCP distant nommé <b>{safe_acc}</b> :"
             else:
-                action_desc = f"L'Agent souhaite <b>{action_fr}</b> les identifiants d'API pour <b>{account_id}</b> ({service}) :"
+                action_desc = f"L'Agent souhaite <b>{action_fr}</b> les identifiants d'API pour <b>{safe_acc}</b> ({safe_svc}) :"
 
             js_msg = (
                 f"🛡️ <b>Demande d'autorisation système</b><br><br>"
@@ -191,19 +181,14 @@ class Tools:
                 return "Opération annulée : L'utilisateur a refusé la modification."
 
             state = self._init_vault(__user__["id"])
-            with state._get_connection() as conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO identity_vault (user_id, service, account_id, credentials) VALUES (?, ?, ?, ?)",
-                    (__user__["id"], service, account_id, credentials_json)
-                )
-                conn.commit()
+            state.save_vault_credential(service, account_id, credentials_json)
             return f"Succès: Source '{account_id}' ({service}) configurée avec succès."
 
         elif action == "delete":
             if service == "mcp":
-                action_desc = f"L'Agent demande la <b>suppression définitive</b> du Serveur MCP distant nommé <b>{account_id}</b>."
+                action_desc = f"L'Agent demande la <b>suppression définitive</b> du Serveur MCP distant nommé <b>{safe_acc}</b>."
             else:
-                action_desc = f"L'Agent demande la <b>suppression définitive</b> des identifiants pour <b>{account_id}</b> ({service})."
+                action_desc = f"L'Agent demande la <b>suppression définitive</b> des identifiants pour <b>{safe_acc}</b> ({safe_svc})."
 
             js_msg = (
                 f"⚠️ <b>Action Destructive Requise</b><br><br>"
@@ -224,12 +209,7 @@ class Tools:
                 return "Opération annulée : L'utilisateur a refusé la suppression."
 
             state = self._init_vault(__user__["id"])
-            with state._get_connection() as conn:
-                conn.execute(
-                    "DELETE FROM identity_vault WHERE user_id = ? AND service = ? AND account_id = ?",
-                    (__user__["id"], service, account_id)
-                )
-                conn.commit()
+            state.delete_vault_credential(service, account_id)
             return f"Succès: Source '{account_id}' supprimée."
 
         return "Erreur: action invalide (utiliser add, update, ou delete)."

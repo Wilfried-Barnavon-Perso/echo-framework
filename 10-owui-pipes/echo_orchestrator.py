@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 5.231.17.1
+version: 5.231.20.2
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.2: Déclaration explicite de __event_call__ dans la signature de pipe() et rafraîchissement systématique des closures dans _TOOLS_CACHE[chat_id] à chaque tour.
 # 5.231.15.1: Sanctuarisation de promptTokenCount en cascade cognitive pour immuniser la persistance contre les faux deltas négatifs.
 # 5.231.13.1: Suppression de la double écriture SSE de save_context_stats et correction du cumul de promptTokenCount/cachedContentTokenCount en cascade.
 # 5.231.10.2: Déport du HUD contextuel vers context_gauge_filter, transmission de (user_id, chat_id) à EchoEvents et persistance auto-archivée.
 # 5.231.10.1: Suppression de detect_verbal_escalation et déduplication de la docstring de new_cognitive_level vis-à-vis du PCD.
-# 5.231.8.1: Reformulation haut SNR de la description et des paramètres de new_cognitive_level (style PAS, conformité Gemini 3/4).
 
 
 # ==============================================================================
@@ -582,7 +582,7 @@ class Pipe:
             except Exception as e:
                 print(f"[Écho] ⚠️ Échec enregistrement routes Window Manager : {e}")
 
-    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, __request__: Optional[Any] = None, __tools__: list = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
+    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, __event_call__: Optional[Any] = None, __request__: Optional[Any] = None, __tools__: list = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
 
         # ==============================================================================
         # COUPE-CIRCUIT (FAST-TRACK) : Tâches d'arrière-plan Open WebUI
@@ -743,6 +743,22 @@ class Pipe:
             # Aucun outil injecté (modèle sans outils associés ou fallback OpenAI)
             __metadata__["_echo_tools_dict"] = {}
             __metadata__["_echo_body_tools"] = body.get("tools", [])
+
+        # Rafraîchissement des closures de tour sur les callables cachés dans _TOOLS_CACHE[chat_id]
+        if chat_id and chat_id in _TOOLS_CACHE and isinstance(_TOOLS_CACHE[chat_id], dict):
+            fresh_closures = {
+                "__user__": __user__,
+                "__metadata__": __metadata__,
+                "__event_emitter__": __event_emitter__,
+                "__event_call__": __event_call__ or kwargs.get("__event_call__"),
+            }
+            for _t_entry in _TOOLS_CACHE[chat_id].values():
+                if isinstance(_t_entry, dict) and "callable" in _t_entry:
+                    _cb = _t_entry["callable"]
+                    if hasattr(_cb, "keywords") and isinstance(_cb.keywords, dict):
+                        for _ck, _cv in fresh_closures.items():
+                            if _ck in _cb.keywords and _cv is not None:
+                                _cb.keywords[_ck] = _cv
 
         # Log diagnostic (DEBUG uniquement, ne pas laisser en WARNING en production)
         if isinstance(__tools__, dict):

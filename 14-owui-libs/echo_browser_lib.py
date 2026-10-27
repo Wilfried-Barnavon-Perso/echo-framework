@@ -1,16 +1,16 @@
 """
 title: ECHO Browser Lib
 author: ECHO Framework
-version: 5.226.18.0
+version: 5.231.20.1
 description: Composant système interne : ECHO Browser Lib.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Propagation explicite de chat_id dans EchoBrowserLib pour isoler les sessions Playwright éphémères et sous-agents sans perdre le coffre de fichiers du chat.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.15: Nouveaux types d'action (select, click_current), option clear_before, et zoom réel CDP (absolute_grid).
 # 1.14: Mise à jour description action_zoom_in pour mentionner le VISEUR ROUGE.
 # 1.13: Ajout de action_zoom_in et action_zoom_out pour le ciblage géométrique de précision (Multimodal).
-# 1.11: Précision sur les vérifications humaines pour l'usage des coordonnées X/Y et grille vision.
 
 import httpx
 import logging
@@ -126,17 +126,18 @@ async def req_to_browser(timeout: int, endpoint: str, data: dict = None, user_id
 
 class EchoBrowserLib:
     """Encapsule les actions réseau pour le sous-agent navigateur."""
-    def __init__(self, timeout: int, session_id: str, user_id: str, vision_grid_step: int = DEFAULT_VISION_GRID_STEP):
+    def __init__(self, timeout: int, session_id: str, user_id: str, vision_grid_step: int = DEFAULT_VISION_GRID_STEP, chat_id: str = None):
         self.timeout = timeout
         self.session_id = session_id
         self.user_id = user_id
         self.vision_grid_step = vision_grid_step
+        self.chat_id = chat_id or session_id
 
     async def _action(self, action: str, params: dict = None) -> dict:
         params = params or {}
         if action == "inspect_page" and params.get("target") == "vision" and params.get("vision_grid"):
             params["vision_grid_step"] = self.vision_grid_step
-        return await req_to_browser(self.timeout, "/action", {"session_id": self.session_id, "action": action, "params": params}, self.user_id)
+        return await req_to_browser(self.timeout, "/action", {"session_id": self.session_id, "chat_id": self.chat_id, "action": action, "params": params}, self.user_id)
 
     async def highlight(self) -> dict:
         return await self._action("inspect_page", {"target": "vision", "vision_grid": False})
@@ -150,6 +151,7 @@ class EchoBrowserLib:
     async def start_session(self, idle_timeout: int, mode: str) -> dict:
         return await req_to_browser(self.timeout, "/start_session", {
             "session_id": self.session_id, 
+            "chat_id": self.chat_id,
             "idle_timeout": idle_timeout, 
             "mode": mode
         }, self.user_id)

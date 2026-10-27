@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.231.17.1
+version: 5.231.20.3
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.3: Conformité multi-chat des HUDs (get_floating_monitor_js avec isolation stricte de _echoGetAggregatedPayload, _generate_webplayer_js, monitor_ECHO, show_image_js) et suppression des fuites de listeners DOM.
+# 5.231.20.1: Ajout du pourcentage d'occupation contexte entre parenthèses sur la ligne Total du HUD.
 # 5.231.17.1: Remplacement d'Empreinte tour par Δ Capacité avec inversion de signe (perte en négatif, libération en positif).
 # 5.231.15.1: Formatage fixe à 2 décimales dans la capsule, libellés unifiés Empreinte tour et élimination des inversions de signes.
 # 5.231.14.2: Neutralisation de la capsule différentielle (style sobre slate-400 et affichage du pourcentage seul).
-# 5.231.14.1: Calcul de la croissance du contexte sur promptTokenCount (Option A) et gestion dynamique Gain/Perte de capacité (fix double tiret).
-# 5.231.13.2: Suppression de la garde if (!window.echoRenderContextGauge) pour autoriser le Hot-Update direct du renderer JS.
 
 
 import sys
@@ -1182,33 +1182,27 @@ class EchoRichUI:
                     
                     if (this.allowResize) {
                         const resizer = document.getElementById(this.id + '-resizer');
-                        let isResizing = false, rStartX, rStartY, startW, startH;
-                        
                         resizer.onmousedown = (e) => {
                             e.preventDefault(); e.stopPropagation();
-                            isResizing = true;
-                            rStartX = e.clientX;
-                            rStartY = e.clientY;
-                            startW = hud.offsetWidth || parseInt(hud.style.width) || 500;
-                            startH = hud.offsetHeight || parseInt(hud.style.height) || 400;
+                            const rStartX = e.clientX;
+                            const rStartY = e.clientY;
+                            const startW = hud.offsetWidth || parseInt(hud.style.width) || 500;
+                            const startH = hud.offsetHeight || parseInt(hud.style.height) || 400;
                             hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
-                        };
-                        
-                        document.addEventListener('mousemove', (e) => {
-                            if (isResizing) {
-                                e.preventDefault();
-                                hud.style.width = Math.max(parseInt(this.minWidth) || 200, startW + (e.clientX - rStartX)) + 'px';
-                                hud.style.height = Math.max(parseInt(this.minHeight) || 100, startH + (e.clientY - rStartY)) + 'px';
-                            }
-                        });
-                        
-                        document.addEventListener('mouseup', () => {
-                            if (isResizing) {
-                                isResizing = false;
+                            const onMove = (me) => {
+                                me.preventDefault();
+                                hud.style.width = Math.max(parseInt(this.minWidth) || 200, startW + (me.clientX - rStartX)) + 'px';
+                                hud.style.height = Math.max(parseInt(this.minHeight) || 100, startH + (me.clientY - rStartY)) + 'px';
+                            };
+                            const onUp = () => {
+                                document.removeEventListener('mousemove', onMove);
+                                document.removeEventListener('mouseup', onUp);
                                 hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
                                 if (this.geo) this.geo.save();
-                            }
-                        });
+                            };
+                            document.addEventListener('mousemove', onMove);
+                            document.addEventListener('mouseup', onUp);
+                        };
                     }
                     
                     document.getElementById(this.id + '-btn-close').onclick = () => {
@@ -1501,16 +1495,19 @@ class EchoUI(EchoRichUI):
             current_url: str,
             hud_id: str,
             state_key: str,
-            icon: str = "👁️") -> str:
+            icon: str = "👁️",
+            chat_id: str = "") -> str:
         """Génère le moteur de pilotage ECHO WEBPLAYER (v5.20 Équilibre Souverain Pro)."""
         meta_j = std_json.dumps(metadata).decode('utf-8')
         b64_j = std_json.dumps(b64).decode('utf-8')
         url_j = std_json.dumps(current_url).decode('utf-8')
         mime_j = std_json.dumps(mime).decode('utf-8')
+        cid_j = std_json.dumps(chat_id or "").decode('utf-8')
 
         return f"""
   (function() {{
     const HUD_ID = '{hud_id}';
+    const CHAT_ID = {cid_j};
     {EchoUI.get_mobile_guard_js(hud_id)}
     const STATE_KEY = '{state_key}';
     const ENGINE_KEY = 'echoWebPlayer_' + HUD_ID.replace(/[^a-zA-Z0-9]/g, '_');
@@ -1652,22 +1649,28 @@ class EchoUI(EchoRichUI):
             }}
           }};
 
-          window.addEventListener('mousemove', (e) => {{
+          if (this._winMoveHandler) window.removeEventListener('mousemove', this._winMoveHandler);
+          if (this._winUpHandler) window.removeEventListener('mouseup', this._winUpHandler);
+          if (this._winResizeHandler) window.removeEventListener('resize', this._winResizeHandler);
+
+          this._winMoveHandler = (e) => {{
             if (this.isDragging) {{
               this.imgX += (e.clientX - this.startMouseX);
               this.imgY += (e.clientY - this.startMouseY);
               this.startMouseX = e.clientX; this.startMouseY = e.clientY;
               this.syncLayout();
             }}
-          }});
+          }};
+          window.addEventListener('mousemove', this._winMoveHandler);
 
-          window.addEventListener('mouseup', () => {{
+          this._winUpHandler = () => {{
             if (this.isDragging) {{
               this.isDragging = false;
               area.style.cursor = 'crosshair';
               this.saveState();
             }}
-          }});
+          }};
+          window.addEventListener('mouseup', this._winUpHandler);
 
           header.onmousedown = (e) => {{
             if (e.target.closest && e.target.closest('button, input, select, a')) return;
@@ -1708,7 +1711,12 @@ class EchoUI(EchoRichUI):
             this.syncLayout();
           }};
 
-          document.getElementById(HUD_ID + "-btn-close").onclick = () => this.hud.remove();
+          document.getElementById(HUD_ID + "-btn-close").onclick = () => {{
+            if (this._winMoveHandler) window.removeEventListener('mousemove', this._winMoveHandler);
+            if (this._winUpHandler) window.removeEventListener('mouseup', this._winUpHandler);
+            if (this._winResizeHandler) window.removeEventListener('resize', this._winResizeHandler);
+            this.hud.remove();
+          }};
 
           const resizer = document.getElementById(HUD_ID + "-resizer");
           if (resizer) {{
@@ -1734,15 +1742,21 @@ class EchoUI(EchoRichUI):
              }};
           }}
 
-          window.addEventListener('resize', () => {{
+          this._winResizeHandler = () => {{
              this.syncLayout(false);
-          }});
+          }};
+          window.addEventListener('resize', this._winResizeHandler);
         }},
 
         create: function(data) {{
           const old = document.getElementById(HUD_ID); if(old) old.remove();
           this.hud = document.createElement('div');
           this.hud.id = HUD_ID;
+          const effectiveCid = CHAT_ID || (window.EchoWM && typeof window.EchoWM.getActiveChatId === 'function' ? window.EchoWM.getActiveChatId() : '');
+          if (effectiveCid) {{
+            this.hud.setAttribute('data-chat-id', effectiveCid);
+            this.hud.setAttribute('data-echo-chat-id', effectiveCid);
+          }}
           this.hud.style.cssText = 'position:fixed; z-index:10000; background:rgba(12,12,12,0.98); backdrop-filter:blur(25px); border:1px solid #333; border-radius:12px; box-shadow:0 25px 70px rgba(0,0,0,0.9); color:white; font-family:sans-serif; display:flex; flex-direction:column; overflow:hidden; min-width:200px; min-height:100px;';
 
           this.hud.innerHTML = `
@@ -1842,18 +1856,21 @@ class EchoUI(EchoRichUI):
             current_url: str = "",
             webp_b64: str = None):
         """Déploie le moniteur visuel interactif (HUD) haute performance."""
+        cid = getattr(events, "chat_id", None) or ""
+        scoped_hud_id = f"{hud_id}-{cid}" if (cid and hud_id == "echo-webplayer") else hud_id
         if webp_b64:
             js_code = EchoUI._generate_webplayer_js(
                 webp_b64,
                 "image/webp",
                 metadata or [],
                 current_url,
-                hud_id,
+                scoped_hud_id,
                 state_key,
-                icon="🌐")
+                icon="🌐",
+                chat_id=cid)
         else:
             js_code = EchoUI._generate_webplayer_js(
-                b64, "image/jpeg", metadata or [], current_url, hud_id, state_key, icon="🌐")
+                b64, "image/jpeg", metadata or [], current_url, scoped_hud_id, state_key, icon="🌐", chat_id=cid)
         await events.emit_execute(js_code)
 
     @staticmethod
@@ -1932,6 +1949,7 @@ class EchoUI(EchoRichUI):
     var cache_pct = (c_t / max_t) * 100;
     var prompt_pct = (active_p_t / max_t) * 100;
     var gen_pct = (g_t / max_t) * 100;
+    var total_pct = ((total_t / max_t) * 100).toFixed(2);
     var quota_frac = typeof stats.quota_fraction === 'number' ? stats.quota_fraction : 1.0;
 
     function _color_for_frac(f) {
@@ -2068,7 +2086,7 @@ class EchoUI(EchoRichUI):
 
     var iconHtml = `<div class="echo-tooltip"><svg width="20" height="20" viewBox="0 0 20 20" style="${pulseStyle}"><circle cx="10" cy="10" r="8" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2" /><circle cx="10" cy="10" r="8" fill="none" stroke="${q_color}" stroke-width="2" stroke-dasharray="${dash_array}" stroke-dashoffset="${dash_offset}" transform="rotate(-90 10 10)" stroke-linecap="round" /><path d="M10 6a2.5 2.5 0 00-2.5 2.5V10h5V8.5A2.5 2.5 0 0010 6zm3.5 4H6.5a1 1 0 00-1 1v4a1 1 0 001 1h7a1 1 0 001-1v-4a1 1 0 00-1-1z" fill="white" opacity="0.9" /></svg><div class="tooltip-box" style="width:310px;"><div class="tooltip-title">AUTHENTIFICATION</div><div class="tooltip-row"><span>🔐 Source:</span> <span>${stats.auth_sources ? stats.auth_sources.join(', ') : 'N/A'}</span></div><div class="tooltip-row"><span>👤 Compte:</span> <span>${stats.user_email || 'N/A'}</span></div>${tier_html}${proj_html}<div class="tooltip-row"><span>🌐 Tenant:</span> <span style="color:#10b981;">${stats.tenant_id || 'ECHO'}</span></div><div class="tooltip-title" style="margin-top:8px;border-top:1px solid rgba(0,212,255,0.2);padding-top:6px;">QUOTAS</div><div class="tooltip-row"><span>💳 Crédits IA:</span> <b style="color:#10b981;">${stats.credits_val || 'N/A'}</b></div><div class="tooltip-row"><span>🤖 Modèle CA:</span> <span style="color:#a3a3a3;font-size:10px;">${stats.quota_model || '—'}</span></div>${q_rows_html}${rpd_html}${rpm_html}<div class="tooltip-row"><span>🏷️ Type:</span> <span style="color:#a3a3a3;font-size:10px;">${stats.quota_type || 'UNKNOWN'}</span></div></div></div>`;
 
-    var barHtml = `<div class="echo-tooltip" style="min-width:180px;"><div style="display:flex;width:100%;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;"><div style="width:${cache_pct}%;background:#8b5cf6;"></div><div style="width:${prompt_pct}%;background:#10b981;"></div><div style="width:${gen_pct}%;background:#f59e0b;"></div></div>${deltaBadge}<div class="tooltip-box" style="width:260px;"><div class="tooltip-title">CONTEXTE ${is_pending ? '(CALCUL EN COURS...)' : ''}</div><div class="tooltip-row"><span>Cache:</span> <span>${c_t}</span></div><div class="tooltip-row"><span>Prompt:</span> <span>${active_p_t}</span></div><div class="tooltip-row"><span>Génération:</span> <span>${g_t}</span></div><div class="tooltip-row" style="font-weight:bold;margin-top:4px;"><span>Total:</span> <span>${total_t} / ${max_t}</span></div>${deltaTooltipRows}</div></div>`;
+    var barHtml = `<div class="echo-tooltip" style="min-width:180px;"><div style="display:flex;width:100%;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;"><div style="width:${cache_pct}%;background:#8b5cf6;"></div><div style="width:${prompt_pct}%;background:#10b981;"></div><div style="width:${gen_pct}%;background:#f59e0b;"></div></div>${deltaBadge}<div class="tooltip-box" style="width:260px;"><div class="tooltip-title">CONTEXTE ${is_pending ? '(CALCUL EN COURS...)' : ''}</div><div class="tooltip-row"><span>Cache:</span> <span>${c_t}</span></div><div class="tooltip-row"><span>Prompt:</span> <span>${active_p_t}</span></div><div class="tooltip-row"><span>Génération:</span> <span>${g_t}</span></div><div class="tooltip-row" style="font-weight:bold;margin-top:4px;"><span>Total:</span> <span>${total_t} / ${max_t} (${total_pct}%)</span></div>${deltaTooltipRows}</div></div>`;
 
     hud.innerHTML = iconHtml + barHtml;
 
@@ -2156,13 +2174,16 @@ class EchoUI(EchoRichUI):
 
     @staticmethod
     def show_image_js(b64: str, mime: str = "image/png",
-                      title: str = "Aperçu Image") -> str:
+                      title: str = "Aperçu Image",
+                      chat_id: str = "") -> str:
         """Réutilise le moteur WebPlayer (HUD navigateur) pour afficher une image locale (Base64).
         Utiliser via events.call('execute', {'code': ...}).
         N'utilise pas HTMLResponse — retour 100% propre, sans pollution du contexte Gemini."""
+        hud_id = f"echo-preview-{chat_id}" if chat_id else "echo-preview"
         return EchoUI._generate_webplayer_js(
             b64=b64, mime=mime, metadata=[], current_url=title,
-            hud_id="echo-preview", state_key="echo_preview_state", icon="🖼️"
+            hud_id=hud_id, state_key="echo_preview_state", icon="🖼️",
+            chat_id=chat_id
         )
 
     @classmethod
@@ -2576,27 +2597,52 @@ return new Promise(function(resolve) {{
         d'Open WebUI (accès localStorage/token de session depuis le code de la Sandbox)."""
         return EchoUI.get_floating_window_class_js() + """
       window._echoUIPayloads = window._echoUIPayloads || {};
+      window._echoUIPayloadsByChat = window._echoUIPayloadsByChat || {};
+      window._echoWindowChatMap = window._echoWindowChatMap || {};
       if (!window._echoUIAggregatorBound) {
           window._echoUIAggregatorBound = true;
           window.addEventListener('message', (event) => {
               if (event.data && event.data.echoUIPayload) {
                   const { window_id, payload } = event.data.echoUIPayload;
                   window._echoUIPayloads[window_id] = payload;
+                  const cid = window._echoWindowChatMap[window_id] || '_global';
+                  if (!window._echoUIPayloadsByChat[cid]) window._echoUIPayloadsByChat[cid] = {};
+                  window._echoUIPayloadsByChat[cid][window_id] = payload;
               }
               if (event.data && event.data.echoSignal === 'abort') {
                   window._echoUIPayloads['_echo_signal'] = 'abort';
+                  const cid = (event.data.chat_id) || (window.EchoWM && typeof window.EchoWM.getActiveChatId === 'function' ? window.EchoWM.getActiveChatId() : '_global');
+                  if (!window._echoUIPayloadsByChat[cid]) window._echoUIPayloadsByChat[cid] = {};
+                  window._echoUIPayloadsByChat[cid]['_echo_signal'] = 'abort';
               }
               if (event.data && event.data.echoPing) {
                   const wid = event.data.echoPing;
                   if (!window._echoUIPayloads['_pings']) window._echoUIPayloads['_pings'] = {};
                   window._echoUIPayloads['_pings'][wid] = Date.now();
+                  const cid = window._echoWindowChatMap[wid] || '_global';
+                  if (!window._echoUIPayloadsByChat[cid]) window._echoUIPayloadsByChat[cid] = {};
+                  if (!window._echoUIPayloadsByChat[cid]['_pings']) window._echoUIPayloadsByChat[cid]['_pings'] = {};
+                  window._echoUIPayloadsByChat[cid]['_pings'][wid] = Date.now();
               }
           });
       }
-      window._echoGetAggregatedPayload = () => window._echoUIPayloads;
+      window._echoGetAggregatedPayload = (chatId) => {
+          if (chatId) {
+              window._echoUIPayloadsByChat = window._echoUIPayloadsByChat || {};
+              if (!window._echoUIPayloadsByChat[chatId]) {
+                  window._echoUIPayloadsByChat[chatId] = {};
+              }
+              return window._echoUIPayloadsByChat[chatId];
+          }
+          return window._echoUIPayloads;
+      };
 
-      window.echoCreateFloatingMonitor = (window_id, title, htmlContent, width, height) => {
+      window.echoCreateFloatingMonitor = (window_id, title, htmlContent, width, height, chatId) => {
           const hudId = 'echo-sandbox-monitor-hud-' + window_id;
+          const effectiveCid = chatId || (window.EchoWM && typeof window.EchoWM.getActiveChatId === 'function' ? window.EchoWM.getActiveChatId() : '');
+          if (effectiveCid) {
+              window._echoWindowChatMap[window_id] = effectiveCid;
+          }
           
           let monitor = window['echo_monitor_obj_' + window_id];
           if (!document.getElementById(hudId) || !monitor) {
@@ -2618,6 +2664,11 @@ return new Promise(function(resolve) {{
           } else {
               const titleEl = document.querySelector(`#${hudId}-header div`);
               if (titleEl) titleEl.textContent = title;
+          }
+          const hudEl = document.getElementById(hudId);
+          if (hudEl && effectiveCid) {
+              hudEl.setAttribute('data-chat-id', effectiveCid);
+              hudEl.setAttribute('data-echo-chat-id', effectiveCid);
           }
           
           const body = document.getElementById(hudId + '-body');

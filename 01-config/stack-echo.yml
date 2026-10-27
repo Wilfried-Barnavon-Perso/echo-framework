@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 5.227.1.1
+# VERSION : 5.231.21.1
 # ==============================================================================
 #                  inventés par la syntaxe officielle BunkerWeb (REVERSE_PROXY_AUTH_REQUEST*).
 #                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
@@ -92,6 +92,7 @@ services:
       - ENABLE_FORWARD_USER_INFO_HEADERS=true
       # Désactivation de l'expiration du token interne (géré par SSO/WAF)
       - JWT_EXPIRES_IN=-1
+      - ECHO_VAULT_ENCRYPTION_KEY=${ECHO_VAULT_ENCRYPTION_KEY}
     volumes:
       - /opt/ECHO/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
       - /opt/ECHO/owui-libs:/app/backend/echo_libs:ro

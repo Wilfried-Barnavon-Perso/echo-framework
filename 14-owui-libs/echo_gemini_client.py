@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.231.20.1
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Isolation multi-agent des point_id Qdrant dans index_text_in_ephemeral_rag via inclusion de sub_sid dans le seed UUID5.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.13: Filtrage strict des parts de pensée native (thought=True) et journalisation des erreurs dans call_distillation.
 # 1.12: Harmonisation du message UI lors des retries ("⛓️💥 Reconnexion au modèle, tentative...").
 # 1.11: Utilisation factorisée de get_descending_cascade et get_generation_config (thinkingLevel="high" sur cascade 429).
-# 1.10: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 import time
 import random
 import hashlib
@@ -476,12 +476,16 @@ class EchoGeminiClient:
                         return 0, f"Échec création collection Qdrant : HTTP {cr.status_code}"
 
                 # --- 4. GÉNÉRATION DES EMBEDDINGS ET CONSTRUCTION DES POINTS ---
+                from echo_constants import ECHO_SUBAGENT_CONTEXT
+                sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
+                active_sub_sid = sub_ctx.get("sub_sid") if (sub_ctx and sub_ctx.get("is_subagent")) else None
                 for i, chunk in enumerate(chunks):
                     vector = await EchoGeminiClient.generate_embedding(
                         chunk, "document", __user__, __metadata__, title=source_id
                     )
                     if vector:
-                        seed_str = f"{uid}_{chat_id}_{source_id}_{unique_seed}_{i}" if unique_seed else f"{uid}_{chat_id}_{source_id}_{i}"
+                        sub_prefix = f"{active_sub_sid}_" if active_sub_sid else ""
+                        seed_str = f"{uid}_{chat_id}_{sub_prefix}{source_id}_{unique_seed}_{i}" if unique_seed else f"{uid}_{chat_id}_{sub_prefix}{source_id}_{i}"
                         point_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, seed_str))
                         
                         payload_data = {
@@ -491,10 +495,8 @@ class EchoGeminiClient:
                             "text": chunk,
                             "timestamp": int(time.time())
                         }
-                        from echo_constants import ECHO_SUBAGENT_CONTEXT
-                        sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
-                        if sub_ctx.get("is_subagent") and sub_ctx.get("sub_sid"):
-                            payload_data["sub_sid"] = sub_ctx["sub_sid"]
+                        if active_sub_sid:
+                            payload_data["sub_sid"] = active_sub_sid
 
                         points.append({
                             "id": point_id,

@@ -220,12 +220,12 @@
       </tbody>
     </table>
 
-    <h3>Tables Complémentaires (<code>call_bridge</code>, <code>rich_payloads</code>, <code>codex_docs</code>, <code>cognitive_threads</code>)</h3>
+    <h3>Tables Complémentaires (<code>call_bridge</code>, <code>rich_payloads</code>, <code>codex_docs</code>, <code>cognitive_threads</code>, <code>identity_vault</code>)</h3>
     <ul>
       <li><strong><code>call_bridge</code> :</strong> Pont entre un <code>call_id</code> d'outil (<code>signature</code>, <code>function_name</code>, <code>args_json</code>) et son résultat au sous-tour suivant.</li>
       <li><strong><code>rich_payloads</code> :</strong> Stocke les parts enrichies (<code>rich_parts_json</code>) indexées par <code>invariant_hash</code>.</li>
       <li><strong><code>codex_docs</code> :</strong> Table de suivi documentaire complémentaire au registre <code>echo_resources</code> (les plans stratégiques et fichiers Codex étant gouvernés par <code>echo_resources</code> et les dépôts Git <code>main</code> / <code>sandbox</code>).</li>
-      <li><strong><code>cognitive_threads</code> :</strong> Stocke l'historique des délégations multi-agents (<a href="14_agents_automatisation.html">Conseil Delphi &amp; Sous-Agents</a>) par <code>(sub_sid, step_index)</code>.</li>
+      <li><strong><code>cognitive_threads</code> :</strong> Stocke l'historique des délégations multi-agents (<a href="14_agents_automatisation.html">Conseil Delphi &amp; Sous-Agents</a>) par <code>(sub_sid, step_index)</code>. Table <strong><code>identity_vault</code></strong> (dans <code>identity.db</code>, clé primaire composite <code>(user_id, service, account_id)</code>) : stocke les secrets applicatifs MCP et N8N dans la colonne <code>credentials</code> chiffrée en AEAD <code>AES-256-GCM</code> (format <code>enc:v1:&lt;nonce_b64&gt;:&lt;ciphertext_b64&gt;:&lt;tag_b64&gt;</code> avec <code>AAD = user_id:service:account_id</code> et dérivation de clé utilisateur <code>HKDF-SHA256</code> via <code>echo_crypto.py</code>).</li>
     </ul>
 
     <h2>Collections Qdrant</h2>
@@ -342,7 +342,7 @@ Content-Type: application/json</code></pre>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.18 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.22 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -1,6 +1,7 @@
-# VERSION : 5.228.0.1
+# VERSION : 5.231.20.1
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Isolation des sessions MCP actives par compte optionnel (cache_key incluant account_id).
 # 5.228.0.1: Import partagé de AuthRequiredError depuis m5_providers et déduplication du message d'erreur.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.18: Hook générique after_list_tools pour l'adaptation des schémas de fournisseurs résidents
@@ -222,9 +223,11 @@ async def _open_transport(stack: AsyncExitStack, user_id: str, service: str, cre
     return read_stream, write_stream
 
 
-async def _get_or_create_session(user_id: str, service: str, credentials_str: str) -> ClientSession:
+async def _get_or_create_session(
+    user_id: str, service: str, credentials_str: str, account_id: str = None
+) -> ClientSession:
     """Récupère une session MCP existante ou en initialise une nouvelle via l'alias."""
-    cache_key = f"{user_id}_{service}"
+    cache_key = f"{user_id}_{service}_{account_id}" if account_id else f"{user_id}_{service}"
 
     # Récupérer les identifiants et calculer l'empreinte
     cred_hash = hashlib.md5((credentials_str or "").encode()).hexdigest()
@@ -259,6 +262,7 @@ async def proxy_mcp_request(payload: dict) -> dict:
     """
     user_id = payload.get("user_id")
     service = payload.get("service")
+    account_id = payload.get("account_id")
     credentials = payload.get("credentials", "")
     rpc_request = payload.get("rpc_request", {})
 
@@ -271,7 +275,7 @@ async def proxy_mcp_request(payload: dict) -> dict:
     if not service or not method:
         raise ValueError("Paramètres 'service' ou 'rpc_request.method' manquants.")
 
-    session = await _get_or_create_session(user_id, service, credentials)
+    session = await _get_or_create_session(user_id, service, credentials, account_id=account_id)
     provider = get_service_provider(service)
 
     try:
@@ -289,7 +293,7 @@ async def proxy_mcp_request(payload: dict) -> dict:
         else:
             raise ValueError(f"Méthode non supportée par le proxy : {method}")
     except BaseException:
-        cache_key = f"{user_id}_{service}"
+        cache_key = f"{user_id}_{service}_{account_id}" if account_id else f"{user_id}_{service}"
         async with _SESSIONS_LOCK:
             holder = _SESSIONS.get(cache_key)
             if holder is not None and holder.session is session:

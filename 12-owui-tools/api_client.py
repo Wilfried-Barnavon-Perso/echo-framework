@@ -1,21 +1,21 @@
 """
 title: ECHO Universal API Client
 author: Wilfried BARNAVON
-version: 5.229.0.0
+version: 5.231.20.1
 description: Composant système interne : ECHO Universal API Client.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Résolution DNS asynchrone non-bloquante (getaddrinfo IPv4/IPv6) et durcissement SSRF (blocage conteneurs internes echo-*).
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.9: Troncature anti-OOM (131K chars) et prévention via Docstring.
 # 1.8: Switched complex objects to JSON strings to avoid 400 errors with strict Gemini REST schemas.
-# 1.7: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
+import asyncio
 import httpx
 import orjson as json
 import sys
-import socket
 import ipaddress
 from urllib.parse import urlparse
 from typing import Optional, Literal
@@ -26,30 +26,50 @@ from echo_core import wrap_tool_output
 from echo_constants import ECHO_ALLOWED_DOMAINS
 from echo_constants import ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS
 
+
 class Tools:
     def __init__(self):
         pass
 
-    def _is_safe_url(self, url: str) -> bool:
-        """Vérifie si l'URL pointe vers un réseau privé (SSRF protection)."""
+    async def _is_safe_url(self, url: str) -> bool:
+        """Vérifie de manière asynchrone si l'URL pointe vers un réseau privé ou conteneur interne (SSRF protection IPv4/IPv6)."""
         try:
             parsed = urlparse(url)
-            hostname = parsed.hostname
+            if parsed.scheme not in ("http", "https"):
+                return False
+            hostname = (parsed.hostname or "").strip().lower()
             if not hostname:
                 return False
-            
+
+            # Blocage explicite des noms d'hôtes internes Docker / loopback
+            if hostname in ("localhost", "host.docker.internal") or hostname.startswith("echo-") or hostname.endswith(".local") or hostname.endswith(".internal"):
+                return False
+
             # Vérification du domaine autorisé
             if ECHO_ALLOWED_DOMAINS != "*":
-                if hostname not in ECHO_ALLOWED_DOMAINS.split(','):
+                allowed = [d.strip().lower() for d in ECHO_ALLOWED_DOMAINS.split(",") if d.strip()]
+                if hostname not in allowed:
                     return False
 
-            # Résolution DNS pour bloquer RFC 1918
-            ip_addr = socket.gethostbyname(hostname)
-            ip = ipaddress.ip_address(ip_addr)
-            
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+            # Résolution DNS asynchrone complète (IPv4 + IPv6)
+            loop = asyncio.get_running_loop()
+            addr_infos = await loop.getaddrinfo(hostname, None)
+            if not addr_infos:
                 return False
-                
+
+            for info in addr_infos:
+                ip_str = info[4][0].split("%")[0]
+                ip = ipaddress.ip_address(ip_str)
+                if (
+                    ip.is_private
+                    or ip.is_loopback
+                    or ip.is_link_local
+                    or ip.is_multicast
+                    or ip.is_reserved
+                    or ip.is_unspecified
+                ):
+                    return False
+
             return True
         except Exception:
             return False
@@ -64,8 +84,14 @@ class Tools:
         __metadata__: dict = {},
     ) -> str:
         """Exécute une requête HTTP REST directe vers une URL publique externe (hors serveurs MCP)."""
-        if not self._is_safe_url(url):
-             return wrap_tool_output(text="❌ Accès réseau non autorisé (SSRF ou domaine non whitelisté).", status={"status": "error", "domain": url}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        if not await self._is_safe_url(url):
+            return wrap_tool_output(
+                text="❌ Accès réseau non autorisé (SSRF ou domaine non whitelisté).",
+                status={"status": "error", "domain": url},
+                user_id=__user__.get("id", "system") if __user__ else "system",
+                chat_id=__metadata__.get("chat_id") if __metadata__ else None,
+                metadata=__metadata__,
+            )
 
         actual_headers = headers if headers else {}
         actual_body = body if body else None

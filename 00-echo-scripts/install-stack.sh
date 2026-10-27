@@ -1,18 +1,18 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.226.18.0
+# VERSION : 5.231.21.1
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.21.1: Délégation de la génération des secrets .env (dont ECHO_VAULT_ENCRYPTION_KEY) à ensure_echo_secrets (echo-globals.sh).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 6.33: Mise à jour du chemin de build pour l'image parente docker-python-base.
 # 6.32: Utilisation des variables d'environnement ECHO_NET_MAIN_PREFIX pour la création dynamique des sous-réseaux IPAM.
 # 6.31: Assignation de sous-réseaux statiques pour echo-network (10.20.40.0/24) et echo-sandbox (10.20.50.0/24).
-# 6.30: Correction du parsing yq/grep pour cibler le service echo-open-webui.
 
 set -e # Arrêt en cas d'erreur critique
 
@@ -197,23 +197,7 @@ echo "🏗️  Analyse du fichier Docker Compose pour les ressources externes...
 
 # 2.0 Gestion des Secrets Centralisés
 ENV_FILE="$ECHO_ENV_FILE"
-touch "$ENV_FILE"
-chmod 600 "$ENV_FILE"
-
-generate_secret() {
-    local key=$1
-    local length=$2
-    if ! grep -q "^$key=" "$ENV_FILE"; then
-        local secret=$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$length")
-        echo "$key=$secret" >> "$ENV_FILE"
-        echo "   🔑 Génération du secret : $key"
-    fi
-}
-
-generate_secret "BW_DB_PASSWORD" 24
-generate_secret "SEARXNG_SECRET" 64
-generate_secret "ECHO_SSO_SECRET" 32
-generate_secret "N8N_ENCRYPTION_KEY" 64
+ensure_echo_secrets
 
 # Configuration N8N Headless (Propriétaire)
 if ! grep -q "^N8N_INSTANCE_OWNER_MANAGED_BY_ENV=" "$ENV_FILE"; then

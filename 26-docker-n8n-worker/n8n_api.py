@@ -2,16 +2,16 @@
 """
 ================================================================================
 MODULE : ECHO N8N WORKER API
-VERSION : 5.226.18.0
+VERSION : 5.231.20.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Verrou asynchrone _N8N_AUTH_LOCK sur get_or_create_n8n_api_key, isolation de N8N_USER_FOLDER par execution_id avec purge finally, et préfixage propriétaire [ECHO:<user_id>] des démons.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.18: Rate-Limit Healthcheck
 # 2.17: Fix : Ajout d'un filtre de logs (RateLimitHealthCheckFilter) limitant l'affichage des requêtes /health à 1/5min.
 # 2.16: Fix : Écriture systématique d'un deployment_report.json dans chat_dir après chaque appel /deploy (succès, warning, erreur). Alimente le Download Broker pour émission d'AEC au modèle. Fix : Ajout de "settings": {} si absent du payload (requis par baseWorkflowShape). Fix : Timeout explicite sur delete_workflow (15s) et prune_workflows (30s). Refactor : Import subprocess supprimé (inutilisé), random remonté en tête.
-# 2.15: Fix : Séquence de déploiement démon corrigée (bug "request/body/active is read-only"). Étape 1 : POST /api/v1/workflows SANS le champ "active" (CreateWorkflowDto N8N v2.x). Étape 2 : POST /api/v1/workflows/{id}/activate (alias publishWorkflow v2.34.6). Timeout=30.0 sur httpx.AsyncClient. Retour "warning" si activation échouée.
 import os
 import json
 import uuid
@@ -57,125 +57,120 @@ logging.getLogger("uvicorn.access").addFilter(RateLimitHealthCheckFilter())
 
 active_executions: Dict[str, list[asyncio.subprocess.Process]] = {}
 N8N_MASTER_API_KEY: str | None = None
+_N8N_AUTH_LOCK = asyncio.Lock()
 N8N_URL = os.environ.get("N8N_URL", "http://127.0.0.1:5678")
 
 app = FastAPI(title="ECHO N8N Worker API", description="Interface REST pour orchestration N8N")
 
 N8N_AUTH_DEBUG_LOGS: list[str] = []
 
-async def get_or_create_n8n_api_key() -> str | None:
-    global N8N_MASTER_API_KEY, N8N_AUTH_DEBUG_LOGS
-    N8N_AUTH_DEBUG_LOGS.clear()
-    
-    if N8N_MASTER_API_KEY:
-        N8N_AUTH_DEBUG_LOGS.append("Utilisation de la clé en cache.")
-        return N8N_MASTER_API_KEY
-        
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        # Augmentation à 30 tentatives (150 secondes) car le boot initial de N8N avec migrations SQLite est très lent
-        for i in range(30):
-            N8N_AUTH_DEBUG_LOGS.append(f"--- Tentative {i+1} ---")
-            try:
-                # 1. Login to get Auth Cookie (L'Owner est créé par ENV)
-                cookie = None
-                try:
-                    admin_pwd = os.environ.get("N8N_INSTANCE_OWNER_PASSWORD", "ECHO_System_123!")
-                    login_resp = await client.post(f"{N8N_URL}/rest/login", json={
-                        "emailOrLdapLoginId": "system@echo.local",
-                        "password": admin_pwd
-                    })
-                    N8N_AUTH_DEBUG_LOGS.append(f"Login HTTP {login_resp.status_code} : {login_resp.text[:100]}")
-                    cookie = login_resp.cookies.get("n8n-auth")
-                except Exception as ex2:
-                    N8N_AUTH_DEBUG_LOGS.append(f"Login Exception : {ex2}")
-                    await asyncio.sleep(5)
-                    continue
-                
-                if cookie:
-                    # 3. Check for existing API keys
-                    keys_resp = await client.get(f"{N8N_URL}/rest/api-keys", cookies={"n8n-auth": cookie})
-                    N8N_AUTH_DEBUG_LOGS.append(f"Get Keys HTTP {keys_resp.status_code}")
-                    if keys_resp.status_code == 200:
-                        try:
-                            json_resp = keys_resp.json()
-                            # N8N wrappe toutes les réponses REST dans {"data": ...} (response-helper.ts L42-46)
-                            # Unwrap récursif : {"data": [...]}, {"data": {"apiKeys": [...]}}, ou liste directe
-                            if isinstance(json_resp, dict) and "data" in json_resp:
-                                keys_data = json_resp["data"]
-                            elif isinstance(json_resp, list):
-                                keys_data = json_resp
-                            else:
-                                keys_data = []
-                            # Si data est un dict contenant 'items' (format N8N public-api-key.service.ts)
-                            if isinstance(keys_data, dict) and "items" in keys_data:
-                                keys_data = keys_data["items"]
-                                
-                            if isinstance(keys_data, list):
-                                for k in keys_data:
-                                    if isinstance(k, dict) and "id" in k:
-                                        await client.delete(f"{N8N_URL}/rest/api-keys/{k['id']}", cookies={"n8n-auth": cookie})
-                                if keys_data:
-                                    N8N_AUTH_DEBUG_LOGS.append(f"Clés existantes purgées ({len(keys_data)}).")
-                                else:
-                                    N8N_AUTH_DEBUG_LOGS.append("Aucune clé existante à purger.")
-                            else:
-                                N8N_AUTH_DEBUG_LOGS.append(f"Format API keys non reconnu après unwrap (type={type(keys_data).__name__}), purge ignorée.")
-                        except Exception as parse_e:
-                            N8N_AUTH_DEBUG_LOGS.append(f"Erreur mineure ignorée lors de la purge: {parse_e}")
-                            
-                    # 4. Create new API key with required scopes (N8N 2.x Zod validation)
-                    # expiresAt en SECONDES UNIX (cohérent avec Date.now()/1000 côté N8N)
-                    expires_at = int(time.time()) + (10 * 365 * 24 * 60 * 60)  # 10 ans
-                    # Interrogation dynamique des scopes autorisés pour cet utilisateur
-                    # Identique au comportement de l'UI Web de N8N lors de la création manuelle
-                    scopes_resp = await client.get(f"{N8N_URL}/rest/api-keys/scopes", cookies={"n8n-auth": cookie})
-                    
-                    if scopes_resp.status_code == 200:
-                        scopes_json = scopes_resp.json()
-                        # Unwrap du wrapper {"data": [...]} de N8N REST (response-helper.ts L42-46)
-                        if isinstance(scopes_json, dict) and "data" in scopes_json:
-                            owner_scopes = scopes_json["data"]
-                        elif isinstance(scopes_json, list):
-                            owner_scopes = scopes_json
-                        else:
-                            owner_scopes = scopes_json
-                        N8N_AUTH_DEBUG_LOGS.append(f"Récupération dynamique des scopes réussie ({len(owner_scopes)} scopes).")
-                    else:
-                        N8N_AUTH_DEBUG_LOGS.append(f"Échec GET /scopes: HTTP {scopes_resp.status_code}. Fallback minimaliste.")
-                        # Fallback ultra-minimaliste pour garantir le boot
-                        owner_scopes = ["workflow:create", "workflow:read", "workflow:update", "workflow:delete", "workflow:list"]
 
-                    N8N_AUTH_DEBUG_LOGS.append(f"Scopes envoyés : {owner_scopes}")
-                    create_resp = await client.post(
-                        f"{N8N_URL}/rest/api-keys",
-                        json={
-                            "label": "ECHO_MASTER_KEY",
-                            "expiresAt": expires_at,
-                            "scopes": owner_scopes
-                        },
-                        cookies={"n8n-auth": cookie}
-                    )
-                    N8N_AUTH_DEBUG_LOGS.append(f"Create Key HTTP {create_resp.status_code} : {create_resp.text[:200]}")
-                    if create_resp.status_code in (200, 201):
-                        resp_data = create_resp.json()
-                        # N8N wrappe la réponse de création dans {"data": ...}
-                        # "apiKey" est expurgée (redacted), le secret brut est dans "rawApiKey" (api-keys.controller.ts L59)
-                        key_obj = resp_data.get("data", resp_data) if isinstance(resp_data, dict) else resp_data
-                        N8N_MASTER_API_KEY = key_obj.get("rawApiKey") if isinstance(key_obj, dict) else None
-                        if N8N_MASTER_API_KEY:
-                            N8N_AUTH_DEBUG_LOGS.append(f"Clé API créée et secrète récupérée. Scopes retenus : {owner_scopes}")
-                            return N8N_MASTER_API_KEY
+async def get_or_create_n8n_api_key() -> str | None:
+    global N8N_MASTER_API_KEY
+    if N8N_MASTER_API_KEY:
+        return N8N_MASTER_API_KEY
+
+    async with _N8N_AUTH_LOCK:
+        if N8N_MASTER_API_KEY:
+            N8N_AUTH_DEBUG_LOGS.append("Utilisation de la clé en cache.")
+            return N8N_MASTER_API_KEY
+        N8N_AUTH_DEBUG_LOGS.clear()
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Augmentation à 30 tentatives (150 secondes) car le boot initial de N8N avec migrations SQLite est très lent
+            for i in range(30):
+                N8N_AUTH_DEBUG_LOGS.append(f"--- Tentative {i+1} ---")
+                try:
+                    # 1. Login to get Auth Cookie (L'Owner est créé par ENV)
+                    cookie = None
+                    try:
+                        admin_pwd = os.environ.get("N8N_INSTANCE_OWNER_PASSWORD", "ECHO_System_123!")
+                        login_resp = await client.post(f"{N8N_URL}/rest/login", json={
+                            "emailOrLdapLoginId": "system@echo.local",
+                            "password": admin_pwd
+                        })
+                        N8N_AUTH_DEBUG_LOGS.append(f"Login HTTP {login_resp.status_code} : {login_resp.text[:100]}")
+                        cookie = login_resp.cookies.get("n8n-auth")
+                    except Exception as ex2:
+                        N8N_AUTH_DEBUG_LOGS.append(f"Login Exception : {ex2}")
+                        await asyncio.sleep(5)
+                        continue
+
+                    if cookie:
+                        # 3. Check for existing API keys
+                        keys_resp = await client.get(f"{N8N_URL}/rest/api-keys", cookies={"n8n-auth": cookie})
+                        N8N_AUTH_DEBUG_LOGS.append(f"Get Keys HTTP {keys_resp.status_code}")
+                        if keys_resp.status_code == 200:
+                            try:
+                                json_resp = keys_resp.json()
+                                if isinstance(json_resp, dict) and "data" in json_resp:
+                                    keys_data = json_resp["data"]
+                                elif isinstance(json_resp, list):
+                                    keys_data = json_resp
+                                else:
+                                    keys_data = []
+                                if isinstance(keys_data, dict) and "items" in keys_data:
+                                    keys_data = keys_data["items"]
+
+                                if isinstance(keys_data, list):
+                                    for k in keys_data:
+                                        if isinstance(k, dict) and "id" in k:
+                                            await client.delete(f"{N8N_URL}/rest/api-keys/{k['id']}", cookies={"n8n-auth": cookie})
+                                    if keys_data:
+                                        N8N_AUTH_DEBUG_LOGS.append(f"Clés existantes purgées ({len(keys_data)}).")
+                                    else:
+                                        N8N_AUTH_DEBUG_LOGS.append("Aucune clé existante à purger.")
+                                else:
+                                    N8N_AUTH_DEBUG_LOGS.append(f"Format API keys non reconnu après unwrap (type={type(keys_data).__name__}), purge ignorée.")
+                            except Exception as parse_e:
+                                N8N_AUTH_DEBUG_LOGS.append(f"Erreur mineure ignorée lors de la purge: {parse_e}")
+
+                        # 4. Create new API key with required scopes (N8N 2.x Zod validation)
+                        expires_at = int(time.time()) + (10 * 365 * 24 * 60 * 60)  # 10 ans
+                        scopes_resp = await client.get(f"{N8N_URL}/rest/api-keys/scopes", cookies={"n8n-auth": cookie})
+
+                        if scopes_resp.status_code == 200:
+                            scopes_json = scopes_resp.json()
+                            if isinstance(scopes_json, dict) and "data" in scopes_json:
+                                owner_scopes = scopes_json["data"]
+                            elif isinstance(scopes_json, list):
+                                owner_scopes = scopes_json
+                            else:
+                                owner_scopes = scopes_json
+                            N8N_AUTH_DEBUG_LOGS.append(f"Récupération dynamique des scopes réussie ({len(owner_scopes)} scopes).")
                         else:
-                            N8N_AUTH_DEBUG_LOGS.append(f"Clé créée mais extraction échouée (rawApiKey introuvable): {resp_data}")
-                else:
-                    N8N_AUTH_DEBUG_LOGS.append("Aucun cookie n8n-auth retourné par le login. Nouvelle tentative dans 3s...")
+                            N8N_AUTH_DEBUG_LOGS.append(f"Échec GET /scopes: HTTP {scopes_resp.status_code}. Fallback minimaliste.")
+                            owner_scopes = ["workflow:create", "workflow:read", "workflow:update", "workflow:delete", "workflow:list"]
+
+                        N8N_AUTH_DEBUG_LOGS.append(f"Scopes envoyés : {owner_scopes}")
+                        create_resp = await client.post(
+                            f"{N8N_URL}/rest/api-keys",
+                            json={
+                                "label": "ECHO_MASTER_KEY",
+                                "expiresAt": expires_at,
+                                "scopes": owner_scopes
+                            },
+                            cookies={"n8n-auth": cookie}
+                        )
+                        N8N_AUTH_DEBUG_LOGS.append(f"Create Key HTTP {create_resp.status_code} : {create_resp.text[:200]}")
+                        if create_resp.status_code in (200, 201):
+                            resp_data = create_resp.json()
+                            key_obj = resp_data.get("data", resp_data) if isinstance(resp_data, dict) else resp_data
+                            N8N_MASTER_API_KEY = key_obj.get("rawApiKey") if isinstance(key_obj, dict) else None
+                            if N8N_MASTER_API_KEY:
+                                N8N_AUTH_DEBUG_LOGS.append(f"Clé API créée et secrète récupérée. Scopes retenus : {owner_scopes}")
+                                return N8N_MASTER_API_KEY
+                            else:
+                                N8N_AUTH_DEBUG_LOGS.append(f"Clé créée mais extraction échouée (rawApiKey introuvable): {resp_data}")
+                    else:
+                        N8N_AUTH_DEBUG_LOGS.append("Aucun cookie n8n-auth retourné par le login. Nouvelle tentative dans 3s...")
+                        await asyncio.sleep(3)
+                        continue
+
+                except Exception as e:
+                    N8N_AUTH_DEBUG_LOGS.append(f"Exception globale boucle : {e}")
                     await asyncio.sleep(3)
-                    continue
-                
-            except Exception as e:
-                N8N_AUTH_DEBUG_LOGS.append(f"Exception globale boucle : {e}")
-                await asyncio.sleep(3)
-                
+
     return None
 
 class ExecuteRequest(BaseModel):
@@ -223,11 +218,13 @@ def replace_download_dir(data: Any, target_dir: str) -> Any:
         return data.replace("__ECHO_DOWNLOAD_DIR__", target_dir)
     return data
 
-async def _run_n8n_process(req: ExecuteRequest, target_dir: Path, tmp_file: Path, chat_dir: Path):
+async def _run_n8n_process(req: ExecuteRequest, target_dir: Path, tmp_file: Path, chat_dir: Path, execution_id: str = ""):
     process = None
     status = "error"
     stdout = ""
     stderr = ""
+    exec_suffix = f"_{execution_id}" if execution_id else f"_{uuid.uuid4().hex[:8]}"
+    isolated_user_folder = target_dir / f".n8n_isolated{exec_suffix}"
     try:
         # Exécution de N8N
         # On utilise asyncio.create_subprocess_exec pour ne pas bloquer l'event loop
@@ -235,7 +232,7 @@ async def _run_n8n_process(req: ExecuteRequest, target_dir: Path, tmp_file: Path
         env = os.environ.copy()
         env["N8N_PORT"] = str(random.randint(10000, 30000))
         env["N8N_RUNNERS_BROKER_PORT"] = str(random.randint(30001, 50000))
-        env["N8N_USER_FOLDER"] = str(target_dir / ".n8n_isolated")
+        env["N8N_USER_FOLDER"] = str(isolated_user_folder)
         
         import_proc = await asyncio.create_subprocess_exec(
             "npx", "n8n", "import:workflow", f"--input={str(tmp_file)}",
@@ -245,7 +242,7 @@ async def _run_n8n_process(req: ExecuteRequest, target_dir: Path, tmp_file: Path
         )
         import_stdout, import_stderr = await import_proc.communicate()
         if import_proc.returncode != 0:
-             raise Exception(f"Import Workflow Failed: {import_stderr.decode('utf-8', errors='replace')} | STDOUT: {import_stdout.decode('utf-8', errors='replace')}")
+            raise Exception(f"Import Workflow Failed: {import_stderr.decode('utf-8', errors='replace')} | STDOUT: {import_stdout.decode('utf-8', errors='replace')}")
 
         process = await asyncio.create_subprocess_exec(
             "npx", "n8n", "execute", "--id", req.n8n_workflow_id,
@@ -300,6 +297,8 @@ async def _run_n8n_process(req: ExecuteRequest, target_dir: Path, tmp_file: Path
                 pass
         if tmp_file.exists():
             tmp_file.unlink(missing_ok=True)
+        if isolated_user_folder.exists():
+            shutil.rmtree(isolated_user_folder, ignore_errors=True)
             
     return status, stdout, stderr
 
@@ -331,7 +330,7 @@ async def execute_workflow(req: ExecuteRequest, background_tasks: BackgroundTask
         
         if req.sync:
             # Mode Synchrone : on attend la fin
-            status, stdout, stderr = await _run_n8n_process(req, target_dir, tmp_file, chat_dir)
+            status, stdout, stderr = await _run_n8n_process(req, target_dir, tmp_file, chat_dir, execution_id=execution_id)
             return {
                 "status": status,
                 "stdout": stdout,
@@ -339,7 +338,7 @@ async def execute_workflow(req: ExecuteRequest, background_tasks: BackgroundTask
             }
         else:
             # Mode Asynchrone : Fire & Forget
-            background_tasks.add_task(_run_n8n_process, req, target_dir, tmp_file, chat_dir)
+            background_tasks.add_task(_run_n8n_process, req, target_dir, tmp_file, chat_dir, execution_id)
             return {
                 "status": "started",
                 "execution_id": execution_id,
@@ -377,8 +376,12 @@ async def deploy_workflow(req: ExecuteRequest):
         if "settings" not in workflow_data:
             workflow_data["settings"] = {}
 
-        if "name" not in workflow_data:
-            workflow_data["name"] = f"ECHO_Daemon_{req.n8n_workflow_id}"
+        owner_prefix = f"[ECHO:{req.user_id}] "
+        raw_name = workflow_data.get("name") or f"ECHO_Daemon_{req.n8n_workflow_id}"
+        if not str(raw_name).startswith("[ECHO:"):
+            workflow_data["name"] = f"{owner_prefix}{raw_name}"
+        else:
+            workflow_data["name"] = str(raw_name)
 
         api_key = await get_or_create_n8n_api_key()
         headers = {"X-N8N-API-KEY": api_key} if api_key else {}

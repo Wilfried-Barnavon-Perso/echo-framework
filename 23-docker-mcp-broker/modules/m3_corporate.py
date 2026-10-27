@@ -2,11 +2,12 @@
 """
 ================================================================================
 MODULE : ECHO - M3 CORPORATE
-VERSION : 5.229.1.1
+VERSION : 5.231.20.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Prise en compte des credentials utilisateur (credentials_var) pour l'authentification optionnelle Sirene/Pappers.
 # 5.229.1.1: Ajout de l'import httpx manquant pour l'API Sirene.
 # 5.228.9.1: Fallback d'import MCPServer (compatibilité MCP 1.x et 2.x).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
@@ -17,17 +18,25 @@ try:
 except ImportError:
     from mcp.server.fastmcp import FastMCP as MCPServer
 
+from core.security import credentials_var
+
+
 def register_corporate_tools(mcp: MCPServer):
-    
+
     @mcp.tool()
     async def search_french_company(query: str) -> str:
         """Recherche une entreprise française (API Sirene)."""
         url = "https://recherche-entreprises.api.gouv.fr/search"
         params = {"q": query}
-        
+        creds = credentials_var.get() or {}
+        headers = {}
+        sirene_key = creds.get("sirene_key")
+        if sirene_key:
+            headers["Authorization"] = f"Bearer {sirene_key}"
+
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(url, params=params)
+                response = await client.get(url, params=params, headers=headers)
                 response.raise_for_status()
                 data = response.json()
                 

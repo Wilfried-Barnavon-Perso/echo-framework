@@ -2,18 +2,19 @@
 """
 title: ECHO AEC Manager
 author: Wilfried BARNAVON
-version: 5.227.1.1
+version: 5.231.20.1
 description: Composant système interne : ECHO AEC Manager.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Suffixe UUID sur event_id dans EchoAEC.record_event pour éliminer les collisions intra-milliseconde.
 # 5.227.1.1: Suppression de render_context_checkpoint suite à la suppression du compactage in-place.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.5: Ajout de render_context_checkpoint pour l'encapsulation XML déterministe de <artifact id="AEC_context_checkpoint">.
 # 2.4: Ajout de render_directive pour le formatage XML natif des directives système ponctuelles (PIS et mise à niveau).
-# 2.3: Ajout de drain_pending_directives (transaction atomique), purge_orphaned_events et status optionnel dans record_event.
 
 import time
+import uuid
 import sqlite3
 from typing import List, Dict, Any
 
@@ -22,7 +23,7 @@ class EchoAEC:
     @staticmethod
     def record_event(state_manager: Any, event_name: str, summary: str = None, status: str = "active", resource_type: str = "aec_event") -> str:
         """Transmission SQLite : Inscrit un événement abstrait (ex: Directive de Cascade) dans le Registre Unifié."""
-        event_id = f"aec_event_{int(time.time() * 1000)}"
+        event_id = f"aec_event_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
         state_manager.save_resource(
             id=event_id,
             name=event_name,

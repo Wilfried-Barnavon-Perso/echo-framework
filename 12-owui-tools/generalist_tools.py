@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 5.229.2.1
+version: 5.231.20.1
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.20.1: Isolation multi-chat du HUD wait_timer (data-chat-id) et suppression des fuites de listeners document.
 # 5.229.2.1: Ajout de l'outil list_ui_tags (consultation locale des tags du chat courant ou globale de toutes les conversations).
 # 5.229.1.2: Précision de la transmission par défaut aux sous-agents dans la docstring de tool_advisor.
 # 5.229.1.1: Bascule cognitive de tool_advisor vers MODEL_APOLLO (medium thinking).
 # 5.229.0.1: Renommage de delegate_to_tool_consultant en tool_advisor et enrichissement de la docstring (utilité, sous-agents).
-# 5.229.0.0: Compression des docstrings OpenAPI et refonte de delegate_to_tool_consultant en Conseiller Opérationnel Hybride (EchoToolGuidesManager + read_tool_guide).
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -126,17 +126,28 @@ class Tools:
         await events.status(f"⏱️ Démarrage d'un timer de {sec_val} secondes...")
 
         # 2. Injection du HUD Interactif (Front-end)
-        hud_id = "echo-wait-timer-hud"
+        cid = str(__metadata__.get("chat_id") or "") if __metadata__ else ""
+        safe_cid = "".join(c if c.isalnum() or c in "-_" else "_" for c in cid)
+        hud_id = f"echo-wait-timer-hud-{safe_cid}" if safe_cid else "echo-wait-timer-hud"
+        cid_json = json.dumps(cid)
         js_code = f"""
         (function() {{
             const HUD_ID = '{hud_id}';
+            const CHAT_ID = {cid_json};
             let old = document.getElementById(HUD_ID);
-            if (old) old.remove();
+            if (old) {{
+                if (old._cleanup) old._cleanup();
+                old.remove();
+            }}
 
             let remaining = {sec_val};
             
             const hud = document.createElement('div');
             hud.id = HUD_ID;
+            if (CHAT_ID) {{
+                hud.setAttribute('data-chat-id', CHAT_ID);
+                hud.setAttribute('data-echo-chat-id', CHAT_ID);
+            }}
             hud.style.cssText = 'position:fixed; z-index:10005; top:80px; right:30px; background-color:#0a0a0a; color:#ef4444; font-family:"Courier New", Courier, monospace; font-weight:bold; font-size:24px; border:2px solid #333; border-radius:10px; padding:10px 20px; box-shadow:0 8px 30px rgba(0,0,0,0.8); display:flex; align-items:center; gap:15px; user-select:none; cursor:move; min-width:120px; justify-content:center;';
 
             const timeDisplay = document.createElement('span');
@@ -148,28 +159,26 @@ class Tools:
             closeBtn.style.cssText = 'color:#555; cursor:pointer; font-size:20px; transition:color 0.2s; position:absolute; top:-5px; right:5px; font-weight:normal; line-height:1;';
             closeBtn.onmouseover = () => closeBtn.style.color = '#ef4444';
             closeBtn.onmouseout = () => closeBtn.style.color = '#555';
-            closeBtn.onclick = () => hud.remove();
 
-            hud.appendChild(timeDisplay);
-            hud.appendChild(closeBtn);
-            document.body.appendChild(hud);
-
-            // Fonctionnalité Drag & Drop
-            let isDragging = false, startX, startY, startLeft, startTop;
+            // Fonctionnalité Drag & Drop sans fuite de listeners
+            let startX, startY, startLeft, startTop;
+            const onMove = (e) => {{
+                hud.style.right = 'auto';
+                hud.style.left = (startLeft + e.clientX - startX) + 'px';
+                hud.style.top = (startTop + e.clientY - startY) + 'px';
+            }};
+            const onUp = () => {{
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            }};
             hud.onmousedown = (e) => {{
                 if (e.target === closeBtn) return;
-                isDragging = true;
                 startX = e.clientX; startY = e.clientY;
                 const rect = hud.getBoundingClientRect();
                 startLeft = rect.left; startTop = rect.top;
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
             }};
-            document.addEventListener('mousemove', (e) => {{
-                if (!isDragging) return;
-                hud.style.right = 'auto'; // Désactiver right lors du drag
-                hud.style.left = (startLeft + e.clientX - startX) + 'px';
-                hud.style.top = (startTop + e.clientY - startY) + 'px';
-            }});
-            document.addEventListener('mouseup', () => isDragging = false);
 
             // Moteur du Timer
             const interval = setInterval(() => {{
@@ -178,15 +187,31 @@ class Tools:
                     remaining = 0;
                     timeDisplay.innerText = "0s";
                     clearInterval(interval);
-                    // Disparition automatique après 1000ms
                     setTimeout(() => {{
                         let currentHud = document.getElementById(HUD_ID);
-                        if (currentHud) currentHud.remove();
+                        if (currentHud) {{
+                            if (currentHud._cleanup) currentHud._cleanup();
+                            currentHud.remove();
+                        }}
                     }}, 1000);
                 }} else {{
                     timeDisplay.innerText = remaining + "s";
                 }}
             }}, 1000);
+
+            hud._cleanup = () => {{
+                clearInterval(interval);
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+            }};
+            closeBtn.onclick = () => {{
+                hud._cleanup();
+                hud.remove();
+            }};
+
+            hud.appendChild(timeDisplay);
+            hud.appendChild(closeBtn);
+            document.body.appendChild(hud);
         }})();
         """
         await events.emit_execute(js_code)

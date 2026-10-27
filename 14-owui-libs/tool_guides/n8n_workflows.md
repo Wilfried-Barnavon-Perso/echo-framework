@@ -1,7 +1,7 @@
 ---
 domain_id: n8n_workflows
-version: 5.229.0.0
-updated_at: 2026-10-22
+version: 5.231.22.1
+updated_at: 2026-10-27
 name: Orchestration & Automatisation N8N
 description: Conception déléguée (N8N Grapher Prometheus), recherche Hub N8N, gestion de templates globaux, exécution éphémère Oneshot et déploiement de Daemons persistants.
 tools: [create_n8n_template, modify_n8n_template, delete_n8n_template, prepare_n8n_workflow, modify_n8n_workflow, delete_n8n_workflow, run_n8n_oneshot_workflow, deploy_n8n_daemon, search_n8n_hub, download_n8n_hub_template, query_n8n_documentation, delegate_to_n8n_grapher]
@@ -14,15 +14,15 @@ keywords: [n8n, workflow, automatisation, daemon, oneshot, template, grapher, hu
 
 ### 1.1 Règle Critique de Délégation (`delegate_to_n8n_grapher`)
 - Dès qu'un workflow demandé **dépasse 2 nœuds**, nécessite du mocking, une gestion de payloads volumineux ou des tests en Sandbox, l'Orchestrateur **DOIT IMPÉRATIVEMENT** déléguer la tâche à `delegate_to_n8n_grapher(instructions="...")` (`MODEL_PROMETHEUS`).
-- `delegate_to_n8n_grapher` dispose de tous les outils N8N, du Codex, du Code Executor et de l'Identity Vault pour concevoir, tester en Oneshot et déployer le graphe de bout en bout.
+- `delegate_to_n8n_grapher` dispose de tous les outils N8N, du Codex, du Code Executor et de la consultation de l'Identity Vault (`list_identities_services`, `list_identities`) pour concevoir, tester en Oneshot et déployer le graphe de bout en bout. *(Attention : `ask_user` et `manage_identity` étant bloqués en mode Headless, la collecte et l'enregistrement d'un secret manquant doivent être effectués par l'Orchestrateur principal avant ou après la délégation).*
 - Si l'Orchestrateur intervient directement sur un workflow simple, il **DOIT** préalablement appeler `query_n8n_documentation()` pour récupérer la version exacte de l'instance N8N et ses contraintes architecturales.
 
 ### 1.2 Barrière de Sécurité des Secrets (`__ECHO_SECRET_XXX__`)
 - Le Worker N8N d'ECHO étant **stateless**, les blocs `"credentials"` N8N natifs et les en-têtes d'authentification codés en dur (`Authorization`, `Cookie`, `X-API-Key`, `Token`) sont **STRICTEMENT INTERDITS** et bloqués par `prepare_n8n_workflow` / `modify_n8n_workflow`.
 - **Procédure obligatoire pour l'authentification dans N8N** :
   1. Vérifier les secrets existants via `list_identities(service="n8n_workflows")`.
-  2. Si le secret est manquant, le demander à l'Utilisateur via `ask_user_input` puis l'enregistrer via `manage_identity(action="add", service="n8n_workflows", account_id="NOM_CLE", credentials_json='{"description": "...", "value": "..."}')`.
-  3. Dans le JSON du workflow N8N (ex: nœud HTTP Request), injecter la macro **`__ECHO_SECRET_NOM_CLE__`**. Le moteur remplace dynamiquement cette macro par la valeur du Vault au moment de l'exécution.
+  2. Si le secret est manquant, l'Orchestrateur principal DOIT le demander à l'Utilisateur via `ask_user` puis l'enregistrer via `manage_identity(action="add", service="n8n_workflows", account_id="NOM_CLE", credentials_json='{"description": "...", "value": "..."}')`.
+  3. Dans le JSON du workflow N8N (ex: nœud HTTP Request), injecter la macro **`__ECHO_SECRET_NOM_CLE__`**. Au moment de l'exécution (`run_n8n_oneshot_workflow` ou `deploy_n8n_daemon`), le moteur déchiffre l'entrée du Vault, extrait la valeur brute (qu'elle soit stockée sous `"value"`, `"credentials"` ou en chaîne directe), l'échappe pour le JSON, bloque l'exécution si une macro reste non résolue, et masque automatiquement toute apparition littérale du secret dans `stdout`/`stderr` et les messages d'erreur (`[MASQUÉ:__ECHO_SECRET_NOM_CLE__]`).
 
 ### 1.3 Écriture de Fichiers et Rapports (`__ECHO_DOWNLOAD_DIR__`)
 - Les nœuds Webhook entrants sont inutilisables dans cette infrastructure isolée.
