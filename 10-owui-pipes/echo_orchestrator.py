@@ -1,7 +1,7 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 5.231.15.1
+version: 5.231.17.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
@@ -997,14 +997,8 @@ class Pipe:
                     escalation_tool = {
                         "name": "new_cognitive_level",
                         "description": (
-                            "Outil de transition cognitive dynamique exécutant le Protocole PCD (le niveau actif est exclu de l'enum `niveau_requis`).\n\n"
-                            "## Règles d'invocation\n"
-                            "1. **Exclusivité d'appel d'outil** : `new_cognitive_level` DOIT être l'UNIQUE appel d'outil émis dans le tour. "
-                            "Le Modèle DOIT invoquer cet outil SANS autre appel parallèle ; tout autre outil requis DOIT être exécuté APRÈS la transition par le Modèle cible.\n"
-                            "2. **Prohibition de l'inertie et redescente** : Conformément au PCD, l'inertie en `MODEL_ZEPHYR` (dès qu'une action outillée ou analytique est requise) "
-                            "comme en `MODEL_APOLLO` (face à un besoin d'architecture, de logique formelle ou d'orchestration profonde relevant de `MODEL_PROMETHEUS`) est ABSOLUMENT INTERDITE. "
-                            "Le Modèle DOIT également redescendre vers `MODEL_APOLLO` ou `MODEL_ZEPHYR` dès qu'une phase critique en `MODEL_PROMETHEUS` est close.\n"
-                            "3. **Charge contextuelle** : Au-delà de 50 % de charge contextuelle, le Modèle DOIT privilégier `MODEL_APOLLO` ou `MODEL_PROMETHEUS`."
+                            "Outil de transition cognitive dynamique exécutant le Protocole PCD (le niveau actuel est exclu de l'enum `niveau_requis`).\n\n"
+                            "**Exclusivité d'appel d'outil** : Le Modèle doit circonscrire l'appel à `new_cognitive_level` au sein d'un appel isolé de tout autre appel parallèle à un autre outil."
                         ),
                         "parameters": {
                             "type": "object",
@@ -1012,13 +1006,13 @@ class Pipe:
                                 "niveau_requis": {
                                     "type": "string",
                                     "enum": menu_escalade,
-                                    "description": "Identifiant du niveau cognitif cible requis pour traiter la tâche.",
+                                    "description": "Identifiant du modèle cognitif cible requis dans le contexte actuel.",
                                 },
                                 "plan_de_transfert": {
                                     "type": "string",
                                     "description": (
                                         "Plan de relais Markdown à haut SNR transmis au niveau cible. DOIT structurer : "
-                                        "1) Objectif, 2) Analyse de l'état courant, 3) Stratégie et outils à mobiliser, 4) Contraintes."
+                                        "1) Objectif, 2) Analyse de l'état courant, 3) Amorce de stratégie, 4) Contraintes repérées."
                                     ),
                                 },
                                 "raison": {
@@ -1222,7 +1216,7 @@ class Pipe:
                     for c in proc.accumulated_calls:
                         cancel_resp = {
                             "name": c["name"],
-                            "response": {"status": "error", "message": "Exécution annulée (Escalade cognitive prioritaire). Veuillez relancer cet outil."},
+                            "response": {"status": "error", "message": "Exécution annulée (Adaptation cognitive prioritaire). Le Modèle doit relancer cet outil."},
                         }
                         if "id" in c:
                             cancel_resp["id"] = c["id"]

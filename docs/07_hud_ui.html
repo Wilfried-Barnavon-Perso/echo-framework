@@ -173,8 +173,8 @@ sequenceDiagram
           <li><strong>Fragmentation UCTP (<code>ECHO_UCTP_CHUNK_SIZE = 256 000</code>) :</strong> Tout payload excédant 256 Ko est découpé en chunks séquentiels (<code>_build_uctp_frames</code>) accumulés dans <code>window.echoUCTPBuffer</code> avec HUD de progression non-bloquant jusqu'au signal <code>ECHO_UCTP_EOF</code>, contournant les limites WebSocket et WAF.</li>
         </ul>
 
-        <h3>2. Filtre Context Gauge, Calcul Différentiel &amp; Rendu Hot-Updatable (<code>context_gauge_filter.py</code> v5.231.15.1 &amp; <code>echo_ui.py</code> v5.231.15.1)</h3>
-        <p>Le filtre bidirectionnel <code>context_gauge_filter.py</code> (priorité 10) active en Inlet l'anneau pulsant (<code>is_pending=True</code>) et fige l'état du tour précédent via <code>archive_previous_context_stats()</code> (hors sous-tours <code>role == "tool"</code>). En Outlet, il rafraîchit les quotas OAuth2 (<code>AuthService.refresh_quota_if_needed()</code> dans <code>echo_auth.py</code> v5.231.13.1), calcule via <code>EchoUI.calculate_context_delta()</code> le différentiel (<code>delta_total</code>, <code>capacity_lost_pct</code> formaté à 2 décimales fixes sans inversion de signe sous le libellé unifié <code>Empreinte tour : +X.XX%</code> ou <code>-X.XX% (libéré)</code>, <code>growth_pct</code> sur <code>promptTokenCount</code> avec libellé dynamique <code>Croissance contexte:</code> / <code>Variation contexte:</code>, <code>delta_quota_5h_pct</code>, <code>delta_quota_weekly_pct</code>) et met à jour instantanément <code>#echo-nav-context-hud</code> via le renderer JS universel <code>window.echoRenderContextGauge</code> (également invoqué par <code>deploy_context_gauge</code> et lors de l'hydratation à froid <code>/echo/v1/wm/chat/{chat_id}</code>) :</p>
+        <h3>2. Filtre Context Gauge, Calcul Différentiel &amp; Rendu Hot-Updatable (<code>context_gauge_filter.py</code> v5.231.15.1 &amp; <code>echo_ui.py</code> v5.231.17.1)</h3>
+        <p>Le filtre bidirectionnel <code>context_gauge_filter.py</code> (priorité 10) active en Inlet l'anneau pulsant (<code>is_pending=True</code>) et fige l'état du tour précédent via <code>archive_previous_context_stats()</code> (hors sous-tours <code>role == "tool"</code>). En Outlet, il rafraîchit les quotas OAuth2 (<code>AuthService.refresh_quota_if_needed()</code> dans <code>echo_auth.py</code> v5.231.13.1), calcule via <code>EchoUI.calculate_context_delta()</code> le différentiel (<code>delta_total</code>, <code>capacity_lost_pct</code> formaté à 2 décimales fixes sous le libellé unifié <code>&Delta; Capacité : -X.XX%</code> ou <code>+X.XX% (libéré)</code>, <code>growth_pct</code> sur <code>promptTokenCount</code> avec libellé dynamique <code>Croissance contexte:</code> / <code>Variation contexte:</code>, <code>delta_quota_5h_pct</code>, <code>delta_quota_weekly_pct</code>) et met à jour instantanément <code>#echo-nav-context-hud</code> via le renderer JS universel <code>window.echoRenderContextGauge</code> (également invoqué par <code>deploy_context_gauge</code> et lors de l'hydratation à froid <code>/echo/v1/wm/chat/{chat_id}</code>) :</p>
         <pre><code>deploy_context_gauge(
     events,                        # EchoEvents
     plan_name, credits_val,        # Identité du plan
@@ -208,7 +208,7 @@ sequenceDiagram
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.15 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.18 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.231.15.1
+version: 5.231.17.1
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.17.1: Remplacement d'Empreinte tour par Δ Capacité avec inversion de signe (perte en négatif, libération en positif).
 # 5.231.15.1: Formatage fixe à 2 décimales dans la capsule, libellés unifiés Empreinte tour et élimination des inversions de signes.
 # 5.231.14.2: Neutralisation de la capsule différentielle (style sobre slate-400 et affichage du pourcentage seul).
 # 5.231.14.1: Calcul de la croissance du contexte sur promptTokenCount (Option A) et gestion dynamique Gain/Perte de capacité (fix double tiret).
 # 5.231.13.2: Suppression de la garde if (!window.echoRenderContextGauge) pour autoriser le Hot-Update direct du renderer JS.
-# 5.231.13.1: Épuration du tooltip différentiel (suppression de l'affichage Δ Prompt/Gen et Δ Cache).
 
 
 import sys
@@ -2041,7 +2041,7 @@ class EchoUI(EchoRichUI):
       var capLost = stats.delta.capacity_lost_pct || 0;
       var sign = dTot > 0 ? '+' : '';
       var capLostFixed = Math.abs(capLost).toFixed(2);
-      var badgeText = (capLost > 0 ? '+' : (capLost < 0 ? '-' : '')) + capLostFixed + '%';
+      var badgeText = (capLost > 0 ? '-' : (capLost < 0 ? '+' : '')) + capLostFixed + '%';
       deltaBadge = `<span class="echo-delta-badge">${badgeText}</span>`;
 
       var signGrowth = (stats.delta.growth_pct > 0 ? '+' : '') + stats.delta.growth_pct + '%';
@@ -2049,11 +2049,11 @@ class EchoUI(EchoRichUI):
 
       var capRow = '';
       if (capLost > 0) {
-        capRow = `<div class="tooltip-row"><span>Empreinte tour:</span> <b style="color:#ef4444;">+${capLostFixed}%</b></div>`;
+        capRow = `<div class="tooltip-row"><span>Δ Capacité:</span> <b style="color:#ef4444;">-${capLostFixed}%</b></div>`;
       } else if (capLost < 0) {
-        capRow = `<div class="tooltip-row"><span>Empreinte tour:</span> <b style="color:#10b981;">-${capLostFixed}% (libéré)</b></div>`;
+        capRow = `<div class="tooltip-row"><span>Δ Capacité:</span> <b style="color:#10b981;">+${capLostFixed}% (libéré)</b></div>`;
       } else {
-        capRow = `<div class="tooltip-row"><span>Empreinte tour:</span> <span>0%</span></div>`;
+        capRow = `<div class="tooltip-row"><span>Δ Capacité:</span> <span>0%</span></div>`;
       }
 
       deltaTooltipRows = `

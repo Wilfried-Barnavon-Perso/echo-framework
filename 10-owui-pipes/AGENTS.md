@@ -8,7 +8,7 @@ Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégratio
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `echo_orchestrator.py` (v5.231.15.1)
+### `echo_orchestrator.py` (v5.231.17.1)
 
 #### A. Classe `UserDataManager` (Le Tisserand de Mémoire)
 **Rôle** : Gestionnaire de l'état asynchrone SQLite (proxy vers `EchoStateManager`). Il reconstruit l'historique exact de la conversation.
