@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 5.231.20.1
+version: 5.231.29.1
 description: Permet au modèle de manipuler un espace virtuel (Codex) avec versioning Git invisible et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.29.1: Unification SSOT des espaces de travail Codex (CODEX_WORKSPACE_LITERAL, CODEX_DEFAULT_WORKSPACE, ECHO_CODEX_WORKSPACES) et exclusion formelle de la sandbox dans echo_resources via is_codex_workspace_indexed.
+# 5.231.28.1: Normalisation de storage_path via format_codex_storage_path (codex/<workspace>/<filename>) et suppression des appels à codex_docs.
 # 5.231.20.1: Centralisation du verrou Git via get_codex_lock (echo_paths), déportation asyncio.to_thread des lectures Dulwich et garde OCC SHA-256 anti-Lost Update dans edit_codex (assisted_edition).
 # 5.231.5.1: Factorisation de _resolve_and_verify_file et support multi-chat/commit dans open_codex_ui.
 # 5.230.0.2: Inscription déterministe de l'AEC URN en début d'appel avec résolution SSoT sur la session active et déduplication intra-tour.
-# 5.230.0.1: Intégration de _emit_urn_directive (Haut SNR, 35 tokens) et rappel URN canonique dans les contrats wrap_tool_output.
-# 5.229.7.3: Harmonisation des signatures -> dict et enrichissement systématique des sorties LLM via wrap_tool_output.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -19,7 +19,7 @@ import sys
 import hashlib
 import asyncio
 from pydantic import BaseModel, Field
-from typing import Optional, Any, Literal
+from typing import Optional, Any
 
 sys.path.append("/app/backend/echo_libs")
 from echo_core import wrap_tool_output, wrap_cascade_output
@@ -29,12 +29,21 @@ from echo_state_manager import EchoStateManager
 from echo_aec import EchoAEC
 import echo_constants
 from echo_constants import (
-    ECHO_API_MAX_RETRIES, get_generation_config, FILE_INGESTION_STATUS,
-    ECHO_USERS_ROOT, ECHO_SYNC_EXCLUDE_LIST, ECHO_CODEX_WORKSPACES
+    CODEX_DEFAULT_WORKSPACE,
+    CODEX_DIR_NAME,
+    CODEX_WORKSPACE_LITERAL,
+    CODEX_WORKSPACE_MAIN,
+    ECHO_API_MAX_RETRIES,
+    ECHO_CODEX_WORKSPACES,
+    ECHO_SYNC_EXCLUDE_LIST,
+    ECHO_USERS_ROOT,
+    FILE_INGESTION_STATUS,
+    get_generation_config,
+    is_codex_workspace_indexed,
 )
 from echo_prompts import SYS_CODEX_EDIT, SYS_CODEX_SUMMARIZE
 from echo_codex_git import CodexRepo
-from echo_paths import get_codex_lock
+from echo_paths import get_codex_lock, format_codex_storage_path
 
 
 class Tools:
@@ -56,7 +65,13 @@ class Tools:
     # HELPERS
     # =========================================================================
 
-    def _get_context(self, __user__: dict, __metadata__: dict, workspace: str = "main", target_chat_id: Optional[str] = None):
+    def _get_context(
+        self,
+        __user__: dict,
+        __metadata__: dict,
+        workspace: str = CODEX_DEFAULT_WORKSPACE,
+        target_chat_id: Optional[str] = None,
+    ):
         """Extrait user_id, chat_id et initialise CodexRepo + StateManager."""
         uid = __user__.get("id", "anonymous") if __user__ else "anonymous"
         cid = (__metadata__ or {}).get("chat_id")
@@ -229,13 +244,20 @@ class Tools:
         )
 
     async def _update_registry(self, state, filename: str, lang: str, line_count: int, commit_hash: str, msg: str, workspace: str):
-        """Met à jour le registre unifié (SQLite) en isolant la Sandbox."""
-        if workspace != "sandbox":
+        """Synchronise la ressource dans la table SQLite echo_resources uniquement pour les espaces indexés (exclut la sandbox)."""
+        if is_codex_workspace_indexed(workspace):
             await asyncio.to_thread(
                 state.save_resource,
-                id=filename, name=filename, resource_type='codex', status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
-                git_tracked=True, language=lang, lines=line_count,
-                last_commit=commit_hash[:12], commit_msg=msg, storage_path=f"codex/{filename}"
+                id=filename,
+                name=filename,
+                resource_type="codex",
+                status=FILE_INGESTION_STATUS["PUT_IN_CONTEXT"],
+                git_tracked=True,
+                language=lang,
+                lines=line_count,
+                last_commit=commit_hash[:12],
+                commit_msg=msg,
+                storage_path=format_codex_storage_path(filename, workspace),
             )
 
     # =========================================================================
@@ -248,7 +270,7 @@ class Tools:
         content: str,
         language: str = None,
         commit_message: str = None,
-        workspace: Literal["main", "sandbox"] = "main",
+        workspace: CODEX_WORKSPACE_LITERAL = CODEX_DEFAULT_WORKSPACE,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -299,7 +321,7 @@ class Tools:
         new_content: str = None,
         instructions: str = None,
         commit_message: str = None,
-        workspace: Literal["main", "sandbox"] = "main",
+        workspace: CODEX_WORKSPACE_LITERAL = CODEX_DEFAULT_WORKSPACE,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -428,7 +450,7 @@ class Tools:
     async def delete_codex(
         self,
         filename: str,
-        workspace: Literal["main", "sandbox"] = "main",
+        workspace: CODEX_WORKSPACE_LITERAL = CODEX_DEFAULT_WORKSPACE,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -450,7 +472,7 @@ class Tools:
                 return wrap_tool_output(text=f"❌ Fichier/Dossier `{filename}` introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
 
             commit_hash, paths_to_rm = delete_result
-            if workspace != "sandbox":
+            if is_codex_workspace_indexed(workspace):
                 for path in paths_to_rm:
                     await asyncio.to_thread(state.delete_resource, path)
         await events.status(f"🗑️ {filename} supprimé (commit {commit_hash[:7]}).", done=True)
@@ -478,7 +500,7 @@ class Tools:
         start_line: int = None,
         end_line: int = None,
         commit_hash: str = None,
-        workspace: Literal["main", "sandbox"] = "main",
+        workspace: CODEX_WORKSPACE_LITERAL = CODEX_DEFAULT_WORKSPACE,
         target_chat_id: Optional[str] = None,
         __user__: dict = {},
         __metadata__: dict = {},
@@ -564,7 +586,7 @@ class Tools:
         self,
         filename: str,
         commit_hash: str,
-        workspace: Literal["main", "sandbox"] = "main",
+        workspace: CODEX_WORKSPACE_LITERAL = CODEX_DEFAULT_WORKSPACE,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -611,7 +633,7 @@ class Tools:
         commit_hash: str = None,
         trace_history: bool = False,
         history_depth: int = 50,
-        workspace: Literal["main", "sandbox"] = "main",
+        workspace: CODEX_WORKSPACE_LITERAL = CODEX_DEFAULT_WORKSPACE,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -693,7 +715,7 @@ class Tools:
     async def summarize_codex(
         self,
         filename: str,
-        workspace: Literal["main", "sandbox"] = "main",
+        workspace: CODEX_WORKSPACE_LITERAL = CODEX_DEFAULT_WORKSPACE,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -775,14 +797,14 @@ class Tools:
 
         def _inspect_chat_codex(target_cid: str) -> dict:
             info = {"main_count": 0, "sandbox_count": 0, "extensions": set()}
-            codex_base = os.path.join(users_root, safe_uid, "chats", target_cid, "codex")
-            for ws in ("main", "sandbox"):
+            codex_base = os.path.join(users_root, safe_uid, "chats", target_cid, CODEX_DIR_NAME)
+            for ws in ECHO_CODEX_WORKSPACES:
                 ws_path = os.path.join(codex_base, ws)
                 if os.path.exists(ws_path):
                     try:
                         for entry in os.scandir(ws_path):
                             if not entry.name.startswith(".") and entry.name not in ECHO_SYNC_EXCLUDE_LIST:
-                                if ws == "main":
+                                if ws == CODEX_WORKSPACE_MAIN:
                                     info["main_count"] += 1
                                 else:
                                     info["sandbox_count"] += 1
@@ -830,7 +852,7 @@ class Tools:
 
     async def list_codex(
         self,
-        workspace: Literal["main", "sandbox"] = "main",
+        workspace: CODEX_WORKSPACE_LITERAL = CODEX_DEFAULT_WORKSPACE,
         target_chat_id: Optional[str] = None,
         __user__: dict = {},
         __metadata__: dict = {},
@@ -892,7 +914,7 @@ class Tools:
         self,
         filename: Optional[str] = None,
         limit: int = 20,
-        workspace: Literal["main", "sandbox"] = "main",
+        workspace: CODEX_WORKSPACE_LITERAL = CODEX_DEFAULT_WORKSPACE,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -933,7 +955,7 @@ class Tools:
         self,
         filename: str,
         commit_hash: str = None,
-        workspace: Literal["main", "sandbox"] = "main",
+        workspace: CODEX_WORKSPACE_LITERAL = CODEX_DEFAULT_WORKSPACE,
         target_chat_id: Optional[str] = None,
         __user__: dict = None,
         __metadata__: dict = None,
@@ -948,7 +970,7 @@ class Tools:
         # Support défensif : inversion workspace / commit_hash si appelé positionnellement ("file.py", "sandbox")
         eff_ws = workspace
         eff_commit = commit_hash
-        if eff_commit in ECHO_CODEX_WORKSPACES and eff_ws == "main":
+        if eff_commit in ECHO_CODEX_WORKSPACES and eff_ws == CODEX_DEFAULT_WORKSPACE:
             eff_ws = eff_commit
             eff_commit = None
 

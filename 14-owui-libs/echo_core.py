@@ -2,18 +2,22 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 5.231.10.1
+version: 5.231.28.2
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.28.2: Implémentation de EchoCompactionEngine en % de CONTEXT_MAX (63% HEAD / 37% TAIL de 20%), zéro troncature, conservation des balises AEC et fallback ZoneInfo.
 # 5.231.10.1: Suppression de detect_verbal_escalation ; conservation de attach_thought_signature (conformité Gemini 3/4).
 # 5.231.7.1: Factorisation de attach_thought_signature (conformité Gemini 3/4).
 # 5.227.1.1: Suppression de EchoCompactionEngine suite au remplacement du compactage in-place par resume_in_new_chat_action.
 # 5.227.0.1: Fiabilisation de EchoCompactionEngine (regex ALL_AEC_PATTERN multi-attributs, désambiguïsation par index attendu dans resolve_active_window, mise à l'échelle télémétrique dans find_split_index et extraction des outils Open WebUI m['output']).
-# 5.226.18.0: Alignement sur le versioning global ECHO.
+import os
 import re
 import time
+import sqlite3
+import logging
+from contextlib import closing
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple
@@ -22,6 +26,8 @@ from echo_aec import EchoAEC
 import orjson as std_json
 from echo_paths import get_echo_version
 from echo_constants import CHARS_PER_TOKEN, AEC_REMINDERS
+
+logger = logging.getLogger("ECHO_CORE")
 
 def build_model_identity(m_id: str) -> str:
     if m_id == "aucun": return "aucun"
@@ -433,4 +439,536 @@ def attach_thought_signature(
             if isinstance(p, dict) and "text" in p:
                 p["thoughtSignature"] = signature
                 return
+
+
+class EchoCompactionEngine:
+    """
+    Moteur de Compaction Contextuelle In-Place piloté en pourcentages de ECHO_MAX_CONTEXT_SIZE.
+    Décompose l'enveloppe cible (ex: 20% de CONTEXT_MAX = 209 715 tokens) en :
+    - Part compressée HEAD : ex. 63% de 20% = 12.6% de CONTEXT_MAX (~132 120 tokens max budget, plafonné à maxOutputTokens=65535 API)
+    - Part gardée intacte TAIL : 1 - COMPACTION_COMPRESSED_SHARE_PCT (ex. 37% de 20% = 7.4% de CONTEXT_MAX, ~77 594 tokens max budget)
+    Sans troncature des messages entrants ni retrait des balises <artifact id="AEC_...">.
+    """
+
+    SYNTHETIC_IMAGE_MARKER = "Here are the images from the tool results above. Please analyze them."
+    GEMINI_MAX_OUTPUT_TOKENS = 65535
+
+    @staticmethod
+    def load_active_branch_messages(chat_id: str) -> Optional[List[Dict[str, Any]]]:
+        """Charge de manière synchrone la branche active de messages depuis Open WebUI Chats."""
+        try:
+            from open_webui.models.chats import Chats
+
+            chat_record = Chats.get_chat_by_id(chat_id)
+            if chat_record and getattr(chat_record, "chat", None):
+                return EchoStateManager.extract_active_branch(chat_record.chat)
+        except Exception:
+            pass
+        return None
+
+    @classmethod
+    def is_real_user_turn(cls, msg: Dict[str, Any]) -> bool:
+        """Détermine si un message 'user' est un vrai tour utilisateur (ignore les messages synthétiques d'images d'outils)."""
+        if msg.get("role") != "user":
+            return False
+        content = msg.get("content", "")
+        if isinstance(content, str) and cls.SYNTHETIC_IMAGE_MARKER in content:
+            return False
+        if isinstance(content, list):
+            for item in content:
+                if (
+                    isinstance(item, dict)
+                    and item.get("type") == "text"
+                    and cls.SYNTHETIC_IMAGE_MARKER in item.get("text", "")
+                ):
+                    return False
+        return True
+
+    @classmethod
+    def split_into_turns(cls, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Découpe une liste linéaire de messages (hors 'system') en tours logiques complets.
+        Chaque tour débute par un vrai message 'user' et inclut toutes les réponses 'assistant'/'tool'
+        subséquentes jusqu'au prochain vrai message 'user'.
+        """
+        turns: List[Dict[str, Any]] = []
+        current_turn: Optional[Dict[str, Any]] = None
+
+        for idx, msg in enumerate(messages):
+            role = msg.get("role")
+            if role == "system":
+                continue
+            if cls.is_real_user_turn(msg):
+                if current_turn is not None:
+                    turns.append(current_turn)
+                current_turn = {
+                    "turn_idx": len(turns),
+                    "start_msg_idx": idx,
+                    "user_msg_id": msg.get("id"),
+                    "messages": [msg],
+                    "tokens_est": 0,
+                }
+            else:
+                if current_turn is not None:
+                    current_turn["messages"].append(msg)
+
+        if current_turn is not None:
+            turns.append(current_turn)
+
+        for t in turns:
+            t["tokens_est"] = estimate_token_size(t["messages"])
+        return turns
+
+    @classmethod
+    def compute_adaptive_pivot(
+        cls,
+        turns: List[Dict[str, Any]],
+        existing_checkpoint: Optional[Dict[str, Any]] = None,
+        target_context_pct: Optional[float] = None,
+        compressed_share_pct: Optional[float] = None,
+        kept_share_pct: Optional[float] = None,
+        incoming_user_tokens: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        Calcule le pivot de compaction selon les pourcentages de ECHO_MAX_CONTEXT_SIZE :
+        - Enveloppe cible totale = ECHO_MAX_CONTEXT_SIZE * target_context_pct (ex: 20% = 209 715 tokens)
+        - Part compressée HEAD = compressed_share_pct (ex: 63% de 20% = 12.6% de CONTEXT_MAX = 132 120 tokens)
+        - Part gardée intacte TAIL = 1 - compressed_share_pct (ex: 37% de 20% = 7.4% de CONTEXT_MAX = 77 594 tokens)
+        Au moins 1 tour non-compressé (le plus ancien) est systématiquement intégré dans HEAD.
+        """
+        from echo_constants import (
+            ECHO_MAX_CONTEXT_SIZE,
+            COMPACTION_MIN_TURNS_REQUIRED,
+            COMPACTION_TARGET_CONTEXT_PCT,
+            COMPACTION_COMPRESSED_SHARE_PCT,
+            get_compaction_shares,
+        )
+
+        t_pct = float(
+            target_context_pct if target_context_pct is not None else COMPACTION_TARGET_CONTEXT_PCT
+        )
+        raw_c_share = float(
+            compressed_share_pct
+            if compressed_share_pct is not None
+            else COMPACTION_COMPRESSED_SHARE_PCT
+        )
+        # Dérivation fonctionnelle stricte de kept_share via 1 - c_share (helper SSOT)
+        c_share, k_share = get_compaction_shares(raw_c_share)
+
+        target_total_tokens = int(ECHO_MAX_CONTEXT_SIZE * t_pct)
+        compressed_budget_tokens = int(target_total_tokens * c_share)
+        kept_budget_tokens = max(
+            0, int(target_total_tokens * k_share) - max(0, int(incoming_user_tokens))
+        )
+
+        total_turns = len(turns)
+        old_pivot_idx = int((existing_checkpoint or {}).get("pivot_turn_idx", 0))
+        uncompacted_count = total_turns - old_pivot_idx
+
+        if uncompacted_count < COMPACTION_MIN_TURNS_REQUIRED:
+            return {
+                "eligible": False,
+                "reason": (
+                    f"Aucun nouveau tour complet à compresser "
+                    f"(tours totaux : {total_turns}, pivot actuel : {old_pivot_idx}, "
+                    f"minimum requis : {COMPACTION_MIN_TURNS_REQUIRED})."
+                ),
+                "total_turns": total_turns,
+            }
+
+        # Remplissage de TAIL à rebours depuis le tour le plus récent,
+        # en laissant obligatoirement au moins turns[old_pivot_idx] dans HEAD.
+        tail_tokens = 0
+        keep_turns = 0
+        for idx in range(total_turns - 1, old_pivot_idx, -1):
+            t_tok = int(turns[idx].get("tokens_est", 0))
+            if tail_tokens + t_tok <= kept_budget_tokens:
+                tail_tokens += t_tok
+                keep_turns += 1
+            else:
+                break
+
+        new_pivot_idx = total_turns - keep_turns
+        delta_turns = turns[old_pivot_idx:new_pivot_idx]
+        pivot_msg_id = (
+            turns[new_pivot_idx]["user_msg_id"] if new_pivot_idx < total_turns else None
+        )
+
+        return {
+            "eligible": len(delta_turns) > 0,
+            "total_turns": total_turns,
+            "old_pivot_turn_idx": old_pivot_idx,
+            "new_pivot_turn_idx": new_pivot_idx,
+            "pivot_msg_id": pivot_msg_id,
+            "keep_recent_turns": keep_turns,
+            "tail_tokens_est": tail_tokens,
+            "delta_turns": delta_turns,
+            "delta_turns_count": len(delta_turns),
+            "target_total_tokens": target_total_tokens,
+            "compressed_budget_tokens": compressed_budget_tokens,
+            "kept_budget_tokens": kept_budget_tokens,
+        }
+
+    @classmethod
+    def format_turns_for_distillation(cls, turns_slice: List[Dict[str, Any]]) -> str:
+        """
+        Sérialise les tours de HEAD pour le LLM de distillation :
+        - ZÉRO troncature de caractères sur les messages ou résultats d'outils.
+        - Conservation intégrale des balises <artifact id="AEC_...">.
+        - Seuls les blobs binaires Base64 (data:...;base64,... / inline_data) sont remplacés par '[MÉDIA BINAIRE OMIS]'.
+        """
+        b64_pattern = re.compile(r"data:[^;]+;base64,[A-Za-z0-9+/=]+")
+        blocks: List[str] = []
+
+        for t in turns_slice:
+            t_num = t["turn_idx"] + 1
+            lines = [f"=== TOUR #{t_num} ==="]
+            for m in t["messages"]:
+                role = (m.get("role") or "unknown").upper()
+                content = m.get("content", "")
+                if isinstance(content, list):
+                    parts_txt = []
+                    for item in content:
+                        if isinstance(item, dict):
+                            if item.get("type") == "text":
+                                parts_txt.append(item.get("text", ""))
+                            elif item.get("type") == "image_url" or "inline_data" in item:
+                                parts_txt.append("[MÉDIA BINAIRE OMIS]")
+                    text_val = "\n".join(parts_txt)
+                else:
+                    text_val = str(content or "")
+
+                text_val = b64_pattern.sub("[MÉDIA BINAIRE OMIS]", text_val).strip()
+
+                tool_calls = m.get("tool_calls") or []
+                if tool_calls:
+                    tc_formatted = []
+                    for tc in tool_calls:
+                        if isinstance(tc, dict):
+                            fn = tc.get("function", {})
+                            tc_formatted.append(
+                                f"{fn.get('name', 'tool')}({fn.get('arguments', '')})"
+                            )
+                    if tc_formatted:
+                        lines.append(f"[{role} -> TOOL_CALLS]: {', '.join(tc_formatted)}")
+
+                output_items = m.get("output")
+                if isinstance(output_items, list):
+                    for out_item in output_items:
+                        if not isinstance(out_item, dict):
+                            continue
+                        otype = out_item.get("type")
+                        if otype == "function_call":
+                            lines.append(
+                                f"[{role} -> FUNCTION_CALL]: {out_item.get('name', 'tool')}({out_item.get('arguments', '')})"
+                            )
+                        elif otype == "function_call_output":
+                            out_val = b64_pattern.sub(
+                                "[MÉDIA BINAIRE OMIS]", str(out_item.get("output", ""))
+                            ).strip()
+                            if out_val:
+                                lines.append(f"[TOOL_OUTPUT]: {out_val}")
+
+                if text_val:
+                    lines.append(f"[{role}]: {text_val}")
+            blocks.append("\n".join(lines))
+
+        return "\n\n".join(blocks)
+
+    @staticmethod
+    def build_sqlite_resources_snapshot(user_id: str, chat_id: str) -> str:
+        """Extrait un instantané déterministe du Registre Unifié SQLite (table echo_resources uniquement)."""
+        from echo_paths import get_echo_session_path
+
+        session_db = get_echo_session_path(user_id, chat_id, "db")
+        if not os.path.exists(session_db):
+            return ""
+
+        lines: List[str] = []
+        try:
+            with closing(sqlite3.connect(session_db, timeout=5.0)) as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='echo_resources'"
+                )
+                if cur.fetchone():
+                    cur.execute(
+                        "SELECT id, name, resource_type, status, storage_path, plan_goal "
+                        "FROM echo_resources "
+                        "WHERE resource_type NOT IN ('aec_event', 'aec_directive') "
+                        "ORDER BY updated_at DESC LIMIT 30"
+                    )
+                    rows = cur.fetchall()
+                    if rows:
+                        for rid, rname, rtype, rst, spath, pgoal in rows:
+                            loc = f" (`{spath}`)" if spath else ""
+                            goal_str = f" — Objectif: *{pgoal}*" if pgoal else ""
+                            lines.append(
+                                f"- `{rid}` [{rtype}] : **{rname}**{loc} — Statut: `{rst}`{goal_str}"
+                            )
+        except Exception as e:
+            logger.warning(f"ECHO Compaction: Snapshot SQLite partiel: {e}")
+
+        return "\n".join(lines)
+
+    @classmethod
+    def resolve_active_window(
+        cls,
+        messages: List[Dict[str, Any]],
+        checkpoint: Optional[Dict[str, Any]],
+        branch_messages: Optional[List[Dict[str, Any]]] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Résout la fenêtre active de messages pour EchoOrchestrator.prepare_context().
+        Retourne (prefix_contents, cut_msg_idx) et réhydrate les 'id' et 'updated_at'
+        depuis branch_messages sur la tranche TAIL afin que get_signature_by_id fonctionne en O(1).
+        """
+        if not checkpoint or not isinstance(checkpoint, dict):
+            return [], 0
+
+        summary_xml = checkpoint.get("summary_xml", "")
+        if not summary_xml:
+            return [], 0
+
+        from echo_prompts import CONTEXT_COMPACTION_ACK_MESSAGE
+
+        pivot_msg_id = checkpoint.get("pivot_msg_id")
+        pivot_turn_idx = int(checkpoint.get("pivot_turn_idx", 0))
+
+        real_user_indices = [
+            idx for idx, m in enumerate(messages) if cls.is_real_user_turn(m)
+        ]
+        if not real_user_indices:
+            return [], 0
+
+        # Réhydratation O(1) des IDs et timestamps depuis branch_messages avant recherche d'ID
+        if branch_messages:
+            non_sys_branch = [
+                bm for bm in branch_messages if bm.get("role") != "system"
+            ]
+            non_sys_payload_indices = [
+                idx
+                for idx, m in enumerate(messages)
+                if m.get("role") != "system"
+                and cls.SYNTHETIC_IMAGE_MARKER not in str(m.get("content", ""))
+            ]
+            # Si messages contient le nouveau tour entrant non encore sauvé dans branch_messages, on aligne le préfixe
+            if len(non_sys_branch) == len(non_sys_payload_indices):
+                pairs = zip(non_sys_payload_indices, non_sys_branch)
+            elif len(non_sys_branch) < len(non_sys_payload_indices):
+                pairs = zip(non_sys_payload_indices[: len(non_sys_branch)], non_sys_branch)
+            else:
+                pairs = zip(
+                    non_sys_payload_indices,
+                    non_sys_branch[-len(non_sys_payload_indices) :],
+                )
+
+            for p_idx, bm in pairs:
+                if bm.get("role") == messages[p_idx].get("role"):
+                    if not messages[p_idx].get("id") and bm.get("id"):
+                        messages[p_idx]["id"] = bm["id"]
+                    if not messages[p_idx].get("updated_at") and (
+                        bm.get("updated_at") or bm.get("timestamp")
+                    ):
+                        messages[p_idx]["updated_at"] = bm.get("updated_at") or bm.get(
+                            "timestamp"
+                        )
+
+        cut_msg_idx: Optional[int] = None
+        if pivot_msg_id:
+            for idx in real_user_indices:
+                if messages[idx].get("id") == pivot_msg_id:
+                    cut_msg_idx = idx
+                    break
+
+        if cut_msg_idx is None:
+            if pivot_turn_idx < len(real_user_indices):
+                cut_msg_idx = real_user_indices[pivot_turn_idx]
+            else:
+                # Si tous les tours passés ont été compactés, on coupe au dernier tour utilisateur (le tour entrant)
+                cut_msg_idx = real_user_indices[-1]
+
+        if cut_msg_idx <= 0:
+            return [], 0
+
+        prefix_contents = [
+            {"role": "user", "parts": [{"text": summary_xml}]},
+            {"role": "model", "parts": [{"text": CONTEXT_COMPACTION_ACK_MESSAGE}]},
+        ]
+        return prefix_contents, cut_msg_idx
+
+    @classmethod
+    async def execute_compaction(
+        cls,
+        user_id: str,
+        chat_id: str,
+        past_messages: List[Dict[str, Any]],
+        incoming_user_msg: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        events: Optional[Any] = None,
+        target_context_pct: Optional[float] = None,
+        compressed_share_pct: Optional[float] = None,
+        kept_share_pct: Optional[float] = None,
+        min_turns_required: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Exécute la Compaction Contextuelle In-Place sur les tours passés complets (past_messages) :
+        1. Découpe past_messages en tours et calcule le pivot selon la répartition (ex: 63% compressé / 37% gardé de 20%).
+        2. Sérialise les tours de HEAD sans aucune troncature et avec leurs AEC.
+        3. Appelle EchoGeminiClient.call_distillation avec max_tokens = min(compressed_budget_tokens, 65535).
+        4. Scelle <artifact id="AEC_context_checkpoint"> dans echo_settings['context_checkpoint'].
+        """
+        from echo_constants import COMPACTION_MIN_TURNS_REQUIRED
+        from echo_prompts import CONTEXT_COMPACTION_SYSTEM_PROMPT
+        from echo_gemini_client import EchoGeminiClient
+
+        state_mgr = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        raw_ckpt = state_mgr.get_session_setting("context_checkpoint")
+        existing_ckpt = None
+        if raw_ckpt:
+            try:
+                existing_ckpt = std_json.loads(raw_ckpt)
+            except Exception:
+                existing_ckpt = None
+
+        turns = cls.split_into_turns(past_messages)
+        min_req = (
+            min_turns_required
+            if min_turns_required is not None
+            else COMPACTION_MIN_TURNS_REQUIRED
+        )
+        if len(turns) < min_req:
+            return {
+                "ok": False,
+                "reason": (
+                    f"La session ne comporte que {len(turns)} tour(s) complet(s) "
+                    f"(minimum requis : {min_req})."
+                ),
+            }
+
+        incoming_tokens = (
+            estimate_token_size(incoming_user_msg) if incoming_user_msg else 0
+        )
+        plan = cls.compute_adaptive_pivot(
+            turns=turns,
+            existing_checkpoint=existing_ckpt,
+            target_context_pct=target_context_pct,
+            compressed_share_pct=compressed_share_pct,
+            kept_share_pct=kept_share_pct,
+            incoming_user_tokens=incoming_tokens,
+        )
+        if not plan.get("eligible"):
+            return {
+                "ok": False,
+                "reason": plan.get("reason", "Compaction non éligible."),
+            }
+
+        serialized_delta = cls.format_turns_for_distillation(plan["delta_turns"])
+        sqlite_snapshot = cls.build_sqlite_resources_snapshot(user_id, chat_id)
+
+        compressed_budget = int(plan["compressed_budget_tokens"])
+        api_max_output_tokens = min(compressed_budget, cls.GEMINI_MAX_OUTPUT_TOKENS)
+
+        prompt_parts: List[str] = [
+            f"<COMPRESSION_BUDGET>\n"
+            f"Budget cible maximal pour ce Checkpoint : {compressed_budget} tokens "
+            f"(capacité de sortie maximale : {api_max_output_tokens} tokens).\n"
+            f"Conserve le maximum de détails techniques pertinents, le code, les décisions et le sens complet sans dépasser ce budget.\n"
+            f"</COMPRESSION_BUDGET>"
+        ]
+        if existing_ckpt and existing_ckpt.get("summary_md"):
+            prompt_parts.append(
+                f"<PREVIOUS_CHECKPOINT compacted_turns=\"{existing_ckpt.get('pivot_turn_idx', 0)}\">\n"
+                f"{existing_ckpt['summary_md']}\n"
+                f"</PREVIOUS_CHECKPOINT>"
+            )
+        prompt_parts.append(
+            f"<NEW_CONVERSATION_TURNS from_turn=\"{plan['old_pivot_turn_idx'] + 1}\" to_turn=\"{plan['new_pivot_turn_idx']}\">\n"
+            f"{serialized_delta}\n"
+            f"</NEW_CONVERSATION_TURNS>"
+        )
+        if sqlite_snapshot:
+            prompt_parts.append(
+                f"<ACTIVE_SQLITE_RESOURCES>\n{sqlite_snapshot}\n</ACTIVE_SQLITE_RESOURCES>"
+            )
+
+        user_prompt = "\n\n".join(prompt_parts)
+        summary_md = await EchoGeminiClient.call_distillation(
+            system_prompt=CONTEXT_COMPACTION_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            user_id=user_id,
+            metadata=metadata,
+            events=events,
+            max_tokens=api_max_output_tokens,
+            temperature=0.1,
+            timeout=180,
+            chat_id=chat_id,
+        )
+
+        if not summary_md or not summary_md.strip():
+            return {
+                "ok": False,
+                "reason": "Le moteur de distillation n'a retourné aucune synthèse.",
+            }
+
+        compaction_count = int((existing_ckpt or {}).get("compaction_count", 0)) + 1
+        try:
+            now_dt = datetime.now(ZoneInfo("Europe/Paris"))
+        except Exception:
+            now_dt = datetime.now()
+        now_str = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+        summary_xml = EchoAEC.render_context_checkpoint(
+            summary_md=summary_md,
+            resources_snapshot=sqlite_snapshot,
+            compacted_turns=plan["new_pivot_turn_idx"],
+            compaction_count=compaction_count,
+            timestamp_str=now_str,
+        )
+
+        new_ckpt = {
+            "version": 1,
+            "compaction_count": compaction_count,
+            "pivot_turn_idx": plan["new_pivot_turn_idx"],
+            "pivot_msg_id": plan["pivot_msg_id"],
+            "keep_recent_turns": plan["keep_recent_turns"],
+            "summary_md": summary_md.strip(),
+            "summary_xml": summary_xml,
+            "checkpoint_tokens": estimate_token_size(summary_xml),
+            "tail_tokens_est": plan["tail_tokens_est"],
+            "created_at": int(time.time()),
+        }
+        state_mgr.save_session_setting(
+            "context_checkpoint", std_json.dumps(new_ckpt).decode("utf-8")
+        )
+
+        # Enregistre les métriques de compaction dans context_stats
+        state_mgr.save_context_stats(
+            {
+                "compaction_count": compaction_count,
+                "compacted_turns": plan["new_pivot_turn_idx"],
+            }
+        )
+
+        EchoAEC.record_event(
+            state_manager=state_mgr,
+            event_name="context_compaction",
+            status="completed",
+            summary=(
+                f"Compaction contextuelle #{compaction_count} exécutée : "
+                f"tours 1 à {plan['new_pivot_turn_idx']} consolidés dans <artifact id=\"AEC_context_checkpoint\">, "
+                f"{plan['keep_recent_turns']} tour(s) récent(s) maintenu(s) intact(s)."
+            ),
+            resource_type="aec_event",
+        )
+
+        return {
+            "ok": True,
+            "compaction_count": compaction_count,
+            "compacted_turns": plan["new_pivot_turn_idx"],
+            "delta_turns_count": plan["delta_turns_count"],
+            "keep_recent_turns": plan["keep_recent_turns"],
+            "checkpoint_tokens": estimate_token_size(summary_xml),
+            "tail_tokens_est": plan["tail_tokens_est"],
+        }
+
 

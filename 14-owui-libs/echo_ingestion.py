@@ -2,15 +2,16 @@
 ECHO Ingestion Pipeline
 Gestion unifiée, asynchrone et Zéro-RAM de l'ingestion des fichiers (CAS 1, 2, 3, 4).
 Factorisé à partir de new_context_filter.py pour permettre le traitement en arrière-plan.
-version: 5.228.7.1
+version: 5.231.29.1
 description: Composant du système ECHO : Echo Ingestion.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.29.1: Alignement sur la constante SSOT CODEX_WORKSPACE_MAIN lors de l'indexation Codex.
+# 5.231.28.1: Normalisation de storage_path via format_codex_storage_path (codex/main/<filename>) et retrait de save_codex_doc.
 # 5.228.7.1: Factorisation de la détection textuelle via is_text_mime (echo_constants).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.3: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
-# 1.2: SSOT AEC : Remplacement du hardcoding XML par EchoAEC.render_smart_context.
 
 import os
 import asyncio
@@ -26,11 +27,12 @@ try:
 except ImportError:
     aiofiles = None
 
-from echo_paths import resolve_upload_file_path, get_echo_session_path, get_echo_global_path
+from echo_paths import resolve_upload_file_path, get_echo_session_path, get_echo_global_path, format_codex_storage_path
 from echo_gemini_client import EchoGeminiClient
 from echo_state_manager import EchoStateManager
 from echo_prompts import SYS_INGEST_EXTRACT, USR_INGEST_SYNTHESIS
 from echo_constants import (
+    CODEX_WORKSPACE_MAIN,
     get_gemini_mime, is_text_mime,
     FILE_INGESTION_STATUS,
     MAX_DIRECT_TEXT_INJECT_SIZE, MAX_DIRECT_MMEDIA_INJECT_SIZE,
@@ -308,7 +310,8 @@ class EchoIngestionPipeline:
                     status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'], mime=mime, git_tracked=True,
                     language=CodexRepo.detect_language(filename),
                     lines=lines,
-                    last_commit=commit_hash, commit_msg="Importation automatique via Upload"
+                    last_commit=commit_hash, commit_msg="Importation automatique via Upload",
+                    storage_path=format_codex_storage_path(safe_name, CODEX_WORKSPACE_MAIN)
                 )
                 logger.info(f"📦 Fichier {filename} intégré au Codex Zéro-RAM avec succès.")
             except Exception as e:

@@ -1,16 +1,16 @@
 """
 title: ECHO Prompts Library
 author: Wilfried BARNAVON
-version: 5.229.0.2
+version: 5.231.28.1
 description: Système de Registre Cognitif ECHO (Prompts Library).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.28.1: Ajout de CONTEXT_COMPACTION_SYSTEM_PROMPT et CONTEXT_COMPACTION_ACK_MESSAGE pour la distillation contextuelle in-place.
 # 5.229.0.2: Ajout de l'obligation de traçabilité des sources (version et updated_at) dans le format de sortie de SYS_ORCHESTRATOR_CONSULTANT.
 # 5.229.0.1: Alignement terminologique de SYS_ORCHESTRATOR_CONSULTANT (Expert-Conseil / Tool Advisor, utilité et sous-agents).
 # 5.229.0.0: Refonte de SYS_ORCHESTRATOR_CONSULTANT (intégration de la Carte Hiérarchique, des manuels pré-injectés et de l'outil read_tool_guide).
 # 5.227.1.1: Remplacement de SYS_CONTEXT_COMPACTION et USR_CONTEXT_COMPACTION par USR_ACTION_RESUME_GLOBAL et USR_ACTION_RESUME_RECENT.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # ==============================================================================
 # Système de Registre Cognitif ECHO (Prompts Library)
@@ -709,3 +709,44 @@ Règles strictes :
 - Si l'enregistrement est inaudible, vide ou ne comporte que des bruits de fond,
   renvoie une chaîne vide sans générer d'erreur.
 - Respecte scrupuleusement la langue parlée, l'orthographe et la ponctuation."""
+
+# ==============================================================================
+# DOMAINE : COMPACTION CONTEXTUELLE IN-PLACE (CHECKPOINTER)
+# ==============================================================================
+
+CONTEXT_COMPACTION_SYSTEM_PROMPT = """Tu es le Moteur de Checkpoint Contextuel du système ECHO.
+Ta mission est de produire une synthèse d'état chirurgicale, dense et sans aucune perte de sens ni de détail technique des tours de conversation passés afin de maintenir l'empreinte sous l'objectif cible tout en garantissant une continuité d'exécution bit-perfect.
+
+RÈGLES D'INGÉNIERIE DU CHECKPOINT (STRICTES) :
+1. ZÉRO MÉTA-DISCOURS : Produis exclusivement les 7 sections Markdown demandées ci-dessous. N'encapsule PAS la sortie dans un bloc de code global.
+2. FUSION INCRÉMENTALE : Si un `<PREVIOUS_CHECKPOINT>` est fourni en entrée, fusionne l'intégralité de ses informations toujours valides avec les `<NEW_CONVERSATION_TURNS>` sans perdre les objectifs initiaux ni les décisions architecturales historiques. Mets à jour les éléments obsolètes.
+3. FIDÉLITÉ TECHNIQUE & CONSERVATION DU SENS : Préserve intégralement les chemins de fichiers, URNs Codex (`codex:...`), identifiants de ressources (`plan_id`, `workflow_id`, `skill_id`), extraits de code critiques, signatures de fonctions/classes, variables d'environnement, commandes exécutées, valeurs numériques exactes, repères temporels AEC et causes racines d'erreurs.
+4. DENSITÉ SÉMANTIQUE (HAUT SNR) : Restitue toute la substance technique dans la limite du budget cible indiqué (`<COMPRESSION_BUDGET>`).
+
+STRUCTURE OBLIGATOIRE DE LA SYNTHÈSE :
+### 1. Objectif Directeur & Intentions Utilisateur
+(Chronologie complète des demandes explicites de l'Utilisateur, de l'objectif global et des contraintes métier/techniques imposées.)
+
+### 2. État d'Avancement & Jalons Validés
+(Ce qui a été accompli, validé ou livré avec succès jusqu'au point de checkpoint.)
+
+### 3. Décisions Techniques, Architecture & Invariants
+(Choix d'implémentation retenus, arbitrages effectués, pistes écartées et raisons techniques.)
+
+### 4. Ressources, Fichiers Codex & Plans Actifs
+(Inventaire précis des fichiers créés/modifiés avec leurs URNs `codex:...` ou chemins exacts `codex/main/...`, plans stratégiques et workflows manipulés.)
+
+### 5. Faits Clés, Code Critique, Sorties d'Outils & Résultats de Recherche
+(Données factuelles extraites par les outils, structures de code clés, résultats de requêtes, URLs sources et conclusions d'analyse à retenir.)
+
+### 6. Erreurs Rencontrées & Correctifs Appliqués
+(Problèmes ou échecs rencontrés dans les tours passés et manière dont ils ont été résolus ou contournés.)
+
+### 7. Tâches en Cours & Prochaines Étapes Immédiates
+(État exact au moment de la coupure et actions restant à accomplir dans les tours suivants.)"""
+
+CONTEXT_COMPACTION_ACK_MESSAGE = (
+    "Checkpoint contextuel `<artifact id=\"AEC_context_checkpoint\">` intégré. "
+    "Continuité d'état, invariants techniques et ressources actives verrouillés pour la suite de la session."
+)
+

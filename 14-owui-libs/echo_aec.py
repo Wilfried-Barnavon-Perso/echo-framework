@@ -2,16 +2,16 @@
 """
 title: ECHO AEC Manager
 author: Wilfried BARNAVON
-version: 5.231.20.1
+version: 5.231.28.1
 description: Composant système interne : ECHO AEC Manager.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.28.1: Réintroduction de EchoAEC.render_context_checkpoint pour l'encapsulation XML déterministe de <artifact id="AEC_context_checkpoint">.
 # 5.231.20.1: Suffixe UUID sur event_id dans EchoAEC.record_event pour éliminer les collisions intra-milliseconde.
 # 5.227.1.1: Suppression de render_context_checkpoint suite à la suppression du compactage in-place.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.5: Ajout de render_context_checkpoint pour l'encapsulation XML déterministe de <artifact id="AEC_context_checkpoint">.
-# 2.4: Ajout de render_directive pour le formatage XML natif des directives système ponctuelles (PIS et mise à niveau).
 
 import time
 import uuid
@@ -188,4 +188,26 @@ class EchoAEC:
             f'{summary}\n\n{sys_msg}\n'
             f'</artifact>'
         )
+
+    @staticmethod
+    def render_context_checkpoint(
+        summary_md: str,
+        resources_snapshot: str,
+        compacted_turns: int,
+        compaction_count: int,
+        timestamp_str: str,
+    ) -> str:
+        """Génère la balise XML déterministe <artifact id="AEC_context_checkpoint"> pour la compaction in-place."""
+        res_block = f"\n\n### 8. Registre Unifié des Ressources Actives (SQLite)\n{resources_snapshot}" if resources_snapshot else ""
+        return (
+            f'<artifact id="AEC_context_checkpoint" compaction_count="{compaction_count}" '
+            f'compacted_turns="{compacted_turns}" timestamp="{timestamp_str}">\n'
+            f'{summary_md.strip()}{res_block}\n\n'
+            f'[DIRECTIVE SYSTÈME : Ce checkpoint synthétise les {compacted_turns} premiers tours de cette conversation. '
+            f'Il fait foi sur l\'état antérieur. Si un détail granulaire antérieur au checkpoint (extrait de code exact, '
+            f'log brut, valeur précise) est requis, le Modèle DOIT interroger la mémoire vectorielle de session via '
+            f'`search_sessions_context` ou consulter le Registre Unifié via `query_registry`.]\n'
+            f'</artifact>'
+        )
+
 

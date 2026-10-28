@@ -1,11 +1,13 @@
 """
 title: ECHO Session Clone & Migration Engine
 author: Wilfried BARNAVON
-version: 5.231.27.2
+version: 5.231.29.1
 description: Moteur partagé de duplication atomique des conteneurs de session ECHO (Clone, Fork et Migration).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.29.1: Alignement sur les constantes SSOT des espaces de travail Codex (CODEX_DIR_NAME, CODEX_WORKSPACE_MAIN, CODEX_WORKSPACE_SANDBOX).
+# 5.231.28.2: Suppression des requêtes SQLite sur les tables obsolètes plans et codex_docs (unification sur echo_resources).
 # 5.231.27.2: Refonte clonage/fork (résolution causale, copie Espace Utilisateur/RAG <= cutoff_ts, réassignation ID).
 # 5.228.4.1: Mise à jour echo_resources.name, reset N8N deployed_as_*, purge last_model_id, frontmatter Codex.
 # 5.227.1.1: Création du module partagé de duplication atomique de session (clone, fork et migration).
@@ -20,7 +22,13 @@ import shutil
 import sqlite3
 import uuid
 
-from echo_constants import COLLECTION_SESSION_RAG, ECHO_QDRANT_URL
+from echo_constants import (
+    CODEX_DIR_NAME,
+    CODEX_WORKSPACE_MAIN,
+    CODEX_WORKSPACE_SANDBOX,
+    COLLECTION_SESSION_RAG,
+    ECHO_QDRANT_URL,
+)
 from echo_paths import get_echo_session_path
 import httpx
 
@@ -191,7 +199,7 @@ def purge_conversational_state(cur: sqlite3.Cursor) -> None:
         cur.execute(
             "DELETE FROM echo_settings WHERE key IN ("
             "'context_stats', 'previous_context_stats', 'last_model_id', "
-            "'last_active_model', 'turn_origin_model', 'compaction_state') "
+            "'last_active_model', 'turn_origin_model', 'compaction_state', 'context_checkpoint') "
             "OR key LIKE 'aec_tier_%' OR key LIKE 'cascade_%'"
         )
         cur.execute("DELETE FROM auth_data WHERE key LIKE 'cascade_%'")
@@ -518,8 +526,6 @@ def prune_forked_history(
             )
         else:
             cur.execute("DELETE FROM call_bridge WHERE timestamp > ?", (cutoff_ts,))
-        cur.execute("DELETE FROM plans WHERE created_at > ?", (cutoff_ts,))
-        cur.execute("DELETE FROM codex_docs WHERE created_at > ?", (cutoff_ts,))
         cur.execute(
             "DELETE FROM auth_data WHERE key LIKE 'cascade_%' AND updated_at > ?",
             (cutoff_ts,),
@@ -570,7 +576,7 @@ def rewrite_codex_plan_frontmatter(
     codex_dir: str, orig_cid: str, new_cid: str
 ) -> None:
     """Met à jour chat_id dans le frontmatter YAML des plans du Codex."""
-    main_dir = os.path.join(codex_dir, "main")
+    main_dir = os.path.join(codex_dir, CODEX_WORKSPACE_MAIN)
     if not os.path.exists(main_dir):
         return
     old_line = f"chat_id: {orig_cid}"
@@ -686,8 +692,8 @@ def _prune_domain_files_to_cutoff(
             except Exception:
                 pass
 
-    elif domain == "codex":
-        sandbox_dir = os.path.join(domain_dir, "sandbox")
+    elif domain == CODEX_DIR_NAME:
+        sandbox_dir = os.path.join(domain_dir, CODEX_WORKSPACE_SANDBOX)
         if os.path.exists(sandbox_dir):
             for dirpath, dirnames, filenames in os.walk(sandbox_dir, topdown=False):
                 for fn in filenames:
@@ -711,17 +717,17 @@ def _prune_domain_files_to_cutoff(
 def align_codex_git_to_cutoff(
     user_id: str, new_cid: str, cutoff_ts: int, new_db: str
 ) -> None:
-    """Aligne le dépôt Git Codex 'main' sur le commit <= cutoff_ts et synchronise echo_resources/codex_docs/plans."""
+    """Aligne le dépôt Git Codex 'main' sur le commit <= cutoff_ts et synchronise echo_resources."""
     try:
         from echo_codex_git import CodexRepo
 
         codex_main_dir = os.path.join(
-            get_echo_session_path(user_id, new_cid, "codex"), "main"
+            get_echo_session_path(user_id, new_cid, CODEX_DIR_NAME), CODEX_WORKSPACE_MAIN
         )
         if not os.path.exists(os.path.join(codex_main_dir, ".git")):
             return
 
-        repo = CodexRepo(user_id=user_id, chat_id=new_cid, workspace="main")
+        repo = CodexRepo(user_id=user_id, chat_id=new_cid, workspace=CODEX_WORKSPACE_MAIN)
         res = repo.restore_repo_to_timestamp(cutoff_ts)
         tracked_files = res.get("tracked_files") or set()
         restored_sha = res.get("restored_commit")
@@ -733,8 +739,6 @@ def align_codex_git_to_cutoff(
                 cur.execute(
                     "DELETE FROM echo_resources WHERE resource_type IN ('codex', 'plan') AND git_tracked = 1"
                 )
-                cur.execute("DELETE FROM codex_docs")
-                cur.execute("DELETE FROM plans")
             else:
                 cur.execute(
                     "SELECT id, name, resource_type, storage_path FROM echo_resources "
@@ -765,30 +769,8 @@ def align_codex_git_to_cutoff(
                                     "last_commit = COALESCE(?, last_commit) WHERE id = ?",
                                     (line_cnt, restored_status, short_sha, r_id),
                                 )
-                                if r_type == "codex":
-                                    cur.execute(
-                                        "UPDATE codex_docs SET lines = ?, "
-                                        "last_commit = COALESCE(?, last_commit) WHERE filename = ?",
-                                        (line_cnt, short_sha, rel_fn),
-                                    )
-                                elif r_type == "plan" and restored_status:
-                                    cur.execute(
-                                        "UPDATE plans SET status = ? WHERE plan_id = ? OR filename = ?",
-                                        (restored_status, r_id, rel_fn),
-                                    )
                             except Exception:
                                 pass
-                cur.execute("SELECT filename FROM codex_docs")
-                for (doc_fn,) in cur.fetchall():
-                    if doc_fn not in tracked_files:
-                        cur.execute(
-                            "DELETE FROM codex_docs WHERE filename = ?", (doc_fn,)
-                        )
-                cur.execute("SELECT plan_id, filename FROM plans")
-                for p_id, p_fn in cur.fetchall():
-                    if p_fn not in tracked_files:
-                        cur.execute("DELETE FROM plans WHERE plan_id = ?", (p_id,))
-                        cur.execute("DELETE FROM echo_resources WHERE id = ?", (p_id,))
             conn.commit()
     except Exception as e:
         logger.warning(f"[ECHO-SESSION-CLONE] ⚠️ Alignement Git Codex ignoré : {e}")
@@ -806,13 +788,13 @@ def duplicate_session_domains(
 ) -> None:
     """Duplique les répertoires de l'Espace Utilisateur (files, codex, n8n_workflows, dependencies),
     limite leur contenu à cutoff_ts si is_partial_fork=True, et réajuste orig_cid -> new_cid."""
-    for domain in ("files", "codex", "n8n_workflows", "dependencies"):
+    for domain in ("files", CODEX_DIR_NAME, "n8n_workflows", "dependencies"):
         s_dom = get_echo_session_path(user_id, orig_cid, domain)
         d_dom = get_echo_session_path(user_id, new_cid, domain)
         if os.path.exists(s_dom):
             shutil.copytree(s_dom, d_dom, symlinks=True, dirs_exist_ok=True)
             if is_partial_fork and cutoff_ts is not None:
-                if domain == "codex" and new_db:
+                if domain == CODEX_DIR_NAME and new_db:
                     align_codex_git_to_cutoff(user_id, new_cid, cutoff_ts, new_db)
                 _prune_domain_files_to_cutoff(
                     domain,
@@ -824,7 +806,7 @@ def duplicate_session_domains(
             rewrite_symlinks(d_dom, orig_cid, new_cid)
             if domain in ("files", "n8n_workflows"):
                 rename_cloned_files(d_dom, orig_cid, new_cid)
-            elif domain == "codex":
+            elif domain == CODEX_DIR_NAME:
                 rewrite_codex_plan_frontmatter(d_dom, orig_cid, new_cid)
 
 
@@ -869,6 +851,10 @@ def sync_cloned_session(
             cur.execute(
                 "DELETE FROM echo_settings WHERE key IN "
                 "('context_stats', 'previous_context_stats', 'turn_origin_model')"
+            )
+            cur.execute(
+                "DELETE FROM echo_settings WHERE key = 'context_checkpoint' AND updated_at > ?",
+                (cutoff_ts,),
             )
             cur.execute(
                 "SELECT model_id FROM cognitive_signatures "

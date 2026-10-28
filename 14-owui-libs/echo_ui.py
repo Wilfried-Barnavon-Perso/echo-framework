@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.231.24.2
+version: 5.231.28.1
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.28.1: Affichage des métriques de compaction (compaction_count, compacted_turns) dans l'infobulle du HUD contextuel.
 # 5.231.24.2: Déclaration du @keyframes echo-pulse et centrage transform-origin de l'animation SVG pour le HUD contextuel.
 # 5.231.24.1: Support du calcul différentiel, capsule d'évolution et deltas de quotas dès le tour 1.
 # 5.231.20.3: Conformité multi-chat des HUDs (get_floating_monitor_js avec isolation stricte de _echoGetAggregatedPayload, _generate_webplayer_js, monitor_ECHO, show_image_js) et suppression des fuites de listeners DOM.
 # 5.231.20.1: Ajout du pourcentage d'occupation contexte entre parenthèses sur la ligne Total du HUD.
-# 5.231.17.1: Remplacement d'Empreinte tour par Δ Capacité avec inversion de signe (perte en négatif, libération en positif).
 
 
 import sys
@@ -2095,11 +2095,15 @@ class EchoUI(EchoRichUI):
       `;
     }
 
+    var compCount = stats.compaction_count || 0;
+    var compTurns = stats.compacted_turns || 0;
+    var compRowHtml = compCount > 0 ? `<div class="tooltip-row" style="margin-top:2px;color:#38bdf8;"><span>🗜️ Compactions:</span> <b>#${compCount} (${compTurns} tours)</b></div>` : '';
+
     var pulseStyle = is_pending ? 'animation: echo-pulse 1.5s infinite; transform-origin: center;' : '';
 
     var iconHtml = `<div class="echo-tooltip"><svg width="20" height="20" viewBox="0 0 20 20" style="${pulseStyle}"><circle cx="10" cy="10" r="8" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2" /><circle cx="10" cy="10" r="8" fill="none" stroke="${q_color}" stroke-width="2" stroke-dasharray="${dash_array}" stroke-dashoffset="${dash_offset}" transform="rotate(-90 10 10)" stroke-linecap="round" /><path d="M10 6a2.5 2.5 0 00-2.5 2.5V10h5V8.5A2.5 2.5 0 0010 6zm3.5 4H6.5a1 1 0 00-1 1v4a1 1 0 001 1h7a1 1 0 001-1v-4a1 1 0 00-1-1z" fill="white" opacity="0.9" /></svg><div class="tooltip-box" style="width:310px;"><div class="tooltip-title">AUTHENTIFICATION</div><div class="tooltip-row"><span>🔐 Source:</span> <span>${stats.auth_sources ? stats.auth_sources.join(', ') : 'N/A'}</span></div><div class="tooltip-row"><span>👤 Compte:</span> <span>${stats.user_email || 'N/A'}</span></div>${tier_html}${proj_html}<div class="tooltip-row"><span>🌐 Tenant:</span> <span style="color:#10b981;">${stats.tenant_id || 'ECHO'}</span></div><div class="tooltip-title" style="margin-top:8px;border-top:1px solid rgba(0,212,255,0.2);padding-top:6px;">QUOTAS</div><div class="tooltip-row"><span>💳 Crédits IA:</span> <b style="color:#10b981;">${stats.credits_val || 'N/A'}</b></div><div class="tooltip-row"><span>🤖 Modèle CA:</span> <span style="color:#a3a3a3;font-size:10px;">${stats.quota_model || '—'}</span></div>${q_rows_html}${rpd_html}${rpm_html}<div class="tooltip-row"><span>🏷️ Type:</span> <span style="color:#a3a3a3;font-size:10px;">${stats.quota_type || 'UNKNOWN'}</span></div></div></div>`;
 
-    var barHtml = `<div class="echo-tooltip" style="min-width:180px;"><div style="display:flex;width:100%;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;"><div style="width:${cache_pct}%;background:#8b5cf6;"></div><div style="width:${prompt_pct}%;background:#10b981;"></div><div style="width:${gen_pct}%;background:#f59e0b;"></div></div>${deltaBadge}<div class="tooltip-box" style="width:260px;"><div class="tooltip-title">CONTEXTE ${is_pending ? '(CALCUL EN COURS...)' : ''}</div><div class="tooltip-row"><span>Cache:</span> <span>${c_t}</span></div><div class="tooltip-row"><span>Prompt:</span> <span>${active_p_t}</span></div><div class="tooltip-row"><span>Génération:</span> <span>${g_t}</span></div><div class="tooltip-row" style="font-weight:bold;margin-top:4px;"><span>Total:</span> <span>${total_t} / ${max_t} (${total_pct}%)</span></div>${deltaTooltipRows}</div></div>`;
+    var barHtml = `<div class="echo-tooltip" style="min-width:180px;"><div style="display:flex;width:100%;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;"><div style="width:${cache_pct}%;background:#8b5cf6;"></div><div style="width:${prompt_pct}%;background:#10b981;"></div><div style="width:${gen_pct}%;background:#f59e0b;"></div></div>${deltaBadge}<div class="tooltip-box" style="width:260px;"><div class="tooltip-title">CONTEXTE ${is_pending ? '(CALCUL EN COURS...)' : ''}</div><div class="tooltip-row"><span>Cache:</span> <span>${c_t}</span></div><div class="tooltip-row"><span>Prompt:</span> <span>${active_p_t}</span></div><div class="tooltip-row"><span>Génération:</span> <span>${g_t}</span></div><div class="tooltip-row" style="font-weight:bold;margin-top:4px;"><span>Total:</span> <span>${total_t} / ${max_t} (${total_pct}%)</span></div>${compRowHtml}${deltaTooltipRows}</div></div>`;
 
     hud.innerHTML = iconHtml + barHtml;
 
@@ -2140,6 +2144,8 @@ class EchoUI(EchoRichUI):
             quota_weekly_fraction: Optional[float] = None,
             quota_weekly_reset: str = "N/A",
             delta: Optional[Dict[str, Any]] = None,
+            compaction_count: int = 0,
+            compacted_turns: int = 0,
             is_pending: bool = False,
             chat_id: Optional[str] = None):
         """Déploie ou met à jour le HUD contextuel ECHO de façon unifiée et non-bloquante."""
@@ -2172,6 +2178,8 @@ class EchoUI(EchoRichUI):
             "quota_weekly_fraction": quota_weekly_fraction,
             "quota_weekly_reset": quota_weekly_reset,
             "delta": delta or {},
+            "compaction_count": compaction_count,
+            "compacted_turns": compacted_turns,
             "is_pending": is_pending,
         }
         json_payload = std_json.dumps(payload).decode("utf-8")

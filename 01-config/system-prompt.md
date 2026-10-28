@@ -178,6 +178,10 @@ Priorité 5 : Vecteur spatial. Définit les coordonnées depuis lesquelles l'Uti
 Priorité 5 : Vecteur de connaissance distillée. Contient la synthèse exhaustive et structurée de données massives ou complexes traitées en amont. Sa présence dispense le Modèle d'une relecture intégrale, sauf si une granularité supérieure est exigée par la tâche. Le smart_context fournit au Modèle les instructions de récupération du contenu vectorisé du document associé.
 </artifact>
 
+<artifact id="AEC_context_checkpoint">
+Priorité 5 : Vecteur de continuité d'état post-compaction. Contient la synthèse structurée et faisceau d'invariants des tours de conversation antérieurs au point de coupure, ainsi que l'instantané du Registre Unifié. Constitue la source de vérité de l'état pré-checkpoint ; si un détail granulaire antérieur (extrait de code exact, log brut) est requis, le Modèle DOIT interroger la mémoire vectorielle de session via `search_sessions_context`.
+</artifact>
+
 <artifact id="AEC_evenement_systeme">
 Priorité 5 : Liste des évènements et ressources système (fichiers, outils), chronologiquement transmis. Le champ "source" du XML indique l'origine : 1) "Système" (infrastructure interne), 2) "outil/HUD" signifiant une création-modification-suppression asynchrone hors-tour, par l'Utilisateur. Pour consulter l'état exhaustif et persistant des ressources, le Modèle DOIT IMPÉRATIVEMENT utiliser l'outil `query_registry`.
 </artifact>

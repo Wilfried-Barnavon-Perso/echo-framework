@@ -1,20 +1,21 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.231.24.1
+version: 5.231.29.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.29.1: Unification SSOT des espaces de travail Codex (CODEX_WORKSPACE_MAIN, CODEX_WORKSPACE_SANDBOX, CODEX_INDEXED_WORKSPACES, CODEX_WORKSPACE_LITERAL, is_codex_workspace_indexed).
+# 5.231.28.2: Ajout des constantes de compaction en % de ECHO_MAX_CONTEXT_SIZE (COMPACTION_TRIGGER_THRESHOLD_PCT=0.50, COMPACTION_TARGET_CONTEXT_PCT=0.20, COMPACTION_COMPRESSED_SHARE_PCT=0.63, get_compaction_shares) et étalonnage en % de AEC_REMINDERS.
 # 5.231.24.1: Définition SSOT de ECHO_QUOTA_REFRESH_THROTTLE_SEC (60s), ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC (0s) et ECHO_QUOTA_RESET_IMMINENT_LABEL pour la gouvernance des quotas Google Cloud.
 # 5.230.1.1: Harmonisation des types et constantes pour la stack ECHO.
 # 5.230.0.3: Définition SSOT du protocole URN Codex et ancres UI (CODEX_URN_PATTERN, CODEX_ANCHOR_PATTERN avec icônes ✏️/👁️, CODEX_HUD_ID, CODEX_ACTION_ID).
-# 5.229.1.1: Définition de DELEGATE_AGENT_SYSTEM_TOOLS garantissant la disponibilité des outils système pour tout sous-agent.
-# 5.228.9.1: Alignement de la version globale ECHO.
 
 
 import os
 import contextvars
+from typing import Literal
 
 # Information à ne pas effacer : Ce ContextVar permet de transmettre l'identité du sous-agent
 # à travers les frontières asynchrones (asyncio) de manière "télépathique", sans avoir à modifier
@@ -214,42 +215,90 @@ ECHO_RETRY_JITTER_MIN    = 0.7
 ECHO_RETRY_JITTER_MAX    = 1.3
 
 # ==============================================================================
-# 1.3 RAPPELS COGNITIFS (DÉFIBRILLATEUR ATTENTIONNEL MULTI-AXES)
+# 1.25 GOUVERNANCE DU CONTEXTE ET COMPACTION IN-PLACE (% DE ECHO_MAX_CONTEXT_SIZE)
+# ==============================================================================
+# Limite Physique de Contexte Gemini (1M tokens) - Source Unique de Vérité (SSOT)
+ECHO_MAX_CONTEXT_SIZE = 1048576
+MAX_CONTEXT_TOKENS = ECHO_MAX_CONTEXT_SIZE
+
+# --- PARAMÈTRES DE COMPACTION CONTEXTUELLE IN-PLACE (EN % DE ECHO_MAX_CONTEXT_SIZE) ---
+# Seuil de déclenchement automatique : 50% de CONTEXT_MAX (~524 288 tokens).
+# Laisse la conversation se dérouler confortablement jusqu'à 500k tokens avant de compacter.
+COMPACTION_TRIGGER_THRESHOLD_PCT = 0.50
+
+# Enveloppe totale maximale visée post-compaction : < 20% de CONTEXT_MAX (~209 715 tokens).
+# Garantit une libération immédiate de > 300 000 tokens de marge libre (hystérésis forte).
+COMPACTION_TARGET_CONTEXT_PCT    = 0.20
+
+# Part de l'enveloppe cible allouée au Checkpoint compressé HEAD : 63% de 20% = 12.6% de CONTEXT_MAX.
+# Soit un budget de ~132 120 tokens, avec maxOutputTokens borné par le plafond matériel Gemini (65 535 tokens).
+COMPACTION_COMPRESSED_SHARE_PCT  = 0.63
+
+# Part de l'enveloppe cible allouée aux tours récents gardés bruts TAIL : 37% de 20% = 7.4% de CONTEXT_MAX.
+# Dérivée dynamiquement par construction (1 - COMPACTION_COMPRESSED_SHARE_PCT) = ~77 594 tokens max.
+COMPACTION_KEPT_SHARE_PCT        = round(1.0 - COMPACTION_COMPRESSED_SHARE_PCT, 4)
+
+# Minimum de tours complets passés requis pour autoriser une compaction
+COMPACTION_MIN_TURNS_REQUIRED    = 1
+
+
+def get_compaction_shares(compressed_share: float = COMPACTION_COMPRESSED_SHARE_PCT) -> tuple[float, float]:
+    """
+    Retourne (compressed_share, kept_share) garantissant que leur somme vaut strictement 1.0 (1 - compressed_share).
+    Par exemple, pour l'enveloppe cible (20% de CONTEXT_MAX = 209 715 tokens) :
+    - Part compressée HEAD : 63% de l'enveloppe cible (12.6% de CONTEXT_MAX, soit ~132 120 tokens max budget, bridé à 65535 API)
+    - Part gardée brute TAIL : 37% de l'enveloppe cible (7.4% de CONTEXT_MAX, soit ~77 594 tokens max budget)
+    """
+    val = float(compressed_share)
+    if val > 1.0:
+        val = val / 100.0
+    c = round(max(0.05, min(0.95, val)), 4)
+    return (c, round(1.0 - c, 4))
+
+
+# ==============================================================================
+# 1.3 RAPPELS COGNITIFS (DÉFIBRILLATEUR ATTENTIONNEL MULTI-AXES EN % DE CONTEXT_MAX)
 # ==============================================================================
 AEC_REMINDERS = [
     {
         "id": "context_hygiene",
-        "token_threshold": 140000,
+        "context_pct": 0.30,
+        "token_threshold": int(ECHO_MAX_CONTEXT_SIZE * 0.30),  # 30% (~314 572 tokens)
         "tool_calls_threshold": 65,
         "message": "Rappel : Charge contextuelle élevée. Le Modèle DOIT recentrer son attention sur le vecteur thématique principal et consolider le Méta-Artéfact Résumé. Appliquer le PGCU."
     },
     {
         "id": "kernel",
-        "token_threshold": 100000,
+        "context_pct": 0.20,
+        "token_threshold": int(ECHO_MAX_CONTEXT_SIZE * 0.20),  # 20% (~209 715 tokens)
         "tool_calls_threshold": 50,
         "message": "Rappel : L'alignement sur le Kernel et la rigueur d'analyse sont FONDAMENTAUX."
     },
     {
         "id": "factuality",
-        "token_threshold": 70000,
+        "context_pct": 0.15,
+        "token_threshold": int(ECHO_MAX_CONTEXT_SIZE * 0.15),  # 15% (~157 286 tokens)
         "tool_calls_threshold": 35,
         "message": "Rappel : Toute hypothèse non vérifiée est présumée incertaine. Le Modèle DOIT sourcer rigoureusement et vérifier via recherche Web ou inspection de code si un doute subsiste. Appliquer le PRAF."
     },
     {
         "id": "strategy",
-        "token_threshold": 60000,
+        "context_pct": 0.12,
+        "token_threshold": int(ECHO_MAX_CONTEXT_SIZE * 0.12),  # 12% (~125 829 tokens)
         "tool_calls_threshold": 30,
         "message": "Rappel : Le Modèle DOIT s'assurer de mettre à jour judicieusement, et appliquer, ses Hypothèses d'Apprentissage et le plan stratégique en cours pour éviter la vision tunnel. Appliquer le PRAC."
     },
     {
         "id": "alignment",
-        "token_threshold": 55000,
+        "context_pct": 0.10,
+        "token_threshold": int(ECHO_MAX_CONTEXT_SIZE * 0.10),  # 10% (~104 857 tokens)
         "tool_calls_threshold": 28,
         "message": "Rappel : Le Modèle DOIT s'assurer de maintenir et respecter scrupuleusement le Profil d'Alignement et les préférences de l'Utilisateur. Appliquer le PACP."
     },
     {
         "id": "efficiency",
-        "token_threshold": 44000,
+        "context_pct": 0.08,
+        "token_threshold": int(ECHO_MAX_CONTEXT_SIZE * 0.08),  # 8% (~83 886 tokens)
         "tool_calls_threshold": 18,
         "message": "Rappel : Le Modèle DOIT privilégier l'usage de Sous-Agents pour économiser son contexte. Appliquer le PARE."
     }
@@ -491,7 +540,9 @@ ECHO_CODEX_MAX_AI_PASSES = 5        # Nombre max de passes auto-continue IA (0 �
 
 # Nom du sous-dossier Codex dans le vault utilisateur
 CODEX_DIR_NAME = "codex"
-CODEX_DEFAULT_WORKSPACE = "main"
+CODEX_WORKSPACE_MAIN = "main"
+CODEX_WORKSPACE_SANDBOX = "sandbox"
+CODEX_DEFAULT_WORKSPACE = CODEX_WORKSPACE_MAIN
 CODEX_HUD_ID = "echo-codex-hud"
 CODEX_ACTION_ID = "echo_codex_action"
 
@@ -670,9 +721,23 @@ ECHO_QDRANT_URL = "http://echo-qdrant:6333"
 # --- CONFIGURATION DES ESPACES DE TRAVAIL (CODEX) ---
 # Définit les sous-dossiers stricts dans la structure codex via un dictionnaire pour alimenter dynamiquement l'UI.
 ECHO_CODEX_WORKSPACES = {
-    "main": "Main",       # Dépôt officiel versionné
-    "sandbox": "Sandbox"  # Espace d'exécution et de génération du worker
+    CODEX_WORKSPACE_MAIN: "Main",       # Dépôt officiel versionné (indexé dans echo_resources)
+    CODEX_WORKSPACE_SANDBOX: "Sandbox"  # Espace d'exécution et de génération du worker (exclu de echo_resources)
 }
+
+# Sous-ensemble strict des espaces Codex autorisés à être indexés dans SQLite echo_resources.
+# La sandbox (bac à sable d'exécution) est formellement exclue du Registre Unifié.
+CODEX_INDEXED_WORKSPACES: frozenset[str] = frozenset({
+    CODEX_WORKSPACE_MAIN,
+})
+
+# Type Literal dynamique SSOT pour le schéma OpenAPI Pydantic des outils Codex
+CODEX_WORKSPACE_LITERAL = Literal[tuple(ECHO_CODEX_WORKSPACES.keys())]
+
+
+def is_codex_workspace_indexed(workspace: str) -> bool:
+    """Retourne True si l'espace de travail Codex doit être indexé dans la table SQLite echo_resources (exclut sandbox)."""
+    return workspace in CODEX_INDEXED_WORKSPACES
 
 # Liste stricte des dossiers et fichiers à ignorer lors de la synchronisation ou de l'exploration UI.
 # Cette constante agit comme un bouclier critique pour le Codex (Plan A) : elle empêche le `os.walk` 
@@ -707,9 +772,7 @@ ECHO_UCTP_CHUNK_SIZE = 256000        # Taille des fragments UCTP Python <-> JS (
 # Timeout d'attente pour le chargement du modèle d'embedding WebGPU (Edge Embedding)
 DEFAULT_EDGE_EMBEDDING_TIMEOUT = 180
 
-# Limite Physique de Contexte
-# ECHO_MAX_CONTEXT_SIZE : Taille officielle du contexte absorbable par les modèles Gemini.
-ECHO_MAX_CONTEXT_SIZE = 1048576
+# Limite Physique de Contexte (ECHO_MAX_CONTEXT_SIZE définie en section 1.25)
 CONTEXT_WARNING_THRESHOLD = 0.80  # Alerte jaune
 CONTEXT_TRUNCATE_THRESHOLD = 0.90 # Alerte rouge et Troncature
 PRUNE_CONTENT_THRESHOLD = 60000   # Seuil de tolérance (caractères) pour la troncature des UI brutes (env. 15k tokens)

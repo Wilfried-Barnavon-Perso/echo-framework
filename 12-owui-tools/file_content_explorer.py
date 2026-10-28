@@ -1,16 +1,16 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.231.20.1
+version: 5.231.29.1
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.29.1: Alignement de _resolve_extended_file_path sur les constantes SSOT CODEX_DIR_NAME, CODEX_WORKSPACE_MAIN et CODEX_WORKSPACE_SANDBOX.
 # 5.231.20.1: Isolation multi-chat du viewer d'image via transmission de chat_id à EchoUI.show_image_js.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.228.7.1: Factorisation de la détection textuelle via is_text_mime (echo_constants).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 5.109.32: Fix thinking medium explicite sur semantic_probe et read_multimedia_file (MODEL_APOLLO).
 
 import os
 import sys
@@ -32,8 +32,15 @@ from echo_gemini_client import EchoGeminiClient
 from echo_http import get_stealth_headers
 from echo_ui import EchoUI
 from echo_constants import (
-    ECHO_UPLOADS_TRANSIT_DIR, get_gemini_mime, is_text_mime, ECHO_API_KEY_RETRIES,
-    ECHO_API_MAX_RETRIES, get_generation_config
+    CODEX_DIR_NAME,
+    CODEX_WORKSPACE_MAIN,
+    CODEX_WORKSPACE_SANDBOX,
+    ECHO_API_KEY_RETRIES,
+    ECHO_API_MAX_RETRIES,
+    ECHO_UPLOADS_TRANSIT_DIR,
+    get_generation_config,
+    get_gemini_mime,
+    is_text_mime,
 )
 from echo_prompts import SYS_EXPLORE_SENSORY, SYS_EXPLORER_PROBE
 
@@ -58,7 +65,11 @@ class Tools:
             state = EchoStateManager(user_id=uid, chat_id=cid)
             resource = state.get_resource(target)
             if resource and resource.get("resource_type") == "codex":
-                return os.path.join(get_echo_session_path(uid, cid, "codex"), "main", resource.get("name", target))
+                return os.path.join(
+                    get_echo_session_path(uid, cid, CODEX_DIR_NAME),
+                    CODEX_WORKSPACE_MAIN,
+                    resource.get("name", target),
+                )
                 
         # 2. Upload Standard (files)
         fpath = resolve_upload_file_path(uid, target, self.uploads_dir, chat_id=cid)
@@ -66,7 +77,11 @@ class Tools:
             
         # 3. Fallback 'Sandbox' (fichier brut non indexé)
         if cid and ".." not in safe_target.split("/"):
-            sandbox_path = os.path.join(get_echo_session_path(uid, cid, "codex"), "sandbox", safe_target)
+            sandbox_path = os.path.join(
+                get_echo_session_path(uid, cid, CODEX_DIR_NAME),
+                CODEX_WORKSPACE_SANDBOX,
+                safe_target,
+            )
             if os.path.exists(sandbox_path) and os.path.isfile(sandbox_path):
                 return sandbox_path
                 

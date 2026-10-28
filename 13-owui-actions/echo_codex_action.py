@@ -1,17 +1,17 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 5.231.6.1
+version: 5.231.29.1
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.29.1: Alignement sur le prédicat SSOT is_codex_workspace_indexed pour exclure formellement la sandbox de echo_resources.
+# 5.231.28.1: Normalisation de storage_path via format_codex_storage_path (codex/<workspace>/<filename>) et suppression des appels à codex_docs.
 # 5.231.6.1: Probe non-destructif de window._echoCodexTarget, amorçage direct via body REST et résolution sans HUD en Cold Start.
 # 5.231.5.1: Support de commit_hash dans switch_chat, et résolution active_chat_title sur chat distant.
 # 5.230.0.2: Résolution directe _echoCodexTarget à l'amorçage Cold Start, switch atomique 1-passe et normalisation.
-# 5.230.0.1: Unification des branches switch_chat et switch_workspace avec prise en charge combinée de target_chat_id, workspace et target_file.
-# 5.229.7.3: Réactualisation dynamique du catalogue multi-chat (echoCodexUpdateChats) lors du refresh.
 
 import sys
 import uuid
@@ -26,6 +26,7 @@ sys.path.append("/app/backend/echo_libs")
 
 from echo_codex_ui import EchoCodexUI
 from echo_codex_git import CodexRepo
+from echo_paths import format_codex_storage_path
 from echo_state_manager import EchoStateManager
 from echo_gemini_client import EchoGeminiClient
 from echo_events import EchoEvents
@@ -33,11 +34,12 @@ from echo_prompts import SYS_CODEX_EDIT
 from echo_constants import (
     CODEX_DEFAULT_WORKSPACE,
     CODEX_HUD_ID,
-    get_generation_config,
     CODEX_QUICK_ACTIONS,
-    FILE_INGESTION_STATUS,
     ECHO_CODEX_WORKSPACES,
+    FILE_INGESTION_STATUS,
     OWUI_ORCHESTRATOR_MODEL,
+    get_generation_config,
+    is_codex_workspace_indexed,
 )
 
 logger = logging.getLogger(__name__)
@@ -204,7 +206,7 @@ class Action:
                 await events.call_execute(err_code)
 
             def _sync_registry(filename, commit_hash, msg, line_count=0, lang=None):
-                if current_workspace != "sandbox":
+                if is_codex_workspace_indexed(current_workspace):
                     l = lang or CodexRepo.detect_language(filename)
                     state.save_resource(
                         id=filename,
@@ -216,7 +218,7 @@ class Action:
                         lines=line_count,
                         last_commit=commit_hash[:12],
                         commit_msg=msg,
-                        storage_path=f"codex/{current_workspace}/{filename}"
+                        storage_path=format_codex_storage_path(filename, current_workspace)
                     )
 
             try:
@@ -530,7 +532,7 @@ class Action:
                                 last_uploaded_content = content
                                 last_uploaded_bin = actual_bin
 
-                                if current_workspace != "sandbox":
+                                if is_codex_workspace_indexed(current_workspace):
                                     _sync_registry(filename, commit_hash, f"Import {filename}", line_count, lang)
 
                             current_state = await asyncio.to_thread(repo.get_latest_state)
@@ -797,7 +799,7 @@ class Action:
                             continue
                         if delete_result:
                             commit_hash, paths_to_rm = delete_result
-                            if current_workspace != "sandbox":
+                            if is_codex_workspace_indexed(current_workspace):
                                 for path in paths_to_rm:
                                     state.delete_resource(path)
 
@@ -854,7 +856,7 @@ class Action:
 
                             # Mettre à jour le registre codex (supprimer
                             # ancien, créer nouveau)
-                            if current_workspace != "sandbox" and not is_dir:
+                            if is_codex_workspace_indexed(current_workspace) and not is_dir:
                                 state.delete_resource(old_name)
                                 new_lang = CodexRepo.detect_language(new_name)
                                 line_count = result["total_lines"] if result else 0

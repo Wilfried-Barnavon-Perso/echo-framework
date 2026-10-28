@@ -1,23 +1,24 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 5.231.20.2
+version: 5.231.28.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.28.1: Intégration de EchoCompactionEngine.resolve_active_window dans prepare_context() pour l'injection de <artifact id="AEC_context_checkpoint"> et le découpage au pivot.
 # 5.231.20.2: Déclaration explicite de __event_call__ dans la signature de pipe() et rafraîchissement systématique des closures dans _TOOLS_CACHE[chat_id] à chaque tour.
 # 5.231.15.1: Sanctuarisation de promptTokenCount en cascade cognitive pour immuniser la persistance contre les faux deltas négatifs.
 # 5.231.13.1: Suppression de la double écriture SSE de save_context_stats et correction du cumul de promptTokenCount/cachedContentTokenCount en cascade.
 # 5.231.10.2: Déport du HUD contextuel vers context_gauge_filter, transmission de (user_id, chat_id) à EchoEvents et persistance auto-archivée.
-# 5.231.10.1: Suppression de detect_verbal_escalation et déduplication de la docstring de new_cognitive_level vis-à-vis du PCD.
 
 
 # ==============================================================================
 # SECTION 0 : IMPORTS & CONFIGURATION
 # ==============================================================================
 import sys
+import asyncio
 import secrets
 import re
 import time
@@ -43,6 +44,7 @@ from echo_core import (
     unbox_tool_output,
     convert_owui_tools,
     attach_thought_signature,
+    EchoCompactionEngine,
 )
 from echo_gemini_client import EchoGeminiClient
 from echo_http import FatalAPIError
@@ -250,8 +252,24 @@ class Orchestrator:
                 aec_text = EchoAEC.render_system_events(sys_events=sys_events_to_inject)
                 messages[-1]["content"] = aec_text + str(messages[-1].get("content", ""))
 
-        final_contents = []; last_cumul = None
-        i = 0
+        # --- RÉSOLUTION DU CHECKPOINT DE COMPACTION CONTEXTUELLE IN-PLACE ---
+        ckpt_prefix = []
+        cut_msg_idx = 0
+        raw_ckpt = self.user_data_manager.get_session_setting("context_checkpoint")
+        if raw_ckpt:
+            try:
+                ckpt_data = std_json.loads(raw_ckpt)
+                branch_messages = await asyncio.to_thread(
+                    EchoCompactionEngine.load_active_branch_messages, chat_id
+                )
+                ckpt_prefix, cut_msg_idx = EchoCompactionEngine.resolve_active_window(
+                    messages, ckpt_data, branch_messages
+                )
+            except Exception as e:
+                log.warning(f"[PipeEngine] Lecture context_checkpoint ignorée: {e}")
+
+        final_contents = list(ckpt_prefix); last_cumul = None
+        i = cut_msg_idx
         while i < len(messages):
             m = messages[i]; role = m.get("role"); content = m.get("content", "")
             msg_id = m.get("id"); updated_at = m.get("updated_at")
