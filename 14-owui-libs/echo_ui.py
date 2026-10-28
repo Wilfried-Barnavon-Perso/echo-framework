@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.231.20.3
+version: 5.231.24.2
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.24.2: Déclaration du @keyframes echo-pulse et centrage transform-origin de l'animation SVG pour le HUD contextuel.
+# 5.231.24.1: Support du calcul différentiel, capsule d'évolution et deltas de quotas dès le tour 1.
 # 5.231.20.3: Conformité multi-chat des HUDs (get_floating_monitor_js avec isolation stricte de _echoGetAggregatedPayload, _generate_webplayer_js, monitor_ECHO, show_image_js) et suppression des fuites de listeners DOM.
 # 5.231.20.1: Ajout du pourcentage d'occupation contexte entre parenthèses sur la ligne Total du HUD.
 # 5.231.17.1: Remplacement d'Empreinte tour par Δ Capacité avec inversion de signe (perte en négatif, libération en positif).
-# 5.231.15.1: Formatage fixe à 2 décimales dans la capsule, libellés unifiés Empreinte tour et élimination des inversions de signes.
-# 5.231.14.2: Neutralisation de la capsule différentielle (style sobre slate-400 et affichage du pourcentage seul).
 
 
 import sys
@@ -1893,7 +1893,8 @@ class EchoUI(EchoRichUI):
         p_cache = int(prev.get("cachedContentTokenCount", 0))
         p_total = int(prev.get("totalTokenCount", 0))
 
-        has_prev = p_total > 0
+        is_first_turn = bool(prev.get("is_first_turn")) or (p_total == 0 and c_total > 0 and bool(prev))
+        has_prev = p_total > 0 or is_first_turn
 
         delta_total = (c_total - p_total) if has_prev else 0
         delta_prompt = (c_prompt - p_prompt) if has_prev else 0
@@ -1903,9 +1904,9 @@ class EchoUI(EchoRichUI):
         max_size = max(1, int(max_context_size or ECHO_MAX_CONTEXT_SIZE))
         capacity_lost_pct = (delta_total / max_size) * 100.0 if has_prev else 0.0
 
-        if has_prev and p_prompt > 0:
+        if not is_first_turn and has_prev and p_prompt > 0:
             growth_pct = (delta_prompt / p_prompt) * 100.0
-        elif has_prev and p_total > 0:
+        elif not is_first_turn and has_prev and p_total > 0:
             growth_pct = (delta_total / p_total) * 100.0
         else:
             growth_pct = 0.0
@@ -1928,7 +1929,7 @@ class EchoUI(EchoRichUI):
             "growth_pct": round(growth_pct, 1),
             "delta_quota_5h": delta_q5,
             "delta_quota_weekly": delta_qw,
-            "is_first_turn": not has_prev,
+            "is_first_turn": is_first_turn,
         }
 
     @staticmethod
@@ -1989,6 +1990,10 @@ class EchoUI(EchoRichUI):
           display: inline-flex; align-items: center; font-size: 10px; font-weight: 500;
           padding: 1px 6px; border-radius: 10px; margin-left: 6px; white-space: nowrap;
           background: rgba(148, 163, 184, 0.12); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.25);
+        }
+        @keyframes echo-pulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.35; transform: scale(1.12); }
         }
         @media (max-width: 768px) { .tooltip-box { width: 90vw !important; left: 50% !important; transform: translateX(-50%) translateY(-5px) !important; white-space: normal !important; } }
       `;
@@ -2062,8 +2067,15 @@ class EchoUI(EchoRichUI):
       var badgeText = (capLost > 0 ? '-' : (capLost < 0 ? '+' : '')) + capLostFixed + '%';
       deltaBadge = `<span class="echo-delta-badge">${badgeText}</span>`;
 
-      var signGrowth = (stats.delta.growth_pct > 0 ? '+' : '') + stats.delta.growth_pct + '%';
-      var growthLabel = (stats.delta.growth_pct < 0) ? 'Variation contexte:' : 'Croissance contexte:';
+      var isFirstTurn = !!(stats.delta && stats.delta.is_first_turn);
+      var growthRow = '';
+      if (!isFirstTurn && stats.delta.growth_pct !== 0) {
+        var signGrowth = (stats.delta.growth_pct > 0 ? '+' : '') + stats.delta.growth_pct + '%';
+        var growthLabel = (stats.delta.growth_pct < 0) ? 'Variation contexte:' : 'Croissance contexte:';
+        growthRow = `<div class="tooltip-row"><span>${growthLabel}</span> <span>${signGrowth}</span></div>`;
+      } else if (isFirstTurn) {
+        growthRow = `<div class="tooltip-row"><span>Initialisation:</span> <span>+${dTot} tokens</span></div>`;
+      }
 
       var capRow = '';
       if (capLost > 0) {
@@ -2074,15 +2086,16 @@ class EchoUI(EchoRichUI):
         capRow = `<div class="tooltip-row"><span>Δ Capacité:</span> <span>0%</span></div>`;
       }
 
+      var diffTitle = isFirstTurn ? 'DIFFÉRENTIEL (PREMIER TOUR)' : 'DIFFÉRENTIEL (DERNIER TOUR)';
       deltaTooltipRows = `
-        <div class="tooltip-title" style="margin-top:8px;border-top:1px solid rgba(0,212,255,0.2);padding-top:6px;">DIFFÉRENTIEL (DERNIER TOUR)</div>
+        <div class="tooltip-title" style="margin-top:8px;border-top:1px solid rgba(0,212,255,0.2);padding-top:6px;">${diffTitle}</div>
         <div class="tooltip-row"><span>Δ Tokens Total:</span> <span style="font-weight:bold;">${sign}${dTot}</span></div>
         ${capRow}
-        <div class="tooltip-row"><span>${growthLabel}</span> <span>${signGrowth}</span></div>
+        ${growthRow}
       `;
     }
 
-    var pulseStyle = is_pending ? 'animation: echo-pulse 1.5s infinite;' : '';
+    var pulseStyle = is_pending ? 'animation: echo-pulse 1.5s infinite; transform-origin: center;' : '';
 
     var iconHtml = `<div class="echo-tooltip"><svg width="20" height="20" viewBox="0 0 20 20" style="${pulseStyle}"><circle cx="10" cy="10" r="8" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2" /><circle cx="10" cy="10" r="8" fill="none" stroke="${q_color}" stroke-width="2" stroke-dasharray="${dash_array}" stroke-dashoffset="${dash_offset}" transform="rotate(-90 10 10)" stroke-linecap="round" /><path d="M10 6a2.5 2.5 0 00-2.5 2.5V10h5V8.5A2.5 2.5 0 0010 6zm3.5 4H6.5a1 1 0 00-1 1v4a1 1 0 001 1h7a1 1 0 001-1v-4a1 1 0 00-1-1z" fill="white" opacity="0.9" /></svg><div class="tooltip-box" style="width:310px;"><div class="tooltip-title">AUTHENTIFICATION</div><div class="tooltip-row"><span>🔐 Source:</span> <span>${stats.auth_sources ? stats.auth_sources.join(', ') : 'N/A'}</span></div><div class="tooltip-row"><span>👤 Compte:</span> <span>${stats.user_email || 'N/A'}</span></div>${tier_html}${proj_html}<div class="tooltip-row"><span>🌐 Tenant:</span> <span style="color:#10b981;">${stats.tenant_id || 'ECHO'}</span></div><div class="tooltip-title" style="margin-top:8px;border-top:1px solid rgba(0,212,255,0.2);padding-top:6px;">QUOTAS</div><div class="tooltip-row"><span>💳 Crédits IA:</span> <b style="color:#10b981;">${stats.credits_val || 'N/A'}</b></div><div class="tooltip-row"><span>🤖 Modèle CA:</span> <span style="color:#a3a3a3;font-size:10px;">${stats.quota_model || '—'}</span></div>${q_rows_html}${rpd_html}${rpm_html}<div class="tooltip-row"><span>🏷️ Type:</span> <span style="color:#a3a3a3;font-size:10px;">${stats.quota_type || 'UNKNOWN'}</span></div></div></div>`;
 

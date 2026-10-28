@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.230.1.1
+version: 5.231.24.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.24.1: Définition SSOT de ECHO_QUOTA_REFRESH_THROTTLE_SEC (60s), ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC (0s) et ECHO_QUOTA_RESET_IMMINENT_LABEL pour la gouvernance des quotas Google Cloud.
+# 5.230.1.1: Harmonisation des types et constantes pour la stack ECHO.
 # 5.230.0.3: Définition SSOT du protocole URN Codex et ancres UI (CODEX_URN_PATTERN, CODEX_ANCHOR_PATTERN avec icônes ✏️/👁️, CODEX_HUD_ID, CODEX_ACTION_ID).
 # 5.229.1.1: Définition de DELEGATE_AGENT_SYSTEM_TOOLS garantissant la disponibilité des outils système pour tout sous-agent.
 # 5.228.9.1: Alignement de la version globale ECHO.
-# 5.228.8.2: Résolution MIME déterministe dans is_binary_file (sans écrasement text/plain par get_gemini_mime) et détection des octets de contrôle C0.
-# 5.228.7.1: Factorisation SSOT de CODEX_LANG_TO_EXT, is_text_mime et is_binary_file pour le support binaire/hexadécimal du Codex.
 
 
 import os
@@ -189,6 +189,11 @@ GOOGLE_OAUTH_TOKEN_LIFETIME = 3300  # secondes
 
 # PKCE auth flow : timeout serveur callback (5 min pour que l'utilisateur ouvre l'URL)
 PKCE_CALLBACK_TIMEOUT = 300  # secondes
+
+# --- GESTION DES QUOTAS GOOGLE CLOUD (Anti-spam / Anti-429) ---
+ECHO_QUOTA_REFRESH_THROTTLE_SEC = 60            # Période minimale entre deux requêtes Cloud de rafraîchissement
+ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC = 0     # Seuil en secondes résiduelles pour qualifier le reset d'imminent (<= 0)
+ECHO_QUOTA_RESET_IMMINENT_LABEL = "Imminent"    # Label d'affichage et de détection d'imminence
 
 # ==============================================================================
 # 1.2 RÉSILIENCE ET RETRIES (API)

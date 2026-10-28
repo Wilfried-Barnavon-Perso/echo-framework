@@ -2,16 +2,16 @@
 """
 title: ECHO Context Gauge Filter
 author: Wilfried BARNAVON
-version: 5.231.15.1
+version: 5.231.24.1
 description: Filtre Inlet/Outlet (Priorité 10) affichant le HUD contextuel de tokens persistant avec différentiel et pourcentage de capacité perdue.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.24.1: Initialisation baseline des quotas et du contexte à l'Inlet du tour 1 pour calcul différentiel immédiat.
 # 5.231.15.1: Alignement sur le calcul unifié d'empreinte capacitaire et la sanctuarisation de promptTokenCount.
 # 5.231.13.1: Archivage unique de previous_context_stats en début de tour utilisateur, refresh Cloud des quotas en Outlet et résolution de ca_model_id.
 # 5.231.12.1: Affichage garanti du HUD des l'inlet du 1er tour et persistance des fractions de quotas pour calcul du differentiel.
 # 5.231.11.1: Réétagement de la priorité à 10 (après edge_embed_bridge_filter à 3 et avant user_native_context_filter à 20).
-# 5.231.10.1: Création du filtre Context Gauge (Priorité 5) avec affichage persistant, calcul de différentiel unitaire et pourcentage de capacité perdue.
 
 import sys
 from typing import Any, Dict, Optional
@@ -156,7 +156,16 @@ class Filter:
             incoming_msgs = body.get("messages", [])
             is_tool_continuation = bool(incoming_msgs and incoming_msgs[-1].get("role") == "tool")
             if not is_tool_continuation:
-                sm.archive_previous_context_stats()
+                if last_stats and last_stats.get("totalTokenCount", 0) > 0:
+                    sm.archive_previous_context_stats()
+                else:
+                    last_model = sm.get_last_active_model()
+                    ca_model_id = get_ca_model_id(last_model) if last_model else None
+                    echo_auth = EchoAuth(user_id=user_id)
+                    quota_snap = echo_auth.get_ui_quota_snapshot(ca_model_id)
+                    q5 = quota_snap.get("quota_5h_fraction") if quota_snap else None
+                    qw = quota_snap.get("quota_weekly_fraction") if quota_snap else None
+                    sm.init_session_context_baseline(quota_5h_fraction=q5, quota_weekly_fraction=qw)
         except Exception:
             pass
 

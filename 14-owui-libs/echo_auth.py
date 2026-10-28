@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Auth
 author: Wilfried BARNAVON
-version: 5.231.13.1
+version: 5.231.24.1
 description: Gestion de l'authentification et OAuth2.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.24.1: Utilisation des constantes SSOT ECHO_QUOTA_REFRESH_THROTTLE_SEC, ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC et ECHO_QUOTA_RESET_IMMINENT_LABEL.
 # 5.231.13.1: Support de la clé disabled dans get_ui_quota_snapshot et rafraîchissement Cloud réactif (60s / échéance Imminent) dans refresh_quota_if_needed.
 # 5.231.12.1: Résolution systématique de ca_model_id et suppression du court-circuit de get_quota_summary dans get_ui_quota_snapshot.
 # 5.231.10.1: Factorisation de format_quota_reset_time, get_active_auth_providers et get_ui_quota_snapshot pour le HUD.
 # 5.228.3.2: Traçabilité typée des erreurs réseau httpx, verrouillage Circuit Breaker sur RequestError, Auto-Heal unlock_agy_endpoint sur 200 OK et ciblage prioritaire Gemini dans le fallback fetch_available_models.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 import os
 import time
 import sqlite3
@@ -36,7 +36,9 @@ from echo_constants import (
     ECHO_CALLBACK_PORT_RANGE_START, ECHO_CALLBACK_PORT_RANGE_END,
     ANTIGRAVITY_DESKTOP_CLIENT_ID, ANTIGRAVITY_DESKTOP_CLIENT_SECRET, AUTH_DATA_PROJECT_ID,
     AUTH_DATA_USER_TIER, AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_KEY_SECONDARY, AUTH_METHOD_OAUTH2,
-    ECHO_USERS_ROOT, GOOGLE_OAUTH_TOKEN_URL, GOOGLE_OAUTH_TOKEN_LIFETIME
+    ECHO_USERS_ROOT, GOOGLE_OAUTH_TOKEN_URL, GOOGLE_OAUTH_TOKEN_LIFETIME,
+    ECHO_QUOTA_REFRESH_THROTTLE_SEC, ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC,
+    ECHO_QUOTA_RESET_IMMINENT_LABEL
 )
 class EchoAuth:
     def __init__(self, user_id: str = "system"):
@@ -110,8 +112,8 @@ class EchoAuth:
             from datetime import datetime, timezone
             reset_dt = datetime.fromisoformat(raw_iso.replace("Z", "+00:00"))
             diff_sec = (reset_dt - datetime.now(timezone.utc)).total_seconds()
-            if diff_sec <= 0:
-                return "Imminent"
+            if diff_sec <= ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC:
+                return ECHO_QUOTA_RESET_IMMINENT_LABEL
             diff_min = int(diff_sec / 60)
             if diff_min >= 1440:
                 days, hours = diff_min // 1440, (diff_min % 1440) // 60
@@ -1251,10 +1253,10 @@ class AuthService:
 
         snap = self.echo_auth.get_ui_quota_snapshot()
         is_imminent = (
-            snap.get("quota_5h_reset") == "Imminent"
-            or snap.get("quota_weekly_reset") == "Imminent"
+            snap.get("quota_5h_reset") == ECHO_QUOTA_RESET_IMMINENT_LABEL
+            or snap.get("quota_weekly_reset") == ECHO_QUOTA_RESET_IMMINENT_LABEL
         )
-        if not force and not is_imminent and (time.time() - last_fetch < 60):
+        if not force and not is_imminent and (time.time() - last_fetch < ECHO_QUOTA_REFRESH_THROTTLE_SEC):
 
             return
 

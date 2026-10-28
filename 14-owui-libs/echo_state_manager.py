@@ -2,16 +2,16 @@
 """
 title: ECHO Echo State Manager
 author: Wilfried BARNAVON
-version: 5.231.21.3
+version: 5.231.24.1
 description: Gestionnaire d'état SQLite et RAG.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.24.1: Ajout de init_session_context_baseline pour l'amorçage du différentiel et des quotas dès le tour 1.
 # 5.231.21.3: Centralisation CRUD chiffré AES-256-GCM de identity_vault via _get_identity_connection (lecture seule pure sans Lazy Migration).
 # 5.231.13.1: Séparation de archive_previous_context_stats (début de tour) et save_context_stats (fusion sans écrasement de previous_context_stats).
 # 5.231.10.1: Auto-archivage de previous_context_stats et méthode get_previous_context_stats pour le calcul de différentiel.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.4: Délégation de la création d'environnement à un filtre Inlet WebUI.
 import os
 import time
 import sqlite3
@@ -455,6 +455,20 @@ class EchoStateManager:
     def unlock_agy_endpoint(self, idx: int):
         """Déverrouille proactivement une URL sur un succès HTTP (Auto-Heal)."""
         self.save_setting(f"agy_locked_url_{idx}", "")
+
+    def init_session_context_baseline(self, quota_5h_fraction: Optional[float] = None, quota_weekly_fraction: Optional[float] = None):
+        """Initialise la référence initiale de la session au tour 1 si aucun historique n'existe."""
+        if not self.get_previous_context_stats() and not self.get_last_context_stats():
+            baseline = {
+                "totalTokenCount": 0,
+                "promptTokenCount": 0,
+                "candidatesTokenCount": 0,
+                "cachedContentTokenCount": 0,
+                "quota_5h_fraction": quota_5h_fraction,
+                "quota_weekly_fraction": quota_weekly_fraction,
+                "is_first_turn": True,
+            }
+            self.save_session_setting('previous_context_stats', std_json.dumps(baseline).decode('utf-8'))
 
     def archive_previous_context_stats(self):
         """Archive l'état final du tour précédent au tout début d'un nouveau tour utilisateur."""
