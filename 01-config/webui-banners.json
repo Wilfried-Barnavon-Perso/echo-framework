@@ -1,5 +1,13 @@
 [
   {
+    "id": "echo-banner-update-snapshot-20261028",
+    "type": "warning",
+    "title": "Important : Mise à jour sous snapshot",
+    "content": "**Important — Mise à jour sous snapshot** : Mise à jour en cours sous snapshot. Rollback possible, avec perte de votre travail actuel. Le travail mené avant cet avertissement ne sera pas perdu.",
+    "dismissible": false,
+    "timestamp": 1730119060
+  },
+  {
     "id": "echo-banner-codex-multichat-links-20261025",
     "type": "success",
     "title": "ECHO Codex Multi-Chat & Liens Directs",
