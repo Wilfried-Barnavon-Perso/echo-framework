@@ -1,11 +1,11 @@
 [
   {
-    "id": "echo-banner-update-snapshot-20261028",
+    "id": "echo-banner-context-compaction-beta-20261028",
     "type": "warning",
-    "title": "Important : Mise à jour sous snapshot",
-    "content": "**Important — Mise à jour sous snapshot** : Mise à jour en cours sous snapshot. Rollback possible, avec perte de votre travail actuel. Le travail mené avant cet avertissement ne sera pas perdu.",
-    "dismissible": false,
-    "timestamp": 1730119060
+    "title": "Filtre de compactage contextuel (Bêta)",
+    "content": "**Filtre de compression contextuelle (Bêta)** : Le filtre de compactage automatique du contexte est désormais **désactivé par défaut**. Actuellement en version bêta expérimentale, son activation peut occasionner une **perte de données ou d'historique** dans vos échanges.",
+    "dismissible": true,
+    "timestamp": 1730148330
   },
   {
     "id": "echo-banner-codex-multichat-links-20261025",
@@ -32,4 +32,3 @@
     "timestamp": 1729683543
   }
 ]
-
