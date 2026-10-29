@@ -1,16 +1,16 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.231.29.1
+version: 5.231.32.1
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.32.1: Surcharge d'instruction pour read_multimedia_file, correction d'assignation SYS/USR prompt et docstring descriptive étendue.
 # 5.231.29.1: Alignement de _resolve_extended_file_path sur les constantes SSOT CODEX_DIR_NAME, CODEX_WORKSPACE_MAIN et CODEX_WORKSPACE_SANDBOX.
 # 5.231.20.1: Isolation multi-chat du viewer d'image via transmission de chat_id à EchoUI.show_image_js.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.228.7.1: Factorisation de la détection textuelle via is_text_mime (echo_constants).
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 import os
 import sys
@@ -19,7 +19,7 @@ import httpx
 import mimetypes
 import hashlib
 import asyncio
-from typing import List, Any, Literal
+from typing import List, Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 # Importations ECHO Standard
@@ -42,7 +42,7 @@ from echo_constants import (
     get_gemini_mime,
     is_text_mime,
 )
-from echo_prompts import SYS_EXPLORE_SENSORY, SYS_EXPLORER_PROBE
+from echo_prompts import SYS_EXPLORE_SENSORY, SYS_EXPLORER_PROBE, USR_EXPLORE_SENSORY
 
 class Tools:
     class Valves(BaseModel):
@@ -259,12 +259,13 @@ class Tools:
     async def read_multimedia_file(
         self, 
         file_id: str, 
+        instruction: Optional[str] = None,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Génère un rapport textuel descriptif d'un fichier multimédia (image, audio, vidéo)."""
+        """Génère un rapport textuel descriptif complet et horodaté d'un fichier multimédia (image, audio, vidéo)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
         fpath = self._resolve_extended_file_path(uid, __metadata__.get("chat_id"), file_id)
@@ -283,13 +284,14 @@ class Tools:
         safe_name = os.path.basename(fpath)
         if "_" in safe_name and len(safe_name.split("_")[0]) >= 32: safe_name = safe_name.split("_", 1)[1]
         
-        prompt = SYS_EXPLORE_SENSORY.format(filename=safe_name)
+        user_prompt = instruction.strip() if instruction and instruction.strip() else USR_EXPLORE_SENSORY
+        system_prompt = SYS_EXPLORE_SENSORY.format(filename=safe_name)
         
         try:
             payload = {
-                "contents": [{"role": "user", "parts": [{"text": prompt}, {"inline_data": {"mime_type": mime, "data": f"___ECHO_STREAM_FILE___{fpath}___"}}]}],
+                "contents": [{"role": "user", "parts": [{"text": user_prompt}, {"inline_data": {"mime_type": mime, "data": f"___ECHO_STREAM_FILE___{fpath}___"}}]}],
                 "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="medium"),
-                "systemInstruction": {"parts": [{"text": SYS_EXPLORER_PROBE}]}
+                "systemInstruction": {"parts": [{"text": system_prompt}]}
             }
 
             cascade_task = asyncio.create_task(EchoGeminiClient.call_cascade(

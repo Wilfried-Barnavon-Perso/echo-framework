@@ -1,7 +1,7 @@
 ---
 domain_id: code_and_files
-version: 5.229.0.0
-updated_at: 2026-10-22
+version: 5.231.32.1
+updated_at: 2026-10-29
 name: Registre Unifié, Explorateur de l'Espace Personnel & Sandbox d'Exécution de Code
 description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash) et exécution isolée de scripts Codex sandbox (.py / .js).
 tools: [query_registry, read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes, code_executor, kill_sandbox_execution]
@@ -33,7 +33,7 @@ Tous les outils ci-dessous résolvent automatiquement `file_id` (ou `target`) pa
 | Besoin Opérationnel | Outil à Invoquer | Spécifications & Contraintes Critiques |
 | :--- | :--- | :--- |
 | **Analyse ciblée d'un fichier volumineux (Texte, PDF, Doc)** | `semantic_probe(file_id, query)` | Délègue la lecture Zéro-RAM à un sous-agent (`MODEL_APOLLO`, limite 30 Mo) qui répond précisément au motif `query`. |
-| **Rapport descriptif complet d'un Média (Image, Audio, Vidéo, PDF)** | `read_multimedia_file(file_id)` | Sonde sensorielle multimodale Zéro-RAM (`MODEL_APOLLO`, limite 30 Mo) restituant une distillation complète du média. |
+| **Rapport descriptif complet d'un Média (Image, Audio, Vidéo, PDF)** | `read_multimedia_file(file_id, instruction=None)` | Sonde sensorielle multimodale Zéro-RAM (`MODEL_APOLLO`, limite 30 Mo) restituant une distillation complète et horodatée du média. `instruction` optionnel pour surcharger la consigne par défaut. |
 | **Lecture brute de lignes ou d'octets** | `read_raw_file_content(file_id, start_line=1, end_line=100, output_mode="text", byte_offset=0)` | `output_mode` : `"text"`, `"base64"` ou `"hex"`. **CONTRAINTE CRITIQUE** : `byte_offset` (> 0) est mutuellement exclusif avec `start_line`/`end_line`. Limiter à ~100 lignes par appel (max 16 Ko). Si un binaire lu en `"text"` est illisible, interdiction de boucler : utiliser `semantic_probe` ou `read_multimedia_file`. |
 | **Afficher une image à l'Utilisateur** | `show_image_to_user(target)` | Si `target` est un fichier local (ID Registre ou nom), l'affiche dans l'interface dédiée (viewer ECHO). Si `target` est une URL `http(s)://`, vérifie la validité de l'image et retourne la syntaxe Markdown exacte à insérer dans la réponse. |
 | **Métadonnées & Intégrité cryptographique** | `get_file_metadata(file_id)` / `calculate_file_hashes(file_ids, algorithm="sha256")` | `get_file_metadata` retourne taille et MIME. `calculate_file_hashes` accepte une liste `file_ids` et `algorithm` parmi `"sha256"`, `"md5"`, `"sha1"`, `"sha512"`, `"blake2b"`, `"crc32"`. |
