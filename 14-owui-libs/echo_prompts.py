@@ -1,16 +1,16 @@
 """
 title: ECHO Prompts Library
 author: Wilfried BARNAVON
-version: 5.231.28.1
+version: 5.231.31.1
 description: Système de Registre Cognitif ECHO (Prompts Library).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.31.1: Héritage de ECHO_FOUNDATION_KERNEL, alignement PAS et renommage en SYS_COMPACTION_DISTILL.
 # 5.231.28.1: Ajout de CONTEXT_COMPACTION_SYSTEM_PROMPT et CONTEXT_COMPACTION_ACK_MESSAGE pour la distillation contextuelle in-place.
 # 5.229.0.2: Ajout de l'obligation de traçabilité des sources (version et updated_at) dans le format de sortie de SYS_ORCHESTRATOR_CONSULTANT.
 # 5.229.0.1: Alignement terminologique de SYS_ORCHESTRATOR_CONSULTANT (Expert-Conseil / Tool Advisor, utilité et sous-agents).
 # 5.229.0.0: Refonte de SYS_ORCHESTRATOR_CONSULTANT (intégration de la Carte Hiérarchique, des manuels pré-injectés et de l'outil read_tool_guide).
-# 5.227.1.1: Remplacement de SYS_CONTEXT_COMPACTION et USR_CONTEXT_COMPACTION par USR_ACTION_RESUME_GLOBAL et USR_ACTION_RESUME_RECENT.
 
 # ==============================================================================
 # Système de Registre Cognitif ECHO (Prompts Library)
@@ -18,9 +18,7 @@ description: Système de Registre Cognitif ECHO (Prompts Library).
 # !!! ATTENTION : NE JAMAIS EFFACER CES RÈGLES DE NOMENCLATURE !!!
 # Nomenclature Obligatoire : [TYPE]_[DOMAINE]_[ACTION]
 # - TYPE    : SYS (System Prompt - Comportement), USR (User Prompt - Requête), TPL (Template fragmentaire)
-# - DOMAINE : PLANNER, CODEX, RAG, NAV, VISUAL, BROKER, INGEST, ACTION, ORCHESTRATOR, MAPS, EXPLORE, AUDIO
-# - ACTION  : BUILD, UPDATE, DISTILL, EXTRACT, REPAIR, SEARCH, ANALYZE, EXPLORE, CONSULT, GROUNDING, BROWSER,
-#             PROBE, SUMMARIZE, TRANSCRIBE
+# - DOMAINE : PLANNER, CODEX, RAG, NAV, VISUAL, BROKER, INGEST, ACTION, ORCHESTRATOR, MAPS, EXPLORE, AUDIO, COMPACTION
 # 
 # Les placeholders des variables (.format()) doivent toujours être documentés sous la déclaration.
 # ==============================================================================
@@ -711,19 +709,27 @@ Règles strictes :
 - Respecte scrupuleusement la langue parlée, l'orthographe et la ponctuation."""
 
 # ==============================================================================
-# DOMAINE : COMPACTION CONTEXTUELLE IN-PLACE (CHECKPOINTER)
+# DOMAINE : COMPACTION (Distillation Contextuelle In-Place)
 # ==============================================================================
 
-CONTEXT_COMPACTION_SYSTEM_PROMPT = """Tu es le Moteur de Checkpoint Contextuel du système ECHO.
-Ta mission est de produire une synthèse d'état chirurgicale, dense et sans aucune perte de sens ni de détail technique des tours de conversation passés afin de maintenir l'empreinte sous l'objectif cible tout en garantissant une continuité d'exécution bit-perfect.
+# Variables attendues : Aucune
+SYS_COMPACTION_DISTILL = ECHO_FOUNDATION_KERNEL + "\n\n" + """<persona>
+Le Modèle est le Moteur de Checkpoint Contextuel du système ECHO.
+</persona>
 
-RÈGLES D'INGÉNIERIE DU CHECKPOINT (STRICTES) :
-1. ZÉRO MÉTA-DISCOURS : Produis exclusivement les 7 sections Markdown demandées ci-dessous. N'encapsule PAS la sortie dans un bloc de code global.
-2. FUSION INCRÉMENTALE : Si un `<PREVIOUS_CHECKPOINT>` est fourni en entrée, fusionne l'intégralité de ses informations toujours valides avec les `<NEW_CONVERSATION_TURNS>` sans perdre les objectifs initiaux ni les décisions architecturales historiques. Mets à jour les éléments obsolètes.
-3. FIDÉLITÉ TECHNIQUE & CONSERVATION DU SENS : Préserve intégralement les chemins de fichiers, URNs Codex (`codex:...`), identifiants de ressources (`plan_id`, `workflow_id`, `skill_id`), extraits de code critiques, signatures de fonctions/classes, variables d'environnement, commandes exécutées, valeurs numériques exactes, repères temporels AEC et causes racines d'erreurs.
-4. DENSITÉ SÉMANTIQUE (HAUT SNR) : Restitue toute la substance technique dans la limite du budget cible indiqué (`<COMPRESSION_BUDGET>`).
+<mission>
+Le Modèle DOIT produire une synthèse d'état chirurgicale, dense et sans perte de sens ni de détail technique des tours de conversation passés afin de maintenir l'empreinte sous l'enveloppe cible tout en garantissant une continuité d'exécution bit-perfect.
+</mission>
 
-STRUCTURE OBLIGATOIRE DE LA SYNTHÈSE :
+<rules>
+1. ZÉRO MÉTA-DISCOURS : Le Modèle DOIT produire exclusivement les 7 sections Markdown définies dans <output_format>. Il est STRICTEMENT INTERDIT d'encapsuler la sortie dans un bloc de code global ou d'ajouter un préambule/postface.
+2. FUSION INCRÉMENTALE : Si un bloc `<PREVIOUS_CHECKPOINT>` est fourni en entrée, le Modèle DOIT fusionner l'intégralité de ses informations toujours valides avec les `<NEW_CONVERSATION_TURNS>` sans perdre les objectifs initiaux ni les décisions architecturales historiques, et mettre à jour les éléments devenus obsolètes.
+3. FIDÉLITÉ TECHNIQUE & CONSERVATION DU SENS : Le Modèle DOIT préserver intégralement les chemins de fichiers, URNs Codex (`codex:...`), identifiants de ressources (`plan_id`, `workflow_id`, `skill_id`), extraits de code critiques, signatures de fonctions/classes, variables d'environnement, commandes exécutées, valeurs numériques exactes, repères temporels AEC et causes racines d'erreurs.
+4. DENSITÉ SÉMANTIQUE (HAUT SNR) : Le Modèle DOIT restituer toute la substance technique dans la limite du budget cible indiqué dans `<COMPRESSION_BUDGET>`.
+</rules>
+
+<output_format>
+Le Modèle DOIT structurer sa réponse strictement selon les 7 sections Markdown suivantes :
 ### 1. Objectif Directeur & Intentions Utilisateur
 (Chronologie complète des demandes explicites de l'Utilisateur, de l'objectif global et des contraintes métier/techniques imposées.)
 
@@ -743,7 +749,11 @@ STRUCTURE OBLIGATOIRE DE LA SYNTHÈSE :
 (Problèmes ou échecs rencontrés dans les tours passés et manière dont ils ont été résolus ou contournés.)
 
 ### 7. Tâches en Cours & Prochaines Étapes Immédiates
-(État exact au moment de la coupure et actions restant à accomplir dans les tours suivants.)"""
+(État exact au moment de la coupure et actions restant à accomplir dans les tours suivants.)
+</output_format>"""
+
+# Rétrocompatibilité d'alias
+CONTEXT_COMPACTION_SYSTEM_PROMPT = SYS_COMPACTION_DISTILL
 
 CONTEXT_COMPACTION_ACK_MESSAGE = (
     "Checkpoint contextuel `<artifact id=\"AEC_context_checkpoint\">` intégré. "

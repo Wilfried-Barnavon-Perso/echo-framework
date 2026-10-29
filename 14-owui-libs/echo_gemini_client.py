@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 5.231.20.1
+version: 5.231.31.1
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.31.1: Prise en charge du timeout et sécurisation des closures __user__/__metadata__ dans call_distillation.
 # 5.231.20.1: Isolation multi-agent des point_id Qdrant dans index_text_in_ephemeral_rag via inclusion de sub_sid dans le seed UUID5.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.13: Filtrage strict des parts de pensée native (thought=True) et journalisation des erreurs dans call_distillation.
 # 1.12: Harmonisation du message UI lors des retries ("⛓️💥 Reconnexion au modèle, tentative...").
-# 1.11: Utilisation factorisée de get_descending_cascade et get_generation_config (thinkingLevel="high" sur cascade 429).
 import time
 import random
 import hashlib
@@ -335,7 +335,8 @@ class EchoGeminiClient:
         parts: Optional[List[Dict]] = None,
         max_tokens: int = 65535,  # 65535. Surchargeable : ex. 8192 (RAG), 2048 (brief).
         target_model: Optional[str] = None,
-        system_instruction: Optional[str] = None
+        system_instruction: Optional[str] = None,
+        timeout: int = 120,
     ) -> Union[Dict, str]:
         """
         Exécute une tâche de distillation (extraction sémantique).
@@ -344,8 +345,8 @@ class EchoGeminiClient:
         from echo_constants import MODEL_DISTILLATION, ECHO_MODELS_REGISTRY
         import copy
         
-        user_id = __user__.get("id", "system")
-        chat_id = __metadata__.get("chat_id")
+        user_id = (__user__ or {}).get("id", "system")
+        chat_id = (__metadata__ or {}).get("chat_id")
         
         # Résolution du modèle
         actual_model = target_model if target_model else MODEL_DISTILLATION
@@ -369,7 +370,9 @@ class EchoGeminiClient:
             payload["generationConfig"]["response_mime_type"] = "application/json"
 
         try:
-            data = await EchoGeminiClient.call(actual_model, payload, user_id, chat_id=chat_id)
+            data = await EchoGeminiClient.call(
+                actual_model, payload, user_id, timeout=timeout, chat_id=chat_id
+            )
 
             # Extraction et Nettoyage (exclusion stricte des parts de pensée native Gemini)
             target = data.get("response", {}) if "response" in data else data

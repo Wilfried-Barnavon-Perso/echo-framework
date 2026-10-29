@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 5.231.28.2
+version: 5.231.31.1
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.31.1: Prise en charge asynchrone de Chats.get_chat_by_id et correction de l'appel EchoGeminiClient.call_distillation (is_json=False, system_instruction).
 # 5.231.28.2: Implémentation de EchoCompactionEngine en % de CONTEXT_MAX (63% HEAD / 37% TAIL de 20%), zéro troncature, conservation des balises AEC et fallback ZoneInfo.
 # 5.231.10.1: Suppression de detect_verbal_escalation ; conservation de attach_thought_signature (conformité Gemini 3/4).
 # 5.231.7.1: Factorisation de attach_thought_signature (conformité Gemini 3/4).
 # 5.227.1.1: Suppression de EchoCompactionEngine suite au remplacement du compactage in-place par resume_in_new_chat_action.
-# 5.227.0.1: Fiabilisation de EchoCompactionEngine (regex ALL_AEC_PATTERN multi-attributs, désambiguïsation par index attendu dans resolve_active_window, mise à l'échelle télémétrique dans find_split_index et extraction des outils Open WebUI m['output']).
 import os
 import re
 import time
@@ -454,14 +454,62 @@ class EchoCompactionEngine:
     GEMINI_MAX_OUTPUT_TOKENS = 65535
 
     @staticmethod
-    def load_active_branch_messages(chat_id: str) -> Optional[List[Dict[str, Any]]]:
-        """Charge de manière synchrone la branche active de messages depuis Open WebUI Chats."""
+    def extract_active_branch(
+        chat_dict: Any, current_message_id: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """Reconstruit la branche active complète de messages jusqu'à history.currentId."""
+        if not isinstance(chat_dict, dict):
+            return []
+        history = (
+            chat_dict.get("history")
+            if isinstance(chat_dict.get("history"), dict)
+            else {}
+        )
+        messages_map = (
+            history.get("messages")
+            if isinstance(history.get("messages"), dict)
+            else {}
+        )
+        curr_id = current_message_id or history.get("currentId")
+
+        if messages_map and curr_id and curr_id in messages_map:
+            chain = []
+            visited = set()
+            curr = curr_id
+            while curr and curr in messages_map and curr not in visited:
+                visited.add(curr)
+                node = messages_map[curr]
+                if isinstance(node, dict):
+                    chain.append({**node, "id": node.get("id") or curr})
+                    curr = node.get("parentId")
+                else:
+                    break
+            chain.reverse()
+            if chain:
+                return chain
+
+        db_msgs = chat_dict.get("messages")
+        if isinstance(db_msgs, list) and db_msgs:
+            return db_msgs
+        return []
+
+    @classmethod
+    async def load_active_branch_messages(
+        cls,
+        chat_id: str,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Charge de manière asynchrone/hybride la branche active de messages depuis Open WebUI Chats."""
         try:
+            import inspect
             from open_webui.models.chats import Chats
 
-            chat_record = Chats.get_chat_by_id(chat_id)
+            res = Chats.get_chat_by_id(chat_id)
+            chat_record = await res if inspect.isawaitable(res) else res
             if chat_record and getattr(chat_record, "chat", None):
-                return EchoStateManager.extract_active_branch(chat_record.chat)
+                curr_id = getattr(chat_record, "current_message_id", None)
+                branch = cls.extract_active_branch(chat_record.chat, curr_id)
+                if branch:
+                    return branch
         except Exception:
             pass
         return None
@@ -819,7 +867,7 @@ class EchoCompactionEngine:
         4. Scelle <artifact id="AEC_context_checkpoint"> dans echo_settings['context_checkpoint'].
         """
         from echo_constants import COMPACTION_MIN_TURNS_REQUIRED
-        from echo_prompts import CONTEXT_COMPACTION_SYSTEM_PROMPT
+        from echo_prompts import SYS_COMPACTION_DISTILL
         from echo_gemini_client import EchoGeminiClient
 
         state_mgr = EchoStateManager(user_id=user_id, chat_id=chat_id)
@@ -894,15 +942,13 @@ class EchoCompactionEngine:
 
         user_prompt = "\n\n".join(prompt_parts)
         summary_md = await EchoGeminiClient.call_distillation(
-            system_prompt=CONTEXT_COMPACTION_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            user_id=user_id,
-            metadata=metadata,
-            events=events,
+            prompt=user_prompt,
+            __user__={"id": user_id},
+            __metadata__={**(metadata or {}), "chat_id": chat_id},
+            is_json=False,
             max_tokens=api_max_output_tokens,
-            temperature=0.1,
-            timeout=180,
-            chat_id=chat_id,
+            system_instruction=SYS_COMPACTION_DISTILL,
+            timeout=240,
         )
 
         if not summary_md or not summary_md.strip():

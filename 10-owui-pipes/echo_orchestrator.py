@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 5.231.28.1
+version: 5.231.31.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.31.1: Prise en charge asynchrone directe de EchoCompactionEngine.load_active_branch_messages.
 # 5.231.28.1: Intégration de EchoCompactionEngine.resolve_active_window dans prepare_context() pour l'injection de <artifact id="AEC_context_checkpoint"> et le découpage au pivot.
 # 5.231.20.2: Déclaration explicite de __event_call__ dans la signature de pipe() et rafraîchissement systématique des closures dans _TOOLS_CACHE[chat_id] à chaque tour.
 # 5.231.15.1: Sanctuarisation de promptTokenCount en cascade cognitive pour immuniser la persistance contre les faux deltas négatifs.
 # 5.231.13.1: Suppression de la double écriture SSE de save_context_stats et correction du cumul de promptTokenCount/cachedContentTokenCount en cascade.
-# 5.231.10.2: Déport du HUD contextuel vers context_gauge_filter, transmission de (user_id, chat_id) à EchoEvents et persistance auto-archivée.
 
 
 # ==============================================================================
@@ -259,8 +259,8 @@ class Orchestrator:
         if raw_ckpt:
             try:
                 ckpt_data = std_json.loads(raw_ckpt)
-                branch_messages = await asyncio.to_thread(
-                    EchoCompactionEngine.load_active_branch_messages, chat_id
+                branch_messages = await EchoCompactionEngine.load_active_branch_messages(
+                    chat_id
                 )
                 ckpt_prefix, cut_msg_idx = EchoCompactionEngine.resolve_active_window(
                     messages, ckpt_data, branch_messages
@@ -855,7 +855,6 @@ class Pipe:
 
                 # Lancer le serveur callback en background (non bloquant)
                 # Préservation de la référence pour éviter le Garbage Collection de la tâche
-                import asyncio
                 global _BACKGROUND_TASKS
                 if '_BACKGROUND_TASKS' not in globals():
                     _BACKGROUND_TASKS = set()

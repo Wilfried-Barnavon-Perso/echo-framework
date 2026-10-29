@@ -1,17 +1,17 @@
 """
 title: ECHO Context Compaction Filter
 author: Wilfried BARNAVON
-version: 5.231.30.1
+version: 5.231.31.1
 description: Composant système interne : Compaction contextuelle automatique in-place sur seuil.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgMjJ2LTYiLz48cGF0aCBkPSJNMTIgOFYyIi8+PHBhdGggZD0iTTQgMTJIMiIvPjxwYXRoIGQ9Ik0xMCAxMkg4Ii8+PHBhdGggZD0iTTE2IDEyaC0yIi8+PHBhdGggZD0iTTIyIDEyaC0yIi8+PHBhdGggZD0ibTE1IDE5LTMtMy0zIDMiLz48cGF0aCBkPSJtMTUgNS0zIDMtMy0zIi8+PC9zdmc+
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.31.1: Prise en charge asynchrone directe de EchoCompactionEngine.load_active_branch_messages, notification d'alerte et spinner CSS HUD.
 # 5.231.30.1: Alignement sur le modèle UserValves (ENABLE_AUTO_COMPACTION uniquement, toggle=True, icône SVG fold-vertical) et utilisation stricte des constantes SSOT.
 # 5.231.28.1: Création du filtre Inlet (priorité 25) de compaction contextuelle automatique in-place sur seuil (% de CONTEXT_MAX, désactivé par défaut).
 
 import sys
-import asyncio
 import logging
 from typing import Optional, Callable, Any
 from pydantic import BaseModel, Field
@@ -77,6 +77,9 @@ class Filter:
             "(() => {"
             "  let el = document.getElementById('echo-compact-hud');"
             "  if (!el) {"
+            "    const styleEl = document.createElement('style');"
+            "    styleEl.textContent = '@keyframes echo-compact-spin { to { transform: rotate(360deg); } }';"
+            "    document.head.appendChild(styleEl);"
             "    el = document.createElement('div');"
             "    el.id = 'echo-compact-hud';"
             "    el.setAttribute('data-echo-scope', 'global');"
@@ -84,6 +87,7 @@ class Filter:
             "backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;';"
             "    el.innerHTML = `<div style=\"background:#151924;border:1px solid rgba(56,189,248,0.35);border-radius:14px;"
             "padding:24px 32px;max-width:460px;color:#f1f5f9;box-shadow:0 20px 50px rgba(0,0,0,0.5);text-align:center;\">"
+            "<div style=\"display:inline-block;width:22px;height:22px;border:2.5px solid rgba(56,189,248,0.25);border-top-color:#38bdf8;border-radius:50%;animation:echo-compact-spin 0.8s linear infinite;margin-bottom:10px;\"></div>"
             "<div style=\"font-size:16px;font-weight:600;margin-bottom:8px;color:#38bdf8;\">🗜️ Compaction Contextuelle en cours...</div>"
             "<div id=\"echo-compact-hud-sub\" style=\"font-size:13px;color:#94a3b8;\"></div></div>`;"
             "    document.body.appendChild(el);"
@@ -141,9 +145,7 @@ class Filter:
         incoming_msg = messages[-1]
         past_messages = messages[:-1]
         try:
-            branch = await asyncio.to_thread(
-                EchoCompactionEngine.load_active_branch_messages, chat_id
-            )
+            branch = await EchoCompactionEngine.load_active_branch_messages(chat_id)
             if branch:
                 # Si le dernier message de branch est déjà le message entrant sans réponse assistant, l'exclure de past_messages
                 if branch[-1].get("role") == "user":
@@ -183,11 +185,12 @@ class Filter:
                     "info",
                 )
             else:
-                logger.info(
-                    f"ECHO Compaction ignorée ({chat_id}): {result.get('reason')}"
-                )
+                reason = result.get("reason", "Inconnue")
+                logger.info(f"ECHO Compaction ignorée ({chat_id}): {reason}")
+                await events.toast(f"ℹ️ Compaction différée : {reason}", "info")
         except Exception as e:
             logger.error(f"ECHO Compaction erreur ({chat_id}): {e}")
+            await events.toast(f"⚠️ Échec de compaction : {e}", "warning")
         finally:
             try:
                 await events.emit_execute(self._build_hud_js(False))
