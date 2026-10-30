@@ -105,7 +105,7 @@
             de données volumineuses à un sous-agent dédié.</li>
         </ul>
 
-          <h3>3. Vault Explorer (<code>file_content_explorer.py</code> v5.231.33.3) &amp; Maps Grounding
+          <h3>3. Vault Explorer (<code>file_content_explorer.py</code> v5.231.35.1) &amp; Maps Grounding
             (<code>gemini_maps_grounding.py</code> v5.229.0.0)</h3>
           <ul>
             <li><strong>Isolement &amp; Espaces :</strong> Résolution étendue des chemins
@@ -114,9 +114,13 @@
               blocs de 16 Ko (<code>read_raw_file_content</code>), prévisualisation image isolée par conversation
               (<code>show_image_to_user</code> via <code>chat_id</code>), extraction chirurgicale ciblée
               (<code>semantic_probe</code>) et distillation multimédia descriptive horodatée
-              (<code>read_multimedia_file</code>) avec décimation vidéo à 1 fps en résolution native + audio intact
-              (<code>-c:a copy</code>) et segmentation Map-Reduce en mémoire vive sans recouvrement
-              (<code>pipe:1</code> / <code>pypdf</code> <code>BytesIO</code>) au-delà de 30 Mo ou 45 min
+              (<code>read_multimedia_file</code>) avec décimation vidéo à 1 fps en résolution native
+              (<code>-preset veryfast -qp 26 -g 10 -bf 0</code>, fragmentation fMP4 <code>-frag_duration 5000000</code>,
+              régulation CPU/RAM multi-chat via sémaphore <code>MAX_CONCURRENT_TRANSCODES</code>, priorité OS
+              <code>nice 19</code>, <code>-threads 2</code> et <code>-skip_frame noref</code>)
+              + audio intact (<code>-c:a copy</code>) et segmentation Map-Reduce en mémoire vive sans recouvrement
+              (<code>pipe:1</code> / <code>pypdf</code> <code>BytesIO</code>, troncature fMP4 zéro-perte
+              <code>_trim_fmp4_to_max_bytes</code>) au-delà de 30 Mo ou 45 min
               par million de tokens.</li>
             <li><strong>Maps Grounding :</strong> Ancrage spatial générant des données topologiques projetées côté
               client
@@ -132,7 +136,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.34 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.36 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

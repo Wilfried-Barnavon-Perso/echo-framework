@@ -1,21 +1,22 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.231.33.3
+version: 5.231.35.1
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.231.33.3: Factorisation du pipeline multimodal, auto-résolution FFmpeg (_ensure_ffmpeg_bin), évaluation du seuil de 30 Mo sur le flux vidéo décimé à 1 fps en résolution native avec piste audio intacte (-c:a copy) et segmentation Map-Reduce sans recouvrement en mémoire vive.
+# 5.231.35.1: Régulation CPU/RAM multi-chat du transcodage FFmpeg (sémaphore MAX_CONCURRENT_TRANSCODES, nice 19 / IDLE_PRIORITY_CLASS, -threads 2, -filter_threads 1, -skip_frame noref).  # noqa: E501
+# 5.231.34.1: Correction de la fragmentation fMP4 sur pipe:1 (-frag_duration 5000000 -g 10 -bf 0), quantification H.264 fixe (-preset veryfast -qp 26) à 1 fps, troncature fMP4 zéro-perte (_trim_fmp4_to_max_bytes) et conformité Flake8.  # noqa: E501
+# 5.231.33.3: Factorisation du pipeline multimodal, auto-résolution FFmpeg (_ensure_ffmpeg_bin), évaluation du seuil de 30 Mo sur le flux vidéo décimé à 1 fps en résolution native avec piste audio intacte (-c:a copy) et segmentation Map-Reduce sans recouvrement en mémoire vive.  # noqa: E501
 # 5.231.32.1: Surcharge d'instruction pour read_multimedia_file, correction d'assignation SYS/USR prompt et docstring descriptive étendue.
 # 5.231.29.1: Alignement de _resolve_extended_file_path sur les constantes SSOT CODEX_DIR_NAME, CODEX_WORKSPACE_MAIN et CODEX_WORKSPACE_SANDBOX.
-# 5.231.20.1: Isolation multi-chat du viewer d'image via transmission de chat_id à EchoUI.show_image_js.
-# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 
 import io
 import os
 import re
 import sys
+import struct
 import shutil
 import base64
 import httpx
@@ -27,14 +28,14 @@ from pydantic import BaseModel, Field
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_events import EchoEvents
-from echo_core import wrap_tool_output, wrap_cascade_output, split_thought_process
-from echo_paths import resolve_upload_file_path, get_echo_session_path
-from echo_state_manager import EchoStateManager
-from echo_gemini_client import EchoGeminiClient
-from echo_http import get_stealth_headers
-from echo_ui import EchoUI
-from echo_constants import (
+from echo_events import EchoEvents  # noqa: E402
+from echo_core import wrap_tool_output, wrap_cascade_output, split_thought_process  # noqa: E402
+from echo_paths import resolve_upload_file_path, get_echo_session_path  # noqa: E402
+from echo_state_manager import EchoStateManager  # noqa: E402
+from echo_gemini_client import EchoGeminiClient  # noqa: E402
+from echo_http import get_stealth_headers  # noqa: E402
+from echo_ui import EchoUI  # noqa: E402
+from echo_constants import (  # noqa: E402
     CODEX_DIR_NAME,
     CODEX_WORKSPACE_MAIN,
     CODEX_WORKSPACE_SANDBOX,
@@ -46,13 +47,15 @@ from echo_constants import (
     get_gemini_mime,
     is_text_mime,
 )
-from echo_prompts import SYS_EXPLORE_SENSORY, SYS_EXPLORER_PROBE, USR_EXPLORE_SENSORY
+from echo_prompts import SYS_EXPLORE_SENSORY, SYS_EXPLORER_PROBE, USR_EXPLORE_SENSORY  # noqa: E402
+
 
 class Tools:
     class Valves(BaseModel):
         PROBE_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour le sondage sémantique.")
         MAX_READ_SIZE_KB: int = Field(default=16, description="Taille maximale (en Ko) pour la lecture brute (RAW).")
         MAX_MULTIMODAL_SIZE_KB: int = Field(default=30720, description="Taille maximale (en Ko) pour l'injection multimédia (défaut: 30 Mo).")
+        MAX_CONCURRENT_TRANSCODES: int = Field(default=1, description="Nombre maximal de transcodages FFmpeg simultanés (anti-saturation CPU/RAM multi-chat).")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -60,10 +63,11 @@ class Tools:
 
     def _resolve_extended_file_path(self, uid: str, cid: str, target: str) -> str:
         """Résout le chemin d'un fichier (main, upload, ou sandbox)."""
-        if not target: return None
+        if not target:
+            return None
         target = target.strip()
         safe_target = target.replace("\\", "/").strip("/")
-        
+
         if cid:
             # 1. Résolution Registre (Codex 'main')
             state = EchoStateManager(user_id=uid, chat_id=cid)
@@ -74,11 +78,12 @@ class Tools:
                     CODEX_WORKSPACE_MAIN,
                     resource.get("name", target),
                 )
-                
+
         # 2. Upload Standard (files)
         fpath = resolve_upload_file_path(uid, target, self.uploads_dir, chat_id=cid)
-        if fpath: return fpath
-            
+        if fpath:
+            return fpath
+
         # 3. Fallback 'Sandbox' (fichier brut non indexé)
         if cid and ".." not in safe_target.split("/"):
             sandbox_path = os.path.join(
@@ -88,33 +93,50 @@ class Tools:
             )
             if os.path.exists(sandbox_path) and os.path.isfile(sandbox_path):
                 return sandbox_path
-                
+
         return None
 
     async def read_raw_file_content(
-        self, 
-        file_id: str, 
-        start_line: int = 1, 
-        end_line: int = 100, 
+        self,
+        file_id: str,
+        start_line: int = 1,
+        end_line: int = 100,
         output_mode: Literal["text", "base64", "hex"] = "text",
         byte_offset: int = 0,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
-        __event_call__: Any = None
+        __event_call__: Any = None,
     ) -> str:
         """Lit un fichier de l'Espace Personnel (Uploads, Codex `main` ou `sandbox`) par lignes ou offset binaire."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
-        fpath = self._resolve_extended_file_path(uid, __metadata__.get("chat_id"), file_id)
-        if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        cid = __metadata__.get("chat_id") if __metadata__ else None
+        user_id_out = __user__.get("id", "system") if __user__ else "system"
+        fpath = self._resolve_extended_file_path(uid, cid, file_id)
+        if not fpath:
+            return wrap_tool_output(
+                text="❌ Fichier introuvable.",
+                status={"status": "error"},
+                user_id=user_id_out,
+                chat_id=cid,
+                metadata=__metadata__,
+            )
 
         size = os.path.getsize(fpath)
-        if byte_offset > size: return wrap_tool_output(text="❌ Offset invalide.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        if byte_offset > size:
+            return wrap_tool_output(
+                text="❌ Offset invalide.",
+                status={"status": "error"},
+                user_id=user_id_out,
+                chat_id=cid,
+                metadata=__metadata__,
+            )
 
         MAX_CHARS = self.valves.MAX_READ_SIZE_KB * 1024
         safe_name = os.path.basename(fpath)
-        if "_" in safe_name and len(safe_name.split("_")[0]) >= 32: safe_name = safe_name.split("_", 1)[1]
+        if "_" in safe_name and len(safe_name.split("_")[0]) >= 32:
+            safe_name = safe_name.split("_", 1)[1]
         await events.status(f"📂 Lecture : {safe_name}...")
 
         try:
@@ -125,60 +147,84 @@ class Tools:
 
             warning_msg = ""
             if output_mode == "text" and not is_text:
-                warning_msg = f"\n\n[ATTENTION SYSTÈME ECHO]\nCe fichier est un binaire ({mime}). Si le texte extrait ci-dessus est illisible, incomplet ou ne correspond pas aux attentes, le Modèle a la STRICTE INTERDICTION de boucler en rappelant l'outil avec d'autres lignes/offsets.\n=> Le Modèle DOIT utiliser output_mode='base64' pour une injection multimodale native (PDF/Images/Media), ou déléguer l'analyse via `semantic_probe` (extraction ciblée) ou `read_multimedia_file` (distillation descriptive complète)."
+                warning_msg = (
+                    f"\n\n[ATTENTION SYSTÈME ECHO]\n"
+                    f"Ce fichier est un binaire ({mime}). Si le texte extrait ci-dessus est illisible, incomplet ou ne correspond pas aux attentes, "
+                    f"le Modèle a la STRICTE INTERDICTION de boucler en rappelant l'outil avec d'autres lignes/offsets.\n"
+                    f"=> Le Modèle DOIT utiliser output_mode='base64' pour une injection multimodale native (PDF/Images/Media), "
+                    f"ou déléguer l'analyse via `semantic_probe` (extraction ciblée) ou `read_multimedia_file` (distillation descriptive complète)."
+                )
 
             if output_mode == "text":
                 lines = []
-                with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
+                with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
                     f.seek(byte_offset)
-                    
+
                     if byte_offset == 0:
                         if start_line > 1:
                             for _ in range(start_line - 1):
-                                if not f.readline(MAX_CHARS): break
-                                
+                                if not f.readline(MAX_CHARS):
+                                    break
+
                         total_read = 0
                         for i in range(start_line, end_line + 1):
                             line = f.readline(MAX_CHARS)
-                            if not line: break
-                            
+                            if not line:
+                                break
+
                             # Détection de la troncature d'une ligne trop longue
-                            if len(line) == MAX_CHARS and not line.endswith('\n'):
+                            if len(line) == MAX_CHARS and not line.endswith("\n"):
                                 f.readline()  # purge le reste de la ligne dans le flux
                                 line += " [...tronqué]"
-                                
+
                             total_read += len(line)
-                            clean_line = line.replace('\x00', '').rstrip('\r\n')
+                            clean_line = line.replace("\x00", "").rstrip("\r\n")
                             lines.append(f"{i} | {clean_line}")
                             if total_read >= MAX_CHARS:
                                 lines.append(f"... [Tronqué : limite de {self.valves.MAX_READ_SIZE_KB} Ko atteinte]")
                                 break
                         new_offset = f.tell()
-                        res_text = f"--- CONTENU TEXTE (Lignes {start_line} à {end_line}, Offset 0 à {new_offset}) ---\n\n" + "\n".join(lines) + warning_msg
+                        res_text = (
+                            f"--- CONTENU TEXTE (Lignes {start_line} à {end_line}, Offset 0 à {new_offset}) ---\n\n"
+                            + "\n".join(lines)
+                            + warning_msg
+                        )
                     else:
                         # Lecture brute par offset (évite l'hallucination des lignes virtuelles)
-                        raw_chunk = f.read(MAX_CHARS).replace('\x00', '')
+                        raw_chunk = f.read(MAX_CHARS).replace("\x00", "")
                         lines.append(raw_chunk)
                         new_offset = f.tell()
                         res_text = f"--- CONTENU TEXTE (Offset {byte_offset} à {new_offset}) ---\n\n" + raw_chunk + warning_msg
             elif output_mode == "base64":
-                with open(fpath, 'rb') as f:
+                with open(fpath, "rb") as f:
                     f.seek(byte_offset)
-                    content = base64.b64encode(f.read(12288)).decode('utf-8')
+                    content = base64.b64encode(f.read(12288)).decode("utf-8")
                     new_offset = f.tell()
                 res_text = f"--- CONTENU BASE64 ---\n\n{content}"
             else:
-                with open(fpath, 'rb') as f:
+                with open(fpath, "rb") as f:
                     f.seek(byte_offset)
                     import binascii
-                    content = binascii.hexlify(f.read(8192), sep=' ', bytes_per_sep=2).decode('utf-8')
+                    content = binascii.hexlify(f.read(8192), sep=" ", bytes_per_sep=2).decode("utf-8")
                     new_offset = f.tell()
                 res_text = f"--- CONTENU HEXADECIMAL ---\n\n{content}"
 
             await events.status("Lecture terminée.", done=True)
-            return wrap_tool_output(text=res_text, status={"status": "success", "new_offset": str(new_offset), "total_size": str(size)}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(
+                text=res_text,
+                status={"status": "success", "new_offset": str(new_offset), "total_size": str(size)},
+                user_id=user_id_out,
+                chat_id=cid,
+                metadata=__metadata__,
+            )
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(
+                text=f"❌ Erreur : {str(e)}",
+                status={"status": "error"},
+                user_id=user_id_out,
+                chat_id=cid,
+                metadata=__metadata__,
+            )
 
     @staticmethod
     def _format_hms(seconds: float) -> str:
@@ -217,6 +263,41 @@ class Tools:
         )
 
     _FFMPEG_BIN: Optional[str] = None
+    _FFMPEG_SEMAPHORE: Optional[asyncio.Semaphore] = None
+    _FFMPEG_SEM_LIMIT: int = 0
+
+    def _get_ffmpeg_semaphore(self) -> asyncio.Semaphore:
+        """
+        Retourne le sémaphore global de régulation des transcodages FFmpeg concurrents.
+        Empêche l'effondrement CPU et les pics OOM RAM (N * 30 Mo) en environnement multi-utilisateur / multi-chat
+        en sérialisant les extractions lourdes à l'échelle du worker Open WebUI.
+        """
+        limit = max(1, int(getattr(self.valves, "MAX_CONCURRENT_TRANSCODES", 1)))
+        if Tools._FFMPEG_SEMAPHORE is None or Tools._FFMPEG_SEM_LIMIT != limit:
+            Tools._FFMPEG_SEMAPHORE = asyncio.Semaphore(limit)
+            Tools._FFMPEG_SEM_LIMIT = limit
+        return Tools._FFMPEG_SEMAPHORE
+
+    @staticmethod
+    def _lower_posix_priority() -> None:
+        """Abaisse la priorité d'ordonnancement CPU du sous-processus au niveau le plus bas (nice +19) sous Linux/POSIX."""
+        try:
+            os.nice(19)
+        except Exception:
+            pass
+
+    @classmethod
+    def _get_low_priority_subprocess_kwargs(cls) -> dict:
+        """
+        Construit les arguments plateforme de `asyncio.create_subprocess_exec` pour exécuter FFmpeg
+        en priorité CPU minimale (`os.nice(19)` sous Linux/Docker, `IDLE_PRIORITY_CLASS` sous Windows),
+        garantissant que la boucle événementielle Open WebUI, FastAPI et SQLite restent toujours prioritaires.
+        """
+        if os.name == "nt":
+            return {"creationflags": 0x00000040}  # IDLE_PRIORITY_CLASS
+        if hasattr(os, "nice"):
+            return {"preexec_fn": cls._lower_posix_priority}
+        return {}
 
     async def _ensure_ffmpeg_bin(self) -> str:
         """
@@ -299,7 +380,7 @@ class Tools:
 
     @staticmethod
     def _get_ffmpeg_muxer_and_mime(mime: str, ext: str) -> Tuple[List[str], str]:
-        """Sélectionne le conteneur streamable (pipe:1) sans aucun ré-encodage (-c copy)."""
+        """Sélectionne le conteneur streamable sur stdout (pipe:1) adapté au flux audio ou vidéo."""
         if mime.startswith("audio/"):
             if mime in ("audio/mp3", "audio/mpeg") or ext == ".mp3":
                 return ["-f", "mp3"], "audio/mp3"
@@ -320,7 +401,65 @@ class Tools:
         return [
             "-f", "mp4",
             "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+            "-frag_duration", "5000000",
         ], "video/mp4"
+
+    @staticmethod
+    def _trim_fmp4_to_max_bytes(buf: bytearray, max_bytes: int) -> Tuple[Optional[bytes], float]:
+        """
+        Tronque un buffer fMP4 en mémoire vive exactement à la fin du dernier couple complet
+        (moof + mdat) inférieur ou égal à max_bytes, et calcule la durée vidéo exacte extraite (1 trame = 1s à 1 fps).
+        """
+        pos = 0
+        last_valid_end = 0
+        video_frames = 0
+        has_moov = False
+        buf_len = len(buf)
+
+        while pos + 8 <= buf_len and pos <= max_bytes:
+            sz, btype = struct.unpack(">I4s", buf[pos:pos + 8])
+            if sz < 8 or pos + sz > max_bytes or pos + sz > buf_len:
+                break
+            if btype == b"moov":
+                has_moov = True
+            elif btype == b"moof":
+                mpos = pos + 8
+                mend = pos + sz
+                frag_vframes = 0
+                while mpos + 8 <= mend:
+                    msz, mtype = struct.unpack(">I4s", buf[mpos:mpos + 8])
+                    if msz < 8 or mpos + msz > mend:
+                        break
+                    if mtype == b"traf":
+                        tpos = mpos + 8
+                        tend = mpos + msz
+                        is_vid = False
+                        while tpos + 8 <= tend:
+                            tsz, ttype = struct.unpack(">I4s", buf[tpos:tpos + 8])
+                            if tsz < 8 or tpos + tsz > tend:
+                                break
+                            if ttype == b"tfhd" and tsz >= 16:
+                                tid = struct.unpack(">I", buf[tpos + 12:tpos + 16])[0]
+                                is_vid = (tid == 1)
+                            elif ttype == b"trun" and is_vid and tsz >= 16:
+                                frag_vframes += struct.unpack(">I", buf[tpos + 12:tpos + 16])[0]
+                            tpos += tsz
+                    mpos += msz
+
+                if pos + sz + 8 <= buf_len:
+                    next_sz, next_type = struct.unpack(">I4s", buf[pos + sz:pos + sz + 8])
+                    frag_end = pos + sz + next_sz
+                    if next_type == b"mdat" and next_sz >= 8 and frag_end <= max_bytes and frag_end <= buf_len:
+                        video_frames += frag_vframes
+                        last_valid_end = frag_end
+                        pos = frag_end
+                        continue
+                break
+            pos += sz
+
+        if has_moov and last_valid_end > 0 and video_frames > 0:
+            return bytes(buf[:last_valid_end]), float(video_frames)
+        return None, 0.0
 
     async def _extract_media_segment_bytes(
         self,
@@ -330,12 +469,14 @@ class Tools:
         end_sec: float,
         max_bytes: int,
         allow_overflow: bool = False,
-    ) -> Tuple[Optional[bytes], str, int]:
+    ) -> Tuple[Optional[bytes], str, int, float]:
         """
-        Extrait une tranche [start_sec, end_sec] 100% en mémoire vive via FFmpeg (pipe:1) :
-        - Vidéo : décimation temporelle à 1 fps (-vf fps=1) en résolution spatiale native intacte + piste audio copiée bit-à-bit (-c:a copy).
+        Extrait une tranche [start_sec, end_sec] 100% en mémoire vive via FFmpeg (pipe:1) sous régulation CPU/RAM :
+        - Vidéo : décimation temporelle à 1 fps (-vf fps=1) en résolution spatiale native intacte + piste audio copiée bit-à-bit (-c:a copy),
+          saut natif des trames non-référencées au décodage (-skip_frame noref), bridage strict à 2 threads CPU (-threads 2, -filter_threads 1),
+          priorité OS minimale (nice 19 / IDLE_PRIORITY_CLASS) et sérialisation inter-chats via sémaphore (_get_ffmpeg_semaphore).
         - Audio : copie binaire directe (-c copy).
-        Retourne (raw_bytes, out_mime, status_code) où status_code vaut :
+        Retourne (raw_bytes, out_mime, status_code, actual_duration_sec) où status_code vaut :
           0 = succès, 1 = dépassement max_bytes (overflow VBR), -1 = EOF ou erreur.
         """
         ext = os.path.splitext(fpath)[1].lower()
@@ -343,25 +484,35 @@ class Tools:
         ffmpeg_bin = await self._ensure_ffmpeg_bin()
         seg_duration = max(0.1, end_sec - start_sec)
         is_video = mime.startswith("video/")
+        # Optimisation CPU : en entrée vidéo, -skip_frame noref court-circuite le décodage des B-frames non-référencées
+        # (~19% d'économie CPU), et -threads 2 borne le décodeur pour préserver au moins 2 vCPU sur 4 pour Open WebUI.
+        input_args = ["-threads", "2", "-skip_frame", "noref"] if is_video else []
         codec_args = (
             [
-                "-vf", "fps=1",
+                "-filter_threads", "1",
+                "-vf", "fps=1,scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                "-pix_fmt", "yuv420p",
                 "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-crf", "23",
+                "-preset", "veryfast",
+                "-qp", "26",
+                "-g", "10",
+                "-bf", "0",
+                "-threads", "2",
                 "-c:a", "copy",
             ]
             if is_video
             else ["-c", "copy"]
         )
+        prio_kwargs = self._get_low_priority_subprocess_kwargs()
 
-        async def _run_ffmpeg(m_args: List[str]) -> Tuple[Optional[bytes], int]:
+        async def _run_ffmpeg(m_args: List[str], fmt_mime: str) -> Tuple[Optional[bytes], int, float]:
             cmd = [
                 ffmpeg_bin,
                 "-hide_banner",
                 "-loglevel", "error",
                 "-ss", f"{start_sec:.3f}",
                 "-t", f"{seg_duration:.3f}",
+                *input_args,
                 "-i", fpath,
                 *codec_args,
                 *m_args,
@@ -371,6 +522,7 @@ class Tools:
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                **prio_kwargs,
             )
             buf = bytearray()
             overflow = False
@@ -391,24 +543,29 @@ class Tools:
                     await proc.wait()
                 except Exception:
                     pass
-                return None, -1
+                return None, -1, 0.0
 
             if overflow:
-                return None, 1
+                if fmt_mime == "video/mp4":
+                    trimmed, trimmed_dur = self._trim_fmp4_to_max_bytes(buf, max_bytes)
+                    if trimmed is not None and trimmed_dur >= 5.0:
+                        return trimmed, 0, trimmed_dur
+                return None, 1, 0.0
             if proc.returncode != 0 or len(buf) == 0:
-                return None, -1
-            return bytes(buf), 0
+                return None, -1, 0.0
+            return bytes(buf), 0, seg_duration
 
-        data, code = await _run_ffmpeg(muxer_args)
-        if code == 1:
-            return None, out_mime, 1
-        if data is None and is_video and muxer_args[1] != "matroska":
-            # Fallback conteneur universel Matroska (conservant strictement -c:a copy) si le codec audio source est incompatible avec fMP4
-            data, code = await _run_ffmpeg(["-f", "matroska"])
-            out_mime = "video/webm"
+        async with self._get_ffmpeg_semaphore():
+            data, code, actual_dur = await _run_ffmpeg(muxer_args, out_mime)
             if code == 1:
-                return None, out_mime, 1
-        return data, out_mime, code
+                return None, out_mime, 1, 0.0
+            if data is None and is_video and muxer_args[1] != "matroska":
+                # Fallback conteneur universel Matroska (conservant strictement -c:a copy) si le codec audio source est incompatible avec fMP4
+                out_mime = "video/webm"
+                data, code, actual_dur = await _run_ffmpeg(["-f", "matroska"], out_mime)
+                if code == 1:
+                    return None, out_mime, 1, 0.0
+            return data, out_mime, code, actual_dur
 
     async def _iter_pdf_memory_segments(
         self, fpath: str, max_bytes: int
@@ -462,7 +619,7 @@ class Tools:
         """
         Générateur JIT de segments multimodaux en mémoire vive :
         - Fast-Path Zéro-RAM sur fichier direct si Taille <= MAX_MULTIMODAL_SIZE_KB et Durée <= 45 min / 1M tokens.
-        - Segmentation en mémoire vive (FFmpeg -c copy pipe:1 ou pypdf BytesIO) avec subdivision dichotomique anti-VBR sinon.
+        - Segmentation en mémoire vive (FFmpeg pipe:1 ou pypdf BytesIO) avec troncature fMP4 zéro-perte ou dichotomie sinon.
         """
         max_bytes = self.valves.MAX_MULTIMODAL_SIZE_KB * 1024
         max_duration_sec = int(2700 * (ECHO_MAX_CONTEXT_SIZE / 1048576))
@@ -514,28 +671,37 @@ class Tools:
                 s_sec, e_sec = queue.pop(0)
                 span = e_sec - s_sec
                 can_split = span > 10.0
-                raw_bytes, seg_mime, status_code = await self._extract_media_segment_bytes(
+                raw_bytes, seg_mime, status_code, actual_dur = await self._extract_media_segment_bytes(
                     fpath, mime, s_sec, e_sec, max_bytes, allow_overflow=not can_split
                 )
                 if status_code == 1 and can_split:
-                    # Subdivision dichotomique bout-à-bout (sans recouvrement) si le flux extrait dépasse 30 Mo
+                    # Subdivision dichotomique bout-à-bout (sans recouvrement) si le flux non-fMP4 extrait dépasse 30 Mo
                     mid = (s_sec + e_sec) / 2.0
                     queue.insert(0, (mid, e_sec))
                     queue.insert(0, (s_sec, mid))
                     continue
                 if raw_bytes:
+                    effective_end = min(e_sec, s_sec + actual_dur) if actual_dur > 0 else e_sec
+                    if can_split and (e_sec - effective_end) > 1.0:
+                        queue.insert(0, (effective_end, e_sec))
                     marker = EchoGeminiClient.register_memory_stream(raw_bytes)
-                    is_full_single = (not unknown_dur) and (s_sec == 0.0) and (e_sec >= duration) and (len(queue) == 0)
-                    label = None if is_full_single else f"Segment [{self._format_hms(s_sec)} - {self._format_hms(e_sec)}]"
+                    is_full_single = (
+                        (not unknown_dur)
+                        and (s_sec == 0.0)
+                        and (effective_end >= duration - 1.0)
+                        and (len(queue) == 0)
+                    )
+                    label = None if is_full_single else f"Segment [{self._format_hms(s_sec)} - {self._format_hms(effective_end)}]"
                     yield marker, seg_mime, s_sec, label
                     if unknown_dur and not queue and len(raw_bytes) > 4096:
-                        queue.append((e_sec, e_sec + step_sec))
+                        queue.append((effective_end, effective_end + step_sec))
             return
 
         # 4. Fallback de sécurité si un binaire non-segmentable dépasse MAX_MULTIMODAL_SIZE_KB
         if file_size > max_bytes:
             raise ValueError(
-                f"Max Size Exceeded : Le fichier ({file_size / (1024 * 1024):.1f} Mo) dépasse la limite autorisée de {self.valves.MAX_MULTIMODAL_SIZE_KB / 1024:.1f} Mo et son format ({mime}) ne supporte pas la segmentation."
+                f"Max Size Exceeded : Le fichier ({file_size / (1024 * 1024):.1f} Mo) dépasse la limite autorisée "
+                f"de {self.valves.MAX_MULTIMODAL_SIZE_KB / 1024:.1f} Mo et son format ({mime}) ne supporte pas la segmentation."
             )
         yield f"___ECHO_STREAM_FILE___{fpath}___", mime, 0.0, None
 
@@ -648,6 +814,13 @@ class Tools:
         seg_idx = 0
 
         try:
+            init_hb = (
+                f"👁️ Préparation et analyse multimodale de {safe_name}..."
+                if mode == "sensory"
+                else f"🤖 Préparation et sondage sémantique de {safe_name}..."
+            )
+            await events.status(init_hb, False)
+
             async for data_marker, seg_mime, start_offset_sec, seg_label in self._iter_in_memory_segments(fpath, mime):
                 seg_idx += 1
                 try:
@@ -813,9 +986,9 @@ class Tools:
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
-        __event_call__: Any = None
+        __event_call__: Any = None,
     ) -> str:
-        """Extrait de manière chirurgicale les données, réponses ou concepts ciblés (query) d'un document ou média volumineux (PDF, texte, image, audio, vidéo) sans saturer le contexte."""
+        """Extrait de manière chirurgicale les données, réponses ou concepts ciblés (query) d'un document ou média volumineux."""
         return await self._execute_multimodal_analysis(
             file_id=file_id,
             user_prompt=query,
@@ -833,7 +1006,7 @@ class Tools:
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
-        __event_call__: Any = None
+        __event_call__: Any = None,
     ) -> str:
         """Génère un rapport textuel descriptif complet et horodaté d'un fichier multimédia (image, audio, vidéo)."""
         user_prompt = instruction.strip() if instruction and instruction.strip() else USR_EXPLORE_SENSORY
@@ -848,117 +1021,194 @@ class Tools:
         )
 
     async def show_image_to_user(
-        self, 
-        target: str, 
+        self,
+        target: str,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
-        __event_call__: Any = None
+        __event_call__: Any = None,
     ) -> dict:
         """Affiche une image locale ou valide une URL d'image distante pour présentation à l'utilisateur."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
+        cid = __metadata__.get("chat_id") if __metadata__ else None
+        user_id_out = __user__.get("id", "system") if __user__ else "system"
         is_url = target.lower().startswith(("http://", "https://"))
-        
+
         # Sécurité anti-chemins absolus
         if not is_url and (target.startswith("/") or (len(target) > 1 and target[1] == ":")):
-             return wrap_tool_output(text="❌ Sécurité : Accès restreint.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(
+                text="❌ Sécurité : Accès restreint.",
+                status={"status": "error"},
+                user_id=user_id_out,
+                chat_id=cid,
+                metadata=__metadata__,
+            )
 
         try:
             if is_url:
                 await events.status("🌐 Vérification du lien distant...")
                 h = get_stealth_headers(target)
-                
+
                 try:
                     async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as c:
                         r = await c.head(target, headers=h)
                         if r.status_code >= 400:
                             r = await c.get(target, headers={**h, "Range": "bytes=0-0"}, timeout=8.0)
-                        
+
                         r.raise_for_status()
-                        
+
                         content_type = r.headers.get("content-type", "").lower()
                         if content_type and not content_type.startswith("image/"):
                             return wrap_tool_output(
                                 text=f"❌ Le lien pointe vers un contenu '{content_type}', pas une image. Le Modèle DOIT s'interdire d'utiliser la syntaxe MD.",
-                                status={"status": "error"}
-                            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-                            
+                                status={"status": "error"},
+                                user_id=user_id_out,
+                                chat_id=cid,
+                                metadata=__metadata__,
+                            )
+
                         return wrap_tool_output(
                             text=f"✅ L'image est valide et accessible. Le Modèle DOIT utiliser ce code exact dans sa réponse : `![Description]({target})`",
-                            status={"status": "success"}
-                        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-                        
+                            status={"status": "success"},
+                            user_id=user_id_out,
+                            chat_id=cid,
+                            metadata=__metadata__,
+                        )
+
                 except httpx.HTTPStatusError as e:
                     if e.response.status_code == 404:
                         return wrap_tool_output(
                             text="❌ L'image n'existe pas (Erreur 404). Lien mort. Ne l'affichez pas.",
-                            status={"status": "error"}
-                        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                            status={"status": "error"},
+                            user_id=user_id_out,
+                            chat_id=cid,
+                            metadata=__metadata__,
+                        )
                     else:
                         return wrap_tool_output(
-                            text=f"⚠️ La vérification serveur est bloquée (Erreur {e.response.status_code}). Le navigateur de l'utilisateur y parviendra peut-être. Tentez le code en dernier recours : `![Description]({target})`",
-                            status={"status": "warning"}
-                        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                            text=(
+                                f"⚠️ La vérification serveur est bloquée (Erreur {e.response.status_code}). "
+                                f"Le navigateur de l'utilisateur y parviendra peut-être. Tentez le code en dernier recours : `![Description]({target})`"
+                            ),
+                            status={"status": "warning"},
+                            user_id=user_id_out,
+                            chat_id=cid,
+                            metadata=__metadata__,
+                        )
                 except Exception:
                     return wrap_tool_output(
-                        text=f"⚠️ La vérification serveur a échoué (Réseau/Timeout). Le navigateur client y parviendra peut-être. Tentez le code : `![Description]({target})`",
-                        status={"status": "warning"}
-                    , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                        text=(
+                            f"⚠️ La vérification serveur a échoué (Réseau/Timeout). "
+                            f"Le navigateur client y parviendra peut-être. Tentez le code : `![Description]({target})`"
+                        ),
+                        status={"status": "warning"},
+                        user_id=user_id_out,
+                        chat_id=cid,
+                        metadata=__metadata__,
+                    )
             else:
-                fpath = self._resolve_extended_file_path(uid, __metadata__.get("chat_id"), target)
+                fpath = self._resolve_extended_file_path(uid, cid, target)
                 if not fpath:
-                    return wrap_tool_output(text=f"❌ Image '{target}' introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    return wrap_tool_output(
+                        text=f"❌ Image '{target}' introuvable.",
+                        status={"status": "error"},
+                        user_id=user_id_out,
+                        chat_id=cid,
+                        metadata=__metadata__,
+                    )
                 mime, _ = mimetypes.guess_type(fpath)
-                mime = mime or 'image/png'
-                with open(fpath, 'rb') as f:
-                    b64 = base64.b64encode(f.read()).decode('utf-8')
+                mime = mime or "image/png"
+                with open(fpath, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("utf-8")
                 title = f"Espace Personnel : {os.path.basename(fpath)}"
 
             # Injection JS pure dans le DOM Open WebUI — aucun retour HTMLResponse
-            js_code = EchoUI.show_image_js(b64, mime, title, chat_id=__metadata__.get("chat_id") if __metadata__ else None)
+            js_code = EchoUI.show_image_js(b64, mime, title, chat_id=cid)
             if events and (events.caller or events.emitter):
                 await events.call_execute(js_code)
-            
+
             await events.status("✅ Image affichée.", done=True)
-            return wrap_tool_output(text=f"✅ Image affichée dans le viewer ECHO.\n\n**Titre :** {title}", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(
+                text=f"✅ Image affichée dans le viewer ECHO.\n\n**Titre :** {title}",
+                status={"status": "success"},
+                user_id=user_id_out,
+                chat_id=cid,
+                metadata=__metadata__,
+            )
 
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Échec affichage : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(
+                text=f"❌ Échec affichage : {str(e)}",
+                status={"status": "error"},
+                user_id=user_id_out,
+                chat_id=cid,
+                metadata=__metadata__,
+            )
 
-
-    async def get_file_metadata(self, file_id: str, __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None) -> str:
+    async def get_file_metadata(
+        self,
+        file_id: str,
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+    ) -> str:
         """Récupère la taille et le type MIME d'un fichier de l'Espace Personnel."""
         uid = __user__.get("id", "anonymous")
-        fpath = self._resolve_extended_file_path(uid, __metadata__.get("chat_id"), file_id)
-        if not fpath: return wrap_tool_output(text="❌ Fichier introuvable.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        cid = __metadata__.get("chat_id") if __metadata__ else None
+        user_id_out = __user__.get("id", "system") if __user__ else "system"
+        fpath = self._resolve_extended_file_path(uid, cid, file_id)
+        if not fpath:
+            return wrap_tool_output(
+                text="❌ Fichier introuvable.",
+                status={"status": "error"},
+                user_id=user_id_out,
+                chat_id=cid,
+                metadata=__metadata__,
+            )
         stat = os.stat(fpath)
         mime, _ = get_gemini_mime(fpath)
-        return wrap_tool_output(text=f"📊 **{os.path.basename(fpath)}**\nTaille: {stat.st_size} octets\nType: {mime}", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        return wrap_tool_output(
+            text=f"📊 **{os.path.basename(fpath)}**\nTaille: {stat.st_size} octets\nType: {mime}",
+            status={"status": "success"},
+            user_id=user_id_out,
+            chat_id=cid,
+            metadata=__metadata__,
+        )
 
     async def calculate_file_hashes(
-        self, 
-        file_ids: List[str], 
+        self,
+        file_ids: List[str],
         algorithm: Literal["sha256", "md5", "sha1", "sha512", "blake2b", "crc32"] = "sha256",
-        __user__: dict = {}, 
-        __metadata__: dict = {}, 
-        __event_emitter__: Any = None
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
     ) -> str:
         """Calcule les empreintes cryptographiques (SHA256, MD5, etc.) d'une liste de fichiers."""
         import zlib
         uid = __user__.get("id", "anonymous")
+        cid = __metadata__.get("chat_id") if __metadata__ else None
+        user_id_out = __user__.get("id", "system") if __user__ else "system"
         res = []
         for fid in file_ids:
-            p = self._resolve_extended_file_path(uid, __metadata__.get("chat_id"), fid)
+            p = self._resolve_extended_file_path(uid, cid, fid)
             if p:
                 if algorithm == "crc32":
                     crc = 0
-                    with open(p, 'rb') as f:
-                        for chunk in iter(lambda: f.read(65536), b""): crc = zlib.crc32(chunk, crc)
+                    with open(p, "rb") as f:
+                        for chunk in iter(lambda: f.read(65536), b""):
+                            crc = zlib.crc32(chunk, crc)
                     res.append(f"{os.path.basename(p)} ({algorithm.upper()}): {crc & 0xFFFFFFFF:08x}")
                 else:
                     h = hashlib.new(algorithm)
-                    with open(p, 'rb') as f:
-                        for chunk in iter(lambda: f.read(65536), b""): h.update(chunk)
+                    with open(p, "rb") as f:
+                        for chunk in iter(lambda: f.read(65536), b""):
+                            h.update(chunk)
                     res.append(f"{os.path.basename(p)} ({algorithm.upper()}): {h.hexdigest()}")
-        return wrap_tool_output(text="\n".join(res), status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        return wrap_tool_output(
+            text="\n".join(res),
+            status={"status": "success"},
+            user_id=user_id_out,
+            chat_id=cid,
+            metadata=__metadata__,
+        )
