@@ -2,19 +2,20 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 5.231.31.1
+version: 5.231.33.1
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.33.1: Support du streaming Base64 en mémoire vive (___ECHO_STREAM_MEM___, register_memory_stream, release_memory_stream, _zero_ram_memory_generator) sans écriture disque ni duplication RAM dans deepcopy.
 # 5.231.31.1: Prise en charge du timeout et sécurisation des closures __user__/__metadata__ dans call_distillation.
 # 5.231.20.1: Isolation multi-agent des point_id Qdrant dans index_text_in_ephemeral_rag via inclusion de sub_sid dans le seed UUID5.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.13: Filtrage strict des parts de pensée native (thought=True) et journalisation des erreurs dans call_distillation.
-# 1.12: Harmonisation du message UI lors des retries ("⛓️💥 Reconnexion au modèle, tentative...").
 import time
 import random
 import hashlib
+import uuid
 import orjson as json
 import orjson as std_json
 import asyncio
@@ -31,6 +32,35 @@ from echo_constants import AUTH_DATA_PROJECT_ID, AUTH_METHOD_OAUTH2, ECHO_AGY_US
 
 class EchoGeminiClient:
     """Moteur factorisé pour les appels API Gemini avec Architecture Symétrique (AI Studio & Code Assist)."""
+
+    _MEM_STREAM_BUFFERS: Dict[str, bytes] = {}
+
+    @classmethod
+    def register_memory_stream(cls, raw_bytes: bytes) -> str:
+        """Enregistre un segment binaire en mémoire vive et retourne son marqueur léger (zéro copie lors de copy.deepcopy)."""
+        mem_id = uuid.uuid4().hex
+        cls._MEM_STREAM_BUFFERS[mem_id] = raw_bytes
+        return f"___ECHO_STREAM_MEM___{mem_id}___"
+
+    @classmethod
+    def release_memory_stream(cls, marker_or_id: str) -> None:
+        """Libère immédiatement le buffer mémoire associé au marqueur."""
+        if not marker_or_id:
+            return
+        clean_id = marker_or_id.replace("___ECHO_STREAM_MEM___", "").replace("___", "")
+        cls._MEM_STREAM_BUFFERS.pop(clean_id, None)
+
+    @staticmethod
+    async def _zero_ram_memory_generator(raw_bytes: bytes, json_prefix: bytes, json_suffix: bytes):
+        yield json_prefix
+        chunk_size = 3 * 1024 * 1024  # Multiple strict de 3 requis pour B64 sans padding interne
+        mv = memoryview(raw_bytes)
+        total_len = len(raw_bytes)
+        for offset in range(0, total_len, chunk_size):
+            chunk = bytes(mv[offset:offset + chunk_size])
+            b64_chunk = await asyncio.to_thread(base64.b64encode, chunk)
+            yield b64_chunk
+        yield json_suffix
 
     @staticmethod
     async def _zero_ram_stream_generator(filepath: str, json_prefix: bytes, json_suffix: bytes):
@@ -65,24 +95,33 @@ class EchoGeminiClient:
 
     @staticmethod
     def _prepare_zero_ram_content(payload: dict):
-        """Détecte le Hook Porteur dans le JSON et prépare le Stream HTTPX. Retourne (generator, content_length)."""
+        """Détecte le Hook Porteur (Fichier ou Mémoire) dans le JSON et prépare le Stream HTTPX. Retourne (generator, content_length)."""
         import json, re, os
         payload_str = json.dumps(payload)
-        match = re.search(r'("data":\s*)"___ECHO_STREAM_FILE___(.*?)___"', payload_str)
+        match = re.search(r'("data":\s*)"___ECHO_STREAM_(FILE|MEM)___(.*?)___"', payload_str)
         if match:
-            filepath = json.loads('"' + match.group(2) + '"')
+            mode = match.group(2)
+            target = json.loads('"' + match.group(3) + '"')
             parts = payload_str.split(match.group(0), 1)
             if len(parts) != 2:
                 raise ValueError("Erreur inattendue de découpage du Hook Zéro-RAM.")
             prefix = (parts[0] + match.group(1) + '"').encode('utf-8')
             suffix = ('"' + parts[1]).encode('utf-8')
             
-            # Calcul mathématique exact du Content-Length
-            file_size = os.path.getsize(filepath)
-            b64_size = ((file_size + 2) // 3) * 4
-            content_length = len(prefix) + b64_size + len(suffix)
-            
-            return EchoGeminiClient._zero_ram_stream_generator(filepath, prefix, suffix), str(content_length)
+            if mode == "MEM":
+                raw_bytes = EchoGeminiClient._MEM_STREAM_BUFFERS.get(target)
+                if raw_bytes is None:
+                    raise ValueError(f"Buffer mémoire introuvable ou expiré : {target}")
+                raw_size = len(raw_bytes)
+                b64_size = ((raw_size + 2) // 3) * 4
+                content_length = len(prefix) + b64_size + len(suffix)
+                return EchoGeminiClient._zero_ram_memory_generator(raw_bytes, prefix, suffix), str(content_length)
+            else:
+                # Calcul mathématique exact du Content-Length sur fichier
+                file_size = os.path.getsize(target)
+                b64_size = ((file_size + 2) // 3) * 4
+                content_length = len(prefix) + b64_size + len(suffix)
+                return EchoGeminiClient._zero_ram_stream_generator(target, prefix, suffix), str(content_length)
         return None, None
 
     @staticmethod

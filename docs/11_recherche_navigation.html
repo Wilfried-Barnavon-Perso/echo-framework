@@ -57,9 +57,9 @@
           <li><strong>Data Broker (<code>ask_data_broker</code>) :</strong> Délégation de la collecte et du croisement de données volumineuses à un sous-agent dédié.</li>
         </ul>
 
-        <h3>3. Vault Explorer (<code>file_content_explorer.py</code> v5.231.20.1) &amp; Maps Grounding (<code>gemini_maps_grounding.py</code> v5.229.0.0)</h3>
+        <h3>3. Vault Explorer (<code>file_content_explorer.py</code> v5.231.33.1) &amp; Maps Grounding (<code>gemini_maps_grounding.py</code> v5.229.0.0)</h3>
         <ul>
-          <li><strong>Isolement &amp; Espaces :</strong> Résolution étendue des chemins (<code>_resolve_extended_file_path</code>) vérifiant strictement le <code>user_id</code> à travers les espaces <code>files</code> (Vault), <code>main</code> et <code>sandbox</code> (Codex). Lecture paginée par blocs de 16 Ko (<code>read_raw_file_content</code>), prévisualisation image isolée par conversation (<code>show_image_to_user</code> via <code>chat_id</code>) et sondage multimodal direct via <code>semantic_probe</code>.</li>
+          <li><strong>Isolement &amp; Espaces :</strong> Résolution étendue des chemins (<code>_resolve_extended_file_path</code>) vérifiant strictement le <code>user_id</code> à travers les espaces <code>files</code> (Vault), <code>main</code> et <code>sandbox</code> (Codex). Lecture paginée par blocs de 16 Ko (<code>read_raw_file_content</code>), prévisualisation image isolée par conversation (<code>show_image_to_user</code> via <code>chat_id</code>), extraction chirurgicale ciblée (<code>semantic_probe</code>) et distillation multimédia descriptive horodatée (<code>read_multimedia_file</code>) avec segmentation Map-Reduce en mémoire vive (<code>ffmpeg -c copy pipe:1</code> / <code>pypdf</code> <code>BytesIO</code>) au-delà de 30 Mo ou 45 min par million de tokens.</li>
           <li><strong>Maps Grounding :</strong> Ancrage spatial générant des données topologiques projetées côté client dans une carte interactive (HUD).</li>
         </ul>
       </div>
@@ -72,7 +72,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.33 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.34 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

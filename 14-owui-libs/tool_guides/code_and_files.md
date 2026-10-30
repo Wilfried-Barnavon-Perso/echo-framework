@@ -1,11 +1,11 @@
 ---
 domain_id: code_and_files
-version: 5.231.32.2
+version: 5.231.33.1
 updated_at: 2026-10-30
 name: Registre Unifié, Explorateur de l'Espace Personnel & Sandbox d'Exécution de Code
 description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash) et exécution isolée de scripts Codex sandbox (.py / .js).
 tools: [query_registry, read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes, code_executor, kill_sandbox_execution]
-keywords: [registre, query_registry, fichier, file, code, python, node, javascript, sandbox, code_executor, image, pdf, audio, hash, sha256]
+keywords: [registre, query_registry, fichier, file, code, python, node, javascript, sandbox, code_executor, image, pdf, audio, video, multimedia, semantic_probe, read_multimedia_file, hash, sha256]
 ---
 
 # MANUEL OPÉRATIONNEL : REGISTRE UNIFIÉ, FICHIERS & SANDBOX DE CODE (`code_and_files`)
@@ -32,8 +32,8 @@ Tous les outils ci-dessous résolvent automatiquement `file_id` (ou `target`) pa
 ### 2.1 Matrice de Sélection de l'Outil d'Exploration
 | Besoin Opérationnel | Outil à Invoquer | Spécifications & Contraintes Critiques |
 | :--- | :--- | :--- |
-| **Analyse ciblée d'un fichier volumineux (Texte, PDF, Doc)** | `semantic_probe(file_id, query)` | Délègue la lecture Zéro-RAM à un sous-agent (`MODEL_APOLLO`, limite 30 Mo) qui répond précisément au motif `query`. |
-| **Rapport descriptif complet d'un Média (Image, Audio, Vidéo, PDF)** | `read_multimedia_file(file_id, instruction=None)` | Sonde sensorielle multimodale Zéro-RAM (`MODEL_APOLLO`, limite 30 Mo) restituant une distillation complète et horodatée du média. `instruction` optionnel pour surcharger la consigne par défaut. |
+| **Extraction chirurgicale ciblée dans un fichier ou média volumineux (Texte, PDF, Image, Audio, Vidéo)** | `semantic_probe(file_id, query)` | Délègue l'extraction ciblée Zéro-RAM à un sous-agent (`MODEL_APOLLO`) qui répond précisément au motif `query`. Au-delà de 30 Mo ou 45 min, segmente automatiquement le flux en mémoire vive (Map-Reduce) et consolide la réponse. |
+| **Rapport descriptif complet et horodaté d'un Média (Image, Audio, Vidéo, PDF)** | `read_multimedia_file(file_id, instruction=None)` | Sonde sensorielle multimodale Zéro-RAM (`MODEL_APOLLO`) restituant une distillation complète et horodatée du média (avec segmentation automatique en mémoire vive par tranches $\le 30\text{ Mo}$ / $\le 45\text{ min}$ et recalage des timestamps). `instruction` optionnel pour surcharger la consigne par défaut. |
 | **Lecture brute de lignes ou d'octets** | `read_raw_file_content(file_id, start_line=1, end_line=100, output_mode="text", byte_offset=0)` | `output_mode` : `"text"`, `"base64"` ou `"hex"`. **CONTRAINTE CRITIQUE** : `byte_offset` (> 0) est mutuellement exclusif avec `start_line`/`end_line`. Limiter à ~100 lignes par appel (max 16 Ko). Si un binaire lu en `"text"` est illisible, interdiction de boucler : utiliser `semantic_probe` ou `read_multimedia_file`. |
 | **Afficher une image à l'Utilisateur** | `show_image_to_user(target)` | Si `target` est un fichier local (ID Registre ou nom), l'affiche dans l'interface dédiée (viewer ECHO). Si `target` est une URL `http(s)://`, vérifie la validité de l'image et retourne la syntaxe Markdown exacte à insérer dans la réponse. |
 | **Métadonnées & Intégrité cryptographique** | `get_file_metadata(file_id)` / `calculate_file_hashes(file_ids, algorithm="sha256")` | `get_file_metadata` retourne taille et MIME. `calculate_file_hashes` accepte une liste `file_ids` et `algorithm` parmi `"sha256"`, `"md5"`, `"sha1"`, `"sha512"`, `"blake2b"`, `"crc32"`. |

@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.231.32.1
+version: 5.231.33.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.33.1: Purge de la constante orpheline PROMPT_SENSORY_DISTILLATION (déjà centralisée dans echo_prompts.py via TPL_EXPLORE_SENSORY).
 # 5.231.32.1: Rehaussement du seuil de déclenchement de compaction automatique à 60% de CONTEXT_MAX (COMPACTION_TRIGGER_THRESHOLD_PCT=0.60).
 # 5.231.29.1: Unification SSOT des espaces de travail Codex (CODEX_WORKSPACE_MAIN, CODEX_WORKSPACE_SANDBOX, CODEX_INDEXED_WORKSPACES, CODEX_WORKSPACE_LITERAL, is_codex_workspace_indexed).
 # 5.231.28.2: Ajout des constantes de compaction en % de ECHO_MAX_CONTEXT_SIZE (COMPACTION_TRIGGER_THRESHOLD_PCT=0.50, COMPACTION_TARGET_CONTEXT_PCT=0.20, COMPACTION_COMPRESSED_SHARE_PCT=0.63, get_compaction_shares) et étalonnage en % de AEC_REMINDERS.
 # 5.231.24.1: Définition SSOT de ECHO_QUOTA_REFRESH_THROTTLE_SEC (60s), ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC (0s) et ECHO_QUOTA_RESET_IMMINENT_LABEL pour la gouvernance des quotas Google Cloud.
-# 5.230.1.1: Harmonisation des types et constantes pour la stack ECHO.
 
 
 import os
@@ -968,22 +968,6 @@ def is_binary_file(file_path: str = "", raw_bytes: bytes = None) -> tuple[bool, 
             return True, "application/octet-stream"
 
     return False, mime
-
-# ==============================================================================
-# DIRECTIVES DE DISTILLATION SENSORIELLE (UNIFIÉES)
-# ==============================================================================
-PROMPT_SENSORY_DISTILLATION = (
-    "Le Modèle DOIT générer un rapport analytique ultra-précis de la source fournie ({filename}). "
-    "Ce rapport constitue l'unique contexte disponible pour le Modèle Principal.\n\n"
-    "<directives_synchronisation>\n"
-    "1. CHRONOLOGIE : Horodatage strict ([HH:MM:SS - HH:MM:SS]) requis pour chaque segment.\n"
-    "2. SYNCHRONISATION MULTIMODALE : Croisement et alignement simultanés obligatoires pour chaque segment :\n"
-    "   - Canal Visuel : Actions, éléments notables, scènes.\n"
-    "   - Canal Auditif : Bruitages, ambiance, inflexions vocales.\n"
-    "   - Canal Textuel : Transcription verbatim des dialogues et textes affichés.\n"
-    "3. RIGUEUR : Aucune supposition ou interprétation. Description strictement factuelle et exhaustive.\n"
-    "</directives_synchronisation>"
-)
 
 # ==============================================================================
 # 11. SCHÉMAS GEMINI (API Validation)
