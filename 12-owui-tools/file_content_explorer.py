@@ -1,12 +1,12 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.231.33.1
+version: 5.231.33.2
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.231.33.1: Factorisation du pipeline multimodal (_execute_multimodal_analysis, _call_apollo_with_heartbeat) et segmentation Map-Reduce 100% en mémoire vive (FFmpeg -c copy pipe:1 / pypdf BytesIO) sur MAX_MULTIMODAL_SIZE_KB et 45 min / 1M tokens (ECHO_MAX_CONTEXT_SIZE).
+# 5.231.33.2: Factorisation du pipeline multimodal (_execute_multimodal_analysis, _call_apollo_with_heartbeat), auto-résolution FFmpeg (_ensure_ffmpeg_bin via imageio-ffmpeg sur open-webui:main-slim) et segmentation Map-Reduce 100% en mémoire vive (FFmpeg -c copy pipe:1 / pypdf BytesIO) sur MAX_MULTIMODAL_SIZE_KB et 45 min / 1M tokens (ECHO_MAX_CONTEXT_SIZE).
 # 5.231.32.1: Surcharge d'instruction pour read_multimedia_file, correction d'assignation SYS/USR prompt et docstring descriptive étendue.
 # 5.231.29.1: Alignement de _resolve_extended_file_path sur les constantes SSOT CODEX_DIR_NAME, CODEX_WORKSPACE_MAIN et CODEX_WORKSPACE_SANDBOX.
 # 5.231.20.1: Isolation multi-chat du viewer d'image via transmission de chat_id à EchoUI.show_image_js.
@@ -16,6 +16,7 @@ import io
 import os
 import re
 import sys
+import shutil
 import base64
 import httpx
 import mimetypes
@@ -215,30 +216,75 @@ class Tools:
             text,
         )
 
-    async def _probe_media_duration(self, fpath: str) -> Optional[float]:
-        """Sonde la durée exacte (en secondes) d'un flux audio ou vidéo via ffprobe/ffmpeg."""
+    _FFMPEG_BIN: Optional[str] = None
+
+    async def _ensure_ffmpeg_bin(self) -> str:
+        """
+        Résout le chemin de l'exécutable ffmpeg (natif ou statique via imageio-ffmpeg).
+        Sur open-webui:main-slim dépourvu de /usr/bin/ffmpeg, provisionne imageio-ffmpeg à chaud si nécessaire.
+        """
+        if Tools._FFMPEG_BIN and os.path.exists(Tools._FFMPEG_BIN):
+            return Tools._FFMPEG_BIN
+
+        sys_ffmpeg = shutil.which("ffmpeg")
+        if sys_ffmpeg:
+            Tools._FFMPEG_BIN = sys_ffmpeg
+            return sys_ffmpeg
+
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "ffprobe",
-                "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                fpath,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15.0)
-            val = stdout.decode("utf-8", errors="ignore").strip()
-            if val and val != "N/A":
-                dur = float(val)
-                if dur > 0:
-                    return dur
+            import imageio_ffmpeg
+            exe = await asyncio.to_thread(imageio_ffmpeg.get_ffmpeg_exe)
+            if exe and os.path.exists(exe):
+                Tools._FFMPEG_BIN = exe
+                return exe
+        except ImportError:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    sys.executable, "-m", "pip", "install", "--quiet",
+                    "--break-system-packages", "imageio-ffmpeg",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await asyncio.wait_for(proc.communicate(), timeout=60.0)
+                import imageio_ffmpeg
+                exe = await asyncio.to_thread(imageio_ffmpeg.get_ffmpeg_exe)
+                if exe and os.path.exists(exe):
+                    Tools._FFMPEG_BIN = exe
+                    return exe
+            except Exception:
+                pass
         except Exception:
             pass
 
+        return "ffmpeg"
+
+    async def _probe_media_duration(self, fpath: str) -> Optional[float]:
+        """Sonde la durée exacte (en secondes) d'un flux audio ou vidéo via ffprobe ou ffmpeg."""
+        ffprobe_bin = shutil.which("ffprobe")
+        if ffprobe_bin:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    ffprobe_bin,
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    fpath,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+                val = stdout.decode("utf-8", errors="ignore").strip()
+                if val and val != "N/A":
+                    dur = float(val)
+                    if dur > 0:
+                        return dur
+            except Exception:
+                pass
+
+        ffmpeg_bin = await self._ensure_ffmpeg_bin()
         try:
             proc = await asyncio.create_subprocess_exec(
-                "ffmpeg", "-hide_banner", "-i", fpath,
+                ffmpeg_bin, "-hide_banner", "-i", fpath,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -284,22 +330,25 @@ class Tools:
         end_sec: float,
         max_bytes: int,
         allow_overflow: bool = False,
-    ) -> Tuple[Optional[bytes], str]:
+    ) -> Tuple[Optional[bytes], str, int]:
         """
         Extrait une tranche [start_sec, end_sec] 100% en mémoire vive via FFmpeg (-c copy ... pipe:1).
         Aucun canal audio ou vidéo n'est ré-encodé ou altéré.
-        Si le flux dépasse max_bytes (pic VBR) et que allow_overflow=False, interrompt FFmpeg et retourne (None, out_mime).
+        Retourne (raw_bytes, out_mime, status_code) où status_code vaut :
+          0 = succès, 1 = dépassement max_bytes (overflow VBR), -1 = EOF ou erreur.
         """
         ext = os.path.splitext(fpath)[1].lower()
         muxer_args, out_mime = self._get_ffmpeg_muxer_and_mime(mime, ext)
+        ffmpeg_bin = await self._ensure_ffmpeg_bin()
+        seg_duration = max(0.1, end_sec - start_sec)
 
         async def _run_ffmpeg(m_args: List[str]) -> Tuple[Optional[bytes], int]:
             cmd = [
-                "ffmpeg",
+                ffmpeg_bin,
                 "-hide_banner",
                 "-loglevel", "error",
                 "-ss", f"{start_sec:.3f}",
-                "-to", f"{end_sec:.3f}",
+                "-t", f"{seg_duration:.3f}",
                 "-i", fpath,
                 "-c", "copy",
                 *m_args,
@@ -334,19 +383,19 @@ class Tools:
             if overflow:
                 return None, 1
             if proc.returncode != 0 or len(buf) == 0:
-                return None, proc.returncode or -1
+                return None, -1
             return bytes(buf), 0
 
         data, code = await _run_ffmpeg(muxer_args)
         if code == 1:
-            return None, out_mime
+            return None, out_mime, 1
         if data is None and mime.startswith("video/") and muxer_args[1] != "matroska":
             # Fallback conteneur universel Matroska si le codec source est incompatible avec fMP4 en stream copy
             data, code = await _run_ffmpeg(["-f", "matroska"])
             out_mime = "video/webm"
             if code == 1:
-                return None, out_mime
-        return data, out_mime
+                return None, out_mime, 1
+        return data, out_mime, code
 
     async def _iter_pdf_memory_segments(
         self, fpath: str, max_bytes: int
@@ -421,30 +470,37 @@ class Tools:
             return
 
         # 3. Segmentation Audio/Vidéo en mémoire vive (Stream Copy -c copy vers pipe:1)
-        if is_av and duration and duration > 0:
-            bps = file_size / duration
-            safe_target_bytes = int(max_bytes * 0.85)
-            step_by_size = (safe_target_bytes / bps) if bps > 0 else float(max_duration_sec)
-            step_sec = max(15.0, min(float(max_duration_sec), step_by_size))
-            overlap_sec = 5.0 if step_sec > 20.0 else 0.0
+        if is_av:
+            if duration and duration > 0:
+                bps = file_size / duration
+                safe_target_bytes = int(max_bytes * 0.85)
+                step_by_size = (safe_target_bytes / bps) if bps > 0 else float(max_duration_sec)
+                step_sec = max(15.0, min(float(max_duration_sec), step_by_size))
+                overlap_sec = 5.0 if step_sec > 20.0 else 0.0
 
-            queue: List[Tuple[float, float]] = []
-            cur = 0.0
-            while cur < duration:
-                nxt = min(duration, cur + step_sec)
-                queue.append((cur, nxt))
-                if nxt >= duration:
-                    break
-                cur = nxt - overlap_sec
+                queue: List[Tuple[float, float]] = []
+                cur = 0.0
+                while cur < duration:
+                    nxt = min(duration, cur + step_sec)
+                    queue.append((cur, nxt))
+                    if nxt >= duration:
+                        break
+                    cur = nxt - overlap_sec
+            else:
+                # Si la durée d'en-tête est absente (Duration: N/A), progresse par fenêtres glissantes jusqu'à EOF
+                step_sec = 180.0
+                overlap_sec = 5.0
+                queue = [(0.0, step_sec)]
 
+            unknown_dur = not (duration and duration > 0)
             while queue:
                 s_sec, e_sec = queue.pop(0)
                 span = e_sec - s_sec
                 can_split = span > 10.0
-                raw_bytes, seg_mime = await self._extract_media_segment_bytes(
+                raw_bytes, seg_mime, status_code = await self._extract_media_segment_bytes(
                     fpath, mime, s_sec, e_sec, max_bytes, allow_overflow=not can_split
                 )
-                if raw_bytes is None and can_split:
+                if status_code == 1 and can_split:
                     # Subdivision dichotomique immédiate en cas de pic de débit VBR dépassant 30 Mo
                     mid = (s_sec + e_sec) / 2.0
                     sub_overlap = min(2.0, span * 0.05)
@@ -455,6 +511,9 @@ class Tools:
                     marker = EchoGeminiClient.register_memory_stream(raw_bytes)
                     label = f"Segment [{self._format_hms(s_sec)} - {self._format_hms(e_sec)}]"
                     yield marker, seg_mime, s_sec, label
+                    if unknown_dur and not queue and len(raw_bytes) > 4096:
+                        nxt_start = e_sec - overlap_sec
+                        queue.append((nxt_start, nxt_start + step_sec))
             return
 
         # 4. Fallback de sécurité si un binaire non-segmentable dépasse MAX_MULTIMODAL_SIZE_KB
