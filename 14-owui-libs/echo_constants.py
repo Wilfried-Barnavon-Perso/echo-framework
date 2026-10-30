@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.231.29.1
+version: 5.231.32.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.32.1: Rehaussement du seuil de déclenchement de compaction automatique à 60% de CONTEXT_MAX (COMPACTION_TRIGGER_THRESHOLD_PCT=0.60).
 # 5.231.29.1: Unification SSOT des espaces de travail Codex (CODEX_WORKSPACE_MAIN, CODEX_WORKSPACE_SANDBOX, CODEX_INDEXED_WORKSPACES, CODEX_WORKSPACE_LITERAL, is_codex_workspace_indexed).
 # 5.231.28.2: Ajout des constantes de compaction en % de ECHO_MAX_CONTEXT_SIZE (COMPACTION_TRIGGER_THRESHOLD_PCT=0.50, COMPACTION_TARGET_CONTEXT_PCT=0.20, COMPACTION_COMPRESSED_SHARE_PCT=0.63, get_compaction_shares) et étalonnage en % de AEC_REMINDERS.
 # 5.231.24.1: Définition SSOT de ECHO_QUOTA_REFRESH_THROTTLE_SEC (60s), ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC (0s) et ECHO_QUOTA_RESET_IMMINENT_LABEL pour la gouvernance des quotas Google Cloud.
 # 5.230.1.1: Harmonisation des types et constantes pour la stack ECHO.
-# 5.230.0.3: Définition SSOT du protocole URN Codex et ancres UI (CODEX_URN_PATTERN, CODEX_ANCHOR_PATTERN avec icônes ✏️/👁️, CODEX_HUD_ID, CODEX_ACTION_ID).
 
 
 import os
@@ -222,9 +222,9 @@ ECHO_MAX_CONTEXT_SIZE = 1048576
 MAX_CONTEXT_TOKENS = ECHO_MAX_CONTEXT_SIZE
 
 # --- PARAMÈTRES DE COMPACTION CONTEXTUELLE IN-PLACE (EN % DE ECHO_MAX_CONTEXT_SIZE) ---
-# Seuil de déclenchement automatique : 50% de CONTEXT_MAX (~524 288 tokens).
-# Laisse la conversation se dérouler confortablement jusqu'à 500k tokens avant de compacter.
-COMPACTION_TRIGGER_THRESHOLD_PCT = 0.50
+# Seuil de déclenchement automatique : 60% de CONTEXT_MAX (~629 145 tokens).
+# Laisse la conversation se dérouler confortablement jusqu'à 600k tokens avant de compacter.
+COMPACTION_TRIGGER_THRESHOLD_PCT = 0.60
 
 # Enveloppe totale maximale visée post-compaction : < 20% de CONTEXT_MAX (~209 715 tokens).
 # Garantit une libération immédiate de > 300 000 tokens de marge libre (hystérésis forte).
