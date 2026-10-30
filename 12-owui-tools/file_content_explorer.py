@@ -1,12 +1,12 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.231.33.2
+version: 5.231.33.3
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.231.33.2: Factorisation du pipeline multimodal (_execute_multimodal_analysis, _call_apollo_with_heartbeat), auto-résolution FFmpeg (_ensure_ffmpeg_bin via imageio-ffmpeg sur open-webui:main-slim) et segmentation Map-Reduce 100% en mémoire vive (FFmpeg -c copy pipe:1 / pypdf BytesIO) sur MAX_MULTIMODAL_SIZE_KB et 45 min / 1M tokens (ECHO_MAX_CONTEXT_SIZE).
+# 5.231.33.3: Factorisation du pipeline multimodal, auto-résolution FFmpeg (_ensure_ffmpeg_bin), évaluation du seuil de 30 Mo sur le flux vidéo décimé à 1 fps en résolution native avec piste audio intacte (-c:a copy) et segmentation Map-Reduce sans recouvrement en mémoire vive.
 # 5.231.32.1: Surcharge d'instruction pour read_multimedia_file, correction d'assignation SYS/USR prompt et docstring descriptive étendue.
 # 5.231.29.1: Alignement de _resolve_extended_file_path sur les constantes SSOT CODEX_DIR_NAME, CODEX_WORKSPACE_MAIN et CODEX_WORKSPACE_SANDBOX.
 # 5.231.20.1: Isolation multi-chat du viewer d'image via transmission de chat_id à EchoUI.show_image_js.
@@ -332,8 +332,9 @@ class Tools:
         allow_overflow: bool = False,
     ) -> Tuple[Optional[bytes], str, int]:
         """
-        Extrait une tranche [start_sec, end_sec] 100% en mémoire vive via FFmpeg (-c copy ... pipe:1).
-        Aucun canal audio ou vidéo n'est ré-encodé ou altéré.
+        Extrait une tranche [start_sec, end_sec] 100% en mémoire vive via FFmpeg (pipe:1) :
+        - Vidéo : décimation temporelle à 1 fps (-vf fps=1) en résolution spatiale native intacte + piste audio copiée bit-à-bit (-c:a copy).
+        - Audio : copie binaire directe (-c copy).
         Retourne (raw_bytes, out_mime, status_code) où status_code vaut :
           0 = succès, 1 = dépassement max_bytes (overflow VBR), -1 = EOF ou erreur.
         """
@@ -341,6 +342,18 @@ class Tools:
         muxer_args, out_mime = self._get_ffmpeg_muxer_and_mime(mime, ext)
         ffmpeg_bin = await self._ensure_ffmpeg_bin()
         seg_duration = max(0.1, end_sec - start_sec)
+        is_video = mime.startswith("video/")
+        codec_args = (
+            [
+                "-vf", "fps=1",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-crf", "23",
+                "-c:a", "copy",
+            ]
+            if is_video
+            else ["-c", "copy"]
+        )
 
         async def _run_ffmpeg(m_args: List[str]) -> Tuple[Optional[bytes], int]:
             cmd = [
@@ -350,7 +363,7 @@ class Tools:
                 "-ss", f"{start_sec:.3f}",
                 "-t", f"{seg_duration:.3f}",
                 "-i", fpath,
-                "-c", "copy",
+                *codec_args,
                 *m_args,
                 "pipe:1",
             ]
@@ -389,8 +402,8 @@ class Tools:
         data, code = await _run_ffmpeg(muxer_args)
         if code == 1:
             return None, out_mime, 1
-        if data is None and mime.startswith("video/") and muxer_args[1] != "matroska":
-            # Fallback conteneur universel Matroska si le codec source est incompatible avec fMP4 en stream copy
+        if data is None and is_video and muxer_args[1] != "matroska":
+            # Fallback conteneur universel Matroska (conservant strictement -c:a copy) si le codec audio source est incompatible avec fMP4
             data, code = await _run_ffmpeg(["-f", "matroska"])
             out_mime = "video/webm"
             if code == 1:
@@ -469,14 +482,19 @@ class Tools:
                 yield seg
             return
 
-        # 3. Segmentation Audio/Vidéo en mémoire vive (Stream Copy -c copy vers pipe:1)
+        # 3. Segmentation Audio/Vidéo en mémoire vive (sans recouvrement : overlap = 0)
         if is_av:
+            is_video = mime.startswith("video/")
             if duration and duration > 0:
-                bps = file_size / duration
-                safe_target_bytes = int(max_bytes * 0.85)
-                step_by_size = (safe_target_bytes / bps) if bps > 0 else float(max_duration_sec)
-                step_sec = max(15.0, min(float(max_duration_sec), step_by_size))
-                overlap_sec = 5.0 if step_sec > 20.0 else 0.0
+                if is_video:
+                    # Pour la vidéo, les 30 Mo s'appliquent au flux décimé à 1 fps + audio copy :
+                    # on découpe initialement uniquement selon le plafond temporel (45 min / 1M tokens).
+                    step_sec = float(max_duration_sec)
+                else:
+                    bps = file_size / duration
+                    safe_target_bytes = int(max_bytes * 0.85)
+                    step_by_size = (safe_target_bytes / bps) if bps > 0 else float(max_duration_sec)
+                    step_sec = max(15.0, min(float(max_duration_sec), step_by_size))
 
                 queue: List[Tuple[float, float]] = []
                 cur = 0.0
@@ -485,11 +503,10 @@ class Tools:
                     queue.append((cur, nxt))
                     if nxt >= duration:
                         break
-                    cur = nxt - overlap_sec
+                    cur = nxt
             else:
-                # Si la durée d'en-tête est absente (Duration: N/A), progresse par fenêtres glissantes jusqu'à EOF
-                step_sec = 180.0
-                overlap_sec = 5.0
+                # Si la durée d'en-tête est absente (Duration: N/A), progresse par fenêtres bout-à-bout jusqu'à EOF
+                step_sec = float(max_duration_sec) if is_video else 300.0
                 queue = [(0.0, step_sec)]
 
             unknown_dur = not (duration and duration > 0)
@@ -501,19 +518,18 @@ class Tools:
                     fpath, mime, s_sec, e_sec, max_bytes, allow_overflow=not can_split
                 )
                 if status_code == 1 and can_split:
-                    # Subdivision dichotomique immédiate en cas de pic de débit VBR dépassant 30 Mo
+                    # Subdivision dichotomique bout-à-bout (sans recouvrement) si le flux extrait dépasse 30 Mo
                     mid = (s_sec + e_sec) / 2.0
-                    sub_overlap = min(2.0, span * 0.05)
-                    queue.insert(0, (max(s_sec, mid - sub_overlap), e_sec))
+                    queue.insert(0, (mid, e_sec))
                     queue.insert(0, (s_sec, mid))
                     continue
                 if raw_bytes:
                     marker = EchoGeminiClient.register_memory_stream(raw_bytes)
-                    label = f"Segment [{self._format_hms(s_sec)} - {self._format_hms(e_sec)}]"
+                    is_full_single = (not unknown_dur) and (s_sec == 0.0) and (e_sec >= duration) and (len(queue) == 0)
+                    label = None if is_full_single else f"Segment [{self._format_hms(s_sec)} - {self._format_hms(e_sec)}]"
                     yield marker, seg_mime, s_sec, label
                     if unknown_dur and not queue and len(raw_bytes) > 4096:
-                        nxt_start = e_sec - overlap_sec
-                        queue.append((nxt_start, nxt_start + step_sec))
+                        queue.append((e_sec, e_sec + step_sec))
             return
 
         # 4. Fallback de sécurité si un binaire non-segmentable dépasse MAX_MULTIMODAL_SIZE_KB
