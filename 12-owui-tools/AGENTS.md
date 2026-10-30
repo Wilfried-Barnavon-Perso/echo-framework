@@ -5,7 +5,7 @@
 ## 1. Rôle du Dossier
 
 Ce dossier constitue **l'Arsenal** du modèle. Il contient l'ensemble des Outils (Tools) exécutables nativement par les LLM via le framework Open WebUI. Tous ces outils requièrent l'injection stricte du contexte Open WebUI via les arguments `__user__` et `__metadata__` dans leurs signatures de fonction pour fonctionner.
-- **Architecture de Séparation Interface / Connaissance (`v5.229.0.0`)** : Les docstrings Python des 93 fonctions exposées dans les 19 fichiers de `12-owui-tools/` sont strictement minimalistes (1 phrase fonctionnelle pure, réduisant l'empreinte du schéma OpenAPI de ~80%), et les retours d'outils sont exempts de directives prescriptives en dur (`IMPLIQUE ...`). La documentation opérationnelle exhaustive (contrats d'arguments, séquences d'enchaînement, prérequis et résolutions d'erreurs) est externalisée dans `14-owui-libs/tool_guides/*.md` et exploitée par l'Expert-Conseil Opérationnel (`tool_advisor`).
+- **Architecture de Séparation Interface / Connaissance (`v5.229.0.0`)** : Les docstrings Python des 95 fonctions exposées dans les 19 fichiers de `12-owui-tools/` (dont 94 indexées dans les manuels opérationnels et le méta-conseiller `tool_advisor`) sont strictement minimalistes (1 phrase fonctionnelle pure, réduisant l'empreinte du schéma OpenAPI de ~80%), et les retours d'outils sont exempts de directives prescriptives en dur (`IMPLIQUE ...`). La documentation opérationnelle exhaustive (contrats d'arguments, séquences d'enchaînement, prérequis et résolutions d'erreurs) est externalisée dans `14-owui-libs/tool_guides/*.md` et exploitée par l'Expert-Conseil Opérationnel (`tool_advisor`).
 
 ## 2. Cartographie des Fichiers et Algorithmes
 

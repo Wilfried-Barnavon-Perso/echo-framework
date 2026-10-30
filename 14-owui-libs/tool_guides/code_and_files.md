@@ -1,7 +1,7 @@
 ---
 domain_id: code_and_files
-version: 5.231.32.1
-updated_at: 2026-10-29
+version: 5.231.32.2
+updated_at: 2026-10-30
 name: Registre Unifié, Explorateur de l'Espace Personnel & Sandbox d'Exécution de Code
 description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash) et exécution isolée de scripts Codex sandbox (.py / .js).
 tools: [query_registry, read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes, code_executor, kill_sandbox_execution]
@@ -61,4 +61,4 @@ Tous les outils ci-dessous résolvent automatiquement `file_id` (ou `target`) pa
   - `timeout_sec` : Délai maximal d'exécution en secondes.
   - `fetch_ui_payload` : Si `True`, injecte l'état initial des composants UI actifs dans la Sandbox au démarrage.
 - **Arrêt d'urgence (`kill_sandbox_execution`)** :
-  - `kill_sandbox_execution()` : Détruit immédiatement le processus Sandbox actif de la session en cas de blocage ou boucle infinie.
+  - `kill_sandbox_execution(run_id=None)` : Détruit immédiatement le processus Sandbox actif de la session (ou l'exécution spécifique ciblée par `run_id` si renseigné) en cas de blocage, dépassement ou boucle infinie.

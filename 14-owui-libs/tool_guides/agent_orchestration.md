@@ -1,7 +1,7 @@
 ---
 domain_id: agent_orchestration
-version: 5.231.22.1
-updated_at: 2026-10-27
+version: 5.231.32.1
+updated_at: 2026-10-30
 name: Orchestration Multi-Agents, Sous-Agents Autonomes, Data Broker & Skills
 description: Délégation à un sous-agent outillé (delegate_to_agent), Table Ronde Delphi (consult_council), Ouvriers Supervisés (consult_supervised_workers), Data Broker et gestion des Skills.
 tools: [delegate_to_agent, list_agent_sessions, close_agent_session, summarize_agent_session, consult_council, consult_supervised_workers, list_councils, close_council, list_supervised_tasks, close_supervised_task, forge_skill, list_skills, read_skill, search_skill, delete_user_skill, ask_data_broker]
@@ -81,3 +81,9 @@ Les **Skills** définissent l'expertise métier et la méthodologie d'un sous-ag
 - **Gestion des sessions des Ouvriers Supervisés** :
   - `list_supervised_tasks()` : Liste les missions supervisées actives (`task_id` de forme `sup_xxxxxxxx`) et les identifiants des sous-agents Ouvriers (`Workers`) rattachés dont l'historique est encore ouvert.
   - `close_supervised_task(task_id)` : Ferme définitivement la mission supervisée `task_id` et purge toutes les sessions (`thread_supervisor_{task_id}_*`) de ses sous-agents Ouvriers.
+
+### 3.4 Collecteur de Données Spécialisé (`ask_data_broker`)
+`ask_data_broker(query)` :
+- `query` : Requête textuelle descriptive spécifiant les données externes précises à collecter (recherche Web ciblée, requêtes HTTP tierces, interrogation ou exécution sur serveurs MCP).
+- **Architecture & Modèle** : Sous-agent spécialisé opéré par `MODEL_APOLLO` (`override_thinking="medium"`), pré-câblé avec un accès direct aux outils Web (`search_web`, `search_instant_answer`), Identity Vault (`list_identities`, `list_identities_services`) et MCP (`list_mcp_functions`, `call_mcp_function`).
+- **Comportement Sans État (Stateless)** : N'ouvre aucune session persistée (`sub_sid`), préservant le contexte de l'Orchestrateur principal contre l'ingestion brute de gros volumes de données externes et restituant une synthèse technique directement exploitable.
