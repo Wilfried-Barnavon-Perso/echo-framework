@@ -1,13 +1,14 @@
 #!/bin/bash
 # ==============================================================================
-# SCRIPT : logs-echo.sh
-# VERSION : 5.226.18.0
+# SCRIPT : echo-logs.sh
+# VERSION : 5.231.39.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : Suivre les journaux (logs) en temps réel de la stack ou d'un service
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Renommage de logs-echo.sh en echo-logs.sh.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 
 ECHO_ROOT="/opt/ECHO"

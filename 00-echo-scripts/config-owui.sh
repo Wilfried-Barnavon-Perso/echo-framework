@@ -1,10 +1,11 @@
 #!/bin/bash
 # ==============================================================================
 # CONFIGURATION AUTOMATIQUE OPEN WEBUI (MODE ASSEMBLAGE)
-# VERSION : 5.226.18.1
+# VERSION : 5.231.39.1
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Appel de echo-show-admin.sh en fin de configuration.
 # 5.226.18.1: Déploiement et activation des Event Functions (type: event) sans toggle/global.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 
@@ -316,4 +317,4 @@ if [ -f "$BANNERS_FILE" ]; then
 fi
 
 echo "✅ [Config] Terminé."
-[ -f "$ECHO_SCRIPTS/show-echo-admin.sh" ] && bash "$ECHO_SCRIPTS/show-echo-admin.sh"
+[ -f "$ECHO_SCRIPTS/echo-show-admin.sh" ] && bash "$ECHO_SCRIPTS/echo-show-admin.sh"

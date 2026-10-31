@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Events
 author: Wilfried BARNAVON
-version: 5.231.5.1
+version: 5.231.39.1
 description: Gestionnaire des événements WebSocket et UI. Intègre le protocole UCTP (Universal Chunked Transfer Protocol).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Fallback SSE/RPC EchoWindowManager dans resolve_live_session lorsque SESSION_POOL Socket.IO ne répond pas et dé-minimisation _echoGeoCtrl.
 # 5.231.5.1: Correction du Fast-Path Codex dans trigger_action (multi-chat switch_chat, target_chat_id, commit et dé-minimisation).
 # 5.231.1.0: Double transport non-destructif (Socket.IO + SSE EchoWindowManager) dédupliqué par exec_id pour préserver WebGPU et les appels RPC multi-chats.
 # 5.230.1.1: Introspection automatique du contexte de closure Open WebUI et routage multi-chats/multi-navigateurs via EchoWindowManager.
 # 5.228.12.1: Factorisation de resolve_live_session et wait_hud_action dans EchoEvents pour la résilience RPC post-standby de tous les HUDs.
-# 5.228.2.1: Vérification de la vivacité de window.echoCodexResolve dans le fast-path de trigger_action pour ré-amorcer le HUD Codex après standby.
 import asyncio
 from typing import Any, Optional
 import uuid
@@ -351,7 +351,20 @@ class EchoEvents:
         retries: int = 3,
         delay: float = 1.5,
     ) -> Optional[tuple["EchoEvents", Any]]:
-        """Résout dynamiquement la session Socket.IO active de l'utilisateur possédant le HUD ouvert."""
+        """Résout dynamiquement la session active (Socket.IO ou SSE EchoWindowManager) possédant le HUD ouvert."""
+        if hud_id:
+            cid_check = (
+                f" && (el.getAttribute('data-echo-chat-id') || el.getAttribute('data-chat-id')) === '{chat_id}'"
+                if chat_id
+                else ""
+            )
+            probe_js = (
+                f"const el = document.getElementById('{hud_id}');"
+                f"return (el{cid_check}) ? ({probe_expr}) : false;"
+            )
+        else:
+            probe_js = f"return ({probe_expr});"
+
         for attempt in range(max(1, retries)):
             try:
                 from open_webui.socket.main import (
@@ -367,19 +380,6 @@ class EchoEvents:
                         key=lambda s: (SESSION_POOL.get(s) or {}).get("last_seen_at", 0),
                         reverse=True,
                     )
-                    if hud_id:
-                        cid_check = (
-                            f" && (el.getAttribute('data-echo-chat-id') || el.getAttribute('data-chat-id')) === '{chat_id}'"
-                            if chat_id
-                            else ""
-                        )
-                        probe_js = (
-                            f"const el = document.getElementById('{hud_id}');"
-                            f"return (el{cid_check}) ? ({probe_expr}) : false;"
-                        )
-                    else:
-                        probe_js = f"return ({probe_expr});"
-
                     for sid in sids_sorted:
                         req_info = {
                             "chat_id": chat_id,
@@ -389,12 +389,35 @@ class EchoEvents:
                         }
                         caller = await get_event_call(req_info)
                         emitter = await get_event_emitter(req_info)
-                        candidate_events = cls(emitter, caller)
+                        candidate_events = cls(
+                            emitter,
+                            caller,
+                            user_id=user_id,
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            session_id=sid,
+                        )
                         probe_res = await candidate_events.call_execute(probe_js, timeout=3.0)
                         if probe_res is not None and probe_res is not False:
                             return candidate_events, probe_res
             except Exception as e:
                 print(f"[EchoEvents] resolve_live_session error: {e}")
+
+            if get_window_manager is not None and user_id:
+                try:
+                    wm_candidate = cls(
+                        None,
+                        None,
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        message_id=message_id,
+                    )
+                    probe_res = await wm_candidate.call_execute(probe_js, timeout=3.0)
+                    if probe_res is not None and probe_res is not False:
+                        return wm_candidate, probe_res
+                except Exception as e:
+                    print(f"[EchoEvents] resolve_live_session WM fallback error: {e}")
+
             if attempt < retries - 1:
                 await asyncio.sleep(delay)
         return None
@@ -440,7 +463,12 @@ class EchoEvents:
                     }} else {{
                         window.sendCodexAction({{ action: 'ping' }});
                     }}
-                    if (codexEl) codexEl.classList.remove('is-minimized');
+                    if (codexEl) {{
+                        codexEl.classList.remove('is-minimized');
+                        if (codexEl._echoGeoCtrl && codexEl._echoGeoCtrl.isMinimized && typeof codexEl._echoGeoCtrl.toggleMinimize === 'function') {{
+                            codexEl._echoGeoCtrl.toggleMinimize();
+                        }}
+                    }}
                     return true;
                 }}
 

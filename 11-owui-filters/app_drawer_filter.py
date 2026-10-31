@@ -1,16 +1,16 @@
 """
 title: ECHO App Drawer Filter
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.231.39.1
 description: Composant système interne : ECHO App Drawer Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Fallback REST direct (/api/chat/actions/<id> et window.echoOpenCodex) lorsque le bouton natif d'action n'est pas monté dans le DOM.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.11: Correction du ciblage DOM pendant la génération du modèle (boucle pipe) pour cibler le message complet.
 # 1.10: Différenciation du seuil tactile (15px) vs souris (3px) pour empêcher l'hyper-sensibilité mobile.
 # 1.9: Implémentation HUD Mobile (Drag tactile, persistance, clamping anti-débordement).
-# 1.8: Historique ajusté.
 
 import logging
 from pydantic import BaseModel, Field
@@ -307,21 +307,25 @@ class Filter:
                 btn.classList.add('btn-clicked');
                 setTimeout(() => btn.classList.remove('btn-clicked'), 1000);
                 
-                const currentChatIdMatch = window.location.pathname.match(/\/c\/([a-z0-9-]+)/i);
-                const currentChatId = currentChatIdMatch ? currentChatIdMatch[1] : null;
+                const currentChatIdMatch = window.location.pathname.match(/\/c\/([a-zA-Z0-9_-]+)/i);
+                const currentChatId = (currentChatIdMatch ? currentChatIdMatch[1] : null)
+                    || (window.EchoWM && window.EchoWM.activeChatId) || null;
                 if (!currentChatId) return;
 
                 try {
                     // 1. Recherche du dernier message contenant effectivement le bouton d'action
                     const messageElements = document.querySelectorAll('[id^="message-"]');
                     let nativeBtn = null;
-                    
+                    let lastMsgId = 'app-drawer-click';
+
                     for (let i = messageElements.length - 1; i >= 0; i--) {
                         const el = messageElements[i];
                         const id = el.id;
                         // On ignore la zone de texte, l'édition, les notes, et les messages utilisateur
                         if (!id.includes('input') && !id.includes('edit') && !id.includes('index') && !id.includes('feedback') && !el.classList.contains('user-message')) {
-                            
+                            if (lastMsgId === 'app-drawer-click') {
+                                lastMsgId = id.replace(/^message-/, '');
+                            }
                             // On tente de trouver le bouton d'action natif dans CE message
                             const btn = el.querySelector(`button[aria-label="${action.name}"]`);
                             if (btn) {
@@ -331,12 +335,31 @@ class Filter:
                         }
                     }
 
-                    // 2. Déclenchement si le bouton est trouvé dans l'historique affiché
+                    // 2. Déclenchement si le bouton est trouvé dans l'historique affiché, sinon fallback REST direct
                     if (nativeBtn) {
                         console.log(`ECHO HUD: Déclenchement du bouton natif pour "${action.name}"`);
                         nativeBtn.click();
-                    } else {
-                        console.warn(`ECHO HUD: Bouton natif "${action.name}" introuvable dans l'historique récent.`);
+                    } else if (action.id === 'echo_codex_action' && typeof window.echoOpenCodex === 'function') {
+                        window.echoOpenCodex(currentChatId, 'main', '');
+                    } else if (action.id) {
+                        const cleanToken = token.replace(/^"|"$/g, '');
+                        const socketId = (window.socket && window.socket.connected && window.socket.id)
+                            || (window._socket && window._socket.connected && window._socket.id)
+                            || '';
+                        await fetch('/api/chat/actions/' + action.id, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': 'Bearer ' + cleanToken
+                            },
+                            body: JSON.stringify({
+                                chat_id: currentChatId,
+                                model: window._currentModelId || 'echo_orchestrator',
+                                id: lastMsgId,
+                                session_id: socketId,
+                                messages: []
+                            })
+                        });
                     }
                 } catch (err) {
                     console.error("Erreur lors de l'appel d'action:", err);

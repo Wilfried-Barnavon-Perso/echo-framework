@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Links & URN Filter
 author: Wilfried BARNAVON
-version: 5.231.11.1
+version: 5.231.39.1
 description: Filtre bidirectionnel (Inlet/Outlet: Pont DOM JS & window.echoOpenCodex / Outlet: Validation physique FS Fail-Closed et mutation d'ancres Codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Synchronisation sur EchoCodexUI.get_codex_bridge_js v5.231.39.1 (isolation multi-chat des HUDs parqués et Cold Start sans faux session_id).
 # 5.231.11.1: Réétagement de la priorité à 40 (après new_context_filter à 30 et avant conversation_rag_filter à 100).
 # 5.231.6.1: Factorisation SSOT de _get_js_bridge via EchoCodexUI.get_codex_bridge_js et neutralisation target=_blank.
 # 5.230.0.6: Hot-Update echoOpenCodex sans blocage _echoCodexBridgeAttached, CSS text-decoration-skip-ink et factorisation.
 # 5.230.0.5: Encodage URL (quote/unquote) du chemin dans les ancres #codex: pour supporter espaces, accents et parenthèses.
-# 5.230.0.4: Support de message["output"] (OutputItem[] Open WebUI) en complément de message["content"] et transmission du workspace.
 
 import re
 import sys

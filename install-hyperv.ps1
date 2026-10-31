@@ -1,7 +1,7 @@
 # ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# VERSION : 5.226.18.0
+# VERSION : 5.231.39.1
 # DATE    : 2026-09-24
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
@@ -26,12 +26,13 @@
 #    - Monte le disque Seed au démarrage.
 #    - Dézippe les sources dans /opt/ECHO/source.
 #    - Installe les outils (Docker, yq, jq).
-#    - Lance sync-echo.sh --local-only.
+#    - Lance echo-sync.sh --local-only.
 #    - Lance install-stack.sh.
 # 5. HYPER-V : Crée et lance la VM.
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Mise à jour des références cloud-init vers echo-sync.sh.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # --- FONCTION UTILITAIRE : PAUSE SUR ERREUR ---
@@ -61,7 +62,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.226.18.0"
+$SCRIPT_VERSION = "5.231.39.1"
 $ScriptDir = $PSScriptRoot
 Set-Location -Path $ScriptDir
 $VersionFile = "$ScriptDir\VERSION"
@@ -138,7 +139,7 @@ $WriteFilesBlock += "        permissions: '0444'`n"
 $WriteFilesBlock += "        encoding: b64`n"
 $WriteFilesBlock += "        content: $ScriptVerContent`n"
 
-# Injection de la BRANCHE (Requis par sync-echo.sh)
+# Injection de la BRANCHE (Requis par echo-sync.sh)
 $BrancheContent = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($BRANCHE))
 $WriteFilesBlock += "      - path: /opt/ECHO/ECHO_BRANCH`n"
 $WriteFilesBlock += "        permissions: '0644'`n"
@@ -212,11 +213,11 @@ $WriteFilesBlock
       - "rm /opt/ECHO/source/source.zip"
 
       # 4. Préparation du script de synchro
-      - "chmod +x /opt/ECHO/source/00-echo-scripts/sync-echo.sh"
+      - "chmod +x /opt/ECHO/source/00-echo-scripts/echo-sync.sh"
 
       # 5. Lancement de la Synchro en mode LOCAL-ONLY (Pas de git clone)
       #    Cela va distribuer les fichiers de /opt/ECHO/source vers /opt/ECHO/echo-scripts, etc.
-      - "/opt/ECHO/source/00-echo-scripts/sync-echo.sh --local-only"
+      - "/opt/ECHO/source/00-echo-scripts/echo-sync.sh --local-only"
 
       # 7. Lancement Installation de la Stack avec journalisation temps réel
       - "bash /opt/ECHO/echo-scripts/install-stack.sh 2>&1 | tee /opt/ECHO/install.log"

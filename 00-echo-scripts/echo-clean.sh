@@ -1,14 +1,15 @@
 #!/bin/bash
 # ==============================================================================
-# SCRIPT : clean-echo.sh
-# VERSION : 5.226.18.0
+# SCRIPT : echo-clean.sh
+# VERSION : 5.231.39.1
 # ROLE   : Nettoyage système et gestion dynamique du cache Docker
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Renommage de clean-echo.sh en echo-clean.sh et alignement du fichier de log.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 
-LOG_FILE="/var/log/clean-echo.log"
+LOG_FILE="/var/log/echo-clean.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "=================================================="

@@ -1,12 +1,15 @@
 <!DOCTYPE html>
 <html lang="fr">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Déploiement du Framework ECHO v5 : provisioning Hyper-V, installation Linux natif, WSL2, cycle de vie des 4 phases, scripts sync-echo et install-stack.">
+  <meta name="description"
+    content="Déploiement du Framework ECHO v5 : provisioning Hyper-V, installation Linux natif, WSL2, cycle de vie des 4 phases, scripts echo-sync et install-stack.">
   <title>ECHO v5 - 15. Déploiement & Infra</title>
   <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
   <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
 
@@ -42,22 +45,28 @@
 
     <h3>Phase 1 - Assemblage et injection (hôte Windows)</h3>
     <p>
-      Le script d'installation rassemble les sources locales et provisionne de manière transparente la machine virtuelle. Il prépare les fondations en allouant les ressources matérielles nécessaires au bon fonctionnement de l'intelligence artificielle, sans exiger de paramétrage complexe.
+      Le script d'installation rassemble les sources locales et provisionne de manière transparente la machine
+      virtuelle. Il prépare les fondations en allouant les ressources matérielles nécessaires au bon fonctionnement de
+      l'intelligence artificielle, sans exiger de paramétrage complexe.
     </p>
 
     <h3>Phase 2 - Provisioning automatisé (VM Linux)</h3>
     <p>
-      Au premier démarrage, le système s'installe de lui-même de manière silencieuse. Il déploie l'ensemble des prérequis logiciels nécessaires au fonctionnement du serveur de manière autonome, assurant un système opérationnel et sécurisé.
+      Au premier démarrage, le système s'installe de lui-même de manière silencieuse. Il déploie l'ensemble des
+      prérequis logiciels nécessaires au fonctionnement du serveur de manière autonome, assurant un système opérationnel
+      et sécurisé.
     </p>
 
     <h3>Phase 3 - Synchronisation des sources</h3>
     <p>
-      L'outil de synchronisation distribue les fichiers sources vers leur emplacement définitif au sein de la machine virtuelle Linux.
+      L'outil de synchronisation distribue les fichiers sources vers leur emplacement définitif au sein de la machine
+      virtuelle Linux.
     </p>
 
     <h3>Phase 4 - Orchestration Docker</h3>
     <p>
-      L'orchestrateur de déploiement assure le démarrage séquentiel de toute la pile applicative ECHO, configurant au passage les variables d'environnement globales et connectant Open WebUI au moteur d'IA.
+      L'orchestrateur de déploiement assure le démarrage séquentiel de toute la pile applicative ECHO, configurant au
+      passage les variables d'environnement globales et connectant Open WebUI au moteur d'IA.
     </p>
 
     <h2>Voie B - Linux Natif (Serveur Dédié)</h2>
@@ -72,7 +81,7 @@ sudo bash &lt;(curl -fsSL https://raw.githubusercontent.com/Wilfried-Barnavon-Pe
       <code>install-linux.sh</code> est <strong>idempotent</strong> : si ECHO est déjà installé,
       une seconde exécution effectue une mise à jour propre. Il installe Docker, Docker Compose v2,
       <code>jq</code>, <code>yq</code>, <code>git</code>, <code>chrony</code>, puis clone le
-      dépôt dans <code>/opt/ECHO/source</code> et enchaîne <code>sync-echo.sh</code> et
+      dépôt dans <code>/opt/ECHO/source</code> et enchaîne <code>echo-sync.sh</code> et
       <code>install-stack.sh</code>.
     </p>
 
@@ -126,12 +135,42 @@ systemd=true</code></pre>
         </tr>
       </thead>
       <tbody>
-        <tr><td><strong>Isolation</strong></td><td>Maximale (VM dédiée)</td><td>OS dédié</td><td>Partielle (noyau partagé)</td></tr>
-        <tr><td><strong>Prérequis</strong></td><td>Windows 11 Pro + Hyper-V + 8 Go RAM</td><td>Ubuntu 22.04+ / Debian 12+</td><td>WSL2 activé sur Windows 10/11</td></tr>
-        <tr><td><strong>Complexité de démarrage</strong></td><td>Élevée (VM + cloud-init)</td><td>Faible</td><td>Faible</td></tr>
-        <tr><td><strong>Idempotent</strong></td><td>Non (VM recréée)</td><td>Oui</td><td>Oui</td></tr>
-        <tr><td><strong>Accès depuis Windows</strong></td><td>Via IP statique de la VM</td><td>Non direct</td><td><code>localhost</code> natif</td></tr>
-        <tr><td><strong>Usage recommandé</strong></td><td>Production souveraine</td><td>Serveur dédié</td><td>Développement / test unitaire</td></tr>
+        <tr>
+          <td><strong>Isolation</strong></td>
+          <td>Maximale (VM dédiée)</td>
+          <td>OS dédié</td>
+          <td>Partielle (noyau partagé)</td>
+        </tr>
+        <tr>
+          <td><strong>Prérequis</strong></td>
+          <td>Windows 11 Pro + Hyper-V + 8 Go RAM</td>
+          <td>Ubuntu 22.04+ / Debian 12+</td>
+          <td>WSL2 activé sur Windows 10/11</td>
+        </tr>
+        <tr>
+          <td><strong>Complexité de démarrage</strong></td>
+          <td>Élevée (VM + cloud-init)</td>
+          <td>Faible</td>
+          <td>Faible</td>
+        </tr>
+        <tr>
+          <td><strong>Idempotent</strong></td>
+          <td>Non (VM recréée)</td>
+          <td>Oui</td>
+          <td>Oui</td>
+        </tr>
+        <tr>
+          <td><strong>Accès depuis Windows</strong></td>
+          <td>Via IP statique de la VM</td>
+          <td>Non direct</td>
+          <td><code>localhost</code> natif</td>
+        </tr>
+        <tr>
+          <td><strong>Usage recommandé</strong></td>
+          <td>Production souveraine</td>
+          <td>Serveur dédié</td>
+          <td>Développement / test unitaire</td>
+        </tr>
       </tbody>
     </table>
 
@@ -144,36 +183,41 @@ systemd=true</code></pre>
 
     <table>
       <thead>
-        <tr><th>Commande</th><th>Action</th><th>Impact</th></tr>
+        <tr>
+          <th>Commande</th>
+          <th>Action</th>
+          <th>Impact</th>
+        </tr>
       </thead>
       <tbody>
         <tr>
-          <td><code>update-echo</code></td>
+          <td><code>echo-update</code></td>
           <td>Mise à jour du code Python uniquement.</td>
           <td>Redémarrage « hot reload » des micro-services. Données préservées.</td>
         </tr>
         <tr>
-          <td><code>upgrade-echo</code></td>
+          <td><code>echo-upgrade</code></td>
           <td>Mise à niveau majeure de l'infrastructure.</td>
           <td>Re-synchronisation complète + rebuild des images Docker locales.</td>
         </tr>
         <tr>
-          <td><code>rebuild-echo</code></td>
+          <td><code>echo-rebuild</code></td>
           <td>Réinitialisation intégrale (destructrice).</td>
-          <td>Suppression de <strong>tous</strong> les conteneurs, volumes, images et secrets. Remise à zéro totale - données perdues.</td>
+          <td>Suppression de <strong>tous</strong> les conteneurs, volumes, images et secrets. Remise à zéro totale -
+            données perdues.</td>
         </tr>
         <tr>
-          <td><code>clean-echo</code></td>
+          <td><code>echo-clean</code></td>
           <td>Maintenance et purge de sécurité Docker.</td>
           <td>Nettoyage des images orphelines, du cache de build et des logs sans perte de données.</td>
         </tr>
         <tr>
-          <td><code>logs-echo</code> / <code>ps-echo</code></td>
+          <td><code>echo-logs</code> / <code>echo-ps</code></td>
           <td>Diagnostic et supervision en ligne de commande.</td>
           <td>Suivi en temps réel des journaux et de l'état des conteneurs de la pile.</td>
         </tr>
         <tr>
-          <td><code>show-echo-admin</code></td>
+          <td><code>echo-show-admin</code></td>
           <td>Affiche les identifiants administrateur.</td>
           <td>Lecture seule depuis <code>/opt/ECHO/.secrets</code>.</td>
         </tr>
@@ -185,7 +229,7 @@ systemd=true</code></pre>
 
     <div class="code-header">Déploiement automatisé depuis un clone local du dépôt</div>
     <pre><code># Depuis la racine du dépôt git ECHO cloné localement :
-sudo bash 00-echo-scripts/sync-echo.sh --local-only
+sudo bash 00-echo-scripts/echo-sync.sh --local-only
 sudo bash 00-echo-scripts/install-stack.sh
 
 # Interface disponible sur http://localhost:3000</code></pre>
@@ -193,47 +237,157 @@ sudo bash 00-echo-scripts/install-stack.sh
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Configuration Hyper-V &amp; Provisioning (<code>install-hyperv.ps1</code> v5.226.18.0)</h3>
+        <h3>1. Configuration Hyper-V &amp; Provisioning (<code>install-hyperv.ps1</code> v5.231.39.1)</h3>
         <p>
-          Lors du déploiement Windows, <code>install-hyperv.ps1</code> crée une archive ZIP pointant par défaut sur la branche <code>dev</code> du projet (hors <code>.git</code>, <code>.venv</code>, <code>node_modules</code>), génère un disque CIDATA de 64 Mo contenant <code>user-data</code>, <code>meta-data</code>, <code>vendor-data</code> et <code>source.zip</code>, puis provisionne une VM Hyper-V Génération 2 sous <strong>Ubuntu 26.04</strong> (4 vCPUs, 8 Go de RAM au démarrage avec allocation dynamique 4 Go – 10 Go, et VHDX dynamique de 100 Go). Au premier démarrage, Subiquity exécute cloud-init, installe Docker Compose v2, <code>jq</code>, <code>yq</code>, <code>git</code> et lance <code>sync-echo.sh</code> puis <code>install-stack.sh</code>.
+          Lors du déploiement Windows, <code>install-hyperv.ps1</code> crée une archive ZIP pointant par défaut sur la
+          branche <code>dev</code> du projet (hors <code>.git</code>, <code>.venv</code>, <code>node_modules</code>),
+          génère un disque CIDATA de 64 Mo contenant <code>user-data</code>, <code>meta-data</code>,
+          <code>vendor-data</code> et <code>source.zip</code>, puis provisionne une VM Hyper-V Génération 2 sous
+          <strong>Ubuntu 26.04</strong> (4 vCPUs, 8 Go de RAM au démarrage avec allocation dynamique 4 Go – 10 Go, et
+          VHDX dynamique de 100 Go). Au premier démarrage, Subiquity exécute cloud-init, installe Docker Compose v2,
+          <code>jq</code>, <code>yq</code>, <code>git</code> et lance <code>echo-sync.sh</code> puis
+          <code>install-stack.sh</code>.
         </p>
 
-        <h3>2. Cartographie Déclarative des Sources (<code>sync-echo.sh</code> v5.226.18.0)</h3>
+        <h3>2. Cartographie Déclarative des Sources (<code>echo-sync.sh</code> v5.231.39.1)</h3>
         <table>
           <thead>
-            <tr><th>Source (dépôt git)</th><th>Destination sur la VM</th><th>Contenu</th></tr>
+            <tr>
+              <th>Source (dépôt git)</th>
+              <th>Destination sur la VM</th>
+              <th>Contenu</th>
+            </tr>
           </thead>
           <tbody>
-            <tr><td><code>00-echo-scripts/</code></td><td><code>/opt/ECHO/echo-scripts/</code></td><td>Scripts Bash d'administration et liens <code>/usr/local/bin/</code></td></tr>
-            <tr><td><code>01-config/</code></td><td><code>/opt/ECHO/config/</code></td><td>Manifestes Compose, Kernel statique, <code>webui-settings.json</code>, <code>webui-banners.json</code>, <code>logging.json</code></td></tr>
-            <tr><td><code>_assets/images/</code></td><td><code>/opt/ECHO/echo-images/</code></td><td>Ressources graphiques et avatars des modèles ECHO</td></tr>
-            <tr><td><code>docker-python-base/</code></td><td><code>/opt/ECHO/docker-python-base/</code></td><td>Image mutualisée <code>echo-python-base:latest</code></td></tr>
-            <tr><td><code>10-owui-pipes/</code></td><td><code>/opt/ECHO/owui-pipes/</code></td><td>Orchestrateur Cognitif Python (<code>echo_orchestrator.py</code>, Cortex)</td></tr>
-            <tr><td><code>11-owui-filters/</code></td><td><code>/opt/ECHO/owui-filters/</code></td><td>Filtres Inlet &amp; Outlet</td></tr>
-            <tr><td><code>12-owui-tools/</code></td><td><code>/opt/ECHO/owui-tools/</code></td><td>Outils de l'Arsenal</td></tr>
-            <tr><td><code>13-owui-actions/</code></td><td><code>/opt/ECHO/owui-actions/</code></td><td>Actions interactives HUD</td></tr>
-            <tr><td><code>14-owui-libs/</code></td><td><code>/opt/ECHO/owui-libs/</code> et <code>/app/backend/echo_libs/</code></td><td>Librairies centrales partagées (et guides opérationnels <code>tool_guides/</code>)</td></tr>
-            <tr><td><code>15-owui-events/</code></td><td><code>/opt/ECHO/owui-events/</code></td><td>Fonctions événementielles Open WebUI (<code>chat_clone_sync_event.py</code>)</td></tr>
-            <tr><td><code>20-docker-admin-manager/</code></td><td><code>/opt/ECHO/docker-admin-manager/</code></td><td>Console Admin Manager (Port 3001)</td></tr>
-            <tr><td><code>21-docker-coding-worker/</code></td><td><code>/opt/ECHO/docker-coding-worker/</code></td><td>Sandbox Code Python 3.14 / Node 22 (Port 5000)</td></tr>
-            <tr><td><code>22-docker-browser-worker/</code></td><td><code>/opt/ECHO/docker-browser-worker/</code></td><td>Browser Worker Playwright (Port 5002)</td></tr>
-            <tr><td><code>23-docker-mcp-broker/</code></td><td><code>/opt/ECHO/docker-mcp-broker/</code></td><td>MCP Broker Proxy HTTP (Port 8000)</td></tr>
-            <tr><td><code>24-docker-echo-auth-manager/</code></td><td><code>/opt/ECHO/docker-echo-auth-manager/</code></td><td>ECHO Auth Manager IdP SSO &amp; MFA (Port 8000)</td></tr>
-            <tr><td><code>25-docker-download-broker/</code></td><td><code>/opt/ECHO/docker-download-broker/</code></td><td>Download Broker Daemon</td></tr>
-            <tr><td><code>26-docker-n8n-worker/</code></td><td><code>/opt/ECHO/docker-n8n-worker/</code></td><td>Headless N8N Worker (Port 5003)</td></tr>
-            <tr><td><code>30-docker-embedding-worker/</code></td><td><code>/opt/ECHO/docker-embedding-worker/</code></td><td>Embedding Worker Harrier-OSS (Port 7997)</td></tr>
+            <tr>
+              <td><code>00-echo-scripts/</code></td>
+              <td><code>/opt/ECHO/echo-scripts/</code></td>
+              <td>Scripts Bash d'administration et liens <code>/usr/local/bin/</code></td>
+            </tr>
+            <tr>
+              <td><code>01-config/</code></td>
+              <td><code>/opt/ECHO/config/</code></td>
+              <td>Manifestes Compose, Kernel statique, <code>webui-settings.json</code>,
+                <code>webui-banners.json</code>, <code>logging.json</code></td>
+            </tr>
+            <tr>
+              <td><code>_assets/images/</code></td>
+              <td><code>/opt/ECHO/echo-images/</code></td>
+              <td>Ressources graphiques et avatars des modèles ECHO</td>
+            </tr>
+            <tr>
+              <td><code>docker-python-base/</code></td>
+              <td><code>/opt/ECHO/docker-python-base/</code></td>
+              <td>Image mutualisée <code>echo-python-base:latest</code></td>
+            </tr>
+            <tr>
+              <td><code>10-owui-pipes/</code></td>
+              <td><code>/opt/ECHO/owui-pipes/</code></td>
+              <td>Orchestrateur Cognitif Python (<code>echo_orchestrator.py</code>, Cortex)</td>
+            </tr>
+            <tr>
+              <td><code>11-owui-filters/</code></td>
+              <td><code>/opt/ECHO/owui-filters/</code></td>
+              <td>Filtres Inlet &amp; Outlet</td>
+            </tr>
+            <tr>
+              <td><code>12-owui-tools/</code></td>
+              <td><code>/opt/ECHO/owui-tools/</code></td>
+              <td>Outils de l'Arsenal</td>
+            </tr>
+            <tr>
+              <td><code>13-owui-actions/</code></td>
+              <td><code>/opt/ECHO/owui-actions/</code></td>
+              <td>Actions interactives HUD</td>
+            </tr>
+            <tr>
+              <td><code>14-owui-libs/</code></td>
+              <td><code>/opt/ECHO/owui-libs/</code> et <code>/app/backend/echo_libs/</code></td>
+              <td>Librairies centrales partagées (et guides opérationnels <code>tool_guides/</code>)</td>
+            </tr>
+            <tr>
+              <td><code>15-owui-events/</code></td>
+              <td><code>/opt/ECHO/owui-events/</code></td>
+              <td>Fonctions événementielles Open WebUI (<code>chat_clone_sync_event.py</code>)</td>
+            </tr>
+            <tr>
+              <td><code>20-docker-admin-manager/</code></td>
+              <td><code>/opt/ECHO/docker-admin-manager/</code></td>
+              <td>Console Admin Manager (Port 3001)</td>
+            </tr>
+            <tr>
+              <td><code>21-docker-coding-worker/</code></td>
+              <td><code>/opt/ECHO/docker-coding-worker/</code></td>
+              <td>Sandbox Code Python 3.14 / Node 22 (Port 5000)</td>
+            </tr>
+            <tr>
+              <td><code>22-docker-browser-worker/</code></td>
+              <td><code>/opt/ECHO/docker-browser-worker/</code></td>
+              <td>Browser Worker Playwright (Port 5002)</td>
+            </tr>
+            <tr>
+              <td><code>23-docker-mcp-broker/</code></td>
+              <td><code>/opt/ECHO/docker-mcp-broker/</code></td>
+              <td>MCP Broker Proxy HTTP (Port 8000)</td>
+            </tr>
+            <tr>
+              <td><code>24-docker-echo-auth-manager/</code></td>
+              <td><code>/opt/ECHO/docker-echo-auth-manager/</code></td>
+              <td>ECHO Auth Manager IdP SSO &amp; MFA (Port 8000)</td>
+            </tr>
+            <tr>
+              <td><code>25-docker-download-broker/</code></td>
+              <td><code>/opt/ECHO/docker-download-broker/</code></td>
+              <td>Download Broker Daemon</td>
+            </tr>
+            <tr>
+              <td><code>26-docker-n8n-worker/</code></td>
+              <td><code>/opt/ECHO/docker-n8n-worker/</code></td>
+              <td>Headless N8N Worker (Port 5003)</td>
+            </tr>
+            <tr>
+              <td><code>30-docker-embedding-worker/</code></td>
+              <td><code>/opt/ECHO/docker-embedding-worker/</code></td>
+              <td>Embedding Worker Harrier-OSS (Port 7997)</td>
+            </tr>
           </tbody>
         </table>
-        <p>Le script applique un nettoyage conditionnel <code>sed</code> des caractères CRLF/BOM uniquement sur les fichiers impactés afin de préserver les horodatages (<code>mtime</code>) et le cache Docker BuildKit.</p>
+        <p>Le script applique un nettoyage conditionnel <code>sed</code> des caractères CRLF/BOM uniquement sur les
+          fichiers impactés afin de préserver les horodatages (<code>mtime</code>) et le cache Docker BuildKit.</p>
 
-        <h3>3. Séquençage Docker &amp; Autosafety (<code>stack-echo.yml</code> v5.231.21.1, <code>echo-globals.sh</code> v5.231.21.2, <code>enable-bunkerweb.sh</code> v5.231.21.2 &amp; <code>install-stack.sh</code> v5.231.21.1)</h3>
+        <h3>3. Séquençage Docker &amp; Autosafety (<code>stack-echo.yml</code> v5.231.37.1, <code>echo-globals.sh</code>
+          v5.231.21.2, <code>enable-bunkerweb.sh</code> v5.231.21.2 &amp; <code>install-stack.sh</code> v5.231.39.1)
+        </h3>
         <ul>
-          <li><strong>Tier 1 (Fondations) :</strong> Qdrant (<code>v1.19.1</code>, IP <code>.103</code>), SearXNG (<code>.101</code>), Watchtower (<code>.102</code>).</li>
-          <li><strong>Tier 2 (Workers) :</strong> Embedding (<code>.30</code>), Coding Worker (<code>.21</code> sur <code>echo-sandbox</code>), Browser Worker (<code>.22</code>), MCP Broker (<code>.23</code>, volume persistant <code>echo-mcp-cache</code>), Download Broker (<code>.25</code>), N8N Worker (<code>.26</code>).</li>
-          <li><strong>Tier 3 (Cortex) :</strong> Open WebUI (<code>main-slim</code>, IP <code>.100</code>, <code>ENABLE_CONTEXT_COMPACTION=false</code> neutralisant la compaction native d'Open WebUI pour préserver l'intégrité du Shadow Suture SQLite et des signatures cognitives, injection exclusive de la clé maître <code>ECHO_VAULT_ENCRYPTION_KEY</code> générée par <code>ensure_echo_secrets()</code> afin de l'isoler des conteneurs workers et sandbox, label <code>bunkerweb.MAX_CLIENT_SIZE=4096m</code>, cache persistant <code>PIP_CACHE_DIR=/app/backend/data/.cache/pip</code>, <code>mgzip</code>, <code>dulwich</code>, <code>markitdown[all]</code>, <code>h2</code>, <code>pybase64</code>, <code>edge-tts</code>).</li>
-          <li><strong>Tier 4 (Gouvernance) :</strong> Admin Manager (<code>.20</code>, montages Hot-Reload en lecture seule <code>:ro</code> de <code>server.py</code>, <code>core/</code>, <code>services/</code>, <code>routes/</code>, <code>templates/</code> et accès aux 5 volumes de données dont <code>echo-n8n-data</code> et <code>echo-mcp-cache</code>) et ECHO Auth Manager (<code>.24</code>).</li>
+          <li><strong>Tier 1 (Fondations) :</strong> Qdrant (<code>v1.19.1</code>, IP <code>.103</code>), SearXNG
+            (<code>.101</code>), Watchtower (<code>.102</code>).</li>
+          <li><strong>Tier 2 (Workers) :</strong> Embedding (<code>.30</code>), Coding Worker (<code>.21</code> sur
+            <code>echo-sandbox</code>), Browser Worker (<code>.22</code>), MCP Broker (<code>.23</code>, volume
+            persistant <code>echo-mcp-cache</code>), Download Broker (<code>.25</code>), N8N Worker (<code>.26</code>).
+          </li>
+          <li><strong>Tier 3 (Cortex) :</strong> Open WebUI (<code>main-slim</code>, IP <code>.100</code>,
+            <code>ENABLE_CONTEXT_COMPACTION=false</code> neutralisant la compaction native d'Open WebUI pour préserver
+            l'intégrité du Shadow Suture SQLite et des signatures cognitives, injection exclusive de la clé maître
+            <code>ECHO_VAULT_ENCRYPTION_KEY</code> générée par <code>ensure_echo_secrets()</code> afin de l'isoler des
+            conteneurs workers et sandbox, label <code>bunkerweb.MAX_CLIENT_SIZE=4096m</code>, cache persistant
+            <code>PIP_CACHE_DIR=/app/backend/data/.cache/pip</code>, <code>mgzip</code>, <code>dulwich</code>,
+            <code>markitdown[all]</code>, <code>h2</code>, <code>pybase64</code>, <code>edge-tts</code>).</li>
+          <li><strong>Tier 4 (Gouvernance) :</strong> Admin Manager (<code>.20</code>, montages Hot-Reload en lecture
+            seule <code>:ro</code> de <code>server.py</code>, <code>core/</code>, <code>services/</code>,
+            <code>routes/</code>, <code>templates/</code> et accès aux 5 volumes de données dont
+            <code>echo-n8n-data</code> et <code>echo-mcp-cache</code>) et ECHO Auth Manager (<code>.24</code>).</li>
         </ul>
-        <p><code>install-stack.sh</code> (v5.231.21.1) invoque <code>ensure_echo_secrets</code> (<code>echo-globals.sh</code> v5.231.21.2), configure l'<strong>Autosafety Docker</strong> (logs max 10 Mo, cron quotidien <code>/etc/cron.daily/clean-echo</code>), compile l'image socle <code>echo-python-base:latest</code> avec <code>CMAKE_BUILD_PARALLEL_LEVEL=2</code> et un throttle de 30 jours (<code>.last_base_pull</code>), puis exécute <code>config-owui.sh</code> (<code>v5.226.18.1</code>) qui synchronise <code>webui-settings.json</code> et <code>webui-banners.json</code>, purge les modèles fantômes obsolètes en base SQLite et enregistre l'Orchestrateur Cognitif <code>echo_orchestrator</code> ainsi que les filtres, outils, actions HUD et fonctions événementielles (<code>Event</code>). Les conteneurs labellisés <code>echo.hot-reload=true</code> sont rechargés à chaud par <code>update-echo</code>, tandis que <code>rebuild-echo</code> (<code>upgrade-echo.sh</code> v5.226.18.0) exige une double saisie de sécurité (<code>CONFIRMER</code> puis <code>DETRUIRE</code>).</p>
+        <p><code>install-stack.sh</code> (v5.231.39.1) invoque <code>ensure_echo_secrets</code>
+          (<code>echo-globals.sh</code> v5.231.21.2), configure l'<strong>Autosafety Docker</strong> (logs max 10 Mo,
+          cron quotidien <code>/etc/cron.daily/echo-clean</code>), compile l'image socle
+          <code>echo-python-base:latest</code> avec <code>CMAKE_BUILD_PARALLEL_LEVEL=2</code> et un throttle de 30 jours
+          (<code>.last_base_pull</code>), puis exécute <code>config-owui.sh</code> (<code>v5.231.39.1</code>) qui
+          synchronise <code>webui-settings.json</code> et <code>webui-banners.json</code>, purge les modèles fantômes
+          obsolètes en base SQLite et enregistre l'Orchestrateur Cognitif <code>echo_orchestrator</code> ainsi que les
+          filtres, outils, actions HUD et fonctions événementielles (<code>Event</code>). Les conteneurs labellisés
+          <code>echo.hot-reload=true</code> sont rechargés à chaud par <code>echo-update</code>, tandis que
+          <code>echo-rebuild</code> (<code>echo-upgrade.sh</code> v5.231.39.1) exige une double saisie de sécurité
+          (<code>CONFIRMER</code> puis <code>DETRUIRE</code>).</p>
       </div>
     </details>
 
@@ -244,10 +398,11 @@ sudo bash 00-echo-scripts/install-stack.sh
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.38 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.40 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
   <script src="nav.js"></script>
 </body>
+
 </html>

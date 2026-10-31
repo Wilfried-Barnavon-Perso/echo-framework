@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.231.28.1
+version: 5.231.39.1
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Réinitialisation inconditionnelle de window[resolveVar] dans echoCreateHudRpcBridge pour éviter le vol d'action au montage.
 # 5.231.28.1: Affichage des métriques de compaction (compaction_count, compacted_turns) dans l'infobulle du HUD contextuel.
 # 5.231.24.2: Déclaration du @keyframes echo-pulse et centrage transform-origin de l'animation SVG pour le HUD contextuel.
 # 5.231.24.1: Support du calcul différentiel, capsule d'évolution et deltas de quotas dès le tour 1.
 # 5.231.20.3: Conformité multi-chat des HUDs (get_floating_monitor_js avec isolation stricte de _echoGetAggregatedPayload, _generate_webplayer_js, monitor_ECHO, show_image_js) et suppression des fuites de listeners DOM.
-# 5.231.20.1: Ajout du pourcentage d'occupation contexte entre parenthèses sur la ligne Total du HUD.
 
 
 import sys
@@ -921,9 +921,9 @@ class EchoRichUI:
                     return true;
                 }
 
-                if (window.EchoWM && window.EchoWM.isReplaying) {
-                    window[resolveVar] = null;
-                }
+                // Réinitialisation inconditionnelle du résolveur lors du montage d'un nouveau HUD
+                // afin d'empêcher une ancienne boucle backend en cours d'éviction de voler la première action (ex: load_file).
+                window[resolveVar] = null;
 
                 async function reconnectBackend() {
                     if (isReconnecting || !isOwnedHudAlive()) return;

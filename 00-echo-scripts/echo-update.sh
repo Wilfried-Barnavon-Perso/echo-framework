@@ -1,13 +1,14 @@
 #!/bin/bash
 # ==============================================================================
-# SCRIPT : update-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 5.226.18.0
+# SCRIPT : echo-update.sh
+# VERSION : 5.231.39.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À JOUR RAPIDE (CODE ONLY) + HOT RELOAD
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Renommage en echo-update.sh et ciblage de echo-sync.sh.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # --- INITIALISATION : CORE ECHO GLOBALS ---
@@ -27,7 +28,7 @@ if ! command -v $DOCKER_COMPOSE_CMD &> /dev/null; then
 fi
 
 COMPOSE_FILE="$ECHO_CONFIG/stack-echo.yml"
-SYNC_SCRIPT="$ECHO_SCRIPTS/sync-echo.sh"
+SYNC_SCRIPT="$ECHO_SCRIPTS/echo-sync.sh"
 export COMPOSE_PROJECT_NAME="echo"
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
@@ -52,7 +53,7 @@ else
 fi
 
 # RELANCE DU SCRIPT SI MIS A JOUR
-if ! diff "$MY_OWN_ORIGIN"  "$CURRENT_SCRIPT" > /dev/null 2>&1  ; then
+if [ -f "$MY_OWN_ORIGIN" ] && ! diff "$MY_OWN_ORIGIN" "$CURRENT_SCRIPT" > /dev/null 2>&1 ; then
     exec "$MY_OWN_ORIGIN" "$@"; exit 0
 fi
 
