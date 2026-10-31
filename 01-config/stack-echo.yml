@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 5.231.36.1
+# VERSION : 5.231.36.2
 # ==============================================================================
 #                  inventés par la syntaxe officielle BunkerWeb (REVERSE_PROXY_AUTH_REQUEST*).
 #                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
@@ -42,6 +42,8 @@
 # 5.231.21.1: Injection de ECHO_VAULT_ENCRYPTION_KEY sur echo-open-webui pour le chiffrement AEAD de l'Identity Vault.
 # 5.227.1.1: Open WebUI : Maintien de ENABLE_CONTEXT_COMPACTION=false pour protéger la Suture Bit-Perfect ECHO.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
+
+name: echo
 
 services:
 

@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
-# VERSION : 5.231.36.1
+# VERSION : 5.231.36.2
 # ==============================================================================
 # ==============================================================================
 # Architecture Robuste (MariaDB Backend, Shared Config via Anchors)
@@ -70,6 +70,8 @@ x-bw-config: &bw-config
   DISABLE_DEFAULT_SERVER: "yes"
   USE_MODSECURITY: "yes"
   MODSEC_CRS_PARANOIA_LEVEL: "1"
+
+name: echo
 
 services:
   
