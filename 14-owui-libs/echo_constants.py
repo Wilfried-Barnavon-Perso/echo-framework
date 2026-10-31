@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.231.33.1
+version: 5.231.40.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.40.1: Alignement du protocole Antigravity sur le Language Server 2.28.2 (CL 1006921819).
 # 5.231.33.1: Purge de la constante orpheline PROMPT_SENSORY_DISTILLATION (déjà centralisée dans echo_prompts.py via TPL_EXPLORE_SENSORY).
 # 5.231.32.1: Rehaussement du seuil de déclenchement de compaction automatique à 60% de CONTEXT_MAX (COMPACTION_TRIGGER_THRESHOLD_PCT=0.60).
 # 5.231.29.1: Unification SSOT des espaces de travail Codex (CODEX_WORKSPACE_MAIN, CODEX_WORKSPACE_SANDBOX, CODEX_INDEXED_WORKSPACES, CODEX_WORKSPACE_LITERAL, is_codex_workspace_indexed).
 # 5.231.28.2: Ajout des constantes de compaction en % de ECHO_MAX_CONTEXT_SIZE (COMPACTION_TRIGGER_THRESHOLD_PCT=0.50, COMPACTION_TARGET_CONTEXT_PCT=0.20, COMPACTION_COMPRESSED_SHARE_PCT=0.63, get_compaction_shares) et étalonnage en % de AEC_REMINDERS.
-# 5.231.24.1: Définition SSOT de ECHO_QUOTA_REFRESH_THROTTLE_SEC (60s), ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC (0s) et ECHO_QUOTA_RESET_IMMINENT_LABEL pour la gouvernance des quotas Google Cloud.
 
 
 import os
@@ -60,11 +60,11 @@ ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 ECHO_SESSION_DOMAINS = ["codex", "files", "db", "n8n_workflows", "dependencies"]
 ECHO_GLOBAL_DOMAINS = ["skills", "files", "chats", "n8n_workflow_templates"]
 
-# Identité Réseau (Antigravity 2.24.0 — aligné sur Antigravity Desktop package.json & language_server --stamp)
+# Identité Réseau (Antigravity 2.28.2 — aligné sur Antigravity Desktop package.json & language_server --stamp)
 # Format natif AGY Hub : "antigravity/hub/{ideVersion} (os_type=...; arch=...; cl=...; auth_method=personal_consumer; proxy_client=antigravity/{ideVersion})"
 # ECHO tourne sous Docker Linux — on émet l'identité réelle de la plateforme hôte.
-_AGY_IDE_VERSION = "2.24.0"      # Miroir de package.json:version — à synchroniser lors des mises à jour
-_AGY_LS_CL       = "1000335682"  # Changelist language_server (--stamp)
+_AGY_IDE_VERSION = "2.28.2"      # Miroir de package.json:version — à synchroniser lors des mises à jour
+_AGY_LS_CL       = "1006921819"  # Changelist language_server (--stamp)
 ECHO_USER_AGENT             = f"antigravity/{_AGY_IDE_VERSION}"
 ECHO_AGY_USER_AGENT         = (
     f"antigravity/hub/{_AGY_IDE_VERSION} "
