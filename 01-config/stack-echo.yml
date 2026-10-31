@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 5.231.33.1
+# VERSION : 5.231.36.1
 # ==============================================================================
 #                  inventés par la syntaxe officielle BunkerWeb (REVERSE_PROXY_AUTH_REQUEST*).
 #                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
@@ -37,11 +37,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.36.1: Fix du nommage des images locales buildées (suppression du double préfixe echo-echo-* via directive image: explicite).
 # 5.231.33.1: Open WebUI : Ajout de imageio-ffmpeg au démarrage de echo-open-webui (main-slim) pour la segmentation multimédia en mémoire vive.
 # 5.231.21.1: Injection de ECHO_VAULT_ENCRYPTION_KEY sur echo-open-webui pour le chiffrement AEAD de l'Identity Vault.
 # 5.227.1.1: Open WebUI : Maintien de ENABLE_CONTEXT_COMPACTION=false pour protéger la Suture Bit-Perfect ECHO.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 9.83: Open WebUI : Désactivation forcée de ENABLE_CONTEXT_COMPACTION=false.
 
 services:
 
@@ -232,6 +232,7 @@ services:
 
   # 2. Admin Manager (Dashboard Système ECHO)
   echo-admin-manager:
+    image: echo-admin-manager:latest
     build:
       context: /opt/ECHO/docker-admin-manager
       dockerfile: Dockerfile
@@ -330,6 +331,7 @@ services:
   # ============================================================================
   
   echo-mcp-broker:
+    image: echo-mcp-broker:latest
     build:
       context: /opt/ECHO/docker-mcp-broker
       dockerfile: Dockerfile
@@ -359,6 +361,7 @@ services:
       start_period: 30s
 
   echo-coding-worker:
+    image: echo-coding-worker:latest
     build:
       context: /opt/ECHO/docker-coding-worker
       dockerfile: Dockerfile
@@ -391,6 +394,7 @@ services:
       start_period: 30s
 
   echo-browser-worker:
+    image: echo-browser-worker:latest
     build:
       context: /opt/ECHO/docker-browser-worker
       dockerfile: Dockerfile
@@ -418,6 +422,7 @@ services:
       start_period: 120s
 
   echo-n8n-worker:
+    image: echo-n8n-worker:latest
     build:
       context: /opt/ECHO/docker-n8n-worker
       dockerfile: Dockerfile
@@ -535,6 +540,7 @@ services:
 
   # 6. ECHO Embedding Worker (microsoft/Harrier-OSS-v1-0.6B — Text RAG, multilingue, 1024d)
   echo-embedding:
+    image: echo-embedding:latest
     build:
       context: /opt/ECHO/docker-embedding-worker
       dockerfile: Dockerfile
@@ -571,6 +577,7 @@ services:
 
   # 7. ECHO Download Broker (Ingestion asynchrone Playwright)
   echo-download-broker:
+    image: echo-download-broker:latest
     build:
       context: /opt/ECHO/docker-download-broker
       dockerfile: Dockerfile

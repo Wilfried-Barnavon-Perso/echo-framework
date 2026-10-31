@@ -14,14 +14,14 @@ Ce dossier est le **Centre Névralgique Statique** de l'architecture. Il contien
 - **Injection** : Il est injecté au démarrage dans l'API Open WebUI pour structurer chaque interaction LLM.
 
 ### `stack-echo.yml`
-**Rôle** : Le manifeste d'orchestration Docker Compose principal (v5.231.33.1).
+**Rôle** : Le manifeste d'orchestration Docker Compose principal (v5.231.36.1).
 - **Sémantique** : Définit la topologie du cluster sur 4 Tiers séquentiels (Fondations > Workers > OWUI > Admin). Désactive explicitement le compactage natif d'Open WebUI (`ENABLE_CONTEXT_COMPACTION=false`) pour préserver l'intégrité des signatures cognitives et du Shadow Suture SQLite, et injecte `ECHO_VAULT_ENCRYPTION_KEY` exclusivement dans le conteneur `echo-open-webui` pour le chiffrement AEAD de l'Identity Vault (isolant la clé maître des workers sandbox et d'ingestion).
 - **Domain-Driven IPAM & Persistance** : Opère sur deux sous-réseaux isolés (`echo-network` via `${ECHO_NET_MAIN_PREFIX}` et `echo-sandbox` via `${ECHO_NET_SANDBOX_PREFIX}`) avec adressage IPv4 statique (`.100-.103` pour les briques Core et `.20-.30` calqués sur les numéros des dossiers Workers, après suppression des anciens conteneurs `.31`/`.32` au profit du pont audio in-process `edge-tts` dans `echo-open-webui`). Monte les volumes nommés (`echo-qdrant-data`, `echo-n8n-data`, `echo-mcp-cache`, `echo_libs_sandbox`, etc.), les 4 packages Hot-Reload de `echo-admin-manager` (`core`, `services`, `routes`, `templates` en `:ro` + `echo-n8n-data` et `echo-mcp-cache` en `:rw`), ainsi que `logging.json` (horodatage ISO 8601) sur l'ensemble des workers Python.
 - **Intégration BunkerWeb & Résilience SPA** : Configure sur `echo-open-webui` le Forward Auth (`/api/verify`), la résolution DNS dynamique Nginx (`set $$upstream`), le Smart Proxy Mock sur `/api/version`, l'Auto-Heal SPA par `sub_filter` sur `/auth`, le bounce `/sso-logout` (`Clear-Site-Data: "cache"`), `bunkerweb.MAX_CLIENT_SIZE=4096m`, et `USE_MODSECURITY=no` (reposant sur `BAD_BEHAVIOR` pour les codes `405 444` et un Rate Limit `300r/s` burst `1000`).
 - **Règles d'Exécution** : Gère les `healthcheck` stricts pour s'assurer que les fondations (Qdrant `v1.19.1`, SearXNG) soient actives avant de lancer les Workers IA et l'ECHO N8N Orchestrator.
 
 ### `bunkerweb-stack.yml`
-**Rôle** : L'enveloppe de sécurité périmétrique (WAF BunkerWeb v1.6.15, manifeste v5.226.18.0).
+**Rôle** : L'enveloppe de sécurité périmétrique (WAF BunkerWeb v1.6.15, manifeste v5.231.36.1).
 - **Sémantique** : Ce manifeste secondaire est activé par `enable-bunkerweb.sh` pour proxyfier les requêtes vers Open WebUI (`ui.`), l'Admin Manager (`am.`) et l'IdP `echo-auth-manager` (`auth.`, IP `.24`), adossé à MariaDB `11.4` (`--max-allowed-packet=128M`). Intègre dans l'ancre partagée (`x-bw-config`) les directives critiques `DISABLE_DEFAULT_SERVER: "yes"`, `AUTO_LETS_ENCRYPT`, `GUNICORN_TIMEOUT: "120"` et l'exclusion `www.example.com_AUTO_LETS_ENCRYPT: "no"`, tandis que `MULTISITE: "yes"` est injecté dans le bloc `environment:` de `bunkerweb` et `bw-scheduler`. Ces variables globales ne doivent **jamais** être répétées sous forme de labels sur des conteneurs dynamiques pour éviter l'effacement par Autoconf.
 
 ### `webui-settings.json` & `model-config.json`
