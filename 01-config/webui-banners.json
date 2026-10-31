@@ -1,34 +1,26 @@
 [
   {
-    "id": "echo-banner-context-compaction-beta-20261028",
-    "type": "warning",
-    "title": "Filtre de compactage contextuel (Bêta)",
-    "content": "**Filtre de compression contextuelle (Bêta)** : Le filtre de compactage automatique du contexte est désormais **désactivé par défaut**. Actuellement en version bêta expérimentale, son activation peut occasionner une **perte de données ou d'historique** dans vos échanges.",
+    "id": "echo-banner-context-compaction-auto-20261031",
+    "type": "info",
+    "title": "Compaction contextuelle automatique",
+    "content": "**Compaction automatique activée** : Vos échanges de très longue durée sont désormais compressés de manière transparente dès 60% d'utilisation du contexte. La mémoire et les directives restent intactes sans saturation de quota. Désactivable à tout moment dans les paramètres de filtres.",
     "dismissible": true,
-    "timestamp": 1730148330
+    "timestamp": 1793449200
+  },
+  {
+    "id": "echo-banner-multimedia-exploration-20261031",
+    "type": "success",
+    "title": "Analyse Multimédia & Vidéos longues",
+    "content": "**Exploration multimédia enrichie** : Écho distille désormais vos enregistrements audio et vidéos volumineuses avec horodatages précis `[HH:MM:SS]` grâce au découpage en mémoire vive, et adapte son analyse à vos instructions spécifiques.",
+    "dismissible": true,
+    "timestamp": 1793449200
   },
   {
     "id": "echo-banner-codex-multichat-links-20261025",
-    "type": "success",
+    "type": "info",
     "title": "ECHO Codex Multi-Chat & Liens Directs",
     "content": "**ECHO Codex Multi-Chat & Liens** : Vous pouvez désormais consulter les fichiers de vos autres sessions en lecture seule (👁️) et modifier ceux du chat local (✏️). Les liens dans les messages ouvrent directement l'éditeur Codex sur le document ciblé !",
     "dismissible": true,
     "timestamp": 1729862400
-  },
-  {
-    "id": "echo-banner-subagent-budget-20261025",
-    "type": "info",
-    "title": "Délégation des Sous-Agents & Budget",
-    "content": "**Délégation des Sous-Agents fiabilisée** : La gestion du budget d'outils alloué aux sous-agents est désormais stricte. Dès la limite atteinte, l'agent achève proprement sa synthèse sans boucle d'appels superflue, garantissant une exécution maîtrisée et sans surcoût de quota.",
-    "dismissible": true,
-    "timestamp": 1729862400
-  },
-  {
-    "id": "echo-banner-tags-rag-20261023",
-    "type": "info",
-    "title": "Mémoire & Tags de discussion",
-    "content": "**Mémoire ciblée par tags** : Vous pouvez désormais organiser vos conversations avec des étiquettes (tags). Écho sait provisionner automatiquement mais aussi lister vos tags et **restreindre ses recherches en mémoire** aux discussions portant le tag de votre choix.",
-    "dismissible": true,
-    "timestamp": 1729683543
   }
 ]
