@@ -1,12 +1,13 @@
 """
 title: ECHO Context Compaction Filter
 author: Wilfried BARNAVON
-version: 5.231.31.1
+version: 5.231.38.1
 description: Composant système interne : Compaction contextuelle automatique in-place sur seuil.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgMjJ2LTYiLz48cGF0aCBkPSJNMTIgOFYyIi8+PHBhdGggZD0iTTQgMTJIMiIvPjxwYXRoIGQ9Ik0xMCAxMkg4Ii8+PHBhdGggZD0iTTE2IDEyaC0yIi8+PHBhdGggZD0iTTIyIDEyaC0yIi8+PHBhdGggZD0ibTE1IDE5LTMtMy0zIDMiLz48cGF0aCBkPSJtMTUgNS0zIDMtMy0zIi8+PC9zdmc+
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.38.1: Activation par défaut de la compaction contextuelle automatique (ENABLE_AUTO_COMPACTION=True).
 # 5.231.31.1: Prise en charge asynchrone directe de EchoCompactionEngine.load_active_branch_messages, notification d'alerte et spinner CSS HUD.
 # 5.231.30.1: Alignement sur le modèle UserValves (ENABLE_AUTO_COMPACTION uniquement, toggle=True, icône SVG fold-vertical) et utilisation stricte des constantes SSOT.
 # 5.231.28.1: Création du filtre Inlet (priorité 25) de compaction contextuelle automatique in-place sur seuil (% de CONTEXT_MAX, désactivé par défaut).
@@ -47,7 +48,7 @@ class Filter:
 
     class UserValves(BaseModel):
         ENABLE_AUTO_COMPACTION: bool = Field(
-            default=False,
+            default=True,
             description="🗜️ Activer la compaction automatique du contexte lorsque le seuil est atteint.",
         )
 
