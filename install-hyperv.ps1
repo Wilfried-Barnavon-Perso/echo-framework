@@ -1,8 +1,8 @@
-# ==============================================================================
+﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# VERSION : 5.231.39.1
-# DATE    : 2026-09-24
+# VERSION : 5.231.40.1
+# DATE    : 2026-10-31
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
@@ -32,6 +32,7 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.40.1: Correction encodage UTF-8 BOM pour le parseur PowerShell 5.1 et alignement version.
 # 5.231.39.1: Mise à jour des références cloud-init vers echo-sync.sh.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 
@@ -62,7 +63,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.231.39.1"
+$SCRIPT_VERSION = "5.231.40.1"
 $ScriptDir = $PSScriptRoot
 Set-Location -Path $ScriptDir
 $VersionFile = "$ScriptDir\VERSION"
