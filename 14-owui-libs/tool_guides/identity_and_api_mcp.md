@@ -1,7 +1,7 @@
 ---
 domain_id: identity_and_api_mcp
-version: 5.231.22.2
-updated_at: 2026-10-27
+version: 5.231.37.1
+updated_at: 2026-10-31
 name: Coffre-Fort d'Identités (Identity Vault), Client API HTTP & Protocole MCP
 description: Découverte et gestion des secrets/comptes chiffrés et sécurisés (Identity Vault), requêtes HTTP universelles (call_api), instanciation/exécution sur les serveurs MCP (echo_mcp_tool) et stratégies par service.
 tools: [list_identities_services, list_identities, manage_identity, call_api, list_mcp_functions, call_mcp_function]
@@ -107,7 +107,9 @@ L'outil MCP route dynamiquement les requêtes JSON-RPC vers toutes les catégori
   2. `search_emails(folder="...", received_before="<date>", order_by="receivedDateTime asc")` pour cibler immédiatement les e-mails éligibles (ou `list_emails(order_by="receivedDateTime asc", include_body=False)`).
   3. Optionnel : `batch_get_emails(email_ids=[...])` si une vérification du contenu textuel est exigée avant action.
   4. `batch_trash_emails(email_ids=[...])` pour envoyer l'ensemble à la corbeille en un minimum d'appels API.
-- **Autres Capacités** : Gestion d'agenda (`list_events`, `create_event`, `respond_event`) et stockage OneDrive (`list_files`, `upload_file`, `delete_file`).
+- **Téléchargement de Fichiers OneDrive & Pièces Jointes (`get_file`, `get_attachment`)** :
+  - Les fichiers téléchargés via `get_file(file_id="...")` et `get_attachment(email_id="...", attachment_id="...")` sont **automatiquement routés vers le Download Broker** (`/app/downloads/<user_id>/<chat_id>/mcp/`) puis ingérés dans le Registre Unifié (`query_registry`). Les paramètres `download_path` et `save_path` sont optionnels (seul un nom de fichier peut être suggéré ; tout chemin système comme `/root/.workspace` est ignoré et remplacé par la Drop-Zone du Download Broker). La réponse restitue directement le `file_id` ECHO à 8 caractères hexadécimaux.
+- **Autres Capacités** : Gestion d'agenda (`list_events`, `create_event`, `respond_event`) et stockage OneDrive (`list_files`, `create_file`, `update_file`, `delete_file`).
 
 ### 3.2 Google Workspace (`google_workspace` - Résident `workspace-mcp`)
 - **Pérennité du Refresh Token** :
@@ -116,6 +118,8 @@ L'outil MCP route dynamiquement les requêtes JSON-RPC vers toutes les catégori
 - **Syntaxe de Recherche Gmail & Drive** :
   - L'argument `q` exploite la syntaxe native des moteurs Google (ex: `q="from:recrutement@societe.com has:attachment after:2026/01/01"`).
   - Les requêtes Drive supportent les opérateurs de recherche standard Google Drive (`name contains 'CV' and mimeType = 'application/pdf'`).
+- **Téléchargements Drive & Pièces Jointes Gmail (`get_drive_file_download_url`, `get_gmail_attachment_content`, `download_chat_attachment`)** :
+  - Tout fichier ou pièce jointe téléchargé par `workspace-mcp` est automatiquement intercepté en sortie et transféré dans le **Download Broker** (`/app/downloads/<user_id>/<chat_id>/mcp/`) avec attribution d'un `file_id` ECHO à 8 caractères hexadécimaux pour ingestion automatique dans le Registre Unifié (`query_registry`).
 - **Outils Disponibles** : Messagerie Gmail (`list_messages`, `get_message`, `send_message`), Drive (`search_files`, `download_file`), Calendar (`list_events`, `create_event`), Contacts, Docs, Sheets, Tasks.
 
 ### 3.3 Agrégateur d'Emploi (`jobs_omnisearch` - Natif `m2_jobs_omnisearch.py`)

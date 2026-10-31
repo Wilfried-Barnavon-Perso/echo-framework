@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 5.231.36.2
+# VERSION : 5.231.37.1
 # ==============================================================================
 #                  inventés par la syntaxe officielle BunkerWeb (REVERSE_PROXY_AUTH_REQUEST*).
 #                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
@@ -350,6 +350,7 @@ services:
       - /opt/ECHO/docker-mcp-broker/core:/app/core:ro
       - /opt/ECHO/docker-mcp-broker/modules:/app/modules:ro
       - echo-mcp-cache:/app/mcp_cache:rw
+      - echo-download-broker-data:/app/downloads:rw
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"

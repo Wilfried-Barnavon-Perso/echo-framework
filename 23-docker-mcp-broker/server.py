@@ -1,18 +1,18 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 5.231.20.1
+VERSION : 5.231.37.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-10-27
-================================================================================
+DATE MAJ : 2026-10-31
+===============================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.37.1: Extraction de x-openwebui-chat-id dans WebUIUserMiddleware (chat_id_var) et compatibilité FastMCP.
 # 5.231.20.1: Extraction et décodage de l'en-tête x-echo-credentials dans WebUIUserMiddleware (credentials_var).
 # 5.228.9.2: Schéma jobs_omnisearch enrichi avec directives APEC (DataDome), LinkedIn (li_at) et WTTJ.
 # 5.228.9.1: Directives France Travail (OAuth2 francetravail.io) et champs WTTJ dans jobs_omnisearch.
 # 5.228.0.1: Directive PAS exhaustive pour google_workspace (anti-localhost:8001, mode In production).
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 import base64
 import json
 import logging
@@ -25,7 +25,7 @@ except ImportError:
     from mcp.server.fastmcp import FastMCP as MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 
-from core.security import user_id_var, credentials_var
+from core.security import user_id_var, chat_id_var, credentials_var
 from modules.m5_proxy_mcp import proxy_mcp_request, AuthRequiredError
 from modules.m2_jobs_omnisearch import setup_jobs_omnisearch_mcp
 from modules.m3_corporate import register_corporate_tools
@@ -51,11 +51,14 @@ async def ping() -> str:
 
 # FastMCP et Open WebUI communiquent via StreamableHTTP (et non SSE standard)
 # Nous utiliserons Uvicorn pour exposer l'application ASGI générée par mcp.
-app = mcp.streamable_http_app(
-    json_response=True,
-    stateless_http=True,
-    transport_security=TransportSecuritySettings(
-        enable_dns_rebinding_protection=False))
+try:
+    app = mcp.streamable_http_app(
+        json_response=True,
+        stateless_http=True,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=False))
+except TypeError:
+    app = mcp.streamable_http_app()
 
 # Route HTTP pour le Docker Healthcheck
 
@@ -70,9 +73,18 @@ SERVICE_SCHEMAS = {
         "category": "mcp_native",
         "name": "Corporate (Sirene/Pappers)",
         "fields": [
-            {"id": "sirene_key", "label": "Clé API Sirene", "type": "password", "help": "Token Bearer obtenu sur l'INSEE."},
-            {"id": "pappers_key", "label": "Clé API Pappers", "type": "password",
-                "help": "Clé API obtenue sur pappers.fr (Espace Développeurs)."}
+            {
+                "id": "sirene_key",
+                "label": "Clé API Sirene",
+                "type": "password",
+                "help": "Token Bearer obtenu sur l'INSEE.",
+            },
+            {
+                "id": "pappers_key",
+                "label": "Clé API Pappers",
+                "type": "password",
+                "help": "Clé API obtenue sur pappers.fr (Espace Développeurs).",
+            },
         ]
     },
     "jobs_omnisearch": {
@@ -148,37 +160,73 @@ SERVICE_SCHEMAS = {
         "command": "workspace-mcp",
         "user_required_instructions": (
             "DIRECTIVES IMPÉRATIVES D'AUTHENTIFICATION GOOGLE WORKSPACE :\n"
-            "1. PROSCRIPTION LOCALE : Le Modèle a l'INTERDICTION STRICTE de proposer ou d'afficher des URLs de redirection locales "
-            "(ex: http://localhost:8001/oauth2callback). L'infrastructure opère dans un conteneur headless isolé inaccessible depuis le navigateur de l'Utilisateur.\n"
+            "1. PROSCRIPTION LOCALE : Le Modèle a l'INTERDICTION STRICTE de proposer ou d'afficher "
+            "des URLs de redirection locales (ex: http://localhost:8001/oauth2callback). "
+            "L'infrastructure opère dans un conteneur headless isolé inaccessible depuis le navigateur "
+            "de l'Utilisateur.\n"
             "2. PRÉREQUIS GOOGLE CLOUD CONSOLE (SI PREMIÈRE CONFIGURATION) :\n"
             "   a. L'Utilisateur DOIT créer un projet sur Google Cloud Console et activer les APIs requises "
             "(Calendar, Gmail, Drive, Contacts, Sheets, Docs, Slides, Tasks).\n"
-            "   b. Dans 'Identifiants', créer un ID client OAuth de type 'Application Web' et déclarer impérativement l'URI de redirection autorisée : "
-            "https://developers.google.com/oauthplayground\n"
+            "   b. Dans 'Identifiants', créer un ID client OAuth de type 'Application Web' et déclarer "
+            "impérativement l'URI de redirection autorisée : https://developers.google.com/oauthplayground\n"
             "3. PÉRENNITÉ DU JETON (ANTI-EXPIRATION 7 JOURS) :\n"
-            "   Dans Google Cloud Console > 'Écran de consentement OAuth' (Google Auth Platform > Audience), l'Utilisateur DOIT basculer le statut "
-            "de publication de 'Testing' (Test) à 'In production' (En production). Sans cette action, Google invalide déterministement "
+            "   Dans Google Cloud Console > 'Écran de consentement OAuth' (Google Auth Platform > Audience), "
+            "l'Utilisateur DOIT basculer le statut de publication de 'Testing' (Test) à 'In production' "
+            "(En production). Sans cette action, Google invalide déterministement "
             "le Refresh Token tous les 7 jours (erreur invalid_grant).\n"
             "4. GÉNÉRATION / RÉGÉNÉRATION DU REFRESH TOKEN (OAuth Playground) :\n"
             "   a. L'Utilisateur DOIT accéder à https://developers.google.com/oauthplayground\n"
-            "   b. Ouvrir les paramètres (icône engrenage en haut à droite), cocher 'Use your own OAuth credentials' et renseigner le 'OAuth Client ID' et le 'OAuth Client secret'.\n"
-            "   c. Dans 'Step 1 - Select & authorize APIs' > champ 'Input your own scopes', coller la liste exhaustive suivante :\n"
-            "      openid https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email "
-            "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/gmail.modify "
-            "https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts https://www.googleapis.com/auth/spreadsheets "
-            "https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/presentations https://www.googleapis.com/auth/tasks\n"
+            "   b. Ouvrir les paramètres (icône engrenage en haut à droite), cocher 'Use your own OAuth credentials' "
+            "et renseigner le 'OAuth Client ID' et le 'OAuth Client secret'.\n"
+            "   c. Dans 'Step 1 - Select & authorize APIs' > champ 'Input your own scopes', coller la liste "
+            "exhaustive suivante :\n"
+            "      openid https://www.googleapis.com/auth/userinfo.profile "
+            "https://www.googleapis.com/auth/userinfo.email "
+            "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive "
+            "https://www.googleapis.com/auth/gmail.modify "
+            "https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts "
+            "https://www.googleapis.com/auth/spreadsheets "
+            "https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/presentations "
+            "https://www.googleapis.com/auth/tasks\n"
             "   d. Cliquer sur 'Authorize APIs' et valider l'accès avec le compte Google cible.\n"
-            "   e. Dans 'Step 2 - Exchange authorization code for tokens', cliquer sur 'Exchange authorization code for tokens' et copier la valeur de 'Refresh token'.\n"
+            "   e. Dans 'Step 2 - Exchange authorization code for tokens', cliquer sur "
+            "'Exchange authorization code for tokens' et copier la valeur de 'Refresh token'.\n"
             "5. CONSIGNATION DANS L'IDENTITY VAULT :\n"
-            "   Les 4 clés exactes suivantes DOIVENT être enregistrées dans l'Identity Vault sous le service 'google_workspace' "
-            "(ou mettre à jour 'GOOGLE_OAUTH_REFRESH_TOKEN' s'il s'agit d'un simple renouvellement) : "
-            "'USER_GOOGLE_EMAIL', 'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'GOOGLE_OAUTH_REFRESH_TOKEN'."
+            "   Les 4 clés exactes suivantes DOIVENT être enregistrées dans l'Identity Vault sous le service "
+            "'google_workspace' (ou mettre à jour 'GOOGLE_OAUTH_REFRESH_TOKEN' s'il s'agit d'un simple "
+            "renouvellement) : "
+            "'USER_GOOGLE_EMAIL', 'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', "
+            "'GOOGLE_OAUTH_REFRESH_TOKEN'."
         ),
         "fields": [
-            {"id": "USER_GOOGLE_EMAIL", "label": "Email Google", "type": "text", "required": True, "help": "Email du compte (ex: john.doe@gmail.com)"},
-            {"id": "GOOGLE_OAUTH_CLIENT_ID", "label": "Client ID", "type": "text", "required": True, "help": "ID Client OAuth2 Google"},
-            {"id": "GOOGLE_OAUTH_CLIENT_SECRET", "label": "Client Secret", "type": "password", "required": True, "help": "Secret Client OAuth2 Google"},
-            {"id": "GOOGLE_OAUTH_REFRESH_TOKEN", "label": "Refresh Token", "type": "password", "required": True, "help": "Généré via OAuth Playground"}
+            {
+                "id": "USER_GOOGLE_EMAIL",
+                "label": "Email Google",
+                "type": "text",
+                "required": True,
+                "help": "Email du compte (ex: john.doe@gmail.com)",
+            },
+            {
+                "id": "GOOGLE_OAUTH_CLIENT_ID",
+                "label": "Client ID",
+                "type": "text",
+                "required": True,
+                "help": "ID Client OAuth2 Google",
+            },
+            {
+                "id": "GOOGLE_OAUTH_CLIENT_SECRET",
+                "label": "Client Secret",
+                "type": "password",
+                "required": True,
+                "help": "Secret Client OAuth2 Google",
+            },
+            {
+                "id": "GOOGLE_OAUTH_REFRESH_TOKEN",
+                "label": "Refresh Token",
+                "type": "password",
+                "required": True,
+                "help": "Généré via OAuth Playground",
+            },
         ]
     },
     "microsoft_365": {
@@ -186,39 +234,93 @@ SERVICE_SCHEMAS = {
         "name": "Microsoft 365 MCP (Résident)",
         "command": "microsoft-mcp",
         "user_required_instructions": (
-            "Le Modèle DOIT guider l'Utilisateur pour configurer Microsoft 365 si les identifiants sont manquants ou invalides : "
-            "1. Demander à l'Utilisateur de créer une application sur le portail Azure (Entra ID) avec la plateforme 'Application mobile et de bureau' "
-            "(Redirect URI natif) et d'ajouter les permissions Microsoft Graph déléguées requises : "
+            "Le Modèle DOIT guider l'Utilisateur pour configurer Microsoft 365 si les identifiants "
+            "sont manquants ou invalides : "
+            "1. Demander à l'Utilisateur de créer une application sur le portail Azure (Entra ID) avec la "
+            "plateforme 'Application mobile et de bureau' (Redirect URI natif) et d'ajouter les permissions "
+            "Microsoft Graph déléguées requises : "
             "Mail.ReadWrite, Mail.Send, Calendars.ReadWrite, User.Read, Files.ReadWrite.All, offline_access. "
-            "2. L'Utilisateur doit enregistrer dans l'Identity Vault pour le service 'microsoft_365' les deux clés exactes suivantes : "
+            "2. L'Utilisateur doit enregistrer dans l'Identity Vault pour le service 'microsoft_365' "
+            "les deux clés exactes suivantes : "
             "'MICROSOFT_MCP_CLIENT_ID' (Client ID / Application ID Azure) et 'MICROSOFT_MCP_TENANT_ID' "
-            "(Tenant ID, ex: 'consumers' pour les comptes personnels @outlook/@hotmail, ou l'ID d'annuaire de l'organisation). "
-            "3. Une fois les clés renseignées dans le Vault, le Modèle DOIT appeler la fonction 'authenticate_account' du MCP Microsoft. "
-            "4. Le Modèle DOIT restituer à l'Utilisateur l'URL de vérification ainsi que le 'User Code' fournis par le MCP, et inviter l'Utilisateur à valider la connexion. "
-            "5. Après confirmation de l'Utilisateur, le Modèle DOIT appeler la fonction 'complete_authentication' avec le 'flow_cache' pour clore l'authentification MSAL."
+            "(Tenant ID, ex: 'consumers' pour les comptes personnels @outlook/@hotmail, ou l'ID d'annuaire "
+            "de l'organisation). "
+            "3. Une fois les clés renseignées dans le Vault, le Modèle DOIT appeler la fonction "
+            "'authenticate_account' du MCP Microsoft. "
+            "4. Le Modèle DOIT restituer à l'Utilisateur l'URL de vérification ainsi que le 'User Code' "
+            "fournis par le MCP, et inviter l'Utilisateur à valider la connexion. "
+            "5. Après confirmation de l'Utilisateur, le Modèle DOIT appeler la fonction "
+            "'complete_authentication' avec le 'flow_cache' pour clore l'authentification MSAL."
         ),
         "fields": [
-            {"id": "MICROSOFT_MCP_CLIENT_ID", "label": "App ID Azure", "type": "text", "required": True, "help": "ID de l'application enregistrée sur Azure"},
-            {"id": "MICROSOFT_MCP_TENANT_ID", "label": "Tenant ID", "type": "text", "required": True, "help": "ID du Tenant (consumers, common, etc.)"}
+            {
+                "id": "MICROSOFT_MCP_CLIENT_ID",
+                "label": "App ID Azure",
+                "type": "text",
+                "required": True,
+                "help": "ID de l'application enregistrée sur Azure",
+            },
+            {
+                "id": "MICROSOFT_MCP_TENANT_ID",
+                "label": "Tenant ID",
+                "type": "text",
+                "required": True,
+                "help": "ID du Tenant (consumers, common, etc.)",
+            },
         ]
     },
     "remote_mcp": {
         "category": "mcp_remote",
         "name": "Serveurs MCP Distants (HTTP/SSE)",
         "fields": [
-            {"id": "url", "label": "URL du Serveur", "type": "text", "help": "ex: https://locataire-averti.com/mcp/sse"},
-            {"id": "transport", "label": "Type de Transport", "type": "text", "help": "Saisir obligatoirement 'sse' ou 'streamable_http'."},
-            {"id": "headers", "label": "En-têtes (JSON)", "type": "text", "help": "ex: {\"Authorization\": \"Bearer XXX\"}"},
-            {"id": "description", "label": "Rôle", "type": "text", "help": "Sert au LLM pour savoir quand l'utiliser."}
+            {
+                "id": "url",
+                "label": "URL du Serveur",
+                "type": "text",
+                "help": "ex: https://locataire-averti.com/mcp/sse",
+            },
+            {
+                "id": "transport",
+                "label": "Type de Transport",
+                "type": "text",
+                "help": "Saisir obligatoirement 'sse' ou 'streamable_http'.",
+            },
+            {
+                "id": "headers",
+                "label": "En-têtes (JSON)",
+                "type": "text",
+                "help": "ex: {\"Authorization\": \"Bearer XXX\"}",
+            },
+            {
+                "id": "description",
+                "label": "Rôle",
+                "type": "text",
+                "help": "Sert au LLM pour savoir quand l'utiliser.",
+            },
         ]
     },
     "stdio_mcp": {
         "category": "mcp_ephemeral",
         "name": "Serveurs MCP Locaux (Stdio)",
         "fields": [
-            {"id": "command", "label": "Commande", "type": "text", "help": "ex: npx ou uvx"},
-            {"id": "args", "label": "Arguments (JSON)", "type": "text", "help": "ex: [\"-y\", \"@modelcontextprotocol/server-postgres\"]"},
-            {"id": "description", "label": "Rôle", "type": "text", "help": "Sert au LLM pour savoir quand l'utiliser."}
+            {
+                "id": "command",
+                "label": "Commande",
+                "type": "text",
+                "help": "ex: npx ou uvx",
+            },
+            {
+                "id": "args",
+                "label": "Arguments (JSON)",
+                "type": "text",
+                "help": "ex: [\"-y\", \"@modelcontextprotocol/server-postgres\"]",
+            },
+            {
+                "id": "description",
+                "label": "Rôle",
+                "type": "text",
+                "help": "Sert au LLM pour savoir quand l'utiliser.",
+            },
         ]
     }
 }
@@ -249,6 +351,13 @@ class WebUIUserMiddleware:
 
             if user_id:
                 user_id_var.set(user_id)
+
+            chat_id = headers.get(b"x-openwebui-chat-id", b"").decode("utf-8")
+            if not chat_id:
+                chat_id = headers.get(b"x-echo-chat-id", b"").decode("utf-8")
+
+            if chat_id:
+                chat_id_var.set(chat_id)
 
             b64_creds = headers.get(b"x-echo-credentials", b"").decode("utf-8")
             parsed_creds = {}
