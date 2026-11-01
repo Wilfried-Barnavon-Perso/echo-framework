@@ -1,11 +1,13 @@
 #!/bin/bash
 # ==============================================================================
-# AFFICHAGE SECURISE DES IDENTIFIANTS ADMIN
-# VERSION : 5.226.18.0
+# SCRIPT : echo-show-admin.sh
+# VERSION : 5.231.39.1
 # Auteur : Wilfried BARNAVON
+# ROLE   : Affichage sécurisé des identifiants Admin
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Renommage de show-echo-admin.sh en echo-show-admin.sh.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # --- INITIALISATION : CORE ECHO GLOBALS ---

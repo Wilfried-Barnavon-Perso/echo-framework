@@ -1,16 +1,16 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 5.231.20.1
+version: 5.231.29.1
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.29.1: Alignement sur la constante SSOT CODEX_WORKSPACE_MAIN lors de l'indexation des plans dans echo_resources.
+# 5.231.28.1: Normalisation de storage_path via format_codex_storage_path (codex/main/<filename>) et suppression des appels à la table obsolète plans.
 # 5.231.20.1: Synchronisation par verrou partagé get_codex_lock(user_id, chat_id), déportation asyncio.to_thread des accès Dulwich et suffixe UUID anti-collision sur plan_id.
 # 5.229.0.0: Compression des docstrings OpenAPI et externalisation de la documentation vers 14-owui-libs/tool_guides/strategic_planner.md.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.14: Sanctuarisation du thinkingLevel "high" sur build_plan et analyze_plan.
-# 1.13: Refonte UX complète (zéro émoji), statut "proposed" par défaut, retrait des modales build/update, et ajout de l'outil analyze_plan.
 
 import sys
 import uuid
@@ -34,11 +34,14 @@ from echo_prompts import (
     SYS_PLANNER_UPDATE_TASKS, SYS_PLANNER_ANALYZE
 )
 from echo_codex_git import CodexRepo
-from echo_paths import get_codex_lock
+from echo_paths import get_codex_lock, format_codex_storage_path
 from echo_ui import EchoUI
 from echo_constants import (
-    PLAN_STATUS, get_generation_config,
-    PLANNER_MODEL_BUILD, PLANNER_MODEL_UPDATE,
+    CODEX_WORKSPACE_MAIN,
+    PLAN_STATUS,
+    PLANNER_MODEL_BUILD,
+    PLANNER_MODEL_UPDATE,
+    get_generation_config,
 )
 
 
@@ -237,7 +240,7 @@ class Tools:
         state.save_resource(
             id=plan_id, name=goal[:80], resource_type='plan', status='proposed',
             mime='text/markdown', plan_goal=goal[:200], author_model=model_key_used,
-            git_tracked=True, storage_path=f"codex/{filename}",
+            git_tracked=True, storage_path=format_codex_storage_path(filename, CODEX_WORKSPACE_MAIN),
         )
 
         if __event_emitter__:

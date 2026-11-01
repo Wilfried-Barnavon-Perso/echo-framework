@@ -1,34 +1,45 @@
-# VERSION : 5.229.1.3
+# VERSION : 5.231.37.1
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.37.1: Routage atomique des téléchargements M365 et Google Workspace vers le Download Broker (/mcp/).
 # 5.229.1.3: En-tête Prefer text, assainisseur anti-HTML, bodyPreview et traçabilité new_id post-déplacement.
 # 5.229.1.2: Lecteur batch (batch_get_emails) et recherche multi-axes (search_emails KQL/OData/dossiers).
 # 5.229.1.1: Auto-résolution dossiers M365, pagination/tri list_emails, trash_email et batch_trash_emails ($batch).
 # 5.228.0.1: Fail-Closed OAuth2 GoogleWorkspaceProvider (prepare_env + bouclier anti-localhost:8001).
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 """
 ECHO MCP Broker - Adaptateurs de cycle de vie spécifiques aux fournisseurs MCP résidents.
 Isole la logique d'authentification et de préparation d'environnement (Microsoft 365 MSAL,
 Google Workspace OAuth2) hors de l'orchestrateur de transport générique m5_proxy_mcp.py.
 """
 import ast
+import base64
 import hashlib
 import html
 import json
 import logging
 import os
 import re
+import shutil
 import tempfile
+import time
 import urllib.parse
+import uuid
 from contextlib import AsyncExitStack
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import httpx
+from core.security import chat_id_var
 
 logger = logging.getLogger(__name__)
 
 MCP_CACHE_ROOT = os.environ.get("ECHO_MCP_CACHE_DIR", "/app/mcp_cache")
+MCP_DOWNLOADS_ROOT = os.environ.get("ECHO_DOWNLOADS_DIR", "/app/downloads")
+
+_WORKSPACE_UUID_SUFFIX_RE = re.compile(
+    r"_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?=\.[^.]+$|$)"
+)
+_SAVED_TO_LINE_RE = re.compile(r"(Saved to:\s*)([^\r\n]+)")
 
 
 class AuthRequiredError(Exception):
@@ -47,6 +58,99 @@ class MCPServiceProvider:
             "structuredContent": payload,
             "isError": is_error,
         }
+
+    @staticmethod
+    def _sanitize_segment(val: Optional[str], fallback: str = "anonymous") -> str:
+        cleaned = "".join(
+            c for c in str(val or "") if c.isalnum() or c in ("-", "_", ".")
+        ).strip(".")
+        return cleaned or fallback
+
+    @staticmethod
+    def _sanitize_filename(filename: Optional[str], fallback: str = "downloaded_file") -> str:
+        if not filename:
+            return fallback
+        base = os.path.basename(str(filename).replace("\\", "/")).strip()
+        sanitized = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", base).rstrip(" .")
+        if not sanitized or sanitized in (".", ".."):
+            return fallback
+        return sanitized
+
+    @staticmethod
+    def _extract_hex_fid(filename: str) -> Optional[str]:
+        if "_" not in filename:
+            return None
+        prefix = filename.split("_", 1)[0].lower()
+        if len(prefix) == 8 and all(c in "0123456789abcdef" for c in prefix):
+            return prefix
+        return None
+
+    @classmethod
+    def _get_mcp_drop_dir(cls, user_id: Optional[str], chat_id: Optional[str] = None) -> str:
+        resolved_cid = chat_id or chat_id_var.get() or "default_chat"
+        safe_uid = cls._sanitize_segment(user_id, "anonymous")
+        safe_cid = cls._sanitize_segment(resolved_cid, "default_chat")
+        drop_dir = os.path.join(MCP_DOWNLOADS_ROOT, safe_uid, safe_cid, "mcp")
+        os.makedirs(drop_dir, exist_ok=True)
+        for path_to_chmod in (
+            MCP_DOWNLOADS_ROOT,
+            os.path.join(MCP_DOWNLOADS_ROOT, safe_uid),
+            os.path.join(MCP_DOWNLOADS_ROOT, safe_uid, safe_cid),
+            drop_dir,
+        ):
+            try:
+                os.chmod(path_to_chmod, 0o777)
+            except Exception:
+                pass
+        return drop_dir
+
+    @classmethod
+    def _publish_file_to_broker(
+        cls,
+        src_or_bytes: Union[bytes, bytearray, str],
+        user_id: Optional[str],
+        chat_id: Optional[str],
+        filename: Optional[str],
+        fid: Optional[str] = None,
+    ) -> Tuple[str, str, str]:
+        """
+        Écrit ou déplace atomiquement un fichier vers la Drop-Zone MCP du Download Broker
+        via un fichier temporaire `.part`, ajuste les permissions (0o666) et antidate `st_mtime`
+        de 5s pour permettre une collecte sans latence par `download_broker.py`.
+        Retourne `(fid, safe_name, final_path)`.
+        """
+        fid = (fid or uuid.uuid4().hex[:8]).lower()
+        clean_name = cls._sanitize_filename(filename)
+        if clean_name.lower().startswith(f"{fid}_"):
+            safe_name = f"{fid}_{clean_name.split('_', 1)[1]}"
+        else:
+            safe_name = f"{fid}_{clean_name}"
+
+        drop_dir = cls._get_mcp_drop_dir(user_id, chat_id)
+        final_path = os.path.join(drop_dir, safe_name)
+        part_path = f"{final_path}.part"
+
+        if isinstance(src_or_bytes, (bytes, bytearray)):
+            with open(part_path, "wb") as f_out:
+                f_out.write(src_or_bytes)
+        elif isinstance(src_or_bytes, str):
+            if os.path.abspath(src_or_bytes) != os.path.abspath(part_path):
+                shutil.move(src_or_bytes, part_path)
+        else:
+            raise TypeError("src_or_bytes doit être bytes ou un chemin de fichier (str).")
+
+        try:
+            os.chmod(part_path, 0o666)
+        except Exception:
+            pass
+        try:
+            ready_mtime = time.time() - 5.0
+            os.utime(part_path, (ready_mtime, ready_mtime))
+        except Exception:
+            pass
+
+        os.replace(part_path, final_path)
+        return fid, safe_name, final_path
 
     async def prepare_env(
         self,
@@ -71,6 +175,7 @@ class MCPServiceProvider:
         user_id: str,
         tool_name: str,
         args: dict,
+        chat_id: Optional[str] = None,
     ) -> Tuple[dict, Optional[dict]]:
         """
         Hook exécuté avant `session.call_tool(tool_name, args)`.
@@ -84,6 +189,7 @@ class MCPServiceProvider:
         user_id: str,
         tool_name: str,
         result: dict,
+        chat_id: Optional[str] = None,
     ) -> dict:
         """Hook exécuté après `session.call_tool(tool_name, args)` sur le résultat sérialisé."""
         return result
@@ -100,6 +206,7 @@ class GoogleWorkspaceProvider(MCPServiceProvider):
         "RefreshError",
         "Token has been expired or revoked",
     )
+    _USER_STAGING_DIRS: dict[str, set[str]] = {}
 
     async def prepare_env(
         self,
@@ -184,17 +291,24 @@ class GoogleWorkspaceProvider(MCPServiceProvider):
             json.dump(token_data, f)
 
         env["WORKSPACE_MCP_CREDENTIALS_DIR"] = temp_dir_path
+        attachments_staging = os.path.join(temp_dir_path, "attachments")
+        os.makedirs(attachments_staging, exist_ok=True)
+        env["WORKSPACE_ATTACHMENT_DIR"] = attachments_staging
+        safe_uid = self._sanitize_segment(user_id)
+        self._USER_STAGING_DIRS.setdefault(safe_uid, set()).add(attachments_staging)
 
     async def after_tool_call(
         self,
         user_id: str,
         tool_name: str,
         result: dict,
+        chat_id: Optional[str] = None,
     ) -> dict:
         """
         Bouclier anti-pollution : intercepte toute tentative de `workspace-mcp` d'exposer
         une URL locale (localhost:8001/oauth2callback) ou une erreur d'expiration OAuth2
         en cours de session, et lève `AuthRequiredError` pour évincer la session corrompue.
+        Redirige également vers le Download Broker tout fichier écrit par `workspace-mcp`.
         """
         if not isinstance(result, dict):
             return result
@@ -210,6 +324,68 @@ class GoogleWorkspaceProvider(MCPServiceProvider):
                 "Le flux interactif local (localhost:8001/oauth2callback) émis par workspace-mcp "
                 "a été intercepté et bloqué car il est inaccessible depuis l'hôte."
             )
+
+        moved_map: dict[str, Tuple[str, str, str]] = {}
+        content_list = result.get("content")
+        if isinstance(content_list, list):
+            for item in content_list:
+                if not isinstance(item, dict) or item.get("type") != "text":
+                    continue
+                text_val = item.get("text", "")
+                for match in _SAVED_TO_LINE_RE.finditer(text_val):
+                    raw_path = match.group(2).strip()
+                    if raw_path and raw_path not in moved_map and os.path.isfile(raw_path):
+                        base_name = os.path.basename(raw_path)
+                        clean_orig = _WORKSPACE_UUID_SUFFIX_RE.sub("", base_name)
+                        try:
+                            moved_map[raw_path] = self._publish_file_to_broker(
+                                raw_path, user_id, chat_id, clean_orig
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "Échec transfert fichier Google Workspace vers Download Broker: %s", e
+                            )
+
+        safe_uid = self._sanitize_segment(user_id)
+        staging_dirs = self._USER_STAGING_DIRS.get(safe_uid, set())
+        for staging_dir in list(staging_dirs):
+            if not os.path.isdir(staging_dir):
+                staging_dirs.discard(staging_dir)
+                continue
+            for fname in os.listdir(staging_dir):
+                fpath = os.path.join(staging_dir, fname)
+                if os.path.isfile(fpath) and fpath not in moved_map:
+                    clean_orig = _WORKSPACE_UUID_SUFFIX_RE.sub("", fname)
+                    try:
+                        moved_map[fpath] = self._publish_file_to_broker(
+                            fpath, user_id, chat_id, clean_orig
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Échec transfert reliquat staging Google Workspace: %s", e
+                        )
+
+        if moved_map and isinstance(content_list, list):
+            result = dict(result)
+            new_content = []
+            for item in content_list:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    new_text = item.get("text", "")
+                    for old_path, (_fid, safe_name, new_path) in moved_map.items():
+                        new_text = new_text.replace(old_path, new_path)
+                        old_fname = os.path.basename(old_path)
+                        if old_fname != safe_name:
+                            new_text = new_text.replace(old_fname, safe_name)
+                    summary_lines = [
+                        f"\n📦 ECHO Download Broker: file_id='{fid}', name='{safe_name}', path='{new_path}'"
+                        for fid, safe_name, new_path in moved_map.values()
+                    ]
+                    new_item = dict(item)
+                    new_item["text"] = new_text + "".join(summary_lines)
+                    new_content.append(new_item)
+                else:
+                    new_content.append(item)
+            result["content"] = new_content
 
         return result
 
@@ -760,6 +936,46 @@ class Microsoft365Provider(MCPServiceProvider):
                     "without moving it to the trash folder. For safe reversible deletion, use 'trash_email' instead."
                 )
                 patched_tools.append(t_copy)
+            elif t_name == "get_file":
+                t_copy = dict(tool)
+                t_copy["description"] = (
+                    "Download a file from OneDrive directly into the ECHO Download Broker for automatic "
+                    "ingestion into the Unified Registry. 'download_path' is optional (only a custom "
+                    "filename may be suggested; directory routing to the Download Broker is enforced)."
+                )
+                schema = dict(t_copy.get("inputSchema", {}))
+                props = dict(schema.get("properties", {}))
+                if "download_path" in props:
+                    dp_prop = dict(props["download_path"])
+                    dp_prop["description"] = (
+                        "Optional desired filename (e.g. 'report.pdf'). Directory path is automatically "
+                        "overridden to the ECHO Download Broker drop-zone."
+                    )
+                    props["download_path"] = dp_prop
+                schema["properties"] = props
+                schema["required"] = ["file_id"]
+                t_copy["inputSchema"] = schema
+                patched_tools.append(t_copy)
+            elif t_name == "get_attachment":
+                t_copy = dict(tool)
+                t_copy["description"] = (
+                    "Download an email attachment directly into the ECHO Download Broker for automatic "
+                    "ingestion into the Unified Registry. 'save_path' is optional (only a custom "
+                    "filename may be suggested; directory routing to the Download Broker is enforced)."
+                )
+                schema = dict(t_copy.get("inputSchema", {}))
+                props = dict(schema.get("properties", {}))
+                if "save_path" in props:
+                    sp_prop = dict(props["save_path"])
+                    sp_prop["description"] = (
+                        "Optional desired filename (e.g. 'invoice.pdf'). Directory path is automatically "
+                        "overridden to the ECHO Download Broker drop-zone."
+                    )
+                    props["save_path"] = sp_prop
+                schema["properties"] = props
+                schema["required"] = ["email_id", "attachment_id"]
+                t_copy["inputSchema"] = schema
+                patched_tools.append(t_copy)
             elif t_name == "list_mail_folders":
                 has_list_mail_folders = True
                 patched_tools.append(tool)
@@ -898,6 +1114,7 @@ class Microsoft365Provider(MCPServiceProvider):
         user_id: str,
         tool_name: str,
         args: dict,
+        chat_id: Optional[str] = None,
     ) -> Tuple[dict, Optional[dict]]:
         args = dict(args or {})
 
@@ -1589,6 +1806,133 @@ class Microsoft365Provider(MCPServiceProvider):
                     logger.warning("Échec de move_email direct Graph: %s", e)
                     args["destination_folder"] = resolved_fid
 
+        # Cas 12 : get_file (OneDrive) -> téléchargement et routage forcé vers le Download Broker
+        if tool_name == "get_file":
+            file_id = str(args.get("file_id") or "").strip()
+            if not file_id:
+                return args, self._make_tool_response(
+                    {"status": "error", "message": "file_id obligatoire."}, is_error=True
+                )
+            fid = uuid.uuid4().hex[:8]
+            req_path = str(args.get("download_path") or "").strip()
+            req_name = self._sanitize_filename(req_path, "") if req_path else ""
+            safe_fid_seg = self._sanitize_segment(file_id, "file")
+
+            try:
+                token = self._get_access_token(user_id, resolved_account)
+                async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                    meta_res = await client.get(
+                        f"https://graph.microsoft.com/v1.0/me/drive/items/{file_id}",
+                        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                    )
+                    if meta_res.status_code != 200:
+                        return args, self._make_tool_response(
+                            {
+                                "status": "error",
+                                "message": f"Échec Graph get_file metadata ({meta_res.status_code}): {meta_res.text}",
+                            },
+                            is_error=True,
+                        )
+                    metadata = meta_res.json()
+                    download_url = metadata.get("@microsoft.graph.downloadUrl")
+                    if not download_url:
+                        return args, self._make_tool_response(
+                            {"status": "error", "message": "Aucune downloadUrl disponible pour ce fichier OneDrive."},
+                            is_error=True,
+                        )
+                    remote_name = self._sanitize_filename(metadata.get("name"), "")
+                    chosen_name = remote_name or req_name or f"onedrive_{safe_fid_seg}"
+                    drop_dir = self._get_mcp_drop_dir(user_id, chat_id)
+                    safe_name = f"{fid}_{chosen_name}"
+                    final_path = os.path.join(drop_dir, safe_name)
+                    part_path = f"{final_path}.part"
+
+                    async with client.stream("GET", download_url) as dl_stream:
+                        dl_stream.raise_for_status()
+                        with open(part_path, "wb") as f_out:
+                            async for chunk in dl_stream.aiter_bytes(chunk_size=65536):
+                                f_out.write(chunk)
+
+                    _, safe_name, final_path = self._publish_file_to_broker(
+                        part_path, user_id, chat_id, chosen_name, fid=fid
+                    )
+                    size_bytes = metadata.get("size") or os.path.getsize(final_path)
+                    return args, self._make_tool_response(
+                        {
+                            "status": "downloaded_to_broker",
+                            "file_id": fid,
+                            "name": safe_name,
+                            "original_name": metadata.get("name", chosen_name),
+                            "path": final_path,
+                            "size_mb": round(size_bytes / (1024 * 1024), 2),
+                            "mime_type": (metadata.get("file") or {}).get("mimeType"),
+                        }
+                    )
+            except Exception as e:
+                logger.warning("Fallback get_file via serveur MCP suite à exception Graph directe: %s", e)
+                fallback_name = req_name or f"onedrive_{safe_fid_seg}"
+                drop_dir = self._get_mcp_drop_dir(user_id, chat_id)
+                args["download_path"] = os.path.join(drop_dir, f"{fid}_{fallback_name}")
+
+        # Cas 13 : get_attachment (Outlook) -> téléchargement et routage forcé vers le Download Broker
+        if tool_name == "get_attachment":
+            email_id = str(args.get("email_id") or "").strip()
+            attachment_id = str(args.get("attachment_id") or "").strip()
+            if not email_id or not attachment_id:
+                return args, self._make_tool_response(
+                    {"status": "error", "message": "email_id et attachment_id obligatoires."},
+                    is_error=True,
+                )
+            fid = uuid.uuid4().hex[:8]
+            req_path = str(args.get("save_path") or "").strip()
+            req_name = self._sanitize_filename(req_path, "") if req_path else ""
+            safe_att_seg = self._sanitize_segment(attachment_id[:8], "att")
+
+            try:
+                token = self._get_access_token(user_id, resolved_account)
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    att_res = await client.get(
+                        f"https://graph.microsoft.com/v1.0/me/messages/{email_id}/attachments/{attachment_id}",
+                        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                    )
+                    if att_res.status_code != 200:
+                        return args, self._make_tool_response(
+                            {
+                                "status": "error",
+                                "message": f"Échec Graph get_attachment ({att_res.status_code}): {att_res.text}",
+                            },
+                            is_error=True,
+                        )
+                    att_data = att_res.json()
+                    content_b64 = att_data.get("contentBytes")
+                    if not content_b64:
+                        return args, self._make_tool_response(
+                            {"status": "error", "message": "Contenu binaire (contentBytes) indisponible."},
+                            is_error=True,
+                        )
+                    remote_name = self._sanitize_filename(att_data.get("name"), "")
+                    chosen_name = remote_name or req_name or f"attachment_{safe_att_seg}"
+                    content_bytes = base64.b64decode(content_b64)
+                    _, safe_name, final_path = self._publish_file_to_broker(
+                        content_bytes, user_id, chat_id, chosen_name, fid=fid
+                    )
+                    return args, self._make_tool_response(
+                        {
+                            "status": "downloaded_to_broker",
+                            "file_id": fid,
+                            "name": safe_name,
+                            "original_name": att_data.get("name", chosen_name),
+                            "saved_to": final_path,
+                            "content_type": att_data.get("contentType", "application/octet-stream"),
+                            "size": att_data.get("size", len(content_bytes)),
+                        }
+                    )
+            except Exception as e:
+                logger.warning("Fallback get_attachment via serveur MCP suite à exception Graph directe: %s", e)
+                fallback_name = req_name or f"attachment_{safe_att_seg}"
+                drop_dir = self._get_mcp_drop_dir(user_id, chat_id)
+                args["save_path"] = os.path.join(drop_dir, f"{fid}_{fallback_name}")
+
         return args, None
 
     async def after_tool_call(
@@ -1596,8 +1940,14 @@ class Microsoft365Provider(MCPServiceProvider):
         user_id: str,
         tool_name: str,
         result: dict,
+        chat_id: Optional[str] = None,
     ) -> dict:
-        if tool_name not in ("authenticate_account", "complete_authentication"):
+        if tool_name not in (
+            "authenticate_account",
+            "complete_authentication",
+            "get_file",
+            "get_attachment",
+        ):
             return result
 
         payload = None
@@ -1654,6 +2004,31 @@ class Microsoft365Provider(MCPServiceProvider):
                     os.remove(flow_path)
                 except Exception:
                     pass
+
+        elif tool_name in ("get_file", "get_attachment"):
+            raw_path = payload.get("path") or payload.get("saved_to")
+            if raw_path and os.path.isfile(raw_path):
+                base_fname = os.path.basename(raw_path)
+                fid = self._extract_hex_fid(base_fname)
+                orig_name = payload.get("name")
+                target_name = orig_name if orig_name and orig_name != "unknown" else base_fname
+                try:
+                    fid, safe_name, final_path = self._publish_file_to_broker(
+                        raw_path, user_id, chat_id, target_name, fid=fid
+                    )
+                    updated = dict(payload)
+                    updated["status"] = "downloaded_to_broker"
+                    updated["file_id"] = fid
+                    updated["name"] = safe_name
+                    if orig_name:
+                        updated["original_name"] = orig_name
+                    if "path" in updated:
+                        updated["path"] = final_path
+                    if "saved_to" in updated:
+                        updated["saved_to"] = final_path
+                    return self._make_tool_response(updated, is_error=bool(result.get("isError")))
+                except Exception as e:
+                    logger.warning("MS365: échec finalisation fichier Download Broker: %s", e)
 
         return result
 

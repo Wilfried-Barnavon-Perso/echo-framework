@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 5.231.2.1
+version: 5.231.29.1
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.29.1: Alignement sur les constantes SSOT des espaces de travail Codex (CODEX_DEFAULT_WORKSPACE, CODEX_WORKSPACE_SANDBOX, ECHO_CODEX_WORKSPACES).
 # 5.231.2.1: Filtrage SSoT strict dans get_user_codex_chats excluant les conversations orphelines supprimées de webui.db.
 # 5.230.0.1: Délégation factorisée de _secure_path vers normalize_codex_rel_path (echo_paths) avec décodage URL défensif (unquote).
 # 5.229.7.2: Résolution des SHA courts (resolve_commit) et traversée hiérarchique de Tree (lookup_path) pour read/restore/diff/log.
 # 5.229.7.1: Support Multi-Chat sélectif (découverte SSoT, UI hiérarchique, Read-Only strict et tooling transverse).
-# 5.228.8.2: Correction de commit_file (préservation LF stricte newline="" et textes Unicode hors plage Latin-1) et auto-réparation du décodage UTF-8/Latin-1 dans read_file.
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
 # desc.
 
@@ -25,12 +25,16 @@ from dulwich import porcelain
 
 import echo_constants
 from echo_constants import (
-    CODEX_LANG_MAP,
     CODEX_DEFAULT_LANG,
-    ECHO_SYNC_EXCLUDE_LIST,
-    is_binary_file,
-    ECHO_USERS_ROOT,
+    CODEX_DEFAULT_WORKSPACE,
+    CODEX_DIR_NAME,
+    CODEX_LANG_MAP,
+    CODEX_WORKSPACE_SANDBOX,
     ECHO_BASE_DATA_DIR,
+    ECHO_CODEX_WORKSPACES,
+    ECHO_SYNC_EXCLUDE_LIST,
+    ECHO_USERS_ROOT,
+    is_binary_file,
 )
 from echo_paths import get_echo_session_path, normalize_codex_rel_path
 
@@ -40,8 +44,8 @@ class CodexRepo:
     Un dépôt isolé par couple (user_id, chat_id).
     Toutes les opérations sont synchrones et sans effet de bord réseau."""
 
-    def __init__(self, user_id: str, chat_id: str, workspace: str = "main"):
-        base_codex = get_echo_session_path(user_id, chat_id, "codex")
+    def __init__(self, user_id: str, chat_id: str, workspace: str = CODEX_DEFAULT_WORKSPACE):
+        base_codex = get_echo_session_path(user_id, chat_id, CODEX_DIR_NAME)
         self.workspace = workspace
         self.repo_path = os.path.join(base_codex, workspace)
         os.makedirs(self.repo_path, exist_ok=True)
@@ -275,7 +279,7 @@ class CodexRepo:
         if not os.path.exists(target_abs_path) or not os.path.isdir(target_abs_path):
             return files
 
-        is_sandbox = os.path.basename(self.repo_path.rstrip("/\\")) == "sandbox"
+        is_sandbox = os.path.basename(self.repo_path.rstrip("/\\")) == CODEX_WORKSPACE_SANDBOX
 
         if is_sandbox:
             for entry in os.scandir(target_abs_path):
@@ -739,7 +743,7 @@ class CodexRepo:
 
     def get_latest_state(self) -> str:
         """Retourne un identifiant d'état rapide (hash Git ou mtime) pour le ping."""
-        is_sandbox = os.path.basename(self.repo_path.rstrip("/\\")) == "sandbox"
+        is_sandbox = os.path.basename(self.repo_path.rstrip("/\\")) == CODEX_WORKSPACE_SANDBOX
         if is_sandbox:
             try:
                 max_mtime = os.path.getmtime(self.repo_path)
@@ -805,11 +809,11 @@ class CodexRepo:
             with os.scandir(user_chats_dir) as entries:
                 for entry in entries:
                     if entry.is_dir() and not entry.name.startswith("."):
-                        codex_path = os.path.join(entry.path, "codex")
+                        codex_path = os.path.join(entry.path, CODEX_DIR_NAME)
                         if os.path.exists(codex_path):
                             has_content = False
                             try:
-                                for ws in ("main", "sandbox"):
+                                for ws in ECHO_CODEX_WORKSPACES:
                                     ws_dir = os.path.join(codex_path, ws)
                                     if os.path.exists(ws_dir):
                                         with os.scandir(ws_dir) as ws_entries:

@@ -1,6 +1,7 @@
-# VERSION : 5.231.20.1
+# VERSION : 5.231.37.1
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.37.1: Propagation de chat_id aux hooks before_tool_call et after_tool_call de MCPServiceProvider.
 # 5.231.20.1: Isolation des sessions MCP actives par compte optionnel (cache_key incluant account_id).
 # 5.228.0.1: Import partagé de AuthRequiredError depuis m5_providers et déduplication du message d'erreur.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
@@ -18,7 +19,7 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.client.session import ClientSession
 
-from core.security import user_id_var
+from core.security import user_id_var, chat_id_var
 from modules.m5_providers import AuthRequiredError, get_service_provider
 
 logger = logging.getLogger(__name__)
@@ -261,6 +262,7 @@ async def proxy_mcp_request(payload: dict) -> dict:
     }
     """
     user_id = payload.get("user_id")
+    chat_id = payload.get("chat_id")
     service = payload.get("service")
     account_id = payload.get("account_id")
     credentials = payload.get("credentials", "")
@@ -268,6 +270,10 @@ async def proxy_mcp_request(payload: dict) -> dict:
 
     if not user_id:
         user_id = user_id_var.get()
+    if not chat_id:
+        chat_id = chat_id_var.get()
+    if chat_id:
+        chat_id_var.set(chat_id)
 
     method = rpc_request.get("method")
     params = rpc_request.get("params", {})
@@ -285,11 +291,15 @@ async def proxy_mcp_request(payload: dict) -> dict:
         elif method == "tools/call":
             name = params.get("name")
             args = params.get("arguments", {})
-            args, short_circuit = await provider.before_tool_call(user_id, name, args)
+            args, short_circuit = await provider.before_tool_call(
+                user_id, name, args, chat_id=chat_id
+            )
             if short_circuit is not None:
                 return short_circuit
             dumped = _dump(await session.call_tool(name, args))
-            return await provider.after_tool_call(user_id, name, dumped)
+            return await provider.after_tool_call(
+                user_id, name, dumped, chat_id=chat_id
+            )
         else:
             raise ValueError(f"Méthode non supportée par le proxy : {method}")
     except BaseException:

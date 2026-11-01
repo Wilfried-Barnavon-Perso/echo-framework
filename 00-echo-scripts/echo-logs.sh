@@ -1,13 +1,15 @@
 #!/bin/bash
 # ==============================================================================
-# SCRIPT : logs-echo.sh
-# VERSION : 5.226.18.0
+# SCRIPT : echo-logs.sh
+# VERSION : 5.231.42.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : Suivre les journaux (logs) en temps réel de la stack ou d'un service
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.42.1: Passage explicite de --env-file "$ECHO_ENV_FILE" à docker compose pour supprimer les warnings de variables non définies.
+# 5.231.39.1: Renommage de logs-echo.sh en echo-logs.sh.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 
 ECHO_ROOT="/opt/ECHO"
@@ -18,12 +20,16 @@ DOCKER_COMPOSE_CMD="docker-compose"
 if ! command -v $DOCKER_COMPOSE_CMD &> /dev/null; then DOCKER_COMPOSE_CMD="docker compose"; fi
 
 COMPOSE_FILE="${ECHO_CONFIG:-$ECHO_ROOT/config}/stack-echo.yml"
+ENV_FILE_ARG=()
+if [ -f "${ECHO_ENV_FILE:-$ECHO_ROOT/.env}" ]; then
+    ENV_FILE_ARG=(--env-file "${ECHO_ENV_FILE:-$ECHO_ROOT/.env}")
+fi
 export COMPOSE_PROJECT_NAME="echo"
 
 if [ -z "$1" ]; then
     echo "📜 Affichage des journaux de toute la stack ECHO (Ctrl+C pour quitter)..."
-    $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" logs -f --tail=100
+    $DOCKER_COMPOSE_CMD "${ENV_FILE_ARG[@]}" -f "$COMPOSE_FILE" logs -f --tail=100
 else
     echo "📜 Affichage des journaux pour : $1 (Ctrl+C pour quitter)..."
-    $DOCKER_COMPOSE_CMD -f "$COMPOSE_FILE" logs -f --tail=100 "$1"
+    $DOCKER_COMPOSE_CMD "${ENV_FILE_ARG[@]}" -f "$COMPOSE_FILE" logs -f --tail=100 "$1"
 fi

@@ -1,16 +1,16 @@
 """
 title: ECHO N8N Orchestrator
 author: ECHO
-version: 5.231.21.3
+version: 5.231.42.2
 description: Outil agentique de cycle de vie et d'exécution N8N (Phase 2 & 3). Refactorisation institutionnelle et N8N Grapher.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.42.2: Validation pré-vol des chemins WriteBinaryFile/ReadWriteFile (__ECHO_DOWNLOAD_DIR__/), purge de l'ancien démon au redéploiement et transmission de echo_workflow_id à la suppression.
 # 5.231.21.3: Délégation Vault chiffré à EchoStateManager, désencapsulation/échappement JSON dans _inject_secrets, masquage des secrets dans les logs et alignement ask_user.
 # 5.231.20.2: Conversion en async def des 6 outils synchrones, remplacement de httpx.Client bloquant par httpx.AsyncClient, sécurisation anti-traversal des IDs et alignement de allowed_tools (code_executor) dans delegate_to_n8n_grapher.
 # 5.229.0.0: Compression des docstrings OpenAPI et externalisation de la documentation vers 14-owui-libs/tool_guides/n8n_workflows.md.
 # 5.226.18.1: Alignement global ECHO et harmonisation impersonnelle (PAS) du docstring de run_n8n_oneshot_workflow.
-# 1.18: Nomenclature : Alignement de la délégation N8N Grapher sur MODEL_PROMETHEUS.
 
 import sys
 import asyncio
@@ -121,31 +121,50 @@ class Tools:
     # =========================================================================
 
     def _check_secrets(self, content_str: str, user_id: str) -> Optional[str]:
-        """Vérifie l'absence de credentials N8N natifs et la présence des macros ECHO dans le Vault."""
-        errors = []
+        """Vérifie l'absence de credentials N8N natifs, la validité des chemins d'écriture disque et la présence des macros ECHO dans le Vault."""
+        secret_errors = []
+        path_errors = []
         
-        # 1. Vérification architecturale (Credentials N8N natifs interdits)
+        # 1. Vérification architecturale (Credentials N8N natifs interdits & chemins WriteBinaryFile/ReadWriteFile)
         try:
             parsed = json.loads(content_str)
             nodes = parsed.get("nodes", [])
             has_native_credentials = False
             for node in nodes:
+                if not isinstance(node, dict):
+                    continue
                 if "credentials" in node and node["credentials"]:
                     has_native_credentials = True
-                    break
                 
-                params = node.get("parameters", {})
+                params = node.get("parameters", {}) or {}
                 headers = params.get("headerParametersUi", {}).get("parameter", [])
-                if not isinstance(headers, list): headers = []
+                if not isinstance(headers, list):
+                    headers = []
                 for header in headers:
                     name = header.get("name", "").lower()
                     value = header.get("value", "")
                     if name in ["cookie", "authorization", "api-key", "x-api-key", "token"]:
                         if "__ECHO_SECRET_" not in value:
-                            errors.append(f"Header '{name}' codé en dur dans '{node.get('name')}'. Hardcoding strictement proscrit.")
+                            secret_errors.append(f"Header '{name}' codé en dur dans '{node.get('name')}'. Hardcoding strictement proscrit.")
+
+                node_type = str(node.get("type", ""))
+                is_write_binary = node_type.endswith(".writeBinaryFile")
+                is_read_write_write = (
+                    node_type.endswith(".readWriteFile")
+                    and params.get("operation") == "write"
+                )
+                if is_write_binary or is_read_write_write:
+                    raw_file_path = str(params.get("fileName") or params.get("filePath") or "").strip()
+                    normalized_path = re.sub(r'^[=\s\{\'"`]+', '', raw_file_path)
+                    if not normalized_path.startswith("__ECHO_DOWNLOAD_DIR__/"):
+                        path_errors.append(
+                            f"Noeud '{node.get('name')}' ({node_type}) : Le chemin d'écriture '{raw_file_path}' est invalide. "
+                            "Tout fichier écrit sur disque DOIT impérativement commencer par '__ECHO_DOWNLOAD_DIR__/' "
+                            "(ex: '__ECHO_DOWNLOAD_DIR__/rapport.json')."
+                        )
             
             if has_native_credentials:
-                errors.append("Credentials N8N natifs interdits (Worker stateless). Remplacer par requêtes brutes via macros __ECHO_SECRET_XXX__.")
+                secret_errors.append("Credentials N8N natifs interdits (Worker stateless). Remplacer par requêtes brutes via macros __ECHO_SECRET_XXX__.")
         except Exception:
             pass # Si ce n'est pas un JSON valide, la création plantera plus loin de toute façon
             
@@ -155,11 +174,23 @@ class Tools:
             state = EchoStateManager(user_id=user_id)
             for key in matches:
                 if not state.has_vault_credential("n8n_workflows", key):
-                    errors.append(f"Macro manquante : Le secret '{key}' est requis mais absent de l'ECHO Identity Vault de l'Utilisateur.")
+                    secret_errors.append(f"Macro manquante : Le secret '{key}' est requis mais absent de l'ECHO Identity Vault de l'Utilisateur.")
                         
-        if errors:
-            final_err = " | ".join(errors)
-            return f"[Action Requise] Violation architecturale bloquante : {final_err}\nLe Modèle DOIT utiliser `ask_user` pour collecter l'information, l'enregistrer via `manage_identity` (service='n8n_workflows'), puis injecter la macro __ECHO_SECRET_...__."
+        all_errors = secret_errors + path_errors
+        if all_errors:
+            final_err = " | ".join(all_errors)
+            guidance = []
+            if secret_errors:
+                guidance.append(
+                    "Le Modèle DOIT utiliser `ask_user` pour collecter l'information, "
+                    "l'enregistrer via `manage_identity` (service='n8n_workflows'), puis injecter la macro __ECHO_SECRET_...__."
+                )
+            if path_errors:
+                guidance.append(
+                    "Le Modèle DOIT corriger les paramètres `fileName` / `filePath` des noeuds d'écriture "
+                    "pour cibler `__ECHO_DOWNLOAD_DIR__/nom_du_fichier.ext`."
+                )
+            return f"[Action Requise] Violation architecturale bloquante : {final_err}\n" + "\n".join(guidance)
         return None
 
     async def prepare_n8n_workflow(self, content: str = None, from_template_id: str = None, __user__: dict = None, __metadata__: dict = None) -> dict:
@@ -264,10 +295,11 @@ class Tools:
             
             # Appel API asynchrone non-bloquant pour tuer les process N8N en cours ou purger le démon
             try:
-                async with httpx.AsyncClient(timeout=15.0) as client:
+                safe_wf_id = sanitize_echo_id(n8n_workflow_id, "n8n_workflow_id")
+                async with httpx.AsyncClient(timeout=20.0) as client:
                     resp = await client.delete(
                         f"{ECHO_N8N_WORKER_URL}/workflow/{target_delete_id}",
-                        params={"user_id": uid, "chat_id": cid},
+                        params={"user_id": uid, "chat_id": cid, "echo_workflow_id": safe_wf_id},
                     )
                     if resp.status_code == 200:
                         data = resp.json()
@@ -485,7 +517,22 @@ class Tools:
         
         # 2. Appel au Worker API pour le déploiement
         try:
+            state = EchoStateManager(user_id=uid, chat_id=cid)
+            existing_res = state.get_resource(n8n_workflow_id)
+            existing_status = existing_res.get("status", "") if isinstance(existing_res, dict) else ""
+            old_n8n_id = (
+                existing_status.replace("deployed_as_", "").strip()
+                if isinstance(existing_status, str) and existing_status.startswith("deployed_as_")
+                else ""
+            )
+
             async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
+                if old_n8n_id:
+                    try:
+                        await client.delete(f"{ECHO_N8N_WORKER_URL}/workflow/{old_n8n_id}")
+                    except Exception:
+                        pass
+
                 payload = {
                     "user_id": uid,
                     "chat_id": cid,
@@ -504,7 +551,6 @@ class Tools:
 
                 if status in ("success", "warning"):
                     # Mise à jour du State Manager avec le VRAI ID N8N
-                    state = EchoStateManager(user_id=uid, chat_id=cid)
                     state.update_resource_status(n8n_workflow_id, f"deployed_as_{real_n8n_id}")
 
                     if status == "success":

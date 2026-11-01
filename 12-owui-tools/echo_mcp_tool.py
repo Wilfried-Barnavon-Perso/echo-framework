@@ -1,11 +1,12 @@
 """
 title: ECHO Universal MCP Tool
 author: ECHO
-version: 5.231.21.1
-description: Outil universel permettant au Modèle d'interroger et d'exécuter des requêtes sur l'infrastructure MCP via un routage dynamique.
+version: 5.231.37.1
+description: Outil universel d'interrogation et d'exécution sur l'infrastructure MCP via routage dynamique.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.37.1: Propagation de chat_id (en-tête x-openwebui-chat-id et payload proxy_mcp) pour le Download Broker.
 # 5.231.21.1: Délégation de _fetch_credentials au CRUD chiffré AES-256-GCM de EchoStateManager (get_vault_credential).
 # 5.231.20.1: Isolation multi-user des credentials sur mcp_native et support multi-compte optionnel (account_id).
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
@@ -68,6 +69,7 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
         await events.status(f"🌐 Routage dynamique pour l'interrogation de '{service}'...")
 
+        chat_id = str((__metadata__ or {}).get("chat_id") or "")
         category = await self._get_category(service)
         credentials = self._fetch_credentials(__user__["id"], service, account_id)
 
@@ -78,6 +80,7 @@ class Tools:
                     b64_creds = base64.b64encode(credentials.encode("utf-8")).decode("ascii") if credentials else ""
                     headers = {
                         "x-openwebui-user-id": str(__user__["id"]),
+                        "x-openwebui-chat-id": chat_id,
                         "x-echo-credentials": b64_creds,
                     }
                     resp = await client.post(self.mcp_native_url, json=rpc, headers=headers)
@@ -87,6 +90,7 @@ class Tools:
                 else:
                     payload = {
                         "user_id": __user__["id"],
+                        "chat_id": chat_id,
                         "service": service,
                         "account_id": account_id,
                         "credentials": credentials,
@@ -145,6 +149,7 @@ class Tools:
         await events.status(f"⚙️ Exécution de la fonction '{function_name}' sur '{service}'...")
 
         arguments = arguments or {}
+        chat_id = str((__metadata__ or {}).get("chat_id") or "")
         category = await self._get_category(service)
         credentials = self._fetch_credentials(__user__["id"], service, account_id)
 
@@ -160,6 +165,7 @@ class Tools:
                     b64_creds = base64.b64encode(credentials.encode("utf-8")).decode("ascii") if credentials else ""
                     headers = {
                         "x-openwebui-user-id": str(__user__["id"]),
+                        "x-openwebui-chat-id": chat_id,
                         "x-echo-credentials": b64_creds,
                     }
                     resp = await client.post(self.mcp_native_url, json=rpc, headers=headers)
@@ -169,6 +175,7 @@ class Tools:
                 else:
                     payload = {
                         "user_id": __user__["id"],
+                        "chat_id": chat_id,
                         "service": service,
                         "account_id": account_id,
                         "credentials": credentials,

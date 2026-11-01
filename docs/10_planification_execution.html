@@ -46,9 +46,9 @@
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Strategic Planner (<code>strategic_planner.py</code> v5.231.20.1)</h3>
+        <h3>1. Strategic Planner (<code>strategic_planner.py</code> v5.231.29.1)</h3>
         <ul>
-          <li><strong>Conception &amp; Persistance Git Concurrente :</strong> Protégé par le verrou partagé <code>get_codex_lock(uid, cid)</code> et déporté hors de l'Event Loop via <code>asyncio.to_thread</code>, <code>build_plan</code> (propulsé par <code>MODEL_PROMETHEUS</code> avec <code>override_thinking="high"</code>) génère deux fichiers liés dans le Codex Git (<code>main</code>) et les indexe dans la table SQLite <code>echo_resources</code> : le document stratégique <code>{plan_id}_{slug}.md</code> (statut initial <code>proposed</code>) et la liste de tâches <code>tasks_{plan_id}_{slug}.md</code>.</li>
+          <li><strong>Conception &amp; Persistance Git Concurrente :</strong> Protégé par le verrou partagé <code>get_codex_lock(uid, cid)</code> et déporté hors de l'Event Loop via <code>asyncio.to_thread</code>, <code>build_plan</code> (propulsé par <code>MODEL_PROMETHEUS</code> avec <code>override_thinking="high"</code>) génère deux fichiers liés dans le Codex Git (<code>CODEX_WORKSPACE_MAIN</code>) et les indexe exclusivement dans la table SQLite unifiée <code>echo_resources</code> (avec <code>storage_path</code> normalisé via <code>format_codex_storage_path</code> au format <code>codex/main/{filename}</code>) : le document stratégique <code>{plan_id}_{slug}.md</code> (statut initial <code>proposed</code>) et la liste de tâches <code>tasks_{plan_id}_{slug}.md</code>.</li>
           <li><strong>Validation, Suivi Tactique &amp; Analyse :</strong> <code>process_plan</code> soumet le plan via une modale de confirmation interactive (transition <code>proposed</code> &rarr; <code>executing</code>). <code>update_plan</code> permet de réviser la stratégie tant qu'elle est au statut <code>proposed</code>, tandis que <code>update_tasks</code> (<code>MODEL_APOLLO</code>) assure le suivi tactique des cases à cocher (<code>[ ]</code>, <code>[/]</code>, <code>[x]</code>, <code>[!]</code>, <code>[-]</code>), complétés par <code>read_plan</code>, <code>delete_plan</code> (suppression atomique du plan et de son fichier <code>tasks_</code> associé) et <code>analyze_plan</code> (<code>MODEL_PROMETHEUS</code>, <code>override_thinking="high"</code>).</li>
           <li><strong>Proprioception :</strong> Le modèle consulte l'état des plans à la demande via <code>query_registry</code> afin de préserver la fenêtre contextuelle.</li>
         </ul>
@@ -77,7 +77,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.25 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.44 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

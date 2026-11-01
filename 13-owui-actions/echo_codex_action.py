@@ -1,17 +1,17 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 5.231.6.1
+version: 5.231.39.1
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Pré-chargement atomique de initial_content à t=0ms, purge atomique de _echoCodexTarget et enregistrement anticipé de loop_id.
+# 5.231.29.1: Alignement sur le prédicat SSOT is_codex_workspace_indexed pour exclure formellement la sandbox de echo_resources.
+# 5.231.28.1: Normalisation de storage_path via format_codex_storage_path (codex/<workspace>/<filename>) et suppression des appels à codex_docs.
 # 5.231.6.1: Probe non-destructif de window._echoCodexTarget, amorçage direct via body REST et résolution sans HUD en Cold Start.
 # 5.231.5.1: Support de commit_hash dans switch_chat, et résolution active_chat_title sur chat distant.
-# 5.230.0.2: Résolution directe _echoCodexTarget à l'amorçage Cold Start, switch atomique 1-passe et normalisation.
-# 5.230.0.1: Unification des branches switch_chat et switch_workspace avec prise en charge combinée de target_chat_id, workspace et target_file.
-# 5.229.7.3: Réactualisation dynamique du catalogue multi-chat (echoCodexUpdateChats) lors du refresh.
 
 import sys
 import uuid
@@ -26,6 +26,7 @@ sys.path.append("/app/backend/echo_libs")
 
 from echo_codex_ui import EchoCodexUI
 from echo_codex_git import CodexRepo
+from echo_paths import format_codex_storage_path
 from echo_state_manager import EchoStateManager
 from echo_gemini_client import EchoGeminiClient
 from echo_events import EchoEvents
@@ -33,11 +34,12 @@ from echo_prompts import SYS_CODEX_EDIT
 from echo_constants import (
     CODEX_DEFAULT_WORKSPACE,
     CODEX_HUD_ID,
-    get_generation_config,
     CODEX_QUICK_ACTIONS,
-    FILE_INGESTION_STATUS,
     ECHO_CODEX_WORKSPACES,
+    FILE_INGESTION_STATUS,
     OWUI_ORCHESTRATOR_MODEL,
+    get_generation_config,
+    is_codex_workspace_indexed,
 )
 
 logger = logging.getLogger(__name__)
@@ -103,6 +105,14 @@ class Action:
         mid = body.get("id") or __metadata__.get("message_id") or ""
         model_id = body.get("model") or __metadata__.get("model_id") or OWUI_ORCHESTRATOR_MODEL
         reconnect_only = bool(body.get("reconnect_only"))
+        events = EchoEvents(
+            __event_emitter__,
+            __event_call__,
+            user_id=uid,
+            chat_id=cid,
+            message_id=mid,
+            session_id=body.get("session_id") or __metadata__.get("session_id") or "",
+        )
 
         # Initialisation du repo et du state manager
         current_workspace = body.get("workspace") or CODEX_DEFAULT_WORKSPACE
@@ -120,14 +130,16 @@ class Action:
 
         if not reconnect_only and not initial_file and not initial_target_cid:
             target_probe = await events.call_execute(
-                "return window._echoCodexTarget || false;",
+                "const t = window._echoCodexTarget; window._echoCodexTarget = null; return t || false;",
                 timeout=3.0,
             )
             if isinstance(target_probe, dict):
-                initial_target_cid = target_probe.get("target_chat_id") or ""
-                initial_file = target_probe.get("file") or ""
-                if target_probe.get("workspace") in ECHO_CODEX_WORKSPACES:
-                    current_workspace = target_probe["workspace"]
+                host_cid = target_probe.get("host_chat_id") or ""
+                if not host_cid or host_cid == cid:
+                    initial_target_cid = target_probe.get("target_chat_id") or ""
+                    initial_file = target_probe.get("file") or ""
+                    if target_probe.get("workspace") in ECHO_CODEX_WORKSPACES:
+                        current_workspace = target_probe["workspace"]
 
         if current_workspace not in ECHO_CODEX_WORKSPACES:
             current_workspace = CODEX_DEFAULT_WORKSPACE
@@ -144,6 +156,53 @@ class Action:
                 initial_file = ""
         state = EchoStateManager(user_id=uid, chat_id=cid)
         files = await asyncio.to_thread(repo.list_files)
+        if not files and not initial_file and current_workspace == CODEX_DEFAULT_WORKSPACE and active_chat_id == cid:
+            for candidate_ws in ECHO_CODEX_WORKSPACES:
+                if candidate_ws == current_workspace:
+                    continue
+                candidate_repo = CodexRepo(uid, active_chat_id, workspace=candidate_ws)
+                candidate_files = await asyncio.to_thread(candidate_repo.list_files)
+                if any(f.get("type") != "directory" for f in candidate_files):
+                    current_workspace = candidate_ws
+                    repo = candidate_repo
+                    files = candidate_files
+                    break
+
+        initial_content = None
+        initial_is_binary = False
+        if not reconnect_only:
+            target_to_read = initial_file
+            if not target_to_read:
+                first_file_entry = next((f for f in files if f.get("type") != "directory"), None)
+                if first_file_entry:
+                    target_to_read = first_file_entry.get("filename") or ""
+            if target_to_read:
+                read_res = await asyncio.to_thread(repo.read_file, target_to_read)
+                if not read_res and initial_file:
+                    basename_match = next(
+                        (
+                            f.get("filename")
+                            for f in files
+                            if f.get("type") != "directory"
+                            and (
+                                f.get("filename") == target_to_read
+                                or str(f.get("filename", "")).endswith("/" + target_to_read)
+                            )
+                        ),
+                        None,
+                    )
+                    if basename_match:
+                        target_to_read = basename_match
+                        read_res = await asyncio.to_thread(repo.read_file, target_to_read)
+                if not read_res:
+                    fallback_entry = next((f for f in files if f.get("type") != "directory"), None)
+                    if fallback_entry and fallback_entry.get("filename"):
+                        target_to_read = fallback_entry["filename"]
+                        read_res = await asyncio.to_thread(repo.read_file, target_to_read)
+                if isinstance(read_res, dict) and "content" in read_res:
+                    initial_file = target_to_read
+                    initial_content = read_res["content"]
+                    initial_is_binary = bool(read_res.get("is_binary", False))
 
         # Index de navigation historique par fichier : {filename:
         # [commit_list], idx}
@@ -159,6 +218,10 @@ class Action:
             active_chat_title = other_match.get("title", f"Chat {active_chat_id[:8]}") if other_match else f"Chat {active_chat_id[:8]}"
         else:
             active_chat_title = chats_data.get("current", {}).get("title", "Conversation Actuelle")
+
+        # Enregistrement anticipé de loop_id AVANT l'injection du HUD pour évincer immédiatement toute ancienne boucle
+        loop_id = uuid.uuid4().hex
+        _ACTIVE_CODEX_LOOPS[(uid, cid)] = loop_id
 
         # 1. Injection du HUD Monaco (sauf en cas de reconnexion transparente post-standby)
         if not reconnect_only:
@@ -176,12 +239,11 @@ class Action:
                 active_chat_id=active_chat_id,
                 active_chat_title=active_chat_title,
                 initial_file=initial_file,
+                initial_content=initial_content,
+                initial_is_binary=initial_is_binary,
             )
             await events.call_execute(hud_js)
             await events.status("HUD Codex injecté.", done=True, hidden=True)
-
-        loop_id = uuid.uuid4().hex
-        _ACTIVE_CODEX_LOOPS[(uid, cid)] = loop_id
 
         # 2. Définition de la boucle événementielle bidirectionnelle (Détachée)
         async def background_loop():
@@ -204,7 +266,7 @@ class Action:
                 await events.call_execute(err_code)
 
             def _sync_registry(filename, commit_hash, msg, line_count=0, lang=None):
-                if current_workspace != "sandbox":
+                if is_codex_workspace_indexed(current_workspace):
                     l = lang or CodexRepo.detect_language(filename)
                     state.save_resource(
                         id=filename,
@@ -216,7 +278,7 @@ class Action:
                         lines=line_count,
                         last_commit=commit_hash[:12],
                         commit_msg=msg,
-                        storage_path=f"codex/{current_workspace}/{filename}"
+                        storage_path=format_codex_storage_path(filename, current_workspace)
                     )
 
             try:
@@ -530,7 +592,7 @@ class Action:
                                 last_uploaded_content = content
                                 last_uploaded_bin = actual_bin
 
-                                if current_workspace != "sandbox":
+                                if is_codex_workspace_indexed(current_workspace):
                                     _sync_registry(filename, commit_hash, f"Import {filename}", line_count, lang)
 
                             current_state = await asyncio.to_thread(repo.get_latest_state)
@@ -797,7 +859,7 @@ class Action:
                             continue
                         if delete_result:
                             commit_hash, paths_to_rm = delete_result
-                            if current_workspace != "sandbox":
+                            if is_codex_workspace_indexed(current_workspace):
                                 for path in paths_to_rm:
                                     state.delete_resource(path)
 
@@ -854,7 +916,7 @@ class Action:
 
                             # Mettre à jour le registre codex (supprimer
                             # ancien, créer nouveau)
-                            if current_workspace != "sandbox" and not is_dir:
+                            if is_codex_workspace_indexed(current_workspace) and not is_dir:
                                 state.delete_resource(old_name)
                                 new_lang = CodexRepo.detect_language(new_name)
                                 line_count = result["total_lines"] if result else 0

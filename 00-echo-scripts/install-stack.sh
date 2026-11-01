@@ -1,18 +1,18 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.231.21.1
+# VERSION : 5.231.39.1
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Alignement du cron quotidien sur echo-clean (/etc/cron.daily/echo-clean) et de l'aide sur echo-show-admin.
 # 5.231.21.1: Délégation de la génération des secrets .env (dont ECHO_VAULT_ENCRYPTION_KEY) à ensure_echo_secrets (echo-globals.sh).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 6.33: Mise à jour du chemin de build pour l'image parente docker-python-base.
 # 6.32: Utilisation des variables d'environnement ECHO_NET_MAIN_PREFIX pour la création dynamique des sous-réseaux IPAM.
-# 6.31: Assignation de sous-réseaux statiques pour echo-network (10.20.40.0/24) et echo-sandbox (10.20.50.0/24).
 
 set -e # Arrêt en cas d'erreur critique
 
@@ -156,15 +156,15 @@ ensure_docker_autosafety() {
     rm -f "$temp_file"
 
     # --- Ajout du Cron de Nettoyage Centralisé (Idempotent) ---
-    local cron_target="/etc/cron.daily/clean-echo"
-    echo "   🔄 Configuration de la maintenance centralisée (clean-echo)..."
-    if [ -f "$ECHO_SCRIPTS/clean-echo.sh" ]; then
-        # Le script a été copié physiquement ici par sync-echo.sh
+    local cron_target="/etc/cron.daily/echo-clean"
+    echo "   🔄 Configuration de la maintenance centralisée (echo-clean)..."
+    if [ -f "$ECHO_SCRIPTS/echo-clean.sh" ]; then
+        # Le script a été copié physiquement ici par echo-sync.sh
         # Nous l'injectons dans le moteur cron pour l'exécution automatique chaque nuit
-        ln -sf "$ECHO_SCRIPTS/clean-echo.sh" "$cron_target"
+        ln -sf "$ECHO_SCRIPTS/echo-clean.sh" "$cron_target"
         echo "   ✅ Cron quotidien configuré ($cron_target)."
     else
-        echo "   ⚠️ Fichier clean-echo.sh introuvable, maintenance ignorée."
+        echo "   ⚠️ Fichier echo-clean.sh introuvable, maintenance ignorée."
     fi
 }
 
@@ -326,7 +326,7 @@ echo "✅ DEPLOIEMENT TERMINÉ."
 echo "-----------------------------------------------------------"
 echo "🌐 LOCAL UI    : http://IP-LOCALE:3000"
 echo "🔧 LOCAL ADMIN : http://IP-LOCALE:3001"
-echo "🔑 CREDENTIALS : Tapez 'show-echo-admin'"
+echo "🔑 CREDENTIALS : Tapez 'echo-show-admin'"
 echo "-----------------------------------------------------------"
 echo "🛡️  POUR ACTIVER L'ACCÈS PUBLIC SÉCURISÉ (BunkerWeb) :"
 echo "   Lancez la commande : enable-bunkerweb"

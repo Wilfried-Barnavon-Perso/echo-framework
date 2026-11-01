@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 5.231.21.1
+# VERSION : 5.231.42.1
 # ==============================================================================
 #                  inventés par la syntaxe officielle BunkerWeb (REVERSE_PROXY_AUTH_REQUEST*).
 #                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
@@ -37,11 +37,13 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.36.1: Fix du nommage des images locales buildées (suppression du double préfixe echo-echo-* via directive image: explicite).
+# 5.231.33.1: Open WebUI : Ajout de imageio-ffmpeg au démarrage de echo-open-webui (main-slim) pour la segmentation multimédia en mémoire vive.
+# 5.231.21.1: Injection de ECHO_VAULT_ENCRYPTION_KEY sur echo-open-webui pour le chiffrement AEAD de l'Identity Vault.
 # 5.227.1.1: Open WebUI : Maintien de ENABLE_CONTEXT_COMPACTION=false pour protéger la Suture Bit-Perfect ECHO.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 9.83: Open WebUI : Désactivation forcée de ENABLE_CONTEXT_COMPACTION=false.
-# 9.82: BunkerWeb : Ajustement de MAX_CLIENT_SIZE de 500m à 4096m sur echo-open-webui.
-# 9.81: BunkerWeb : Suppression de la mention (WAF) dans le template de retour HTML 403 Forbidden.
+
+name: echo
 
 services:
 
@@ -74,7 +76,7 @@ services:
       # 🛡️ ECHO AUTH : Redirection après déconnexion (Bounce local pour purger le Service Worker)
       - WEBUI_AUTH_SIGNOUT_REDIRECT_URL=https://ui.${ECHO_DOMAIN:-localhost}/sso-logout
       # ATTENTION : Séparateur point-virgule (;) obligatoire pour Open WebUI
-      - "CORS_ALLOW_ORIGIN=https://ui.${ECHO_DOMAIN:-localhost};https://www.${ECHO_DOMAIN:-localhost};http://localhost:3000;http://127.0.0.1:3000;https://${ECHO_DOMAIN:-localhost};${ECHO_DETECTED_ORIGINS}"
+      - "CORS_ALLOW_ORIGIN=https://ui.${ECHO_DOMAIN:-localhost};https://www.${ECHO_DOMAIN:-localhost};http://localhost:3000;http://127.0.0.1:3000;https://${ECHO_DOMAIN:-localhost};${ECHO_DETECTED_ORIGINS:-}"
 
       # Sécurité Cookies (Recommandé Doc Officielle)
       - "WEBUI_SESSION_COOKIE_SECURE=true"
@@ -92,7 +94,7 @@ services:
       - ENABLE_FORWARD_USER_INFO_HEADERS=true
       # Désactivation de l'expiration du token interne (géré par SSO/WAF)
       - JWT_EXPIRES_IN=-1
-      - ECHO_VAULT_ENCRYPTION_KEY=${ECHO_VAULT_ENCRYPTION_KEY}
+      - ECHO_VAULT_ENCRYPTION_KEY=${ECHO_VAULT_ENCRYPTION_KEY:-}
     volumes:
       - /opt/ECHO/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
       - /opt/ECHO/owui-libs:/app/backend/echo_libs:ro
@@ -213,7 +215,7 @@ services:
       # 📍 Autoriser la géolocalisation pour ce serveur spécifique (Standard BunkerWeb)
       - "bunkerweb.PERMISSIONS_POLICY=geolocation=(self), camera=(self), microphone=(self)"      
     command: >
-      /bin/bash -c "PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=2 pip install mgzip dulwich 'markitdown[all]' h2 pybase64 edge-tts && ./start.sh"
+      /bin/bash -c "PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=2 pip install mgzip dulwich 'markitdown[all]' h2 pybase64 edge-tts imageio-ffmpeg && ./start.sh"
     healthcheck:
       test: ["CMD-SHELL", "curl --silent --fail http://localhost:8080/health || exit 1"]
       interval: 15s
@@ -232,6 +234,7 @@ services:
 
   # 2. Admin Manager (Dashboard Système ECHO)
   echo-admin-manager:
+    image: echo-admin-manager:latest
     build:
       context: /opt/ECHO/docker-admin-manager
       dockerfile: Dockerfile
@@ -242,8 +245,8 @@ services:
         ipv4_address: ${ECHO_NET_MAIN_PREFIX}.20
     environment:
       - TZ=Europe/Paris
-      - ECHO_SSO_SECRET=${ECHO_SSO_SECRET}
-      - ECHO_DOMAIN=${ECHO_DOMAIN}
+      - ECHO_SSO_SECRET=${ECHO_SSO_SECRET:-}
+      - ECHO_DOMAIN=${ECHO_DOMAIN:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     
@@ -260,7 +263,7 @@ services:
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST=/api/verify"
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @api_403_reject; error_page 429 = @api_429_reject; error_page 500 501 502 503 504 = @api_5xx_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @api_403_reject { if ($$request_uri ~* ^/api/) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403)\"}'; } default_type text/html; return 403 '<html><body><center><h1>403 Forbidden</h1></center></body></html>'; } location @api_429_reject { if ($$request_uri ~* ^/api/) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } default_type text/html; return 429 '<html><body><center><h1>429 Too Many Requests</h1></center></body></html>'; } location @api_5xx_reject { default_type application/json; if ($$request_uri ~* ^/api/) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } return 500 '{\"detail\":\"Internal Error (500)\"}'; }"
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$webui_name $$upstream_http_x_webui_name;$$dummy $$upstream_http_dummy"
-      - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name;X-Echo-Sso-Secret ${ECHO_SSO_SECRET}"
+      - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name;X-Echo-Sso-Secret ${ECHO_SSO_SECRET:-}"
       
       # 🛡️ ECHO AUTH BACKEND (Nginx internal proxy_pass sécurisé contre le transfert de Content-Length)
       # On crée manuellement la location Nginx sans passer par la macro REVERSE_PROXY_URL_2
@@ -330,6 +333,7 @@ services:
   # ============================================================================
   
   echo-mcp-broker:
+    image: echo-mcp-broker:latest
     build:
       context: /opt/ECHO/docker-mcp-broker
       dockerfile: Dockerfile
@@ -346,6 +350,7 @@ services:
       - /opt/ECHO/docker-mcp-broker/core:/app/core:ro
       - /opt/ECHO/docker-mcp-broker/modules:/app/modules:ro
       - echo-mcp-cache:/app/mcp_cache:rw
+      - echo-download-broker-data:/app/downloads:rw
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
@@ -359,6 +364,7 @@ services:
       start_period: 30s
 
   echo-coding-worker:
+    image: echo-coding-worker:latest
     build:
       context: /opt/ECHO/docker-coding-worker
       dockerfile: Dockerfile
@@ -391,6 +397,7 @@ services:
       start_period: 30s
 
   echo-browser-worker:
+    image: echo-browser-worker:latest
     build:
       context: /opt/ECHO/docker-browser-worker
       dockerfile: Dockerfile
@@ -418,6 +425,7 @@ services:
       start_period: 120s
 
   echo-n8n-worker:
+    image: echo-n8n-worker:latest
     build:
       context: /opt/ECHO/docker-n8n-worker
       dockerfile: Dockerfile
@@ -446,6 +454,7 @@ services:
     volumes:
       - /opt/ECHO/docker-n8n-worker/n8n_api.py:/app/n8n_api.py:ro
       - /opt/ECHO/docker-n8n-worker/start.sh:/app/start.sh:ro
+      - /opt/ECHO/docker-n8n-worker/n8n_architecture.md:/app/n8n_architecture.md:ro
       - echo-download-broker-data:/home/node/.n8n-files:rw
       - echo-n8n-data:/home/node/.n8n:rw
       - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
@@ -472,7 +481,7 @@ services:
     environment:
       - TZ=Europe/Paris
       - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
-      - SEARXNG_SECRET=${SEARXNG_SECRET}
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-}
     cap_drop:
       - ALL
     cap_add:
@@ -535,6 +544,7 @@ services:
 
   # 6. ECHO Embedding Worker (microsoft/Harrier-OSS-v1-0.6B — Text RAG, multilingue, 1024d)
   echo-embedding:
+    image: echo-embedding:latest
     build:
       context: /opt/ECHO/docker-embedding-worker
       dockerfile: Dockerfile
@@ -571,6 +581,7 @@ services:
 
   # 7. ECHO Download Broker (Ingestion asynchrone Playwright)
   echo-download-broker:
+    image: echo-download-broker:latest
     build:
       context: /opt/ECHO/docker-download-broker
       dockerfile: Dockerfile

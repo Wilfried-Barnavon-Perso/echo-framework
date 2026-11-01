@@ -29,9 +29,17 @@ Le test des workflows réactifs en mode Sandbox requiert obligatoirement un Mock
 
 ## 3. Gestion des Identifiants (ECHO Vault)
 - N'inventez jamais de credentials en dur (ex: tokens d'API, mots de passe) dans les noeuds.
-- Utilisez le système de substitution interne du framework ECHO (ex: variables d'environnement ou Vault) selon l'implémentation active.
+- Utilisez exclusivement la macro `__ECHO_SECRET_NOM_CLE__` injectée dynamiquement depuis l'Identity Vault d'ECHO.
 
-## 4. Documentation Officielle (Serveur MCP Kapa.ai)
+## 4. Écriture sur Disque & Limites de Volumétrie (`__ECHO_DOWNLOAD_DIR__`)
+- **Sandbox Synchrone (`sync=True`)** : Plafond strict de sortie à **8 Ko**.
+- **Exécution Asynchrone (`sync=False`)** : Plafond d'ingestion directe à **64 Ko**.
+- **Règle d'Architecture Critique (`Write Binary File` / `Read/Write Files from Disk`)** :
+  Le Modèle DOIT concevoir le graphe N8N pour qu'il filtre lui-même ses données (via des nœuds `Item Lists`, `Aggregate`, ou `Code`) AVANT la restitution finale. Si la charge utile finale dépasse 64 Ko ou si le workflow (Oneshot ou Démon) produit un fichier ou un rapport, il DOIT se conclure par un nœud `Write Binary File` (`n8n-nodes-base.writeBinaryFile`) ou `Read/Write Files from Disk` (`n8n-nodes-base.readWriteFile`) dont le paramètre `fileName` / `filePath` cible **STRICTEMENT** la macro :
+  `__ECHO_DOWNLOAD_DIR__/nom_du_fichier.ext`
+  Tout chemin relatif ou ne commençant pas par `__ECHO_DOWNLOAD_DIR__/` est rejeté par la validation pré-vol et provoque un échec `ENOENT` (`fs.realpath`) dans le worker N8N.
+
+## 5. Documentation Officielle (Serveur MCP Kapa.ai)
 - Si vous avez besoin de consulter la documentation officielle de N8N (pour comprendre le fonctionnement complexe d'un noeud ou chercher un exemple), vous pouvez vous connecter dynamiquement au serveur MCP officiel de N8N propulsé par Kapa.ai.
 - **URL Endpoint** : `https://n8n.mcp.kapa.ai` (Transport HTTP).
 - **Usage** : Vous pouvez forger un petit script Python temporaire dans votre Sandbox pour interroger ce serveur MCP si vous bloquez sur l'usage d'un noeud spécifique.

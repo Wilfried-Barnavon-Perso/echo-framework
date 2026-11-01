@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-linux.sh
-# VERSION : 5.226.18.0
+# VERSION : 5.231.39.1
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE :
@@ -19,6 +19,7 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Mise à jour des références vers echo-sync.sh, echo-update, echo-upgrade et echo-show-admin.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.3: Retrait de la configuration Docker redondante (déplacée dans install-stack.sh).
 # 1.2: Ajout de la rotation des logs Docker et du prune hebdomadaire.
@@ -204,7 +205,7 @@ else
     log_ok "Clonage terminé."
 fi
 
-# Écriture du fichier de branche (requis par sync-echo.sh)
+# Écriture du fichier de branche (requis par echo-sync.sh)
 echo "$TARGET_BRANCH" > "$ECHO_ROOT/ECHO_BRANCH"
 chmod 644 "$ECHO_ROOT/ECHO_BRANCH"
 log_info "Branche enregistrée : $TARGET_BRANCH"
@@ -214,8 +215,8 @@ log_info "Branche enregistrée : $TARGET_BRANCH"
 # ==============================================================================
 log_section "SYNCHRONISATION DES FICHIERS"
 
-chmod +x "$ECHO_SOURCE/00-echo-scripts/sync-echo.sh"
-"$ECHO_SOURCE/00-echo-scripts/sync-echo.sh" --local-only
+chmod +x "$ECHO_SOURCE/00-echo-scripts/echo-sync.sh"
+"$ECHO_SOURCE/00-echo-scripts/echo-sync.sh" --local-only
 
 log_section "INSTALLATION DE LA STACK DOCKER"
 
@@ -236,9 +237,9 @@ echo -e "   🔧 Admin Manager      : ${CYAN}http://${HOST_IP}:3001${NC}"
 echo -e "   🔑 Auth PKCE (SSH)    : ${CYAN}ports 8020–8024 exposés${NC}"
 echo ""
 echo -e "   📋 Commandes utiles :"
-echo -e "      ${YELLOW}update-echo${NC}      → Mise à jour rapide du code"
-echo -e "      ${YELLOW}upgrade-echo${NC}     → Mise à niveau majeure (rebuild)"
-echo -e "      ${YELLOW}show-echo-admin${NC}  → Afficher les identifiants"
+echo -e "      ${YELLOW}echo-update${NC}      → Mise à jour rapide du code"
+echo -e "      ${YELLOW}echo-upgrade${NC}     → Mise à niveau majeure (rebuild)"
+echo -e "      ${YELLOW}echo-show-admin${NC}  → Afficher les identifiants"
 echo -e "      ${YELLOW}enable-bunkerweb${NC} → Activer l'accès public sécurisé"
 echo ""
 echo -e "   📄 Log d'installation : $ECHO_ROOT/install.log"

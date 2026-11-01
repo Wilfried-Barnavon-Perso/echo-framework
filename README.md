@@ -1,11 +1,11 @@
 <div align="center">
   <img src="docs/logo-echo-full.png" alt="ECHO Framework Logo" width="350">
   
-  # 🧠 ECHO Framework v5.231.25
+  # 🧠 ECHO Framework v5.231.44
   
   **The Sovereign Intelligence Orchestrator**
   
-  [![Version](https://img.shields.io/badge/version-5.231.25-blue.svg)](#)
+  [![Version](https://img.shields.io/badge/version-5.231.44-blue.svg)](#)
   [![Open WebUI](https://img.shields.io/badge/Powered%20by-Open%20WebUI-4CAF50.svg)](#)
   [![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-F9AB00.svg)](#)
   [![License](https://img.shields.io/badge/license-Apache%202.0-purple.svg)](#)
@@ -58,7 +58,7 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
 
 - 🔒 **Souveraineté & Sécurité Périmétrique** : Vos bases vectorielles (Qdrant), votre historique de session (SQLite) et vos fichiers (Codex) restent confinés localement sur des réseaux Docker isolés. L'accès est protégé par **ECHO Auth** (IdP natif avec MFA/TOTP et SSO) placé derrière un reverse-proxy WAF **BunkerWeb**, et supervisé par un **Admin Manager** dédié (monitoring temps réel et sauvegardes automatisées sur NAS / Cloud).
 - 🧠 **Mémoire Biomimétique & Edge Bridge** : Fini l'amnésie des LLMs. Calquée sur la mémoire humaine, l'architecture hiérarchise les souvenirs selon leur importance et consolide automatiquement les apprentissages récurrents. L'indexation vectorielle s'appuie sur un **Edge Embedding Bridge** exploitant l'accélération matérielle (`WebGPU` / `WASM` en `fp16`, validée en amont par une sonde matérielle et un smoke test de calcul avant tout téléchargement) du navigateur client, relayé côté serveur par le modèle local **Harrier-OSS-v1-0.6B** sous `llama.cpp`.
-- 🪢 **Suture Sémantique (Bit-perfect) & Continuité de Session** : L'**Echo Orchestrator** garantit une continuité de session chirurgicale et pilote dynamiquement l'escalade cognitive entre les modèles (`PROMETHEUS`, `APOLLO`, `ZEPHYR`) avec bascule instantanée (Circuit Breaker OAuth2 en HTTP/2). Lorsque la conversation s'allonge ou que vous souhaitez explorer une piste alternative, l'action **Poursuivre dans une nouvelle conversation** (distillation en deux passes et conservation des étiquettes) ainsi que le support natif du **Clonage et de la Bifurcation (Fork)** transfèrent et alignent automatiquement vos fichiers, votre Codex Git et la mémoire vectorielle de session.
+- 🪢 **Suture Sémantique (Bit-perfect), Compaction In-Place & Continuité de Session** : L'**Echo Orchestrator** garantit une continuité de session chirurgicale et pilote dynamiquement l'escalade cognitive entre les modèles (`PROMETHEUS`, `APOLLO`, `ZEPHYR`) avec bascule instantanée (Circuit Breaker OAuth2 en HTTP/2). Lorsque la conversation s'allonge ou que vous souhaitez explorer une piste alternative, la **Compaction Contextuelle Automatique In-Place**, l'action **Poursuivre dans une nouvelle conversation** (distillation en deux passes et conservation des étiquettes) ainsi que le support natif du **Clonage et de la Bifurcation (Fork)** condensent ou transfèrent automatiquement vos échanges, vos fichiers, votre Codex Git et la mémoire vectorielle de session.
 - 🔐 **Identity Vault & Chiffrement Authentifié (`AES-256-GCM`)** : Coffre-fort de secrets chiffré au repos avec dérivation cryptographique par utilisateur (`HKDF-SHA256`) et liaison contextuelle anti-substitution (`AAD`), permettant de connecter des services tiers, des workflows N8N ou des serveurs Model Context Protocol (MCP) multi-comptes sans jamais exposer vos clés en clair au modèle ni dans les journaux d'exécution.
 - 🛠️ **Sovereign Toolbox & Workers Dédiés** :
   - **ECHO N8N Orchestrator** : Conception, test en Sandbox isolée et déploiement de workflows d'automatisation autonomes directement pilotés par l'IA, avec injection à la volée et masquage automatique des secrets.
@@ -67,7 +67,7 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
   - **Coding Worker Sandbox** : Exécution hermétique de code multi-langages (Python, Node.js) avec retour visuel et supervision en temps réel.
   - **Browser Worker** : Navigation web autonome asynchrone propulsée par Playwright avec contournement anti-bot et ciblage visuel de précision.
   - **ECHO Codex, Liens Interactifs & Delphi** : Éditeur de code intégré (Monaco) doublé d'un **Éditeur Hexadécimal virtualisé**, prévisualisation multimédia en direct (Markdown, HTML, SVG, PDF, images), consultation inter-conversations en lecture seule, **liens Codex cliquables** directement dans les réponses de l'IA, tables rondes multi-agents parallélisées (`consult_council`, `consult_supervised_workers`) et gestionnaire de compétences (`Skills`).
-  - **Window Manager (`EchoWM`), HUD & Conseiller d'Outils** : Gestionnaire de fenêtres multi-chats et multi-navigateurs parquant et restaurant vos outils sans perte d'état lors des changements de discussion, **Jauge Contextuelle & Quotas Cloud (5h / Semaine)** avec suivi différentiel par tour, et **Expert-Conseil Opérationnel (`tool_advisor`)** adossé à 10 manuels spécialisés réduisant de 80 % l'empreinte des 93 outils.
+  - **Window Manager (`EchoWM`), HUD & Conseiller d'Outils** : Gestionnaire de fenêtres multi-chats et multi-navigateurs parquant et restaurant vos outils sans perte d'état lors des changements de discussion, **Jauge Contextuelle & Quotas Cloud (5h / Semaine)** avec suivi différentiel dès le premier tour et compteur de compaction, et **Expert-Conseil Opérationnel (`tool_advisor`)** adossé à 10 manuels spécialisés réduisant de 80 % l'empreinte des 95 outils.
 
 ---
 

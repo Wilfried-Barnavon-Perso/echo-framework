@@ -2,16 +2,16 @@
 """
 title: ECHO Context Gauge Filter
 author: Wilfried BARNAVON
-version: 5.231.24.1
+version: 5.231.28.1
 description: Filtre Inlet/Outlet (Priorité 10) affichant le HUD contextuel de tokens persistant avec différentiel et pourcentage de capacité perdue.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.28.1: Transmission de compaction_count et compacted_turns au HUD contextuel en Inlet, Outlet et Cold-Start.
 # 5.231.24.1: Initialisation baseline des quotas et du contexte à l'Inlet du tour 1 pour calcul différentiel immédiat.
 # 5.231.15.1: Alignement sur le calcul unifié d'empreinte capacitaire et la sanctuarisation de promptTokenCount.
 # 5.231.13.1: Archivage unique de previous_context_stats en début de tour utilisateur, refresh Cloud des quotas en Outlet et résolution de ca_model_id.
 # 5.231.12.1: Affichage garanti du HUD des l'inlet du 1er tour et persistance des fractions de quotas pour calcul du differentiel.
-# 5.231.11.1: Réétagement de la priorité à 10 (après edge_embed_bridge_filter à 3 et avant user_native_context_filter à 20).
 
 import sys
 from typing import Any, Dict, Optional
@@ -116,6 +116,8 @@ class Filter:
             quota_weekly_fraction=quota_snap.get("quota_weekly_fraction"),
             quota_weekly_reset=quota_snap.get("quota_weekly_reset", "N/A"),
             delta=delta,
+            compaction_count=int(stats.get("compaction_count", 0) or 0),
+            compacted_turns=int(stats.get("compacted_turns", 0) or 0),
             is_pending=is_pending,
             chat_id=chat_id,
         )

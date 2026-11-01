@@ -2,15 +2,16 @@
 """
 title: ECHO Echo Paths
 author: Wilfried BARNAVON
-version: 5.231.20.1
+version: 5.231.29.1
 description: Résolution des chemins absolus du système.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.29.1: Alignement de format_codex_storage_path sur la constante SSOT CODEX_DEFAULT_WORKSPACE.
+# 5.231.28.1: Ajout de format_codex_storage_path(relative_path, workspace) garantissant le format canonique codex/<workspace>/<filename>.
 # 5.231.20.1: Standardisation multi-user/concurrence : ajout de sanitize_echo_id, get_codex_lock, get_user_skill_lock et suffixe UUID anti-collision dans generate_echo_file_id.
 # 5.230.0.1: Factorisation SSOT de normalize_codex_rel_path (avec unquote défensif) et check_codex_file_exists pour les outils, filtres et dépôts Codex.
 # 5.226.18.1: Ajout du registre de verrous asyncio (_CHAT_CLONE_LOCKS, get_chat_clone_lock, wait_for_chat_clone).
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 import os
 import time
 import glob
@@ -19,6 +20,7 @@ import asyncio
 from urllib.parse import unquote
 from typing import Optional
 from echo_constants import (
+    CODEX_DEFAULT_WORKSPACE,
     CODEX_DIR_NAME,
     ECHO_CODEX_WORKSPACES,
     ECHO_GLOBAL_DOMAINS,
@@ -170,6 +172,13 @@ def normalize_codex_rel_path(
         elif clean_path.startswith(prefix_ws):
             clean_path = clean_path[len(prefix_ws):]
     return clean_path or None
+
+
+def format_codex_storage_path(relative_path: str, workspace: str = CODEX_DEFAULT_WORKSPACE) -> str:
+    """Formate de façon canonique le storage_path d'une ressource Codex ('codex/<workspace>/<chemin>')."""
+    ws = workspace if workspace in ECHO_CODEX_WORKSPACES else CODEX_DEFAULT_WORKSPACE
+    clean = normalize_codex_rel_path(relative_path, workspace=ws) or (relative_path or "").replace("\\", "/").strip("/")
+    return f"{CODEX_DIR_NAME}/{ws}/{clean}"
 
 
 def check_codex_file_exists(

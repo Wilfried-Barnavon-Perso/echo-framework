@@ -1,19 +1,20 @@
 """
 title: ECHO Codex UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.231.6.1
+version: 5.231.39.1
 description: Composant système interne : Moteur de rendu HUD Monaco et Éditeur Hexadécimal pour ECHO Codex.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Sérialisation JSON intégrale des variables JS (activeChatTitle), pré-injection initial_content à t=0ms et isolation multi-chat de echoOpenCodex.
 # 5.231.6.1: Pont universel get_codex_bridge_js, Cold Start direct REST et émission ordonnée de close avant destruction du HUD.
 # 5.231.4.1: Suppression du forçage parasite dans renderFileTree, gardes !isMinimized et anti-flash sur aiPanel et statusBar.
 # 5.231.3.1: Persistance de isMinimized/isFullscreen dans saveState, initialisation anti-flash et appel factorisé à geoCtrl.close().
 # 5.231.1.1: Refonte du sélecteur multi-chat en Custom Dropdown Popover HTML borné (260px) avec ellipsis et tooltip.
-# 5.231.1.0: Chargement résilient marked.js (fetch credentials:omit + isolation CommonJS UMD + echoImportModule), onReconnectEnd et data-pending-file.
 
 
 import sys
+from typing import Optional
 import orjson as std_json
 
 # Importations ECHO Standard
@@ -56,27 +57,42 @@ class EchoCodexUI(EchoUI):
             // 1. Fonction universelle d'ouverture du Codex (analogue à open_codex_ui en Python)
             window.echoOpenCodex = function(targetChatId, targetWorkspace, targetFile) {{
                 const codexEl = document.getElementById(HUD_ID);
-                const currentChatId = window.location.pathname.startsWith('/c/') ? window.location.pathname.substring(3) : '';
+                const urlMatch = window.location.pathname.match(/\\/c\\/([a-zA-Z0-9_-]+)/);
+                const currentChatId = (urlMatch ? urlMatch[1] : '') || (window.EchoWM && window.EchoWM.activeChatId) || '';
                 const ws = targetWorkspace || DEFAULT_WS;
                 const effectiveCid = targetChatId || currentChatId;
+                const hostChatId = currentChatId || effectiveCid;
 
-                // Mode Chaud : Le HUD est déjà ouvert dans le DOM
-                if (codexEl && typeof window.sendCodexAction === 'function') {{
+                const elCid = codexEl
+                    ? ((window.EchoWM && typeof window.EchoWM.getElementChatId === 'function')
+                        ? window.EchoWM.getElementChatId(codexEl)
+                        : (codexEl.getAttribute('data-echo-chat-id') || codexEl.getAttribute('data-chat-id') || ''))
+                    : '';
+                const isParked = codexEl && codexEl.getAttribute('data-echo-parked') === '1';
+                const isSameHostChat = Boolean(codexEl && hostChatId && elCid === hostChatId && !isParked);
+
+                // Mode Chaud : Le HUD est déjà ouvert et visible pour la conversation hôte courante
+                if (isSameHostChat && typeof window.sendCodexAction === 'function') {{
                     window.sendCodexAction({{
                         action: 'switch_chat',
                         target_chat_id: effectiveCid,
                         workspace: ws,
                         target_file: targetFile
                     }});
+                    if (codexEl._echoGeoCtrl && codexEl._echoGeoCtrl.isMinimized && typeof codexEl._echoGeoCtrl.toggleMinimize === 'function') {{
+                        codexEl._echoGeoCtrl.toggleMinimize();
+                    }}
                     codexEl.classList.remove('is-minimized');
                     return;
                 }}
 
-                // Mode Froid : Armement de la cible pour l'initialisation du HUD (sécurité fallback)
+                // Mode Froid : Armement de la cible horodatée et scopée au chat hôte
                 window._echoCodexTarget = {{
-                    file: targetFile,
+                    file: targetFile || '',
                     workspace: ws,
-                    target_chat_id: effectiveCid
+                    target_chat_id: effectiveCid,
+                    host_chat_id: hostChatId,
+                    ts: Date.now()
                 }};
 
                 // Déclenchement direct de l'action avec payload complet (Cold Start direct à t = 0ms)
@@ -91,9 +107,10 @@ class EchoCodexUI(EchoUI):
                     }}
                 }}
 
-                const socketId = (window.socket && window.socket.id)
-                    || (window._socket && window._socket.id)
-                    || (window.EchoWM && window.EchoWM.clientId) || '';
+                // Ne jamais injecter EchoWM.clientId comme session_id Socket.IO
+                const socketId = (window.socket && window.socket.connected && window.socket.id)
+                    || (window._socket && window._socket.connected && window._socket.id)
+                    || '';
                 fetch('/api/chat/actions/' + ACTION_ID, {{
                     method: 'POST',
                     headers: {{
@@ -101,13 +118,13 @@ class EchoCodexUI(EchoUI):
                         'Authorization': 'Bearer ' + token
                     }},
                     body: JSON.stringify({{
-                        chat_id: currentChatId || effectiveCid,
+                        chat_id: hostChatId,
                         model: window._currentModelId || DEFAULT_MODEL,
                         id: msgId,
                         session_id: socketId,
                         target_chat_id: effectiveCid,
                         workspace: ws,
-                        target_file: targetFile,
+                        target_file: targetFile || '',
                         messages: []
                     }})
                 }}).catch(err => console.error('[ECHO Codex Bridge] Erreur déclenchement action:', err));
@@ -159,22 +176,34 @@ class EchoCodexUI(EchoUI):
             chats_json: str = "{}",
             active_chat_id: str = "",
             active_chat_title: str = "",
-            initial_file: str = "") -> str:
+            initial_file: str = "",
+            initial_content: Optional[str] = None,
+            initial_is_binary: bool = False) -> str:
         """Génère le script JS complet du HUD Monaco Codex.
         Injection via __event_call__({type: 'execute', data: {code: ...}})."""
         lang_to_ext_json = std_json.dumps(CODEX_LANG_TO_EXT).decode("utf-8")
         ext_to_lang_json = std_json.dumps(CODEX_LANG_MAP).decode("utf-8")
+        cid_json = std_json.dumps(chat_id or "").decode("utf-8")
+        active_cid_json = std_json.dumps(active_chat_id or chat_id or "").decode("utf-8")
+        active_title_json = std_json.dumps(active_chat_title or "").decode("utf-8")
         initial_file_json = std_json.dumps(initial_file or "").decode("utf-8")
+        initial_content_json = std_json.dumps(initial_content).decode("utf-8")
+        initial_is_binary_json = "true" if initial_is_binary else "false"
+        mid_json = std_json.dumps(message_id or "").decode("utf-8")
+        model_id_json = std_json.dumps(model_id or "echo_orchestrator").decode("utf-8")
+        current_ws_json = std_json.dumps(current_workspace or CODEX_DEFAULT_WORKSPACE).decode("utf-8")
         return f"""
     (function() {{
       const CODEX_ID = 'echo-codex-hud';
       {cls.get_mobile_guard_js("echo-codex-hud")}
-      const CID = '{chat_id}';
-      let activeChatId = '{active_chat_id}' || CID;
-      let activeChatTitle = '{active_chat_title}';
+      const CID = {cid_json};
+      let activeChatId = {active_cid_json} || CID;
+      let activeChatTitle = {active_title_json};
       const INITIAL_FILE = {initial_file_json};
-      const MID = '{message_id}';
-      const MODEL_ID = '{model_id}';
+      const INITIAL_CONTENT = {initial_content_json};
+      const INITIAL_IS_BINARY = {initial_is_binary_json};
+      const MID = {mid_json};
+      const MODEL_ID = {model_id_json};
       const STATE_KEY = 'echo_codex_' + CID;
       const MONACO_CDN = 'https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min';
 
@@ -196,7 +225,7 @@ class EchoCodexUI(EchoUI):
       const workspaces = {workspaces_json};
       const rawChats = {chats_json};
       let chatsData = (rawChats && rawChats.current) ? rawChats : {{ current: {{ id: CID, title: activeChatTitle || 'Conversation Actuelle' }}, others: [] }};
-      let currentWorkspace = '{current_workspace}';
+      let currentWorkspace = {current_ws_json};
       let isReadOnly = (activeChatId !== CID);
       // Mapping langage Monaco ↔ extension (injecté depuis echo_constants SSOT)
       const LANG_TO_EXT = {lang_to_ext_json};
@@ -235,28 +264,40 @@ class EchoCodexUI(EchoUI):
       let targetFileOverride = INITIAL_FILE || null;
       let initialSwitchAction = null;
       if (window._echoCodexTarget) {{
-          currentWorkspace = window._echoCodexTarget.workspace || currentWorkspace;
-          targetFileOverride = window._echoCodexTarget.file || targetFileOverride;
-          if (targetFileOverride) {{
-              try {{ targetFileOverride = decodeURIComponent(targetFileOverride); }} catch (e) {{}}
-          }}
-          const initialTargetChat = window._echoCodexTarget.target_chat_id;
-          if (initialTargetChat && initialTargetChat !== CID) {{
-              activeChatId = initialTargetChat;
-              isReadOnly = true;
-          }}
-          initialSwitchAction = {{
-              action: "switch_chat",
-              target_chat_id: initialTargetChat || activeChatId,
-              workspace: currentWorkspace,
-              target_file: targetFileOverride
-          }};
+          const t = window._echoCodexTarget;
           window._echoCodexTarget = null;
+          const isFreshTarget = (!t.host_chat_id || t.host_chat_id === CID) && (!t.ts || (Date.now() - t.ts) < 15000);
+          if (isFreshTarget && !INITIAL_FILE) {{
+              currentWorkspace = t.workspace || currentWorkspace;
+              targetFileOverride = t.file || targetFileOverride;
+              if (targetFileOverride) {{
+                  try {{ targetFileOverride = decodeURIComponent(targetFileOverride); }} catch (e) {{}}
+              }}
+              const initialTargetChat = t.target_chat_id;
+              const isValidTargetChat = initialTargetChat && (
+                  initialTargetChat === CID ||
+                  (chatsData && Array.isArray(chatsData.others) && chatsData.others.some(c => c && c.id === initialTargetChat))
+              );
+              if (isValidTargetChat && initialTargetChat !== CID) {{
+                  activeChatId = initialTargetChat;
+                  isReadOnly = true;
+              }}
+              if (isValidTargetChat && (initialTargetChat !== activeChatId || (t.workspace && t.workspace !== currentWorkspace))) {{
+                  initialSwitchAction = {{
+                      action: "switch_chat",
+                      target_chat_id: initialTargetChat || activeChatId,
+                      workspace: currentWorkspace,
+                      target_file: targetFileOverride
+                  }};
+              }}
+          }}
       }}
       const firstFileEntry = files.find(f => f.type !== 'directory');
       let currentFile = targetFileOverride || (firstFileEntry ? firstFileEntry.filename : null);
       let editor = null;
-      let pendingContent = null;
+      let pendingContent = (INITIAL_CONTENT !== null && INITIAL_CONTENT !== undefined && currentFile)
+          ? {{ content: INITIAL_CONTENT, filename: currentFile, isBinary: INITIAL_IS_BINARY }}
+          : null;
       let diffEditor = null;
       let isDiffMode = false;
       let isHistoryMode = false;

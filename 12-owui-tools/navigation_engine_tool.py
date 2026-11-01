@@ -1,16 +1,16 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 5.231.20.1
+version: 5.231.41.1
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.41.1: Tour de synthèse finale garanti en functionCallingConfig mode NONE à l'épuisement de max_iterations dans delegate_web_browsing, injection d'alerte de budget dans functionResponse et garde-fou de récupération.
 # 5.231.20.1: Isolation des sessions Playwright par sub_sid/sid dans delegate_web_browsing et close_web_thread, sessions éphémères parallélisables dans analyze/archive_web_page et nommage anti-écrasement des archives.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 11.43: Séparation stricte entre chat_id (persistance SQLite/Vault) et browser_session_id (isolation Playwright par sub_sid) pour empêcher la création de dossiers chats/<sub_sid> orphelins.
-# 11.42: Ajustement du thinking level de analyze_web_page à medium.
 
 import os
 import time
@@ -271,9 +271,16 @@ class Tools:
             
         try:
             last_fn_name = "action"
-            while iterations < max_iterations:
-                iterations += 1
-                await events.status(f"🤖 Agent Navigateur: Analyse en cours (Étape {iterations})...", done=False)
+            text_out = ""
+            while True:
+                is_budget_exhausted = iterations >= max_iterations
+                if is_budget_exhausted:
+                    await events.status(
+                        f"🛑 Agent Navigateur: Budget atteint ({iterations}/{max_iterations}), synthèse finale...",
+                        done=False
+                    )
+                else:
+                    await events.status(f"🤖 Agent Navigateur: Analyse en cours (Étape {iterations + 1}/{max_iterations})...", done=False)
             
                 # Défense passive : Troncature de l'historique du navigateur
                 current_size = estimate_token_size(history)
@@ -308,15 +315,18 @@ class Tools:
                     }
                 ]
 
+                all_browser_tools = BROWSER_TOOLS_SCHEMA + schema_extensions
                 payload = {
                     "contents": history,
-                    "tools": [{"functionDeclarations": BROWSER_TOOLS_SCHEMA + schema_extensions}],
-                    "tool_config": {"functionCallingConfig": {"mode": "AUTO"}}
+                    "tools": [{"functionDeclarations": all_browser_tools}],
+                    "tool_config": {
+                        "functionCallingConfig": {"mode": "NONE" if is_budget_exhausted else "AUTO"}
+                    }
                 }
 
                 from echo_constants import get_generation_config
                 # Élasticité Cognitive : HIGH pour l'analyse (Vision, DOM, A11y, ou démarrage initial), LOW pour l'exécution motrice (Clic, Scroll)
-                thinking_mode = "high" if last_fn_name in ["action", "action_inspect_page"] else "low"
+                thinking_mode = "high" if (is_budget_exhausted or last_fn_name in ["action", "action_inspect_page"]) else "low"
                 payload["generationConfig"] = get_generation_config(target_model_key, override_thinking=thinking_mode)
                 
                 model = clamp_model(target_model_key, __metadata__, user_id=uid)
@@ -335,7 +345,57 @@ class Tools:
             
                 tool_called = len(tools_raw) > 0
 
+                if is_budget_exhausted:
+                    text_out = "".join(p.get("text", "") for p in text_raw).strip()
+                    if tool_called and not text_out:
+                        cancel_parts = []
+                        for part in tools_raw:
+                            fc = part["functionCall"]
+                            _cfr = {
+                                "name": fc.get("name", "unknown"),
+                                "response": {
+                                    "status": "cancelled_budget_exhausted",
+                                    "message": (
+                                        f"ACTION REFUSÉE : Nombre maximum d'itérations atteint ({iterations}/{max_iterations}). "
+                                        "Le Modèle a l'INTERDICTION d'appeler un outil et DOIT rédiger immédiatement "
+                                        "une synthèse complète et détaillée de ses observations et actions."
+                                    ),
+                                },
+                            }
+                            if fc.get("id"):
+                                _cfr["id"] = fc["id"]
+                            cancel_parts.append({"functionResponse": _cfr})
+                        rec_payload = {
+                            "contents": history + [
+                                {"role": "model", "parts": raw_parts},
+                                {"role": "user", "parts": cancel_parts},
+                            ],
+                            "tools": [{"functionDeclarations": all_browser_tools}],
+                            "tool_config": {"functionCallingConfig": {"mode": "NONE"}},
+                            "generationConfig": get_generation_config(target_model_key, override_thinking="high"),
+                        }
+                        rec_data, _, _ = await EchoGeminiClient.call_cascade(
+                            model, rec_payload, uid, __metadata__, events, timeout=120
+                        )
+                        if rec_data:
+                            rec_cands = rec_data.get("candidates", [])
+                            if rec_cands and rec_cands[0].get("content"):
+                                rec_parts = rec_cands[0]["content"].get("parts", [])
+                                text_out = "".join(
+                                    p.get("text", "") for p in rec_parts if "text" in p and not p.get("thought")
+                                ).strip()
+
+                    clean_model_parts = [p for p in raw_parts if "functionCall" not in p]
+                    if not any("text" in p and not p.get("thought") for p in clean_model_parts) and text_out:
+                        clean_model_parts.append({"text": text_out})
+                    if clean_model_parts:
+                        history.append({"role": "model", "parts": clean_model_parts})
+                        sig = next((p["thoughtSignature"] for p in raw_parts if "thoughtSignature" in p), None)
+                        state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "model", clean_model_parts, sig)
+                    break
+
                 if tool_called:
+                    iterations += 1
                     # 1. Ajout du message modèle avec TOUTES les parts brutes (préservation thoughtSignature STRICTE)
                     history.append({"role": "model", "parts": raw_parts})
                 
@@ -466,6 +526,21 @@ class Tools:
                         if fn_id: _fr["id"] = fn_id
                         response_parts.append({"functionResponse": _fr})
                 
+                    if response_parts:
+                        last_fr_resp = response_parts[-1]["functionResponse"]["response"]
+                        if isinstance(last_fr_resp, dict):
+                            if iterations >= max_iterations:
+                                last_fr_resp["_budget_alert"] = (
+                                    f"BUDGET D'ITÉRATION ÉPUISÉ ({iterations}/{max_iterations}). "
+                                    "Plus aucune action navigateur n'est disponible. Le Modèle DOIT impérativement "
+                                    "rédiger immédiatement une synthèse complète et détaillée de toutes les informations "
+                                    "collectées, des actions accomplies et de l'état exact de la navigation."
+                                )
+                            else:
+                                last_fr_resp["_budget"] = (
+                                    f"Étape {iterations}/{max_iterations} ({max_iterations - iterations} restantes)"
+                                )
+
                     # 3. Ajout du message utilisateur contenant toutes les réponses
                     # Injection de la vision base64 dans la functionResponse correspondante si elle a été demandée
                     if last_view and use_vision and vision_requested and last_view.get("screenshot_b64"):
@@ -529,9 +604,9 @@ class Tools:
                 text=(
                     f"ÉCHEC : Nombre maximum d'itérations atteint ({max_iterations}). "
                     "Le Modèle doit analyser la synthèse suivante et relancer l'outil `delegate_web_browsing` pour poursuivre la tâche.\n"
-                    f"[SYNTHÈSE_NAVIGATEUR] :\n{text_out if 'text_out' in locals() else fallback_msg}"
+                    f"[SYNTHÈSE_NAVIGATEUR] :\n{text_out if text_out else fallback_msg}"
                 ), 
-                status={"status": "too_many_tries"}
+                status={"status": "too_many_tries", "steps": iterations, "sid": sid}
             , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
         finally:
             stop_streaming.set()

@@ -1,7 +1,7 @@
 ---
 domain_id: n8n_workflows
-version: 5.231.22.1
-updated_at: 2026-10-27
+version: 5.231.42.1
+updated_at: 2026-10-31
 name: Orchestration & Automatisation N8N
 description: Conception déléguée (N8N Grapher Prometheus), recherche Hub N8N, gestion de templates globaux, exécution éphémère Oneshot et déploiement de Daemons persistants.
 tools: [create_n8n_template, modify_n8n_template, delete_n8n_template, prepare_n8n_workflow, modify_n8n_workflow, delete_n8n_workflow, run_n8n_oneshot_workflow, deploy_n8n_daemon, search_n8n_hub, download_n8n_hub_template, query_n8n_documentation, delegate_to_n8n_grapher]
@@ -26,9 +26,9 @@ keywords: [n8n, workflow, automatisation, daemon, oneshot, template, grapher, hu
 
 ### 1.3 Écriture de Fichiers et Rapports (`__ECHO_DOWNLOAD_DIR__`)
 - Les nœuds Webhook entrants sont inutilisables dans cette infrastructure isolée.
-- Si un workflow (Oneshot asynchrone ou Daemon) produit un fichier ou un rapport, le nœud d'écriture sur disque **DOIT STRICTEMENT** cibler le chemin :
+- Si un workflow (Oneshot asynchrone ou Daemon) produit un fichier ou un rapport, tout nœud d'écriture sur disque (`Write Binary File` ou `Read/Write Files from Disk` en mode `write`) **DOIT STRICTEMENT** cibler le chemin :
   `__ECHO_DOWNLOAD_DIR__/nom_du_fichier.ext`
-- Le système intercepte, sécurise et ingère automatiquement tout fichier écrit dans ce répertoire vers le Registre Unifié de la session.
+- Tout chemin relatif ou ne commençant pas par `__ECHO_DOWNLOAD_DIR__/` est bloqué en pré-vol par `prepare_n8n_workflow` / `modify_n8n_workflow`. Le système crée automatiquement l'arborescence cible, protège le dossier des démons actifs via une sentinelle `.echo_daemon_keep` et ingère tout fichier produit vers le Registre Unifié de la session.
 
 ---
 

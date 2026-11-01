@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.231.20.1
+version: 5.231.43.1
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.43.1: Ajout du paramètre multiplier (1..5) dans consult_council, renommage COUNCIL_MAX_SKILLS=7, COUNCIL_ROUNDS_MIN=3, COUNCIL_ROUNDS_MAX=10, COUNCIL_MAX_PR_COMPLEXITY=60, validation arithmétique PAS et droit d'abstention.
 # 5.231.20.1: Parallélisation asyncio.gather des ouvriers dans consult_supervised_workers, correction du parsing de task_id (sup_*) dans list/close_supervised_task, verrou par council_id et sécurisation async des skills.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides) et purge des directives IMPLIQUE.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.42: Sanctuarisation thinkingLevel "high" sur synthèse Delphi et critique, consolidation sur MODEL_APOLLO (medium).
-# 5.41: Résolution robuste de chat_id avec fallback sur __metadata__ pour la propagation aux sous-agents.
 
 import sys
 import re
@@ -58,11 +58,11 @@ class Tools:
         DEBUG_COUNCIL: bool = Field(default=False, description="Si activé, conserve les traces des réflexions internes et affiche plus de détails.")
 
     class UserValves(BaseModel):
-        COUNCIL_ROUNDS_DEFAULT: int = Field(default=3, description="Nombre de tours de parole par défaut pour un conseil d'experts.")
-        COUNCIL_ROUNDS_MAX: int = Field(default=5, description="Limite haute du nombre de tours de parole.")
-        COUNCIL_MAX_PARTICIPANTS: int = Field(default=5, description="Nombre maximum de participants au conseil (hors synthétiseur).")
+        COUNCIL_ROUNDS_MIN: int = Field(default=3, description="Nombre de tours de parole minimum et par défaut pour un conseil d'experts.")
+        COUNCIL_ROUNDS_MAX: int = Field(default=10, description="Limite haute du nombre de tours de parole.")
+        COUNCIL_MAX_SKILLS: int = Field(default=7, description="Nombre maximum d'expertises (skills) distinctes au conseil (hors synthétiseur).")
         COUNCIL_EXPERT_MAX_CALLS_PER_ROUND: int = Field(default=3, ge=0, le=10, description="Budget max d'appels d'outils par expert et par tour de conseil.")
-        COUNCIL_MAX_PR_COMPLEXITY: int = Field(default=30, description="Complexité maximale (participants * rounds) d'un conseil.")
+        COUNCIL_MAX_PR_COMPLEXITY: int = Field(default=60, description="Complexité maximale (participants * rounds) d'un conseil.")
         SUPERVISOR_MAX_CORRECTION_ROUNDS: int = Field(default=3, ge=1, le=5, description="Nombre maximum de tours de correction du superviseur.")
 
     def __init__(self):
@@ -320,6 +320,7 @@ class Tools:
         target_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_PROMETHEUS",
         synthesis_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_PROMETHEUS",
         rounds: Optional[int] = None,
+        multiplier: int = 1,
         close_on_finish: bool = False,
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
@@ -327,7 +328,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Convoque un conseil d'experts en parallèle (méthode Delphi, min 2 skill_id) et synthétise leurs délibérations."""
+        """Convoque un conseil d'experts en parallèle (méthode Delphi, avec facteur multiplicateur 1 à 5 par skill_id) et synthétise leurs délibérations."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
@@ -335,47 +336,134 @@ class Tools:
             return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=user_id, chat_id=None, metadata=__metadata__)
 
         # ── Phase 0 : Validation & Chargement ──
-        skill_ids = [s.strip() for s in participants if s.strip()]
+        if multiplier is None:
+            multiplier = 1
+        if isinstance(multiplier, bool) or not isinstance(multiplier, int) or multiplier < 1 or multiplier > 5:
+            return wrap_tool_output(
+                text=(
+                    f"❌ Erreur : La valeur du paramètre `multiplier` ({multiplier}) est hors limites.\n"
+                    f"Le Modèle DOIT fournir un entier strictement compris entre 1 et 5."
+                ),
+                status={"status": "error"},
+                user_id=user_id,
+                chat_id=chat_id,
+                metadata=__metadata__,
+            )
 
-        max_p = self.user_valves.COUNCIL_MAX_PARTICIPANTS
-        if len(skill_ids) > max_p:
-            return wrap_tool_output(text=f"❌ Maximum {max_p} participants (reçu: {len(skill_ids)}).", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-        if len(skill_ids) < 2:
-            available = get_all_skills(user_id)
+        skill_ids = list(dict.fromkeys(s.strip() for s in participants if s.strip()))
+        max_skills = self.user_valves.COUNCIL_MAX_SKILLS
+        max_participants = max_skills * multiplier
+        total_participants = len(skill_ids) * multiplier
+
+        if len(skill_ids) > max_skills:
+            return wrap_tool_output(
+                text=(
+                    f"❌ Erreur : Le nombre d'expertises distinctes ({len(skill_ids)}) dépasse la limite autorisée ({max_skills}, "
+                    f"soit {max_participants} participants maximum avec `multiplier={multiplier}`).\n"
+                    f"Le Modèle DOIT soumettre au maximum {max_skills} `skill_id` dans `participants`."
+                ),
+                status={"status": "error"},
+                user_id=user_id,
+                chat_id=chat_id,
+                metadata=__metadata__,
+            )
+
+        if total_participants < 2:
+            available = await asyncio.to_thread(get_all_skills, user_id)
             skill_list = ", ".join(f"`{s['id']}`" for s in available) if available else "aucun"
             return wrap_tool_output(
-                text=f"❌ Conseil : Minimum 2 participants (Reçu: {len(skill_ids)}).\n\n"
-                     f"**Skills disponibles :** {skill_list}\n\n"
-                     f"→ Si expert/skill manquant, appeler d'abord `forge_skill`.",
-                status={"status": "error"}
-            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                text=(
+                    f"❌ Erreur : Le nombre total de participants ({len(skill_ids)} × {multiplier} = {total_participants}) "
+                    f"est inférieur au minimum requis (2).\n\n"
+                    f"**Skills disponibles :** {skill_list}\n\n"
+                    f"Le Modèle DOIT soumettre au moins 2 `skill_id` ou définir `multiplier` >= 2 "
+                    f"(et appeler `forge_skill` au préalable si une expertise est manquante)."
+                ),
+                status={"status": "error"},
+                user_id=user_id,
+                chat_id=chat_id,
+                metadata=__metadata__,
+            )
 
-        effective_rounds = min(
-            rounds or self.user_valves.COUNCIL_ROUNDS_DEFAULT,
-            self.user_valves.COUNCIL_ROUNDS_MAX
+        min_rounds = self.user_valves.COUNCIL_ROUNDS_MIN
+        max_rounds = self.user_valves.COUNCIL_ROUNDS_MAX
+        effective_rounds = max(
+            min_rounds,
+            min(
+                rounds if rounds is not None else min_rounds,
+                max_rounds,
+            ),
         )
 
-        if len(skill_ids) * effective_rounds > self.user_valves.COUNCIL_MAX_PR_COMPLEXITY:
-            return wrap_tool_output(
-                text=f"❌ La complexité (participants * rounds = {len(skill_ids) * effective_rounds}) dépasse la limite autorisée ({self.user_valves.COUNCIL_MAX_PR_COMPLEXITY}).",
-                status={"status": "error"}
-            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        max_complexity = self.user_valves.COUNCIL_MAX_PR_COMPLEXITY
+        complexity = total_participants * effective_rounds
+        if complexity > max_complexity:
+            max_r_adm = min(max_rounds, max_complexity // total_participants)
+            max_m_adm = min(5, max_complexity // (len(skill_ids) * effective_rounds))
+            max_s_adm = min(max_skills, max_complexity // (multiplier * effective_rounds))
 
-        # Chargement et validation de chaque skill
+            opt_r = (
+                f"`rounds` <= {max_r_adm} (avec {len(skill_ids)} skills et `multiplier={multiplier}`)"
+                if max_r_adm >= min_rounds
+                else (
+                    f"Réduction de `rounds` seule insuffisante (minimum {min_rounds} tours, "
+                    f"soit {total_participants} × {min_rounds} = {total_participants * min_rounds} > {max_complexity})"
+                )
+            )
+            opt_m = (
+                f"`multiplier` <= {max_m_adm} (avec {len(skill_ids)} skills et `rounds={effective_rounds}`)"
+                if max_m_adm >= 1 and (len(skill_ids) * max_m_adm) >= 2
+                else "Réduction de `multiplier` seule insuffisante"
+            )
+            opt_s = (
+                f"`participants` <= {max_s_adm} skills (avec `multiplier={multiplier}` et `rounds={effective_rounds}`)"
+                if max_s_adm >= 1 and (max_s_adm * multiplier) >= 2
+                else "Réduction de `participants` seule insuffisante"
+            )
+
+            return wrap_tool_output(
+                text=(
+                    f"❌ Erreur : La combinaison des paramètres soumis dépasse la capacité maximale du conseil.\n"
+                    f"- Limite arithmétique : (nb_skills × multiplier) × rounds <= {max_complexity}\n"
+                    f"- Calcul courant : ({len(skill_ids)} × {multiplier}) × {effective_rounds} = {complexity} > {max_complexity}\n"
+                    f"- Bornes des paramètres : nb_skills in [1..{max_skills}], multiplier in [1..5], rounds in [{min_rounds}..{max_rounds}].\n\n"
+                    f"Le Modèle DOIT ajuster ses paramètres en respectant l'un des plafonds suivants :\n"
+                    f"- Option A (`rounds`) : {opt_r}.\n"
+                    f"- Option B (`multiplier`) : {opt_m}.\n"
+                    f"- Option C (`participants`) : {opt_s}."
+                ),
+                status={"status": "error"},
+                user_id=user_id,
+                chat_id=chat_id,
+                metadata=__metadata__,
+            )
+
+        # Chargement et validation de chaque skill, puis démultiplication par multiplier
         roster = []
-        for i, sid in enumerate(skill_ids):
-            content = get_skill_content(user_id, sid)
+        participant_idx = 1
+        for sid in skill_ids:
+            content = await asyncio.to_thread(get_skill_content, user_id, sid)
             if not content:
                 return wrap_tool_output(
-                    text=f"❌ Skill '{sid}' introuvable. Le Modèle DOIT utiliser l'outil forge_skill au préalable."
-                , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    text=f"❌ Skill '{sid}' introuvable. Le Modèle DOIT utiliser l'outil forge_skill au préalable.",
+                    status={"status": "error"},
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    metadata=__metadata__,
+                )
             meta = parse_skill_metadata(content)
-            roster.append({
-                "skill_id": sid,
-                "name": meta.get("name", sid),
-                "instructions": content,
-                "alias": f"Participant {i + 1}"
-            })
+            base_name = meta.get("name", sid)
+            for m_idx in range(1, multiplier + 1):
+                inst_id = f"{sid}_{m_idx}" if multiplier > 1 else sid
+                inst_name = f"{base_name} #{m_idx}" if multiplier > 1 else base_name
+                roster.append({
+                    "instance_id": inst_id,
+                    "skill_id": sid,
+                    "name": inst_name,
+                    "instructions": content,
+                    "alias": f"Participant {participant_idx}",
+                })
+                participant_idx += 1
 
         # Résolution et normalisation du council_id (évite toute collision avec le séparateur '_')
         cid = sanitize_echo_id(council_id, fallback="council").replace("_", "-")
@@ -390,7 +478,13 @@ class Tools:
         _delegate_mod = sys.modules.get("tool_agent_engine_tool")
         _delegate_cls = getattr(_delegate_mod, "Tools", None) if _delegate_mod else None
         if not _delegate_cls:
-            return wrap_tool_output(text="❌ Module agent_engine_tool introuvable dans sys.modules.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(
+                text="❌ Module agent_engine_tool introuvable dans sys.modules.",
+                status={"status": "error"},
+                user_id=user_id,
+                chat_id=chat_id,
+                metadata=__metadata__,
+            )
         delegate = _delegate_cls()
         # Propager les valves infra du parent
         delegate.valves.KEY_SWITCH_THRESHOLD = self.valves.KEY_SWITCH_THRESHOLD
@@ -409,29 +503,31 @@ class Tools:
                 # Construction du prompt par participant
                 if round_num == 1:
                     base_prompt = f"### QUESTION SOUMISE AU CONSEIL\n{question}"
-                    round_prompts = {p["skill_id"]: base_prompt for p in roster}
+                    round_prompts = {p["instance_id"]: base_prompt for p in roster}
                 else:
                     prev = all_rounds[-1]
                     round_prompts = {}
                     for p in roster:
-                        sid = p["skill_id"]
+                        inst_id = p["instance_id"]
                         others = "\n\n".join(
-                            f"**{r['alias']}** :\n{prev[r['skill_id']]}"
+                            f"**{r['alias']}** ({r['name']}) :\n{prev[r['instance_id']]}"
                             for r in roster
-                            if r["skill_id"] != sid and r["skill_id"] in prev
+                            if r["instance_id"] != inst_id and r["instance_id"] in prev
                         )
-                        round_prompts[sid] = (
+                        round_prompts[inst_id] = (
                             f"### CONTRIBUTIONS DU TOUR {round_num - 1}\n{others}\n\n"
                             f"### MISSION DU MODÈLE\n"
-                            f"Le Modèle est {p['alias']}. Il DOIT réagir aux contributions ci-dessus. "
-                            f"Il DOIT exprimer son analyse, ses accords, ses désaccords et ses compléments."
+                            f"Le Modèle est {p['alias']} ({p['name']}). Il DOIT prendre connaissance des contributions ci-dessus "
+                            f"pour exprimer son analyse, ses accords, ses désaccords et ses compléments. "
+                            f"Le Modèle peut signifier qu'il préfère ne pas répondre."
                         )
 
                 # Appels parallèles — chaque participant est un agent indépendant
                 async def _call_participant(participant: dict, prompt: str) -> Tuple[str, str]:
-                    """Appelle un participant via delegate_to_agent et retourne (skill_id, texte)."""
+                    """Appelle un participant via delegate_to_agent et retourne (instance_id, texte)."""
                     sid = participant["skill_id"]
-                    agent_sid = f"thread_council_{cid}_{sid}"
+                    inst_id = participant["instance_id"]
+                    agent_sid = f"thread_council_{cid}_{inst_id}"
                     if agent_sid not in council_sids:
                         council_sids.append(agent_sid)
 
@@ -439,7 +535,7 @@ class Tools:
                     members = "\n".join(f"- {p['alias']} : {p['name']}" for p in roster)
                     current_time = datetime.datetime.now().isoformat()
                     council_system = SYS_ORCHESTRATOR_COUNCIL_EXPERT.format(
-                        participant_alias=participant['alias'],
+                        participant_alias=f"{participant['alias']} ({participant['name']})",
                         roster_length=len(roster),
                         members=members,
                         round_num=round_num,
@@ -474,10 +570,10 @@ class Tools:
                     else:
                         text = str(result)
 
-                    return sid, text
+                    return inst_id, text
 
                 tasks = [
-                    _call_participant(p, round_prompts[p["skill_id"]])
+                    _call_participant(p, round_prompts[p["instance_id"]])
                     for p in roster
                 ]
                 results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -486,14 +582,14 @@ class Tools:
                 round_responses: Dict[str, str] = {}
                 for i, result in enumerate(results):
                     if isinstance(result, Exception):
-                        sid = roster[i]["skill_id"]
+                        inst_id = roster[i]["instance_id"]
                         alias = roster[i]["alias"]
-                        round_responses[sid] = f"⚠️ {alias} n'a pas pu répondre."
+                        round_responses[inst_id] = f"⚠️ {alias} n'a pas pu répondre."
                         if self.valves.DEBUG_COUNCIL:
                             print(f"[Council] {alias} error: {result}")
                     else:
-                        sid, text = result
-                        round_responses[sid] = text or "(Pas de réponse)"
+                        inst_id, text = result
+                        round_responses[inst_id] = text or "(Pas de réponse)"
 
                 all_rounds.append(round_responses)
 
@@ -504,9 +600,9 @@ class Tools:
             for rnd, responses in enumerate(all_rounds, 1):
                 transcript += f"---\n### TOUR {rnd}\n\n"
                 for p in roster:
-                    sid = p["skill_id"]
-                    if sid in responses:
-                        transcript += f"**{p['alias']}** ({p['name']}) :\n{responses[sid]}\n\n"
+                    inst_id = p["instance_id"]
+                    if inst_id in responses:
+                        transcript += f"**{p['alias']}** ({p['name']}) :\n{responses[inst_id]}\n\n"
 
             synthesis_system = SYS_ORCHESTRATOR_COUNCIL_SYNTHESIS
 
@@ -857,6 +953,15 @@ class Tools:
                         cid_found = rem[: -(len(k_sid) + 1)]
                         skill_found = k_sid
                         break
+                if not cid_found:
+                    m_inst = re.match(r"^(.+)_(\d+)$", rem)
+                    if m_inst:
+                        rem_base, inst_num = m_inst.group(1), m_inst.group(2)
+                        for k_sid in known_skills:
+                            if rem_base.endswith(f"_{k_sid}"):
+                                cid_found = rem_base[: -(len(k_sid) + 1)]
+                                skill_found = f"{k_sid} #{inst_num}"
+                                break
                 if not cid_found and "_" in rem:
                     cid_found, skill_found = rem.split("_", 1)
                 if cid_found:

@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
-# SCRIPT : sync-echo.sh
-# VERSION : 5.226.18.0
+# SCRIPT : echo-sync.sh
+# VERSION : 5.231.39.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -10,6 +10,7 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Renommage en echo-sync.sh et mise à jour du lien symbolique echo-rebuild.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 4.11: Ajout d'un encart visuel de versioning Git interactif (Avant/Après).
 # 4.10: Déploiement déclaratif automatique via boucle regex. Suppression des fantômes.
@@ -229,7 +230,7 @@ for script_path in "$ECHO_SCRIPTS"/*.sh; do
     ln -sf "$script_path" "/usr/local/bin/$script_name"
 done
 
-ln -sf "$ECHO_SCRIPTS/upgrade-echo.sh" /usr/local/bin/rebuild-echo
+ln -sf "$ECHO_SCRIPTS/echo-upgrade.sh" /usr/local/bin/echo-rebuild
 
 # Versioning
 if [ -f "$SRC_DIR/VERSION" ]; then 
@@ -252,7 +253,7 @@ done
 chmod +x "$ECHO_SCRIPTS"/*.sh
 
 # RELANCE DU SCRIPT SI MIS A JOUR
-if ! diff "$MY_OWN_ORIGIN" "$CURRENT_SCRIPT" > /dev/null 2>&1 ; then
+if [ -f "$MY_OWN_ORIGIN" ] && ! diff "$MY_OWN_ORIGIN" "$CURRENT_SCRIPT" > /dev/null 2>&1 ; then
     exec "$MY_OWN_ORIGIN" "$@"; exit 0
 fi
 

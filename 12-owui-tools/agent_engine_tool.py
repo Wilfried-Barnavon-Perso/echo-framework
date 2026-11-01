@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 5.231.20.2
+version: 5.231.41.1
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.41.1: Verrouillage explicite functionCallingConfig mode NONE à l'épuisement du budget, injection de télémétrie/alerte de budget dans functionResponse, relance de récupération en CAS 4 et assainissement des functionCall orphelins en base SQLite.
 # 5.231.20.2: Support hybride des outils synchrones/asynchrones via asyncio.to_thread et rafraîchissement non-mutatif des closures (__event_emitter__, __event_call__, __metadata__, __user__) par copie locale de functools.partial.
 # 5.229.6.1: Remplacement du circuit breaker réactif par un Tool Stripping proactif en fin de budget avec achèvement du lot parallèle.
 # 5.229.1.2: Factorisation SSOT via DELEGATE_AGENT_SYSTEM_TOOLS garantissant la disponibilité des outils système pour tout sous-agent.
 # 5.229.0.1: Précision de la condition de fermeture de session dans la docstring de close_agent_session.
-# 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/agent_orchestration.md.
 
 import sys
 import uuid
@@ -489,9 +489,11 @@ async def _run_agent_loop(
     while True:
         # 1. Construction des function_declarations (source A : sub_tools, B : body_tools_specs)
         # Si le budget d'appels d'outils est atteint ou dépassé (calls_used >= max_calls),
-        # Tool Stripping proactif : la liste d'outils est vidée pour forcer mécaniquement
-        # le LLM à formuler sa synthèse finale en texte pur sans outil.
-        fn_decls = _build_function_declarations(sub_tools, body_tools_specs) if calls_used < max_calls else []
+        # les déclarations sont maintenues pour la cohérence de l'historique mais
+        # functionCallingConfig.mode est forcé à "NONE" pour contraindre mécaniquement
+        # le décodeur Gemini à formuler sa synthèse finale en texte pur sans appel d'outil.
+        fn_decls = _build_function_declarations(sub_tools, body_tools_specs)
+        is_budget_exhausted = calls_used >= max_calls
 
         # 1.5. Défense passive : Troncature de l'historique de l'agent
         current_size = estimate_token_size(history) + estimate_token_size(final_system)
@@ -515,7 +517,9 @@ async def _run_agent_loop(
         }
         if fn_decls:
             payload["tools"] = [{"functionDeclarations": fn_decls}]
-            payload["tool_config"] = {"functionCallingConfig": {"mode": "AUTO"}}
+            payload["tool_config"] = {
+                "functionCallingConfig": {"mode": "NONE" if is_budget_exhausted else "AUTO"}
+            }
 
         # 3. Appel API via call_cascade (clamping + thinkingConfig + cascade descendante)
         try:
@@ -632,13 +636,71 @@ async def _run_agent_loop(
             )
 
         # =====================================================================
-        # CAS 4 : Garde-fou hallucination — tool call sur tour stripped (calls_used >= max_calls)
+        # CAS 4 : Garde-fou hallucination — tool call sur tour verrouillé (calls_used >= max_calls)
         # =====================================================================
         if calls_used >= max_calls and real_fc:
+            if not text:
+                cancel_parts = []
+                for fc in real_fc:
+                    _cfr: dict = {
+                        "name": fc.get("name", "unknown"),
+                        "response": {
+                            "status": "cancelled_budget_exhausted",
+                            "message": (
+                                f"APPEL REFUSÉ : Budget de {max_calls} appels d'outils épuisé ({calls_used}/{max_calls}). "
+                                "Le Modèle a l'INTERDICTION d'appeler un outil et DOIT rédiger immédiatement "
+                                "sa synthèse finale complète et détaillée en texte pur."
+                            ),
+                        },
+                    }
+                    if fc.get("id"):
+                        _cfr["id"] = fc["id"]
+                    cancel_parts.append({"functionResponse": _cfr})
+
+                recovery_payload: dict = {
+                    "contents": history + [
+                        {"role": "model", "parts": raw_parts},
+                        {"role": "user", "parts": cancel_parts},
+                    ],
+                    "systemInstruction": {"parts": [{"text": final_system}]},
+                    "generationConfig": get_generation_config(current_model_key),
+                }
+                if fn_decls:
+                    recovery_payload["tools"] = [{"functionDeclarations": fn_decls}]
+                    recovery_payload["tool_config"] = {"functionCallingConfig": {"mode": "NONE"}}
+                try:
+                    rec_data, rec_model, _ = await EchoGeminiClient.call_cascade(
+                        target_model_key=current_model_key,
+                        payload=recovery_payload,
+                        user_id=user_id,
+                        metadata=__metadata__,
+                        events=events,
+                        threshold=valves.KEY_SWITCH_THRESHOLD,
+                        max_retries=valves.MAX_RETRIES,
+                        timeout=120,
+                        include_thoughts=False,
+                    )
+                    if rec_data:
+                        rec_cands = rec_data.get("candidates", [])
+                        if rec_cands and rec_cands[0].get("content"):
+                            rec_parts = rec_cands[0]["content"].get("parts", [])
+                            text = "".join(
+                                p.get("text", "") for p in rec_parts if "text" in p and not p.get("thought")
+                            ).strip()
+                            if rec_model:
+                                model_used = rec_model
+                except Exception:
+                    pass
+
             final_text = text or "(Synthèse finale — budget d'outils atteint ou dépassé)"
-            model_raw = raw_parts if raw_parts else [{"text": final_text}]
-            history.append({"role": "model", "parts": model_raw})
-            state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", model_raw, _sig(model_raw))
+            clean_model_parts = [p for p in raw_parts if "functionCall" not in p]
+            if not any("text" in p and not p.get("thought") for p in clean_model_parts):
+                clean_model_parts.append({"text": final_text})
+            history.append({"role": "model", "parts": clean_model_parts})
+            state.save_thread_step(
+                sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model",
+                clean_model_parts, _sig(clean_model_parts) or _sig(raw_parts)
+            )
             await events.status(
                 f"🛑 Agent [{sid}] — budget d'outils atteint ou dépassé "
                 f"({calls_used}/{max_calls} appels). Synthèse terminée.",
@@ -766,6 +828,20 @@ async def _run_agent_loop(
             if fn_id:
                 _fr["id"] = fn_id
             response_parts.append({"functionResponse": _fr})
+
+        if response_parts:
+            last_resp = response_parts[-1]["functionResponse"]["response"]
+            if calls_used >= max_calls:
+                last_resp["_budget_alert"] = (
+                    f"BUDGET D'OUTILS ÉPUISÉ ({calls_used}/{max_calls} appels utilisés). "
+                    "Plus aucun appel d'outil n'est disponible. Le Modèle DOIT impérativement "
+                    "rédiger immédiatement son rapport final complet et détaillé synthétisant "
+                    "l'ensemble des actions réalisées, les résultats obtenus et l'état exact de la mission."
+                )
+            else:
+                last_resp["_budget"] = (
+                    f"{calls_used}/{max_calls} appels utilisés ({max_calls - calls_used} restants)"
+                )
 
         # Règle API : le message user après une functionCall doit contenir
         # UNIQUEMENT des functionResponse parts — pas de text mélangé.

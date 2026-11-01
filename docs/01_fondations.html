@@ -129,7 +129,7 @@
         <h3>1. Collections Vectorielles Qdrant, Migration de Session &amp; Escalade</h3>
         <ul>
           <li><strong>RAG Organique (<code>echo_meta_artifacts</code>) :</strong> indexé par <code>user_id</code> avec qualification obligatoire sur 5 niveaux d'importance (<code>MEMORY_IMPORTANCE_WEIGHTS</code> et <code>MEMORY_IMPORTANCE_LABELS</code> de <code>1 - Trivial</code> à <code>5 - Axiome</code>, alignés sur les protocoles <code>PACP</code>/<code>PRAC</code>) et consolidation nocturne par centroïde L2-normalisé (<code>Lvl1 &rarr; Lvl2</code>). Manipulé via <code>update_meta_artifact</code>, <code>search_meta_artifacts</code> et <code>delete_meta_artifact_item</code>.</li>
-          <li><strong>Session RAG (<code>echo_session_rag</code>) &amp; Mémoire Épisodique Active :</strong> indexé par <code>user_id + chat_id + source_id</code> via <code>save_session_context</code>, <code>search_sessions_context</code> (avec support <code>global_search</code> inter-sessions et filtrage par <code>tag</code> via SSoT <code>webui.db</code>) et <code>delete_session_context_source</code>. En complément du Session RAG, l'action <code>resume_in_new_chat_action.py</code> (v5.229.2.1) et le module <code>echo_session_clone.py</code> (v5.228.4.1, mutualisé avec <code>echo_chat_cloned_event.py</code> v5.227.1.1) opèrent une migration de session par distillation en 2 passes (<code>USR_ACTION_RESUME_GLOBAL</code> et <code>USR_ACTION_RESUME_RECENT</code> via <code>MODEL_DISTILLATION</code>), propagation des étiquettes (<code>Chats.add_chat_tag_by_id</code>), duplication atomique des domaines et du Codex Git, et clonage paginé des vecteurs Qdrant.</li>
+          <li><strong>Session RAG (<code>echo_session_rag</code>) &amp; Mémoire Épisodique Active :</strong> indexé par <code>user_id + chat_id + source_id</code> via <code>save_session_context</code>, <code>search_sessions_context</code> (avec support <code>global_search</code> inter-sessions et filtrage par <code>tag</code> via SSoT <code>webui.db</code>) et <code>delete_session_context_source</code>. En complément du Session RAG, le filtre <code>context_compaction_filter.py</code> (v5.231.38.1), l'action <code>resume_in_new_chat_action.py</code> (v5.229.2.1) et le module <code>echo_session_clone.py</code> (v5.231.29.1, mutualisé avec <code>echo_chat_cloned_event.py</code> v5.231.27.2) opèrent la compaction contextuelle in-place (à 60 % de charge) ou la migration/bifurcation de session par distillation en 2 passes (<code>USR_ACTION_RESUME_GLOBAL</code> et <code>USR_ACTION_RESUME_RECENT</code> via <code>MODEL_DISTILLATION</code>), propagation des étiquettes (<code>Chats.add_chat_tag_by_id</code>), duplication atomique et causale (<code>cutoff_ts</code>) des domaines et du Codex Git, et clonage paginé des vecteurs Qdrant.</li>
           <li><strong>Corrélation contextuelle :</strong> Au-delà des seuils de charge contextuelle (<code>CONTEXT_LOAD_WARNING_THRESHOLD = 40%</code>, <code>CONTEXT_LOAD_CRITICAL_THRESHOLD = 60%</code>), l'outil <code>new_cognitive_level</code> permet au modèle actif de déclencher une escalade cognitive vers <code>MODEL_APOLLO</code> ou <code>MODEL_PROMETHEUS</code>.</li>
         </ul>
 
@@ -148,7 +148,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.25 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.44 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -1,13 +1,14 @@
 #!/bin/bash
 # ==============================================================================
-# SCRIPT : upgrade-echo.sh (VERSION LEGACY COMPOSE V1)
-# VERSION : 5.226.18.0
+# SCRIPT : echo-upgrade.sh
+# VERSION : 5.231.39.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Renommage en echo-upgrade.sh, commande destructrice echo-rebuild et ciblage de echo-sync.sh.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 6.10: Implémentation d'une double vérification biométrique/stricte pour la commande destructrice rebuild-echo.
 
@@ -27,7 +28,7 @@ if ! command -v $DOCKER_COMPOSE_CMD &> /dev/null; then
     DOCKER_COMPOSE_CMD="docker compose"
 fi
 
-SYNC_SCRIPT="$ECHO_SCRIPTS/sync-echo.sh"
+SYNC_SCRIPT="$ECHO_SCRIPTS/echo-sync.sh"
 COMPOSE_FILE="$ECHO_CONFIG/stack-echo.yml"
 export COMPOSE_PROJECT_NAME="echo"
 
@@ -35,7 +36,7 @@ if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
 
 clear
 
-if [ "$0" == "/usr/local/bin/rebuild-echo" ] ; then
+if [[ "$0" == *"/echo-rebuild" || "$0" == "echo-rebuild" ]] ; then
     echo "⚠️  RECONSTRUCTION COMPLETE DE LA STACK ECHO"
     echo "    Cette opération va :"
     echo "    1. Arrêter tous les services de la stack"
@@ -100,7 +101,7 @@ else
 fi
 
 # RELANCE DU SCRIPT SI MIS A JOUR
-if ! diff "$MY_OWN_ORIGIN"  "$CURRENT_SCRIPT" > /dev/null 2>&1  ; then
+if [ -f "$MY_OWN_ORIGIN" ] && ! diff "$MY_OWN_ORIGIN" "$CURRENT_SCRIPT" > /dev/null 2>&1 ; then
     exec "$MY_OWN_ORIGIN" "$@"; exit 0
 fi
 

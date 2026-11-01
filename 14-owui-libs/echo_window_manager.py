@@ -2,16 +2,16 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 5.231.13.1
+version: 5.231.39.1
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.39.1: Synchronisation de activeChatId à l'insertion sur route '/' en nouvelle session et bump de version EchoWM.
 # 5.231.13.1: Résolution du ca_model_id actif et inclusion de calculate_context_delta dans get_chat_snapshot pour l'hydratation à froid.
 # 5.231.12.1: Enrichissement de context_stats avec get_ui_quota_snapshot et affichage de la jauge à froid dès les quotas disponibles dans hydrateChatState.
 # 5.231.10.1: Intégration de context_stats dans get_chat_snapshot et hydratation automatique echoRenderContextGauge dans hydrateChatState.
 # 5.231.6.1: Intégration du pont universel EchoCodexUI.get_codex_bridge_js dans get_full_loader_bundle_js (/static/loader.js).
-# 5.231.3.1: Méthode helper resetWindowMinimized, alignement de EchoWM._version sur 5.231.3.1 et support déterministe de la géométrie réduite/maximisée.
 
 import asyncio
 import os
@@ -31,7 +31,7 @@ WM_PREFIX = f"{ECHO_AUDIO_PREFIX}/wm"
 wm_router = APIRouter(prefix=WM_PREFIX, tags=["echo_wm"])
 wm_static_router = APIRouter(tags=["echo_wm_static"])
 
-WM_SCRIPT_VERSION = "5.231.13.1"
+WM_SCRIPT_VERSION = "5.231.39.1"
 LOADER_MARKER_START = "/* === ECHO_WM_START === */"
 LOADER_MARKER_END = "/* === ECHO_WM_END === */"
 WM_STATE_KEY = "wm_state"
@@ -472,7 +472,7 @@ def get_client_loader_js() -> str:
     """Génère le script client global agnostique window.EchoWM injecté dans /static/loader.js et via window_manager_filter."""
     return r"""
 (function() {
-    if (window.EchoWM && window.EchoWM._version === '5.231.6.1') {
+    if (window.EchoWM && window.EchoWM._version === '5.231.39.1') {
         if (typeof window.EchoWM.connectSSE === 'function') window.EchoWM.connectSSE();
         if (typeof window.EchoWM.onRouteChanged === 'function') window.EchoWM.onRouteChanged();
         return;
@@ -525,7 +525,7 @@ def get_client_loader_js() -> str:
     }
 
     const EchoWM = {
-        _version: '5.231.6.1',
+        _version: '5.231.39.1',
         clientId: clientId,
         activeChatId: extractChatIdFromUrl(),
         currentExecContext: null,
@@ -665,6 +665,9 @@ def get_client_loader_js() -> str:
             const explicitCid = getElementChatId(el);
             const cid = explicitCid || (ctx && ctx.chatId) || '';
             if (!cid) return;
+            if (!EchoWM.activeChatId && !extractChatIdFromUrl()) {
+                EchoWM.activeChatId = cid;
+            }
 
             if (!el.id) {
                 const baseId = (ctx && ctx.execId) ? ctx.execId.slice(0, 10) : Math.random().toString(36).slice(2, 10);

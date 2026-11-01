@@ -1,7 +1,7 @@
 ---
 domain_id: agent_orchestration
-version: 5.231.22.1
-updated_at: 2026-10-27
+version: 5.231.43.1
+updated_at: 2026-10-31
 name: Orchestration Multi-Agents, Sous-Agents Autonomes, Data Broker & Skills
 description: Délégation à un sous-agent outillé (delegate_to_agent), Table Ronde Delphi (consult_council), Ouvriers Supervisés (consult_supervised_workers), Data Broker et gestion des Skills.
 tools: [delegate_to_agent, list_agent_sessions, close_agent_session, summarize_agent_session, consult_council, consult_supervised_workers, list_councils, close_council, list_supervised_tasks, close_supervised_task, forge_skill, list_skills, read_skill, search_skill, delete_user_skill, ask_data_broker]
@@ -16,7 +16,7 @@ Conformément au principe **PARE** du Kernel, dès qu'une action nécessite pote
 | Moteur | Architecture & Modèles | Cas d'Usage Nominal | Gestion des Sessions |
 | :--- | :--- | :--- | :--- |
 | **`delegate_to_agent`** | 1 Sous-Agent autonome outillé (défaut `MODEL_APOLLO`, budget 25 appels d'outils par invocation). | Tâche spécialisée isolée, exécution technique multi-outils, offload cognitif pour protéger le contexte principal. | `sub_sid` (`list_agent_sessions`, `summarize_agent_session`, `close_agent_session`). |
-| **`consult_council`** | **Table Ronde Delphi** : 2 à 5 experts (`participants` = liste de `skill_id`) débattant en parallèle sur $R$ tours + Synthétiseur (`MODEL_PROMETHEUS` `thinking="high"`). | Sujet multidimensionnel, incertain ou stratégique nécessitant un débat contradictoire multi-perspectives. | `council_id` (`list_councils`, `close_council`). |
+| **`consult_council`** | **Table Ronde Delphi** : 1 à 7 profils (`participants` = liste de `skill_id`) démultipliés par `multiplier` ($1 \dots 5$, min 2 participants effectifs) débattant en parallèle sur $R$ tours ($3 \dots 10$) + Synthétiseur (`MODEL_PROMETHEUS` `thinking="high"`). | Sujet multidimensionnel, incertain ou stratégique nécessitant un débat contradictoire multi-perspectives ou intra-spécialité. | `council_id` (`list_councils`, `close_council`). |
 | **`consult_supervised_workers`** | **Boucle Critique/Correction** : $N$ sous-agents Ouvriers (`Workers`, `MODEL_APOLLO`) + 1 Superviseur Critique (`MODEL_PROMETHEUS` `thinking="high"`) + 1 Consolidateur (`MODEL_APOLLO`). | Livrables complexes exigeant une qualité irréprochable (code critique, architecture, rédaction formelle multi-parties) avec vérification et correction itérative. | `task_id` (`list_supervised_tasks`, `close_supervised_task`). |
 | **`ask_data_broker`** | Sous-agent `MODEL_APOLLO` pré-câblé sur les outils de recherche Web, Identity Vault et MCP. | Collecte et extraction rapide de données externes structurées (Web + MCP) sans saturer l'Orchestrateur. | Stateless (pas de session persistée). |
 
@@ -51,9 +51,10 @@ Les **Skills** définissent l'expertise métier et la méthodologie d'un sous-ag
     - **Règle de cycle de vie** : Ne DOIT être appelée QUE lorsque la tâche du sous-agent est réputée définitivement close et validée. Tant qu'il est potentiellement utile de reprendre son travail, d'approfondir ou de lui poser une question de clarification, la session DOIT rester ouverte afin de préserver son fil d'outils et de permettre sa reprise via `delegate_to_agent(..., sub_sid=sub_sid)`.
 
 ### 3.2 Table Ronde Delphi (`consult_council`, `list_councils`, `close_council`)
-`consult_council(question, participants, council_id, target_model="MODEL_PROMETHEUS", synthesis_model="MODEL_PROMETHEUS", rounds=None, close_on_finish=False)` :
-- `participants` : Liste de `skill_id` existants (`List[str]`, **minimum 2**, maximum `COUNCIL_MAX_PARTICIPANTS = 5`). Tous les `skill_id` DOIVENT exister (sinon appeler `forge_skill` au préalable).
-- `rounds` : Nombre de tours de délibération (défaut `3`, max `5`, avec `len(participants) * rounds <= 30`). Chaque expert dispose d'un budget de 3 appels d'outils par tour.
+`consult_council(question, participants, council_id, target_model="MODEL_PROMETHEUS", synthesis_model="MODEL_PROMETHEUS", rounds=None, multiplier=1, close_on_finish=False)` :
+- `participants` : Liste de `skill_id` existants (`List[str]`, maximum `COUNCIL_MAX_SKILLS = 7`, avec `len(participants) * multiplier >= 2`). Tous les `skill_id` DOIVENT exister (sinon appeler `forge_skill` au préalable).
+- `multiplier` : Facteur multiplicateur par `skill_id` (entier `1` à `5`, défaut `1`), permettant d'instancier plusieurs experts de même nature afin qu'ils se contredisent entre eux (`COUNCIL_MAX_PARTICIPANTS = 7 * multiplier`).
+- `rounds` : Nombre de tours de délibération (min et défaut `3`, max `10`, sous la contrainte arithmétique `(len(participants) * multiplier) * rounds <= 60`). Chaque expert dispose d'un budget de 3 appels d'outils par tour et peut choisir de ne pas répondre lors d'un tour.
 - `council_id` : Identifiant choisi pour le conseil (ex: `"arch_review"`).
 - `close_on_finish` : `False` par défaut (permet de relancer `consult_council` avec le même `council_id` pour approfondir). Une fois la délibération terminée, appeler **`close_council(council_id)`** (et `list_councils()` pour lister les conseils ouverts).
 - **Directive de restitution** : Le rapport de synthèse du conseil n'étant pas affiché directement à l'Utilisateur, l'Orchestrateur DOIT en restituer la substance dans sa réponse.
@@ -81,3 +82,9 @@ Les **Skills** définissent l'expertise métier et la méthodologie d'un sous-ag
 - **Gestion des sessions des Ouvriers Supervisés** :
   - `list_supervised_tasks()` : Liste les missions supervisées actives (`task_id` de forme `sup_xxxxxxxx`) et les identifiants des sous-agents Ouvriers (`Workers`) rattachés dont l'historique est encore ouvert.
   - `close_supervised_task(task_id)` : Ferme définitivement la mission supervisée `task_id` et purge toutes les sessions (`thread_supervisor_{task_id}_*`) de ses sous-agents Ouvriers.
+
+### 3.4 Collecteur de Données Spécialisé (`ask_data_broker`)
+`ask_data_broker(query)` :
+- `query` : Requête textuelle descriptive spécifiant les données externes précises à collecter (recherche Web ciblée, requêtes HTTP tierces, interrogation ou exécution sur serveurs MCP).
+- **Architecture & Modèle** : Sous-agent spécialisé opéré par `MODEL_APOLLO` (`override_thinking="medium"`), pré-câblé avec un accès direct aux outils Web (`search_web`, `search_instant_answer`), Identity Vault (`list_identities`, `list_identities_services`) et MCP (`list_mcp_functions`, `call_mcp_function`).
+- **Comportement Sans État (Stateless)** : N'ouvre aucune session persistée (`sub_sid`), préservant le contexte de l'Orchestrateur principal contre l'ingestion brute de gros volumes de données externes et restituant une synthèse technique directement exploitable.

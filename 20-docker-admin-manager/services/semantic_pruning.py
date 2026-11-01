@@ -2,11 +2,12 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - SEMANTIC PRUNING & GC
-VERSION : 5.226.18.0
+VERSION : 5.231.42.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.42.1: Ajout de echo_resources.id à la liste blanche N8N lors du Garbage Collection des Drop-Zones pour préserver les dossiers des démons actifs.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 import datetime
 import html
@@ -370,10 +371,12 @@ def _run_semantic_pruning(silent=False):
                             if os.path.exists(session_db_path):
                                 try:
                                     with sqlite3.connect(f"file:{session_db_path}?mode=ro", uri=True, timeout=5.0) as s_conn:
-                                        cur = s_conn.execute("SELECT status FROM echo_resources WHERE resource_type = 'n8n_workflow' AND status LIKE 'deployed_as_%'")
+                                        cur = s_conn.execute("SELECT id, status FROM echo_resources WHERE resource_type = 'n8n_workflow'")
                                         for row in cur.fetchall():
-                                            st = row[0]
-                                            if st:
+                                            wf_echo_id, st = row[0], row[1]
+                                            if wf_echo_id:
+                                                n8n_active_ids.append(wf_echo_id)
+                                            if st and st.startswith("deployed_as_"):
                                                 real_id = st.replace("deployed_as_", "")
                                                 n8n_active_ids.append(real_id)
                                 except sqlite3.OperationalError as e:
