@@ -1,16 +1,16 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.231.35.1
+version: 5.231.53.1
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.53.1: Alignement PAS (Énonciation Impersonnelle, Haut SNR, opérateur ABSOLUMENT INTERDIT) des retours de show_image_to_user.  # noqa: E501
+# 5.231.51.1: Ajout de la consigne anti-duplication Markdown dans le retour d'image locale de show_image_to_user.  # noqa: E501
+# 5.231.49.1: Refonte de show_image_to_user en Iframe inline (EchoUI.image_viewer) avec résolution unifiée (ID, Nom, Workspace) et pré-vérification Base64 des images distantes.  # noqa: E501
+# 5.231.47.1: Transmission du nom de fichier original (filename) à EchoUI.show_image_js dans show_image_to_user pour l'export PC bit-perfect.  # noqa: E501
 # 5.231.35.1: Régulation CPU/RAM multi-chat du transcodage FFmpeg (sémaphore MAX_CONCURRENT_TRANSCODES, nice 19 / IDLE_PRIORITY_CLASS, -threads 2, -filter_threads 1, -skip_frame noref).  # noqa: E501
-# 5.231.34.1: Correction de la fragmentation fMP4 sur pipe:1 (-frag_duration 5000000 -g 10 -bf 0), quantification H.264 fixe (-preset veryfast -qp 26) à 1 fps, troncature fMP4 zéro-perte (_trim_fmp4_to_max_bytes) et conformité Flake8.  # noqa: E501
-# 5.231.33.3: Factorisation du pipeline multimodal, auto-résolution FFmpeg (_ensure_ffmpeg_bin), évaluation du seuil de 30 Mo sur le flux vidéo décimé à 1 fps en résolution native avec piste audio intacte (-c:a copy) et segmentation Map-Reduce sans recouvrement en mémoire vive.  # noqa: E501
-# 5.231.32.1: Surcharge d'instruction pour read_multimedia_file, correction d'assignation SYS/USR prompt et docstring descriptive étendue.
-# 5.231.29.1: Alignement de _resolve_extended_file_path sur les constantes SSOT CODEX_DIR_NAME, CODEX_WORKSPACE_MAIN et CODEX_WORKSPACE_SANDBOX.
 
 import io
 import os
@@ -20,25 +20,29 @@ import struct
 import shutil
 import base64
 import httpx
-import mimetypes
 import hashlib
 import asyncio
-from typing import AsyncGenerator, List, Any, Literal, Optional, Tuple
+from typing import AsyncGenerator, List, Any, Literal, Optional, Tuple, Union
 from pydantic import BaseModel, Field
+from fastapi.responses import HTMLResponse
 
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_events import EchoEvents  # noqa: E402
 from echo_core import wrap_tool_output, wrap_cascade_output, split_thought_process  # noqa: E402
-from echo_paths import resolve_upload_file_path, get_echo_session_path  # noqa: E402
-from echo_state_manager import EchoStateManager  # noqa: E402
+from echo_paths import (  # noqa: E402
+    extract_clean_filename,
+    resolve_extended_file_path,
+)
 from echo_gemini_client import EchoGeminiClient  # noqa: E402
-from echo_http import get_stealth_headers  # noqa: E402
+from echo_http import (  # noqa: E402
+    extract_url_filename,
+    get_stealth_headers,
+    is_safe_public_url,
+    sniff_image_mime,
+)
 from echo_ui import EchoUI  # noqa: E402
 from echo_constants import (  # noqa: E402
-    CODEX_DIR_NAME,
-    CODEX_WORKSPACE_MAIN,
-    CODEX_WORKSPACE_SANDBOX,
     ECHO_API_KEY_RETRIES,
     ECHO_API_MAX_RETRIES,
     ECHO_MAX_CONTEXT_SIZE,
@@ -61,40 +65,21 @@ class Tools:
         self.valves = self.Valves()
         self.uploads_dir = ECHO_UPLOADS_TRANSIT_DIR
 
-    def _resolve_extended_file_path(self, uid: str, cid: str, target: str) -> str:
-        """Résout le chemin d'un fichier (main, upload, ou sandbox)."""
-        if not target:
-            return None
-        target = target.strip()
-        safe_target = target.replace("\\", "/").strip("/")
-
-        if cid:
-            # 1. Résolution Registre (Codex 'main')
-            state = EchoStateManager(user_id=uid, chat_id=cid)
-            resource = state.get_resource(target)
-            if resource and resource.get("resource_type") == "codex":
-                return os.path.join(
-                    get_echo_session_path(uid, cid, CODEX_DIR_NAME),
-                    CODEX_WORKSPACE_MAIN,
-                    resource.get("name", target),
-                )
-
-        # 2. Upload Standard (files)
-        fpath = resolve_upload_file_path(uid, target, self.uploads_dir, chat_id=cid)
-        if fpath:
-            return fpath
-
-        # 3. Fallback 'Sandbox' (fichier brut non indexé)
-        if cid and ".." not in safe_target.split("/"):
-            sandbox_path = os.path.join(
-                get_echo_session_path(uid, cid, CODEX_DIR_NAME),
-                CODEX_WORKSPACE_SANDBOX,
-                safe_target,
-            )
-            if os.path.exists(sandbox_path) and os.path.isfile(sandbox_path):
-                return sandbox_path
-
-        return None
+    def _resolve_extended_file_path(
+        self,
+        uid: str,
+        cid: Optional[str],
+        target: str,
+        workspace: Optional[str] = None,
+    ) -> Optional[str]:
+        """Résout le chemin d'un fichier local (ID Registre, ID Upload, Nom de fichier ou Workspace 'main'/'sandbox')."""
+        return resolve_extended_file_path(
+            user_id=uid,
+            chat_id=cid,
+            target=target,
+            workspace=workspace,
+            uploads_dir=self.uploads_dir,
+        )
 
     async def read_raw_file_content(
         self,
@@ -134,9 +119,7 @@ class Tools:
             )
 
         MAX_CHARS = self.valves.MAX_READ_SIZE_KB * 1024
-        safe_name = os.path.basename(fpath)
-        if "_" in safe_name and len(safe_name.split("_")[0]) >= 32:
-            safe_name = safe_name.split("_", 1)[1]
+        safe_name = extract_clean_filename(fpath)
         await events.status(f"📂 Lecture : {safe_name}...")
 
         try:
@@ -797,9 +780,7 @@ class Tools:
                 metadata=__metadata__,
             )
 
-        safe_name = os.path.basename(fpath)
-        if "_" in safe_name and len(safe_name.split("_")[0]) >= 32:
-            safe_name = safe_name.split("_", 1)[1]
+        safe_name = extract_clean_filename(fpath)
 
         system_prompt = (
             SYS_EXPLORE_SENSORY.format(filename=safe_name)
@@ -1023,12 +1004,13 @@ class Tools:
     async def show_image_to_user(
         self,
         target: str,
+        workspace: Optional[Literal["main", "sandbox"]] = None,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None,
-    ) -> dict:
-        """Affiche une image locale ou valide une URL d'image distante pour présentation à l'utilisateur."""
+    ) -> Union[dict, Tuple[HTMLResponse, dict]]:
+        """Affiche une image locale (ID Registre, Nom de fichier ou Workspace) ou distante (URL http/https) dans une Iframe interactive intégrée à la réponse."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid = __user__.get("id", "anonymous")
         cid = __metadata__.get("chat_id") if __metadata__ else None
@@ -1046,96 +1028,163 @@ class Tools:
             )
 
         try:
+            max_bytes = int(self.valves.MAX_MULTIMODAL_SIZE_KB) * 1024
             if is_url:
-                await events.status("🌐 Vérification du lien distant...")
-                h = get_stealth_headers(target)
-
-                try:
-                    async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as c:
-                        r = await c.head(target, headers=h)
-                        if r.status_code >= 400:
-                            r = await c.get(target, headers={**h, "Range": "bytes=0-0"}, timeout=8.0)
-
-                        r.raise_for_status()
-
-                        content_type = r.headers.get("content-type", "").lower()
-                        if content_type and not content_type.startswith("image/"):
-                            return wrap_tool_output(
-                                text=f"❌ Le lien pointe vers un contenu '{content_type}', pas une image. Le Modèle DOIT s'interdire d'utiliser la syntaxe MD.",
-                                status={"status": "error"},
-                                user_id=user_id_out,
-                                chat_id=cid,
-                                metadata=__metadata__,
-                            )
-
-                        return wrap_tool_output(
-                            text=f"✅ L'image est valide et accessible. Le Modèle DOIT utiliser ce code exact dans sa réponse : `![Description]({target})`",
-                            status={"status": "success"},
-                            user_id=user_id_out,
-                            chat_id=cid,
-                            metadata=__metadata__,
-                        )
-
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code == 404:
-                        return wrap_tool_output(
-                            text="❌ L'image n'existe pas (Erreur 404). Lien mort. Ne l'affichez pas.",
-                            status={"status": "error"},
-                            user_id=user_id_out,
-                            chat_id=cid,
-                            metadata=__metadata__,
-                        )
-                    else:
-                        return wrap_tool_output(
-                            text=(
-                                f"⚠️ La vérification serveur est bloquée (Erreur {e.response.status_code}). "
-                                f"Le navigateur de l'utilisateur y parviendra peut-être. Tentez le code en dernier recours : `![Description]({target})`"
-                            ),
-                            status={"status": "warning"},
-                            user_id=user_id_out,
-                            chat_id=cid,
-                            metadata=__metadata__,
-                        )
-                except Exception:
+                await events.status("🌐 Vérification et récupération de l'image distante...")
+                if not await is_safe_public_url(target):
+                    await events.status("❌ URL bloquée par la politique de sécurité.", done=True)
                     return wrap_tool_output(
-                        text=(
-                            f"⚠️ La vérification serveur a échoué (Réseau/Timeout). "
-                            f"Le navigateur client y parviendra peut-être. Tentez le code : `![Description]({target})`"
-                        ),
-                        status={"status": "warning"},
-                        user_id=user_id_out,
-                        chat_id=cid,
-                        metadata=__metadata__,
-                    )
-            else:
-                fpath = self._resolve_extended_file_path(uid, cid, target)
-                if not fpath:
-                    return wrap_tool_output(
-                        text=f"❌ Image '{target}' introuvable.",
+                        text="❌ Sécurité SSRF : L'accès aux adresses locales, privées ou internes est strictement interdit.",
                         status={"status": "error"},
                         user_id=user_id_out,
                         chat_id=cid,
                         metadata=__metadata__,
                     )
-                mime, _ = mimetypes.guess_type(fpath)
-                mime = mime or "image/png"
+
+                h = get_stealth_headers(target)
+                try:
+                    async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
+                        async with c.stream("GET", target, headers=h) as r:
+                            r.raise_for_status()
+                            content_type = r.headers.get("content-type", "").lower()
+                            chunks = []
+                            total_read = 0
+                            async for chunk in r.aiter_bytes(chunk_size=65536):
+                                total_read += len(chunk)
+                                if total_read > max_bytes:
+                                    await events.status("❌ Image distante trop volumineuse.", done=True)
+                                    return wrap_tool_output(
+                                        text=f"❌ L'image distante dépasse la limite autorisée ({self.valves.MAX_MULTIMODAL_SIZE_KB} Ko).",
+                                        status={"status": "error"},
+                                        user_id=user_id_out,
+                                        chat_id=cid,
+                                        metadata=__metadata__,
+                                    )
+                                chunks.append(chunk)
+                            raw_bytes = b"".join(chunks)
+
+                    mime = sniff_image_mime(raw_bytes, content_type=content_type, url_or_path=target)
+                    if not mime:
+                        await events.status("❌ Le lien ne pointe pas vers une image valide.", done=True)
+                        return wrap_tool_output(
+                            text=(
+                                f"❌ Ressource distante rejetée : type MIME détecté `{content_type or 'inconnu'}` "
+                                "invalide (image requise). Il est ABSOLUMENT INTERDIT pour Le Modèle d'injecter "
+                                "cette URL dans la réponse destinée à L'Utilisateur."
+                            ),
+                            status={"status": "error"},
+                            user_id=user_id_out,
+                            chat_id=cid,
+                            metadata=__metadata__,
+                        )
+
+                    fname = extract_url_filename(target, mime=mime)
+                    b64 = base64.b64encode(raw_bytes).decode("utf-8")
+                    data_uri = f"data:{mime};base64,{b64}"
+                    title = f"Image Distante : {fname}"
+                    await events.status("✅ Image distante intégrée.", done=True)
+                    return (
+                        EchoUI.image_viewer(data_uri, title=title, filename=fname, is_remote_fallback=False),
+                        wrap_tool_output(
+                            text=(
+                                f"✅ Image distante `{fname}` ({mime}) vérifiée et rendue dans l'Iframe de la "
+                                "réponse destinée à L'Utilisateur. L'affichage visuel étant déjà assuré par Le "
+                                "Système, il est ABSOLUMENT INTERDIT pour Le Modèle d'émettre une balise Markdown "
+                                "`![...](...)` ou un lien d'image redondant dans sa réponse."
+                            ),
+                            status={"status": "success"},
+                            user_id=user_id_out,
+                            chat_id=cid,
+                            metadata=__metadata__,
+                        ),
+                    )
+
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                        await events.status("❌ Image introuvable (404).", done=True)
+                        return wrap_tool_output(
+                            text=(
+                                "❌ Ressource distante introuvable (HTTP 404). Lien mort : il est ABSOLUMENT "
+                                "INTERDIT pour Le Modèle d'injecter cette URL dans la réponse destinée à "
+                                "L'Utilisateur."
+                            ),
+                            status={"status": "error"},
+                            user_id=user_id_out,
+                            chat_id=cid,
+                            metadata=__metadata__,
+                        )
+                    fname = extract_url_filename(target)
+                    title = f"Image Distante : {fname}"
+                    await events.status(f"⚠️ Accès serveur restreint ({e.response.status_code}), affichage direct dans l'Iframe...", done=True)
+                    return (
+                        EchoUI.image_viewer(target, title=title, filename=fname, is_remote_fallback=True),
+                        wrap_tool_output(
+                            text=(
+                                f"⚠️ Requête serveur filtrée par l'hôte distant (HTTP {e.response.status_code}) : "
+                                f"l'image `{fname}` est montée en lien direct dans l'Iframe du navigateur de "
+                                "L'Utilisateur. L'affichage visuel étant pris en charge par Le Système, il est "
+                                "ABSOLUMENT INTERDIT pour Le Modèle d'émettre une balise Markdown `![...](...)` "
+                                "redondante dans sa réponse."
+                            ),
+                            status={"status": "warning"},
+                            user_id=user_id_out,
+                            chat_id=cid,
+                            metadata=__metadata__,
+                        ),
+                    )
+                except Exception:
+                    fname = extract_url_filename(target)
+                    title = f"Image Distante : {fname}"
+                    await events.status("⚠️ Délai serveur dépassé, affichage direct dans l'Iframe...", done=True)
+                    return (
+                        EchoUI.image_viewer(target, title=title, filename=fname, is_remote_fallback=True),
+                        wrap_tool_output(
+                            text=(
+                                f"⚠️ Délai de téléchargement serveur expiré : l'image `{fname}` est montée en "
+                                "lien direct dans l'Iframe du navigateur de L'Utilisateur. L'affichage visuel "
+                                "étant pris en charge par Le Système, il est ABSOLUMENT INTERDIT pour Le Modèle "
+                                "d'émettre une balise Markdown `![...](...)` redondante dans sa réponse."
+                            ),
+                            status={"status": "warning"},
+                            user_id=user_id_out,
+                            chat_id=cid,
+                            metadata=__metadata__,
+                        ),
+                    )
+            else:
+                fpath = self._resolve_extended_file_path(uid, cid, target, workspace=workspace)
+                if not fpath:
+                    return wrap_tool_output(
+                        text=f"❌ Ressource image locale `{target}` introuvable dans l'Espace Personnel.",
+                        status={"status": "error"},
+                        user_id=user_id_out,
+                        chat_id=cid,
+                        metadata=__metadata__,
+                    )
                 with open(fpath, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode("utf-8")
-                title = f"Espace Personnel : {os.path.basename(fpath)}"
+                    raw_bytes = f.read()
+                mime = sniff_image_mime(raw_bytes, url_or_path=fpath) or "image/png"
+                b64 = base64.b64encode(raw_bytes).decode("utf-8")
+                fname = extract_clean_filename(fpath)
+                title = f"Espace Personnel : {fname}"
+                data_uri = f"data:{mime};base64,{b64}"
 
-            # Injection JS pure dans le DOM Open WebUI — aucun retour HTMLResponse
-            js_code = EchoUI.show_image_js(b64, mime, title, chat_id=cid)
-            if events and (events.caller or events.emitter):
-                await events.call_execute(js_code)
-
-            await events.status("✅ Image affichée.", done=True)
-            return wrap_tool_output(
-                text=f"✅ Image affichée dans le viewer ECHO.\n\n**Titre :** {title}",
-                status={"status": "success"},
-                user_id=user_id_out,
-                chat_id=cid,
-                metadata=__metadata__,
-            )
+                await events.status("✅ Image affichée.", done=True)
+                return (
+                    EchoUI.image_viewer(data_uri, title=title, filename=fname, is_remote_fallback=False),
+                    wrap_tool_output(
+                        text=(
+                            f"✅ Image locale `{fname}` ({mime}, titre : `{title}`) rendue dans l'Iframe de la "
+                            "réponse destinée à L'Utilisateur. L'affichage visuel étant déjà assuré par Le "
+                            "Système, il est ABSOLUMENT INTERDIT pour Le Modèle d'émettre une balise Markdown "
+                            "`![...](...)` ou un lien d'image redondant dans sa réponse."
+                        ),
+                        status={"status": "success"},
+                        user_id=user_id_out,
+                        chat_id=cid,
+                        metadata=__metadata__,
+                    ),
+                )
 
         except Exception as e:
             return wrap_tool_output(
@@ -1169,7 +1218,7 @@ class Tools:
         stat = os.stat(fpath)
         mime, _ = get_gemini_mime(fpath)
         return wrap_tool_output(
-            text=f"📊 **{os.path.basename(fpath)}**\nTaille: {stat.st_size} octets\nType: {mime}",
+            text=f"📊 **{extract_clean_filename(fpath)}**\nTaille: {stat.st_size} octets\nType: {mime}",
             status={"status": "success"},
             user_id=user_id_out,
             chat_id=cid,
@@ -1193,18 +1242,19 @@ class Tools:
         for fid in file_ids:
             p = self._resolve_extended_file_path(uid, cid, fid)
             if p:
+                clean_n = extract_clean_filename(p)
                 if algorithm == "crc32":
                     crc = 0
                     with open(p, "rb") as f:
                         for chunk in iter(lambda: f.read(65536), b""):
                             crc = zlib.crc32(chunk, crc)
-                    res.append(f"{os.path.basename(p)} ({algorithm.upper()}): {crc & 0xFFFFFFFF:08x}")
+                    res.append(f"{clean_n} ({algorithm.upper()}): {crc & 0xFFFFFFFF:08x}")
                 else:
                     h = hashlib.new(algorithm)
                     with open(p, "rb") as f:
                         for chunk in iter(lambda: f.read(65536), b""):
                             h.update(chunk)
-                    res.append(f"{os.path.basename(p)} ({algorithm.upper()}): {h.hexdigest()}")
+                    res.append(f"{clean_n} ({algorithm.upper()}): {h.hexdigest()}")
         return wrap_tool_output(
             text="\n".join(res),
             status={"status": "success"},

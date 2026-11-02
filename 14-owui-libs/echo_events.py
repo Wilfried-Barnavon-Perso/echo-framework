@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Events
 author: Wilfried BARNAVON
-version: 5.231.39.1
+version: 5.231.48.1
 description: Gestionnaire des événements WebSocket et UI. Intègre le protocole UCTP (Universal Chunked Transfer Protocol).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.48.1: Marquage data-echo-scope="global", correction de window._uctp_<id> et watchdog d'auto-nettoyage DOM sur #uctp-loader-<id> dans _build_uctp_frames.
+# 5.231.46.1: Factorisation de _reassemble_uctp_payload post-FIRST_COMPLETED (double transport Socket.IO + SSE/RPC) et wrapping automatique echoWrapUctpPayload en mode call.
 # 5.231.39.1: Fallback SSE/RPC EchoWindowManager dans resolve_live_session lorsque SESSION_POOL Socket.IO ne répond pas et dé-minimisation _echoGeoCtrl.
 # 5.231.5.1: Correction du Fast-Path Codex dans trigger_action (multi-chat switch_chat, target_chat_id, commit et dé-minimisation).
 # 5.231.1.0: Double transport non-destructif (Socket.IO + SSE EchoWindowManager) dédupliqué par exec_id pour préserver WebGPU et les appels RPC multi-chats.
-# 5.230.1.1: Introspection automatique du contexte de closure Open WebUI et routage multi-chats/multi-navigateurs via EchoWindowManager.
-# 5.228.12.1: Factorisation de resolve_live_session et wait_hud_action dans EchoEvents pour la résilience RPC post-standby de tous les HUDs.
 import asyncio
 from typing import Any, Optional
 import uuid
@@ -92,7 +92,8 @@ class EchoEvents:
                 f"if (window.EchoWM && typeof window.EchoWM.runInChatScope === 'function') {{\n"
                 f"    return await window.EchoWM.runInChatScope({cid_json}, {eid_json}, {code_json}, {mode_json}, false);\n"
                 f"}}\n"
-                f"{code_str}"
+                f"const _uctpRes = await (async () => {{\n{code_str}\n}})();\n"
+                f"return (typeof window.echoWrapUctpPayload === 'function') ? window.echoWrapUctpPayload(_uctpRes) : _uctpRes;"
             )
         return (
             f"(async () => {{\n"
@@ -108,7 +109,8 @@ class EchoEvents:
     def _build_uctp_frames(self, code_str: str, exec_id: str, mode: str) -> tuple[str, list[str], str]:
         """Construit les trames JS de fragmentation UCTP (setup, chunks, final_exec) factorisées pour 'emit' et 'call'."""
         var_id = uuid.uuid4().hex
-        var_name = "window._uctp_" + var_id
+        var_name = "_uctp_" + var_id
+        timer_name = "_uctp_timer_" + var_id
         loader_id = "uctp-loader-" + var_id
         cid_json = json.dumps(self.chat_id or "").decode("utf-8")
         eid_json = json.dumps(exec_id).decode("utf-8")
@@ -116,9 +118,17 @@ class EchoEvents:
 
         setup_body = f"""
             window.{var_name} = '';
+            if (window.{timer_name}) clearTimeout(window.{timer_name});
+            window.{timer_name} = setTimeout(() => {{
+                const orphan = document.getElementById('{loader_id}');
+                if (orphan) orphan.remove();
+                delete window.{var_name};
+                delete window.{timer_name};
+            }}, 10000);
             if (!document.getElementById('{loader_id}')) {{
                 const loader = document.createElement('div');
                 loader.id = '{loader_id}';
+                loader.setAttribute('data-echo-scope', 'global');
                 loader.style.cssText = 'position:fixed;bottom:20px;right:20px;background:rgba(15,23,42,0.9);'
                     + 'border:1px solid rgba(56,189,248,0.3);border-radius:8px;padding:12px;display:flex;'
                     + 'flex-direction:column;align-items:center;gap:8px;z-index:999999;'
@@ -158,6 +168,10 @@ class EchoEvents:
             chunks_js.append(f"(async () => {{{chunk_body}}})();" if mode == "emit" else f"{chunk_body}\nreturn true;")
 
         final_body = f"""
+            if (window.{timer_name}) {{
+                clearTimeout(window.{timer_name});
+                delete window.{timer_name};
+            }}
             const loader = document.getElementById('{loader_id}');
             if (loader) loader.remove();
             const code = window.{var_name};
@@ -166,7 +180,8 @@ class EchoEvents:
                 return await window.EchoWM.runInChatScope({cid_json}, {eid_json}, code, {mode_json}, false);
             }}
             const AsyncFunction = Object.getPrototypeOf(async function(){{}}).constructor;
-            return await (new AsyncFunction(code))();
+            const _uctpRes = await (new AsyncFunction(code))();
+            return (typeof window.echoWrapUctpPayload === 'function') ? window.echoWrapUctpPayload(_uctpRes) : _uctpRes;
         """
         final_js = f"(async () => {{{final_body}}})();" if mode == "emit" else final_body
         return setup_js, chunks_js, final_js
@@ -212,15 +227,34 @@ class EchoEvents:
             wrapped = self._wrap_wm_js(code_str, exec_id, "call")
             coro = self.caller({"type": "execute", "data": {"code": wrapped}})
             res = await asyncio.wait_for(coro, timeout=timeout) if (timeout is not None and timeout > 0) else await coro
+        return res
 
-        # UCTP Bidi Réception (JS -> Python)
+    async def _reassemble_uctp_payload(self, res: Any, timeout: Optional[float] = None) -> Any:
+        """Réassemble de manière transparente un payload JS -> Python fragmenté par UCTP (Socket.IO ou SSE/RPC)."""
         if isinstance(res, dict) and res.get("action") == "__chunked_payload__":
             buffer = [res.get("data", "")]
             total = res.get("total_chunks", 1)
+            wait_code = res.get("wait_code") or ""
+            wm = get_window_manager() if get_window_manager is not None else None
 
             for _ in range(1, total):
-                coro_next = self.caller({"type": "execute", "data": {"code": res.get("wait_code")}})
-                next_res = await asyncio.wait_for(coro_next, timeout=timeout) if (timeout is not None and timeout > 0) else await coro_next
+                next_res = None
+                if self.caller:
+                    try:
+                        coro_next = self.caller({"type": "execute", "data": {"code": wait_code}})
+                        next_res = await asyncio.wait_for(coro_next, timeout=timeout) if (timeout is not None and timeout > 0) else await coro_next
+                    except Exception:
+                        next_res = None
+                if next_res is None and wm is not None and wm.has_active_clients(self.user_id):
+                    wm_ok, wm_next = await wm.call_js(
+                        user_id=self.user_id,
+                        chat_id=self.chat_id,
+                        message_id=self.message_id,
+                        code=wait_code,
+                        timeout=timeout,
+                    )
+                    if wm_ok:
+                        next_res = wm_next
                 if isinstance(next_res, dict) and next_res.get("action") == "__chunked_payload__":
                     buffer.append(next_res.get("data", ""))
                 else:
@@ -257,7 +291,9 @@ class EchoEvents:
                 timeout=timeout,
                 exec_id=exec_id,
             )
-            return wm_res if wm_ok else None
+            if not wm_ok:
+                return None
+            return await self._reassemble_uctp_payload(wm_res, timeout=timeout)
 
         if not self.caller:
             return None
@@ -286,14 +322,14 @@ class EchoEvents:
                     if not isinstance(res, dict) or "error" not in res:
                         for p in pending:
                             p.cancel()
-                        return res
+                        return await self._reassemble_uctp_payload(res, timeout=timeout)
 
                 if wm_task in done and not wm_task.cancelled() and wm_task.exception() is None:
                     wm_ok, wm_res = wm_task.result()
                     if wm_ok:
                         for p in pending:
                             p.cancel()
-                        return wm_res
+                        return await self._reassemble_uctp_payload(wm_res, timeout=timeout)
 
                 # Attendre la tâche restante si la première n'a pas abouti
                 for p in pending:
@@ -302,9 +338,9 @@ class EchoEvents:
                         if p is wm_task:
                             wm_ok, wm_res = rem
                             if wm_ok:
-                                return wm_res
+                                return await self._reassemble_uctp_payload(wm_res, timeout=timeout)
                         else:
-                            return rem
+                            return await self._reassemble_uctp_payload(rem, timeout=timeout)
                     except Exception:
                         pass
                 return None
@@ -320,7 +356,8 @@ class EchoEvents:
                 return None
 
         try:
-            return await self._call_via_socket_caller(code_str, exec_id, timeout=timeout)
+            raw_res = await self._call_via_socket_caller(code_str, exec_id, timeout=timeout)
+            return await self._reassemble_uctp_payload(raw_res, timeout=timeout)
         except asyncio.TimeoutError:
             print(f"[EchoEvents] Call Execute Timeout ({timeout}s)")
             return None

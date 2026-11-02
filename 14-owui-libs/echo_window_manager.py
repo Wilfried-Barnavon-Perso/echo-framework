@@ -2,16 +2,16 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 5.231.39.1
+version: 5.231.50.1
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.50.1: Pont postMessage echo:iframe:init / theme-update dans EchoWM pour synchroniser la couleur de fond et de police des Iframes avec la fenêtre principale Open WebUI.
+# 5.231.48.1: Factorisation SSOT de WM_SCRIPT_VERSION, teardown Hot-Upgrade de window.EchoWM, réentrance asynchrone (_execStack/_activeExecCount) et garde DOM dans bodyObs.
+# 5.231.47.1: Inclusion de EchoUI.get_media_export_js dans get_full_loader_bundle_js.
+# 5.231.46.1: Fragmentation UCTP SSE (_broadcast_execute / wm_uctp_chunk + wm_uctp_exec), wrapping Bidi echoWrapUctpPayload dans runInChatScope et inclusion de get_uctp_engine_js dans loader.js.
 # 5.231.39.1: Synchronisation de activeChatId à l'insertion sur route '/' en nouvelle session et bump de version EchoWM.
-# 5.231.13.1: Résolution du ca_model_id actif et inclusion de calculate_context_delta dans get_chat_snapshot pour l'hydratation à froid.
-# 5.231.12.1: Enrichissement de context_stats avec get_ui_quota_snapshot et affichage de la jauge à froid dès les quotas disponibles dans hydrateChatState.
-# 5.231.10.1: Intégration de context_stats dans get_chat_snapshot et hydratation automatique echoRenderContextGauge dans hydrateChatState.
-# 5.231.6.1: Intégration du pont universel EchoCodexUI.get_codex_bridge_js dans get_full_loader_bundle_js (/static/loader.js).
 
 import asyncio
 import os
@@ -24,14 +24,14 @@ import orjson as json
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from echo_constants import ECHO_AUDIO_PREFIX, ECHO_USERS_ROOT
+from echo_constants import ECHO_AUDIO_PREFIX, ECHO_UCTP_CHUNK_SIZE, ECHO_USERS_ROOT
 from echo_state_manager import EchoStateManager
 
 WM_PREFIX = f"{ECHO_AUDIO_PREFIX}/wm"
 wm_router = APIRouter(prefix=WM_PREFIX, tags=["echo_wm"])
 wm_static_router = APIRouter(tags=["echo_wm_static"])
 
-WM_SCRIPT_VERSION = "5.231.39.1"
+WM_SCRIPT_VERSION = "5.231.50.1"
 LOADER_MARKER_START = "/* === ECHO_WM_START === */"
 LOADER_MARKER_END = "/* === ECHO_WM_END === */"
 WM_STATE_KEY = "wm_state"
@@ -235,6 +235,55 @@ class EchoWindowManager:
             "created_at": now,
         }
 
+    async def _broadcast_execute(
+        self,
+        user_id: str,
+        mode: str,
+        eid: str,
+        chat_id: str,
+        message_id: str,
+        code: str,
+    ) -> int:
+        """Diffuse une exécution JS sur le flux SSE avec fragmentation automatique UCTP au-delà de 256 Ko."""
+        if len(code) <= ECHO_UCTP_CHUNK_SIZE:
+            return await self.broadcast(
+                user_id,
+                {
+                    "type": "wm_execute",
+                    "mode": mode,
+                    "exec_id": eid,
+                    "chat_id": chat_id or "",
+                    "message_id": message_id or "",
+                    "code": code,
+                },
+            )
+        total_chunks = (len(code) + ECHO_UCTP_CHUNK_SIZE - 1) // ECHO_UCTP_CHUNK_SIZE
+        delivered = 0
+        for i in range(total_chunks):
+            start_idx = i * ECHO_UCTP_CHUNK_SIZE
+            chunk_str = code[start_idx: start_idx + ECHO_UCTP_CHUNK_SIZE]
+            delivered = await self.broadcast(
+                user_id,
+                {
+                    "type": "wm_uctp_chunk",
+                    "exec_id": eid,
+                    "chunk_index": i,
+                    "total_chunks": total_chunks,
+                    "data": chunk_str,
+                },
+            )
+        await self.broadcast(
+            user_id,
+            {
+                "type": "wm_uctp_exec",
+                "mode": mode,
+                "exec_id": eid,
+                "chat_id": chat_id or "",
+                "message_id": message_id or "",
+            },
+        )
+        return delivered
+
     async def emit_js(
         self,
         user_id: str,
@@ -246,16 +295,13 @@ class EchoWindowManager:
         """Envoie un script JS sans attente de retour à tous les navigateurs de l'utilisateur."""
         eid = exec_id or uuid.uuid4().hex
         self.register_exec(eid, user_id, chat_id, code)
-        delivered = await self.broadcast(
-            user_id,
-            {
-                "type": "wm_execute",
-                "mode": "emit",
-                "exec_id": eid,
-                "chat_id": chat_id or "",
-                "message_id": message_id or "",
-                "code": code,
-            },
+        delivered = await self._broadcast_execute(
+            user_id=user_id,
+            mode="emit",
+            eid=eid,
+            chat_id=chat_id,
+            message_id=message_id,
+            code=code,
         )
         return delivered > 0
 
@@ -286,16 +332,13 @@ class EchoWindowManager:
         }
 
         try:
-            delivered = await self.broadcast(
-                user_id,
-                {
-                    "type": "wm_execute",
-                    "mode": "call",
-                    "exec_id": eid,
-                    "chat_id": chat_id or "",
-                    "message_id": message_id or "",
-                    "code": code,
-                },
+            delivered = await self._broadcast_execute(
+                user_id=user_id,
+                mode="call",
+                eid=eid,
+                chat_id=chat_id,
+                message_id=message_id,
+                code=code,
             )
             if delivered == 0:
                 return False, None
@@ -470,23 +513,41 @@ def get_window_manager() -> EchoWindowManager:
 
 def get_client_loader_js() -> str:
     """Génère le script client global agnostique window.EchoWM injecté dans /static/loader.js et via window_manager_filter."""
-    return r"""
+    js_template = r"""
 (function() {
-    if (window.EchoWM && window.EchoWM._version === '5.231.39.1') {
+    if (window.EchoWM && window.EchoWM._version === '__WM_SCRIPT_VERSION__') {
         if (typeof window.EchoWM.connectSSE === 'function') window.EchoWM.connectSSE();
         if (typeof window.EchoWM.onRouteChanged === 'function') window.EchoWM.onRouteChanged();
         return;
     }
 
-    const clientId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+    const prevWM = window.EchoWM || null;
+    if (prevWM && typeof prevWM.destroy === 'function') {
+        try { prevWM.destroy(); } catch (e) {}
+    } else if (prevWM && prevWM.sse) {
+        try { prevWM.sse.close(); } catch (e) {}
+        prevWM.sse = null;
+    }
+
+    const clientId = (prevWM && prevWM.clientId) ? prevWM.clientId : ((typeof crypto !== 'undefined' && crypto.randomUUID)
         ? crypto.randomUUID()
-        : ('wm-' + Math.random().toString(36).slice(2) + Date.now());
+        : ('wm-' + Math.random().toString(36).slice(2) + Date.now()));
 
     const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-    const rawSetItem = Storage.prototype.setItem;
-    const rawRemoveItem = Storage.prototype.removeItem;
-    const rawAppendChild = Element.prototype.appendChild;
-    const rawInsertBefore = Element.prototype.insertBefore;
+    if (!window._echoWmRawMethods) {
+        window._echoWmRawMethods = {
+            setItem: Storage.prototype.setItem,
+            removeItem: Storage.prototype.removeItem,
+            appendChild: Element.prototype.appendChild,
+            insertBefore: Element.prototype.insertBefore,
+            pushState: history.pushState,
+            replaceState: history.replaceState
+        };
+    }
+    const rawSetItem = window._echoWmRawMethods.setItem;
+    const rawRemoveItem = window._echoWmRawMethods.removeItem;
+    const rawAppendChild = window._echoWmRawMethods.appendChild;
+    const rawInsertBefore = window._echoWmRawMethods.insertBefore;
 
     function extractChatIdFromUrl(pathname) {
         const p = pathname || (typeof location !== 'undefined' ? location.pathname : '');
@@ -525,21 +586,88 @@ def get_client_loader_js() -> str:
     }
 
     const EchoWM = {
-        _version: '5.231.39.1',
+        _version: '__WM_SCRIPT_VERSION__',
         clientId: clientId,
         activeChatId: extractChatIdFromUrl(),
         currentExecContext: null,
+        _execStack: [],
+        _activeExecCount: 0,
+        _replayCount: 0,
         suppressCloseReport: false,
         suppressKvIntercept: false,
         isReplaying: false,
-        hydratedChats: {},
+        hydratedChats: (prevWM && prevWM.hydratedChats) ? prevWM.hydratedChats : {},
         hydratingPromises: {},
-        executedIds: {},
-        executedPromises: {},
+        executedIds: (prevWM && prevWM.executedIds) ? prevWM.executedIds : {},
+        executedPromises: (prevWM && prevWM.executedPromises) ? prevWM.executedPromises : {},
+        uctpBuffers: {},
         kvFlushTimers: {},
         kvPending: {},
         sse: null,
+        bodyObs: null,
+        themeObs: null,
+        _msgHandler: null,
         getElementChatId: getElementChatId,
+
+        destroy: function() {
+            EchoWM._destroyed = true;
+            if (EchoWM.sse) {
+                try { EchoWM.sse.close(); } catch (e) {}
+                EchoWM.sse = null;
+            }
+            if (EchoWM.bodyObs) {
+                try { EchoWM.bodyObs.disconnect(); } catch (e) {}
+                EchoWM.bodyObs = null;
+            }
+            if (EchoWM.themeObs) {
+                try { EchoWM.themeObs.disconnect(); } catch (e) {}
+                EchoWM.themeObs = null;
+            }
+            if (EchoWM._msgHandler) {
+                try { window.removeEventListener('message', EchoWM._msgHandler); } catch (e) {}
+                EchoWM._msgHandler = null;
+            }
+        },
+
+        resolveParentTheme: function() {
+            const docEl = document.documentElement;
+            const isDark = docEl ? docEl.classList.contains('dark') : true;
+            const isOled = docEl ? (docEl.classList.contains('oled-dark') || docEl.style.getPropertyValue('--color-gray-900') === '#000000') : false;
+            const theme = isOled ? 'oled-dark' : (isDark ? 'dark' : 'light');
+            let bgColor = isOled ? '#000000' : (isDark ? '#171717' : '#ffffff');
+            let textColor = isOled ? '#ffffff' : (isDark ? '#ececec' : '#171717');
+            try {
+                const candidates = [
+                    document.getElementById('chat-container'),
+                    document.querySelector('main'),
+                    document.body,
+                    docEl
+                ];
+                for (const el of candidates) {
+                    if (!el || typeof window.getComputedStyle !== 'function') continue;
+                    const cs = window.getComputedStyle(el);
+                    if (cs && cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent') {
+                        bgColor = cs.backgroundColor;
+                        if (cs.color) textColor = cs.color;
+                        break;
+                    }
+                }
+            } catch (e) {}
+            return { type: 'theme-update', theme: theme, bgColor: bgColor, textColor: textColor };
+        },
+
+        broadcastThemeToIframes: function(targetWin) {
+            const payload = EchoWM.resolveParentTheme();
+            if (targetWin && typeof targetWin.postMessage === 'function') {
+                try { targetWin.postMessage(payload, '*'); } catch (e) {}
+                return;
+            }
+            document.querySelectorAll('iframe').forEach(ifr => {
+                try {
+                    if (ifr.contentWindow) ifr.contentWindow.postMessage(payload, '*');
+                } catch (e) {}
+            });
+        },
 
         postRpc: async function(payload) {
             try {
@@ -693,8 +821,6 @@ def get_client_loader_js() -> str:
 
             const execTask = async () => {
                 const waitRpc = isWaitRpcCode(code);
-                const prevCtx = EchoWM.currentExecContext;
-                const prevReplay = EchoWM.isReplaying;
                 const ctx = {
                     chatId: chatId || '',
                     execId: execId || '',
@@ -702,9 +828,14 @@ def get_client_loader_js() -> str:
                     updatedIds: new Set()
                 };
                 if (!waitRpc) {
+                    EchoWM._execStack.push(ctx);
                     EchoWM.currentExecContext = ctx;
+                    EchoWM._activeExecCount += 1;
                     EchoWM.suppressCloseReport = true;
-                    if (isReplay) EchoWM.isReplaying = true;
+                    if (isReplay) {
+                        EchoWM._replayCount += 1;
+                        EchoWM.isReplaying = true;
+                    }
                 }
 
                 let mutObs = null;
@@ -740,9 +871,19 @@ def get_client_loader_js() -> str:
                 } finally {
                     if (mutObs) mutObs.disconnect();
                     if (!waitRpc) {
-                        EchoWM.currentExecContext = prevCtx;
-                        EchoWM.isReplaying = prevReplay;
-                        setTimeout(() => { EchoWM.suppressCloseReport = false; }, 0);
+                        const idx = EchoWM._execStack.indexOf(ctx);
+                        if (idx !== -1) EchoWM._execStack.splice(idx, 1);
+                        EchoWM.currentExecContext = EchoWM._execStack.length > 0
+                            ? EchoWM._execStack[EchoWM._execStack.length - 1]
+                            : null;
+                        if (isReplay) {
+                            EchoWM._replayCount = Math.max(0, EchoWM._replayCount - 1);
+                            EchoWM.isReplaying = EchoWM._replayCount > 0;
+                        }
+                        setTimeout(() => {
+                            EchoWM._activeExecCount = Math.max(0, EchoWM._activeExecCount - 1);
+                            EchoWM.suppressCloseReport = EchoWM._activeExecCount > 0;
+                        }, 0);
                         EchoWM.syncAllWindowsVisibility();
                     }
                 }
@@ -774,13 +915,18 @@ def get_client_loader_js() -> str:
                     }
                 }
 
-                if (mode === 'call' && execId) {
-                    await EchoWM.postRpc({
-                        action: 'rpc_result',
-                        chat_id: chatId,
-                        exec_id: execId,
-                        result: result
-                    });
+                if (mode === 'call') {
+                    if (typeof window.echoWrapUctpPayload === 'function' && (!code || !code.includes('_echoUctpNextChunk'))) {
+                        result = window.echoWrapUctpPayload(result);
+                    }
+                    if (execId) {
+                        await EchoWM.postRpc({
+                            action: 'rpc_result',
+                            chat_id: chatId,
+                            exec_id: execId,
+                            result: result
+                        });
+                    }
                 }
                 return result;
             };
@@ -888,6 +1034,7 @@ def get_client_loader_js() -> str:
         },
 
         connectSSE: function() {
+            if (EchoWM._destroyed) return;
             if (EchoWM.sse && EchoWM.sse.readyState !== 2) return;
             const token = getAuthToken();
             const url = '/echo/v1/wm/stream?client_id=' + encodeURIComponent(clientId)
@@ -902,11 +1049,27 @@ def get_client_loader_js() -> str:
 
                         if (msg.type === 'wm_execute') {
                             await EchoWM.runInChatScope(msg.chat_id || '', msg.exec_id || '', msg.code || '', msg.mode || 'emit', false);
+                        } else if (msg.type === 'wm_uctp_chunk' && msg.exec_id) {
+                            EchoWM.uctpBuffers[msg.exec_id] = (EchoWM.uctpBuffers[msg.exec_id] || '') + (msg.data || '');
+                        } else if (msg.type === 'wm_uctp_exec' && msg.exec_id) {
+                            const fullCode = EchoWM.uctpBuffers[msg.exec_id] || '';
+                            delete EchoWM.uctpBuffers[msg.exec_id];
+                            if (fullCode) {
+                                await EchoWM.runInChatScope(msg.chat_id || '', msg.exec_id, fullCode, msg.mode || 'emit', false);
+                            }
                         } else if (msg.type === 'wm_window_closed') {
                             const el = msg.window_id ? document.getElementById(msg.window_id) : null;
                             if (el) {
+                                EchoWM._activeExecCount += 1;
                                 EchoWM.suppressCloseReport = true;
-                                try { el.remove(); } finally { EchoWM.suppressCloseReport = false; }
+                                try {
+                                    el.remove();
+                                } finally {
+                                    setTimeout(() => {
+                                        EchoWM._activeExecCount = Math.max(0, EchoWM._activeExecCount - 1);
+                                        EchoWM.suppressCloseReport = EchoWM._activeExecCount > 0;
+                                    }, 0);
+                                }
                             }
                         } else if (msg.type === 'wm_kv_sync' && msg.entries) {
                             EchoWM.suppressKvIntercept = true;
@@ -924,57 +1087,67 @@ def get_client_loader_js() -> str:
                 es.onerror = () => {
                     try { es.close(); } catch (e) {}
                     EchoWM.sse = null;
-                    setTimeout(() => EchoWM.connectSSE(), 3000);
+                    if (!EchoWM._destroyed) setTimeout(() => EchoWM.connectSSE(), 3000);
                 };
             } catch (e) {
-                setTimeout(() => EchoWM.connectSSE(), 3000);
+                if (!EchoWM._destroyed) setTimeout(() => EchoWM.connectSSE(), 3000);
             }
         }
     };
 
-    Element.prototype.appendChild = function(node) {
-        const res = rawAppendChild.call(this, node);
-        if (this === document.body && node && node.nodeType === 1) {
-            EchoWM.tagInsertedElement(node);
-        }
-        return res;
-    };
-
-    Element.prototype.insertBefore = function(node, refNode) {
-        const res = rawInsertBefore.call(this, node, refNode);
-        if (this === document.body && node && node.nodeType === 1) {
-            EchoWM.tagInsertedElement(node);
-        }
-        return res;
-    };
-
-    Storage.prototype.setItem = function(key, value) {
-        rawSetItem.call(this, key, value);
-        if (this === localStorage && !EchoWM.suppressKvIntercept && typeof key === 'string') {
-            if (key.startsWith('echo_') || key.startsWith('nav_state_')) {
-                const cid = (EchoWM.currentExecContext && EchoWM.currentExecContext.chatId) || EchoWM.activeChatId || '';
-                if (cid) EchoWM.queueKvSync(cid, key, String(value));
+    if (!window._echoWmHooksInstalled) {
+        window._echoWmHooksInstalled = true;
+        Element.prototype.appendChild = function(node) {
+            const res = rawAppendChild.call(this, node);
+            if (this === document.body && node && node.nodeType === 1 && window.EchoWM) {
+                window.EchoWM.tagInsertedElement(node);
             }
-        }
-    };
+            return res;
+        };
 
-    const origPushState = history.pushState;
-    const origReplaceState = history.replaceState;
-    history.pushState = function() {
-        const r = origPushState.apply(this, arguments);
-        EchoWM.onRouteChanged();
-        return r;
-    };
-    history.replaceState = function() {
-        const r = origReplaceState.apply(this, arguments);
-        EchoWM.onRouteChanged();
-        return r;
-    };
-    window.addEventListener('popstate', () => EchoWM.onRouteChanged());
+        Element.prototype.insertBefore = function(node, refNode) {
+            const res = rawInsertBefore.call(this, node, refNode);
+            if (this === document.body && node && node.nodeType === 1 && window.EchoWM) {
+                window.EchoWM.tagInsertedElement(node);
+            }
+            return res;
+        };
+
+        Storage.prototype.setItem = function(key, value) {
+            rawSetItem.call(this, key, value);
+            const wm = window.EchoWM;
+            if (wm && this === localStorage && !wm.suppressKvIntercept && typeof key === 'string') {
+                if (key.startsWith('echo_') || key.startsWith('nav_state_')) {
+                    const cid = (wm.currentExecContext && wm.currentExecContext.chatId) || wm.activeChatId || '';
+                    if (cid) wm.queueKvSync(cid, key, String(value));
+                }
+            }
+        };
+
+        const origPushState = window._echoWmRawMethods.pushState;
+        const origReplaceState = window._echoWmRawMethods.replaceState;
+        history.pushState = function() {
+            const r = origPushState.apply(this, arguments);
+            if (window.EchoWM) window.EchoWM.onRouteChanged();
+            return r;
+        };
+        history.replaceState = function() {
+            const r = origReplaceState.apply(this, arguments);
+            if (window.EchoWM) window.EchoWM.onRouteChanged();
+            return r;
+        };
+        window.addEventListener('popstate', () => {
+            if (window.EchoWM) window.EchoWM.onRouteChanged();
+        });
+    }
 
     function attachBodyObserver() {
         if (!document.body || typeof MutationObserver === 'undefined') return;
+        if (EchoWM.bodyObs) {
+            try { EchoWM.bodyObs.disconnect(); } catch (e) {}
+        }
         const bodyObs = new MutationObserver((mutations) => {
+            if (EchoWM._destroyed) return;
             for (const m of mutations) {
                 if (m.addedNodes) {
                     m.addedNodes.forEach(node => {
@@ -986,6 +1159,7 @@ def get_client_loader_js() -> str:
                 if (m.removedNodes && !EchoWM.suppressCloseReport && !EchoWM.currentExecContext) {
                     m.removedNodes.forEach(node => {
                         if (node && node.nodeType === 1 && node.id && !isGlobalElement(node)) {
+                            if (document.getElementById(node.id)) return;
                             const cid = getElementChatId(node);
                             const parked = node.getAttribute('data-echo-parked') === '1';
                             if (cid && !parked) {
@@ -1000,10 +1174,28 @@ def get_client_loader_js() -> str:
                 }
             }
         });
+        EchoWM.bodyObs = bodyObs;
         bodyObs.observe(document.body, { childList: true });
     }
 
+    function attachThemeBridge() {
+        EchoWM._msgHandler = (ev) => {
+            if (EchoWM._destroyed) return;
+            if (ev && ev.data && ev.data.type === 'echo:iframe:init' && ev.source) {
+                EchoWM.broadcastThemeToIframes(ev.source);
+            }
+        };
+        window.addEventListener('message', EchoWM._msgHandler);
+        if (document.documentElement && typeof MutationObserver !== 'undefined') {
+            EchoWM.themeObs = new MutationObserver(() => {
+                if (!EchoWM._destroyed) EchoWM.broadcastThemeToIframes();
+            });
+            EchoWM.themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] });
+        }
+    }
+
     window.EchoWM = EchoWM;
+    attachThemeBridge();
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
@@ -1018,6 +1210,7 @@ def get_client_loader_js() -> str:
     }
 })();
 """
+    return js_template.replace("__WM_SCRIPT_VERSION__", WM_SCRIPT_VERSION)
 
 
 def get_full_loader_bundle_js() -> str:
@@ -1025,10 +1218,12 @@ def get_full_loader_bundle_js() -> str:
     parts = []
     try:
         from echo_ui import EchoUI
+        parts.append(EchoUI.get_uctp_engine_js().strip())
         parts.append(EchoUI.get_esm_loader_js().strip())
         parts.append(EchoUI.get_hud_geometry_js().strip())
         parts.append(EchoUI.get_hud_rpc_bridge_js().strip())
         parts.append(EchoUI.get_context_gauge_renderer_js().strip())
+        parts.append(EchoUI.get_media_export_js().strip())
     except Exception:
         pass
     try:

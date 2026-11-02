@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.231.39.1
+version: 5.231.56.1
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.231.39.1: Réinitialisation inconditionnelle de window[resolveVar] dans echoCreateHudRpcBridge pour éviter le vol d'action au montage.
-# 5.231.28.1: Affichage des métriques de compaction (compaction_count, compacted_turns) dans l'infobulle du HUD contextuel.
-# 5.231.24.2: Déclaration du @keyframes echo-pulse et centrage transform-origin de l'animation SVG pour le HUD contextuel.
-# 5.231.24.1: Support du calcul différentiel, capsule d'évolution et deltas de quotas dès le tour 1.
-# 5.231.20.3: Conformité multi-chat des HUDs (get_floating_monitor_js avec isolation stricte de _echoGetAggregatedPayload, _generate_webplayer_js, monitor_ECHO, show_image_js) et suppression des fuites de listeners DOM.
+# 5.231.56.1: Maximisation de l'image à la largeur de l'Iframe, hauteur auto-adaptative sans plafond 640px et hauteur figée hors zoom/pan dans image_viewer.  # noqa: E501
+# 5.231.55.1: Factorisation de window.echoTriggerDownload (gardes isReplaying/document.hidden, basename safe et délai revokeObjectURL 1s) dans get_media_export_js.
+# 5.231.50.1: Suppression du cliquet reportHeight (+10px/scrollHeight), hauteur stable au zoom/dézoom dans image_viewer et synchronisation du fond/police Iframe avec la fenêtre principale.
+# 5.231.49.1: Refonte de image_viewer en Iframe inline responsive auto-adaptative avec outils Copier/Exporter, support 3-paliers anti-CORS dans get_media_export_js et suppression du code mort (show_image_js, player_ui).
+# 5.231.47.1: Factorisation de get_media_export_js (window.echoExportImage bit-perfect/lossless), icônes Export/Check et intégration des boutons Copier/Exporter dans _generate_webplayer_js et show_image_js.
 
 
 import sys
@@ -29,6 +29,7 @@ from echo_constants import (
     ECHO_EDGE_MODEL_CACHE_VERSION,
     ECHO_EDGE_DTYPE,
     ECHO_EDGE_MIN_BUFFER_BYTES,
+    ECHO_UCTP_CHUNK_SIZE,
 )
 
 
@@ -45,6 +46,8 @@ class EchoRichUI:
         "ChevronLeft": "<polyline points='15 18 9 12 15 6'/>",
         "ChevronRight": "<polyline points='9 18 15 12 9 6'/>",
         "Download": "<path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' y1='15' x2='12' y2='3'/>",
+        "Export": "<path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='17 8 12 3 7 8'/><line x1='12' y1='3' x2='12' y2='15'/>",
+        "Check": "<polyline points='20 6 9 17 4 12'/>",
         "Copy": "<rect x='9' y='9' width='13' height='13' rx='2' ry='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/>",
         "Present": "<path d='M6 8l4 4-4 4M18 8l-4 4 4 4M12 4v16'/>",
         "CornerUpLeft": "<polyline points='9 14 4 9 9 4'/><path d='M20 20v-7a4 4 0 0 0-4-4H4'/>",
@@ -885,7 +888,7 @@ class EchoRichUI:
     @staticmethod
     def get_hud_rpc_bridge_js() -> str:
         """Génère le pont RPC résilient universel (file d'attente, heartbeat 5s/25s anti-timeout 60s, reconnexion post-standby et garde-fou SPA)."""
-        return """
+        return EchoRichUI.get_uctp_engine_js() + """
         {
             window.echoCreateHudRpcBridge = function(cfg) {
                 const hudId = cfg.hudId;
@@ -1099,26 +1102,26 @@ class EchoRichUI:
                     this.allowResize = config.allowResize !== false;
                     this.onClose = config.onClose || null;
                     this.onMinimize = config.onMinimize || null;
-                    
+
                     // Centrage basique
                     this.posX = Math.max(20, (window.innerWidth / 2) - (parseInt(this.width)/2 || 250));
                     this.posY = 100;
-                    
+
                     this.isMinimized = false;
                     this.isFullscreen = false;
                     this.geo = null;
                 }
-                
+
                 render() {
                     let hud = document.getElementById(this.id);
                     if (hud) hud.remove();
-                    
+
                     hud = document.createElement('div');
                     hud.id = this.id;
                     hud.style.cssText = `position:fixed; left:${this.posX}px; top:${this.posY}px; width:${this.width}; height:${this.height}; max-width:98vw; max-height:96vh; z-index:10000; background:rgba(12,12,12,0.98); backdrop-filter:blur(25px); border:1px solid #333; border-radius:12px; box-shadow:0 25px 70px rgba(0,0,0,0.9); color:white; font-family:system-ui,sans-serif; display:flex; flex-direction:column; overflow:hidden; min-width:${this.minWidth}; min-height:${this.minHeight};`;
-                    
+
                     const iconHtml = this.icon ? `<span style="font-size:14px; padding:3px 8px; border-radius:8px; background:rgba(0,212,255,0.1); color:#00d4ff;">${this.icon}</span>` : '';
-                    
+
                     hud.innerHTML = `
                       <div id="${this.id}-header" style="height:44px; padding:0 15px; background:rgba(255,255,255,0.02); display:flex; align-items:center; gap:12px; border-bottom:1px solid #222; cursor:move; user-select:none; box-sizing:border-box; flex-shrink:0;">
                         ${iconHtml}
@@ -1138,11 +1141,11 @@ class EchoRichUI:
                     `;
                     document.body.appendChild(hud);
                 }
-                
+
                 attachBaseEvents() {
                     const hud = document.getElementById(this.id);
                     if (!hud) return;
-                    
+
                     hud.addEventListener('mousedown', () => {
                         document.querySelectorAll('[id^="echo-"]').forEach(el => {
                             if (el.style.zIndex && parseInt(el.style.zIndex) >= 10000) {
@@ -1151,7 +1154,7 @@ class EchoRichUI:
                         });
                         hud.style.zIndex = '10001';
                     });
-                    
+
                     const header = document.getElementById(this.id + '-header');
                     const body = document.getElementById(this.id + '-body');
                     this.geo = window.echoBindHudGeometry(hud, header, {
@@ -1179,7 +1182,7 @@ class EchoRichUI:
                             this.isFullscreen = isFs;
                         }
                     });
-                    
+
                     if (this.allowResize) {
                         const resizer = document.getElementById(this.id + '-resizer');
                         resizer.onmousedown = (e) => {
@@ -1204,21 +1207,21 @@ class EchoRichUI:
                             document.addEventListener('mouseup', onUp);
                         };
                     }
-                    
+
                     document.getElementById(this.id + '-btn-close').onclick = () => {
                         hud.remove();
                         if (this.onClose) this.onClose();
                     };
-                    
+
                     document.getElementById(this.id + '-btn-min').onclick = (e) => {
                         e.stopPropagation();
                         this.geo.toggleMinimize();
                     };
-                    
+
                     document.getElementById(this.id + '-btn-zoom').onclick = () => {
                         this.geo.toggleFullscreen();
                     };
-                    
+
                     document.getElementById(this.id + '-btn-reset').onclick = () => {
                         this.geo.resetSize();
                     };
@@ -1228,31 +1231,106 @@ class EchoRichUI:
         """
 
     @staticmethod
-    def get_event_dispatcher_js() -> str:
+    def get_uctp_engine_js() -> str:
         """Injecte le moteur asynchrone UCTP d'ECHO sur le frontend."""
-        return """
-        if (!window.echoDispatcher) {
-            window.echoDispatcher = {
-                _resolvers: {},
-                listen: function(channel) {
-                    return new Promise(resolve => { 
-                        this._resolvers[channel] = resolve; 
-                        setTimeout(() => {
-                            if (this._resolvers[channel] === resolve) {
-                                this.dispatch(channel, { action: "ping" });
-                            }
-                        }, 45000);
-                    });
-                },
-                dispatch: function(channel, payload) {
-                    if (this._resolvers[channel]) {
-                        this._resolvers[channel](payload);
-                        this._resolvers[channel] = null;
-                    }
-                }
-            };
-        }
+        return f"""
+        {{
+            const UCTP_CHUNK_SIZE = {ECHO_UCTP_CHUNK_SIZE};
+            window._uctp_out = window._uctp_out || {{}};
+
+            function mountUctpOutLoader(loaderId) {{
+                if (typeof document === 'undefined' || !document.body || document.getElementById(loaderId)) return;
+                const loader = document.createElement('div');
+                loader.id = loaderId;
+                loader.setAttribute('data-echo-scope', 'global');
+                loader.style.cssText = 'position:fixed;bottom:20px;right:20px;background:rgba(15,23,42,0.9);'
+                    + 'border:1px solid rgba(56,189,248,0.3);border-radius:8px;padding:12px;display:flex;'
+                    + 'flex-direction:column;align-items:center;gap:8px;z-index:999999;'
+                    + 'box-shadow:0 10px 15px -3px rgba(0,0,0,0.5);backdrop-filter:blur(8px);font-family:system-ui;';
+                loader.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;margin-bottom:6px;">'
+                    + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" '
+                    + 'stroke-linecap="round" stroke-linejoin="round" style="animation: spin 1s linear infinite;">'
+                    + '<polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline>'
+                    + '<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg></div>'
+                    + '<div style="width:30px;height:2px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;">'
+                    + '<div id="' + loaderId + '-bar" style="width:0%;height:100%;background:#38bdf8;transition:width 0.1s linear;"></div></div>'
+                    + '<style>@keyframes spin {{ 100% {{ transform: rotate(360deg); }} }}</style>';
+                document.body.appendChild(loader);
+            }}
+
+            function removeUctpOutLoader(loaderId) {{
+                if (typeof document === 'undefined') return;
+                const el = document.getElementById(loaderId);
+                if (el) el.remove();
+            }}
+
+            window.echoWrapUctpPayload = function(payload) {{
+                if (payload === null || payload === undefined) return payload;
+                if (typeof payload === 'object' && payload.action === '__chunked_payload__') return payload;
+                let raw = '';
+                try {{
+                    raw = JSON.stringify(payload);
+                }} catch (e) {{
+                    return payload;
+                }}
+                if (!raw || raw.length <= UCTP_CHUNK_SIZE) return payload;
+
+                const now = Date.now();
+                for (const k of Object.keys(window._uctp_out)) {{
+                    if (now - (window._uctp_out[k].createdAt || 0) > 120000) {{
+                        removeUctpOutLoader(window._uctp_out[k].loaderId);
+                        delete window._uctp_out[k];
+                    }}
+                }}
+
+                const chunks = [];
+                for (let i = 0; i < raw.length; i += UCTP_CHUNK_SIZE) {{
+                    chunks.push(raw.slice(i, i + UCTP_CHUNK_SIZE));
+                }}
+                const transferId = Math.random().toString(36).slice(2) + now.toString(36);
+                const loaderId = 'uctp-loader-out-' + transferId;
+                window._uctp_out[transferId] = {{
+                    chunks: chunks,
+                    index: 1,
+                    loaderId: loaderId,
+                    createdAt: now
+                }};
+                mountUctpOutLoader(loaderId);
+                const bar = (typeof document !== 'undefined') ? document.getElementById(loaderId + '-bar') : null;
+                if (bar) bar.style.width = Math.round((1 / chunks.length) * 100) + '%';
+
+                return {{
+                    action: '__chunked_payload__',
+                    transfer_id: transferId,
+                    data: chunks[0],
+                    total_chunks: chunks.length,
+                    wait_code: "return window._echoUctpNextChunk('" + transferId + "');"
+                }};
+            }};
+
+            window._echoUctpNextChunk = function(transferId, explicitIdx) {{
+                const entry = window._uctp_out && window._uctp_out[transferId];
+                if (!entry || !Array.isArray(entry.chunks)) {{
+                    return {{ action: '__chunked_payload__', data: '' }};
+                }}
+                const idx = (typeof explicitIdx === 'number') ? explicitIdx : entry.index;
+                entry.index = idx + 1;
+                const chunk = (idx < entry.chunks.length) ? entry.chunks[idx] : '';
+                const bar = (typeof document !== 'undefined') ? document.getElementById(entry.loaderId + '-bar') : null;
+                if (bar) bar.style.width = Math.min(100, Math.round(((idx + 1) / entry.chunks.length) * 100)) + '%';
+                if (idx + 1 >= entry.chunks.length) {{
+                    removeUctpOutLoader(entry.loaderId);
+                    delete window._uctp_out[transferId];
+                }}
+                return {{ action: '__chunked_payload__', data: chunk }};
+            }};
+        }}
         """
+
+    @staticmethod
+    def get_event_dispatcher_js() -> str:
+        """Alias de rétrocompatibilité vers get_uctp_engine_js."""
+        return EchoRichUI.get_uctp_engine_js()
 
     @staticmethod
     def get_media_viewport_js(container_id: str, image_id: str, crop_box_id: str = "") -> str:
@@ -1271,14 +1349,14 @@ class EchoRichUI:
         var _echo_vp = document.getElementById('{container_id}');
         var _echo_img = document.getElementById('{image_id}');
         var currentZoom = (typeof currentZoom !== 'undefined') ? currentZoom : 1.0;
-        
+
         if (_echo_vp && _echo_img) {{
             _echo_vp.addEventListener('wheel', (e) => {{
                 if (e.ctrlKey) {{
                     e.preventDefault();
                     var delta = e.deltaY > 0 ? 0.9 : 1.1;
                     currentZoom = Math.min(Math.max(0.1, currentZoom * delta), 15);
-                    var canvas = _echo_vp.querySelector('div'); 
+                    var canvas = _echo_vp.querySelector('div');
                     if (_echo_img.naturalHeight && canvas) {{
                         var r = _echo_img.naturalHeight / _echo_img.naturalWidth;
                         var targetH = Math.min(window.innerHeight * 0.75, _echo_img.naturalHeight);
@@ -1298,7 +1376,7 @@ class EchoRichUI:
         """Encapsulation HTML standard avec détection de thème hybride (Open WebUI Native)."""
         return f"""
     <!DOCTYPE html>
-    <html lang="fr" class="light">
+    <html lang="fr" class="dark">
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1307,19 +1385,19 @@ class EchoRichUI:
         :root {{
           --echo-bg: #ffffff;
           --echo-text: #171717;
-          --echo-hud-bg: #f9f9f9;
+          --echo-hud-bg: #ffffff;
           --echo-hud-border: #e5e5e5;
-          --echo-hud-text: #666666;
+          --echo-hud-text: #525252;
           --echo-btn-bg: #f3f4f6;
           --echo-btn-border: #d1d5db;
-          --echo-btn-text: #374151;
+          --echo-btn-text: #171717;
           --echo-accent: #3b82f6;
         }}
         html.dark {{
           --echo-bg: #171717;
           --echo-text: #ececec;
-          --echo-hud-bg: #262626;
-          --echo-hud-border: #404040;
+          --echo-hud-bg: #171717;
+          --echo-hud-border: #2e2e2e;
           --echo-hud-text: #a3a3a3;
           --echo-btn-bg: #262626;
           --echo-btn-border: #404040;
@@ -1328,14 +1406,34 @@ class EchoRichUI:
         html.oled-dark {{
           --echo-bg: #000000;
           --echo-text: #ffffff;
-          --echo-hud-bg: #101010;
+          --echo-hud-bg: #000000;
           --echo-hud-border: #262626;
           --echo-hud-text: #a3a3a3;
+          --echo-btn-bg: #141414;
+          --echo-btn-border: #262626;
+          --echo-btn-text: #ffffff;
         }}
-        html, body {{ margin: 0; padding: 0; background: var(--echo-bg); color: var(--echo-text); font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; min-height: 100px; overflow-x: hidden; transition: background 0.2s, color 0.2s; }}
+        html {{
+          --bg-primary: var(--echo-bg);
+          --bg-secondary: var(--echo-hud-bg);
+          --text-primary: var(--echo-text);
+          --text-secondary: var(--echo-hud-text);
+          --border: var(--echo-hud-border);
+          --accent: var(--echo-accent);
+        }}
+        html, body {{
+          margin: 0; padding: 0; background: var(--echo-bg); color: var(--echo-text);
+          font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; overflow: hidden; transition: background 0.15s, color 0.15s;
+        }}
         .echo-container {{ width: 100%; display: flex; flex-direction: column; }}
-        #hud-bar {{ background: var(--echo-hud-bg); padding: 8px 16px; border-bottom: 1px solid var(--echo-hud-border); display: flex; align-items: center; justify-content: space-between; z-index: 100; color: var(--echo-hud-text); font-size: 12px; }}
-        .btn {{ background: var(--echo-btn-bg); border: 1px solid var(--echo-btn-border); color: var(--echo-btn-text); padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 11px; transition: all 0.2s; font-weight: 500; }}
+        #hud-bar {{
+          background: var(--echo-hud-bg); padding: 8px 16px; border-bottom: 1px solid var(--echo-hud-border);
+          display: flex; align-items: center; justify-content: space-between; z-index: 100; color: var(--echo-hud-text); font-size: 12px;
+        }}
+        .btn {{
+          background: var(--echo-btn-bg); border: 1px solid var(--echo-btn-border); color: var(--echo-btn-text);
+          padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 11px; transition: all 0.2s; font-weight: 500;
+        }}
         .btn:hover {{ filter: brightness(1.2); border-color: var(--echo-accent); }}
 
         @media (prefers-color-scheme: dark) {{
@@ -1357,21 +1455,37 @@ class EchoRichUI:
 
       function reportHeight() {{
         if (disableAutoResize) return;
-        const h = Math.max(document.body.offsetHeight, document.documentElement.scrollHeight, 100);
-        if (Math.abs(h - lastHeight) > 5) {{
+        const container = document.querySelector('.echo-container');
+        const rawH = container ? container.getBoundingClientRect().height : document.body.offsetHeight;
+        const h = Math.max(Math.ceil(rawH), 100);
+        if (Math.abs(h - lastHeight) > 2) {{
             lastHeight = h;
-            parent.postMessage({{ type: 'iframe:height', height: h + 10 }}, '*');
+            parent.postMessage({{ type: 'iframe:height', height: h }}, '*');
         }}
       }}
 
-      function applyThemeClass(theme) {{
-        document.documentElement.classList.remove('light', 'dark', 'oled-dark');
+      function applyThemeClass(theme, customColors) {{
+        const root = document.documentElement;
+        root.classList.remove('light', 'dark', 'oled-dark');
         if (theme === 'oled-dark') {{
-            document.documentElement.classList.add('dark', 'oled-dark');
-        }} else if (theme === 'dark') {{
-            document.documentElement.classList.add('dark');
+            root.classList.add('dark', 'oled-dark');
+        }} else if (theme === 'light') {{
+            root.classList.add('light');
         }} else {{
-            document.documentElement.classList.add('light');
+            root.classList.add('dark');
+        }}
+        if (customColors && typeof customColors === 'object') {{
+            if (customColors.bgColor) {{
+                root.style.setProperty('--echo-bg', customColors.bgColor);
+                root.style.setProperty('--echo-hud-bg', customColors.bgColor);
+            }}
+            if (customColors.textColor) {{
+                root.style.setProperty('--echo-text', customColors.textColor);
+                root.style.setProperty('--echo-btn-text', customColors.textColor);
+            }}
+            if (customColors.borderColor) {{
+                root.style.setProperty('--echo-hud-border', customColors.borderColor);
+            }}
         }}
         if (typeof reportHeight === 'function') reportHeight();
       }}
@@ -1379,24 +1493,44 @@ class EchoRichUI:
       function syncWithParent() {{
         try {{
             if (parent && parent.document && parent.document.documentElement) {{
-                const isDark = parent.document.documentElement.classList.contains('dark');
-                const isOled = parent.document.documentElement.style.getPropertyValue('--color-gray-900') === '#000000';
-                applyThemeClass(isOled ? 'oled-dark' : (isDark ? 'dark' : 'light'));
+                const pDoc = parent.document;
+                const isDark = pDoc.documentElement.classList.contains('dark');
+                const isOled = pDoc.documentElement.classList.contains('oled-dark') || pDoc.documentElement.style.getPropertyValue('--color-gray-900') === '#000000';
+                const refEl = pDoc.getElementById('chat-container') || pDoc.querySelector('main') || pDoc.body || pDoc.documentElement;
+                let bgColor = '';
+                let textColor = '';
+                if (refEl && parent.getComputedStyle) {{
+                    const cs = parent.getComputedStyle(refEl);
+                    if (cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent') {{
+                        bgColor = cs.backgroundColor;
+                    }}
+                    if (cs.color) textColor = cs.color;
+                }}
+                applyThemeClass(isOled ? 'oled-dark' : (isDark ? 'dark' : 'light'), {{ bgColor: bgColor, textColor: textColor }});
                 return true;
             }}
+        }} catch(e) {{ }}
+        try {{
+            parent.postMessage({{ type: 'echo:iframe:init' }}, '*');
         }} catch(e) {{ }}
         return false;
       }}
 
       window.addEventListener('message', (event) => {{
         if (event.data && event.data.type === 'theme-update') {{
-            applyThemeClass(event.data.theme);
+            applyThemeClass(event.data.theme, {{
+                bgColor: event.data.bgColor || '',
+                textColor: event.data.textColor || '',
+                borderColor: event.data.borderColor || ''
+            }});
         }}
       }});
 
       const darkMQ = window.matchMedia('(prefers-color-scheme: dark)');
       darkMQ.addEventListener('change', (e) => {{
-        if (!localStorage.getItem('theme-override')) {{
+        let hasOverride = false;
+        try {{ hasOverride = !!localStorage.getItem('theme-override'); }} catch(err) {{ }}
+        if (!hasOverride) {{
             applyThemeClass(e.matches ? 'dark' : 'light');
         }}
       }});
@@ -1406,18 +1540,19 @@ class EchoRichUI:
         reportTimeout = setTimeout(reportHeight, 150);
       }}
 
+      syncWithParent();
+
       window.addEventListener('load', () => {{
-        if (!syncWithParent()) {{
-            applyThemeClass(darkMQ.matches ? 'dark' : 'light');
-        }}
+        syncWithParent();
         reportHeight();
       }});
 
       if (window.ResizeObserver) {{
+          const targetEl = document.querySelector('.echo-container') || document.body;
           const ro = new ResizeObserver(() => {{
             if (!disableAutoResize) debouncedReport();
           }});
-          ro.observe(document.body);
+          ro.observe(targetEl);
       }}
 
       setTimeout(reportHeight, 500);
@@ -1488,6 +1623,251 @@ class EchoUI(EchoRichUI):
             return False
 
     @staticmethod
+    def get_media_export_js() -> str:
+        """Génère les moteurs factorisés window.echoTriggerDownload et window.echoExportImage."""
+        check_svg = EchoRichUI.get_icon("Check", size=16, color="#4ade80")
+        return f"""
+        window.echoTriggerDownload = function(blob, filename) {{
+            if (!blob) return false;
+            if ((window.EchoWM && window.EchoWM.isReplaying) || document.hidden) return false;
+            const safeName = String(filename || 'download').split('/').pop() || 'download';
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = safeName;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            return true;
+        }};
+
+        window.echoExportImage = async function(opts) {{
+            if (!opts || !opts.imgEl) return false;
+            const imgEl = opts.imgEl;
+            const mode = opts.mode || 'copy';
+            const btnEl = opts.btnEl || null;
+            const natW = imgEl.naturalWidth || imgEl.width || 0;
+            const natH = imgEl.naturalHeight || imgEl.height || 0;
+            if (!natW || !natH) return false;
+
+            const flashButton = (btn) => {{
+                if (!btn) return;
+                if (!btn.dataset.echoOrigHtml) btn.dataset.echoOrigHtml = btn.innerHTML;
+                if (btn.dataset.echoOrigColor === undefined) btn.dataset.echoOrigColor = btn.style.color || '';
+                if (btn._echoFlashTimer) clearTimeout(btn._echoFlashTimer);
+                btn.innerHTML = "{check_svg}";
+                btn.style.color = '#4ade80';
+                btn._echoFlashTimer = setTimeout(() => {{
+                    btn.innerHTML = btn.dataset.echoOrigHtml;
+                    btn.style.color = btn.dataset.echoOrigColor;
+                    btn._echoFlashTimer = null;
+                }}, 1000);
+            }};
+
+            const showFallback = (url, fbMode) => {{
+                const actionLabel = (fbMode === 'save')
+                    ? "Mode Restreint : Faites Clic droit -> Enregistrer l'image sous..."
+                    : "Mode Restreint : Faites Clic droit -> Copier l'image";
+                const over = document.createElement('div');
+                over.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:20000; display:flex; flex-direction:column; align-items:center; justify-content:center; color:white; backdrop-filter:blur(5px); padding:20px;';
+                over.innerHTML = `
+                    <p style="background:#4ade80; color:black; padding:8px 16px; border-radius:20px; font-weight:bold; margin-bottom:20px; text-align:center;">${{actionLabel}}</p>
+                    <img src="${{url}}" style="max-width:90%; max-height:70%; border:2px solid #555; border-radius:8px; box-shadow:0 0 50px rgba(0,0,0,0.5);" />
+                    <p style="margin-top:20px; color:#aaa; cursor:pointer; font-size:14px;">[ Cliquez n'importe où pour fermer ]</p>
+                `;
+                over.onclick = () => over.remove();
+                document.body.appendChild(over);
+            }};
+
+            const parseDataUri = (src) => {{
+                if (!src || !src.startsWith('data:')) return null;
+                const commaIdx = src.indexOf(',');
+                if (commaIdx === -1) return null;
+                const meta = src.substring(5, commaIdx);
+                const isB64 = meta.endsWith(';base64');
+                const mime = (isB64 ? meta.slice(0, -7) : meta) || 'image/png';
+                if (!isB64) return null;
+                const b64 = src.substring(commaIdx + 1);
+                const binStr = atob(b64);
+                const bytes = new Uint8Array(binStr.length);
+                for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+                return {{ blob: new Blob([bytes], {{ type: mime }}), mime: mime }};
+            }};
+
+            const triggerDownload = (blob, name) => {{
+                window.echoTriggerDownload(blob, name);
+            }};
+
+            const extFromMime = (mime) => {{
+                const m = (mime || '').toLowerCase();
+                const map = {{
+                    'image/png': '.png', 'image/jpeg': '.jpg', 'image/jpg': '.jpg',
+                    'image/webp': '.webp', 'image/gif': '.gif', 'image/svg+xml': '.svg',
+                    'image/bmp': '.bmp', 'image/x-icon': '.ico', 'image/avif': '.avif'
+                }};
+                return map[m] || '.png';
+            }};
+
+            let isCropped = false;
+            let sx = 0, sy = 0, sw = natW, sh = natH;
+            const cropBox = opts.cropBoxEl || null;
+            const canvasContainer = opts.canvasContainerEl || null;
+            if (opts.isCropping && cropBox && canvasContainer && cropBox.style.display !== 'none') {{
+                const rect = cropBox.getBoundingClientRect();
+                const cRect = canvasContainer.getBoundingClientRect();
+                if (cRect.width > 0 && cRect.height > 0) {{
+                    const scaleX = natW / cRect.width, scaleY = natH / cRect.height;
+                    sx = Math.max(0, (rect.left - cRect.left) * scaleX);
+                    sy = Math.max(0, (rect.top - cRect.top) * scaleY);
+                    sw = Math.min(rect.width * scaleX, natW - sx);
+                    sh = Math.min(rect.height * scaleY, natH - sy);
+                    if (sw > 5 && sh > 5) isCropped = true;
+                }}
+            }}
+
+            const buildCanvas = () => {{
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                if (isCropped) {{
+                    canvas.width = Math.round(sw);
+                    canvas.height = Math.round(sh);
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = 'high';
+                    ctx.drawImage(imgEl, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+                }} else {{
+                    canvas.width = natW;
+                    canvas.height = natH;
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = 'high';
+                    ctx.drawImage(imgEl, 0, 0);
+                }}
+                return canvas;
+            }};
+
+            const src = imgEl.src || '';
+
+            if (mode === 'save') {{
+                if (!isCropped) {{
+                    const parsed = parseDataUri(src);
+                    if (parsed) {{
+                        const ext = extFromMime(parsed.mime);
+                        let dlName = opts.filename || ('ECHO_IMAGE_' + Date.now() + ext);
+                        if (dlName.indexOf('.') === -1) dlName += ext;
+                        triggerDownload(parsed.blob, dlName);
+                        flashButton(btnEl);
+                        return true;
+                    }}
+                    if (src.startsWith('blob:')) {{
+                        try {{
+                            const resp = await fetch(src);
+                            const b = await resp.blob();
+                            const ext = extFromMime(b.type);
+                            let dlName = opts.filename || ('ECHO_IMAGE_' + Date.now() + ext);
+                            if (dlName.indexOf('.') === -1) dlName += ext;
+                            triggerDownload(b, dlName);
+                            flashButton(btnEl);
+                            return true;
+                        }} catch (e) {{}}
+                    }}
+                    if (src.startsWith('http://') || src.startsWith('https://')) {{
+                        try {{
+                            const resp = await fetch(src, {{ mode: 'cors', credentials: 'omit' }});
+                            if (resp.ok) {{
+                                const b = await resp.blob();
+                                const ext = extFromMime(b.type);
+                                let dlName = opts.filename || ('ECHO_IMAGE_' + Date.now() + ext);
+                                if (dlName.indexOf('.') === -1) dlName += ext;
+                                triggerDownload(b, dlName);
+                                flashButton(btnEl);
+                                return true;
+                            }}
+                        }} catch (e) {{}}
+                    }}
+                }}
+                let canvas;
+                try {{
+                    canvas = buildCanvas();
+                }} catch (err) {{
+                    showFallback(src, 'save');
+                    return false;
+                }}
+                let dlName = opts.filename || ('ECHO_REPLAY_' + (isCropped ? 'Crop' : 'Full') + '_' + Date.now() + '.png');
+                if (dlName.indexOf('.') === -1) dlName += '.png';
+                return new Promise((resolve) => {{
+                    try {{
+                        canvas.toBlob((blob) => {{
+                            if (!blob) {{ showFallback(src, 'save'); resolve(false); return; }}
+                            triggerDownload(blob, dlName);
+                            flashButton(btnEl);
+                            resolve(true);
+                        }}, 'image/png');
+                    }} catch (err) {{
+                        showFallback(src, 'save');
+                        resolve(false);
+                    }}
+                }});
+            }}
+
+            // Mode 'copy' (Presse-papier W3C ClipboardItem image/png)
+            if (!navigator.clipboard || !window.ClipboardItem) {{
+                try {{
+                    const c = buildCanvas();
+                    showFallback(c.toDataURL('image/png'), 'copy');
+                }} catch (err) {{
+                    showFallback(src, 'copy');
+                }}
+                return false;
+            }}
+
+            if (!isCropped && src.startsWith('data:image/png;base64,')) {{
+                const parsed = parseDataUri(src);
+                if (parsed) {{
+                    try {{
+                        await navigator.clipboard.write([new ClipboardItem({{ 'image/png': parsed.blob }})]);
+                        flashButton(btnEl);
+                        return true;
+                    }} catch (err) {{
+                        showFallback(src, 'copy');
+                        return false;
+                    }}
+                }}
+            }}
+
+            let canvas;
+            try {{
+                canvas = buildCanvas();
+            }} catch (err) {{
+                showFallback(src, 'copy');
+                return false;
+            }}
+            return new Promise((resolve) => {{
+                try {{
+                    canvas.toBlob(async (blob) => {{
+                        if (!blob) {{ showFallback(src, 'copy'); resolve(false); return; }}
+                        try {{
+                            await navigator.clipboard.write([new ClipboardItem({{ 'image/png': blob }})]);
+                            flashButton(btnEl);
+                            resolve(true);
+                        }} catch (err) {{
+                            try {{
+                                showFallback(canvas.toDataURL('image/png'), 'copy');
+                            }} catch (e2) {{
+                                showFallback(src, 'copy');
+                            }}
+                            resolve(false);
+                        }}
+                    }}, 'image/png');
+                }} catch (err) {{
+                    showFallback(src, 'copy');
+                    resolve(false);
+                }}
+            }});
+        }};
+        """
+
+    @staticmethod
     def _generate_webplayer_js(
             b64: str,
             mime: str,
@@ -1503,12 +1883,15 @@ class EchoUI(EchoRichUI):
         url_j = std_json.dumps(current_url).decode('utf-8')
         mime_j = std_json.dumps(mime).decode('utf-8')
         cid_j = std_json.dumps(chat_id or "").decode('utf-8')
+        copy_icon = EchoRichUI.get_icon("Copy", size=16)
+        export_icon = EchoRichUI.get_icon("Export", size=16)
 
         return f"""
   (function() {{
     const HUD_ID = '{hud_id}';
     const CHAT_ID = {cid_j};
     {EchoUI.get_mobile_guard_js(hud_id)}
+    {EchoUI.get_media_export_js()}
     const STATE_KEY = '{state_key}';
     const ENGINE_KEY = 'echoWebPlayer_' + HUD_ID.replace(/[^a-zA-Z0-9]/g, '_');
 
@@ -1520,6 +1903,11 @@ class EchoUI(EchoRichUI):
             if (newUrl !== undefined) {{
                 const urlEl = document.getElementById(HUD_ID + "-url");
                 if (urlEl) urlEl.value = newUrl;
+            }}
+            if (window[ENGINE_KEY].currentData) {{
+                window[ENGINE_KEY].currentData.b64 = newB64;
+                window[ENGINE_KEY].currentData.mime = 'image/jpeg';
+                if (newUrl !== undefined) window[ENGINE_KEY].currentData.url = newUrl;
             }}
         }}
     }};
@@ -1533,7 +1921,7 @@ class EchoUI(EchoRichUI):
       window[ENGINE_KEY] = {{
         hud: null, ratio: 1.0, posX: 30, posY: 30,
         imgScale: 1.0, imgX: 0, imgY: 0,
-        isDragging: false, headerH: 45,
+        isDragging: false, headerH: 45, currentData: null,
 
         getInitialScale: function(imgW, imgH) {{
           const targetW = window.innerWidth * 0.5;
@@ -1691,6 +2079,26 @@ class EchoUI(EchoRichUI):
             document.addEventListener('mouseup', up);
           }};
 
+          const btnCopy = document.getElementById(HUD_ID + "-btn-copy");
+          if (btnCopy) {{
+            btnCopy.onclick = (e) => {{
+              e.stopPropagation();
+              const img = document.getElementById(HUD_ID + "-img");
+              if (window.echoExportImage) window.echoExportImage({{ imgEl: img, mode: 'copy', btnEl: btnCopy }});
+            }};
+          }}
+
+          const btnExport = document.getElementById(HUD_ID + "-btn-export");
+          if (btnExport) {{
+            btnExport.onclick = (e) => {{
+              e.stopPropagation();
+              const img = document.getElementById(HUD_ID + "-img");
+              if (window.echoExportImage) {{
+                window.echoExportImage({{ imgEl: img, mode: 'save', btnEl: btnExport }});
+              }}
+            }};
+          }}
+
           document.getElementById(HUD_ID + "-btn-zoom").onclick = () => {{
             const img = document.getElementById(HUD_ID + "-img");
             const vw = window.innerWidth, vh = window.innerHeight;
@@ -1763,7 +2171,9 @@ class EchoUI(EchoRichUI):
             <div id="${{HUD_ID}}-header" style="height:${{this.headerH}}px; padding:0 15px; background:rgba(255,255,255,0.02); display:flex; align-items:center; gap:12px; border-bottom:1px solid #222; cursor:move; user-select:none; box-sizing:border-box;">
               <span style="font-size:14px; padding:3px 8px; border-radius:8px; background:rgba(0,212,255,0.1); color:#00d4ff;">{icon}</span>
               <input id="${{HUD_ID}}-url" type="text" placeholder="URL du navigateur..." style="flex:1; background:rgba(0,0,0,0.4); border:1px solid #333; border-radius:6px; color:#00d4ff; font-size:11px; padding:6px 12px; outline:none; font-family:monospace;" readonly />
-              <div style="display:flex; gap:8px;">
+              <div style="display:flex; gap:8px; align-items:center;">
+                <button id="${{HUD_ID}}-btn-copy" title="Copier l'image" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px; display:flex; align-items:center; justify-content:center; padding:0;">{copy_icon}</button>
+                <button id="${{HUD_ID}}-btn-export" title="Exporter (Image ➔ PC)" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px; display:flex; align-items:center; justify-content:center; padding:0;">{export_icon}</button>
                 <button id="${{HUD_ID}}-btn-zoom" title="Maximiser (Ajuster)" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/></svg></button>
                 <button id="${{HUD_ID}}-btn-reset" title="Taille réelle (1:1)" style="background:none; border:none; color:#777; cursor:pointer; font-size:11px; font-weight:bold;">1:1</button>
                 <button id="${{HUD_ID}}-btn-min" title="Minimiser" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='5' y1='12' x2='19' y2='12'/></svg></button>
@@ -1791,7 +2201,8 @@ class EchoUI(EchoRichUI):
         }},
 
         update: function(data) {{
-          if (!document.getElementById(HUD_ID)) this.create(data);
+          this.currentData = data;
+          if (!document.getElementById(HUD_ID) || !document.getElementById(HUD_ID + "-btn-copy")) this.create(data);
           this.hud = document.getElementById(HUD_ID);
           const img = document.getElementById(HUD_ID + "-img");
           const boxes = document.getElementById(HUD_ID + "-hitboxes");
@@ -2193,44 +2604,333 @@ class EchoUI(EchoRichUI):
 """
         await events.emit_execute(js_code)
 
-    @staticmethod
-    def show_image_js(b64: str, mime: str = "image/png",
-                      title: str = "Aperçu Image",
-                      chat_id: str = "") -> str:
-        """Réutilise le moteur WebPlayer (HUD navigateur) pour afficher une image locale (Base64).
-        Utiliser via events.call('execute', {'code': ...}).
-        N'utilise pas HTMLResponse — retour 100% propre, sans pollution du contexte Gemini."""
-        hud_id = f"echo-preview-{chat_id}" if chat_id else "echo-preview"
-        return EchoUI._generate_webplayer_js(
-            b64=b64, mime=mime, metadata=[], current_url=title,
-            hud_id=hud_id, state_key="echo_preview_state", icon="🖼️",
-            chat_id=chat_id
-        )
-
     @classmethod
     def image_viewer(
             cls,
             img_url: str,
-            title: str = "Aperçu Image") -> HTMLResponse:
-        """Maintenu pour les Actions OWUI. Pour les Tools, utiliser show_image_js() + events.call."""
+            title: str = "Aperçu Image",
+            filename: str = "",
+            is_remote_fallback: bool = False) -> HTMLResponse:
+        """Génère une Iframe inline responsive et auto-adaptative pour l'affichage d'images (locales B64 ou distantes) avec outils de copie et d'export."""
+        img_url_j = std_json.dumps(img_url or "").decode("utf-8")
+        fname_j = std_json.dumps(filename or "").decode("utf-8")
+        safe_title = (
+            (title or "Aperçu Image")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
+        copy_icon = cls.get_icon("Copy", size=15)
+        export_icon = cls.get_icon("Export", size=15)
+        max_icon = cls.get_icon("Maximize", size=14)
+        media_export_js = cls.get_media_export_js()
+        fallback_badge = (
+            '<span id="echo-iv-badge-mode" style="font-size:10px; padding:2px 7px; border-radius:999px; '
+            'background:rgba(245,158,11,0.15); color:#f59e0b; border:1px solid rgba(245,158,11,0.3); '
+            'white-space:nowrap;">Lien direct</span>'
+            if is_remote_fallback
+            else ""
+        )
+
         content = f"""
-    <div id="hud-bar"><span style="font-weight:bold;">👁️ ECHO Vision Explorer</span></div>
-    <div id="canvas-area" style="width:100%; height:600px; overflow:hidden; position:relative; background:#f1f5f9; display:flex; align-items:center; justify-content:center;">
-      <img src="{img_url}" style="max-width:100%; max-height:100%;">
+    <style>
+      #echo-iv-root {{
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        border: 1px solid var(--echo-hud-border);
+        border-radius: 10px;
+        overflow: hidden;
+        background: var(--echo-bg);
+        box-sizing: border-box;
+      }}
+      #hud-bar {{
+        margin-bottom: 0 !important;
+        border: none !important;
+        border-bottom: 1px solid var(--echo-hud-border) !important;
+        border-radius: 0 !important;
+        padding: 8px 12px !important;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: wrap;
+        background: var(--echo-bg);
+      }}
+      .echo-iv-title-group {{
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        flex: 1;
+      }}
+      .echo-iv-title {{
+        font-weight: 600;
+        font-size: 13px;
+        color: var(--echo-text);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }}
+      .echo-iv-dims {{
+        font-size: 11px;
+        color: var(--echo-hud-text);
+        font-family: 'JetBrains Mono', monospace;
+        white-space: nowrap;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: var(--echo-btn-bg);
+        border: 1px solid var(--echo-hud-border);
+      }}
+      .echo-iv-actions {{
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }}
+      .echo-iv-btn {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        height: 28px;
+        padding: 0 9px;
+        border-radius: 6px;
+        border: 1px solid var(--echo-btn-border);
+        background: var(--echo-btn-bg);
+        color: var(--echo-text);
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        user-select: none;
+      }}
+      .echo-iv-btn:hover {{
+        border-color: var(--echo-accent);
+        color: var(--echo-accent);
+      }}
+      #canvas-area {{
+        width: 100%;
+        min-height: 80px;
+        position: relative;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: var(--echo-bg);
+        box-sizing: border-box;
+        padding: 8px;
+      }}
+      #echo-iv-img {{
+        display: block;
+        width: 100%;
+        max-width: 100%;
+        height: auto;
+        object-fit: contain;
+        border-radius: 4px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
+        transform-origin: center center;
+        user-select: none;
+        -webkit-user-drag: none;
+      }}
+    </style>
+    <div id="echo-iv-root">
+      <div id="hud-bar">
+        <div class="echo-iv-title-group">
+          <span style="font-size:15px;">🖼️</span>
+          <span class="echo-iv-title" title="{safe_title}">{safe_title}</span>
+          <span id="echo-iv-dims" class="echo-iv-dims" style="display:none;"></span>
+          {fallback_badge}
+        </div>
+        <div class="echo-iv-actions">
+          <button id="echo-iv-btn-fit" class="echo-iv-btn" title="Basculer Ajuster au cadre / Taille réelle (1:1)">
+            {max_icon} <span id="echo-iv-fit-label">1:1</span>
+          </button>
+          <button id="echo-iv-btn-copy" class="echo-iv-btn" title="Copier l'image dans le presse-papier (Qualité native)">
+            {copy_icon} <span>Copier</span>
+          </button>
+          <button id="echo-iv-btn-export" class="echo-iv-btn" title="Télécharger l'image originale sur le PC">
+            {export_icon} <span>Exporter</span>
+          </button>
+        </div>
+      </div>
+      <div id="canvas-area">
+        <img id="echo-iv-img" alt="{safe_title}" />
+        <div id="echo-iv-error" style="display:none; flex-direction:column; align-items:center; gap:8px; padding:24px; text-align:center; color:var(--echo-hud-text);">
+          <span style="font-size:24px;">⚠️</span>
+          <span style="font-size:13px; font-weight:600; color:var(--echo-text);">Impossible de charger l'image distante dans le cadre.</span>
+          <a id="echo-iv-ext-link" target="_blank" rel="noopener noreferrer" style="font-size:12px; color:var(--echo-accent); text-decoration:underline;">Ouvrir le lien dans un nouvel onglet</a>
+        </div>
+      </div>
     </div>
+    <script>
+      (function() {{
+        {media_export_js}
+        const IMG_SRC = {img_url_j};
+        const FILENAME = {fname_j};
+        const img = document.getElementById('echo-iv-img');
+        const area = document.getElementById('canvas-area');
+        const dimsEl = document.getElementById('echo-iv-dims');
+        const errEl = document.getElementById('echo-iv-error');
+        const extLink = document.getElementById('echo-iv-ext-link');
+        const btnFit = document.getElementById('echo-iv-btn-fit');
+        const fitLabel = document.getElementById('echo-iv-fit-label');
+        const btnCopy = document.getElementById('echo-iv-btn-copy');
+        const btnExport = document.getElementById('echo-iv-btn-export');
+
+        let fitMode = true;
+        let zoom = 1.0;
+        let panX = 0, panY = 0;
+        let isDragging = false, startX = 0, startY = 0;
+
+        function updateLayout() {{
+          const natW = img.naturalWidth || 0;
+          const natH = img.naturalHeight || 0;
+          if (!natW || !natH) return;
+
+          const areaW = Math.max(100, (area.clientWidth || document.body.clientWidth || 640) - 16);
+
+          if (fitMode) {{
+            disableAutoResize = false;
+            zoom = 1.0;
+            panX = 0;
+            panY = 0;
+            area.style.cursor = 'zoom-in';
+            img.style.width = '100%';
+            img.style.maxWidth = '100%';
+            img.style.height = 'auto';
+            img.style.maxHeight = 'none';
+            img.style.transform = 'none';
+            fitLabel.textContent = '1:1';
+
+            const scaledH = Math.round(areaW * (natH / natW));
+            const targetH = Math.max(60, scaledH + 16);
+            const prevH = area.style.height;
+            area.style.height = targetH + 'px';
+
+            if (prevH !== area.style.height && typeof reportHeight === 'function') {{
+              setTimeout(reportHeight, 30);
+            }}
+          }} else {{
+            disableAutoResize = true;
+            area.style.cursor = isDragging ? 'grabbing' : 'grab';
+            img.style.width = natW + 'px';
+            img.style.maxWidth = 'none';
+            img.style.height = natH + 'px';
+            img.style.maxHeight = 'none';
+            img.style.transform = `translate(${{panX}}px, ${{panY}}px) scale(${{zoom}})`;
+            fitLabel.textContent = 'Ajuster';
+          }}
+        }}
+
+        img.onload = function() {{
+          const natW = img.naturalWidth || 0;
+          const natH = img.naturalHeight || 0;
+          if (natW && natH) {{
+            dimsEl.textContent = natW + ' × ' + natH + ' px';
+            dimsEl.style.display = 'inline-block';
+          }}
+          updateLayout();
+        }};
+
+        img.onerror = function() {{
+          img.style.display = 'none';
+          errEl.style.display = 'flex';
+          if (extLink && (IMG_SRC.startsWith('http://') || IMG_SRC.startsWith('https://'))) {{
+            extLink.href = IMG_SRC;
+          }} else if (extLink) {{
+            extLink.style.display = 'none';
+          }}
+          area.style.height = '180px';
+          if (typeof reportHeight === 'function') setTimeout(reportHeight, 30);
+        }};
+
+        function toggleFitMode() {{
+          fitMode = !fitMode;
+          if (!fitMode) {{
+            zoom = 1.0;
+            panX = 0;
+            panY = 0;
+          }}
+          updateLayout();
+        }}
+
+        btnFit.onclick = toggleFitMode;
+        img.ondblclick = toggleFitMode;
+
+        area.addEventListener('wheel', function(e) {{
+          if (!e.ctrlKey && fitMode) return;
+          e.preventDefault();
+          const natW = img.naturalWidth || 0;
+          const natH = img.naturalHeight || 0;
+          if (fitMode && natW && natH) {{
+            const areaW = Math.max(100, (area.clientWidth || document.body.clientWidth || 640) - 16);
+            zoom = areaW / natW;
+            panX = 0;
+            panY = 0;
+            fitMode = false;
+          }}
+          const factor = e.deltaY < 0 ? 1.12 : 0.89;
+          zoom = Math.max(0.1, Math.min(10.0, zoom * factor));
+          updateLayout();
+        }}, {{ passive: false }});
+
+        area.addEventListener('mousedown', function(e) {{
+          if (fitMode || e.button !== 0) return;
+          e.preventDefault();
+          isDragging = true;
+          startX = e.clientX - panX;
+          startY = e.clientY - panY;
+          area.style.cursor = 'grabbing';
+        }});
+
+        window.addEventListener('mousemove', function(e) {{
+          if (!isDragging) return;
+          panX = e.clientX - startX;
+          panY = e.clientY - startY;
+          img.style.transform = `translate(${{panX}}px, ${{panY}}px) scale(${{zoom}})`;
+        }});
+
+        window.addEventListener('mouseup', function() {{
+          if (isDragging) {{
+            isDragging = false;
+            if (!fitMode) area.style.cursor = 'grab';
+          }}
+        }});
+
+        btnCopy.onclick = function(e) {{
+          e.stopPropagation();
+          if (window.echoExportImage) {{
+            window.echoExportImage({{ imgEl: img, mode: 'copy', btnEl: btnCopy, filename: FILENAME }});
+          }}
+        }};
+
+        btnExport.onclick = function(e) {{
+          e.stopPropagation();
+          if (window.echoExportImage) {{
+            window.echoExportImage({{ imgEl: img, mode: 'save', btnEl: btnExport, filename: FILENAME }});
+          }}
+        }};
+
+        let lastW = area.clientWidth || 0;
+        if (window.ResizeObserver) {{
+          new ResizeObserver(function(entries) {{
+            const w = entries[0] && entries[0].contentRect ? Math.round(entries[0].contentRect.width) : 0;
+            if (w > 0 && Math.abs(w - lastW) > 4) {{
+              lastW = w;
+              if (fitMode) updateLayout();
+            }}
+          }}).observe(area);
+        }}
+
+        img.src = IMG_SRC;
+      }})();
+    </script>
     """
         html = cls._get_boilerplate(content, title)
         return HTMLResponse(
-            content=html, headers={
-                "Content-Disposition": "inline"})
-
-    @classmethod
-    def player_ui(cls, session_id: str, total_steps: int) -> HTMLResponse:
-        content = "<div style='padding:20px;'>Interface Replay v5.136 active via Action.</div>"
-        html = cls._get_boilerplate(content, "ECHO Navigation Replay")
-        return HTMLResponse(
-            content=html, headers={
-                "Content-Disposition": "inline"})
+            content=html, headers={"Content-Disposition": "inline"}
+        )
 
     @classmethod
     def map_viewer(
@@ -2664,7 +3364,7 @@ return new Promise(function(resolve) {{
           if (effectiveCid) {
               window._echoWindowChatMap[window_id] = effectiveCid;
           }
-          
+
           let monitor = window['echo_monitor_obj_' + window_id];
           if (!document.getElementById(hudId) || !monitor) {
               monitor = new window.EchoFloatingWindow({
@@ -2675,11 +3375,11 @@ return new Promise(function(resolve) {{
                   height: height || '400px'
               });
               window['echo_monitor_obj_' + window_id] = monitor;
-              
+
               monitor.onClose = () => {
                   delete window['echo_monitor_obj_' + window_id];
               };
-              
+
               monitor.render();
               monitor.attachBaseEvents();
           } else {
@@ -2691,7 +3391,7 @@ return new Promise(function(resolve) {{
               hudEl.setAttribute('data-chat-id', effectiveCid);
               hudEl.setAttribute('data-echo-chat-id', effectiveCid);
           }
-          
+
           const body = document.getElementById(hudId + '-body');
           if (body) {
               const existingResizer = document.getElementById(hudId + '-resizer');
@@ -2724,7 +3424,7 @@ return new Promise(function(resolve) {{
         model_id: str = "echo_orchestrator",
     ) -> str:
         """Génère le script JS complet du HUD Cognitive Monitor.
-        Injection via __event_call__(type: 'execute', data: code: ...).
+        Injection via events.call_execute(...).
 
         Affiche les threads cognitifs (delegates, experts, conseils) sous forme
         d'onglets verticaux avec arbre d'appels expand/collapse.

@@ -2,11 +2,13 @@
 """
 title: ECHO Window Manager Filter
 author: Wilfried BARNAVON
-version: 5.231.11.1
-description: Filtre Inlet/Outlet (Priorité 2) amorçant le gestionnaire de fenêtres agnostique multi-chats et multi-navigateurs (EchoWindowManager).
+version: 5.231.55.1
+description: Filtre Inlet/Outlet (Priorité 20) amorçant le gestionnaire de fenêtres agnostique multi-chats et multi-navigateurs (EchoWindowManager).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.55.1: Réétagement de la priorité à 20 (après tcp_keepalive_filter à 10 et avant edge_embed_bridge_filter à 30).
+# 5.231.46.1: Acheminement strict de l'injection Inlet et de la synchronisation Outlet via EchoEvents.emit_execute (conformité UCTP et double transport).
 # 5.231.11.1: Réétagement de la priorité à 2 (après tcp_keepalive_filter à 1 et avant edge_embed_bridge_filter à 3).
 # 5.231.1.0: Injection inconditionnelle du bootstrap idempotent en Priorité 1 après rechargement de page.
 # 5.230.1.1: Création du filtre dédié Window Manager à la priorité 1 (après build_environment_domain à 0 et avant edge_embed_bridge_filter à 2).
@@ -18,9 +20,9 @@ from pydantic import BaseModel, Field
 if "/app/backend/echo_libs" not in sys.path:
     sys.path.append("/app/backend/echo_libs")
 
+from echo_events import EchoEvents
 from echo_window_manager import (
     get_full_loader_bundle_js,
-    get_window_manager,
     register_echo_wm_routes,
 )
 
@@ -28,9 +30,9 @@ from echo_window_manager import (
 class Filter:
     class Valves(BaseModel):
         priority: int = Field(
-            default=2,
+            default=20,
             hidden=True,
-            description="Priorité d'exécution (2 = après tcp_keepalive_filter à 1 et avant edge_embed_bridge_filter à 3).",
+            description="Priorité d'exécution (20 = après tcp_keepalive_filter à 10 et avant edge_embed_bridge_filter à 30).",
         )
         enable_window_manager: bool = Field(
             default=True,
@@ -66,10 +68,11 @@ class Filter:
         if not __event_emitter__:
             return body
 
+        user_id = (__user__ or {}).get("id", "")
+        chat_id = (__metadata__ or {}).get("chat_id") or body.get("chat_id") or ""
         try:
-            await __event_emitter__(
-                {"type": "execute", "data": {"code": get_full_loader_bundle_js()}}
-            )
+            events = EchoEvents(__event_emitter__, user_id=user_id, chat_id=chat_id)
+            await events.emit_execute(get_full_loader_bundle_js())
         except Exception:
             pass
 
@@ -88,12 +91,11 @@ class Filter:
 
         user_id = (__user__ or {}).get("id", "")
         chat_id = (__metadata__ or {}).get("chat_id") or body.get("chat_id") or ""
-        wm = get_window_manager()
-        if wm.has_active_clients(user_id):
-            await wm.emit_js(
-                user_id=user_id,
-                chat_id=chat_id,
-                message_id="",
-                code="if (window.EchoWM && typeof window.EchoWM.syncAllWindowsVisibility === 'function') window.EchoWM.syncAllWindowsVisibility();",
+        try:
+            events = EchoEvents(__event_emitter__, user_id=user_id, chat_id=chat_id)
+            await events.emit_execute(
+                "if (window.EchoWM && typeof window.EchoWM.syncAllWindowsVisibility === 'function') window.EchoWM.syncAllWindowsVisibility();"
             )
+        except Exception:
+            pass
         return body

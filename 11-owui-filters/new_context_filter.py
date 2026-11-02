@@ -2,16 +2,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 5.231.11.1
+version: 5.231.55.1
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.55.1: Réétagement de la priorité à 70 (après context_compaction_filter à 60 et avant codex_links_filter à 80).
 # 5.231.11.1: Réétagement de la priorité à 30 (après user_native_context_filter à 20 et avant codex_links_filter à 40).
 # 5.231.7.1: Ajout du fallback sur metadata.user_message_id et timestamp courant pour garantir le scellement Shadow du message utilisateur.
 # 5.227.1.1: Suppression de l'extraction de AEC_context_checkpoint et de l'offset _echo_compacted_user_turns.
 # 5.226.18.1: Attente du verrou de clonage (wait_for_chat_clone) avant l'instanciation de EchoStateManager.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 
 from pydantic import BaseModel, Field
@@ -41,7 +41,7 @@ logger = logging.getLogger("ECHO-FILTER")
 
 class Filter:
     class Valves(BaseModel):
-        priority: int = Field(default=30, hidden=True, description="Priorité d'exécution (30 = après user_native_context_filter à 20 et avant codex_links_filter à 40).")
+        priority: int = Field(default=70, hidden=True, description="Priorité d'exécution (70 = après context_compaction_filter à 60 et avant codex_links_filter à 80).")
         ENABLE_SMART_CONTEXT: bool = Field(default=True, description="Active le résumé intelligent des fichiers volumineux via Gemini Flash.")
         SMART_CONTEXT_CHUNK_LIMIT: int = Field(default=10, ge=2, le=50, description="🧠 Nombre de passages extraits pour la Synthèse Guidée par RAG (2-50).")
         ENABLE_OFFICE_CONVERSION: bool = Field(default=True, description="📄 Convertit automatiquement les fichiers Office (Word, Excel, PowerPoint) en texte pour l'analyse.")

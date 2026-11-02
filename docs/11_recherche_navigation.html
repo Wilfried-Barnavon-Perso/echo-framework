@@ -107,14 +107,18 @@
             de données volumineuses à un sous-agent dédié.</li>
         </ul>
 
-        <h3>3. Vault Explorer (<code>file_content_explorer.py</code> v5.231.35.1) &amp; Maps Grounding
+        <h3>3. Vault Explorer (<code>file_content_explorer.py</code> v5.231.53.1) &amp; Maps Grounding
           (<code>gemini_maps_grounding.py</code> v5.229.0.0)</h3>
         <ul>
-          <li><strong>Isolement &amp; Espaces :</strong> Résolution étendue des chemins
-            (<code>_resolve_extended_file_path</code>) vérifiant strictement le <code>user_id</code> à travers les
+          <li><strong>Isolement &amp; Espaces :</strong> Résolution unifiée par ID, Nom et Workspace
+            (<code>resolve_extended_file_path</code> et <code>extract_clean_filename</code> dans
+            <code>echo_paths.py</code> v5.231.49.1) vérifiant strictement le <code>user_id</code> à travers les
             espaces <code>files</code> (Vault), <code>main</code> et <code>sandbox</code> (Codex). Lecture paginée par
-            blocs de 16 Ko (<code>read_raw_file_content</code>), prévisualisation image isolée par conversation
-            (<code>show_image_to_user</code> via <code>chat_id</code>), extraction chirurgicale ciblée
+            blocs de 16 Ko (<code>read_raw_file_content</code>), affichage d'image en Iframe inline responsive
+            (<code>show_image_to_user(target, workspace=None)</code> via <code>EchoUI.image_viewer</code> avec
+            pré-vérification anti-SSRF <code>is_safe_public_url</code> et <code>sniff_image_mime</code> dans
+            <code>echo_http.py</code> v5.231.49.1, conversion Base64 côté serveur et copie/export intégrés), extraction
+            chirurgicale ciblée
             (<code>semantic_probe</code>) et distillation multimédia descriptive horodatée
             (<code>read_multimedia_file</code>) avec décimation vidéo à 1 fps en résolution native
             (<code>-preset veryfast -qp 26 -g 10 -bf 0</code>, fragmentation fMP4 <code>-frag_duration 5000000</code>,
@@ -139,7 +143,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.44 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.56 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

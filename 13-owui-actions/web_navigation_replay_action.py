@@ -1,17 +1,17 @@
 """
 title: Revue Navigation Web
 author: Wilfried BARNAVON
-version: 5.228.12.1
+version: 5.231.47.1
 description: Cockpit vidéo interactif permettant de visionner et d'extraire des captures de la navigation autonome.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxOCIgeD0iMyIgeT0iMyIgcng9IjIiIC8+PHBhdGggZD0iTTcgM3YxOCIgLz48cGF0aCBkPSJNMyA3LjVoNCIgLz48cGF0aCBkPSJNMyAxMmgxOCIgLz48cGF0aCBkPSJNMyAxNi41aDQiIC8+PHBhdGggZD0iTTE3IDN2MTgiIC8+PHBhdGggZD0iTTE3IDcuNWg0IiAvPjxwYXRoIGQ9Ik0xNyAxNi41aDQiIC8+PC9zdmc+
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.47.1: Factorisation de exportMedia via EchoUI.get_media_export_js (window.echoExportImage), icône Export unifiée et conformité Flake8.
 # 5.228.12.1: Résilience RPC post-standby et anti-timeout 60s via EchoEvents et EchoUI.get_hud_rpc_bridge_js (support ping et reconnect_only).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 4.27: Amélioration UX - Ajout d'un label informatif pour la fonctionnalité de zoom (Ctrl+Molette).
 # 4.26: Refonte iconographique complète via SVGs natifs (EchoUI) et alignements épurés sans background/border-radius.
-# 4.16: Fix - Levée d'une Exception explicite en cas d'absence d'archives pour forcer l'affichage d'un toast d'erreur côté OWUI frontend.
 
 import orjson as json
 import pybase64 as base64
@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 _ACTIVE_REPLAY_LOOPS: dict[tuple[str, str], str] = {}
 
+
 def _generate_replay_shell(
     timestamps: List[Dict],
     chat_id: str,
@@ -48,6 +49,7 @@ def _generate_replay_shell(
             const REPLAY_ID = 'echo-browser-replay';
             {EchoUI.get_mobile_guard_js('echo-browser-replay')}
             {EchoUI.get_hud_rpc_bridge_js()}
+            {EchoUI.get_media_export_js()}
             let replay = document.getElementById(REPLAY_ID);
 
             if (replay && replay.getAttribute('data-chat-id') !== data.cid) {{
@@ -65,7 +67,7 @@ def _generate_replay_shell(
                     <div style="position:absolute; top:20px; right:20px; z-index:100; display:flex; gap:15px;">
                         <button id="${{REPLAY_ID}}-btn-crop" title="Sélection" style="background:none; border:none; color:white; cursor:pointer; width:40px; height:40px; display:flex; align-items:center; justify-content:center; opacity:0.8;">{EchoUI.get_icon('Crop', size=20)}</button>
                         <button id="${{REPLAY_ID}}-btn-copy" title="Copier" style="background:none; border:none; color:white; cursor:pointer; width:40px; height:40px; display:flex; align-items:center; justify-content:center; opacity:0.8;">{EchoUI.get_icon('Copy', size=20)}</button>
-                        <button id="${{REPLAY_ID}}-btn-save" title="Télécharger" style="background:none; border:none; color:white; cursor:pointer; width:40px; height:40px; display:flex; align-items:center; justify-content:center; opacity:0.8;">{EchoUI.get_icon('Download', size=20)}</button>
+                        <button id="${{REPLAY_ID}}-btn-save" title="Exporter (Image ➔ PC)" style="background:none; border:none; color:white; cursor:pointer; width:40px; height:40px; display:flex; align-items:center; justify-content:center; opacity:0.8;">{EchoUI.get_icon('Export', size=20)}</button>
                         <button id="${{REPLAY_ID}}-close" title="Fermer" style="background:none; border:none; color:white; cursor:pointer; width:40px; height:40px; display:flex; align-items:center; justify-content:center; opacity:0.8;">{EchoUI.get_icon('X', size=24)}</button>
                     </div>
 
@@ -89,7 +91,7 @@ def _generate_replay_shell(
                         <div id="${{REPLAY_ID}}-meta" style="font-size:11px; color:#4ade80; font-family:monospace; letter-spacing:1px; background:rgba(0,0,0,0.3); padding:4px 12px; border-radius:10px;">INITIALISATION...</div>
 
                         <div style="display:flex; gap:15px; align-items:center;">
-                            <button id="${{REPLAY_ID}}-first" style="background:none; border:none; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center;">{EchoUI.get_icon('SkipBack', size=20)}</button>    
+                            <button id="${{REPLAY_ID}}-first" style="background:none; border:none; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center;">{EchoUI.get_icon('SkipBack', size=20)}</button>
                             <button id="${{REPLAY_ID}}-prev" style="background:none; border:none; color:white; cursor:pointer; margin-right:40px; display:flex; align-items:center; justify-content:center;">{EchoUI.get_icon('ChevronLeft', size=24)}</button>
 
                             <div style="display:flex; gap:10px; align-items:center;">
@@ -98,7 +100,7 @@ def _generate_replay_shell(
                             </div>
 
                             <button id="${{REPLAY_ID}}-next" style="background:none; border:none; color:white; cursor:pointer; margin-left:40px; display:flex; align-items:center; justify-content:center;">{EchoUI.get_icon('ChevronRight', size=24)}</button>
-                            <button id="${{REPLAY_ID}}-last" style="background:none; border:none; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center;">{EchoUI.get_icon('SkipForward', size=20)}</button>     
+                            <button id="${{REPLAY_ID}}-last" style="background:none; border:none; color:white; cursor:pointer; display:flex; align-items:center; justify-content:center;">{EchoUI.get_icon('SkipForward', size=20)}</button>
                         </div>
 
                         <div style="display:flex; gap:10px; align-items:center; width:480px; opacity:0.8;">
@@ -181,71 +183,16 @@ def _generate_replay_shell(
                 window.echoReplayUpdate = updateUI;
 
                 const exportMedia = async (mode) => {{
-                    const imgEl = document.getElementById(`${{REPLAY_ID}}-img`);
-                    const canvas = document.createElement('canvas');
-                    const ctx = canvas.getContext('2d');
-                    const natW = imgEl.naturalWidth, natH = imgEl.naturalHeight;
-                    if (!natW || !natH) return;
-
-                    let isCropped = false;
-                    const cropBox = document.getElementById(`${{REPLAY_ID}}-crop-box`);
-                    if (isCropping && cropBox && cropBox.style.display !== 'none') {{
-                        const rect = cropBox.getBoundingClientRect();
-                        const cRect = document.getElementById(`${{REPLAY_ID}}-canvas`).getBoundingClientRect();
-                        const scaleX = natW / cRect.width, scaleY = natH / cRect.height;
-                        let sx = (rect.left - cRect.left) * scaleX, sy = (rect.top - cRect.top) * scaleY;
-                        let sw = rect.width * scaleX, sh = rect.height * scaleY;
-                        sx = Math.max(0, sx); sy = Math.max(0, sy);
-                        sw = Math.min(sw, natW - sx); sh = Math.min(sh, natH - sy);
-
-                        if (sw > 5 && sh > 5) {{
-                            canvas.width = sw; canvas.height = sh;
-                            ctx.drawImage(imgEl, sx, sy, sw, sh, 0, 0, sw, sh);
-                            isCropped = true;
-                        }}
-                    }}
-
-                    if (!isCropped) {{
-                        canvas.width = natW; canvas.height = natH;
-                        ctx.drawImage(imgEl, 0, 0);
-                    }}
-
-                    const dataUrl = canvas.toDataURL('image/png');
-                    const showFallback = (url) => {{
-                        const over = document.createElement('div');
-                        over.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:20000; display:flex; flex-direction:column; align-items:center; justify-content:center; color:white; backdrop-filter:blur(5px); padding:20px;';
-                        over.innerHTML = `
-                            <p style="background:#4ade80; color:black; padding:8px 16px; border-radius:20px; font-weight:bold; margin-bottom:20px;">Mode Restreint : Faites Clic droit -> Copier l'image</p>
-                            <img src="${{url}}" style="max-width:90%; max-height:70%; border:2px solid #555; border-radius:8px; box-shadow:0 0 50px rgba(0,0,0,0.5);" />
-                            <p style="margin-top:20px; color:#aaa; cursor:pointer; font-size:14px;">[ Cliquez n'importe où pour fermer ]</p>
-                        `;
-                        over.onclick = () => over.remove();
-                        document.body.appendChild(over);
-                    }};
-
-                    if (mode === 'copy') {{
-                        if (!navigator.clipboard || !window.ClipboardItem) {{
-                            showFallback(dataUrl);
-                            return;
-                        }}
-                        canvas.toBlob(async (blob) => {{
-                            try {{
-                                await navigator.clipboard.write([new ClipboardItem({{ 'image/png': blob }})]);
-                                const btn = document.getElementById(`${{REPLAY_ID}}-btn-copy`);
-                                if(btn) {{
-                                    const oldText = btn.innerHTML; btn.innerHTML = '✓'; btn.style.color = '#4ade80';
-                                    setTimeout(() => {{ btn.innerHTML = oldText; btn.style.color = 'white'; }}, 1000);
-                                }}
-                            }} catch (err) {{
-                                showFallback(dataUrl);
-                            }}
-                        }}, 'image/png');
-                    }} else {{
-                        const link = document.createElement('a');
-                        link.download = `ECHO_REPLAY_${{isCropped ? 'Crop' : 'Full' }}_${{Date.now()}}.png`;
-                        link.href = dataUrl;
-                        link.click();
-                    }}
+                    if (!window.echoExportImage) return;
+                    await window.echoExportImage({{
+                        imgEl: document.getElementById(`${{REPLAY_ID}}-img`),
+                        mode: mode,
+                        btnEl: document.getElementById(mode === 'copy' ? `${{REPLAY_ID}}-btn-copy` : `${{REPLAY_ID}}-btn-save`),
+                        isCropping: isCropping,
+                        cropBoxEl: document.getElementById(`${{REPLAY_ID}}-crop-box`),
+                        canvasContainerEl: document.getElementById(`${{REPLAY_ID}}-canvas`),
+                        filename: `ECHO_REPLAY_${{isCropping ? 'Crop' : 'Full'}}_${{Date.now()}}.png`
+                    }});
                 }};
 
                 const canvas = document.getElementById(`${{REPLAY_ID}}-canvas`);
@@ -385,6 +332,7 @@ def _generate_replay_shell(
     }})();
     """
 
+
 class Action:
     class Valves(BaseModel):
         priority: int = Field(default=60, description="Priorité d'affichage (60 = Sixième).")
@@ -394,11 +342,13 @@ class Action:
 
     async def action(self, body: dict, __user__: dict = {}, __metadata__: dict = {}, __event_call__=None, __event_emitter__=None) -> Optional[dict]:
         events = EchoEvents(__event_emitter__, __event_call__)
-        if not __event_call__: return None
+        if not __event_call__:
+            return None
 
         uid = __user__.get("id", "anonymous")
         cid = body.get("chat_id") or __metadata__.get("chat_id")
-        if not cid: return None
+        if not cid:
+            return None
 
         mid = body.get("id") or __metadata__.get("message_id") or ""
         model_id = body.get("model") or __metadata__.get("model_id") or "echo_orchestrator"
@@ -415,10 +365,10 @@ class Action:
 
         # Redirection vers le Registre V2
         from echo_state_manager import EchoStateManager
-        
+
         state_manager = EchoStateManager(user_id=uid, chat_id=cid)
         resources = state_manager.get_resources(resource_type='media')
-        
+
         prefix = f"U_{uid}_C_{cid}_T_"
         files = []
         try:
@@ -428,7 +378,8 @@ class Action:
                         ts_str = r['id'].split("_T_")[-1].split("_")[0].split(".")[0]
                         if r.get('storage_path'):
                             files.append({"ts": int(ts_str), "storage_path": r['storage_path']})
-                    except: continue
+                    except Exception:
+                        continue
 
             # Tri CHRONOLOGIQUE STRICT
             files.sort(key=lambda x: x["ts"])
@@ -460,7 +411,7 @@ class Action:
                     b64 = await asyncio.to_thread(
                         lambda p: base64.b64encode(open(p, "rb").read()).decode(), path
                     )
-                    update_code = f"if(window.echoReplayUpdate) window.echoReplayUpdate('{b64}', {files[current_idx]['ts']}, {current_idx+1}, {len(files)});"       
+                    update_code = f"if(window.echoReplayUpdate) window.echoReplayUpdate('{b64}', {files[current_idx]['ts']}, {current_idx + 1}, {len(files)});"
                     await events.call_execute(update_code)
                     need_push = False
                 except Exception:

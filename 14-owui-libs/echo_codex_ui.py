@@ -1,16 +1,16 @@
 """
 title: ECHO Codex UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.231.39.1
+version: 5.231.55.1
 description: Composant système interne : Moteur de rendu HUD Monaco et Éditeur Hexadécimal pour ECHO Codex.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.55.1: Export direct client-side (0 aller-retour RPC), noWatchdogActions sur download/upload et délégation sécurisée à echoTriggerDownload.
+# 5.231.47.1: Factorisation des icônes Import/Export/Copy via EchoUI.get_icon et activation de la copie d'image (window.echoExportImage) dans PREVIEW_REGISTRY.
+# 5.231.46.1: Alignement de la docstring _generate_codex_js sur events.call_execute.
 # 5.231.39.1: Sérialisation JSON intégrale des variables JS (activeChatTitle), pré-injection initial_content à t=0ms et isolation multi-chat de echoOpenCodex.
 # 5.231.6.1: Pont universel get_codex_bridge_js, Cold Start direct REST et émission ordonnée de close avant destruction du HUD.
-# 5.231.4.1: Suppression du forçage parasite dans renderFileTree, gardes !isMinimized et anti-flash sur aiPanel et statusBar.
-# 5.231.3.1: Persistance de isMinimized/isFullscreen dans saveState, initialisation anti-flash et appel factorisé à geoCtrl.close().
-# 5.231.1.1: Refonte du sélecteur multi-chat en Custom Dropdown Popover HTML borné (260px) avec ellipsis et tooltip.
 
 
 import sys
@@ -180,7 +180,7 @@ class EchoCodexUI(EchoUI):
             initial_content: Optional[str] = None,
             initial_is_binary: bool = False) -> str:
         """Génère le script JS complet du HUD Monaco Codex.
-        Injection via __event_call__({type: 'execute', data: {code: ...}})."""
+        Injection via events.call_execute(...)."""
         lang_to_ext_json = std_json.dumps(CODEX_LANG_TO_EXT).decode("utf-8")
         ext_to_lang_json = std_json.dumps(CODEX_LANG_MAP).decode("utf-8")
         cid_json = std_json.dumps(chat_id or "").decode("utf-8")
@@ -322,6 +322,7 @@ class EchoCodexUI(EchoUI):
       {cls.get_esm_loader_js()}
       {cls.get_hud_geometry_js()}
       {cls.get_hud_rpc_bridge_js()}
+      {cls.get_media_export_js()}
       const rpcBridge = window.echoCreateHudRpcBridge({{
         hudId: CODEX_ID,
         actionId: 'echo_codex_action',
@@ -335,7 +336,7 @@ class EchoCodexUI(EchoUI):
         hiddenPingMs: 25000,
         watchdogMs: 8000,
         prePingActions: ['ai_edit'],
-        noWatchdogActions: ['close', 'ai_edit'],
+        noWatchdogActions: ['close', 'ai_edit', 'download', 'upload'],
         onReconnectStart: () => {{ if (typeof updateStatus === 'function') updateStatus('🔄 Reconnexion au Codex...'); }},
         onReconnectEnd: () => {{
           if (typeof updateStatus === 'function') {{
@@ -414,9 +415,9 @@ class EchoCodexUI(EchoUI):
         <span id="${{CODEX_ID}}-readonly-badge" class="codex-readonly-badge" style="font-size:11px; padding:2px 8px; border-radius:4px; background:rgba(239,68,68,0.15); color:#ef4444; font-weight:600; border:1px solid rgba(239,68,68,0.3); display:inline-flex; align-items:center; gap:4px; margin-right:4px;">🔒 Lecture Seule</span>
         <select id="${{CODEX_ID}}-lang" style="background:transparent; border:1px solid ${{borderColor}};
           color:${{textColor}}; padding:2px 6px; border-radius:4px; font-size:12px;"></select>
-        <button id="${{CODEX_ID}}-import" class="codex-editable" title="Importer (PC → Codex)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='7 10 12 15 17 10'/><line x1='12' y1='15' x2='12' y2='3'/></svg></button>
-        <button id="${{CODEX_ID}}-export" title="Exporter (Codex → PC)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/><polyline points='17 8 12 3 7 8'/><line x1='12' y1='3' x2='12' y2='15'/></svg></button>
-        <button id="${{CODEX_ID}}-copy" title="Copier" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='9' y='9' width='13' height='13' rx='2' ry='2'/><path d='M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1'/></svg></button>
+        <button id="${{CODEX_ID}}-import" class="codex-editable" title="Importer (PC → Codex)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;">{cls.get_icon('Download', size=16)}</button>
+        <button id="${{CODEX_ID}}-export" title="Exporter (Codex → PC)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;">{cls.get_icon('Export', size=16)}</button>
+        <button id="${{CODEX_ID}}-copy" title="Copier" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;">{cls.get_icon('Copy', size=16)}</button>
         <button id="${{CODEX_ID}}-refresh" title="Actualiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/></svg></button>
         <button id="${{CODEX_ID}}-save" class="codex-editable" title="Sauvegarder (Ctrl+S)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1; opacity:0.3; transition:opacity 0.2s;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z'/><polyline points='17 21 17 13 7 13 7 21'/><polyline points='7 3 7 8 15 8'/></svg></button>
         <button id="${{CODEX_ID}}-preview-toggle" title="Prévisualisation" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:16px; opacity:0.4;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z'/><circle cx='12' cy='12' r='3'/></svg></button>
@@ -736,7 +737,7 @@ class EchoCodexUI(EchoUI):
         const wsSelect = document.createElement('select');
         wsSelect.id = CODEX_ID + '-workspace';
         wsSelect.style.cssText = `flex:1; padding:6px 4px; background:transparent; border:none; color:${{textColor}}; font-size:12px; font-weight:bold; outline:none; cursor:pointer;`;
-        
+
         Object.entries(workspaces).forEach(([key, label]) => {{
           const opt = document.createElement('option');
           opt.value = key;
@@ -744,7 +745,7 @@ class EchoCodexUI(EchoUI):
           if (key === currentWorkspace) opt.selected = true;
           wsSelect.appendChild(opt);
         }});
-        
+
         const wsSpinner = document.createElement('div');
         wsSpinner.id = CODEX_ID + '-ws-spinner';
         wsSpinner.style.cssText = `display:none; width:14px; height:14px; margin-right:8px; border:2px solid ${{textColor}}; border-top-color:transparent; border-radius:50%; animation:codex-spin 1s linear infinite;`;
@@ -754,7 +755,7 @@ class EchoCodexUI(EchoUI):
           wsSpinner.style.display = 'block';
           window.sendCodexAction({{action:'switch_workspace', workspace:wsSelect.value, target_chat_id:activeChatId}});
         }};
-        
+
         wsContainer.appendChild(wsSelect);
         wsContainer.appendChild(wsSpinner);
         sb.appendChild(wsContainer);
@@ -764,20 +765,20 @@ class EchoCodexUI(EchoUI):
         treeContainer.style.cssText = 'overflow-y:auto; flex:1; padding-bottom:6px;';
         // Mode Universel : Arborescence dynamique (Lazy Loading)
         const treeMap = {{ '': {{ isDir: true, children: {{}}, mtime: 0, isLoaded: true }} }};
-        
+
         function injectFilesToTree(fileList) {{
           fileList.forEach(f => {{
             const parts = f.filename.split('/');
             let currentPath = '';
             let parentNode = treeMap[''];
-            
+
             if (f.mtime && f.mtime > parentNode.mtime) parentNode.mtime = f.mtime;
 
             for (let i = 0; i < parts.length; i++) {{
               const part = parts[i];
               currentPath = currentPath ? currentPath + '/' + part : part;
               const isLast = (i === parts.length - 1);
-              
+
               if (!parentNode.children[part]) {{
                 parentNode.children[part] = {{
                   name: part,
@@ -805,7 +806,7 @@ class EchoCodexUI(EchoUI):
 
         window.echoCodexAppendNodes = function(targetDir, newFiles) {{
            injectFilesToTree(newFiles);
-           
+
            const parts = targetDir.split('/');
            let node = treeMap[''];
            if (targetDir !== "") {{
@@ -814,19 +815,19 @@ class EchoCodexUI(EchoUI):
                    else return;
                }}
            }}
-           
+
            const containerId = 'codex-dir-' + encodeURIComponent(targetDir);
            const childrenContainer = document.getElementById(containerId);
            if (childrenContainer) {{
                childrenContainer.innerHTML = '';
                node.isLoaded = true;
-               
+
                const summary = childrenContainer.previousElementSibling;
                if (summary) {{
                    const span = summary.querySelector('.lazy-loading-span');
                    if (span) span.remove();
                }}
-               
+
                renderNode(node, childrenContainer, targetDir === "" ? 0 : parts.length);
            }}
         }};
@@ -849,7 +850,7 @@ class EchoCodexUI(EchoUI):
                 const actionGroup = document.createElement('div');
                 actionGroup.classList.add('codex-editable');
                 actionGroup.style.cssText = 'margin-left:auto; display:flex; gap:4px;';
-                
+
                 const renBtn = document.createElement('span');
                 renBtn.innerHTML = '✏️';
                 renBtn.title = 'Renommer le dossier ' + child.path;
@@ -879,7 +880,7 @@ class EchoCodexUI(EchoUI):
                   input.onblur = finalize;
                   input.onkeydown = (ev) => {{
                     if (ev.key === 'Enter') {{ ev.preventDefault(); finalize(); }}
-                    if (ev.key === 'Escape') {{ 
+                    if (ev.key === 'Escape') {{
                       summary.innerHTML = `<span style="margin-right:4px;">📁</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${{child.name}}</span>`;
                       summary.appendChild(actionGroup);
                     }}
@@ -889,7 +890,7 @@ class EchoCodexUI(EchoUI):
                   input.focus();
                   input.select();
                 }};
-                
+
                 const delBtn = document.createElement('span');
                 delBtn.innerHTML = '🗑️';
                 delBtn.title = 'Supprimer le dossier ' + child.path;
@@ -924,7 +925,7 @@ class EchoCodexUI(EchoUI):
                     }} else {{
                         // Purge DOM et JS pour libérer la RAM
                         child.isLoaded = false;
-                        child.children = {{}}; 
+                        child.children = {{}};
                         childrenContainer.innerHTML = '';
                     }}
                 }};
@@ -942,7 +943,7 @@ class EchoCodexUI(EchoUI):
                 if (child.isLoaded) {{
                     renderNode(child, childrenContainer, level + 1);
                 }}
-                
+
                 details.appendChild(childrenContainer);
                 container.appendChild(details);
               }} else {{
@@ -962,7 +963,7 @@ class EchoCodexUI(EchoUI):
                 const actionGroup = document.createElement('div');
                 actionGroup.classList.add('codex-editable');
                 actionGroup.style.cssText = 'margin-left:auto; display:flex; gap:4px; align-items:center;';
-                
+
                 const renBtn = document.createElement('span');
                 renBtn.innerHTML = '✏️';
                 renBtn.title = 'Renommer ' + f.filename;
@@ -990,7 +991,7 @@ class EchoCodexUI(EchoUI):
                   input.onblur = finalize;
                   input.onkeydown = (ev) => {{
                     if (ev.key === 'Enter') {{ ev.preventDefault(); finalize(); }}
-                    if (ev.key === 'Escape') {{ 
+                    if (ev.key === 'Escape') {{
                       nameSpan.innerHTML = `<span style="margin-right:4px;">${{isActive ? '📝' : '📄'}}</span> ${{((modified && isActive) ? '● ' : '') + child.name}}`;
                     }}
                   }};
@@ -1010,7 +1011,7 @@ class EchoCodexUI(EchoUI):
                     if (agreed) window.sendCodexAction({{action:'delete_file', filename:f.filename, current_file:currentFile}});
                   }});
                 }};
-                
+
                 item.onmouseenter = () => {{ renBtn.style.opacity = '1'; delBtn.style.opacity = '1'; }};
                 item.onmouseleave = () => {{ renBtn.style.opacity = '0'; delBtn.style.opacity = '0'; }};
                 actionGroup.appendChild(renBtn);
@@ -1243,9 +1244,18 @@ class EchoCodexUI(EchoUI):
         importInput.click();
       }};
 
-      // Export (Codex → PC)
+      // Export (Codex → PC) : export direct client-side depuis le buffer actif (0 aller-retour RPC)
       document.getElementById(CODEX_ID + '-export').onclick = () => {{
-        if (currentFile) window.sendCodexAction({{action:'download', filename:currentFile}});
+        if (!currentFile) return;
+        if (isHistoryMode && historyContent !== null) {{
+          window.echoCodexDownload(currentFile, historyContent, isCurrentBinary);
+        }} else if (editor || isCurrentBinary) {{
+          window.echoCodexDownload(currentFile, getActiveContent(), isCurrentBinary);
+        }} else if (pendingContent && pendingContent.filename === currentFile) {{
+          window.echoCodexDownload(currentFile, pendingContent.content, pendingContent.isBinary);
+        }} else {{
+          window.sendCodexAction({{action:'download', filename:currentFile}});
+        }}
       }};
 
       // ===== HEXADECIMAL EDITOR ENGINE =====
@@ -1633,10 +1643,19 @@ class EchoCodexUI(EchoUI):
         previewCopyBtn.onclick = () => {{
           if (!currentFile) return;
           const lang = detectFileLang(currentFile);
+          const container = document.getElementById(CODEX_ID + '-preview-content');
+          if (lang === 'image' && container) {{
+            const imgEl = container.querySelector('img');
+            if (imgEl && window.echoExportImage) {{
+              window.echoExportImage({{ imgEl: imgEl, mode: 'copy', btnEl: previewCopyBtn }}).then((ok) => {{
+                if (ok) updateStatus('📋 Image copiée !');
+              }});
+            }}
+            return;
+          }}
           const content = getActiveContent();
 
           if (lang === 'markdown') {{
-            const container = document.getElementById(CODEX_ID + '-preview-content');
             copyRichText(container.innerHTML, container.innerText);
           }} else {{
             copyPlainText(content);
@@ -1708,7 +1727,7 @@ class EchoCodexUI(EchoUI):
             language: detectFileLang(currentFile),
             is_binary: isCurrentBinary
           }});
-          
+
           modified = false;
           renderFileTree();
           updateSaveButton();
@@ -1828,17 +1847,26 @@ class EchoCodexUI(EchoUI):
       }};
 
       window.echoCodexDownload = (name, content, isBinary) => {{
+        if ((window.EchoWM && window.EchoWM.isReplaying) || document.hidden) return;
         let blob;
         if (detectIsBinary(content, name, isBinary)) {{
           blob = new Blob([latin1ToBytes(content)], {{type: 'application/octet-stream'}});
         }} else {{
           blob = new Blob([content], {{type: 'text/plain;charset=utf-8'}});
         }}
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = name;
-        a.click();
-        URL.revokeObjectURL(a.href);
+        if (typeof window.echoTriggerDownload === 'function') {{
+          window.echoTriggerDownload(blob, name);
+        }} else {{
+          const a = document.createElement('a');
+          a.style.display = 'none';
+          const url = URL.createObjectURL(blob);
+          a.href = url;
+          a.download = String(name || 'download').split('/').pop() || 'download';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }}
       }};
 
       window.echoCodexReset = () => {{ hud.remove(); }};
@@ -1968,7 +1996,7 @@ class EchoCodexUI(EchoUI):
         css:      {{ label: 'CSS Preview',      printable: false, copyable: true, render: (c, el) => renderCSS(c, el) }},
         xml:      {{ label: 'SVG Preview',      printable: false, copyable: true, render: (c, el) => renderSVG(c, el) }},
         pdf:      {{ label: 'PDF Preview',      printable: false, copyable: false, render: (c, el) => renderPDF(c, el) }},
-        image:    {{ label: 'Image Preview',    printable: false, copyable: false, render: (c, el) => renderImage(c, el) }}
+        image:    {{ label: 'Image Preview',    printable: false, copyable: true,  render: (c, el) => renderImage(c, el) }}
       }};
 
       function getPreviewSpec(langOverride) {{
@@ -2111,7 +2139,7 @@ class EchoCodexUI(EchoUI):
           const bytes = latin1ToBytes(content);
           const blob = new Blob([bytes], {{ type: 'application/pdf' }});
           const url = URL.createObjectURL(blob);
-          
+
           const oldIframe = container.querySelector('iframe');
           if (oldIframe) {{
               if (oldIframe.src.startsWith('blob:')) {{
@@ -2119,7 +2147,7 @@ class EchoCodexUI(EchoUI):
               }}
               oldIframe.remove();
           }}
-          
+
           container.innerHTML = '';
           const iframe = document.createElement('iframe');
           iframe.style.cssText = 'width:100%; height:100%; border:none; background:white;';

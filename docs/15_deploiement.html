@@ -268,7 +268,8 @@ sudo bash 00-echo-scripts/install-stack.sh
               <td><code>01-config/</code></td>
               <td><code>/opt/ECHO/config/</code></td>
               <td>Manifestes Compose, Kernel statique, <code>webui-settings.json</code>,
-                <code>webui-banners.json</code>, <code>logging.json</code></td>
+                <code>webui-banners.json</code>, <code>logging.json</code>
+              </td>
             </tr>
             <tr>
               <td><code>_assets/images/</code></td>
@@ -371,11 +372,13 @@ sudo bash 00-echo-scripts/install-stack.sh
             <code>ECHO_VAULT_ENCRYPTION_KEY</code> générée par <code>ensure_echo_secrets()</code> afin de l'isoler des
             conteneurs workers et sandbox, label <code>bunkerweb.MAX_CLIENT_SIZE=4096m</code>, cache persistant
             <code>PIP_CACHE_DIR=/app/backend/data/.cache/pip</code>, <code>mgzip</code>, <code>dulwich</code>,
-            <code>markitdown[all]</code>, <code>h2</code>, <code>pybase64</code>, <code>edge-tts</code>).</li>
+            <code>markitdown[all]</code>, <code>h2</code>, <code>pybase64</code>, <code>edge-tts</code>).
+          </li>
           <li><strong>Tier 4 (Gouvernance) :</strong> Admin Manager (<code>.20</code>, montages Hot-Reload en lecture
             seule <code>:ro</code> de <code>server.py</code>, <code>core/</code>, <code>services/</code>,
             <code>routes/</code>, <code>templates/</code> et accès aux 5 volumes de données dont
-            <code>echo-n8n-data</code> et <code>echo-mcp-cache</code>) et ECHO Auth Manager (<code>.24</code>).</li>
+            <code>echo-n8n-data</code> et <code>echo-mcp-cache</code>) et ECHO Auth Manager (<code>.24</code>).
+          </li>
         </ul>
         <p><code>install-stack.sh</code> (v5.231.39.1) invoque <code>ensure_echo_secrets</code>
           (<code>echo-globals.sh</code> v5.231.21.2), configure l'<strong>Autosafety Docker</strong> (logs max 10 Mo,
@@ -387,7 +390,8 @@ sudo bash 00-echo-scripts/install-stack.sh
           filtres, outils, actions HUD et fonctions événementielles (<code>Event</code>). Les conteneurs labellisés
           <code>echo.hot-reload=true</code> sont rechargés à chaud par <code>echo-update</code>, tandis que
           <code>echo-rebuild</code> (<code>echo-upgrade.sh</code> v5.231.39.1) exige une double saisie de sécurité
-          (<code>CONFIRMER</code> puis <code>DETRUIRE</code>).</p>
+          (<code>CONFIRMER</code> puis <code>DETRUIRE</code>).
+        </p>
       </div>
     </details>
 
@@ -398,7 +402,7 @@ sudo bash 00-echo-scripts/install-stack.sh
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.44 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.231.56 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

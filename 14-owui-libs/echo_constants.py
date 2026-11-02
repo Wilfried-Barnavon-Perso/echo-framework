@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.231.40.1
+version: 5.231.49.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.49.1: Ajout de show_image_to_user dans DELEGATE_AGENT_BLACKLIST (rendu UI HTMLResponse réservé au flux principal).
 # 5.231.40.1: Alignement du protocole Antigravity sur le Language Server 2.28.2 (CL 1006921819).
 # 5.231.33.1: Purge de la constante orpheline PROMPT_SENSORY_DISTILLATION (déjà centralisée dans echo_prompts.py via TPL_EXPLORE_SENSORY).
 # 5.231.32.1: Rehaussement du seuil de déclenchement de compaction automatique à 60% de CONTEXT_MAX (COMPACTION_TRIGGER_THRESHOLD_PCT=0.60).
 # 5.231.29.1: Unification SSOT des espaces de travail Codex (CODEX_WORKSPACE_MAIN, CODEX_WORKSPACE_SANDBOX, CODEX_INDEXED_WORKSPACES, CODEX_WORKSPACE_LITERAL, is_codex_workspace_indexed).
-# 5.231.28.2: Ajout des constantes de compaction en % de ECHO_MAX_CONTEXT_SIZE (COMPACTION_TRIGGER_THRESHOLD_PCT=0.50, COMPACTION_TARGET_CONTEXT_PCT=0.20, COMPACTION_COMPRESSED_SHARE_PCT=0.63, get_compaction_shares) et étalonnage en % de AEC_REMINDERS.
 
 
 import os
@@ -645,11 +645,12 @@ DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
     "consult_council",
     "consult_supervised_workers",
     # 2. Écriture RAG
-    "update_meta_artifact",   # Écrit en mémoire long terme (Qdrant)
-    "delete_meta_artifact_item", # Supprime de la mémoire long terme
+    "update_meta_artifact",       # Écrit en mémoire long terme (Qdrant)
+    "delete_meta_artifact_item",  # Supprime de la mémoire long terme
     # Note: save_session_context et delete_session_context_source sont autorisés pour l'agent
     # 3. Rendu UI & Modales Interactives (interdits en mode Headless / Sous-agent)
     "generate_rich_visualization",  # Génère du HTML interactif pour le stream principal
+    "show_image_to_user",           # Génère une Iframe HTMLResponse pour le stream principal
     "ask_user_input",               # Modale interactive bloquée en mode Headless
     "delete_user_skill",            # Modale de confirmation bloquée en mode Headless
     "manage_identity",              # Gestion d'identités bloquée en mode Headless

@@ -1,12 +1,13 @@
 """
 title: Print / PDF
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.231.46.1
 description: Outil d'exportation de la conversation courante vers un document PDF formaté pour l'impression.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNCAySDZhMiAyIDAgMCAwLTIgMnYxNmEyIDIgMCAwIDAgMiAyaDEyYTIgMiAwIDAgMCAyLTJWOHoiLz48cG9seWxpbmUgcG9pbnRzPSIxNCAyIDE0IDggMjAgOCIvPjxsaW5lIHgxPSIxMiIgeTE9IjEyIiB4Mj0iMTIiIHkyPSIxOCIvPjxwb2x5bGluZSBwb2ludHM9IjkgMTUgMTIgMTggMTUgMTUiLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.46.1: Remplacement de l'appel direct __event_call__ par events.call_execute (conformité UCTP, traçage EchoWM et double transport).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.4: Mise à jour de la priorité d'affichage à 100.
 # 2.3: Factorisation de la logique CSS Path-Marking vers echo_ui.py (EchoUI.get_print_isolation_js). Renommage export_pdf -> print_pdf pour refléter le comportement natif.
@@ -57,7 +58,9 @@ class Action:
         **kwargs,
     ) -> Optional[dict]:
 
-        events = EchoEvents(__event_emitter__, __event_call__)
+        uid = (__user__ or {}).get("id", "")
+        cid = (__metadata__ or {}).get("chat_id") or body.get("chat_id") or ""
+        events = EchoEvents(__event_emitter__, __event_call__, user_id=uid, chat_id=cid)
 
         if not __event_call__:
             await events.toast("❌ Print / PDF : __event_call__ indisponible.", "error")
@@ -74,10 +77,7 @@ class Action:
 
         js_logic = EchoUI.get_print_isolation_js('#chat-messages, [id*="messages-container"], main .overflow-y-auto, main')
 
-        result = await __event_call__({
-            "type": "execute",
-            "data": {"code": js_logic}
-        })
+        result = await events.call_execute(js_logic)
 
         if not isinstance(result, dict):
             logger.error(f"[PRINT-PDF] Résultat JS non reçu : {result!r}")

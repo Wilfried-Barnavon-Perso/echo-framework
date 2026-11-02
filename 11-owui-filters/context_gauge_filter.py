@@ -2,16 +2,16 @@
 """
 title: ECHO Context Gauge Filter
 author: Wilfried BARNAVON
-version: 5.231.28.1
-description: Filtre Inlet/Outlet (Priorité 10) affichant le HUD contextuel de tokens persistant avec différentiel et pourcentage de capacité perdue.
+version: 5.231.55.1
+description: Filtre Inlet/Outlet (Priorité 40) affichant le HUD contextuel de tokens persistant avec différentiel et pourcentage de capacité perdue.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.55.1: Réétagement de la priorité à 40 (après edge_embed_bridge_filter à 30 et avant user_native_context_filter à 50).
 # 5.231.28.1: Transmission de compaction_count et compacted_turns au HUD contextuel en Inlet, Outlet et Cold-Start.
 # 5.231.24.1: Initialisation baseline des quotas et du contexte à l'Inlet du tour 1 pour calcul différentiel immédiat.
 # 5.231.15.1: Alignement sur le calcul unifié d'empreinte capacitaire et la sanctuarisation de promptTokenCount.
 # 5.231.13.1: Archivage unique de previous_context_stats en début de tour utilisateur, refresh Cloud des quotas en Outlet et résolution de ca_model_id.
-# 5.231.12.1: Affichage garanti du HUD des l'inlet du 1er tour et persistance des fractions de quotas pour calcul du differentiel.
 
 import sys
 from typing import Any, Dict, Optional
@@ -31,9 +31,9 @@ from echo_window_manager import extract_closure_context
 class Filter:
     class Valves(BaseModel):
         priority: int = Field(
-            default=10,
+            default=40,
             hidden=True,
-            description="Priorité d'exécution (10 = après edge_embed_bridge_filter à 3 et avant user_native_context_filter à 20).",
+            description="Priorité d'exécution (40 = après edge_embed_bridge_filter à 30 et avant user_native_context_filter à 50).",
         )
         show_context_metrics: bool = Field(
             default=True,

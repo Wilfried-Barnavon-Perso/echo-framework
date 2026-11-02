@@ -2,17 +2,18 @@
 """
 title: ECHO Echo Paths
 author: Wilfried BARNAVON
-version: 5.231.29.1
+version: 5.231.49.1
 description: Résolution des chemins absolus du système.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.49.1: Factorisation de extract_clean_filename et resolve_extended_file_path (résolution unifiée par ID, Nom et Workspace).
 # 5.231.29.1: Alignement de format_codex_storage_path sur la constante SSOT CODEX_DEFAULT_WORKSPACE.
 # 5.231.28.1: Ajout de format_codex_storage_path(relative_path, workspace) garantissant le format canonique codex/<workspace>/<filename>.
 # 5.231.20.1: Standardisation multi-user/concurrence : ajout de sanitize_echo_id, get_codex_lock, get_user_skill_lock et suffixe UUID anti-collision dans generate_echo_file_id.
 # 5.230.0.1: Factorisation SSOT de normalize_codex_rel_path (avec unquote défensif) et check_codex_file_exists pour les outils, filtres et dépôts Codex.
-# 5.226.18.1: Ajout du registre de verrous asyncio (_CHAT_CLONE_LOCKS, get_chat_clone_lock, wait_for_chat_clone).
 import os
+import re
 import time
 import glob
 import uuid
@@ -22,6 +23,8 @@ from typing import Optional
 from echo_constants import (
     CODEX_DEFAULT_WORKSPACE,
     CODEX_DIR_NAME,
+    CODEX_WORKSPACE_MAIN,
+    CODEX_WORKSPACE_SANDBOX,
     ECHO_CODEX_WORKSPACES,
     ECHO_GLOBAL_DOMAINS,
     ECHO_SESSION_DOMAINS,
@@ -29,6 +32,20 @@ from echo_constants import (
     ECHO_UPLOADS_TRANSIT_DIR,
     ECHO_VERSION_PATH,
 )
+
+_VAULT_PREFIX_RE = re.compile(
+    r"^(?:U_.+_C_.+_T_\d+_[0-9a-fA-F]+|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}|[0-9a-fA-F]{32,})_(.+)$"
+)
+
+
+def extract_clean_filename(path_or_name: str) -> str:
+    """Extrait le nom de fichier original en retirant les préfixes d'identifiants techniques du Vault (U_..._C_..._T_... ou UUID)."""
+    base = os.path.basename((path_or_name or "").replace("\\", "/").strip("/"))
+    if not base:
+        return "fichier"
+    match = _VAULT_PREFIX_RE.match(base)
+    return match.group(1) if match else base
+
 
 # Registre en mémoire des verrous asyncio de clonage de session en cours
 _CHAT_CLONE_LOCKS: dict[str, asyncio.Lock] = {}
@@ -136,6 +153,162 @@ def resolve_upload_file_path(
     return matches[0] if matches else None
 
 
+def _resolve_upload_by_filename(
+    user_id: str,
+    filename: str,
+    uploads_dir: str = ECHO_UPLOADS_TRANSIT_DIR,
+    chat_id: Optional[str] = None,
+) -> Optional[str]:
+    """Recherche un fichier dans le Vault d'uploads par son nom original (ex: 'photo.png' -> '*_photo.png')."""
+    clean_name = os.path.basename((filename or "").replace("\\", "/").strip("/"))
+    if not clean_name or clean_name in (".", ".."):
+        return None
+    escaped = glob.escape(clean_name)
+    search_dirs = []
+    if user_id and user_id != "anonymous" and "/" not in str(user_id):
+        if chat_id:
+            search_dirs.append(get_echo_session_path(user_id, chat_id, "files"))
+        search_dirs.append(get_echo_global_path(user_id, "files"))
+    if uploads_dir:
+        search_dirs.append(uploads_dir)
+
+    target_lower = clean_name.lower()
+    for d in search_dirs:
+        if not d or not os.path.isdir(d):
+            continue
+        exact = os.path.join(d, clean_name)
+        if os.path.isfile(exact):
+            return exact
+        matches = glob.glob(os.path.join(d, f"*_{escaped}"))
+        if matches:
+            return matches[0]
+        try:
+            for entry in os.listdir(d):
+                if extract_clean_filename(entry).lower() == target_lower:
+                    candidate = os.path.join(d, entry)
+                    if os.path.isfile(candidate):
+                        return candidate
+        except Exception:
+            pass
+    return None
+
+
+def resolve_extended_file_path(
+    user_id: str,
+    chat_id: Optional[str],
+    target: str,
+    workspace: Optional[str] = None,
+    uploads_dir: str = ECHO_UPLOADS_TRANSIT_DIR,
+) -> Optional[str]:
+    """Résout de façon unifiée le chemin physique d'un fichier local via son ID, son Nom ou son Workspace ('main', 'sandbox', 'files')."""
+    if not target:
+        return None
+    raw = unquote(str(target).strip())
+    for urn_prefix in ("codex:session:", "codex:global:", "codex:"):
+        if raw.lower().startswith(urn_prefix):
+            raw = raw[len(urn_prefix):]
+            break
+    safe_target = raw.replace("\\", "/").strip("/")
+    if not safe_target or ".." in safe_target.split("/"):
+        return None
+
+    effective_ws = workspace.strip().lower() if workspace and workspace.strip() else None
+    rel_target = safe_target
+    if not effective_ws:
+        for ws_candidate in ECHO_CODEX_WORKSPACES:
+            if safe_target.startswith(f"{CODEX_DIR_NAME}/{ws_candidate}/"):
+                effective_ws = ws_candidate
+                rel_target = safe_target[len(f"{CODEX_DIR_NAME}/{ws_candidate}/"):]
+                break
+            if safe_target.startswith(f"{ws_candidate}/"):
+                effective_ws = ws_candidate
+                rel_target = safe_target[len(f"{ws_candidate}/"):]
+                break
+
+    state = None
+    base_codex = get_echo_session_path(user_id, chat_id, CODEX_DIR_NAME) if chat_id else None
+    if chat_id:
+        try:
+            from echo_state_manager import EchoStateManager
+            state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        except Exception:
+            state = None
+
+    def _resolve_from_resource(res: dict) -> Optional[str]:
+        if not res:
+            return None
+        sp = res.get("storage_path") or ""
+        if sp and os.path.isabs(sp) and os.path.isfile(sp):
+            return sp
+        if res.get("resource_type") == "codex" and base_codex:
+            for ws_c in ECHO_CODEX_WORKSPACES:
+                if sp.startswith(f"{CODEX_DIR_NAME}/{ws_c}/"):
+                    rel_sp = sp[len(f"{CODEX_DIR_NAME}/{ws_c}/"):]
+                    cand = os.path.join(base_codex, ws_c, rel_sp)
+                    if os.path.isfile(cand):
+                        return cand
+            cand_main = os.path.join(base_codex, CODEX_WORKSPACE_MAIN, res.get("name", ""))
+            if os.path.isfile(cand_main):
+                return cand_main
+        up = resolve_upload_file_path(user_id, res.get("id", ""), uploads_dir, chat_id=chat_id)
+        if up and os.path.isfile(up):
+            return up
+        if res.get("name"):
+            return _resolve_upload_by_filename(user_id, res["name"], uploads_dir, chat_id=chat_id)
+        return None
+
+    # 1. Si un workspace Codex explicite est demandé ('main' ou 'sandbox')
+    if effective_ws in ECHO_CODEX_WORKSPACES and base_codex:
+        ws_dir = os.path.join(base_codex, effective_ws)
+        clean_rel = normalize_codex_rel_path(rel_target, workspace=effective_ws, repo_path=ws_dir)
+        if clean_rel:
+            cand = os.path.join(ws_dir, clean_rel)
+            if os.path.isfile(cand):
+                return cand
+        if state:
+            res = state.get_resource(rel_target) or state.get_resource(safe_target)
+            resolved = _resolve_from_resource(res)
+            if resolved:
+                return resolved
+
+    # 2. Résolution par ID exact dans le Registre Unifié (Codex, Media, Binary)
+    if state:
+        res = state.get_resource(safe_target)
+        resolved = _resolve_from_resource(res)
+        if resolved:
+            return resolved
+
+    # 3. Résolution directe par ID d'upload dans le Vault (files/<id>_*)
+    fpath = resolve_upload_file_path(user_id, safe_target, uploads_dir, chat_id=chat_id)
+    if fpath and os.path.isfile(fpath):
+        return fpath
+
+    # 4. Résolution par Nom dans le Registre Unifié (echo_resources.name)
+    if state:
+        base_search = os.path.basename(rel_target)
+        candidates = state.get_resources(search=base_search) or []
+        target_l = rel_target.lower()
+        base_l = base_search.lower()
+        for c_res in candidates:
+            c_name = (c_res.get("name") or "").replace("\\", "/").strip("/")
+            if c_name.lower() == target_l or os.path.basename(c_name).lower() == base_l:
+                resolved = _resolve_from_resource(c_res)
+                if resolved:
+                    return resolved
+
+    # 5. Résolution physique directe par Nom/Chemin relatif (Codex 'main' -> Codex 'sandbox' -> Vault 'files')
+    if base_codex:
+        for ws_name in (CODEX_WORKSPACE_MAIN, CODEX_WORKSPACE_SANDBOX):
+            ws_dir = os.path.join(base_codex, ws_name)
+            clean_rel = normalize_codex_rel_path(rel_target, workspace=ws_name, repo_path=ws_dir)
+            if clean_rel:
+                cand = os.path.join(ws_dir, clean_rel)
+                if os.path.isfile(cand):
+                    return cand
+
+    return _resolve_upload_by_filename(user_id, rel_target, uploads_dir, chat_id=chat_id)
+
+
 def generate_echo_file_id(user_id: str, chat_id: str) -> str:
     ts = int(time.time() * 1000)
     uid_s = sanitize_echo_id(user_id)
@@ -199,4 +372,3 @@ def check_codex_file_exists(
         return os.path.isfile(os.path.join(ws_dir, clean_path))
     except Exception:
         return False
-

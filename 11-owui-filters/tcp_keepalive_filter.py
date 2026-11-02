@@ -2,11 +2,12 @@
 title: ECHO TCP Keep-Alive Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
-version: 5.226.18.0
+version: 5.231.55.1
 description: Composant système interne : Protection SPA contre le WAF (SvelteKit HTTP Keep-Alive).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.55.1: Réétagement de la priorité à 10 (après open_webui_bug_correction_filter à 5 et avant window_manager_filter à 20).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.0: Création du filtre pour contrer le bug de hard reload (Tab Discarding / TCP timeout) de SvelteKit.
 
@@ -16,9 +17,9 @@ from typing import Optional
 class Filter:
     class Valves(BaseModel):
         priority: int = Field(
-            default=1, 
+            default=10,
             hidden=True,
-            description="Priorité d'exécution (0 = premier)."
+            description="Priorité d'exécution (10 = après open_webui_bug_correction_filter à 5 et avant window_manager_filter à 20)."
         )
 
     def __init__(self):

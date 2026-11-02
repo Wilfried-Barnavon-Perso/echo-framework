@@ -1,16 +1,16 @@
 """
 title: ECHO User Native Context Filter
 author: ECHO Framework
-version: 5.231.11.1
+version: 5.231.55.1
 description: Composant système interne : Paramétrages personnels du contexte.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.55.1: Réétagement de la priorité à 50 (après context_gauge_filter à 40 et avant context_compaction_filter à 60).
 # 5.231.11.1: Réétagement de la priorité à 20 (après context_gauge_filter à 10 et avant new_context_filter à 30).
 # 5.227.1.1: Suppression de la UserValve ENABLE_AUTO_COMPACTION et de _echo_auto_compaction_enabled.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.1: Ajout de la UserValve ENABLE_AUTO_COMPACTION (False par défaut) pour le compactage contextuel automatique.
-# 1.0: Création du filtre pour déléguer les UserValves et invisibiliser le New Context Filter.
 
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -19,8 +19,8 @@ from typing import Optional
 class Filter:
     class Valves(BaseModel):
         priority: int = Field(
-            default=20,
-            description="Priorité d'exécution (20 = après context_gauge_filter à 10 et avant new_context_filter à 30)."
+            default=50,
+            description="Priorité d'exécution (50 = après context_gauge_filter à 40 et avant context_compaction_filter à 60)."
         )
 
     class UserValves(BaseModel):

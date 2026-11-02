@@ -2,16 +2,16 @@
 title: Edge Embedding Bridge Filter
 author: ECHO Framework
 author_url: https://github.com/echo-framework
-version: 5.231.11.1
+version: 5.231.55.1
 description: Composant système interne : Edge Embedding Bridge Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.55.1: Réétagement de la priorité à 30 (après window_manager_filter à 20 et avant context_gauge_filter à 40).
 # 5.231.11.1: Réétagement de la priorité à 3 (après window_manager_filter à 2 et avant context_gauge_filter à 10).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.26: Ajustement du HUD WebGPU (Décalage horizontal à calc(50% + 125px) pour éviter le chevauchement avec la barre de contexte).
 # 1.25: Fix HUD WebGPU (Saut de position lors du clignotement) via CSS scale indépendant.
-# 1.24: Optimisation (Bypass Serveur-Side) empêchant l'injection JS sur mobile et purge du code mort associé.
 
 import asyncio
 import logging
@@ -45,7 +45,11 @@ logger = logging.getLogger("ECHO-EDGE-BRIDGE")
 
 class Filter:
     class Valves(BaseModel):
-        priority: int = Field(default=3, hidden=True, description="Priorité d'exécution (3 = après window_manager_filter à 2 et avant context_gauge_filter à 10).")
+        priority: int = Field(
+            default=30,
+            hidden=True,
+            description="Priorité d'exécution (30 = après window_manager_filter à 20 et avant context_gauge_filter à 40).",
+        )
         ENABLE_EDGE_EMBEDDING: bool = Field(
             default=True,
             description="Activer le pont Edge Embedding (nécessite BunkerWeb ou un proxy WSS configuré)"

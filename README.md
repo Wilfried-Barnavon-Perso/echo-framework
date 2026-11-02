@@ -1,11 +1,11 @@
 <div align="center">
   <img src="docs/logo-echo-full.png" alt="ECHO Framework Logo" width="350">
   
-  # 🧠 ECHO Framework v5.231.44
+  # 🧠 ECHO Framework v5.231.56
   
   **The Sovereign Intelligence Orchestrator**
   
-  [![Version](https://img.shields.io/badge/version-5.231.44-blue.svg)](#)
+  [![Version](https://img.shields.io/badge/version-5.231.56-blue.svg)](#)
   [![Open WebUI](https://img.shields.io/badge/Powered%20by-Open%20WebUI-4CAF50.svg)](#)
   [![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-F9AB00.svg)](#)
   [![License](https://img.shields.io/badge/license-Apache%202.0-purple.svg)](#)
@@ -66,7 +66,7 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
   - **Pont Audio Intégré (STT & TTS)** : Transcription vocale multimodale haute précision et synthèse vocale neuronale fluide en streaming.
   - **Coding Worker Sandbox** : Exécution hermétique de code multi-langages (Python, Node.js) avec retour visuel et supervision en temps réel.
   - **Browser Worker** : Navigation web autonome asynchrone propulsée par Playwright avec contournement anti-bot et ciblage visuel de précision.
-  - **ECHO Codex, Liens Interactifs & Delphi** : Éditeur de code intégré (Monaco) doublé d'un **Éditeur Hexadécimal virtualisé**, prévisualisation multimédia en direct (Markdown, HTML, SVG, PDF, images), consultation inter-conversations en lecture seule, **liens Codex cliquables** directement dans les réponses de l'IA, tables rondes multi-agents parallélisées (`consult_council`, `consult_supervised_workers`) et gestionnaire de compétences (`Skills`).
+  - **ECHO Codex, Liens Interactifs & Delphi** : Éditeur de code intégré (Monaco) doublé d'un **Éditeur Hexadécimal virtualisé**, prévisualisation multimédia en direct (Markdown, HTML, SVG, PDF, images avec copie et export instantanés), consultation inter-conversations en lecture seule, **liens Codex cliquables** directement dans les réponses de l'IA, tables rondes multi-agents parallélisées (`consult_council`, `consult_supervised_workers`) et gestionnaire de compétences (`Skills`).
   - **Window Manager (`EchoWM`), HUD & Conseiller d'Outils** : Gestionnaire de fenêtres multi-chats et multi-navigateurs parquant et restaurant vos outils sans perte d'état lors des changements de discussion, **Jauge Contextuelle & Quotas Cloud (5h / Semaine)** avec suivi différentiel dès le premier tour et compteur de compaction, et **Expert-Conseil Opérationnel (`tool_advisor`)** adossé à 10 manuels spécialisés réduisant de 80 % l'empreinte des 95 outils.
 
 ---
