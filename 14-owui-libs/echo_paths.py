@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Paths
 author: Wilfried BARNAVON
-version: 5.231.49.1
+version: 5.235.5.2
 description: Résolution des chemins absolus du système.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.235.5.2: Ajout de get_echo_identity_db_path, wait_for_chat_clone et sanctuarisation du schéma SQLite identité.
+# 5.234.1.1: Support de default en alias rétrocompatible de fallback dans sanitize_echo_id.
+# 5.232.5.1: Résolution étendue multi-workspaces (main, plans, generated, sandbox) et types ("codex", "plan", "generated") dans resolve_extended_file_path.
+# 5.231.59.1: Support du préfixe URN canonique codex:current: dans resolve_extended_file_path.
 # 5.231.49.1: Factorisation de extract_clean_filename et resolve_extended_file_path (résolution unifiée par ID, Nom et Workspace).
-# 5.231.29.1: Alignement de format_codex_storage_path sur la constante SSOT CODEX_DEFAULT_WORKSPACE.
-# 5.231.28.1: Ajout de format_codex_storage_path(relative_path, workspace) garantissant le format canonique codex/<workspace>/<filename>.
-# 5.231.20.1: Standardisation multi-user/concurrence : ajout de sanitize_echo_id, get_codex_lock, get_user_skill_lock et suffixe UUID anti-collision dans generate_echo_file_id.
-# 5.230.0.1: Factorisation SSOT de normalize_codex_rel_path (avec unquote défensif) et check_codex_file_exists pour les outils, filtres et dépôts Codex.
 import os
 import re
 import time
@@ -24,7 +24,6 @@ from echo_constants import (
     CODEX_DEFAULT_WORKSPACE,
     CODEX_DIR_NAME,
     CODEX_WORKSPACE_MAIN,
-    CODEX_WORKSPACE_SANDBOX,
     ECHO_CODEX_WORKSPACES,
     ECHO_GLOBAL_DOMAINS,
     ECHO_SESSION_DOMAINS,
@@ -53,10 +52,11 @@ _CODEX_LOCKS: dict[str, asyncio.Lock] = {}
 _SKILL_LOCKS: dict[str, asyncio.Lock] = {}
 
 
-def sanitize_echo_id(raw_id: str, fallback: str = "default") -> str:
+def sanitize_echo_id(raw_id: str, fallback: str = "default", default: Optional[str] = None) -> str:
     """Nettoie un identifiant (user_id, chat_id, skill_id, etc.) pour prévenir toute traversée de chemin."""
+    effective_fallback = default if default is not None else fallback
     cleaned = "".join(x for x in str(raw_id or "") if x.isalnum() or x in "-_")
-    return cleaned if cleaned else fallback
+    return cleaned if cleaned else effective_fallback
 
 
 def get_codex_lock(user_id: str, chat_id: str) -> asyncio.Lock:
@@ -115,6 +115,19 @@ def get_echo_session_path(user_id: str, chat_id: str, domain: str) -> str:
         return os.path.join(base_dir, "session.db")
 
     return os.path.join(base_dir, domain)
+
+
+def get_echo_identity_db_path(user_id: str) -> str:
+    """Retourne le chemin standardisé de la base utilisateur identity.db."""
+    return os.path.join(ECHO_USERS_ROOT, sanitize_echo_id(user_id), "identity.db")
+
+
+def get_echo_db_path(user_id: str, chat_id: str) -> str:
+    """Retourne le chemin standardisé de la base de session session.db. Alias direct de get_echo_session_path(..., 'db')."""
+    return get_echo_session_path(user_id, chat_id, "db")
+
+
+get_echo_session_db_path = get_echo_db_path
 
 
 def resolve_upload_file_path(
@@ -204,7 +217,7 @@ def resolve_extended_file_path(
     if not target:
         return None
     raw = unquote(str(target).strip())
-    for urn_prefix in ("codex:session:", "codex:global:", "codex:"):
+    for urn_prefix in ("codex:current:", "codex:session:", "codex:global:", "codex:"):
         if raw.lower().startswith(urn_prefix):
             raw = raw[len(urn_prefix):]
             break
@@ -240,7 +253,10 @@ def resolve_extended_file_path(
         sp = res.get("storage_path") or ""
         if sp and os.path.isabs(sp) and os.path.isfile(sp):
             return sp
-        if res.get("resource_type") == "codex" and base_codex:
+        if base_codex and (
+            res.get("resource_type") in ("codex", "plan", "generated")
+            or sp.startswith(f"{CODEX_DIR_NAME}/")
+        ):
             for ws_c in ECHO_CODEX_WORKSPACES:
                 if sp.startswith(f"{CODEX_DIR_NAME}/{ws_c}/"):
                     rel_sp = sp[len(f"{CODEX_DIR_NAME}/{ws_c}/"):]
@@ -296,9 +312,9 @@ def resolve_extended_file_path(
                 if resolved:
                     return resolved
 
-    # 5. Résolution physique directe par Nom/Chemin relatif (Codex 'main' -> Codex 'sandbox' -> Vault 'files')
+    # 5. Résolution physique directe par Nom/Chemin relatif (tous les workspaces Codex -> Vault 'files')
     if base_codex:
-        for ws_name in (CODEX_WORKSPACE_MAIN, CODEX_WORKSPACE_SANDBOX):
+        for ws_name in ECHO_CODEX_WORKSPACES:
             ws_dir = os.path.join(base_codex, ws_name)
             clean_rel = normalize_codex_rel_path(rel_target, workspace=ws_name, repo_path=ws_dir)
             if clean_rel:

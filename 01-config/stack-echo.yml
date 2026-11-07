@@ -1,19 +1,7 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 5.231.42.1
+# VERSION : 5.236.5.1
 # ==============================================================================
-#                  inventés par la syntaxe officielle BunkerWeb (REVERSE_PROXY_AUTH_REQUEST*).
-#                 des modèles Open WebUI et conversion RequestBodyLimit en octets.
-#                 et correction de l'anti-indexation (Admin Manager).
-#                 commande uvicorn avec --reload pour permettre le hot-reload du TTS.
-#                 en remplaçant `RAG_EMBEDDING_ENGINE=""` par `"openai"` pour
-#                 éviter le téléchargement de modèles locaux sans faire crasher l'app.
-#                 pour contourner PEP 668 sur Debian Bookworm et suppression de jq
-#                 dans le healthcheck.
-#                 exclusions CRS granulaires (SecRuleRemoveById) pour conserver
-#                 le moteur WAF actif tout en eliminant les faux positifs OWUI.
-#                 Ajout PATCH dans ALLOWED_METHODS. Retrait 400 de BAD_BEHAVIOR.
-#                 open-webui pour le module ECHO Codex.
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
 # ==============================================================================
@@ -33,15 +21,16 @@
 #    - auth-manager     : .24  (Dossier 24- -> voir bunkerweb-stack.yml)
 #    - download-broker  : .25  (Dossier 25-)
 #    - n8n-worker       : .26  (Dossier 26-)
+#    - user-manager     : .27  (Dossier 27- -> voir bunkerweb-stack.yml)
 #    - embedding        : .30  (Dossier 30-)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.236.5.1: Référencement IPAM de user-manager (.27 -> bunkerweb-stack.yml).
+# 5.236.3.1: Alignement du plafond de streams HTTP/2 (LIMIT_CONN_MAX_HTTP2=200) et activation de HTTP/1.1 sur les locations statiques d'Open WebUI pour éviter le 500 PWA lors d'un Ctrl+F5 en mode public.
+# 5.236.2.1: Désactivation de proxy_intercept_errors dans location = /api/verify pour préserver le code 401 vers le module auth_request de BunkerWeb.
+# 5.235.5.1: Montage en lecture seule de /opt/ECHO/owui-libs vers /app/echo_libs dans echo-admin-manager.
 # 5.231.36.1: Fix du nommage des images locales buildées (suppression du double préfixe echo-echo-* via directive image: explicite).
-# 5.231.33.1: Open WebUI : Ajout de imageio-ffmpeg au démarrage de echo-open-webui (main-slim) pour la segmentation multimédia en mémoire vive.
-# 5.231.21.1: Injection de ECHO_VAULT_ENCRYPTION_KEY sur echo-open-webui pour le chiffrement AEAD de l'Identity Vault.
-# 5.227.1.1: Open WebUI : Maintien de ENABLE_CONTEXT_COMPACTION=false pour protéger la Suture Bit-Perfect ECHO.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 name: echo
 
@@ -154,6 +143,7 @@ services:
       - |
         bunkerweb.CUSTOM_CONF_SERVER_HTTP_authbackend=location = /api/verify {
             internal;
+            proxy_intercept_errors off;
             set $$upstream_auth http://echo-auth-manager:8000;
             proxy_pass $$upstream_auth;
             proxy_pass_request_body off;
@@ -175,10 +165,10 @@ services:
 
 
       # 🔓 EXCLUSION API PUBLIQUES : Permet au frontend de s'initialiser avant de rediriger proprement
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_bypass=location ~ ^/api/(version|config) { auth_request off; set $$upstream_owui http://echo-open-webui:8080; proxy_pass $$upstream_owui; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_bypass=location ~ ^/api/(version|config) { auth_request off; set $$upstream_owui http://echo-open-webui:8080; proxy_pass $$upstream_owui; proxy_http_version 1.1; proxy_set_header Connection \"\"; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
 
       # 🔓 EXCLUSION FICHIERS STATIQUES : Requis pour la PWA, les assets et la mise à jour du Service Worker
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_statics=location ~ ^/(assets|static|_app|manifest\\.json|favicon.*\\.png|robots\\.txt) { auth_request off; set $$upstream_owui http://echo-open-webui:8080; proxy_pass $$upstream_owui; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $$scheme; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_statics=location ~ ^/(assets|static|_app|manifest\\.json|favicon.*\\.png|robots\\.txt) { auth_request off; set $$upstream_owui http://echo-open-webui:8080; proxy_pass $$upstream_owui; proxy_http_version 1.1; proxy_set_header Connection \"\"; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $$scheme; }"
 
 
       # 🚫 ANTI-CACHE DYNAMIQUE (Pour forcer l'interception SSO sur le HTML)
@@ -188,7 +178,7 @@ services:
       # 3. RATE LIMITING (Stratégie SPA Robuste)
       - "bunkerweb.USE_LIMIT_REQ=yes"
       - "bunkerweb.LIMIT_REQ_RATE=300r/s"
-      - "bunkerweb.LIMIT_REQ_BURST=1000"
+      - "bunkerweb.LIMIT_CONN_MAX_HTTP2=200"
 
       # 4. SECURITE (Anti-Ban)
       - "bunkerweb.USE_MODSECURITY=no"
@@ -271,6 +261,7 @@ services:
       - |
         bunkerweb.CUSTOM_CONF_SERVER_HTTP_authbackend=location = /api/verify {
             internal;
+            proxy_intercept_errors off;
             set $$upstream_auth http://echo-auth-manager:8000;
             proxy_pass $$upstream_auth;
             proxy_pass_request_body off;
@@ -303,6 +294,7 @@ services:
       - /opt/ECHO/docker-admin-manager/services:/app/services:ro
       - /opt/ECHO/docker-admin-manager/routes:/app/routes:ro
       - /opt/ECHO/docker-admin-manager/templates:/app/templates:ro
+      - /opt/ECHO/owui-libs:/app/echo_libs:ro
       - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
       - /opt/ECHO/echo-images:/app/static:ro
       - echo-backups:/backups
@@ -383,7 +375,7 @@ services:
     volumes:
       - /opt/ECHO/docker-coding-worker/worker_api.py:/app/app.py:ro
       - /opt/ECHO/docker-coding-worker/echo_libs_sandbox:/app/echo_libs_sandbox:ro
-      - /opt/ECHO/docker-coding-worker/sandbox-agent-readme.txt:/app/sandbox-agent-readme.txt:ro
+      - /opt/ECHO/docker-coding-worker/sandbox-agent-readme.md:/app/sandbox-agent-readme.md:ro
       - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
       - echo-webui-data:/app/backend/data:rw
     labels:

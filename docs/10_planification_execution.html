@@ -40,9 +40,10 @@
       JavaScript) en temps réel.
     </p>
     <p>
-      Si vous lui demandez de trier un fichier Excel de 100 000 lignes ou de résoudre un algorithme complexe, l'IA
-      génère un script et l'exécute dans un environnement « bac à sable » isolé. Cela lui permet d'analyser
-      d'importantes quantités de données avec la puissance de l'ordinateur, sans risque pour votre système principal.
+      Si vous lui demandez de trier un fichier Excel de 100 000 lignes, de mener des calculs de longue haleine en
+      arrière-plan ou de prototyper une application interactive, l'IA génère un script et l'exécute dans un
+      environnement « bac à sable » isolé. Elle peut même y projeter de véritables interfaces graphiques qui
+      dialoguent en direct avec vous à l'écran, sans jamais exposer votre système principal.
     </p>
 
     <h2>3. Calendrier et Programmation de Tâches (Open WebUI)</h2>
@@ -65,17 +66,18 @@
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Strategic Planner (<code>strategic_planner.py</code> v5.231.29.1)</h3>
+        <h3>1. Strategic Planner (<code>strategic_planner.py</code> v5.233.0.1)</h3>
         <ul>
           <li><strong>Conception &amp; Persistance Git Concurrente :</strong> Protégé par le verrou partagé
             <code>get_codex_lock(uid, cid)</code> et déporté hors de l'Event Loop via <code>asyncio.to_thread</code>,
             <code>build_plan</code> (propulsé par <code>MODEL_PROMETHEUS</code> avec
-            <code>override_thinking="high"</code>) génère deux fichiers liés dans le Codex Git
-            (<code>CODEX_WORKSPACE_MAIN</code>) et les indexe exclusivement dans la table SQLite unifiée
+            <code>override_thinking="high"</code>) génère deux fichiers liés exclusivement dans l'espace dédié du Codex
+            Git (<code>CODEX_WORKSPACE_PLANS = "plans"</code>) et les indexe dans la table SQLite unifiée
             <code>echo_resources</code> (avec <code>storage_path</code> normalisé via
-            <code>format_codex_storage_path</code> au format <code>codex/main/{filename}</code>) : le document
+            <code>format_codex_storage_path</code> au format <code>codex/plans/{filename}</code>) : le document
             stratégique <code>{plan_id}_{slug}.md</code> (statut initial <code>proposed</code>) et la liste de tâches
-            <code>tasks_{plan_id}_{slug}.md</code>.</li>
+            <code>tasks_{plan_id}_{slug}.md</code>.
+          </li>
           <li><strong>Validation, Suivi Tactique &amp; Analyse :</strong> <code>process_plan</code> soumet le plan via
             une modale de confirmation interactive (transition <code>proposed</code> &rarr; <code>executing</code>).
             <code>update_plan</code> permet de réviser la stratégie tant qu'elle est au statut <code>proposed</code>,
@@ -83,47 +85,70 @@
             (<code>[ ]</code>, <code>[/]</code>, <code>[x]</code>, <code>[!]</code>, <code>[-]</code>), complétés par
             <code>read_plan</code>, <code>delete_plan</code> (suppression atomique du plan et de son fichier
             <code>tasks_</code> associé) et <code>analyze_plan</code> (<code>MODEL_PROMETHEUS</code>,
-            <code>override_thinking="high"</code>).</li>
+            <code>override_thinking="high"</code>).
+          </li>
           <li><strong>Proprioception :</strong> Le modèle consulte l'état des plans à la demande via
-            <code>query_registry</code> afin de préserver la fenêtre contextuelle.</li>
+            <code>query_registry</code> afin de préserver la fenêtre contextuelle.
+          </li>
         </ul>
 
-        <h3>2. Coding Worker &amp; Code Executor (<code>worker_api.py</code> v5.231.20.1 &amp;
-          <code>code_executor_tool.py</code> v5.231.20.1)</h3>
+        <h3>2. Coding Worker &amp; Code Executor (<code>worker_api.py</code> v5.234.1.3 &amp;
+          <code>code_executor_tool.py</code> v5.234.1.2)
+        </h3>
         <p>Micro-service Docker isolé (<code>echo-coding-worker</code>, IP <code>.21</code> sur
-          <code>echo-sandbox</code>, Flask Port 5000) exécutant Python et Node.js.</p>
+          <code>echo-sandbox</code>, Flask Port 5000) exécutant Python et Node.js.
+        </p>
         <ul>
-          <li><strong>Confinement Bubblewrap (<code>bwrap</code>), Verrou de Session &amp; Linting Pré-Exécution
-              :</strong> Sérialisé par session via <code>_get_session_sandbox_lock(user_id, chat_id)</code>, chaque
-            script est validé syntaxiquement avant lancement (<code>py_compile</code> pour Python, <code>node -c</code>
-            pour Node.js) puis exécuté depuis l'espace <code>sandbox</code> du Codex dans un namespace isolé avec
-            montages contrôlés (<code>/sandbox</code>, <code>/main</code>, <code>/files</code>,
-            <code>/echo_libs_sandbox</code>, <code>/sandbox-agent-readme.txt</code> et <code>.tmp</code>). La sortie
-            texte est plafonnée par <code>ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS = 131 072</code> octets (131 Ko, protection
-            anti-OOM).</li>
-          <li><strong>Bidi Polling &amp; Multiplexage JSONL UCTP par <code>run_id</code> (<code>echo_monitor</code>)
-              :</strong> Double canal asynchrone temps réel permettant au script d'émettre des interfaces HTML/JS
-            multi-fenêtres (<code>window_id</code> via <code>/sandbox/.echo_monitor.jsonl</code> transmis par UCTP et
-            isolé par <code>run_id</code> sur <code>/poll_monitor</code>) et de recevoir les événements interactifs du
-            navigateur via <code>get_ui_payload()</code> (<code>_echoGetAggregatedPayload(cid)</code> isolé par
-            <code>chat_id</code> et mis à jour atomiquement par <code>os.replace</code>).</li>
-          <li><strong>Supervisor Pattern &amp; JS Heartbeat (Anti-Zombie) :</strong> Un pacemaker JS surveille la
-            fenêtre du Sandbox Monitor. En cas de fermeture par l'utilisateur, d'expiration du Boot Timeout ou d'appel à
-            l'outil <code>kill_sandbox_execution</code>, le superviseur invoque la route distante <code>/kill</code>
-            (ciblée par <code>run_id</code>) qui détruit immédiatement l'arbre de processus (PID tracking dans
-            <code>_active_sandboxes</code>).</li>
+          <li><strong>Confinement Bubblewrap (<code>bwrap</code>), Parallélisme &amp; Quotas :</strong> Isolation
+            complète
+            via <code>bwrap</code> (<code>--ro-bind /proc /proc</code>, <code>--die-with-parent</code>)
+            avec montages en lecture seule (<code>/main</code>, <code>/plans</code>, <code>/generated</code>,
+            <code>/files</code>,
+            <code>/echo_libs_sandbox</code>, <code>/sandbox-agent-readme.md</code>) et lecture/écriture sur
+            <code>/sandbox</code>.
+            Validation syntaxique pré-exécution (<code>py_compile</code>, <code>node -c</code>). Gestionnaire asynchrone
+            <code>_JOBS_REGISTRY</code> (<code>subprocess.Popen</code> <code>start_new_session=True</code>) limitant la
+            concurrence à 4 jobs par chat et 8 globaux, avec verrou <code>_get_session_deps_lock</code> restreint à
+            l'installation
+            de dépendances <code>pip</code>/<code>npm</code>. Sortie texte bornée à 131 Ko
+            (<code>ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS</code>).
+          </li>
+          <li><strong>Modes d'Exécution &amp; Pilotage Asynchrone :</strong> Support du mode synchrone
+            (<code>background=False</code>
+            par défaut) et détaché (<code>background=True</code> via <code>_BACKGROUND_POLLERS</code>). Outil dédié
+            <code>control_sandbox_execution</code> permettant l'inspection des processus actifs et terminés
+            (<code>action="status"</code>),
+            l'écoute incrémentale en streaming par ligne (<code>action="listen"</code> avec <code>wait_sec</code>) et
+            l'arrêt ciblé
+            (<code>action="kill"</code>). Canaux IPC isolés par <code>run_id</code>
+            (<code>.echo_monitor_{run_id}.jsonl</code>,
+            <code>.echo_ui_payload_{run_id}.json</code>, <code>.echo_ui_inbox_{run_id}.jsonl</code>).
+          </li>
+          <li><strong>Routeur RPC Temps Réel &amp; Supervisor Pattern :</strong> Intégration de
+            <code>echo_monitor</code>
+            (<code>v5.234.1.1</code>) pour la projection d'interfaces HTML/JS et le routage RPC bidirectionnel sans
+            rechargement DOM
+            (<code>display</code>, <code>push_event</code>, <code>get_ui_requests</code>, <code>BidiRouter</code>,
+            <code>window.echoPushMonitorEvent</code>, <code>window.echoRequest</code>, <code>window.onEchoEvent</code>).
+            Le pacemaker JS du superviseur surveille la fenêtre active ; sa fermeture ou l'appel à
+            <code>kill_sandbox_execution</code>
+            déclenche l'envoi d'un signal <code>SIGKILL</code> à l'ensemble du groupe de processus via
+            <code>os.killpg</code>.
+          </li>
         </ul>
 
         <h3>3. Pilotage du Calendrier, Étiquettes &amp; Automatisations Open WebUI (<code>generalist_tools.py</code>
-          v5.231.20.1)</h3>
+        v5.233.0.1)</h3>
         <p>Les fonctions natives d'Open WebUI sont encapsulées de manière sécurisée par le proxy
           <code>safe_owui_call</code> (filtrage dynamique de signature via <code>inspect.signature</code> et retour
-          normalisé <code>wrap_tool_output</code>) :</p>
+          normalisé <code>wrap_tool_output</code>) :
+        </p>
         <ul>
           <li><strong>Calendrier UI :</strong> <code>create_ui_calendar_event</code> (titre, description, lieu, dates
             <code>start</code>/<code>end</code> au format strict ISO 8601), <code>update_ui_calendar_event</code>,
             <code>read_ui_calendar_events</code>, <code>list_ui_calendar_events</code>,
-            <code>search_ui_calendar_events</code> et <code>delete_ui_calendar_event</code>.</li>
+            <code>search_ui_calendar_events</code> et <code>delete_ui_calendar_event</code>.
+          </li>
           <li><strong>CRON Cognitif, Tags &amp; Conseiller Opérationnel Hybride :</strong>
             <code>create_ui_automation</code> programme des tâches de fond récurrentes ou ponctuelles selon la norme
             iCalendar <code>RRULE</code> (avec <code>DTSTART</code> obligatoire si <code>COUNT</code> est défini, modèle
@@ -136,7 +161,8 @@
             <code>wait_timer</code> (HUD isolé par <code>chat_id</code>), <code>ask_user</code> et
             <code>tool_advisor</code> (Agent Conseiller Opérationnel Hybride exécuté sur <code>MODEL_APOLLO</code> avec
             <code>override_thinking="medium"</code>, pré-injecté avec la table des matières des 10 manuels
-            <code>14-owui-libs/tool_guides/*.md</code> via <code>EchoToolGuidesManager</code>).</li>
+            <code>14-owui-libs/tool_guides/*.md</code> via <code>EchoToolGuidesManager</code>).
+          </li>
         </ul>
       </div>
     </details>
@@ -148,7 +174,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.56 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.237.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

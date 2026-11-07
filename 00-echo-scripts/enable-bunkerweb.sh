@@ -1,18 +1,18 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : enable-bunkerweb.sh
-# VERSION : 5.231.21.2
+# VERSION : 5.236.5.1
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Activation de la couche de sécurité BunkerWeb (Secure Edge).
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.236.5.1: Affichage du sous-domaine my.$DOMAIN et vérification préalable de l'image echo-python-base:latest.
 # 5.231.21.2: Délégation de la génération des secrets .env (dont ECHO_VAULT_ENCRYPTION_KEY) à ensure_echo_secrets (y compris en sortie idempotente).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 4.2: Sécurisation de la création IPAM dynamique pour echo-network et echo-sandbox.
 # 4.1: Correction du grep pour le parsing de echo-open-webui.
-# 4.0: set -euo pipefail, idempotence (détection BW déjà actif),
 
 set -euo pipefail
 
@@ -67,6 +67,7 @@ if [ -z "$DOMAIN" ]; then
 
     echo "Architecture cible :"
     echo " - IA    : https://ui.DOMAINE"
+    echo " - Profil: https://my.DOMAINE"
     echo " - Admin : https://am.DOMAINE"
     echo " - Auth  : https://auth.DOMAINE"
     echo ""
@@ -153,6 +154,11 @@ docker network create --subnet="${ECHO_NET_MAIN_PREFIX}.0/24" echo-network 2>/de
 docker network create --subnet="${ECHO_NET_SANDBOX_PREFIX}.0/24" echo-sandbox 2>/dev/null || true
 mkdir -p "$ECHO_ROOT/bunkerweb"
 
+if ! docker image inspect echo-python-base:latest >/dev/null 2>&1; then
+    echo "🏗️ Construction de l'image de base partagée (echo-python-base)..."
+    docker build -t echo-python-base:latest "$ECHO_ROOT/docker-python-base"
+fi
+
 # Arrêt propre (ciblé sur le projet echo)
 $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$BW_STACK_FILE" -f "$ECHO_STACK_FILE" down --remove-orphans
 
@@ -195,6 +201,7 @@ echo ""
 echo "✅ INSTALLATION TERMINÉE !"
 echo "-----------------------------------------------------------"
 echo "🤖 UI IA     : https://ui.$DOMAIN"
+echo "👤 PROFIL    : https://my.$DOMAIN"
 echo "🔧 ADMIN     : https://am.$DOMAIN"
 echo "🔐 AUTH      : https://auth.$DOMAIN"
 echo "-----------------------------------------------------------"

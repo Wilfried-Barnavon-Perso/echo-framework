@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Http
 author: Wilfried BARNAVON
-version: 5.231.49.1
+version: 5.231.59.1
 description: Client HTTP bas niveau (H2). Utilisation de l'UA furtif global.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.59.1: Factorisation de load_image_as_base64 (encapsulation pybase64 locale/distante avec garde SSRF, sniff_image_mime et option disallow_svg).
 # 5.231.49.1: Factorisation de is_safe_public_url (garde SSRF IPv4/IPv6), sniff_image_mime (magic bytes) et extract_url_filename.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 import asyncio
@@ -14,9 +15,10 @@ import ipaddress
 import mimetypes
 import os
 import httpx
+import pybase64
 import time
 from urllib.parse import urlparse, unquote
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from echo_constants import (
     ECHO_ALLOWED_DOMAINS,
     ECHO_HTTP_CLIENT_TIMEOUT,
@@ -25,6 +27,7 @@ from echo_constants import (
     ECHO_HTTP_MAX_KEEPALIVE,
     ECHO_STEALTH_USER_AGENT,
 )
+from echo_paths import extract_clean_filename, resolve_extended_file_path
 
 
 class FatalAPIError(Exception):
@@ -208,3 +211,171 @@ def extract_url_filename(url: str, mime: str = "image/png") -> str:
     except Exception:
         pass
     return f"image_distante{default_ext}"
+
+
+async def load_image_as_base64(
+    target: str,
+    user_id: str,
+    chat_id: Optional[str] = None,
+    workspace: Optional[str] = None,
+    max_bytes: int = 30 * 1024 * 1024,
+    disallow_svg: bool = False,
+) -> Dict[str, Any]:
+    """
+    Charge une image locale (Codex/Workspace/Vault) ou distante (HTTP/HTTPS anti-SSRF)
+    et l'encode en Base64 via pybase64 sans passer par le contexte du LLM.
+    """
+    clean_target = (target or "").strip()
+    if not clean_target:
+        return {"ok": False, "error_code": "empty_target", "error": "Cible d'image vide."}
+
+    is_url = clean_target.lower().startswith(("http://", "https://"))
+    if not is_url and (clean_target.startswith("/") or (len(clean_target) > 1 and clean_target[1] == ":")):
+        return {
+            "ok": False,
+            "is_url": False,
+            "error_code": "forbidden_path",
+            "error": "Sécurité : Accès restreint.",
+        }
+
+    if is_url:
+        if not await is_safe_public_url(clean_target):
+            return {
+                "ok": False,
+                "is_url": True,
+                "error_code": "ssrf_blocked",
+                "error": "Sécurité SSRF : L'accès aux adresses locales, privées ou internes est strictement interdit.",
+            }
+        headers = get_stealth_headers(clean_target)
+        try:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
+                async with c.stream("GET", clean_target, headers=headers) as r:
+                    r.raise_for_status()
+                    content_type = r.headers.get("content-type", "").lower()
+                    chunks = []
+                    total_read = 0
+                    async for chunk in r.aiter_bytes(chunk_size=65536):
+                        total_read += len(chunk)
+                        if total_read > max_bytes:
+                            return {
+                                "ok": False,
+                                "is_url": True,
+                                "error_code": "too_large",
+                                "error": f"L'image distante dépasse la limite autorisée ({max_bytes // 1024} Ko).",
+                            }
+                        chunks.append(chunk)
+                    raw_bytes = b"".join(chunks)
+
+            mime = sniff_image_mime(raw_bytes, content_type=content_type, url_or_path=clean_target)
+            if not mime:
+                return {
+                    "ok": False,
+                    "is_url": True,
+                    "error_code": "invalid_mime",
+                    "content_type": content_type,
+                    "error": f"Ressource distante rejetée : type MIME détecté `{content_type or 'inconnu'}` invalide (image requise).",
+                }
+            if disallow_svg and mime == "image/svg+xml":
+                return {
+                    "ok": False,
+                    "is_url": True,
+                    "error_code": "svg_not_supported",
+                    "error": "Le format vectoriel SVG n'est pas supporté en entrée vision raster (formats acceptés : PNG, JPEG, WEBP, GIF).",
+                }
+            fname = extract_url_filename(clean_target, mime=mime)
+            b64 = pybase64.b64encode(raw_bytes).decode("utf-8")
+            return {
+                "ok": True,
+                "is_url": True,
+                "b64": b64,
+                "mime": mime,
+                "filename": fname,
+                "raw_bytes": raw_bytes,
+                "size_bytes": len(raw_bytes),
+            }
+        except httpx.HTTPStatusError as e:
+            status_code = e.response.status_code
+            fname = extract_url_filename(clean_target)
+            if status_code == 404:
+                return {
+                    "ok": False,
+                    "is_url": True,
+                    "error_code": "http_404",
+                    "http_status": 404,
+                    "filename": fname,
+                    "error": "Ressource distante introuvable (HTTP 404).",
+                }
+            return {
+                "ok": False,
+                "is_url": True,
+                "error_code": "http_status",
+                "http_status": status_code,
+                "filename": fname,
+                "remote_fallback": True,
+                "error": f"Requête serveur filtrée par l'hôte distant (HTTP {status_code}).",
+            }
+        except Exception as e:
+            fname = extract_url_filename(clean_target)
+            return {
+                "ok": False,
+                "is_url": True,
+                "error_code": "timeout_or_network",
+                "filename": fname,
+                "remote_fallback": True,
+                "error": f"Délai ou erreur réseau lors du téléchargement de l'image distante : {str(e)}",
+            }
+
+    fpath = resolve_extended_file_path(user_id, chat_id, clean_target, workspace=workspace)
+    if not fpath or not os.path.isfile(fpath):
+        return {
+            "ok": False,
+            "is_url": False,
+            "error_code": "not_found",
+            "error": f"Ressource image locale `{clean_target}` introuvable dans l'Espace Personnel.",
+        }
+    try:
+        fsize = os.path.getsize(fpath)
+        if fsize > max_bytes:
+            return {
+                "ok": False,
+                "is_url": False,
+                "error_code": "too_large",
+                "error": f"L'image locale dépasse la limite autorisée ({max_bytes // 1024} Ko).",
+            }
+        with open(fpath, "rb") as f:
+            raw_bytes = f.read()
+        mime = sniff_image_mime(raw_bytes, url_or_path=fpath)
+        if not mime:
+            return {
+                "ok": False,
+                "is_url": False,
+                "error_code": "invalid_mime",
+                "error": f"Le fichier local `{clean_target}` n'est pas une image valide.",
+            }
+        if disallow_svg and mime == "image/svg+xml":
+            return {
+                "ok": False,
+                "is_url": False,
+                "error_code": "svg_not_supported",
+                "error": "Le format vectoriel SVG n'est pas supporté en entrée vision raster (formats acceptés : PNG, JPEG, WEBP, GIF).",
+            }
+        b64 = pybase64.b64encode(raw_bytes).decode("utf-8")
+        fname = extract_clean_filename(fpath)
+        return {
+            "ok": True,
+            "is_url": False,
+            "b64": b64,
+            "mime": mime,
+            "filename": fname,
+            "filepath": fpath,
+            "raw_bytes": raw_bytes,
+            "size_bytes": len(raw_bytes),
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "is_url": False,
+            "error_code": "read_error",
+            "error": f"Erreur lecture fichier image : {str(e)}",
+        }
+

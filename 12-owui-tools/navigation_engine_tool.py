@@ -1,16 +1,16 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 5.231.41.1
+version: 5.233.0.1
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.233.0.1: Décoration @echo_tool sur les 6 méthodes publiques et simplification des retours wrap_tool_output.
 # 5.231.41.1: Tour de synthèse finale garanti en functionCallingConfig mode NONE à l'épuisement de max_iterations dans delegate_web_browsing, injection d'alerte de budget dans functionResponse et garde-fou de récupération.
 # 5.231.20.1: Isolation des sessions Playwright par sub_sid/sid dans delegate_web_browsing et close_web_thread, sessions éphémères parallélisables dans analyze/archive_web_page et nommage anti-écrasement des archives.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 11.43: Séparation stricte entre chat_id (persistance SQLite/Vault) et browser_session_id (isolation Playwright par sub_sid) pour empêcher la création de dossiers chats/<sub_sid> orphelins.
 
 import os
 import time
@@ -25,6 +25,7 @@ from typing import Optional, Literal, Any
 sys.path.append("/app/backend/echo_libs")
 from echo_events import EchoEvents
 from echo_core import (
+    echo_tool,
     wrap_tool_output,
     clamp_model,
     estimate_token_size,
@@ -124,6 +125,7 @@ class Tools:
     def __init__(self):
         self.valves = self.Valves()
 
+    @echo_tool
     async def delegate_web_browsing(
         self, task_objective: str, start_url: Optional[str] = None, 
         target_model_key: Literal["MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_APOLLO", 
@@ -149,7 +151,7 @@ class Tools:
 
         await events.status(f"📡 Agent Navigateur [{browser_session_id[:8]}]: Prise de contrôle...")
         if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, browser_session_id, uid, u_valves, events, chat_id=chat_id):
-            return wrap_tool_output(text="❌ Navigateur indisponible.", status={"status": "error"}, user_id=(__user__ or {}).get("id", "system"), chat_id=(__metadata__ or {}).get("chat_id"), metadata=__metadata__)
+            return "❌ Navigateur indisponible."
 
         browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, browser_session_id, uid, vision_grid_step=getattr(u_valves, 'VISION_GRID_STEP', DEFAULT_VISION_GRID_STEP), chat_id=chat_id)
         registry = browser.get_registry()
@@ -333,7 +335,7 @@ class Tools:
                 data, _, err = await EchoGeminiClient.call_cascade(model, payload, uid, __metadata__, events, timeout=120)
 
                 if err or not data:
-                    return wrap_tool_output(text=f"❌ Erreur modèle: {err}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    return f"❌ Erreur modèle: {err}"
 
                 candidates = data.get("candidates", [])
                 if not candidates or not candidates[0].get("content"): break
@@ -597,7 +599,10 @@ class Tools:
                         continue  # Relance la boucle while
                 
                     await events.status(f"✅ Mission terminée en {iterations} étapes.", done=True)
-                    return wrap_tool_output(text=f"🤖 Synthèse du Navigateur :\n{text_out}", status={"status": "success", "steps": iterations, "sid": sid}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    return wrap_tool_output(
+                        text=f"🤖 Synthèse du Navigateur :\n{text_out}",
+                        status={"status": "success", "steps": iterations, "sid": sid}
+                    )
 
             fallback_msg = "Aucune synthèse (Interrompu en cours d'action)."
             return wrap_tool_output(
@@ -607,12 +612,13 @@ class Tools:
                     f"[SYNTHÈSE_NAVIGATEUR] :\n{text_out if text_out else fallback_msg}"
                 ), 
                 status={"status": "too_many_tries", "steps": iterations, "sid": sid}
-            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            )
         finally:
             stop_streaming.set()
             if proxy_task:
                 proxy_task.cancel()
 
+    @echo_tool
     async def analyze_web_page(self, url: str, query: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
         """Extrait et analyse sémantiquement le contenu d'une URL connue pour répondre à une directive précise."""
         chat_id = (__metadata__ or {}).get("chat_id", "default_session")
@@ -625,7 +631,7 @@ class Tools:
         u_valves = (__user__ or {}).get("valves", self.UserValves())
         
         if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, ephem_session_id, uid, u_valves, events, chat_id=chat_id):
-            return wrap_tool_output(text="Erreur critique : Session perdue.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "Erreur critique : Session perdue."
 
         browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, ephem_session_id, uid, chat_id=chat_id)
         try:
@@ -671,9 +677,9 @@ class Tools:
         if os.path.exists(tmp_path): os.remove(tmp_path)
         
         distillate = "".join(p.get("text", "") for p in data.get("candidates", [])[0]["content"].get("parts", []))
-        return wrap_tool_output(text=f"Résultat de l'analyse pour '{query}' :\n{distillate}", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        return f"Résultat de l'analyse pour '{query}' :\n{distillate}"
 
-
+    @echo_tool
     async def archive_web_page(self, url: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
         """Archive le texte intégral d'une page Web en tâche de fond dans la Mémoire Vectorielle de la session."""
         chat_id = (__metadata__ or {}).get("chat_id", "default_session")
@@ -686,7 +692,7 @@ class Tools:
         u_valves = (__user__ or {}).get("valves", self.UserValves())
         
         if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, ephem_session_id, uid, u_valves, events, chat_id=chat_id):
-            return wrap_tool_output(text="Erreur critique : Session perdue.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "Erreur critique : Session perdue."
 
         browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, ephem_session_id, uid, chat_id=chat_id)
         try:
@@ -703,7 +709,7 @@ class Tools:
                 pass
         
         if not markdown_text:
-            return wrap_tool_output(text="Erreur : Échec de l'extraction du texte.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "Erreur : Échec de l'extraction du texte."
             
         domain = urllib.parse.urlparse(url).netloc.replace(".", "_") or "web_page"
         short_uuid = uuid.uuid4().hex[:6]
@@ -725,11 +731,9 @@ class Tools:
         )
         
         await events.status(f"✅ Archive {filename} sauvegardée.", done=True)
-        return wrap_tool_output(
-            text=f"Succès : La page {url} a été archivée physiquement ({filename}). Le processus d'ingestion vectorielle s'exécutera silencieusement en arrière-plan. Le Modèle peut poursuivre son analyse courante.", 
-            status={"status": "success"}
-        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        return f"Succès : La page {url} a été archivée physiquement ({filename}). Le processus d'ingestion vectorielle s'exécutera silencieusement en arrière-plan. Le Modèle peut poursuivre son analyse courante."
 
+    @echo_tool
     async def web_browse_reset(self, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
         """Réinitialise la session courante du Navigateur Autonome."""
         chat_id = (__metadata__ or {}).get("chat_id", "default_session")
@@ -739,8 +743,9 @@ class Tools:
         uid = (__user__ or {}).get("id", "anonymous")
         browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, browser_session_id, uid, chat_id=chat_id)
         res = await browser.reset_session()
-        return wrap_tool_output(text="🚀 Navigateur réinitialisé.", status=res, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        return wrap_tool_output(text="🚀 Navigateur réinitialisé.", status=res)
 
+    @echo_tool
     async def close_web_thread(self, sub_sid: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
         """Ferme définitivement une session de navigation web (`thread_web_*`) et purge son historique."""
         chat_id = (__metadata__ or {}).get("chat_id", "default_session")
@@ -751,10 +756,7 @@ class Tools:
         sids_in_chat = {t["sub_sid"] for t in threads}
         
         if sub_sid not in sids_in_chat or not sub_sid.startswith("thread_web_"):
-            return wrap_tool_output(
-                text=f"❌ Session `{sub_sid}` introuvable dans ce chat ou de type invalide.",
-                status={"status": "error"}
-            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"❌ Session `{sub_sid}` introuvable dans ce chat ou de type invalide."
             
         state.delete_thread(sub_sid)
         
@@ -765,8 +767,9 @@ class Tools:
         return wrap_tool_output(
             text=f"✅ Session web `{sub_sid}` fermée et purgée de l'historique.",
             status={"status": "success", "sid": sub_sid}
-        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        )
 
+    @echo_tool
     async def get_browser_frames_history(self, depth: Optional[int] = 10, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None) -> dict:
         """Consulte l'historique des captures d'écran de navigation de la session."""
         import orjson as json
@@ -785,6 +788,10 @@ class Tools:
                 history.append({"file_id": r['id'], "date": dt, "frame": r['name']})
                 nouveaux.append({"nom": r['name'], "id": r['id'], "mime": r.get('mime') or 'image/png', "statut": r['status']})
 
-            return wrap_tool_output(text=json.dumps(history, option=json.OPT_INDENT_2).decode('utf-8'), status={"status": "success"}, echo_tool_multiparts=nouveaux, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(
+                text=json.dumps(history, option=json.OPT_INDENT_2).decode('utf-8'),
+                status={"status": "success"},
+                echo_tool_multiparts=nouveaux
+            )
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur: {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"❌ Erreur: {str(e)}"

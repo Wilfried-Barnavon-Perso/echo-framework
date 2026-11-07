@@ -1,26 +1,34 @@
 """
 title: ECHO Identity Vault Tool
 author: ECHO
-version: 5.231.21.2
+version: 5.233.0.1
 description: Outil permettant à l'Agent de gérer le Identity Vault (ajout/suppression de serveurs distants ou N8N).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.233.0.1: Généralisation de l'encapsulation @echo_tool sur les 3 outils et typage du schéma de sortie IdentityServicesCatalogOutput.
 # 5.231.21.2: Délégation CRUD chiffré à EchoStateManager, masquage des secrets bruts dans list_identities, schéma n8n_workflows et échappement HTML.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.9: Remplacement de auth_failure_instructions par user_required_instructions et correction Flake8.
-# 1.8: Filtrage croisé de configured_services et forçage sémantique du paramètre 'all'.
 import sys
 import html
 import json
-from typing import Any, Literal
+from typing import Any, Dict, List, Literal, Union
 from pydantic import BaseModel
 
 sys.path.append("/app/backend/echo_libs")
+from echo_core import echo_tool  # noqa: E402
 from echo_state_manager import EchoStateManager  # noqa: E402
 from echo_ui import EchoUI  # noqa: E402
 from echo_events import EchoEvents  # noqa: E402
+
+
+class IdentityServicesCatalogOutput(BaseModel):
+    """Schéma de sortie structuré du catalogue des services de l'Identity Vault."""
+    categories_services: Dict[str, str]
+    services_disponibles_via_mcp_broker: List[Dict[str, Any]]
+    services_avec_identites_configurees: List[str]
 
 
 class Tools:
@@ -33,11 +41,12 @@ class Tools:
     def _init_vault(self, user_id: str) -> EchoStateManager:
         return EchoStateManager(user_id=user_id)
 
+    @echo_tool
     async def list_identities_services(
         self,
         category_filter: Literal["all", "mcp_native", "mcp_resident", "mcp_ephemeral", "mcp_remote", "orchestration", "uncategorized"] = "all",
         __user__: dict = None
-    ) -> str:
+    ) -> Union[IdentityServicesCatalogOutput, str]:
         """Liste le catalogue des services disponibles et configurés dans l'Identity Vault."""
         if not __user__:
             return "Erreur: Auth requise."
@@ -78,21 +87,22 @@ class Tools:
             if category_filter == "all" or schemas.get(svc, {}).get("category", "uncategorized") == category_filter:
                 configured_services.append(svc)
 
-        result_json = {
-            "categories_services": {
-                "mcp_native": "Services natifs vers des serveurs MCP distants",
-                "mcp_resident": "Services résidents de serveurs MCP préinstallés",
-                "mcp_ephemeral": "Services de serveurs MCP installés à la volée (npx/uvx)",
-                "mcp_remote": "Services MCP via connexions distantes (HTTP/SSE)",
-                "orchestration": "Services et leurs identifiants orchestrés par N8N",
-                "uncategorized": "Autres services et leurs identifiants, non catégorisés"
-            },
-            "services_disponibles_via_mcp_broker": available_services_list,
-            "services_avec_identites_configurees": configured_services
+        categories_dict = {
+            "mcp_native": "Services natifs vers des serveurs MCP distants",
+            "mcp_resident": "Services résidents de serveurs MCP préinstallés",
+            "mcp_ephemeral": "Services de serveurs MCP installés à la volée (npx/uvx)",
+            "mcp_remote": "Services MCP via connexions distantes (HTTP/SSE)",
+            "orchestration": "Services et leurs identifiants orchestrés par N8N",
+            "uncategorized": "Autres services et leurs identifiants, non catégorisés"
         }
 
-        return json.dumps(result_json, ensure_ascii=False, indent=2)
+        return IdentityServicesCatalogOutput(
+            categories_services=categories_dict,
+            services_disponibles_via_mcp_broker=available_services_list,
+            services_avec_identites_configurees=configured_services
+        )
 
+    @echo_tool
     async def list_identities(self, service: str, __user__: dict = None) -> str:
         """Liste les comptes et identifiants configurés pour un service spécifique de l'Identity Vault."""
         if not __user__:
@@ -117,6 +127,7 @@ class Tools:
             return f"Aucun compte trouvé pour '{service}'."
         return f"[{service}] " + ", ".join(result)
 
+    @echo_tool
     async def manage_identity(
         self,
         action: str,

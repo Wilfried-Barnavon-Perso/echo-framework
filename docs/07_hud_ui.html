@@ -200,8 +200,8 @@
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
         <h3>1. Architecture Backend ↔ Frontend, EchoWindowManager &amp; Protocole UCTP
-          (<code>echo_window_manager.py</code> v5.231.50.1, <code>echo_events.py</code> v5.231.48.1 &amp;
-          <code>echo_ui.py</code> v5.231.56.1)
+          (<code>echo_window_manager.py</code> v5.231.60.1, <code>echo_events.py</code> v5.231.48.1 &amp;
+          <code>echo_ui.py</code> v5.234.1.1)
         </h3>
         <ul>
           <li><strong>Canal d'Événements &amp; Double Transport Non-Destructif (<code>EchoEvents</code> &amp;
@@ -216,7 +216,7 @@
             d'<code>EchoWindowManager</code>).
           </li>
           <li><strong>Gestionnaire de Fenêtres Agnostique &amp; Isolation Multi-Chat
-            (<code>window_manager_filter.py</code> v5.231.55.1 &amp; <code>echo_ui.py</code> v5.231.56.1) :</strong>
+            (<code>window_manager_filter.py</code> v5.231.55.1 &amp; <code>echo_ui.py</code> v5.234.1.1) :</strong>
             Sert dynamiquement <code>/static/loader.js</code> sans cache (<code>Cache-Control: no-store</code>) en
             isolant le bundle (<code>get_full_loader_bundle_js</code>) dans un élément <code>&lt;script&gt;</code>
             dynamique (neutralisant <code>crossorigin="use-credentials"</code>, complété par
@@ -227,8 +227,12 @@
             (<code>data-echo-parked="1"</code>) lors des changements de chat SPA, scelle l'isolation par conversation
             (<code>data-chat-id</code>, <code>data-echo-chat-id</code>, <code>_echoUIPayloadsByChat</code> dans
             <code>_echoGetAggregatedPayload(chatId)</code>, <code>scoped_hud_id</code> sur <code>monitor_ECHO</code>,
+            canal RPC bidirectionnel temps réel sans rechargement DOM <code>window.echoPushMonitorEvent</code> dans
+            <code>get_floating_monitor_js</code>,
             lecteur Iframe inline responsive <code>EchoUI.image_viewer</code> à hauteur auto-adaptative
-            <code>ResizeObserver</code> sans effet cliquet et moteur d'export 3-paliers
+            <code>ResizeObserver</code> sans effet cliquet, support tactile mobile en mode <code>1:1</code> avec pan à 1
+            doigt et pinch-to-zoom focalisé à 2 doigts, galerie d'essais <code>gallery</code> et moteur d'export
+            3-paliers
             <code>window.echoExportImage</code> / <code>window.echoTriggerDownload</code>, purge des listeners DOM sur
             <code>EchoFloatingWindow</code> et
             <code>_generate_webplayer_js</code>), isole les HUDs globaux (<code>data-echo-scope="global"</code>) et
@@ -247,13 +251,13 @@
         </ul>
 
         <h3>2. Filtre Context Gauge, Calcul Différentiel &amp; Rendu Hot-Updatable (<code>context_gauge_filter.py</code>
-        v5.231.55.1 &amp; <code>echo_ui.py</code> v5.231.56.1)</h3>
+        v5.231.55.1 &amp; <code>echo_ui.py</code> v5.234.1.1)</h3>
         <p>Le filtre bidirectionnel <code>context_gauge_filter.py</code> (priorité 40) active en Inlet l'anneau pulsant
           (<code>is_pending=True</code>, <code>@keyframes echo-pulse</code>) et fige l'état du tour précédent via
           <code>archive_previous_context_stats()</code> ou initialise la référence du premier tour via
           <code>init_session_context_baseline()</code> (hors sous-tours <code>role == "tool"</code>). En Outlet, il
           rafraîchit les quotas OAuth2 (<code>AuthService.refresh_quota_if_needed()</code> dans
-          <code>echo_auth.py</code> v5.231.24.1), calcule via <code>EchoUI.calculate_context_delta()</code> le
+          <code>echo_auth.py</code> v5.236.5.1), calcule via <code>EchoUI.calculate_context_delta()</code> le
           différentiel dès le tour 1 (<code>delta_total</code>, <code>capacity_lost_pct</code> formaté à 2 décimales
           fixes sous le libellé unifié <code>&Delta; Capacité : -X.XX%</code> ou <code>+X.XX% (libéré)</code>,
           <code>growth_pct</code> sur <code>promptTokenCount</code> avec libellé dynamique
@@ -324,7 +328,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.56 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.237.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

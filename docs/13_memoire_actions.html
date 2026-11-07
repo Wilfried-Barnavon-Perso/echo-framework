@@ -69,7 +69,7 @@
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Memory &amp; RAG Tool (<code>memory_and_rag_tool.py</code> v5.231.20.1)</h3>
+        <h3>1. Memory &amp; RAG Tool (<code>memory_and_rag_tool.py</code> v5.235.5.1)</h3>
         <p>Offre au LLM une API complète sur les deux collections Qdrant (<code>echo_meta_artifacts</code> et
           <code>echo_session_rag</code>) :
         </p>
@@ -80,11 +80,13 @@
             <code>max(existing_imp, imp_val)</code> et restitution explicite du label via
             <code>MEMORY_IMPORTANCE_LABELS</code>), <code>search_meta_artifacts</code> (fusion de la recherche
             sémantique ciblée et de la cartographie d'index avec Reranking <code>MEMORY_IMPORTANCE_WEIGHTS</code> :
-            <code>0.55</code>, <code>0.75</code>, <code>1.00</code>, <code>1.30</code>, <code>1.70</code>),
+            <code>0.55</code>, <code>0.75</code>, <code>1.00</code>, <code>1.30</code>, <code>1.70</code> et
+            distillation structurée <code>response_schema=RagDistillOutput</code>),
             <code>delete_meta_artifact_item</code>.
           </li>
           <li><strong>Outils Session RAG :</strong> <code>save_session_context</code>,
-            <code>search_sessions_context</code> (fusionnant recherche vectorielle, cartographie globale, isolation
+            <code>search_sessions_context</code> (fusionnant recherche vectorielle filtrée dynamiquement sur la branche
+            active via <code>build_branch_rag_filter(active_ids)</code>, cartographie globale, isolation
             <code>sub_sid</code> pour les sous-agents, paramètre <code>global_search</code> inter-sessions et filtrage
             par étiquette <code>tag</code> résolu en temps réel via la table SSoT <code>webui.db::tag</code>) et
             <code>delete_session_context_source</code>.
@@ -96,9 +98,10 @@
           <li><strong>Export PDF (<code>print_pdf_action.py</code> v5.231.46.1) :</strong> Capture complète Client-Side
             via <code>EchoEvents.call_execute</code> incluant les <code>&lt;iframe&gt;</code> Data Island (avec
             permission <code>allow-modals</code>).</li>
-          <li><strong>Purge Vectorielle (<code>purge_memory_action.py</code> v5.226.18.0) :</strong> Interface
-            scrollable d'inspection et de suppression ciblée dans <code>echo_meta_artifacts</code> avec gestion stricte
-            de l'annulation modale.</li>
+          <li><strong>Purge Vectorielle (<code>purge_memory_action.py</code> v5.226.18.0) &amp; Réinitialisation Auth
+              (<code>reset_auth_action.py</code> v5.235.5.1) :</strong> Interface
+            scrollable d'inspection et de suppression ciblée dans <code>echo_meta_artifacts</code>, et purge
+            transactionnelle atomique des tokens OAuth2 / clés API via <code>EchoAuth.reset_user_auth</code>.</li>
           <li><strong>Migration &amp; Reprise de Session (<code>resume_in_new_chat_action.py</code> v5.229.2.1)
               :</strong> Extrait l'intégralité de la branche active via <code>Chats.get_chat_by_id</code> (incluant les
             sorties d'outils <code>m["output"]</code>), construit les transcriptions hors de l'Event Loop
@@ -107,7 +110,8 @@
             <code>USR_ACTION_RESUME_RECENT</code>) avec HUD de progression <code>#echo-resume-hud</code>, crée la
             nouvelle conversation via <code>Chats.insert_new_chat</code>, propage les étiquettes (tags) du chat source
             via <code>Chats.add_chat_tag_by_id</code>, duplique les domaines et le Codex via
-            <code>echo_session_clone.sync_resumed_session</code> et clone par pagination les vecteurs Qdrant
+            <code>echo_session_clone.sync_resumed_session</code> (v5.235.5.2) et clone par pagination les vecteurs
+            Qdrant
             <code>COLLECTION_SESSION_RAG</code> (<code>duplicate_session_rag</code>).
           </li>
           <li><strong>Agent Monitor (<code>agent_monitor_action.py</code> v5.228.12.1) &amp; Replay
@@ -119,11 +123,12 @@
 
         <h3>3. Jauge de Contexte, Registre &amp; Outils Généralistes</h3>
         <ul>
-          <li><strong>Context Gauge (<code>context_gauge.py</code> v5.229.0.0) :</strong> <code>get_context_load</code>
-            lit la saturation de la fenêtre dans le registre KV unifié <code>echo_settings</code> (seuils d'alerte
+          <li><strong>Context Gauge (<code>context_gauge.py</code> v5.235.5.1) :</strong> <code>get_context_load</code>
+            lit la saturation de la fenêtre dans le registre KV unifié <code>echo_settings</code> de
+            <code>session.db</code> (seuils d'alerte
             <code>40%</code> et critique <code>60%</code>).
           </li>
-          <li><strong>Generalist Tools (<code>generalist_tools.py</code> v5.231.20.1) :</strong> <code>wait_timer</code>
+          <li><strong>Generalist Tools (<code>generalist_tools.py</code> v5.233.0.1) :</strong> <code>wait_timer</code>
             programmable (plafonné à 180 s et isolé par <code>chat_id</code>), <code>ask_user</code> (modale
             non-bloquante <code>window.echoCustomPrompt</code> avec boutons <em>pills</em>),
             <code>list_ui_folders</code>, <code>list_ui_tags</code>, gestion des automatisations UI
@@ -136,9 +141,13 @@
             exécuté sur <code>MODEL_APOLLO</code> avec <code>override_thinking="medium"</code>, adossé aux 10 manuels
             <code>14-owui-libs/tool_guides/*.md</code> via <code>EchoToolGuidesManager</code>).
           </li>
-          <li><strong>Query Registry (<code>query_registry_tool.py</code> v5.229.0.0) :</strong> Consultation
-            obligatoire de <code>echo_resources</code> et des statuts <code>FILE_INGESTION_STATUS</code> avant
-            manipulation de fichiers.</li>
+          <li><strong>Query Registry (<code>query_registry_tool.py</code> v5.235.5.1) :</strong> Consultation
+            obligatoire de <code>echo_resources</code> (incluant le type <code>"generated"</code>, le filtre
+            <code>workspace</code>, la colonne <code>Localisation</code> et la qualification dynamique de provenance
+            <code>"branche active"</code> vs <code>"hors branche active (production conservée)"</code>) et des statuts
+            <code>FILE_INGESTION_STATUS</code> avant
+            manipulation de fichiers.
+          </li>
         </ul>
       </div>
     </details>
@@ -150,7 +159,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.56 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.237.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

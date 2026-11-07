@@ -1,19 +1,19 @@
 [
   {
-    "id": "echo-banner-context-compaction-auto-20261031",
-    "type": "info",
-    "title": "Compaction contextuelle automatique",
-    "content": "**Compaction automatique activée** : Vos échanges de très longue durée sont désormais compressés de manière transparente dès 60% d'utilisation du contexte. La mémoire et les directives restent intactes sans saturation de quota. Désactivable à tout moment dans les paramètres de filtres.",
+    "id": "echo-banner-image-generation-20261102",
+    "type": "success",
+    "title": "Génération & Retouche d'Images IA",
+    "content": "**Génération d'images native** : Écho conçoit et retouche désormais vos images sur simple description. Définissez vos formats (1:1, 16:9, 9:16, 4:3, 3:4), affinez le rendu par dialogue itératif et retrouvez vos visuels enregistrés dans le Codex.",
     "dismissible": true,
-    "timestamp": 1793449200
+    "timestamp": 1793652000
   },
   {
-    "id": "echo-banner-multimedia-exploration-20261031",
-    "type": "success",
-    "title": "Analyse Multimédia & Vidéos longues",
-    "content": "**Exploration multimédia enrichie** : Écho distille désormais vos enregistrements audio et vidéos volumineuses avec horodatages précis `[HH:MM:SS]` grâce au découpage en mémoire vive, et adapte son analyse à vos instructions spécifiques.",
+    "id": "echo-banner-stealth-browser-20261107",
+    "type": "info",
+    "title": "Navigation Web Furtive & Rejeu Vidéo",
+    "content": "**Navigation Web nouvelle génération** : Le navigateur autonome d'Écho opère désormais en mode Zéro-Trace DOM avec contournement anti-bot renforcé. Suivez ses interactions et visualisez le curseur en temps réel dans le cockpit de rejeu vidéo.",
     "dismissible": true,
-    "timestamp": 1793449200
+    "timestamp": 1794068156
   },
   {
     "id": "echo-banner-delphi-council-multi-20261101",
@@ -22,13 +22,5 @@
     "content": "**Conseil d'experts démultiplié** : Convoquez jusqu'à 7 spécialités et intensifiez la contradiction interne (facteur multiplicateur 1 à 5 par discipline) pour éprouver rigoureusement vos architectures et choix stratégiques.",
     "dismissible": true,
     "timestamp": 1793530800
-  },
-  {
-    "id": "echo-banner-codex-multichat-links-20261025",
-    "type": "info",
-    "title": "ECHO Codex Multi-Chat & Liens Directs",
-    "content": "**ECHO Codex Multi-Chat & Liens** : Vous pouvez désormais consulter les fichiers de vos autres sessions en lecture seule (👁️) et modifier ceux du chat local (✏️). Les liens dans les messages ouvrent directement l'éditeur Codex sur le document ciblé !",
-    "dismissible": true,
-    "timestamp": 1792934400
   }
 ]

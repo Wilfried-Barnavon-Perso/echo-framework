@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.231.43.1
+version: 5.233.0.1
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.233.0.1: Contrainte de sortie JSON via response_schema (SkillRouterOutput et SupervisorCriticOutput), décoration @echo_tool et simplification des retours.
 # 5.231.43.1: Ajout du paramètre multiplier (1..5) dans consult_council, renommage COUNCIL_MAX_SKILLS=7, COUNCIL_ROUNDS_MIN=3, COUNCIL_ROUNDS_MAX=10, COUNCIL_MAX_PR_COMPLEXITY=60, validation arithmétique PAS et droit d'abstention.
 # 5.231.20.1: Parallélisation asyncio.gather des ouvriers dans consult_supervised_workers, correction du parsing de task_id (sup_*) dans list/close_supervised_task, verrou par council_id et sécurisation async des skills.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides) et purge des directives IMPLIQUE.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 5.42: Sanctuarisation thinkingLevel "high" sur synthèse Delphi et critique, consolidation sur MODEL_APOLLO (medium).
 
 import sys
 import re
@@ -23,7 +23,8 @@ from typing import Optional, List, Dict, Any, Literal, Tuple
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_core import wrap_tool_output
+from echo_core import echo_tool, wrap_tool_output
+from echo_protocol import SkillRouterOutput, SupervisorCriticOutput
 from echo_events import EchoEvents
 from echo_gemini_client import EchoGeminiClient
 from echo_state_manager import EchoStateManager
@@ -73,6 +74,7 @@ class Tools:
     # 1. GESTION DES SKILLS
     # ==========================================================================
 
+    @echo_tool
     async def forge_skill(
         self,
         skill_id: str,
@@ -99,12 +101,13 @@ class Tools:
             async with get_user_skill_lock(user_id):
                 success = await asyncio.to_thread(save_skill, user_id, skill_id, name, description, instructions)
         except ValueError as e:
-            return wrap_tool_output(text=f"❌ {e}", status={"status": "error"}, user_id=user_id, chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"❌ {e}"
 
         if success:
-            return wrap_tool_output(text=f"✅ Skill '{name}' ({skill_id}) forgé avec succès.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-        return wrap_tool_output(text=f"❌ Échec de la forge du skill '{skill_id}'.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"✅ Skill '{name}' ({skill_id}) forgé avec succès."
+        return f"❌ Échec de la forge du skill '{skill_id}'."
 
+    @echo_tool
     async def list_skills(
         self,
         __user__: Optional[dict] = None,
@@ -115,15 +118,16 @@ class Tools:
         skills = await asyncio.to_thread(get_all_skills, user_id)
 
         if not skills:
-            return wrap_tool_output(text="ℹ️ Aucune expertise (Skill) n'est actuellement forgée.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "ℹ️ Aucune expertise (Skill) n'est actuellement forgée."
 
         res = "### EXPERTISES DISPONIBLES\n"
         for s in skills:
             res += f"- **ID:** `{s['id']}` | **Nom:** {s['name']}\n"
             res += f"  > *Description:* {s['description']}\n"
 
-        return wrap_tool_output(text=res, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        return res
 
+    @echo_tool
     async def read_skill(
         self,
         skill_id: str,
@@ -132,27 +136,15 @@ class Tools:
     ) -> str:
         """Lit le contenu brut et les directives d'une expertise (Skill) existante."""
         user_id = __user__.get("id", "system") if __user__ else "system"
-        chat_id = (__metadata__ or {}).get("chat_id")
 
         content = await asyncio.to_thread(get_skill_content, user_id, skill_id)
 
         if not content:
-            return wrap_tool_output(
-                text=f"❌ Le skill '{skill_id}' n'existe pas.",
-                status={"status": "error"},
-                user_id=user_id,
-                chat_id=chat_id,
-                metadata=__metadata__
-            )
+            return f"❌ Le skill '{skill_id}' n'existe pas."
 
-        return wrap_tool_output(
-            text=f"### CONTENU DU SKILL `{skill_id}`\n\n```markdown\n{content}\n```",
-            status={"status": "success"},
-            user_id=user_id,
-            chat_id=chat_id,
-            metadata=__metadata__
-        )
+        return f"### CONTENU DU SKILL `{skill_id}`\n\n```markdown\n{content}\n```"
 
+    @echo_tool
     async def search_skill(
         self,
         need_description: str,
@@ -164,16 +156,10 @@ class Tools:
         """Identifie jusqu'à 3 expertises (Skills) pertinentes pour un besoin spécifique."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
-        chat_id = (__metadata__ or {}).get("chat_id")
 
         skills = get_all_skills(user_id)
         if not skills:
-            return wrap_tool_output(
-                text="ℹ️ Aucune expertise (Skill) n'est actuellement forgée.",
-                user_id=user_id,
-                chat_id=chat_id,
-                metadata=__metadata__
-            )
+            return "ℹ️ Aucune expertise (Skill) n'est actuellement forgée."
 
         catalog = [{"id": s["id"], "name": s.get("name", ""), "description": s.get("description", "")} for s in skills]
         catalog_json = json.dumps(catalog).decode('utf-8') if isinstance(json.dumps(catalog), bytes) else json.dumps(catalog)
@@ -187,29 +173,24 @@ class Tools:
             payload={
                 "contents": [{"role": "user", "parts": [{"text": f"Besoin : {need_description}"}]}],
                 "systemInstruction": {"parts": [{"text": system_prompt}]},
-                "generationConfig": {**get_generation_config("MODEL_APOLLO", override_thinking="medium"), "responseMimeType": "application/json"}
+                "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="medium"),
             },
             user_id=user_id,
             metadata=(__metadata__ or {}),
             events=events,
             timeout=30,
             include_thoughts=False,
+            response_schema=SkillRouterOutput,
         )
 
         if not res:
-            return wrap_tool_output(
-                text="❌ Échec de la délégation de recherche sémantique.",
-                status={"status": "error"},
-                user_id=user_id,
-                chat_id=chat_id,
-                metadata=__metadata__
-            )
+            return "❌ Échec de la délégation de recherche sémantique."
 
         candidates = res.get("candidates", [])
-        raw_response = "".join(p.get("text", "") for p in candidates[0].get("content", {}).get("parts", []) if "text" in p) if candidates else "{}"
+        raw_response = "".join(p.get("text", "") for p in candidates[0].get("content", {}).get("parts", []) if "text" in p and not p.get("thought")) if candidates else "{}"
 
         try:
-            parsed = json.loads(raw_response)
+            parsed = SkillRouterOutput.model_validate_json(raw_response).model_dump()
             best_matches = parsed.get("best_matches", [])
         except Exception:
             best_matches = []
@@ -217,10 +198,7 @@ class Tools:
         if not best_matches:
             return wrap_tool_output(
                 text="ℹ️ Aucun skill correspondant trouvé pour ce besoin.",
-                status={"status": "warning"},
-                user_id=user_id,
-                chat_id=chat_id,
-                metadata=__metadata__
+                status={"status": "warning"}
             )
 
         matched_catalog = [s for s in catalog if s["id"] in best_matches]
@@ -229,14 +207,9 @@ class Tools:
         for s in matched_catalog:
             md_res += f"- **ID:** `{s['id']}` | **Nom:** {s['name']}\n  > *Description:* {s['description']}\n"
 
-        return wrap_tool_output(
-            text=md_res,
-            status={"status": "success"},
-            user_id=user_id,
-            chat_id=chat_id,
-            metadata=__metadata__
-        )
+        return md_res
 
+    @echo_tool
     async def delete_user_skill(
         self,
         skill_id: str,
@@ -252,7 +225,7 @@ class Tools:
 
         content = await asyncio.to_thread(get_skill_content, user_id, skill_id)
         if not content:
-            return wrap_tool_output(text=f"Le skill '{skill_id}' n'existe pas.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"❌ Le skill '{skill_id}' n'existe pas."
 
         msg_html = f'''
         <div style="margin-bottom:15px; font-size:15px; font-weight:600;">
@@ -288,7 +261,7 @@ class Tools:
 
         from echo_constants import ECHO_SUBAGENT_CONTEXT
         if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
-            return wrap_tool_output(text="Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de requérir une confirmation de suppression.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de requérir une confirmation de suppression."
 
         user_confirmed = await events.call_execute(js_code)
 
@@ -298,20 +271,21 @@ class Tools:
             if success:
                 if __event_emitter__:
                     await events.status(f"Skill {skill_id} supprimé avec succès.", done=True)
-                return wrap_tool_output(text=f"Le skill '{skill_id}' a été supprimé.", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return f"Le skill '{skill_id}' a été supprimé."
             else:
                 if __event_emitter__:
                     await events.status(f"Erreur système lors de la suppression de {skill_id}.", done=True)
-                return wrap_tool_output(text=f"Impossible de supprimer le skill '{skill_id}'.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return f"❌ Impossible de supprimer le skill '{skill_id}'."
         else:
             if __event_emitter__:
                 await events.status("Suppression non confirmée par l'utilisateur.", done=True)
-            return wrap_tool_output(text="L'utilisateur a refusé ou délai expiré.", status={"status": "cancelled"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(text="L'utilisateur a refusé ou délai expiré.", status={"status": "cancelled"})
 
     # ==========================================================================
     # 2. CONSEIL D'EXPERTS (Protocole Delphi via delegate_to_agent)
     # ==========================================================================
 
+    @echo_tool
     async def consult_council(
         self,
         question: str,
@@ -333,21 +307,15 @@ class Tools:
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
         if not chat_id:
-            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=user_id, chat_id=None, metadata=__metadata__)
+            return "❌ Erreur: Aucun chat_id détecté."
 
         # ── Phase 0 : Validation & Chargement ──
         if multiplier is None:
             multiplier = 1
         if isinstance(multiplier, bool) or not isinstance(multiplier, int) or multiplier < 1 or multiplier > 5:
-            return wrap_tool_output(
-                text=(
-                    f"❌ Erreur : La valeur du paramètre `multiplier` ({multiplier}) est hors limites.\n"
-                    f"Le Modèle DOIT fournir un entier strictement compris entre 1 et 5."
-                ),
-                status={"status": "error"},
-                user_id=user_id,
-                chat_id=chat_id,
-                metadata=__metadata__,
+            return (
+                f"❌ Erreur : La valeur du paramètre `multiplier` ({multiplier}) est hors limites.\n"
+                f"Le Modèle DOIT fournir un entier strictement compris entre 1 et 5."
             )
 
         skill_ids = list(dict.fromkeys(s.strip() for s in participants if s.strip()))
@@ -356,33 +324,21 @@ class Tools:
         total_participants = len(skill_ids) * multiplier
 
         if len(skill_ids) > max_skills:
-            return wrap_tool_output(
-                text=(
-                    f"❌ Erreur : Le nombre d'expertises distinctes ({len(skill_ids)}) dépasse la limite autorisée ({max_skills}, "
-                    f"soit {max_participants} participants maximum avec `multiplier={multiplier}`).\n"
-                    f"Le Modèle DOIT soumettre au maximum {max_skills} `skill_id` dans `participants`."
-                ),
-                status={"status": "error"},
-                user_id=user_id,
-                chat_id=chat_id,
-                metadata=__metadata__,
+            return (
+                f"❌ Erreur : Le nombre d'expertises distinctes ({len(skill_ids)}) dépasse la limite autorisée ({max_skills}, "
+                f"soit {max_participants} participants maximum avec `multiplier={multiplier}`).\n"
+                f"Le Modèle DOIT soumettre au maximum {max_skills} `skill_id` dans `participants`."
             )
 
         if total_participants < 2:
             available = await asyncio.to_thread(get_all_skills, user_id)
             skill_list = ", ".join(f"`{s['id']}`" for s in available) if available else "aucun"
-            return wrap_tool_output(
-                text=(
-                    f"❌ Erreur : Le nombre total de participants ({len(skill_ids)} × {multiplier} = {total_participants}) "
-                    f"est inférieur au minimum requis (2).\n\n"
-                    f"**Skills disponibles :** {skill_list}\n\n"
-                    f"Le Modèle DOIT soumettre au moins 2 `skill_id` ou définir `multiplier` >= 2 "
-                    f"(et appeler `forge_skill` au préalable si une expertise est manquante)."
-                ),
-                status={"status": "error"},
-                user_id=user_id,
-                chat_id=chat_id,
-                metadata=__metadata__,
+            return (
+                f"❌ Erreur : Le nombre total de participants ({len(skill_ids)} × {multiplier} = {total_participants}) "
+                f"est inférieur au minimum requis (2).\n\n"
+                f"**Skills disponibles :** {skill_list}\n\n"
+                f"Le Modèle DOIT soumettre au moins 2 `skill_id` ou définir `multiplier` >= 2 "
+                f"(et appeler `forge_skill` au préalable si une expertise est manquante)."
             )
 
         min_rounds = self.user_valves.COUNCIL_ROUNDS_MIN
@@ -421,21 +377,15 @@ class Tools:
                 else "Réduction de `participants` seule insuffisante"
             )
 
-            return wrap_tool_output(
-                text=(
-                    f"❌ Erreur : La combinaison des paramètres soumis dépasse la capacité maximale du conseil.\n"
-                    f"- Limite arithmétique : (nb_skills × multiplier) × rounds <= {max_complexity}\n"
-                    f"- Calcul courant : ({len(skill_ids)} × {multiplier}) × {effective_rounds} = {complexity} > {max_complexity}\n"
-                    f"- Bornes des paramètres : nb_skills in [1..{max_skills}], multiplier in [1..5], rounds in [{min_rounds}..{max_rounds}].\n\n"
-                    f"Le Modèle DOIT ajuster ses paramètres en respectant l'un des plafonds suivants :\n"
-                    f"- Option A (`rounds`) : {opt_r}.\n"
-                    f"- Option B (`multiplier`) : {opt_m}.\n"
-                    f"- Option C (`participants`) : {opt_s}."
-                ),
-                status={"status": "error"},
-                user_id=user_id,
-                chat_id=chat_id,
-                metadata=__metadata__,
+            return (
+                f"❌ Erreur : La combinaison des paramètres soumis dépasse la capacité maximale du conseil.\n"
+                f"- Limite arithmétique : (nb_skills × multiplier) × rounds <= {max_complexity}\n"
+                f"- Calcul courant : ({len(skill_ids)} × {multiplier}) × {effective_rounds} = {complexity} > {max_complexity}\n"
+                f"- Bornes des paramètres : nb_skills in [1..{max_skills}], multiplier in [1..5], rounds in [{min_rounds}..{max_rounds}].\n\n"
+                f"Le Modèle DOIT ajuster ses paramètres en respectant l'un des plafonds suivants :\n"
+                f"- Option A (`rounds`) : {opt_r}.\n"
+                f"- Option B (`multiplier`) : {opt_m}.\n"
+                f"- Option C (`participants`) : {opt_s}."
             )
 
         # Chargement et validation de chaque skill, puis démultiplication par multiplier
@@ -444,13 +394,7 @@ class Tools:
         for sid in skill_ids:
             content = await asyncio.to_thread(get_skill_content, user_id, sid)
             if not content:
-                return wrap_tool_output(
-                    text=f"❌ Skill '{sid}' introuvable. Le Modèle DOIT utiliser l'outil forge_skill au préalable.",
-                    status={"status": "error"},
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    metadata=__metadata__,
-                )
+                return f"❌ Skill '{sid}' introuvable. Le Modèle DOIT utiliser l'outil forge_skill au préalable."
             meta = parse_skill_metadata(content)
             base_name = meta.get("name", sid)
             for m_idx in range(1, multiplier + 1):
@@ -478,13 +422,7 @@ class Tools:
         _delegate_mod = sys.modules.get("tool_agent_engine_tool")
         _delegate_cls = getattr(_delegate_mod, "Tools", None) if _delegate_mod else None
         if not _delegate_cls:
-            return wrap_tool_output(
-                text="❌ Module agent_engine_tool introuvable dans sys.modules.",
-                status={"status": "error"},
-                user_id=user_id,
-                chat_id=chat_id,
-                metadata=__metadata__,
-            )
+            return "❌ Module agent_engine_tool introuvable dans sys.modules."
         delegate = _delegate_cls()
         # Propager les valves infra du parent
         delegate.valves.KEY_SWITCH_THRESHOLD = self.valves.KEY_SWITCH_THRESHOLD
@@ -638,18 +576,17 @@ class Tools:
 
         roster_summary = ", ".join(f"{p['alias']} ({p['name']})" for p in roster)
         await events.status("🏛️ Conseil terminé.", done=True)
-        return wrap_tool_output(
-            text=(
-                f"### SYNTHÈSE DU CONSEIL [{cid}] ({len(roster)} experts, {effective_rounds} tours)\n"
-                f"**Participants** : {roster_summary}\n\n"
-                f"{synthesis_text}"
-            )
-        , user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+        return (
+            f"### SYNTHÈSE DU CONSEIL [{cid}] ({len(roster)} experts, {effective_rounds} tours)\n"
+            f"**Participants** : {roster_summary}\n\n"
+            f"{synthesis_text}"
+        )
 
     # ==========================================================================
     # 3. SUPERVISEUR (Boucle critique / correction récursive)
     # ==========================================================================
 
+    @echo_tool
     async def consult_supervised_workers(
         self,
         objective: str,
@@ -669,16 +606,16 @@ class Tools:
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
         if not chat_id:
-            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=user_id, chat_id=None, metadata=__metadata__)
+            return "❌ Erreur: Aucun chat_id détecté."
 
         # Parsing du dict workers
         try:
             workers_dict = json.loads(workers) if isinstance(workers, str) else workers
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Format JSON invalide pour workers : {e}", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+            return f"❌ Format JSON invalide pour workers : {e}"
 
         if not workers_dict or not isinstance(workers_dict, dict):
-            return wrap_tool_output(text="❌ workers doit être un dict JSON non vide.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+            return "❌ workers doit être un dict JSON non vide."
 
         task_id = f"sup_{uuid.uuid4().hex[:8]}"
         max_rounds = max_correction_rounds or self.user_valves.SUPERVISOR_MAX_CORRECTION_ROUNDS
@@ -691,7 +628,7 @@ class Tools:
         _delegate_mod = sys.modules.get("tool_agent_engine_tool")
         _delegate_cls = getattr(_delegate_mod, "Tools", None) if _delegate_mod else None
         if not _delegate_cls:
-            return wrap_tool_output(text="❌ Module agent_engine_tool introuvable dans sys.modules.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+            return "❌ Module agent_engine_tool introuvable dans sys.modules."
         delegate = _delegate_cls()
         delegate.valves.KEY_SWITCH_THRESHOLD = self.valves.KEY_SWITCH_THRESHOLD
         delegate.valves.MAX_RETRIES = self.valves.MAX_RETRIES
@@ -785,6 +722,7 @@ class Tools:
                 events=events,
                 timeout=self.valves.COGNITIVE_TIMEOUT,
                 include_thoughts=False,
+                response_schema=SupervisorCriticOutput,
             )
 
             if not critic_res:
@@ -797,29 +735,29 @@ class Tools:
             if candidates:
                 critic_text = "".join(
                     p.get("text", "") for p in candidates[0].get("content", {}).get("parts", [])
-                    if "text" in p
+                    if "text" in p and not p.get("thought")
                 )
 
             try:
-                # Nettoyage : extraire le JSON du texte (le modèle peut ajouter des backticks)
-                json_match = critic_text.strip()
-                if json_match.startswith("```"):
-                    json_match = json_match.split("\n", 1)[-1].rsplit("```", 1)[0]
-                verdict_data = json.loads(json_match)
+                critic_parsed = SupervisorCriticOutput.model_validate_json(critic_text.strip())
             except Exception:
                 await events.status(f"⚠️ [{task_id}] Verdict non parseable — validation forcée.", done=True)
                 break
 
-            verdict = verdict_data.get("verdict", "APPROVED")
+            verdict = critic_parsed.verdict
             if verdict == "APPROVED":
                 await events.status(f"✅ [{task_id}] Verdict : APPROVED (round {correction_round})")
                 break
 
             # REJECTED — Phase 3 : Correction
-            worker_feedback = verdict_data.get("worker_feedback", {})
+            worker_feedback = {
+                item.worker_id: {"status": item.status, "feedback": item.feedback}
+                for item in critic_parsed.worker_feedback
+                if item.worker_id in deliverables
+            }
             workers_to_correct = [
                 w_id for w_id, fb in worker_feedback.items()
-                if isinstance(fb, dict) and fb.get("status") == "needs_correction"
+                if fb.get("status") == "needs_correction"
             ]
 
             if not workers_to_correct:
@@ -916,16 +854,14 @@ class Tools:
                 "task_id": task_id,
                 "rounds_remaining": max_rounds - correction_round,
                 "workers_count": len(workers_dict)
-            },
-            user_id=user_id,
-            chat_id=chat_id,
-            metadata=__metadata__
+            }
         )
 
     # ==========================================================================
     # 4. OUTILS D'ADMINISTRATION (Conseils & Superviseurs)
     # ==========================================================================
 
+    @echo_tool
     async def list_councils(
         self,
         __user__: Optional[dict] = None,
@@ -936,7 +872,7 @@ class Tools:
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
         if not chat_id:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=user_id, chat_id=None, metadata=__metadata__)
+            return "❌ Aucun chat_id détecté."
 
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
         threads = state.list_threads(chat_id)
@@ -968,14 +904,15 @@ class Tools:
                     councils.setdefault(cid_found, []).append(skill_found or "?")
 
         if not councils:
-            return wrap_tool_output(text="ℹ️ Aucun conseil actif.", status={"status": "success"}, user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+            return "ℹ️ Aucun conseil actif."
 
         md = "### 🏛️ CONSEILS ACTIFS\n\n"
         for cid, skills in councils.items():
             md += f"- **ID:** `{cid}` | **Participants:** {', '.join(skills)} | **Sessions:** {len(skills)}\n"
 
-        return wrap_tool_output(text=md, status={"status": "success", "councils": list(councils.keys())}, user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+        return wrap_tool_output(text=md, status={"status": "success", "councils": list(councils.keys())})
 
+    @echo_tool
     async def close_council(
         self,
         council_id: str,
@@ -987,7 +924,7 @@ class Tools:
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
         if not chat_id:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=user_id, chat_id=None, metadata=__metadata__)
+            return "❌ Aucun chat_id détecté."
 
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
         threads = state.list_threads(chat_id)
@@ -996,16 +933,14 @@ class Tools:
         to_delete = [t["sub_sid"] for t in threads if t["sub_sid"].startswith(prefixes)]
 
         if not to_delete:
-            return wrap_tool_output(text=f"❌ Conseil '{council_id}' introuvable.", status={"status": "error"}, user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+            return f"❌ Conseil '{council_id}' introuvable."
 
         for sid in to_delete:
             state.delete_thread(sid)
 
-        return wrap_tool_output(
-            text=f"✅ Conseil `{council_id}` fermé ({len(to_delete)} sessions purgées).",
-            status={"status": "success"}
-        , user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+        return f"✅ Conseil `{council_id}` fermé ({len(to_delete)} sessions purgées)."
 
+    @echo_tool
     async def list_supervised_tasks(
         self,
         __user__: Optional[dict] = None,
@@ -1016,7 +951,7 @@ class Tools:
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
         if not chat_id:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=user_id, chat_id=None, metadata=__metadata__)
+            return "❌ Aucun chat_id détecté."
 
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
         threads = state.list_threads(chat_id)
@@ -1037,14 +972,15 @@ class Tools:
                         tasks.setdefault(tid, []).append(wid)
 
         if not tasks:
-            return wrap_tool_output(text="ℹ️ Aucune tâche supervisée active.", status={"status": "success"}, user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+            return "ℹ️ Aucune tâche supervisée active."
 
         md = "### 📋 TÂCHES SUPERVISÉES ACTIVES\n\n"
         for tid, worker_ids in tasks.items():
             md += f"- **ID:** `{tid}` | **Workers:** {', '.join(worker_ids)} | **Sessions:** {len(worker_ids)}\n"
 
-        return wrap_tool_output(text=md, status={"status": "success", "tasks": list(tasks.keys())}, user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+        return wrap_tool_output(text=md, status={"status": "success", "tasks": list(tasks.keys())})
 
+    @echo_tool
     async def close_supervised_task(
         self,
         task_id: str,
@@ -1056,7 +992,7 @@ class Tools:
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
         if not chat_id:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"}, user_id=user_id, chat_id=None, metadata=__metadata__)
+            return "❌ Aucun chat_id détecté."
 
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
         threads = state.list_threads(chat_id)
@@ -1068,12 +1004,9 @@ class Tools:
         ]
 
         if not to_delete:
-            return wrap_tool_output(text=f"❌ Tâche '{task_id}' introuvable.", status={"status": "error"}, user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+            return f"❌ Tâche '{task_id}' introuvable."
 
         for sid in to_delete:
             state.delete_thread(sid)
 
-        return wrap_tool_output(
-            text=f"✅ Tâche supervisée `{task_id}` fermée ({len(to_delete)} sessions purgées).",
-            status={"status": "success"}
-        , user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+        return f"✅ Tâche supervisée `{task_id}` fermée ({len(to_delete)} sessions purgées)."

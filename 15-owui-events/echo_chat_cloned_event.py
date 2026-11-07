@@ -2,11 +2,12 @@
 """
 title: ECHO Chat Cloned Event Sync
 author: Wilfried BARNAVON
-version: 5.231.27.2
+version: 5.235.5.1
 description: Synchronisation atomique du conteneur de données ECHO lors du clonage ou du fork d'une conversation.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.235.5.1: Résolution de l'arbre actif (live_ids) lors des forks partiels et transmission à sync_cloned_session et duplicate_session_rag.
 # 5.231.27.2: HUD de progression bloquant (#echo-clone-hud) et sync Espace Utilisateur + RAG sous verrou de clonage.
 # 5.227.1.1: Factorisation de la logique de clonage/fork dans la librairie partagée echo_session_clone.py.
 # 5.226.18.1: Création de l'Event Function native pour la synchronisation bit-perfect des clones et forks de session.
@@ -172,6 +173,15 @@ class Event:
                     await events.emit_execute(
                         _build_clone_hud_mount_js(bool(forked_from_msg_id))
                     )
+                    live_ids = None
+                    if forked_from_msg_id:
+                        try:
+                            from echo_core import EchoCompactionEngine
+                            branch_ids = await EchoCompactionEngine.load_active_branch_ids(new_chat_id)
+                            live_ids = set(branch_ids) if branch_ids else None
+                        except Exception as e:
+                            logger.warning(f"[ECHO-EVENT-SYNC] Arbre OWUI indisponible, repli temporel : {e}")
+
                     cutoff_ts, is_partial_fork = await asyncio.to_thread(
                         sync_cloned_session,
                         user_id,
@@ -179,6 +189,7 @@ class Event:
                         new_chat_id,
                         forked_from_msg_id,
                         sync_progress_cb,
+                        live_ids,
                     )
                     await update_hud(
                         85, "🧠 Synchronisation de la Mémoire Vectorielle (Qdrant)..."
@@ -189,6 +200,7 @@ class Event:
                             orig_chat_id,
                             new_chat_id,
                             cutoff_ts=cutoff_ts if is_partial_fork else None,
+                            live_msg_ids=live_ids if is_partial_fork else None,
                         )
                     except Exception as rag_err:
                         logger.warning(

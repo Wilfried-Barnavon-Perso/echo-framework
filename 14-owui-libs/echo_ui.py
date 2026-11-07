@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.231.56.1
+version: 5.234.1.1
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.234.1.1: Ajout du canal RPC Bidi dans get_floating_monitor_js (_echoUIInboxByChat, echoPushMonitorEvent, window.echoRequest, window.onEchoEvent).  # noqa: E501
+# 5.232.2.1: Support tactile mobile en mode 1:1 dans image_viewer (pan 1 doigt, pinch-to-zoom focalisé 2 doigts, touch-action dynamique et double-tap).  # noqa: E501
+# 5.232.0.1: Factorisation de build_rich_view_html et instrumentation JS d'interception d'erreurs (data-echo-visual-error sur console.error, error et unhandledrejection).  # noqa: E501
+# 5.231.60.1: Retrait des boutons hors-tour Recommencer/Clôturer (session_meta) dans image_viewer ; conservation de la galerie multi-essais (gallery).  # noqa: E501
 # 5.231.56.1: Maximisation de l'image à la largeur de l'Iframe, hauteur auto-adaptative sans plafond 640px et hauteur figée hors zoom/pan dans image_viewer.  # noqa: E501
-# 5.231.55.1: Factorisation de window.echoTriggerDownload (gardes isReplaying/document.hidden, basename safe et délai revokeObjectURL 1s) dans get_media_export_js.
-# 5.231.50.1: Suppression du cliquet reportHeight (+10px/scrollHeight), hauteur stable au zoom/dézoom dans image_viewer et synchronisation du fond/police Iframe avec la fenêtre principale.
-# 5.231.49.1: Refonte de image_viewer en Iframe inline responsive auto-adaptative avec outils Copier/Exporter, support 3-paliers anti-CORS dans get_media_export_js et suppression du code mort (show_image_js, player_ui).
-# 5.231.47.1: Factorisation de get_media_export_js (window.echoExportImage bit-perfect/lossless), icônes Export/Check et intégration des boutons Copier/Exporter dans _generate_webplayer_js et show_image_js.
 
 
 import sys
@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 
-from echo_constants import (
+from echo_constants import (  # noqa: E402
     ECHO_GLOBAL_TENANT_PROJECT_ID,
     ECHO_MAX_CONTEXT_SIZE,
     ECHO_EDGE_ONNX_REPO,
@@ -2610,10 +2610,12 @@ class EchoUI(EchoRichUI):
             img_url: str,
             title: str = "Aperçu Image",
             filename: str = "",
-            is_remote_fallback: bool = False) -> HTMLResponse:
-        """Génère une Iframe inline responsive et auto-adaptative pour l'affichage d'images (locales B64 ou distantes) avec outils de copie et d'export."""
+            is_remote_fallback: bool = False,
+            gallery: Optional[List[Dict[str, Any]]] = None) -> HTMLResponse:
+        """Génère une Iframe inline responsive et auto-adaptative pour l'affichage d'images (locales B64 ou distantes) avec outils de copie, d'export et galerie multi-essais."""
         img_url_j = std_json.dumps(img_url or "").decode("utf-8")
         fname_j = std_json.dumps(filename or "").decode("utf-8")
+        gallery_j = std_json.dumps(gallery or []).decode("utf-8")
         safe_title = (
             (title or "Aperçu Image")
             .replace("&", "&amp;")
@@ -2630,6 +2632,13 @@ class EchoUI(EchoRichUI):
             'background:rgba(245,158,11,0.15); color:#f59e0b; border:1px solid rgba(245,158,11,0.3); '
             'white-space:nowrap;">Lien direct</span>'
             if is_remote_fallback
+            else ""
+        )
+        has_gallery = bool(gallery and len(gallery) > 1)
+        gallery_bar_html = (
+            '<div id="echo-iv-gallery-bar" style="display:flex; align-items:center; gap:6px; padding:6px 12px; '
+            'border-bottom:1px solid var(--echo-hud-border); background:var(--echo-bg); flex-wrap:wrap;"></div>'
+            if has_gallery
             else ""
         )
 
@@ -2709,6 +2718,15 @@ class EchoUI(EchoRichUI):
         border-color: var(--echo-accent);
         color: var(--echo-accent);
       }}
+      .echo-iv-btn.is-active {{
+        border-color: var(--echo-accent);
+        background: rgba(59, 130, 246, 0.14);
+        color: var(--echo-accent);
+      }}
+      .echo-iv-btn:disabled {{
+        opacity: 0.55;
+        cursor: default;
+      }}
       #canvas-area {{
         width: 100%;
         min-height: 80px;
@@ -2754,6 +2772,7 @@ class EchoUI(EchoRichUI):
           </button>
         </div>
       </div>
+      {gallery_bar_html}
       <div id="canvas-area">
         <img id="echo-iv-img" alt="{safe_title}" />
         <div id="echo-iv-error" style="display:none; flex-direction:column; align-items:center; gap:8px; padding:24px; text-align:center; color:var(--echo-hud-text);">
@@ -2766,8 +2785,9 @@ class EchoUI(EchoRichUI):
     <script>
       (function() {{
         {media_export_js}
-        const IMG_SRC = {img_url_j};
-        const FILENAME = {fname_j};
+        let IMG_SRC = {img_url_j};
+        let FILENAME = {fname_j};
+        const GALLERY = {gallery_j};
         const img = document.getElementById('echo-iv-img');
         const area = document.getElementById('canvas-area');
         const dimsEl = document.getElementById('echo-iv-dims');
@@ -2777,11 +2797,16 @@ class EchoUI(EchoRichUI):
         const fitLabel = document.getElementById('echo-iv-fit-label');
         const btnCopy = document.getElementById('echo-iv-btn-copy');
         const btnExport = document.getElementById('echo-iv-btn-export');
+        const galleryBar = document.getElementById('echo-iv-gallery-bar');
 
         let fitMode = true;
         let zoom = 1.0;
         let panX = 0, panY = 0;
         let isDragging = false, startX = 0, startY = 0;
+        let isTouchDragging = false, touchStartX = 0, touchStartY = 0;
+        let isPinching = false, pinchStartDist = 0, pinchStartZoom = 1.0;
+        let pinchCenterStart = {{ x: 0, y: 0 }}, pinchPanStart = {{ x: 0, y: 0 }};
+        let lastTapTime = 0, tapStartPos = {{ x: 0, y: 0 }};
 
         function updateLayout() {{
           const natW = img.naturalWidth || 0;
@@ -2791,6 +2816,8 @@ class EchoUI(EchoRichUI):
           const areaW = Math.max(100, (area.clientWidth || document.body.clientWidth || 640) - 16);
 
           if (fitMode) {{
+            area.style.touchAction = '';
+            img.style.touchAction = '';
             disableAutoResize = false;
             zoom = 1.0;
             panX = 0;
@@ -2812,6 +2839,8 @@ class EchoUI(EchoRichUI):
               setTimeout(reportHeight, 30);
             }}
           }} else {{
+            area.style.touchAction = 'none';
+            img.style.touchAction = 'none';
             disableAutoResize = true;
             area.style.cursor = isDragging ? 'grabbing' : 'grab';
             img.style.width = natW + 'px';
@@ -2898,6 +2927,98 @@ class EchoUI(EchoRichUI):
           }}
         }});
 
+        function getTouchDist(t1, t2) {{
+          return Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+        }}
+
+        function getTouchCenter(t1, t2) {{
+          return {{
+            x: (t1.clientX + t2.clientX) / 2,
+            y: (t1.clientY + t2.clientY) / 2
+          }};
+        }}
+
+        area.addEventListener('touchstart', function(e) {{
+          if (fitMode) {{
+            if (e.touches.length === 1) {{
+              const now = Date.now();
+              const t = e.touches[0];
+              const dist = Math.hypot(t.clientX - tapStartPos.x, t.clientY - tapStartPos.y);
+              if (now - lastTapTime < 300 && dist < 12) {{
+                e.preventDefault();
+                toggleFitMode();
+                lastTapTime = 0;
+                return;
+              }}
+              lastTapTime = now;
+              tapStartPos = {{ x: t.clientX, y: t.clientY }};
+            }}
+            return;
+          }}
+          e.preventDefault();
+          if (e.touches.length === 1) {{
+            isTouchDragging = true;
+            isPinching = false;
+            touchStartX = e.touches[0].clientX - panX;
+            touchStartY = e.touches[0].clientY - panY;
+            const now = Date.now();
+            const t = e.touches[0];
+            const dist = Math.hypot(t.clientX - tapStartPos.x, t.clientY - tapStartPos.y);
+            if (now - lastTapTime < 300 && dist < 12) {{
+              toggleFitMode();
+              lastTapTime = 0;
+              return;
+            }}
+            lastTapTime = now;
+            tapStartPos = {{ x: t.clientX, y: t.clientY }};
+          }} else if (e.touches.length >= 2) {{
+            isTouchDragging = false;
+            isPinching = true;
+            pinchStartDist = getTouchDist(e.touches[0], e.touches[1]);
+            pinchStartZoom = zoom;
+            pinchPanStart = {{ x: panX, y: panY }};
+            pinchCenterStart = getTouchCenter(e.touches[0], e.touches[1]);
+          }}
+        }}, {{ passive: false }});
+
+        window.addEventListener('touchmove', function(e) {{
+          if (fitMode || (!isTouchDragging && !isPinching)) return;
+          e.preventDefault();
+          if (e.touches.length === 1 && isTouchDragging) {{
+            panX = e.touches[0].clientX - touchStartX;
+            panY = e.touches[0].clientY - touchStartY;
+            img.style.transform = `translate(${{panX}}px, ${{panY}}px) scale(${{zoom}})`;
+          }} else if (e.touches.length >= 2 && isPinching && pinchStartDist > 0) {{
+            const curDist = getTouchDist(e.touches[0], e.touches[1]);
+            const factor = curDist / pinchStartDist;
+            const newZoom = Math.max(0.1, Math.min(10.0, pinchStartZoom * factor));
+            const curCenter = getTouchCenter(e.touches[0], e.touches[1]);
+            const rect = area.getBoundingClientRect();
+            const ax = rect.left + rect.width / 2;
+            const ay = rect.top + rect.height / 2;
+            panX = curCenter.x - ax - (newZoom / pinchStartZoom) * (pinchCenterStart.x - ax - pinchPanStart.x);
+            panY = curCenter.y - ay - (newZoom / pinchStartZoom) * (pinchCenterStart.y - ay - pinchPanStart.y);
+            zoom = newZoom;
+            img.style.transform = `translate(${{panX}}px, ${{panY}}px) scale(${{zoom}})`;
+          }}
+        }}, {{ passive: false }});
+
+        function onTouchEnd(e) {{
+          if (fitMode) return;
+          if (e.touches.length === 1) {{
+            isPinching = false;
+            isTouchDragging = true;
+            touchStartX = e.touches[0].clientX - panX;
+            touchStartY = e.touches[0].clientY - panY;
+          }} else if (e.touches.length === 0) {{
+            isPinching = false;
+            isTouchDragging = false;
+            pinchStartDist = 0;
+          }}
+        }}
+        window.addEventListener('touchend', onTouchEnd, {{ passive: false }});
+        window.addEventListener('touchcancel', onTouchEnd, {{ passive: false }});
+
         btnCopy.onclick = function(e) {{
           e.stopPropagation();
           if (window.echoExportImage) {{
@@ -2923,7 +3044,40 @@ class EchoUI(EchoRichUI):
           }}).observe(area);
         }}
 
-        img.src = IMG_SRC;
+        if (galleryBar && Array.isArray(GALLERY) && GALLERY.length > 1) {{
+          let activeIdx = GALLERY.findIndex(function(g) {{ return g && g.best; }});
+          if (activeIdx < 0) activeIdx = GALLERY.length - 1;
+          function selectGalleryItem(idx) {{
+            const item = GALLERY[idx];
+            if (!item) return;
+            activeIdx = idx;
+            IMG_SRC = item.data_uri || item.img_url || IMG_SRC;
+            FILENAME = item.filename || FILENAME;
+            img.src = IMG_SRC;
+            const tabs = galleryBar.querySelectorAll('.echo-iv-tab-btn');
+            for (let i = 0; i < tabs.length; i++) {{
+              tabs[i].classList.toggle('is-active', i === idx);
+            }}
+          }}
+          for (let i = 0; i < GALLERY.length; i++) {{
+            const gItem = GALLERY[i];
+            const tabBtn = document.createElement('button');
+            tabBtn.className = 'echo-iv-btn echo-iv-tab-btn' + (i === activeIdx ? ' is-active' : '');
+            const badge = gItem.best ? ' ★' : '';
+            tabBtn.textContent = (gItem.label || ('Essai ' + (i + 1))) + badge;
+            if (gItem.analysis) tabBtn.title = gItem.analysis;
+            tabBtn.onclick = (function(index) {{
+              return function(e) {{
+                e.stopPropagation();
+                selectGalleryItem(index);
+              }};
+            }})(i);
+            galleryBar.appendChild(tabBtn);
+          }}
+          selectGalleryItem(activeIdx);
+        }} else {{
+          img.src = IMG_SRC;
+        }}
       }})();
     </script>
     """
@@ -2955,13 +3109,13 @@ class EchoUI(EchoRichUI):
                 "Content-Disposition": "inline"})
 
     @classmethod
-    def generate_rich_view(
+    def build_rich_view_html(
             cls,
             moteur: str,
             payload: str,
             title: str = "ECHO Rendu Visuel",
-            cdn_timeout_ms: int = 30000) -> tuple:
-        """Usine de rendu universelle (Restauration intégrale v5.121)."""
+            cdn_timeout_ms: int = 30000) -> str:
+        """Construit le document HTML autonome pour un moteur de visualisation riche."""
         from echo_visuals import VisualEngine
         cfg = VisualEngine.get_config(
             moteur, payload, cdn_timeout_ms=cdn_timeout_ms)
@@ -2987,10 +3141,39 @@ class EchoUI(EchoRichUI):
     {scripts_html}
 
     <script>
+      (function() {{
+        const recordErr = (msg) => {{
+          if (!document.body) return;
+          const prev = document.body.getAttribute('data-echo-visual-error') || '';
+          const clean = String(msg || '').trim();
+          if (clean && !prev.includes(clean)) {{
+            document.body.setAttribute('data-echo-visual-error', (prev ? prev + ' | ' : '') + clean);
+          }}
+        }};
+        const origErr = console.error;
+        console.error = function(...args) {{
+          recordErr(args.map(a => (a && a.message) ? a.message : String(a)).join(' '));
+          origErr.apply(console, args);
+        }};
+        window.addEventListener('error', (e) => recordErr(e.message || e.error));
+        window.addEventListener('unhandledrejection', (e) => recordErr(e.reason));
+      }})();
       {cfg.get('init', '')}
     </script>
     """
-        html = cls._get_boilerplate(content, title)
+        return cls._get_boilerplate(content, title)
+
+    @classmethod
+    def generate_rich_view(
+            cls,
+            moteur: str,
+            payload: str,
+            title: str = "ECHO Rendu Visuel",
+            cdn_timeout_ms: int = 30000) -> tuple:
+        """Usine de rendu universelle (Restauration intégrale v5.121)."""
+        html = cls.build_rich_view_html(
+            moteur=moteur, payload=payload, title=title, cdn_timeout_ms=cdn_timeout_ms
+        )
         response = HTMLResponse(
             content=html, headers={
                 "Content-Disposition": "inline"})
@@ -3319,6 +3502,7 @@ return new Promise(function(resolve) {{
         return EchoUI.get_floating_window_class_js() + """
       window._echoUIPayloads = window._echoUIPayloads || {};
       window._echoUIPayloadsByChat = window._echoUIPayloadsByChat || {};
+      window._echoUIInboxByChat = window._echoUIInboxByChat || {};
       window._echoWindowChatMap = window._echoWindowChatMap || {};
       if (!window._echoUIAggregatorBound) {
           window._echoUIAggregatorBound = true;
@@ -3329,6 +3513,13 @@ return new Promise(function(resolve) {{
                   const cid = window._echoWindowChatMap[window_id] || '_global';
                   if (!window._echoUIPayloadsByChat[cid]) window._echoUIPayloadsByChat[cid] = {};
                   window._echoUIPayloadsByChat[cid][window_id] = payload;
+              }
+              if (event.data && event.data.echoUIRequest) {
+                  const req = event.data.echoUIRequest;
+                  const wid = req.window_id || 'default';
+                  const cid = window._echoWindowChatMap[wid] || '_global';
+                  if (!window._echoUIInboxByChat[cid]) window._echoUIInboxByChat[cid] = [];
+                  window._echoUIInboxByChat[cid].push(req);
               }
               if (event.data && event.data.echoSignal === 'abort') {
                   window._echoUIPayloads['_echo_signal'] = 'abort';
@@ -3353,9 +3544,25 @@ return new Promise(function(resolve) {{
               if (!window._echoUIPayloadsByChat[chatId]) {
                   window._echoUIPayloadsByChat[chatId] = {};
               }
-              return window._echoUIPayloadsByChat[chatId];
+              const out = Object.assign({}, window._echoUIPayloadsByChat[chatId]);
+              if (window._echoUIInboxByChat && Array.isArray(window._echoUIInboxByChat[chatId]) && window._echoUIInboxByChat[chatId].length > 0) {
+                  out._inbox_events = window._echoUIInboxByChat[chatId].splice(0);
+              }
+              return out;
           }
           return window._echoUIPayloads;
+      };
+
+      window.echoPushMonitorEvent = (window_id, eventData, reqId, chatId) => {
+          const hudId = 'echo-sandbox-monitor-hud-' + window_id;
+          const body = document.getElementById(hudId + '-body');
+          if (!body) return false;
+          const iframe = body.querySelector('iframe');
+          if (iframe && iframe.contentWindow) {
+              iframe.contentWindow.postMessage({ echoSandboxEvent: eventData, req_id: reqId || null, window_id: window_id }, '*');
+              return true;
+          }
+          return false;
       };
 
       window.echoCreateFloatingMonitor = (window_id, title, htmlContent, width, height, chatId) => {
@@ -3403,6 +3610,35 @@ return new Promise(function(resolve) {{
                   setInterval(function(){
                       window.parent.postMessage({ echoPing: '${window_id}' }, '*');
                   }, 1000);
+                  try { window.parent.postMessage({ type: 'echo:iframe:init' }, '*'); } catch (e) {}
+                  window._echoPendingReqs = {};
+                  window._echoEventListeners = [];
+                  window.addEventListener('message', function(ev) {
+                      if (ev.data && ev.data.type === 'theme-update') {
+                          if (ev.data.bgColor) document.documentElement.style.setProperty('--echo-bg', ev.data.bgColor);
+                          if (ev.data.textColor) document.documentElement.style.setProperty('--echo-text', ev.data.textColor);
+                      }
+                      if (ev.data && ev.data.echoSandboxEvent !== undefined) {
+                          const rid = ev.data.req_id;
+                          if (rid && window._echoPendingReqs[rid]) {
+                              window._echoPendingReqs[rid](ev.data.echoSandboxEvent);
+                              delete window._echoPendingReqs[rid];
+                          }
+                          for (const fn of window._echoEventListeners) {
+                              try { fn(ev.data.echoSandboxEvent, rid); } catch (e) {}
+                          }
+                      }
+                  });
+                  window.echoRequest = function(action, payload) {
+                      const reqId = 'req_' + Math.random().toString(36).slice(2) + '_' + Date.now();
+                      return new Promise(function(resolve) {
+                          window._echoPendingReqs[reqId] = resolve;
+                          window.parent.postMessage({ echoUIRequest: { window_id: '${window_id}', action: action, payload: payload, req_id: reqId } }, '*');
+                      });
+                  };
+                  window.onEchoEvent = function(cb) {
+                      if (typeof cb === 'function') window._echoEventListeners.push(cb);
+                  };
               </script>`;
               iframe.srcdoc = heartbeat + htmlContent;
               body.appendChild(iframe);

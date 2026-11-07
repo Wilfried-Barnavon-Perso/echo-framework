@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.231.49.1
+version: 5.235.5.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.231.49.1: Ajout de show_image_to_user dans DELEGATE_AGENT_BLACKLIST (rendu UI HTMLResponse réservé au flux principal).
-# 5.231.40.1: Alignement du protocole Antigravity sur le Language Server 2.28.2 (CL 1006921819).
-# 5.231.33.1: Purge de la constante orpheline PROMPT_SENSORY_DISTILLATION (déjà centralisée dans echo_prompts.py via TPL_EXPLORE_SENSORY).
-# 5.231.32.1: Rehaussement du seuil de déclenchement de compaction automatique à 60% de CONTEXT_MAX (COMPACTION_TRIGGER_THRESHOLD_PCT=0.60).
-# 5.231.29.1: Unification SSOT des espaces de travail Codex (CODEX_WORKSPACE_MAIN, CODEX_WORKSPACE_SANDBOX, CODEX_INDEXED_WORKSPACES, CODEX_WORKSPACE_LITERAL, is_codex_workspace_indexed).
+# 5.235.5.1: Ajout de ECHO_GC_GRACE_PERIOD_SEC (900s) et de la variable contextuelle ECHO_TURN_CONTEXT.
+# 5.235.1.1: Calibrage de COMPACTION_COMPRESSED_SHARE_PCT à 0.3125 (31.25% HEAD soit 65 535 tokens / 68.75% TAIL soit ~144 179 tokens) pour alignement sur le plafond matériel maxOutputTokens.
+# 5.234.1.1: Ajout des constantes SSOT de concurrence, rétention et écoute de la Sandbox (SANDBOX_MAX_CONCURRENT_JOBS_PER_CHAT, SANDBOX_MAX_CONCURRENT_JOBS_GLOBAL, SANDBOX_FINISHED_JOBS_MAX_PER_CHAT, SANDBOX_FINISHED_JOBS_TTL_SEC, SANDBOX_LISTEN_MAX_WAIT_SEC).
+# 5.234.0.1: Ajout des constantes SSOT d'authentification (ECHO_AUTH_PENDING_MARKER, ECHO_AUTH_TITLE_CONFIG, ECHO_AUTH_TITLE_PENDING, ECHO_AUTH_NOTICE_MARKERS).
+# 5.233.0.1: Ajout de la constante SSOT IMAGE_GEN_MAX_INPUT_IMAGES=10 pour borner la fusion multi-images dans generate_image.
 
 
 import os
@@ -23,6 +23,10 @@ from typing import Literal
 # de signature) effectué par Open WebUI lors de l'encapsulation des outils.
 # Par défaut, le dictionnaire est vide (contexte Orchestrateur).
 ECHO_SUBAGENT_CONTEXT: contextvars.ContextVar = contextvars.ContextVar("ECHO_SUBAGENT_CONTEXT", default={})
+
+# Contexte du tour courant (posé par l'orchestrateur) : provenance des productions
+# {"chat_id": str, "user_message_id": str | None, "assistant_message_id": str | None}
+ECHO_TURN_CONTEXT: contextvars.ContextVar = contextvars.ContextVar("ECHO_TURN_CONTEXT", default={})
 
 try:
     import pybase64 as base64
@@ -53,6 +57,8 @@ ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS = 131072
 
 # HIÉRARCHIE ECHO SOUVERAINE (Standardisé)
 ECHO_USERS_ROOT = f"{ECHO_BASE_DATA_DIR}/users"
+# Délai de grâce (s) protégeant les écritures en vol (uploads, générations) contre les GC (FS & branches mortes)
+ECHO_GC_GRACE_PERIOD_SEC = 900
 ECHO_UPLOADS_TRANSIT_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
 
 ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
@@ -197,6 +203,20 @@ ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC = 0     # Seuil en secondes résiduelles
 ECHO_QUOTA_RESET_IMMINENT_LABEL = "Imminent"    # Label d'affichage et de détection d'imminence
 
 # ==============================================================================
+# MARQUEURS & TITRES D'AUTHENTIFICATION (SSOT ÉMISSION / DÉTECTION)
+# ==============================================================================
+ECHO_AUTH_PENDING_MARKER = "(ECHO_SESSION_AUTH_PENDING)"
+ECHO_AUTH_TITLE_CONFIG = "Configuration de l'Authentification ECHO"
+ECHO_AUTH_TITLE_PENDING = "Authentification en attente"
+
+ECHO_AUTH_NOTICE_MARKERS = frozenset({
+    ECHO_AUTH_PENDING_MARKER,
+    ECHO_AUTH_TITLE_CONFIG,
+    ECHO_AUTH_TITLE_PENDING,
+})
+
+
+# ==============================================================================
 # 1.2 RÉSILIENCE ET RETRIES (API)
 # ==============================================================================
 
@@ -230,12 +250,12 @@ COMPACTION_TRIGGER_THRESHOLD_PCT = 0.60
 # Garantit une libération immédiate de > 300 000 tokens de marge libre (hystérésis forte).
 COMPACTION_TARGET_CONTEXT_PCT    = 0.20
 
-# Part de l'enveloppe cible allouée au Checkpoint compressé HEAD : 63% de 20% = 12.6% de CONTEXT_MAX.
-# Soit un budget de ~132 120 tokens, avec maxOutputTokens borné par le plafond matériel Gemini (65 535 tokens).
-COMPACTION_COMPRESSED_SHARE_PCT  = 0.63
+# Part de l'enveloppe cible allouée au Checkpoint compressé HEAD : 31.25% de 20% = 6.25% de CONTEXT_MAX.
+# Soit un budget de 65 535 tokens, parfaitement aligné sur le plafond matériel Gemini (maxOutputTokens = 65 535).
+COMPACTION_COMPRESSED_SHARE_PCT  = 0.3125
 
-# Part de l'enveloppe cible allouée aux tours récents gardés bruts TAIL : 37% de 20% = 7.4% de CONTEXT_MAX.
-# Dérivée dynamiquement par construction (1 - COMPACTION_COMPRESSED_SHARE_PCT) = ~77 594 tokens max.
+# Part de l'enveloppe cible allouée aux tours récents gardés bruts TAIL : 68.75% de 20% = 13.75% de CONTEXT_MAX.
+# Dérivée dynamiquement par construction (1 - COMPACTION_COMPRESSED_SHARE_PCT) = ~144 179 tokens max.
 COMPACTION_KEPT_SHARE_PCT        = round(1.0 - COMPACTION_COMPRESSED_SHARE_PCT, 4)
 
 # Minimum de tours complets passés requis pour autoriser une compaction
@@ -246,8 +266,8 @@ def get_compaction_shares(compressed_share: float = COMPACTION_COMPRESSED_SHARE_
     """
     Retourne (compressed_share, kept_share) garantissant que leur somme vaut strictement 1.0 (1 - compressed_share).
     Par exemple, pour l'enveloppe cible (20% de CONTEXT_MAX = 209 715 tokens) :
-    - Part compressée HEAD : 63% de l'enveloppe cible (12.6% de CONTEXT_MAX, soit ~132 120 tokens max budget, bridé à 65535 API)
-    - Part gardée brute TAIL : 37% de l'enveloppe cible (7.4% de CONTEXT_MAX, soit ~77 594 tokens max budget)
+    - Part compressée HEAD : 31.25% de l'enveloppe cible (6.25% de CONTEXT_MAX, soit 65 535 tokens max budget, aligné sur le plafond API)
+    - Part gardée brute TAIL : 68.75% de l'enveloppe cible (13.75% de CONTEXT_MAX, soit ~144 179 tokens max budget)
     """
     val = float(compressed_share)
     if val > 1.0:
@@ -357,6 +377,20 @@ ECHO_MODELS_REGISTRY = {
             "maxOutputTokens": 65535,
             "thinkingConfig": {"thinkingLevel": "low"}
         }
+    },
+    "MODEL_IMAGE_GEN": {
+        "ai_studio_id": "gemini-3.1-flash-image",
+        "ca_model_id":  "gemini-3.1-flash-image",
+        "hierarchy": None,
+        "request_type": "image_gen",
+        "generationConfig": {
+            "temperature": 1.0,
+            "maxOutputTokens": 65535,
+            "responseModalities": ["TEXT", "IMAGE"],
+            "imageConfig": {
+                "aspectRatio": "1:1"
+            }
+        }
     }
 }
 
@@ -365,6 +399,19 @@ MODEL_PROMETHEUS          = "MODEL_PROMETHEUS"
 MODEL_APOLLO        = "MODEL_APOLLO"
 MODEL_ZEPHYR         = "MODEL_ZEPHYR"
 MODEL_DISTILLATION = "MODEL_DISTILLATION"
+MODEL_IMAGE_GEN    = "MODEL_IMAGE_GEN"
+
+# Paramètres SSOT du Sous-Agent de Génération et Retouche d'Images (Stochastique : 3 essais requis pour la galerie)
+GEN_IMG_MAX_TRIES = 3
+IMAGE_GEN_VALID_RATIOS = ("1:1", "3:4", "4:3", "9:16", "16:9")
+IMAGE_GEN_MAX_INPUT_IMAGES = 10
+
+# Paramètres SSOT du Moteur de Rendu Visuel Supervisé (Schémas & Diagrammes DSL : 2 essais suffisent)
+GEN_SCHEMA_MAX_TRIES = 2
+EPHEMERAL_RENDER_ENDPOINT = "/render_ephemeral_view"
+EPHEMERAL_RENDER_VIEWPORT_W = 1200
+EPHEMERAL_RENDER_VIEWPORT_H = 800
+EPHEMERAL_RENDER_SETTLE_MS = 250
 
 # Modèle Maître d'orchestration dans Open WebUI (Pipe maître ECHO)
 # Distinct des modèles cognitifs LLM (ECHO_MODELS_REGISTRY) : identifiant d'enregistrement du pipe dans Open WebUI.
@@ -541,6 +588,8 @@ ECHO_CODEX_MAX_AI_PASSES = 5        # Nombre max de passes auto-continue IA (0 �
 # Nom du sous-dossier Codex dans le vault utilisateur
 CODEX_DIR_NAME = "codex"
 CODEX_WORKSPACE_MAIN = "main"
+CODEX_WORKSPACE_PLANS = "plans"
+CODEX_WORKSPACE_GENERATED = "generated"
 CODEX_WORKSPACE_SANDBOX = "sandbox"
 CODEX_DEFAULT_WORKSPACE = CODEX_WORKSPACE_MAIN
 CODEX_HUD_ID = "echo-codex-hud"
@@ -651,6 +700,8 @@ DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
     # 3. Rendu UI & Modales Interactives (interdits en mode Headless / Sous-agent)
     "generate_rich_visualization",  # Génère du HTML interactif pour le stream principal
     "show_image_to_user",           # Génère une Iframe HTMLResponse pour le stream principal
+    "generate_image",               # Sous-agent d'imagerie avec Iframe HTMLResponse réservé au flux principal
+    "close_image_session",          # Fermeture de session d'imagerie réservée au flux principal
     "ask_user_input",               # Modale interactive bloquée en mode Headless
     "delete_user_skill",            # Modale de confirmation bloquée en mode Headless
     "manage_identity",              # Gestion d'identités bloquée en mode Headless
@@ -720,25 +771,94 @@ MODEL_ENUM_REFERENCE = {"MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"}
 ECHO_QDRANT_URL = "http://echo-qdrant:6333"
 
 # --- CONFIGURATION DES ESPACES DE TRAVAIL (CODEX) ---
-# Définit les sous-dossiers stricts dans la structure codex via un dictionnaire pour alimenter dynamiquement l'UI.
+# Définit de manière déclarative les sous-dossiers Codex (label UI, versionnement Git, indexation SQLite, montage Sandbox, écriture générique, resource_type).
 ECHO_CODEX_WORKSPACES = {
-    CODEX_WORKSPACE_MAIN: "Main",       # Dépôt officiel versionné (indexé dans echo_resources)
-    CODEX_WORKSPACE_SANDBOX: "Sandbox"  # Espace d'exécution et de génération du worker (exclu de echo_resources)
+    CODEX_WORKSPACE_MAIN: {
+        "label": "Main",
+        "versioning": "yes",
+        "indexed": "yes",
+        "sandbox_mount": "ro",
+        "generic_writable": "yes",
+        "resource_type": "codex",
+    },
+    CODEX_WORKSPACE_PLANS: {
+        "label": "Plans",
+        "versioning": "yes",
+        "indexed": "yes",
+        "sandbox_mount": "ro",
+        "generic_writable": "no",
+        "resource_type": "plan",
+    },
+    CODEX_WORKSPACE_GENERATED: {
+        "label": "Generated",
+        "versioning": "yes",
+        "indexed": "yes",
+        "sandbox_mount": "ro",
+        "generic_writable": "no",
+        "resource_type": "generated",
+    },
+    CODEX_WORKSPACE_SANDBOX: {
+        "label": "Sandbox",
+        "versioning": "no",
+        "indexed": "no",
+        "sandbox_mount": "rw",
+        "generic_writable": "yes",
+        "resource_type": None,
+    },
 }
 
 # Sous-ensemble strict des espaces Codex autorisés à être indexés dans SQLite echo_resources.
-# La sandbox (bac à sable d'exécution) est formellement exclue du Registre Unifié.
-CODEX_INDEXED_WORKSPACES: frozenset[str] = frozenset({
-    CODEX_WORKSPACE_MAIN,
-})
+CODEX_INDEXED_WORKSPACES: frozenset[str] = frozenset(
+    ws for ws, spec in ECHO_CODEX_WORKSPACES.items()
+    if isinstance(spec, dict) and spec.get("indexed") == "yes"
+)
 
 # Type Literal dynamique SSOT pour le schéma OpenAPI Pydantic des outils Codex
 CODEX_WORKSPACE_LITERAL = Literal[tuple(ECHO_CODEX_WORKSPACES.keys())]
 
 
 def is_codex_workspace_indexed(workspace: str) -> bool:
-    """Retourne True si l'espace de travail Codex doit être indexé dans la table SQLite echo_resources (exclut sandbox)."""
-    return workspace in CODEX_INDEXED_WORKSPACES
+    """Retourne True si l'espace de travail Codex est configuré avec indexed='yes' dans ECHO_CODEX_WORKSPACES."""
+    ws = (workspace or CODEX_DEFAULT_WORKSPACE).strip()
+    spec = ECHO_CODEX_WORKSPACES.get(ws)
+    if isinstance(spec, dict):
+        return spec.get("indexed") == "yes"
+    return ws in CODEX_INDEXED_WORKSPACES
+
+
+def is_codex_workspace_versioned(workspace: str) -> bool:
+    """Retourne True si l'espace de travail Codex est configuré avec versioning='yes' (Git Dulwich)."""
+    ws = (workspace or CODEX_DEFAULT_WORKSPACE).strip()
+    spec = ECHO_CODEX_WORKSPACES.get(ws)
+    if isinstance(spec, dict):
+        return spec.get("versioning") == "yes"
+    return False
+
+
+def is_codex_workspace_generic_writable(workspace: str) -> bool:
+    """Retourne True si l'espace de travail Codex autorise l'écriture via les outils génériques (create/edit/delete_codex)."""
+    ws = (workspace or CODEX_DEFAULT_WORKSPACE).strip()
+    spec = ECHO_CODEX_WORKSPACES.get(ws)
+    if isinstance(spec, dict):
+        return spec.get("generic_writable") == "yes"
+    return False
+
+
+def get_codex_workspace_resource_type(workspace: str):
+    """Retourne le resource_type echo_resources associé au workspace ('codex', 'plan', 'generated', None)."""
+    ws = (workspace or CODEX_DEFAULT_WORKSPACE).strip()
+    spec = ECHO_CODEX_WORKSPACES.get(ws)
+    if isinstance(spec, dict):
+        return spec.get("resource_type")
+    return None
+
+
+def get_codex_workspaces_ui_map() -> dict[str, str]:
+    """Retourne le dictionnaire {workspace_key: label} pour les sélecteurs UI du Codex."""
+    return {
+        ws: (spec.get("label", ws.capitalize()) if isinstance(spec, dict) else str(spec))
+        for ws, spec in ECHO_CODEX_WORKSPACES.items()
+    }
 
 # Liste stricte des dossiers et fichiers à ignorer lors de la synchronisation ou de l'exploration UI.
 # Cette constante agit comme un bouclier critique pour le Codex (Plan A) : elle empêche le `os.walk` 
@@ -750,6 +870,11 @@ ECHO_SYNC_EXCLUDE_LIST = [".venv", "node_modules", "__pycache__", ".git", ".pyte
 ECHO_CODING_WORKER_URL = "http://echo-coding-worker:5000/execute"
 ECHO_DEFAULT_CODE_EXECUTION_TIMEOUT = 900
 ECHO_MAX_CODE_EXECUTION_TIMEOUT = 3600
+SANDBOX_MAX_CONCURRENT_JOBS_PER_CHAT = 4
+SANDBOX_MAX_CONCURRENT_JOBS_GLOBAL = 8
+SANDBOX_FINISHED_JOBS_MAX_PER_CHAT = 20
+SANDBOX_FINISHED_JOBS_TTL_SEC = 900
+SANDBOX_LISTEN_MAX_WAIT_SEC = 60
 
 # NAVIGATION_ENGINE_URL : Utilisée par navigation_engine_tool pour le pilotage Playwright/Chrome.
 NAVIGATION_ENGINE_URL = "http://echo-browser-worker:5002"

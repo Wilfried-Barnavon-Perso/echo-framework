@@ -1,0 +1,4 @@
+flask
+passlib[argon2]
+pyotp
+httpx

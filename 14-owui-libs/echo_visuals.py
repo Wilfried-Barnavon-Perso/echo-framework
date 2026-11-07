@@ -1,16 +1,16 @@
 """
 title: ECHO Visuals Engine Configuration
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 5.232.3.1
 description: Composant système interne : ECHO Visuals Engine Configuration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.232.3.1: Initialisation défensive de mdl.modelData.symmetries avant viewer.render() et téléchargement PDB explicite ({ format: 'pdb' }) dans le moteur bio (3Dmol.js).
+# 5.232.0.3: Ajout de l'extension WebGL echarts-gl@2 au moteur echarts (support natif grid3D, line3D, scatter3D, surface) et interception try/catch console.error sur chart.setOption.
+# 5.232.0.2: Blindage du moteur bio (extraction tolérante PDB/CID, validation d'atomes pré-render contre le crash .symmetries, style hybride cartoon+stick) et propagation console.error sur toutes les branches d'erreur DOM.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 6.3: Optimisation du dimensionnement des conteneurs (hauteurs fixes) et correctifs Layout (Cytoscape, Astro).
-# 6.2: Correction erreur Cross-Origin markmap (Désactivation loadJS/loadCSS instables en iframe).
-# 6.1: Intégration du moteur cartographique géographique Leaflet (OpenStreetMap).
-# 6.0: Correction critique de l'affichage Bio/SVG/A-Frame et stabilisation du redimensionnement iFrame.
 
 class VisualEngine:
     @staticmethod
@@ -104,7 +104,7 @@ class VisualEngine:
                             const b64 = document.getElementById('visual-payload').textContent;
                             let rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
                             if (!rawData.includes('gantt')) rawData = 'gantt\\n' + rawData;
-                            mermaid.render('gantt-svg-' + Date.now(), rawData).then(({{svg}}) => {{ target.innerHTML = svg; }});
+                            mermaid.render('gantt-svg-' + Date.now(), rawData).then(({{svg}}) => {{ target.innerHTML = svg; }}).catch(err => {{ console.error("Mermaid Gantt Error:", err); }});
                         }} else if (retries < maxRetries) {{
                             retries++; setTimeout(run, 100);
                         }}
@@ -158,7 +158,7 @@ class VisualEngine:
                                     clone.setAttribute('fill', '#1e293b');
                                     roughTarget.appendChild(clone);
                                 }});
-                            }});
+                            }}).catch(err => {{ console.error("Mermaid Sketch Error:", err); }});
                         }} else if (retries < maxRetries) {{
                             retries++; setTimeout(run, 100);
                         }}
@@ -169,7 +169,10 @@ class VisualEngine:
 
             # --- 5. GRAPHIQUES (ECHARTS) ---
             "echarts": {
-                "scripts": ["https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"],
+                "scripts": [
+                    "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js",
+                    "https://cdn.jsdelivr.net/npm/echarts-gl@2/dist/echarts-gl.min.js",
+                ],
                 "container": f'<div id="visual-payload" style="display:none;">{payload}</div><div id="visual-target" style="width:100%; height:500px; background:#ffffff;"></div>',
                 "init": f"""
                     let retries = 0;
@@ -179,11 +182,16 @@ class VisualEngine:
                         if (!target) return;
                         
                         if (typeof echarts !== 'undefined') {{
-                            const b64 = document.getElementById('visual-payload').textContent;
-                            const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
-                            const chart = echarts.init(target);
-                            chart.setOption(JSON.parse(rawData));
-                            window.addEventListener('resize', () => chart.resize());
+                            try {{
+                                const b64 = document.getElementById('visual-payload').textContent;
+                                const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
+                                const chart = echarts.init(target);
+                                chart.setOption(JSON.parse(rawData));
+                                window.addEventListener('resize', () => chart.resize());
+                            }} catch (err) {{
+                                console.error("ECharts Error:", err);
+                                target.innerHTML = "⚠️ Erreur ECharts : " + err.message;
+                            }}
                         }} else if (retries < maxRetries) {{
                             retries++; setTimeout(run, 100);
                         }}
@@ -205,7 +213,7 @@ class VisualEngine:
                             target.innerHTML = '';
                             const b64 = document.getElementById('visual-payload').textContent;
                             const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
-                            vegaEmbed('#visual-target', JSON.parse(rawData), {{ theme: 'light', actions: false }});
+                            vegaEmbed('#visual-target', JSON.parse(rawData), {{ theme: 'light', actions: false }}).catch(err => {{ console.error("Vega Error:", err); }});
                         }} else if (retries < maxRetries) {{
                             retries++; setTimeout(run, 100);
                         }}
@@ -374,6 +382,7 @@ class VisualEngine:
                         }} else if (retries < maxRetries) {{
                             retries++; setTimeout(run, 100);
                         }} else {{
+                            console.error("A-Frame Error: CDN Timeout");
                             target.innerHTML = "⚠️ Échec du chargement de A-Frame (CDN Timeout).";
                         }}
                     }};
@@ -465,24 +474,44 @@ class VisualEngine:
                                 const rawData = new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0))).trim();
                                 target.innerHTML = '';
                                 const viewer = $3Dmol.createViewer(target, {{ backgroundColor: 'white' }});
-                                
-                                // Détection intelligente : ID PDB (4 chars) ou PDB:ID or full data
-                                const cleanData = rawData.replace(/^PDB:/i, '').trim();
-                                if (cleanData.length === 4 && !cleanData.includes('\\n')) {{
-                                    $3Dmol.download("pdb:" + cleanData, viewer, {{}}, () => {{ 
-                                        viewer.setStyle({{}}, {{ cartoon: {{ color: 'spectrum' }} }}); 
-                                        viewer.zoomTo(); 
-                                        viewer.render(); 
-                                        disableAutoResize = false;
-                                        if (typeof reportHeight === 'function') reportHeight();
-                                    }});
-                                }} else {{
-                                    viewer.addModel(rawData, "pdb"); 
-                                    viewer.setStyle({{}}, {{ cartoon: {{ color: 'spectrum' }} }}); 
-                                    viewer.zoomTo(); 
+                                const applyBioStyleAndRender = (mdl) => {{
+                                    const atoms = (mdl && typeof mdl.selectedAtoms === 'function') ? mdl.selectedAtoms({{}}) : [];
+                                    if (!atoms || atoms.length === 0) {{
+                                        throw new Error("Aucun atome valide extrait du payload moléculaire (utilisez un code RCSB PDB de 4 caractères comme 1BNA ou CID:<id>).");
+                                    }}
+                                    if (mdl && !mdl.modelData) {{
+                                        mdl.modelData = {{ symmetries: [] }};
+                                    }}
+                                    viewer.setStyle({{}}, {{ cartoon: {{ color: 'spectrum' }}, stick: {{ radius: 0.15 }} }});
+                                    viewer.zoomTo();
                                     viewer.render();
                                     disableAutoResize = false;
                                     if (typeof reportHeight === 'function') reportHeight();
+                                }};
+
+                                const cidMatch = rawData.match(/^(?:cid\\s*:\\s*)(\\d+)$/i);
+                                const hasAtomLines = /^(ATOM\\s+|HETATM)/m.test(rawData);
+                                const pdbMatch = !hasAtomLines ? rawData.replace(/^PDB\\s*:\\s*/i, '').trim().match(/^([1-9][a-z0-9]{{3}})\\b/i) : null;
+
+                                if (cidMatch) {{
+                                    $3Dmol.download("cid:" + cidMatch[1], viewer, {{}}, (mdl) => {{
+                                        try {{ applyBioStyleAndRender(mdl); }} catch (err) {{
+                                            console.error("3Dmol CID Error:", err);
+                                            target.innerHTML = "⚠️ Erreur de rendu 3Dmol : " + err.message;
+                                        }}
+                                    }});
+                                }} else if (pdbMatch) {{
+                                    const pdbId = pdbMatch[1].toUpperCase();
+                                    $3Dmol.download("pdb:" + pdbId, viewer, {{ format: 'pdb' }}, (mdl) => {{
+                                        try {{ applyBioStyleAndRender(mdl); }} catch (err) {{
+                                            console.error("3Dmol PDB Error:", err);
+                                            target.innerHTML = "⚠️ Erreur de rendu 3Dmol : " + err.message;
+                                        }}
+                                    }});
+                                }} else {{
+                                    const fmt = rawData.includes('_atom_site') ? 'cif' : (rawData.includes('V2000') || rawData.includes('V3000') ? 'sdf' : 'pdb');
+                                    const mdl = viewer.addModel(rawData, fmt);
+                                    applyBioStyleAndRender(mdl);
                                 }}
                             }} catch(e) {{ 
                                 console.error("3Dmol Error:", e);
@@ -491,6 +520,7 @@ class VisualEngine:
                         }} else if (retries < maxRetries) {{
                             retries++; setTimeout(run, 100); 
                         }} else {{
+                            console.error("3Dmol Error: CDN Timeout");
                             target.innerHTML = "⚠️ Échec du chargement des librairies 3Dmol (CDN Timeout).";
                         }}
                     }};
@@ -572,6 +602,7 @@ class VisualEngine:
                                     svgEl.style.maxWidth = '100%';
                                     svgEl.style.height = 'auto';
                                 }} else {{
+                                    console.error("SVG Render Error: Code SVG mal formé ou non détecté.");
                                     target.innerHTML = "⚠️ Code SVG mal formé ou non détecté.";
                                 }}
                             }}

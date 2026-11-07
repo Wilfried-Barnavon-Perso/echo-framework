@@ -1,16 +1,16 @@
 """
 title: ECHO Universal MCP Tool
 author: ECHO
-version: 5.231.37.1
+version: 5.233.0.1
 description: Outil universel d'interrogation et d'exécution sur l'infrastructure MCP via routage dynamique.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.233.0.1: Décoration @echo_tool sur les 2 méthodes publiques et simplification des retours wrap_tool_output.
 # 5.231.37.1: Propagation de chat_id (en-tête x-openwebui-chat-id et payload proxy_mcp) pour le Download Broker.
 # 5.231.21.1: Délégation de _fetch_credentials au CRUD chiffré AES-256-GCM de EchoStateManager (get_vault_credential).
 # 5.231.20.1: Isolation multi-user des credentials sur mcp_native et support multi-compte optionnel (account_id).
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 import sys
 import json
 import base64
@@ -19,7 +19,7 @@ from typing import Any, Optional
 from pydantic import BaseModel
 
 sys.path.append("/app/backend/echo_libs")
-from echo_core import wrap_tool_output  # noqa: E402
+from echo_core import echo_tool  # noqa: E402
 from echo_events import EchoEvents  # noqa: E402
 
 
@@ -51,6 +51,7 @@ class Tools:
         except Exception:
             return ""
 
+    @echo_tool
     async def list_mcp_functions(
         self,
         service: str,
@@ -59,12 +60,10 @@ class Tools:
         __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
-    ) -> dict:
+    ) -> Any:
         """Découvre les fonctions et schémas d'arguments exposés par un serveur MCP."""
         if not __user__:
-            return wrap_tool_output(
-                "Erreur: Contexte manquant.", {"status": "error"}, user_id="", chat_id="", metadata={}
-            )
+            return "Erreur: Contexte manquant."
 
         events = EchoEvents(__event_emitter__, __event_call__)
         await events.status(f"🌐 Routage dynamique pour l'interrogation de '{service}'...")
@@ -111,23 +110,12 @@ class Tools:
                     else f"⚠️ Accès à '{service}' : configuration requise."
                 )
                 await events.status(label, done=True)
-                return wrap_tool_output(
-                    json.dumps(data),
-                    status={"status": status_val},
-                    user_id=__user__["id"],
-                    chat_id=__metadata__.get("chat_id"),
-                    metadata=__metadata__
-                )
+                return json.dumps(data)
         except Exception as e:
             err_msg = str(e).strip() or type(e).__name__
-            return wrap_tool_output(
-                json.dumps({"status": "error", "message": err_msg}),
-                status={"status": "error"},
-                user_id=__user__["id"],
-                chat_id=__metadata__.get("chat_id"),
-                metadata=__metadata__
-            )
+            return {"status": "error", "message": err_msg}
 
+    @echo_tool
     async def call_mcp_function(
         self,
         service: str,
@@ -138,12 +126,10 @@ class Tools:
         __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None
-    ) -> dict:
+    ) -> Any:
         """Exécute une fonction spécifique sur un serveur MCP via le Broker."""
         if not __user__:
-            return wrap_tool_output(
-                "Erreur: Contexte manquant.", {"status": "error"}, user_id="", chat_id="", metadata={}
-            )
+            return "Erreur: Contexte manquant."
 
         events = EchoEvents(__event_emitter__, __event_call__)
         await events.status(f"⚙️ Exécution de la fonction '{function_name}' sur '{service}'...")
@@ -201,19 +187,7 @@ class Tools:
                     else f"⚠️ Erreur lors de l'exécution sur '{service}'."
                 )
                 await events.status(label, done=True)
-                return wrap_tool_output(
-                    json.dumps(data),
-                    status={"status": status_val},
-                    user_id=__user__["id"],
-                    chat_id=__metadata__.get("chat_id"),
-                    metadata=__metadata__
-                )
+                return json.dumps(data)
         except Exception as e:
             err_msg = str(e).strip() or type(e).__name__
-            return wrap_tool_output(
-                json.dumps({"status": "error", "message": err_msg}),
-                status={"status": "error"},
-                user_id=__user__["id"],
-                chat_id=__metadata__.get("chat_id"),
-                metadata=__metadata__
-            )
+            return {"status": "error", "message": err_msg}

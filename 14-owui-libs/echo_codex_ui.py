@@ -1,16 +1,16 @@
 """
 title: ECHO Codex UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.231.55.1
+version: 5.232.5.1
 description: Composant système interne : Moteur de rendu HUD Monaco et Éditeur Hexadécimal pour ECHO Codex.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.232.5.1: Support déclaratif de ECHO_CODEX_WORKSPACES, verrouillage Read-Only automatique sur les workspaces non-inscriptibles (plans, generated) et rafraîchissement de l'aperçu image lors de la navigation d'historique Git (◀ ▶).
 # 5.231.55.1: Export direct client-side (0 aller-retour RPC), noWatchdogActions sur download/upload et délégation sécurisée à echoTriggerDownload.
 # 5.231.47.1: Factorisation des icônes Import/Export/Copy via EchoUI.get_icon et activation de la copie d'image (window.echoExportImage) dans PREVIEW_REGISTRY.
 # 5.231.46.1: Alignement de la docstring _generate_codex_js sur events.call_execute.
 # 5.231.39.1: Sérialisation JSON intégrale des variables JS (activeChatTitle), pré-injection initial_content à t=0ms et isolation multi-chat de echoOpenCodex.
-# 5.231.6.1: Pont universel get_codex_bridge_js, Cold Start direct REST et émission ordonnée de close avant destruction du HUD.
 
 
 import sys
@@ -223,10 +223,14 @@ class EchoCodexUI(EchoUI):
       let files = {files_json};
       const quickActions = {quick_actions_json};
       const workspaces = {workspaces_json};
+      function isWorkspaceReadOnly(ws) {{
+        const spec = workspaces && workspaces[ws];
+        return Boolean(spec && typeof spec === 'object' && spec.generic_writable === 'no');
+      }}
       const rawChats = {chats_json};
       let chatsData = (rawChats && rawChats.current) ? rawChats : {{ current: {{ id: CID, title: activeChatTitle || 'Conversation Actuelle' }}, others: [] }};
       let currentWorkspace = {current_ws_json};
-      let isReadOnly = (activeChatId !== CID);
+      let isReadOnly = (activeChatId !== CID) || isWorkspaceReadOnly(currentWorkspace);
       // Mapping langage Monaco ↔ extension (injecté depuis echo_constants SSOT)
       const LANG_TO_EXT = {lang_to_ext_json};
       const EXT_TO_LANG = {ext_to_lang_json};
@@ -738,7 +742,8 @@ class EchoCodexUI(EchoUI):
         wsSelect.id = CODEX_ID + '-workspace';
         wsSelect.style.cssText = `flex:1; padding:6px 4px; background:transparent; border:none; color:${{textColor}}; font-size:12px; font-weight:bold; outline:none; cursor:pointer;`;
 
-        Object.entries(workspaces).forEach(([key, label]) => {{
+        Object.entries(workspaces).forEach(([key, val]) => {{
+          const label = (val && typeof val === 'object') ? (val.label || key) : val;
           const opt = document.createElement('option');
           opt.value = key;
           opt.textContent = '📦 ' + label;
@@ -1833,9 +1838,9 @@ class EchoCodexUI(EchoUI):
         if (newWorkspace) currentWorkspace = newWorkspace;
         if (newActiveChatId) activeChatId = newActiveChatId;
         if (typeof newIsReadOnly === 'boolean') {{
-          setReadOnlyMode(newIsReadOnly);
+          setReadOnlyMode(newIsReadOnly || isWorkspaceReadOnly(currentWorkspace));
         }} else {{
-          setReadOnlyMode(activeChatId !== CID);
+          setReadOnlyMode((activeChatId !== CID) || isWorkspaceReadOnly(currentWorkspace));
         }}
         renderFileTree();
       }};
@@ -1947,6 +1952,7 @@ class EchoCodexUI(EchoUI):
         statusText.textContent = `(${{idx+1}}/${{total}}) ${{info.hash}} "${{info.message}}"`;
         statusText.dataset.hash = info.hash;
         document.getElementById(CODEX_ID + '-hist-actions').style.display = 'flex';
+        if (previewOpen) updatePreview();
       }};
 
       window.echoCodexExitHistory = () => {{ exitHistoryMode(); }};
@@ -1954,10 +1960,11 @@ class EchoCodexUI(EchoUI):
       function exitHistoryMode() {{
         isHistoryMode = false;
         historyContent = null;
-        if (editor) editor.updateOptions({{readOnly: false}});
+        if (editor) editor.updateOptions({{readOnly: isReadOnly}});
         editorWrap.style.background = 'transparent';
         document.getElementById(CODEX_ID + '-hist-actions').style.display = 'none';
         updateStatus(currentFile ? currentFile + ' \u2022 HEAD' : 'Pr\u00eat');
+        if (previewOpen) updatePreview();
       }}
 
       // ===== PREVIEW PANEL & DECLARATIVE PREVIEW REGISTRY =====

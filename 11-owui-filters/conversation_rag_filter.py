@@ -1,16 +1,16 @@
 """
 title: ECHO Session RAG Conversation Filter
 author: ECHO Framework
-version: 5.226.18.0
+version: 5.235.5.1
 description: Composant système interne : ECHO Session RAG Conversation Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.235.5.1: Clôture d'un tour de parole conditionnée à la présence d'au moins un message assistant lors de messages user consécutifs.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.13: Résolution Fork Assistant : Utilisation de l'ID du message assistant pour garantir l'indexation lors d'une régénération.
 # 1.11: Résolution Fork Bomb (Branching) : Itération à rebours O(1) via SQLite is_embedded.
 # 1.10: Self-Healing RAG Filter (auto-réparation avec last_rag_message_id).
-# 1.9: Normalisation globale de la priorité d'exécution (déplacement vers Valves).
 
 from typing import Optional, Any
 from pydantic import BaseModel, Field
@@ -102,7 +102,7 @@ class Filter:
         turns = []
         current_turn = []
         for msg in messages:
-            if msg.get("role") == "user" and current_turn:
+            if msg.get("role") == "user" and current_turn and any(m.get("role") == "assistant" for m in current_turn):
                 turns.append(current_turn)
                 current_turn = []
             current_turn.append(msg)

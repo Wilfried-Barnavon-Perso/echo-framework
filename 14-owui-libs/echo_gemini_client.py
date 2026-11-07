@@ -2,16 +2,17 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 5.231.33.1
+version: 5.236.0.2
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.231.33.1: Support du streaming Base64 en mémoire vive (___ECHO_STREAM_MEM___, register_memory_stream, release_memory_stream, _zero_ram_memory_generator) sans écriture disque ni duplication RAM dans deepcopy.
-# 5.231.31.1: Prise en charge du timeout et sécurisation des closures __user__/__metadata__ dans call_distillation.
-# 5.231.20.1: Isolation multi-agent des point_id Qdrant dans index_text_in_ephemeral_rag via inclusion de sub_sid dans le seed UUID5.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.13: Filtrage strict des parts de pensée native (thought=True) et journalisation des erreurs dans call_distillation.
+# 5.236.0.2: Activation inconditionnelle et fallback SSOT des crédits Google One AI en OAuth2.
+# 5.235.5.1: Indexation Session RAG factorisée via build_session_rag_point_id et injection systématique de message_id pour source conversation.
+# 5.234.0.1: Normalisation symétrique Zéro-Copie de inline_data/mime_type vers inlineData/mimeType pour Code Assist et AI Studio.
+# 5.233.0.1: Support natif de response_schema (Pydantic BaseModel / dict) dans call_distillation et call_cascade, et normalisation camelCase unifiée via normalize_generation_config.
+# 5.232.3.2: Préservation des surcharges generationConfig (override_thinking, response_mime_type, maxOutputTokens) dans call_cascade, Fast-Failover OAuth2 sur TimeoutException dans call et stream, et nettoyage F541.
+import copy
 import time
 import random
 import hashlib
@@ -21,13 +22,14 @@ import orjson as std_json
 import asyncio
 import httpx
 import pybase64 as base64
-from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Union
+from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Type, Union
+from pydantic import BaseModel
 from echo_auth import EchoAuth
 from echo_events import EchoEvents
 from echo_state_manager import EchoStateManager
 from echo_http import _get_global_client, FatalAPIError
 from echo_core import clamp_model, split_thought_process
-from echo_protocol import build_ca_generation_config
+from echo_protocol import get_ca_model_id, build_ca_generation_config, normalize_generation_config, normalize_response_schema
 from echo_constants import AUTH_DATA_PROJECT_ID, AUTH_METHOD_OAUTH2, ECHO_AGY_USER_AGENT, ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, ECHO_GLOBAL_TENANT_PROJECT_ID, ECHO_RETRY_BASE_DELAY, ECHO_RETRY_JITTER_MAX, ECHO_RETRY_JITTER_MIN, ECHO_RETRY_MULTIPLIER, ECHO_SAFETY_SETTINGS, ECHO_USER_AGENT, GOOGLE_API_BASE_URL, GOOGLE_OAUTH_TOKEN_LIFETIME, get_descending_cascade, get_generation_config
 
 class EchoGeminiClient:
@@ -170,7 +172,52 @@ class EchoGeminiClient:
         return headers
 
     @staticmethod
-    async def _prepare_request_context(provider: Dict, target_model: str, payload: Dict, method: str = "generateContent", chat_id: str = None, enable_paid_credits: bool = False, base_url: str = None) -> Optional[Dict]:
+    def _normalize_contents_for_api(raw_contents: list) -> list:
+        """Normalise en camelCase (inlineData / mimeType) sans dupliquer les buffers Base64 en RAM."""
+        if not raw_contents:
+            return []
+        normalized = []
+        for msg in raw_contents:
+            if not isinstance(msg, dict):
+                normalized.append(msg)
+                continue
+            new_parts = []
+            for part in msg.get("parts", []):
+                if not isinstance(part, dict):
+                    new_parts.append(part)
+                    continue
+                if "inline_data" in part:
+                    new_part = {k: v for k, v in part.items() if k != "inline_data"}
+                    d = part["inline_data"]
+                    new_part["inlineData"] = {
+                        "mimeType": d.get("mime_type") or d.get("mimeType", "application/octet-stream"),
+                        "data": d.get("data", ""),
+                    }
+                    new_parts.append(new_part)
+                elif "inlineData" in part and isinstance(part["inlineData"], dict) and "mime_type" in part["inlineData"]:
+                    new_part = dict(part)
+                    d = part["inlineData"]
+                    new_part["inlineData"] = {
+                        "mimeType": d.get("mime_type") or d.get("mimeType", "application/octet-stream"),
+                        "data": d.get("data", ""),
+                    }
+                    new_parts.append(new_part)
+                else:
+                    new_parts.append(part)
+            normalized.append({**msg, "parts": new_parts})
+        return normalized
+
+    @staticmethod
+    async def _prepare_request_context(
+        provider: Dict,
+        target_model: str,
+        payload: Dict,
+        method: str = "generateContent",
+        chat_id: str = None,
+        enable_paid_credits: bool = False,
+        base_url: str = None,
+        gen_config_override: Optional[Dict] = None,
+    ) -> Optional[Dict]:
         """
         Sélecteur de Protocole Symétrique : Prépare URL, Headers et Payload selon le backend.
         Retourne un dictionnaire de configuration ou None si le fournisseur est invalide.
@@ -200,19 +247,24 @@ class EchoGeminiClient:
 
         # --- CAS 1 & 2 : RÉSOLUTION DU MODÈLE TECHNIQUE VIA LE SSOT ---
         from echo_constants import ECHO_MODELS_REGISTRY
+        import copy as _copy
         model_config = ECHO_MODELS_REGISTRY.get(target_model)
         if model_config:
             target_model = model_config["ca_model_id"] if is_agy else model_config["ai_studio_id"]
 
+        effective_gen_conf = _copy.deepcopy(
+            payload.get("generationConfig")
+            or (model_config or {}).get("generationConfig", {})
+        )
+        if gen_config_override:
+            effective_gen_conf.update(_copy.deepcopy(gen_config_override))
+
         # --- CAS 1 : PROTOCOLE API ANTIGRAVITY (OAuth2) ---
         if is_agy:
             if not model_config:
-                from echo_protocol import get_ca_model_id
                 target_model = get_ca_model_id(target_model)
 
             project_id = provider.get("project_id")
-            tier_id = provider.get("tier_id")
-            g1_credits = provider.get("g1_credits")
 
             if not project_id:
                 return None
@@ -247,10 +299,10 @@ class EchoGeminiClient:
                 # Adaptation generationConfig → protocole Code Assist (echo_protocol.py).
                 # Depuis echo_protocol v1.1 : thinkingConfig passe à travers (CA l'accepte).
                 # Cap maxOutputTokens à MAX_TOKENS_DEFAULT (65535 — corrige le 400 prod Gemini 3.1).
-                gen_conf = build_ca_generation_config(payload.get("generationConfig", {}))
+                gen_conf = build_ca_generation_config(effective_gen_conf)
 
                 request_body = {
-                    "contents": payload.get("contents", []),
+                    "contents": EchoGeminiClient._normalize_contents_for_api(payload.get("contents", [])),
                     "systemInstruction": payload.get("systemInstruction"),
                     "generationConfig": gen_conf,
                     "tools": payload.get("tools"),
@@ -268,18 +320,23 @@ class EchoGeminiClient:
                 "user_prompt_id": prompt_id, # Correction : snake_case requis ici
                 "request": request_body,
                 "userAgent": "antigravity",
-                "requestType": "agent"
+                "requestType": (model_config or {}).get("request_type", "agent")
             }
 
-            # CRÉDITS AI — opt-in via UserValve pipe (propagé __metadata__ → enable_paid_credits)
-            if enable_paid_credits:
-                enabled_credits = None
-                if tier_id and ("g1-" in tier_id.lower() or "standard" in tier_id.lower()):
-                    enabled_credits = ["GOOGLE_ONE_AI"]
-                elif g1_credits and int(g1_credits) > 50:
-                    enabled_credits = ["GOOGLE_ONE_AI"]
-                if enabled_credits:
-                    wrapped_payload["enabledCreditTypes"] = enabled_credits
+            # CRÉDITS AI — opt-in via UserValve pipe ou préférence persistée identity.db
+            is_credits_allowed = enable_paid_credits
+            if not is_credits_allowed and provider.get("user_id"):
+                try:
+                    _state = EchoStateManager(user_id=provider["user_id"])
+                    raw_val = _state.get_setting("enable_paid_credits")
+                    is_credits_allowed = str(raw_val).strip().lower() in ("true", "1", "yes")
+                except Exception:
+                    pass
+
+            if is_credits_allowed:
+                # Le forfait régulier est toujours débité en premier par Google.
+                # enabledCreditTypes n'est consommé qu'en cas d'épuisement du quota.
+                wrapped_payload["enabledCreditTypes"] = ["GOOGLE_ONE_AI"]
 
             return {"url": api_url, "headers": headers, "payload": wrapped_payload}
 
@@ -292,18 +349,12 @@ class EchoGeminiClient:
             # Harmonisation stricte pour l'API publique AI Studio
             t_conf = payload.get("toolConfig") or payload.get("tool_config")
             
-            import copy
-            contents = copy.deepcopy(payload.get("contents", []))
-            # Normalisation camelCase exigée par AI Studio (Correction API)
-            for msg in contents:
-                for part in msg.get("parts", []):
-                    if "inline_data" in part:
-                        part["inlineData"] = part.pop("inline_data")
+            contents = EchoGeminiClient._normalize_contents_for_api(payload.get("contents", []))
             
             request_body = {
                 "contents": contents,
                 "systemInstruction": payload.get("systemInstruction"),
-                "generationConfig": payload.get("generationConfig", {}),
+                "generationConfig": normalize_generation_config(effective_gen_conf),
                 "tools": payload.get("tools"),
                 "toolConfig": t_conf,
                 "safetySettings": payload.get("safetySettings", ECHO_SAFETY_SETTINGS),
@@ -376,6 +427,7 @@ class EchoGeminiClient:
         target_model: Optional[str] = None,
         system_instruction: Optional[str] = None,
         timeout: int = 120,
+        response_schema: Optional[Union[Type[BaseModel], dict]] = None,
     ) -> Union[Dict, str]:
         """
         Exécute une tâche de distillation (extraction sémantique).
@@ -405,8 +457,11 @@ class EchoGeminiClient:
         if system_instruction:
             payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
             
+        if response_schema is not None:
+            is_json = True
+            payload["generationConfig"]["responseSchema"] = normalize_response_schema(response_schema)
         if is_json:
-            payload["generationConfig"]["response_mime_type"] = "application/json"
+            payload["generationConfig"]["responseMimeType"] = "application/json"
 
         try:
             data = await EchoGeminiClient.call(
@@ -424,6 +479,8 @@ class EchoGeminiClient:
             clean_text, _ = split_thought_process(full_text)
 
             if is_json:
+                if isinstance(response_schema, type) and issubclass(response_schema, BaseModel):
+                    return response_schema.model_validate_json(clean_text).model_dump()
                 return std_json.loads(clean_text)
             return clean_text
         except Exception as e:
@@ -452,8 +509,14 @@ class EchoGeminiClient:
         Retourne (nb_points_indexés: int, message_erreur: str).
         0 points indique un échec total (embedding worker indisponible ou Qdrant KO).
         """
-        import uuid as _uuid
-        from echo_constants import COLLECTION_SESSION_RAG, EMBEDDING_DIM, ECHO_QDRANT_URL, ECHO_SESSION_RAG_CHUNK_SIZE
+        from echo_constants import (
+            COLLECTION_SESSION_RAG,
+            EMBEDDING_DIM,
+            ECHO_QDRANT_URL,
+            ECHO_SESSION_RAG_CHUNK_SIZE,
+            SESSION_RAG_CONVERSATION_SOURCE_ID,
+        )
+        from echo_session_gc import build_session_rag_point_id
         qdrant_base = ECHO_QDRANT_URL
         
         if max_chunk is None:
@@ -526,9 +589,14 @@ class EchoGeminiClient:
                         chunk, "document", __user__, __metadata__, title=source_id
                     )
                     if vector:
-                        sub_prefix = f"{active_sub_sid}_" if active_sub_sid else ""
-                        seed_str = f"{uid}_{chat_id}_{sub_prefix}{source_id}_{unique_seed}_{i}" if unique_seed else f"{uid}_{chat_id}_{sub_prefix}{source_id}_{i}"
-                        point_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, seed_str))
+                        point_id = build_session_rag_point_id(
+                            uid,
+                            chat_id,
+                            source_id,
+                            i,
+                            unique_seed=unique_seed,
+                            sub_sid=active_sub_sid,
+                        )
                         
                         payload_data = {
                             "user_id": uid,
@@ -539,6 +607,8 @@ class EchoGeminiClient:
                         }
                         if active_sub_sid:
                             payload_data["sub_sid"] = active_sub_sid
+                        if unique_seed and source_id == SESSION_RAG_CONVERSATION_SOURCE_ID:
+                            payload_data["message_id"] = str(unique_seed)
 
                         points.append({
                             "id": point_id,
@@ -599,6 +669,7 @@ class EchoGeminiClient:
         timeout: int = 120,
         chat_id: str = None,
         enable_paid_credits: bool = False,
+        gen_config_override: Optional[Dict] = None,
     ) -> dict:
         # Résolution des identités d'accès aux modèles pour cet utilisateur
         if not auth_providers:
@@ -620,7 +691,16 @@ class EchoGeminiClient:
             # Préparation symétrique de la requête
             # MESSAGE_SHADOWS: Injection de contexte persistant (RAG-lite)
             try:
-                req_ctx = await EchoGeminiClient._prepare_request_context(provider, target_model, payload, "generateContent", chat_id=chat_id, enable_paid_credits=enable_paid_credits, base_url=base_url)
+                req_ctx = await EchoGeminiClient._prepare_request_context(
+                    provider,
+                    target_model,
+                    payload,
+                    "generateContent",
+                    chat_id=chat_id,
+                    enable_paid_credits=enable_paid_credits,
+                    base_url=base_url,
+                    gen_config_override=gen_config_override,
+                )
                 if not req_ctx:
                     # Fail-over immédiat si configuration incomplète (ex: Project ID manquant)
                     if events: await events.status(f"⚠️ Config incomplète pour {provider['type']}. Bascule...", done=False)
@@ -713,6 +793,21 @@ class EchoGeminiClient:
             except FatalAPIError as fe:
                 raise fe
             except Exception as e:
+                if isinstance(e, (httpx.TimeoutException, asyncio.TimeoutError)) and provider.get("type") == AUTH_METHOD_OAUTH2:
+                    from echo_constants import ECHO_ENDPOINT_LOCK_TIMEOUT_MIN
+                    from datetime import datetime, timedelta, timezone
+
+                    reset_time = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+                    state_mgr.lock_agy_endpoint(current_url_idx, reset_time)
+                    new_idx, new_url = state_mgr.get_agy_endpoint()
+                    if new_idx != current_url_idx:
+                        print(f"[ECHO-RETRY] (Non-Stream) Timeout ({e.__class__.__name__}) sur {target_model}. Verrouillage endpoint et bascule immédiate...", flush=True)
+                        current_url_idx = new_idx
+                        base_url = new_url
+                        attempt = 0
+                        current_delay = ECHO_RETRY_BASE_DELAY
+                        continue
+
                 current_limit = max_retries if provider.get("type") == AUTH_METHOD_OAUTH2 else threshold
                 if attempt < current_limit:
                     wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
@@ -731,7 +826,7 @@ class EchoGeminiClient:
                         if events: await events.status(f"🔄 Erreur fatale sur source {provider['type']}. Bascule sur la suivante...", done=False)
                         continue
                 raise e
-        raise Exception(f"Échec après épuisement total.")
+        raise Exception("Échec après épuisement total.")
 
     @staticmethod
     async def call_cascade(
@@ -746,6 +841,7 @@ class EchoGeminiClient:
         chat_id: str = None,
         include_thoughts: bool = False,
         enable_paid_credits: bool = False,
+        response_schema: Optional[Union[Type[BaseModel], dict]] = None,
     ) -> tuple:
         """
         Appel LLM avec cascade descendante centralisée.
@@ -755,6 +851,19 @@ class EchoGeminiClient:
         """
         # 1. Clamping via politique Pipe (lecture __metadata__ → fallback identity.db)
         clamped_key = clamp_model(target_model_key, metadata, user_id=user_id)
+
+        # Résolution de l'autorisation des crédits : paramètre > metadata > identity.db
+        resolved_paid_credits = enable_paid_credits
+        if not resolved_paid_credits and metadata and isinstance(metadata, dict):
+            resolved_paid_credits = bool(metadata.get("_echo_enable_paid_credits", False))
+        if not resolved_paid_credits and user_id:
+            try:
+                _state = EchoStateManager(user_id=user_id)
+                raw_val = _state.get_setting("enable_paid_credits")
+                resolved_paid_credits = str(raw_val).strip().lower() in ("true", "1", "yes")
+            except Exception:
+                pass
+
         reason = None  # Tracker de raison pour le warning
 
         # Notification si le modèle a été ajusté par la politique
@@ -768,14 +877,29 @@ class EchoGeminiClient:
         # 2. Construction cascade descendante depuis le modèle clampé
         cascade = get_descending_cascade(clamped_key, include_start=True)
 
+        # Préservation des surcharges explicites passées par l'appelant dans payload["generationConfig"]
+        caller_gen_cfg = copy.deepcopy(payload.get("generationConfig")) if isinstance(payload.get("generationConfig"), dict) else {}
+        caller_thinking = (caller_gen_cfg.get("thinkingConfig") or {}).get("thinkingLevel")
+        extra_gen_keys = {
+            k: v for k, v in caller_gen_cfg.items()
+            if k not in ("temperature", "topP", "topK", "thinkingConfig")
+        }
+        if response_schema is not None:
+            extra_gen_keys["responseSchema"] = normalize_response_schema(response_schema)
+            extra_gen_keys["responseMimeType"] = "application/json"
+
         # 3. Tentatives en cascade
         for model_key in cascade:
             actual_model = model_key
-            payload["generationConfig"] = get_generation_config(
+            gen_cfg = get_generation_config(
                 model_key,
+                override_thinking=caller_thinking,
                 is_fallback_cascade=(model_key != clamped_key),
                 include_thoughts=include_thoughts,
             )
+            if extra_gen_keys:
+                gen_cfg.update(copy.deepcopy(extra_gen_keys))
+            payload["generationConfig"] = gen_cfg
 
             try:
                 data = await EchoGeminiClient.call(
@@ -787,7 +911,7 @@ class EchoGeminiClient:
                     events=events,
                     timeout=timeout,
                     chat_id=chat_id,
-                    enable_paid_credits=enable_paid_credits,
+                    enable_paid_credits=resolved_paid_credits,
                 )
                 # Confirmation du modèle effectif (visible dans le status)
                 if model_key != clamped_key:
@@ -941,7 +1065,7 @@ class EchoGeminiClient:
                             async for chunk in process_callback(r): yield chunk
                         except asyncio.CancelledError:
                             # Annulation uvicorn (shutdown container) — doit se propager.
-                            print(f"[EchoGemini] ⚠️ Tâche SSE annulée (shutdown). Re-propagation.")
+                            print("[EchoGemini] ⚠️ Tâche SSE annulée (shutdown). Re-propagation.")
                             raise
                     else:
                         # Processeur par défaut pour les outils (Extraction Texte et Objets JSON)
@@ -967,12 +1091,27 @@ class EchoGeminiClient:
                                         except: pass
                                         buffered_lines = []
                         except asyncio.CancelledError:
-                            print(f"[EchoGemini] ⚠️ Tâche SSE annulée (shutdown). Re-propagation.")
+                            print("[EchoGemini] ⚠️ Tâche SSE annulée (shutdown). Re-propagation.")
                             raise
                     break
             except FatalAPIError as fe:
                 raise fe
             except Exception as e:
+                if isinstance(e, (httpx.TimeoutException, asyncio.TimeoutError)) and provider.get("type") == AUTH_METHOD_OAUTH2:
+                    from echo_constants import ECHO_ENDPOINT_LOCK_TIMEOUT_MIN
+                    from datetime import datetime, timedelta, timezone
+
+                    reset_time = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+                    state_mgr.lock_agy_endpoint(current_url_idx, reset_time)
+                    new_idx, new_url = state_mgr.get_agy_endpoint()
+                    if new_idx != current_url_idx:
+                        print(f"[ECHO-RETRY] (Stream) Timeout ({e.__class__.__name__}) sur {target_model}. Verrouillage endpoint et bascule immédiate...", flush=True)
+                        current_url_idx = new_idx
+                        base_url = new_url
+                        attempt = 0
+                        current_delay = ECHO_RETRY_BASE_DELAY
+                        continue
+
                 current_limit = max_retries if provider.get("type") == AUTH_METHOD_OAUTH2 else threshold
                 if attempt < current_limit:
                     wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)

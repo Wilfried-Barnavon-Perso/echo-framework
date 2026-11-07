@@ -1,11 +1,12 @@
 """
 title: ECHO Delegate to Data Broker
 author: ECHO
-version: 5.229.0.0
+version: 5.233.0.1
 description: Délégation de collecte de données externes structurées au Data Broker autonome.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.233.0.1: Généralisation de l'encapsulation @echo_tool sur ask_data_broker.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 from pydantic import BaseModel, Field
@@ -13,8 +14,9 @@ from typing import Any
 import sys
 
 sys.path.append("/app/backend/echo_libs")
-from echo_events import EchoEvents
-from echo_prompts import SYS_BROKER_DELEGATE
+from echo_core import echo_tool  # noqa: E402
+from echo_events import EchoEvents  # noqa: E402
+from echo_prompts import SYS_BROKER_DELEGATE  # noqa: E402
 
 
 class Tools:
@@ -24,6 +26,7 @@ class Tools:
     def __init__(self):
         self.valves = self.Valves()
 
+    @echo_tool
     async def ask_data_broker(
         self,
         query: str = Field(
@@ -74,6 +77,9 @@ class Tools:
                 __event_call__=__event_call__
             )
             await events.status("✅ Data Broker : Collecte terminée.", done=True)
+            if isinstance(result, dict) and "text" in result:
+                result["text"] = f"Rapport du Data Broker :\n{result['text']}"
+                return result
             return f"Rapport du Data Broker :\n{result}"
         except Exception as e:
             return f"Erreur lors de la délégation au Data Broker : {str(e)}"

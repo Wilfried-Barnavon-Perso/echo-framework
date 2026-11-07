@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 5.231.31.1
+version: 5.236.0.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.231.31.1: Prise en charge asynchrone directe de EchoCompactionEngine.load_active_branch_messages.
-# 5.231.28.1: Intégration de EchoCompactionEngine.resolve_active_window dans prepare_context() pour l'injection de <artifact id="AEC_context_checkpoint"> et le découpage au pivot.
-# 5.231.20.2: Déclaration explicite de __event_call__ dans la signature de pipe() et rafraîchissement systématique des closures dans _TOOLS_CACHE[chat_id] à chaque tour.
-# 5.231.15.1: Sanctuarisation de promptTokenCount en cascade cognitive pour immuniser la persistance contre les faux deltas négatifs.
-# 5.231.13.1: Suppression de la double écriture SSE de save_context_stats et correction du cumul de promptTokenCount/cachedContentTokenCount en cascade.
+# 5.236.0.1: Interception explicite des trames SSE d'erreur Google API (429/quota) dans StreamProcessor.
+# 5.235.5.2: Filtrage is_real_user_turn pour exclure les tours synthétiques d'images de la fusion des user consécutifs.
+# 5.235.5.1: Pose de ECHO_TURN_CONTEXT, réhydratation systématique dès l'entrée, fusion des user consécutifs et correction auto-parenté.
+# 5.234.0.1: Suppression du faux-positif Base64 ("PKCE") dans prepare_context via ECHO_AUTH_NOTICE_MARKERS cantonné aux rôles assistant/model et factorisation du bloc pkce_pending.
+# 5.233.0.1: Injection des schémas JSON contraints FAST_TRACK_TASK_SCHEMAS (responseSchema) pour title_generation, tags_generation et follow_up_generation.
 
 
 # ==============================================================================
@@ -64,9 +64,14 @@ from echo_constants import (
     ECHO_TOOLS_CACHE_MAX_SIZE,
     ECHO_MODELS_REGISTRY, get_model_identity, get_generation_config,
     get_descending_cascade, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN,
-    AEC_REMINDERS
+    AEC_REMINDERS,
+    ECHO_AUTH_PENDING_MARKER,
+    ECHO_AUTH_TITLE_PENDING,
+    ECHO_AUTH_NOTICE_MARKERS,
+    ECHO_TURN_CONTEXT,
 )
 from echo_auth import EchoAuth
+from echo_protocol import FAST_TRACK_TASK_SCHEMAS, normalize_response_schema
 
 
 # --- IMPORTATIONS TIERCES CRITIQUES ---
@@ -106,24 +111,11 @@ class UserDataManager:
         """Scellement définitif de l'ombre d'un message."""
         self.state_manager.save_message_shadow(message_id, chat_id, role, parts, updated_at)
 
-    def mark_processed(self, chat_id: str, fid: str, name: str, mime: str, status: str, content: Optional[str] = None, message_id: Optional[str] = None):
-        """Scellement du registre des fichiers."""
-        self.state_manager.mark_processed(chat_id, fid, name, mime, status, content, message_id)
-
-    def get_rich_payload(self, invariant: str) -> Optional[List[dict]]:
-        return self.state_manager.get_rich_payload(invariant)
-
-    def save_rich_payload(self, invariant_hash: str, parts: List[dict], message_id: str = None):
-        self.state_manager.save_rich_payload(invariant_hash, parts, message_id)
-
     def index_suture(self, cumul: str, chat_id: str, inv: str, parent: str = None, message_id: str = None):
         self.state_manager.index_suture(cumul, chat_id, inv, parent, message_id)
 
     def get_signature_by_id(self, message_id: str) -> Optional[str]:
         return self.state_manager.get_signature_by_id(message_id)
-
-    def save_signature_by_id(self, message_id: str, signature: str):
-        self.state_manager.save_signature_by_id(message_id, signature)
 
     def get_signature(self, cumul: str) -> Optional[str]:
         return self.state_manager.get_thought_signature(cumul)
@@ -137,14 +129,8 @@ class UserDataManager:
     def get_last_active_model(self) -> Optional[str]:
         return self.state_manager.get_last_active_model()
 
-    def save_call_bridge(self, call_id: str, sig: str, func_name: str, args: dict = None):
-        self.state_manager.save_call_bridge(call_id, sig, func_name, args)
-
-    def save_auth_data(self, key: str, value: str):
-        self.state_manager.save_auth_data(key, value)
-
-    def get_auth_data(self, key: str) -> Optional[str]:
-        return self.state_manager.get_auth_data(key)
+    def save_call_bridge(self, call_id: str, sig: str, func_name: str, args: dict = None, message_id: str = None):
+        self.state_manager.save_call_bridge(call_id, sig, func_name, args, message_id=message_id)
 
     def save_session_setting(self, key: str, value: str):
         self.state_manager.save_session_setting(key, value)
@@ -205,6 +191,15 @@ class Orchestrator:
         meta = {**(__metadata__ or {}), **body.get("metadata", {})}
         model_id = target_model
 
+        branch_messages = None
+        if chat_id and messages:
+            try:
+                branch_messages = await EchoCompactionEngine.load_active_branch_messages(chat_id)
+                if branch_messages:
+                    EchoCompactionEngine.rehydrate_messages_metadata(messages, branch_messages)
+            except Exception as e:
+                log.warning(f"[PipeEngine] Réhydratation branch_messages ignorée: {e}")
+
         # Nettoyage des AEC orphelins postérieurs au dernier tour reçu (gestion des retouches de messages)
         if messages:
             t_pivot = max([m.get("updated_at") or 0 for m in messages] + [0])
@@ -259,9 +254,10 @@ class Orchestrator:
         if raw_ckpt:
             try:
                 ckpt_data = std_json.loads(raw_ckpt)
-                branch_messages = await EchoCompactionEngine.load_active_branch_messages(
-                    chat_id
-                )
+                if branch_messages is None:
+                    branch_messages = await EchoCompactionEngine.load_active_branch_messages(
+                        chat_id
+                    )
                 ckpt_prefix, cut_msg_idx = EchoCompactionEngine.resolve_active_window(
                     messages, ckpt_data, branch_messages
                 )
@@ -270,13 +266,17 @@ class Orchestrator:
 
         final_contents = list(ckpt_prefix); last_cumul = None
         i = cut_msg_idx
+        last_was_real_user = False
         while i < len(messages):
             m = messages[i]; role = m.get("role"); content = m.get("content", "")
             msg_id = m.get("id"); updated_at = m.get("updated_at")
-            # Exclusion des messages système et des tours d'authentification (ne pas injecter dans le contexte Gemini)
-            auth_markers = ["ECHO_SESSION_AUTH_PENDING", "Authentification ECHO", "Authentification requise", "Antigravity 2.1", "PKCE"]
-            if role == "system" or any(x in str(content) for x in auth_markers):
+            # Exclusion des messages système et des invites d'authentification assistant (ne pas injecter dans le contexte Gemini)
+            if role == "system":
                 i += 1; continue
+            if role in ["assistant", "model"]:
+                text_to_check = content if isinstance(content, str) else str(content)
+                if any(marker in text_to_check for marker in ECHO_AUTH_NOTICE_MARKERS):
+                    i += 1; continue
 
             # --- PRIORITÉ 1 : SHADOW BIT-PERFECT (ID + TIMESTAMP) ---
             if msg_id and updated_at:
@@ -288,11 +288,19 @@ class Orchestrator:
                             final_contents.append(msg)
                             inv_hash = self.user_data_manager.calculate_invariant(msg["role"], msg["parts"])
                             last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
+                        last_was_real_user = False
                         i += 1; continue
                     else:
                         # Shadow Classique (Parts uniquement)
                         role_gemini = "model" if role in ["assistant", "model"] else "user"
-                        final_contents.append({"role": role_gemini, "parts": shadow_data})
+                        is_real_u = EchoCompactionEngine.is_real_user_turn(m)
+                        if is_real_u and last_was_real_user and final_contents and final_contents[-1].get("role") == "user":
+                            final_contents[-1]["parts"] = EchoCompactionEngine.merge_consecutive_user_parts(
+                                final_contents[-1]["parts"], shadow_data
+                            )
+                        else:
+                            final_contents.append({"role": role_gemini, "parts": shadow_data})
+                        last_was_real_user = is_real_u
                         inv_hash = self.user_data_manager.calculate_invariant(role, shadow_data)
                         last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
 
@@ -326,10 +334,9 @@ class Orchestrator:
                         restored_parts = []
                         restored_parts.extend(ensure_gemini_parts(draft_parts, model_id, self.model_origin))
                     else:
-                        inv_hash = self.user_data_manager.calculate_invariant(role, content)
-                        restored_parts = self.user_data_manager.get_rich_payload(inv_hash) or ensure_gemini_parts(content, model_id, self.model_origin)
+                        restored_parts = ensure_gemini_parts(content, model_id, self.model_origin)
                         for p in restored_parts:
-                            if "text" in p:
+                            if "text" in p and "<REQUETE_UTILISATEUR>" not in p["text"] and not p["text"].strip().startswith("<artifact"):
                                 p["text"] = f"<REQUETE_UTILISATEUR>\n{p['text']}\n</REQUETE_UTILISATEUR>"
                 else:
                     # Assistant
@@ -379,7 +386,14 @@ class Orchestrator:
                 i += 1
 
             # --- RÉPARATION DE LA SUTURE (Scellement immédiat pour le tour suivant) ---
-            final_contents.append({"role": role_gemini, "parts": restored_parts})
+            is_real_u = EchoCompactionEngine.is_real_user_turn(m)
+            if is_real_u and last_was_real_user and final_contents and final_contents[-1].get("role") == "user":
+                final_contents[-1]["parts"] = EchoCompactionEngine.merge_consecutive_user_parts(
+                    final_contents[-1]["parts"], restored_parts
+                )
+            else:
+                final_contents.append({"role": role_gemini, "parts": restored_parts})
+            last_was_real_user = is_real_u
             if msg_id and updated_at and restored_parts:
                 self.user_data_manager.save_shadow(msg_id, updated_at, restored_parts, chat_id, role)
 
@@ -478,6 +492,15 @@ class StreamProcessor:
                     try:
                         data = std_json.loads(full_json_str); self.full_raw_accumulator.append(data)
                         target = data.get("response", {}) if "response" in data else data
+                        if "error" in target or "error" in data:
+                            err_info = target.get("error") or data.get("error") or {}
+                            err_code = err_info.get("code", "UNKNOWN")
+                            err_msg = err_info.get("message", "Erreur API non spécifiée")
+                            log.error(f"[StreamProcessor] Erreur reçue dans la trame SSE : {err_code} - {err_msg}")
+                            if in_think:
+                                in_think = False
+                            yield f"\n\n> ❌ **Erreur API Google** (`{err_code}`) : {err_msg}\n"
+                            return
                         if "usageMetadata" in target:
                             if self.usage_stats is None:
                                 self.usage_stats = {}
@@ -633,8 +656,9 @@ class Pipe:
 
             # Force la sortie JSON pour les Titres, Tags et Follow-ups
             # Indispensable car Open WebUI parse la sortie via JSONCodec.loads()
-            if task_id in ["title_generation", "tags_generation", "follow_up_generation"]:
+            if task_id in FAST_TRACK_TASK_SCHEMAS:
                 generation_config["responseMimeType"] = "application/json"
+                generation_config["responseSchema"] = normalize_response_schema(FAST_TRACK_TASK_SCHEMAS[task_id])
 
             if task_id == "tags_generation":
                 user_id = __user__.get("id") if __user__ else None
@@ -835,11 +859,12 @@ class Pipe:
                     # Flow deja en cours - reafficher les instructions
                     stored_url = _ea.get_auth_data("pkce_auth_url") or ""
                     yield (
-                        f"\U0001f510 **Authentification en attente**\n\n"
+                        f"\U0001f510 **{ECHO_AUTH_TITLE_PENDING}**\n\n"
                         f"Le lien est toujours valide.\n\n"
                         f"[\U0001f517 **Autoriser ECHO avec Google**]({stored_url})\n\n"
                         f"---\n"
-                        f"*Ou collez directement une cl\u00e9 `AIza\u2026` / `AQ.\u2026` pour utiliser AI Studio.*"
+                        f"*Ou collez directement une cl\u00e9 `AIza\u2026` / `AQ.\u2026` pour utiliser AI Studio.*\n\n"
+                        f"*{ECHO_AUTH_PENDING_MARKER}*"
                     )
                     return
 
@@ -965,6 +990,12 @@ class Pipe:
         meta_init = {**(__metadata__ or {}), **body.get("metadata", {})}
         user_msg_id = meta_init.get("_echo_user_msg_id") or meta_init.get("user_message_id")
         asst_msg_id = kwargs.get("__message_id__") or meta_init.get("message_id")
+        suture_msg_id = asst_msg_id or user_msg_id
+        ECHO_TURN_CONTEXT.set({
+            "chat_id": chat_id,
+            "user_message_id": user_msg_id,
+            "assistant_message_id": asst_msg_id,
+        })
         failed_models_this_turn = set()
         applied_model = target_model
         is_fallback_cascade = False
@@ -987,8 +1018,9 @@ class Pipe:
 
                 # Suture sémantique pour capture bit-perfect dans le Shadow
                 inv_d = orch.user_data_manager.calculate_invariant("user", directive_part)
-                current_cumul = orch.user_data_manager.calculate_cumulative(inv_d, current_cumul)
-                orch.user_data_manager.index_suture(current_cumul, chat_id, inv_d, current_cumul, user_msg_id)
+                prev_cumul = current_cumul
+                current_cumul = orch.user_data_manager.calculate_cumulative(inv_d, prev_cumul)
+                orch.user_data_manager.index_suture(current_cumul, chat_id, inv_d, prev_cumul, suture_msg_id)
                 cascade_history.append(directive_msg)
 
             # --- [NOUVEAU] RÉSOLUTION DYNAMIQUE DES INSTRUCTIONS SYSTÈME ---
@@ -1189,7 +1221,7 @@ class Pipe:
                 await events.status(f"🚀 Transfert cognitif vers {_get_ui_display(new_target)}...")
 
                 if proc.captured_sig:
-                    orch.user_data_manager.save_call_bridge(f"esc-{secrets.token_hex(4)}", proc.captured_sig, "new_cognitive_level", req)
+                    orch.user_data_manager.save_call_bridge(f"esc-{secrets.token_hex(4)}", proc.captured_sig, "new_cognitive_level", req, message_id=suture_msg_id)
 
                 plan_md = req.get("plan_de_transfert", "Exécution du relais.")
 
@@ -1225,12 +1257,12 @@ class Pipe:
                 model_msg = {"role": "model", "parts": model_parts}
                 inv = orch.user_data_manager.calculate_invariant("model", model_parts, tool_io=tool_io)
                 new_cumul = orch.user_data_manager.calculate_cumulative(inv, current_cumul)
-                orch.user_data_manager.index_suture(new_cumul, chat_id, inv, current_cumul, user_msg_id)
+                orch.user_data_manager.index_suture(new_cumul, chat_id, inv, current_cumul, suture_msg_id)
                 orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, tool_io, asst_msg_id, target_model)
                 cascade_history.append(model_msg)
                 current_cumul = new_cumul
 
-                # Structure status alignée sur wrap_cascade_output (KEYs uniquement)
+                # Structure status alignée sur wrap_tool_output (KEYs uniquement)
                 escalation_status = {
                     "status": "success",
                     "model_requested": target_req,
@@ -1258,7 +1290,7 @@ class Pipe:
                 user_msg = {"role": "user", "parts": user_resp_parts}
                 inv_u = orch.user_data_manager.calculate_invariant("user", user_resp_parts)
                 new_cumul_u = orch.user_data_manager.calculate_cumulative(inv_u, current_cumul)
-                orch.user_data_manager.index_suture(new_cumul_u, chat_id, inv_u, current_cumul, user_msg_id)
+                orch.user_data_manager.index_suture(new_cumul_u, chat_id, inv_u, current_cumul, suture_msg_id)
                 cascade_history.append(user_msg)
                 current_cumul = new_cumul_u
 
@@ -1288,7 +1320,7 @@ class Pipe:
                     model_msg = {"role": "model", "parts": model_parts}
                     inv = orch.user_data_manager.calculate_invariant("model", model_parts, tool_io=tool_io)
                     new_cumul = orch.user_data_manager.calculate_cumulative(inv, current_cumul)
-                    orch.user_data_manager.index_suture(new_cumul, chat_id, inv, current_cumul, user_msg_id)
+                    orch.user_data_manager.index_suture(new_cumul, chat_id, inv, current_cumul, suture_msg_id)
                     orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, tool_io, asst_msg_id, target_model)
                     cascade_history.append(model_msg)
                     current_cumul = new_cumul
@@ -1318,7 +1350,7 @@ class Pipe:
                     user_msg = {"role": "user", "parts": user_resp_parts}
                     inv_u = orch.user_data_manager.calculate_invariant("user", user_resp_parts)
                     new_cumul_u = orch.user_data_manager.calculate_cumulative(inv_u, current_cumul)
-                    orch.user_data_manager.index_suture(new_cumul_u, chat_id, inv_u, current_cumul, user_msg_id)
+                    orch.user_data_manager.index_suture(new_cumul_u, chat_id, inv_u, current_cumul, suture_msg_id)
                     cascade_history.append(user_msg)
                     current_cumul = new_cumul_u
 
@@ -1390,16 +1422,10 @@ class Pipe:
                 final_shadow_content = proc._filter_cascade_for_shadow(cascade_history)
                 if final_shadow_content:
                     orch.user_data_manager.save_shadow(asst_msg_id, int(time.time()), final_shadow_content, chat_id, "assistant")
-            user_msg_id = meta.get("_echo_user_msg_id") or meta.get("user_message_id")
-            if cascade_history and user_msg_id:
-                try:
-                    orch.user_data_manager.state_manager.save_auth_data(f"cascade_{user_msg_id}", std_json.dumps(cascade_history).decode('utf-8'))
-                except Exception as e:
-                    log.error(f"[PipeEngine] Erreur sauvegarde cascade KV: {e}")
 
             # Sauvegarde des ponts d'outils pour la navigation future
             for c in proc.accumulated_calls:
-                orch.user_data_manager.save_call_bridge(c["id"], proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION, c["name"], c["args"])
+                orch.user_data_manager.save_call_bridge(c["id"], proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION, c["name"], c["args"], message_id=suture_msg_id)
 
         # --- PERSISTANCE DES MÉTRIQUES CONTEXTUELLES ---
         if cumulative_usage_stats.get("totalTokenCount", 0) > 0:

@@ -166,15 +166,20 @@
           </li>
           <li><strong>Session RAG (<code>echo_session_rag</code>) &amp; Mémoire Épisodique Active :</strong> indexé par
             <code>user_id + chat_id + source_id</code> via <code>save_session_context</code>,
-            <code>search_sessions_context</code> (avec support <code>global_search</code> inter-sessions et filtrage par
+            <code>search_sessions_context</code> (filtrant dynamiquement sur la branche active via
+            <code>build_branch_rag_filter</code>, avec support <code>global_search</code> inter-sessions et filtrage par
             <code>tag</code> via SSoT <code>webui.db</code>) et <code>delete_session_context_source</code>. En
-            complément du Session RAG, le filtre <code>context_compaction_filter.py</code> (v5.231.55.1), l'action
-            <code>resume_in_new_chat_action.py</code> (v5.229.2.1) et le module <code>echo_session_clone.py</code>
-            (v5.231.29.1, mutualisé avec <code>echo_chat_cloned_event.py</code> v5.231.27.2) opèrent la compaction
+            complément du Session RAG, le filtre <code>context_compaction_filter.py</code> (v5.231.58.1), l'action
+            <code>resume_in_new_chat_action.py</code> (v5.229.2.1) et les modules <code>echo_session_gc.py</code>
+            (v5.235.5.3) et <code>echo_session_clone.py</code>
+            (v5.235.5.2, mutualisé avec <code>echo_chat_cloned_event.py</code> v5.235.5.1) opèrent l'élagage
+            transactionnel des branches mortes (<code>compute_dead_set</code> / <code>purge_dead_set</code> tout en
+            conservant les productions sous provenance <code>hors_branche</code>), la compaction
             contextuelle in-place (à 60 % de charge) ou la migration/bifurcation de session par distillation en 2 passes
             (<code>USR_ACTION_RESUME_GLOBAL</code> et <code>USR_ACTION_RESUME_RECENT</code> via
             <code>MODEL_DISTILLATION</code>), propagation des étiquettes (<code>Chats.add_chat_tag_by_id</code>),
-            duplication atomique et causale (<code>cutoff_ts</code>) des domaines et du Codex Git, et clonage paginé des
+            duplication atomique et causale (<code>cutoff_ts</code>) des domaines et des dépôts Git Codex
+            multi-espaces, et clonage paginé des
             vecteurs Qdrant.
           </li>
           <li><strong>Corrélation contextuelle :</strong> Au-delà des seuils de charge contextuelle
@@ -213,7 +218,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.56 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.237.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

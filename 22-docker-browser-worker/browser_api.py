@@ -1,31 +1,33 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 5.231.20.1
+VERSION : 5.236.4.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-10-27
+DATE MAJ : 2026-11-07
 
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.236.4.1: Durcissement furtivité anti-bot (Client Hints, prototypes safe, WebGL Linux/Android), élimination du tatouage DOM (Zéro-Trace) et incrustation active du curseur hors-DOM via Pillow sur le screencast.
+# 5.232.1.1: Élimination du FastAPIDeprecationWarning (retrait d'ORJSONResponse obsolète) et typage strict des retours routes (dict[str, Any]) pour sérialisation directe Pydantic v2.
+# 5.232.0.3: Optimisation de la latence de POST /render_ephemeral_view (wait_until="load", polling DOM actif 100ms sur #visual-target svg/canvas et settle_ms=250).
+# 5.232.0.2: Ajout de POST /render_ephemeral_view (rendu incognito 100 % RAM Zéro-Disque), support WebGL SwiftShader headless et détection combinée d'attente asynchrone et d'alertes DOM (⚠️ / data-echo-visual-error).
 # 5.231.20.1: Synchronisation dynamique de chat_id dans /action et /start_session pour routage multi-chat des téléchargements en sessions éphémères ou sous-agents.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
-# 9.31: FIX: Séparation entre `sid` (isolation Playwright en RAM par `sub_sid`) et `chat_id` (routage des téléchargements `/app/downloads/<user_id>/<chat_id>/browser`) pour garantir l'ingestion par `download_broker.py` lors d'un appel par sous-agent.
-# 9.30: FIX: Settle asynchrone post-scroll et Lidar Check (recalibrage instantané de Bounding Box) pour annuler les clics ratés lors de Layout Shifts.
-# 9.29: FEAT: Vision Grid Optimisée (Bicolore Magenta/Cyan, crénelures de quarts) pour supprimer le biais d'interpolation IA. FIX: Iframe DOM Map Offset bug (Calibration exacte via locator("html").bounding_box() pour gérer les iframes avec scale, bordures et paddings, annulant l'offset visuel).
 
 import asyncio
+import io
 import pybase64 as base64
 import os
 import time
 import random
 import logging
+from typing import Any
 import orjson as json
 import html2text
+from PIL import Image, ImageDraw
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
-from fastapi.responses import ORJSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from playwright.async_api import async_playwright
 import logging.config
@@ -36,6 +38,7 @@ if os.path.exists('/app/logging.json'):
 else:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("echo-browser")
+
 
 class RateLimitHealthCheckFilter(logging.Filter):
     def __init__(self, rate_limit_seconds=300):
@@ -63,19 +66,22 @@ class RateLimitHealthCheckFilter(logging.Filter):
             pass
         return True
 
+
 logging.getLogger("uvicorn.access").addFilter(RateLimitHealthCheckFilter())
 
 # --- ETAT GLOBAL ---
-IDLE_TIMEOUT_DEFAULT = 3600 # 1 heure de survie par defaut
+IDLE_TIMEOUT_DEFAULT = 3600  # 1 heure de survie par defaut
 MAX_SESSIONS = 20
-RENDERING_FPS = 9 # Vitesse du moteur headless pour optimiser le CPU
+RENDERING_FPS = 9  # Vitesse du moteur headless pour optimiser le CPU
 SESSIONS = {}
 SESSIONS_LOCK = asyncio.Lock()
+
 
 class GlobalState:
     playwright = None
     browser = None
     overlay_context = None
+
 
 state = GlobalState()
 
@@ -88,24 +94,41 @@ INTERACTIVE_SELECTORS = ('a, button, input, textarea, select, [role="button"], [
                          '[tabindex], summary')
 MIN_FRAME_AREA = 2500
 
+GET_CSS_PATH_JS = r"""
+function getCssPath(el) {
+    if (!el || el.nodeType !== Node.ELEMENT_NODE) return '';
+    const path = [];
+    let cur = el;
+    while (cur && cur.nodeType === Node.ELEMENT_NODE) {
+        const tag = cur.tagName.toLowerCase();
+        if (tag === 'html') {
+            path.unshift('html');
+            break;
+        }
+        let parent = cur.parentElement;
+        if (!parent) {
+            path.unshift(tag);
+            break;
+        }
+        let index = 1;
+        let sib = cur.previousElementSibling;
+        while (sib) {
+            index++;
+            sib = sib.previousElementSibling;
+        }
+        path.unshift(`${tag}:nth-child(${index})`);
+        cur = parent;
+    }
+    return path.join(' > ');
+}
+"""
+
 HIGHLIGHT_JS = r"""
 (args) => {
+    """ + GET_CSS_PATH_JS + r"""
     const start = args.start || 0;
     const gen = String(args.gen);
     try {
-        if (!document.getElementById('echo-cursor')) {
-            const cursor = document.createElement('div');
-            cursor.id = 'echo-cursor';
-            cursor.style.cssText = 'position: fixed; top: 0; left: 0; transform: translate(-50%, -50%); width: 16px; height: 16px; background-color: #ff0044; border: 2px solid white; border-radius: 50%; z-index: 2147483647; pointer-events: none; transition: transform 0.05s linear;';
-            document.body.appendChild(cursor);
-            document.addEventListener('mousemove', e => {
-                cursor.style.transform = `translate(${e.clientX}px, ${e.clientY}px)`;
-                window.__echo_mouse_x = Math.round(e.clientX);
-                window.__echo_mouse_y = Math.round(e.clientY);
-            });
-        }
-        document.querySelectorAll('[data-echo-index]').forEach(e => e.removeAttribute('data-echo-index'));
-        
         const interactiveSelectors = args.interactive;
         let items = Array.from(document.querySelectorAll(interactiveSelectors));
         let itemsSet = new Set(items);
@@ -127,7 +150,9 @@ HIGHLIGHT_JS = r"""
             }
         });
         
+        const foundEl = args.found_sel ? document.querySelector(args.found_sel) : null;
         let elements = [];
+        let selectors = {};
         let count = start;
         items.forEach(el => {
             const style = window.getComputedStyle(el);
@@ -179,16 +204,15 @@ HIGHLIGHT_JS = r"""
                     const hit = document.elementFromPoint(cx, cy);
                     if (hit && hit !== el && !el.contains(hit) && !hit.contains(el)) meta.occluded = true;
                 }
-                if (el.hasAttribute('data-echo-found')) meta.found = true;
+                if (foundEl && el === foundEl) meta.found = true;
                 
                 elements.push(meta);
-                el.setAttribute('data-echo-index', gen + ':' + count);
+                selectors[count] = getCssPath(el);
                 count++;
             }
         });
-        document.querySelectorAll('[data-echo-found]').forEach(e => e.removeAttribute('data-echo-found'));
-        return { count: count, elements: elements };
-    } catch (e) { return { count: start, elements: [], error: e.toString() }; }
+        return { count: count, elements: elements, selectors: selectors };
+    } catch (e) { return { count: start, elements: [], selectors: {}, error: e.toString() }; }
 }
 """
 
@@ -246,7 +270,7 @@ async (p) => {
         for (let x = firstX; x <= xEnd; x += tickStep) {
             if (Math.abs(x % p.step) < 0.1) continue;
             ctx.moveTo(toX(x), toY(y));
-            ctx.lineTo(toX(x), toY(y) + 6);
+            ctx.lineTo(toX(x) + 6, toY(y));
         }
         ctx.stroke();
     }
@@ -315,6 +339,7 @@ async (p) => {
 
 SEARCH_DOM_JS = r"""
 (args) => {
+    """ + GET_CSS_PATH_JS + r"""
     const q = String(args.query || '').toLowerCase().trim();
     if (!q) return { found: false, error: 'Requête vide.' };
     const label = el => String(el.innerText || el.getAttribute('aria-label') || el.getAttribute('alt')
@@ -333,18 +358,22 @@ SEARCH_DOM_JS = r"""
             if (t.length < bestLen && t.includes(q) && shown(el)) { best = el; bestLen = t.length; }
         }
         if (best) {
-            best.setAttribute('data-echo-found', '1');
             const r = best.getBoundingClientRect();
             return { found: true, text: label(best).replace(/\s+/g, ' ').substring(0, 100),
-                     delta_y: Math.round(r.top + r.height / 2 - window.innerHeight / 2) };
+                     delta_y: Math.round(r.top + r.height / 2 - window.innerHeight / 2),
+                     css_path: getCssPath(best) };
         }
     }
     return { found: false };
 }
 """
 
-FOUND_IN_VIEW_JS = """() => { const el = document.querySelector('[data-echo-found]');
-    if (!el) return false; const r = el.getBoundingClientRect(); return r.bottom > 0 && r.top < window.innerHeight; }"""
+FOUND_IN_VIEW_JS = """(sel) => {
+    const el = document.querySelector(sel);
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    return r.bottom > 0 && r.top < window.innerHeight;
+}"""
 
 HIT_TEST_JS = """(el, pts) => { const r = el.getBoundingClientRect();
     return pts.map(([fx, fy]) => { const t = document.elementFromPoint(r.left + fx * r.width, r.top + fy * r.height);
@@ -360,6 +389,7 @@ SETTLE_JS = r"""
 })
 """
 
+
 # --- HELPERS ---
 def html_to_markdown(html: str) -> str:
     conv = html2text.HTML2Text()
@@ -368,6 +398,7 @@ def html_to_markdown(html: str) -> str:
     conv.body_width = 0
     return conv.handle(html)
 
+
 async def jpeg_capped(shoot, start_q: int = 85, floor_q: int = 40, limit: int = 720000) -> bytes:
     q = start_q
     data = await shoot(q)
@@ -375,6 +406,7 @@ async def jpeg_capped(shoot, start_q: int = 85, floor_q: int = 40, limit: int = 
         q -= 10
         data = await shoot(q)
     return data
+
 
 async def render_overlay(image_b64: str, width: int, height: int, script: str, params: dict) -> bytes:
     ghost = await state.overlay_context.new_page()
@@ -386,10 +418,13 @@ async def render_overlay(image_b64: str, width: int, height: int, script: str, p
     finally:
         await ghost.close()
 
+
 def fine_grid_step(scale: float) -> int:
     for step in (2, 5, 10, 20, 25, 50, 100):
-        if step * scale >= 40: return step
+        if step * scale >= 40:
+            return step
     return 100
+
 
 def clamp_zoom_box(zb: dict, vp: dict) -> dict:
     x1, x2 = sorted((int(zb["x1"]), int(zb["x2"])))
@@ -403,6 +438,7 @@ def clamp_zoom_box(zb: dict, vp: dict) -> dict:
         y1 = max(0, min((y1 + y2) // 2 - ZOOM_MIN_BOX // 2, vp["height"] - ZOOM_MIN_BOX))
         y2 = y1 + ZOOM_MIN_BOX
     return {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
+
 
 async def capture_zoom(page, zoom_box: dict) -> tuple:
     vp = page.viewport_size or {"width": 1280, "height": 800}
@@ -420,8 +456,9 @@ async def capture_zoom(page, zoom_box: dict) -> tuple:
         await cdp.detach()
     return base64.b64decode(shot["data"]), zb, scale
 
-async def collect_dom_map(page, gen: int, vp: dict) -> list:
-    elements, next_index = [], 0
+
+async def collect_dom_map(page, gen: int, vp: dict, found_sel: str = None) -> tuple:
+    elements, all_selectors, next_index = [], {}, 0
     for frame in page.frames:
         offset_x = offset_y = 0
         scale_x = scale_y = 1.0
@@ -431,7 +468,8 @@ async def collect_dom_map(page, gen: int, vp: dict) -> list:
                 # Calibration exacte de l'iframe : on utilise le <html> pour obtenir la matrice de transformation réelle (scales, borders, OOPiF)
                 html_loc = frame.locator("html")
                 html_box = await html_loc.bounding_box()
-                if not html_box: continue
+                if not html_box:
+                    continue
                 
                 html_rect = await html_loc.evaluate("el => { let r = el.getBoundingClientRect(); return {x: r.left, y: r.top, w: r.width, h: r.height}; }")
                 
@@ -443,15 +481,14 @@ async def collect_dom_map(page, gen: int, vp: dict) -> list:
                 offset_x = html_box["x"] - html_rect["x"] * scale_x
                 offset_y = html_box["y"] - html_rect["y"] * scale_y
                 
-                if (html_box["x"] >= vp["width"] or html_box["y"] >= vp["height"] or
-                    html_box["x"] + html_box["width"] <= 0 or html_box["y"] + html_box["height"] <= 0):
+                if (html_box["x"] >= vp["width"] or html_box["y"] >= vp["height"] or html_box["x"] + html_box["width"] <= 0 or html_box["y"] + html_box["height"] <= 0):
                     continue
             except Exception:
                 continue
 
         try:
             data = await asyncio.wait_for(frame.evaluate(HIGHLIGHT_JS, {
-                "start": next_index, "gen": gen, "interactive": INTERACTIVE_SELECTORS}), timeout=2.0)
+                "start": next_index, "gen": gen, "interactive": INTERACTIVE_SELECTORS, "found_sel": found_sel}), timeout=2.0)
         except Exception as e:
             logger.warning(f"Frame ignored ({frame.url[:80]}): {e}")
             continue
@@ -466,28 +503,148 @@ async def collect_dom_map(page, gen: int, vp: dict) -> list:
             if frame != page.main_frame:
                 el["frame_url"] = frame.url
             elements.append(el)
+        for k, v in data.get("selectors", {}).items():
+            all_selectors[int(k)] = v
         next_index = data.get("count", next_index)
-    return elements
+    return elements, all_selectors
+
 
 async def first_visible(loc, limit: int = 10):
     for i in range(min(await loc.count(), limit)):
         cand = loc.nth(i)
         try:
-            if await cand.is_visible(): return cand
-        except Exception: continue
+            if await cand.is_visible():
+                return cand
+        except Exception:
+            continue
     return loc.first
 
+
 async def wait_for_settle(page, quiet_ms: int = 400, timeout_ms: int = 3000):
-    try: await page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
-    except Exception: pass
-    try: await page.evaluate(SETTLE_JS, [quiet_ms, timeout_ms])
+    try:
+        await page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
     except Exception:
-        try: await page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
-        except Exception: pass
+        pass
+    try:
+        await page.evaluate(SETTLE_JS, [quiet_ms, timeout_ms])
+    except Exception:
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+        except Exception:
+            pass
+
 
 def pick_lru_victim():
     idle = [s for s in SESSIONS.values() if not s.action_lock.locked()]
     return min(idle, key=lambda s: s.last_activity).sid if idle else None
+
+
+def build_stealth_context_args(mode: str, browser_version: str) -> dict:
+    major_version = browser_version.split('.')[0] if browser_version else "130"
+    sec_ch_ua = f'"Chromium";v="{major_version}", "Google Chrome";v="{major_version}", "Not?A_Brand";v="99"'
+    if mode == "mobile":
+        return {
+            "user_agent": (
+                f"Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) "
+                f"Chrome/{major_version}.0.0.0 Mobile Safari/537.36"
+            ),
+            "viewport": {"width": 412, "height": 915},
+            "device_scale_factor": 2,
+            "is_mobile": True,
+            "has_touch": True,
+            "extra_http_headers": {
+                "Sec-CH-UA": sec_ch_ua,
+                "Sec-CH-UA-Mobile": "?1",
+                "Sec-CH-UA-Platform": '"Android"',
+            }
+        }
+    else:
+        return {
+            "user_agent": (
+                f"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                f"Chrome/{major_version}.0.0.0 Safari/537.36"
+            ),
+            "viewport": {"width": 1280, "height": 800},
+            "device_scale_factor": 1,
+            "is_mobile": False,
+            "has_touch": False,
+            "extra_http_headers": {
+                "Sec-CH-UA": sec_ch_ua,
+                "Sec-CH-UA-Mobile": "?0",
+                "Sec-CH-UA-Platform": '"Linux"',
+            }
+        }
+
+
+def build_stealth_init_script(mode: str) -> str:
+    target_platform = 'Linux armv8l' if mode == 'mobile' else 'Linux x86_64'
+    return f"""
+    try {{
+        const mockPlugins = Object.create(PluginArray.prototype);
+        const p1 = Object.create(Plugin.prototype);
+        Object.defineProperties(p1, {{ name: {{ value: 'Chrome PDF Plugin' }}, filename: {{ value: 'internal-pdf-viewer' }}, description: {{ value: 'Portable Document Format' }} }});
+        const p2 = Object.create(Plugin.prototype);
+        Object.defineProperties(p2, {{ name: {{ value: 'Chrome PDF Viewer' }}, filename: {{ value: 'mhjimiapiapergbkpnjafkikajddhbdk' }}, description: {{ value: '' }} }});
+        const p3 = Object.create(Plugin.prototype);
+        Object.defineProperties(p3, {{ name: {{ value: 'Native Client' }}, filename: {{ value: 'internal-nacl-plugin' }}, description: {{ value: '' }} }});
+        Object.defineProperties(mockPlugins, {{ 0: {{ value: p1 }}, 1: {{ value: p2 }}, 2: {{ value: p3 }}, length: {{ value: 3 }} }});
+        Object.defineProperty(mockPlugins, 'item', {{ value: function(index) {{ return this[index]; }} }});
+        Object.defineProperty(mockPlugins, 'namedItem', {{ value: function(name) {{ return [p1, p2, p3].find(p => p.name === name); }} }});
+        Object.defineProperty(mockPlugins, 'refresh', {{ value: function() {{}} }});
+        Object.defineProperty(Navigator.prototype, 'plugins', {{ get: () => mockPlugins, configurable: true }});
+    }} catch (e) {{}}
+
+    Object.defineProperty(Navigator.prototype, 'languages', {{ get: () => ['fr-FR', 'fr', 'en-US', 'en'], configurable: true }});
+    Object.defineProperty(Navigator.prototype, 'platform', {{ get: () => '{target_platform}', configurable: true }});
+    Object.defineProperty(Navigator.prototype, 'deviceMemory', {{ get: () => 8, configurable: true }});
+    Object.defineProperty(Navigator.prototype, 'hardwareConcurrency', {{ get: () => 8, configurable: true }});
+
+    if (!window.chrome) {{
+        window.chrome = {{
+            app: {{ isInstalled: false, InstallState: {{ DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }}, RunningState: {{ CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }} }},
+            runtime: {{}}
+        }};
+    }}
+
+    try {{
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = new Proxy(originalQuery, {{
+            apply: (target, thisArg, args) => {{
+                if (args && args[0] && args[0].name === 'notifications') return Promise.resolve({{ state: Notification.permission }});
+                return Reflect.apply(target, thisArg, args);
+            }}
+        }});
+    }} catch (e) {{}}
+
+    try {{
+        const getParameterProxyHandler = {{
+            apply: function (target, thisArg, args) {{
+                const param = args[0];
+                if (param === 37445) return 'Google Inc. (Google)';
+                if (param === 37446) return 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)';
+                return Reflect.apply(target, thisArg, args);
+            }}
+        }};
+        ['WebGLRenderingContext', 'WebGL2RenderingContext'].forEach((ctx) => {{
+            if (window[ctx] && window[ctx].prototype && window[ctx].prototype.getParameter) {{
+                const original = window[ctx].prototype.getParameter;
+                window[ctx].prototype.getParameter = new Proxy(original, getParameterProxyHandler);
+            }}
+        }});
+    }} catch (e) {{}}
+
+    try {{
+        Object.defineProperty(Window.prototype, 'outerWidth', {{
+            get: function() {{ return this.innerWidth; }},
+            configurable: true
+        }});
+        Object.defineProperty(Window.prototype, 'outerHeight', {{
+            get: function() {{ return this.innerHeight + 85; }},
+            configurable: true
+        }});
+    }} catch (e) {{}}
+    """
+
 
 # --- SESSIONS ---
 class BrowserSession:
@@ -508,6 +665,13 @@ class BrowserSession:
         self.frame_id = 0
         self.index_gen = 0
         self.new_tab_opened = False
+        self.dom_selectors = {}
+        self.dom_elements = {}
+        self.last_found_selector = None
+        self.raw_frame_bytes = None
+        self.mouse_x = None
+        self.mouse_y = None
+        self.viewport = None
 
     def attach_page_tracking(self):
         def _on_page(new_page):
@@ -531,15 +695,109 @@ class BrowserSession:
             return await self.get_active_page()
         return target
 
+    def update_frame_with_cursor(self, mouse_x, mouse_y):
+        if not self.raw_frame_bytes:
+            return
+        try:
+            if mouse_x is None or mouse_y is None:
+                self.latest_frame = base64.b64encode(self.raw_frame_bytes).decode('utf-8')
+                self.frame_id += 1
+                return
+            img = Image.open(io.BytesIO(self.raw_frame_bytes))
+            scale_x = (img.width / self.viewport["width"]) if self.viewport and self.viewport.get("width") else 1.0
+            scale_y = (img.height / self.viewport["height"]) if self.viewport and self.viewport.get("height") else 1.0
+            cx = int(mouse_x * scale_x)
+            cy = int(mouse_y * scale_y)
+            r = 8
+            draw = ImageDraw.Draw(img)
+            draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="#ff0044", outline="#ffffff", width=2)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=50)
+            self.latest_frame = base64.b64encode(buf.getvalue()).decode('utf-8')
+            self.frame_id += 1
+        except Exception as e:
+            logger.warning(f"[{self.sid}] update_frame_with_cursor error: {e}")
+
+    async def ensure_screencast(self, page):
+        if self.cdp_client:
+            return
+        self.cdp_client = await page.context.new_cdp_session(page)
+        vp = page.viewport_size
+        max_w = (vp["width"] // 2) if vp else 640
+        max_h = (vp["height"] // 2) if vp else 400
+
+        async def handle_frame(event):
+            try:
+                self.raw_frame_bytes = base64.b64decode(event['data'])
+                if self.mouse_x is not None and self.mouse_y is not None:
+                    self.update_frame_with_cursor(self.mouse_x, self.mouse_y)
+                else:
+                    self.latest_frame = event['data']
+                    self.frame_id += 1
+            except Exception as e:
+                logger.warning(f"[{self.sid}] handle_frame error: {e}")
+            finally:
+                if self.cdp_client:
+                    try:
+                        await self.cdp_client.send('Page.screencastFrameAck', {'sessionId': event['sessionId']})
+                    except Exception:
+                        pass
+
+        self.cdp_client.on("Page.screencastFrame", handle_frame)
+        await self.cdp_client.send('Page.startScreencast', {
+            'format': 'jpeg', 'quality': 50, 'maxWidth': max_w, 'maxHeight': max_h, 'everyNthFrame': 1
+        })
+
+    async def resolve_indexed_locator(self, page, idx: int):
+        try:
+            idx_int = int(idx)
+        except (ValueError, TypeError):
+            idx_int = idx
+        sel = self.dom_selectors.get(idx_int) or self.dom_selectors.get(str(idx))
+        if sel:
+            loc = await find_element_and_frame(page, sel)
+            if loc:
+                return loc
+            try:
+                cand = page.locator(sel)
+                if await cand.count() > 0:
+                    return await first_visible(cand)
+            except Exception:
+                pass
+        # Fallback sur boîte englobante ou document.elementFromPoint
+        el_meta = self.dom_elements.get(idx_int)
+        if el_meta and "coords" in el_meta:
+            coords = el_meta["coords"]
+            cx = coords[0] + coords[2] / 2
+            cy = coords[1] + coords[3] / 2
+            try:
+                fallback_sel = await page.evaluate(f"""([x, y]) => {{
+                    {GET_CSS_PATH_JS}
+                    const el = document.elementFromPoint(x, y);
+                    return el ? getCssPath(el) : null;
+                }}""", [cx, cy])
+                if fallback_sel:
+                    loc = await find_element_and_frame(page, fallback_sel)
+                    if loc:
+                        return loc
+                    cand = page.locator(fallback_sel)
+                    if await cand.count() > 0:
+                        return await first_visible(cand)
+            except Exception:
+                pass
+        return None
+
     async def bezier_mouse_move(self, page, target_x, target_y):
         import math
         try:
-            start_x = getattr(self, 'mouse_x', random.randint(100, 800))
-            start_y = getattr(self, 'mouse_y', random.randint(100, 600))
+            start_x = self.mouse_x if self.mouse_x is not None else random.randint(100, 800)
+            start_y = self.mouse_y if self.mouse_y is not None else random.randint(100, 600)
             distance = math.hypot(target_x - start_x, target_y - start_y)
             if distance < 5:
                 await page.mouse.move(target_x, target_y)
-                self.mouse_x, self.mouse_y = target_x, target_y
+                self.mouse_x, self.mouse_y = int(target_x), int(target_y)
+                if self.cdp_client:
+                    self.update_frame_with_cursor(self.mouse_x, self.mouse_y)
                 return
             steps = max(5, min(15, int(distance / 60)))
             overshoot_x = target_x + random.uniform(-5, 5) if distance > 300 else target_x
@@ -548,26 +806,37 @@ class BrowserSession:
             cp1_y = start_y + (overshoot_y - start_y) * 0.3 + random.uniform(-20, 20)
             cp2_x = start_x + (overshoot_x - start_x) * 0.7 + random.uniform(-20, 20)
             cp2_y = start_y + (overshoot_y - start_y) * 0.7 + random.uniform(-20, 20)
-            def ease_out_quad(t): return t * (2 - t)
+
+            def ease_out_quad(t):
+                return t * (2 - t)
+
             for i in range(1, steps + 1):
                 t = i / steps
                 et = ease_out_quad(t)
-                x = (1-et)**3 * start_x + 3*(1-et)**2 * et * cp1_x + 3*(1-et)*et**2 * cp2_x + et**3 * overshoot_x
-                y = (1-et)**3 * start_y + 3*(1-et)**2 * et * cp1_y + 3*(1-et)*et**2 * cp2_y + et**3 * overshoot_y
+                x = (1 - et)**3 * start_x + 3 * (1 - et)**2 * et * cp1_x + 3 * (1 - et) * et**2 * cp2_x + et**3 * overshoot_x
+                y = (1 - et)**3 * start_y + 3 * (1 - et)**2 * et * cp1_y + 3 * (1 - et) * et**2 * cp2_y + et**3 * overshoot_y
                 x += random.uniform(-1, 1)
                 y += random.uniform(-1, 1)
                 await page.mouse.move(x, y)
+                self.mouse_x, self.mouse_y = int(x), int(y)
+                if self.cdp_client:
+                    self.update_frame_with_cursor(self.mouse_x, self.mouse_y)
                 await asyncio.sleep(random.uniform(0.001, 0.005))
             if distance > 300:
                 await asyncio.sleep(random.uniform(0.05, 0.15))
                 await page.mouse.move(target_x, target_y)
-            self.mouse_x = target_x
-            self.mouse_y = target_y
+                self.mouse_x, self.mouse_y = int(target_x), int(target_y)
+                if self.cdp_client:
+                    self.update_frame_with_cursor(self.mouse_x, self.mouse_y)
+            else:
+                self.mouse_x = int(target_x)
+                self.mouse_y = int(target_y)
         except Exception as e:
             logger.warning(f"[{self.sid}] Bezier Fallback: {e}")
             await page.mouse.move(target_x, target_y)
-            self.mouse_x = target_x
-            self.mouse_y = target_y
+            self.mouse_x, self.mouse_y = int(target_x), int(target_y)
+            if self.cdp_client:
+                self.update_frame_with_cursor(self.mouse_x, self.mouse_y)
 
     async def pick_hit_point(self, locator, box: dict) -> tuple:
         fractions = [(0.5 + random.uniform(-0.15, 0.15), 0.5 + random.uniform(-0.15, 0.15)),
@@ -577,7 +846,8 @@ class BrowserSession:
         except Exception:
             hits = [False] * len(fractions)
         for (fx, fy), ok in zip(fractions, hits):
-            if ok: return box["x"] + fx * box["width"], box["y"] + fy * box["height"], True
+            if ok:
+                return box["x"] + fx * box["width"], box["y"] + fy * box["height"], True
         return box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, False
 
     async def move_mouse_to_locator(self, page, locator) -> bool:
@@ -585,7 +855,8 @@ class BrowserSession:
             await locator.scroll_into_view_if_needed(timeout=5000)
             await wait_for_settle(page, quiet_ms=150, timeout_ms=1500)
             box = await locator.bounding_box()
-            if not box: return False
+            if not box:
+                return False
             tx, ty, hit = await self.pick_hit_point(locator, box)
             await self.bezier_mouse_move(page, tx, ty)
             
@@ -620,6 +891,7 @@ class BrowserSession:
         except Exception as e:
             logger.error(f"[{self.sid}] ⚠️ Error closing context: {e}")
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("🚀 Initializing Global Playwright Async Instance (v6 ENGINE)...")
@@ -628,6 +900,7 @@ async def lifespan(app: FastAPI):
         headless=True,
         args=[
             "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
+            "--enable-webgl", "--ignore-gpu-blocklist", "--use-gl=angle", "--use-angle=swiftshader",
             "--disable-background-timer-throttling", "--disable-extensions", "--disable-sync",
             f"--limit-fps={RENDERING_FPS}", "--disable-blink-features=AutomationControlled"
         ]
@@ -640,8 +913,10 @@ async def lifespan(app: FastAPI):
     await state.browser.close()
     await state.playwright.stop()
 
-app = FastAPI(lifespan=lifespan, default_response_class=ORJSONResponse)
+
+app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
 
 async def session_cleanup_loop():
     while True:
@@ -656,26 +931,31 @@ async def session_cleanup_loop():
             for sid, s in SESSIONS.items():
                 if s.cdp_client and (now - s.last_screencast_poll > 2.5) and s.last_screencast_poll > 0:
                     logger.info(f"[{sid}] 🛑 Watchdog: Stopping idle screencast")
-                    try: asyncio.create_task(s.cdp_client.send('Page.stopScreencast'))
-                    except: pass
+                    try:
+                        asyncio.create_task(s.cdp_client.send('Page.stopScreencast'))
+                    except Exception:
+                        pass
                     s.cdp_client = None
                     s.last_screencast_poll = 0
 
+
 @app.post("/start_session")
-async def start_session(request: Request):
+async def start_session(request: Request) -> dict[str, Any]:
     data = await request.json()
     user_id = request.headers.get('X-OpenWebUI-User-Id', 'anonymous')
     sid = data.get("session_id")
     chat_id = data.get("chat_id") or sid
     idle_timeout = data.get("idle_timeout", IDLE_TIMEOUT_DEFAULT)
     mode = data.get("mode", "mobile")
-    if not sid: return {"status": "error", "message": "ERREUR_TECHNIQUE : Identifiant de chat manquant."}
+    if not sid:
+        return {"status": "error", "message": "ERREUR_TECHNIQUE : Identifiant de chat manquant."}
 
     async with SESSIONS_LOCK:
         if sid in SESSIONS:
             if getattr(SESSIONS[sid], 'mode', None) == mode:
                 SESSIONS[sid].last_activity = time.time()
-                if chat_id: SESSIONS[sid].chat_id = chat_id
+                if chat_id:
+                    SESSIONS[sid].chat_id = chat_id
                 return {"session_id": sid, "status": "success", "message": "Session deja active."}
             else:
                 logger.info(f"[{sid}] 🔄 Uservalve changed to {mode}. Resetting session.")
@@ -689,166 +969,95 @@ async def start_session(request: Request):
             logger.info(f"[{victim}] ♻️ LRU eviction (capacity {MAX_SESSIONS})")
             await SESSIONS.pop(victim).close()
         
-        if mode == "mobile":
-            ctx_args = {
-                "user_agent": "Mozilla/5.0 (iPad; CPU OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-                "viewport": {"width": 820, "height": 1180},
-                "device_scale_factor": 2, "is_mobile": True, "has_touch": True
-            }
-        else:
-            ctx_args = {
-                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "viewport": {"width": 1280, "height": 800}, "device_scale_factor": 1
-            }
-
+        browser_ver = state.browser.version if state.browser else "130.0.0.0"
+        ctx_args = build_stealth_context_args(mode, browser_ver)
         context = await state.browser.new_context(**ctx_args)
-        
-        stealth_script = """
-            try { delete Navigator.prototype.webdriver; } catch(e) {}
-            try {
-                const mockPlugins = Object.create(PluginArray.prototype);
-                const p1 = Object.create(Plugin.prototype);
-                Object.defineProperties(p1, { name: { value: 'Chrome PDF Plugin' }, filename: { value: 'internal-pdf-viewer' }, description: { value: 'Portable Document Format' } });
-                const p2 = Object.create(Plugin.prototype);
-                Object.defineProperties(p2, { name: { value: 'Chrome PDF Viewer' }, filename: { value: 'mhjimiapiapergbkpnjafkikajddhbdk' }, description: { value: '' } });
-                const p3 = Object.create(Plugin.prototype);
-                Object.defineProperties(p3, { name: { value: 'Native Client' }, filename: { value: 'internal-nacl-plugin' }, description: { value: '' } });
-                Object.defineProperties(mockPlugins, { 0: { value: p1 }, 1: { value: p2 }, 2: { value: p3 }, length: { value: 3 } });
-                Object.defineProperty(mockPlugins, 'item', { value: function(index) { return this[index]; } });
-                Object.defineProperty(mockPlugins, 'namedItem', { value: function(name) { return [p1, p2, p3].find(p => p.name === name); } });
-                Object.defineProperty(mockPlugins, 'refresh', { value: function() {} });
-                Object.defineProperty(navigator, 'plugins', { get: () => mockPlugins });
-            } catch (e) {}
-            Object.defineProperty(navigator, 'languages', { get: () => ['fr-FR', 'fr', 'en-US', 'en'], });
-            if (!window.chrome) {
-                window.chrome = {
-                    app: { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' } },
-                    runtime: {}
-                };
-            }
-            const originalQuery = window.navigator.permissions.query;
-            window.navigator.permissions.query = new Proxy(originalQuery, {
-                apply: (target, thisArg, args) => {
-                    if (args && args[0] && args[0].name === 'notifications') return Promise.resolve({ state: Notification.permission });
-                    return Reflect.apply(target, thisArg, args);
-                }
-            });
-            try {
-                const getParameterProxyHandler = {
-                    apply: function (target, thisArg, args) {
-                        const param = args[0];
-                        if (param === 37445) return 'Google Inc. (NVIDIA)';
-                        if (param === 37446) return 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)';
-                        return Reflect.apply(target, thisArg, args);
-                    }
-                };
-                ['WebGLRenderingContext', 'WebGL2RenderingContext'].forEach((ctx) => {
-                    if (window[ctx] && window[ctx].prototype && window[ctx].prototype.getParameter) {
-                        const original = window[ctx].prototype.getParameter;
-                        window[ctx].prototype.getParameter = new Proxy(original, getParameterProxyHandler);
-                    }
-                });
-            } catch (e) {}
-            if (window.outerWidth === 0 || window.outerHeight === 0) {
-                Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
-                Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
-            }
-            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
-            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
-            const isIpad = navigator.userAgent.includes('iPad');
-            Object.defineProperty(navigator, 'platform', { get: () => isIpad ? 'MacIntel' : 'Win32' });
-        """
+        stealth_script = build_stealth_init_script(mode)
         await context.add_init_script(stealth_script)
+        
         session = BrowserSession(sid, user_id, context, idle_timeout, mode, chat_id=chat_id)
+        session.viewport = ctx_args.get("viewport")
         session.attach_page_tracking()
         SESSIONS[sid] = session
         logger.info(f"[{sid}] 🆕 v6 Session created (Mode: {mode}, Chat: {chat_id})")
         return {"session_id": sid, "status": "success"}
 
+
 async def find_element_and_frame(page, selector):
     for frame in page.frames:
         try:
             loc = frame.locator(selector)
-            if await loc.count() > 0: return await first_visible(loc)
-        except: pass
+            if await loc.count() > 0:
+                return await first_visible(loc)
+        except Exception:
+            pass
     return None
 
+
 @app.post("/screencast/start")
-async def screencast_start(request: Request):
+async def screencast_start(request: Request) -> dict[str, Any]:
     data = await request.json()
     sid = data.get("session_id")
     session = SESSIONS.get(sid)
-    if not session: return {"status": "error", "message": "Session introuvable."}
+    if not session:
+        return {"status": "error", "message": "Session introuvable."}
     page = await session.get_active_page()
-    if not page: return {"status": "error", "message": "Aucune page active."}
+    if not page:
+        return {"status": "error", "message": "Aucune page active."}
     try:
         if session.cdp_client:
-            try: await session.cdp_client.send('Page.stopScreencast')
-            except: pass
+            try:
+                await session.cdp_client.send('Page.stopScreencast')
+            except Exception:
+                pass
             session.cdp_client = None
-        session.cdp_client = await page.context.new_cdp_session(page)
-        vp = page.viewport_size
-        max_w = (vp["width"] // 2) if vp else 640
-        max_h = (vp["height"] // 2) if vp else 400
-        async def handle_frame(event):
-            session.latest_frame = event['data']
-            session.frame_id += 1
-            try: await session.cdp_client.send('Page.screencastFrameAck', {'sessionId': event['sessionId']})
-            except: pass
-        session.cdp_client.on("Page.screencastFrame", handle_frame)
-        await session.cdp_client.send('Page.startScreencast', {
-            'format': 'jpeg', 'quality': 50, 'maxWidth': max_w, 'maxHeight': max_h, 'everyNthFrame': 1
-        })
+        await session.ensure_screencast(page)
         return {"status": "success"}
     except Exception as e:
         logger.error(f"[{sid}] Screencast start error: {e}")
         return {"status": "error", "error": str(e)}
 
+
 @app.post("/screencast/stop")
-async def screencast_stop(request: Request):
+async def screencast_stop(request: Request) -> dict[str, Any]:
     data = await request.json()
     sid = data.get("session_id")
     session = SESSIONS.get(sid)
-    if not session: return {"status": "error", "message": "Session introuvable."}
+    if not session:
+        return {"status": "error", "message": "Session introuvable."}
     try:
         if session.cdp_client:
-            try: await session.cdp_client.send('Page.stopScreencast')
-            except: pass
+            try:
+                await session.cdp_client.send('Page.stopScreencast')
+            except Exception:
+                pass
     except Exception as e:
         logger.error(f"[{sid}] Screencast stop error: {e}")
     finally:
         if session.cdp_client:
-            try: await session.cdp_client.detach()
-            except: pass
+            try:
+                await session.cdp_client.detach()
+            except Exception:
+                pass
             session.cdp_client = None
         session.last_screencast_poll = 0
     return {"status": "success"}
 
+
 @app.post("/screencast/latest")
-async def screencast_latest(request: Request):
+async def screencast_latest(request: Request) -> dict[str, Any]:
     data = await request.json()
     sid = data.get("session_id")
     last_frame_id = data.get("last_frame_id", 0)
     session = SESSIONS.get(sid)
-    if not session: return {"status": "error", "message": "Session introuvable."}
+    if not session:
+        return {"status": "error", "message": "Session introuvable."}
     session.last_screencast_poll = time.time()
     if not session.cdp_client:
         page = await session.get_active_page()
         if page:
             try:
-                session.cdp_client = await page.context.new_cdp_session(page)
-                vp = page.viewport_size
-                max_w = (vp["width"] // 2) if vp else 640
-                max_h = (vp["height"] // 2) if vp else 400
-                async def handle_frame(event):
-                    session.latest_frame = event['data']
-                    session.frame_id += 1
-                    try: await session.cdp_client.send('Page.screencastFrameAck', {'sessionId': event['sessionId']})
-                    except: pass
-                session.cdp_client.on("Page.screencastFrame", handle_frame)
-                await session.cdp_client.send('Page.startScreencast', {
-                    'format': 'jpeg', 'quality': 50, 'maxWidth': max_w, 'maxHeight': max_h, 'everyNthFrame': 1
-                })
+                await session.ensure_screencast(page)
             except Exception as e:
                 logger.error(f"[{sid}] Auto-Resume error: {e}")
     start_time = time.time()
@@ -858,13 +1067,15 @@ async def screencast_latest(request: Request):
     current_url = page.url if page else ""
     return {"status": "success", "frame_id": session.frame_id, "frame_b64": session.latest_frame, "url": current_url}
 
+
 @app.post("/action")
-async def browser_action(request: Request):
+async def browser_action(request: Request) -> dict[str, Any]:
     data = await request.json()
     sid, action, params = data.get("session_id"), data.get("action"), data.get("params", {})
     chat_id = data.get("chat_id")
     session = SESSIONS.get(sid)
-    if not session: return {"status": "error", "error_type": "SESSION_NOT_FOUND", "message": "RESTART_REQUIRED"}
+    if not session:
+        return {"status": "error", "error_type": "SESSION_NOT_FOUND", "message": "RESTART_REQUIRED"}
     if chat_id:
         session.chat_id = chat_id
     session.last_activity = time.time()
@@ -879,10 +1090,14 @@ async def browser_action(request: Request):
                 name, text_to_type = params.get("name"), params.get("text_to_type", "")
                 logger.info(f"[{sid}] 🖱️ Semantic Interact (A11y): {method}={value} name={name} ({a_type})")
                 
-                if method == "role": loc = page.get_by_role(value, name=name) if name else page.get_by_role(value)
-                elif method == "label": loc = page.get_by_label(value)
-                elif method == "text": loc = page.get_by_text(value)
-                else: return {"status": "error", "message": "Method invalide."}
+                if method == "role":
+                    loc = page.get_by_role(value, name=name) if name else page.get_by_role(value)
+                elif method == "label":
+                    loc = page.get_by_label(value)
+                elif method == "text":
+                    loc = page.get_by_text(value)
+                else:
+                    return {"status": "error", "message": "Method invalide."}
                 
                 if await loc.count() == 0:
                     if method == "role" and name:
@@ -890,7 +1105,8 @@ async def browser_action(request: Request):
                         loc = page.get_by_text(name)
                         if await loc.count() == 0:
                             return {"status": "error", "message": f"ERREUR_DOM : Élément introuvable ({method}={value}, name={name})."}
-                    else: return {"status": "error", "message": f"ERREUR_DOM : Élément introuvable ({method}={value})."}
+                    else:
+                        return {"status": "error", "message": f"ERREUR_DOM : Élément introuvable ({method}={value})."}
                 
                 loc = await first_visible(loc)
                 hit = await session.move_mouse_to_locator(page, loc)
@@ -902,7 +1118,8 @@ async def browser_action(request: Request):
                         await asyncio.sleep(random.uniform(0.05, 0.12))
                         await page.mouse.up()
                     else:
-                        try: await loc.click(timeout=4000)
+                        try:
+                            await loc.click(timeout=4000)
                         except Exception as e:
                             logger.warning(f"[{sid}] Click not actionable, forcing: {e}")
                             await loc.click(force=True, timeout=5000)
@@ -918,11 +1135,14 @@ async def browser_action(request: Request):
                         await loc.press_sequentially(char)
                         delay_ms = max(30, min(150, int(random.gauss(80, 40))))
                         await asyncio.sleep(delay_ms / 1000.0)
-                        if random.random() < 0.10: await asyncio.sleep(random.uniform(0.2, 0.6))
+                        if random.random() < 0.10:
+                            await asyncio.sleep(random.uniform(0.2, 0.6))
                 elif a_type == "select":
                     option = text_to_type or ""
-                    try: await loc.select_option(label=option, timeout=5000)
-                    except Exception: await loc.select_option(value=option, timeout=5000)
+                    try:
+                        await loc.select_option(label=option, timeout=5000)
+                    except Exception:
+                        await loc.select_option(value=option, timeout=5000)
                     result["value"] = option
                 elif a_type == "hover":
                     await loc.hover(timeout=10000)
@@ -958,11 +1178,13 @@ async def browser_action(request: Request):
                             dl_dir = os.path.join("/app/downloads", session.user_id, session.chat_id, "browser")
                             os.makedirs(dl_dir, exist_ok=True)
                             filename = target_url.split("/")[-1].split("?")[0]
-                            if not filename: filename = "downloaded_file"
+                            if not filename:
+                                filename = "downloaded_file"
                             dest_path = os.path.join(dl_dir, f"{file_id}_{filename}")
                             response = await page.context.request.get(target_url)
                             body = await response.body()
-                            with open(dest_path, "wb") as f: f.write(body)
+                            with open(dest_path, "wb") as f:
+                                f.write(body)
                             logger.info(f"[{sid}] 📥 Stealth Download completed: {dest_path}")
                         except Exception as e:
                             logger.error(f"[{sid}] ⚠️ Stealth Download error: {e}")
@@ -996,7 +1218,11 @@ async def browser_action(request: Request):
                         await asyncio.sleep(random.uniform(0.05, 0.12))
                         await page.mouse.up()
                         await asyncio.sleep(random.uniform(0.05, 0.15))
-                        await session.bezier_mouse_move(page, max(0, css_x + random.uniform(2, 5) * random.choice([1, -1])), max(0, css_y + random.uniform(2, 5) * random.choice([1, -1])))
+                        await session.bezier_mouse_move(
+                            page,
+                            max(0, css_x + random.uniform(2, 5) * random.choice([1, -1])),
+                            max(0, css_y + random.uniform(2, 5) * random.choice([1, -1]))
+                        )
                     elif a_type == "type":
                         await page.mouse.down()
                         await asyncio.sleep(random.uniform(0.05, 0.12))
@@ -1009,14 +1235,16 @@ async def browser_action(request: Request):
                             await page.keyboard.press(char)
                             delay_ms = max(30, min(150, int(random.gauss(80, 40))))
                             await asyncio.sleep(delay_ms / 1000.0)
-                            if random.random() < 0.10: await asyncio.sleep(random.uniform(0.2, 0.6))
+                            if random.random() < 0.10:
+                                await asyncio.sleep(random.uniform(0.2, 0.6))
                     elif a_type == "select":
                         return {"status": "error", "message": "ERREUR_PARAMETRE : select exige un index ou une cible A11y."}
                 else:
-                    real_selector = f'[data-echo-index="{session.index_gen}:{idx}"]'
-                    logger.info(f"[{sid}] 🖱️ Interact DOM ({a_type}) Target: {real_selector}")
-                    loc = await find_element_and_frame(page, real_selector)
-                    if not loc: return {"status": "error", "message": "ERREUR_DOM : Élément introuvable dans aucune frame."}
+                    loc = await session.resolve_indexed_locator(page, idx)
+                    if not loc:
+                        return {"status": "error", "message": f"ERREUR_DOM : Élément index {idx} introuvable dans aucune frame."}
+                    sel = session.dom_selectors.get(idx) or session.dom_selectors.get(int(idx) if str(idx).isdigit() else idx) or f"index_{idx}"
+                    logger.info(f"[{sid}] 🖱️ Interact DOM ({a_type}) Target: index {idx} -> {sel}")
                     
                     hit = await session.move_mouse_to_locator(page, loc)
                     await asyncio.sleep(random.uniform(0.15, 0.4))
@@ -1027,7 +1255,8 @@ async def browser_action(request: Request):
                             await asyncio.sleep(random.uniform(0.05, 0.12))
                             await page.mouse.up()
                         else:
-                            try: await loc.click(timeout=4000)
+                            try:
+                                await loc.click(timeout=4000)
                             except Exception as e:
                                 logger.warning(f"[{sid}] Manual click failed, trying force: {e}")
                                 await loc.click(force=True, timeout=5000)
@@ -1037,8 +1266,10 @@ async def browser_action(request: Request):
                         await loc.hover(timeout=10000)
                     elif a_type == "select":
                         option = text_to_type or ""
-                        try: await loc.select_option(label=option, timeout=5000)
-                        except Exception: await loc.select_option(value=option, timeout=5000)
+                        try:
+                            await loc.select_option(label=option, timeout=5000)
+                        except Exception:
+                            await loc.select_option(value=option, timeout=5000)
                         result["value"] = option
                     elif a_type == "download":
                         async def handle_download():
@@ -1072,11 +1303,13 @@ async def browser_action(request: Request):
                                 dl_dir = os.path.join("/app/downloads", session.user_id, session.chat_id, "browser")
                                 os.makedirs(dl_dir, exist_ok=True)
                                 filename = target_url.split("/")[-1].split("?")[0]
-                                if not filename: filename = "downloaded_file"
+                                if not filename:
+                                    filename = "downloaded_file"
                                 dest_path = os.path.join(dl_dir, f"{file_id}_{filename}")
                                 response = await page.context.request.get(target_url)
                                 body = await response.body()
-                                with open(dest_path, "wb") as f: f.write(body)
+                                with open(dest_path, "wb") as f:
+                                    f.write(body)
                                 logger.info(f"[{sid}] 📥 Stealth Download completed: {dest_path}")
                             except Exception as e:
                                 logger.error(f"[{sid}] ⚠️ Stealth Download error: {e}")
@@ -1092,7 +1325,8 @@ async def browser_action(request: Request):
                             await loc.press_sequentially(char)
                             delay_ms = max(30, min(150, int(random.gauss(80, 40))))
                             await asyncio.sleep(delay_ms / 1000.0)
-                            if random.random() < 0.10: await asyncio.sleep(random.uniform(0.2, 0.6))
+                            if random.random() < 0.10:
+                                await asyncio.sleep(random.uniform(0.2, 0.6))
                         
                 await wait_for_settle(page, quiet_ms=400, timeout_ms=3000)
                 result["url"] = page.url
@@ -1103,18 +1337,37 @@ async def browser_action(request: Request):
             
                 if target == "url":
                     idx = params.get("index")
-                    if idx is None: return {"status": "error", "message": "Index manquant pour extraire l'URL."}
-                    val = await page.evaluate(f"(sel) => {{ const el = document.querySelector(sel); return el ? (el.href || el.getAttribute('href')) : null; }}", f'[data-echo-index="{session.index_gen}:{idx}"]')
+                    if idx is None:
+                        return {"status": "error", "message": "Index manquant pour extraire l'URL."}
+                    try:
+                        idx_int = int(idx)
+                    except (ValueError, TypeError):
+                        idx_int = idx
+                    sel = session.dom_selectors.get(idx_int) or session.dom_selectors.get(str(idx))
+                    if not sel:
+                        return {"status": "error", "message": f"Sélecteur introuvable pour l'index {idx}."}
+                    val = await page.evaluate(
+                        "(sel) => { const el = document.querySelector(sel); return el ? (el.href || el.getAttribute('href')) : null; }",
+                        sel
+                    )
                     result["value"] = val
                     result["url"] = page.url
                 
                 elif target == "search_dom":
-                    res = await page.evaluate(SEARCH_DOM_JS, {"query": params.get("value", ""), "interactive": INTERACTIVE_SELECTORS})
+                    res = await page.evaluate(
+                        SEARCH_DOM_JS,
+                        {"query": params.get("value", ""), "interactive": INTERACTIVE_SELECTORS}
+                    )
+                    session.last_found_selector = res.get("css_path")
                     if res.get("found") and abs(res.get("delta_y", 0)) > (page.viewport_size or {"height": 800})["height"] * 0.3:
                         await session.human_wheel_scroll(page, res["delta_y"])
                         await wait_for_settle(page, quiet_ms=250, timeout_ms=1500)
-                        if not await page.evaluate(FOUND_IN_VIEW_JS):
-                            await page.evaluate("() => document.querySelector('[data-echo-found]')?.scrollIntoView({block: 'center'})")
+                        found_sel = session.last_found_selector
+                        if found_sel and not await page.evaluate(FOUND_IN_VIEW_JS, found_sel):
+                            await page.evaluate(
+                                "(sel) => document.querySelector(sel)?.scrollIntoView({block: 'center'})",
+                                found_sel
+                            )
                             await asyncio.sleep(0.3)
                     result["search_result"] = {k: v for k, v in res.items() if k != "delta_y"}
                     result["url"] = page.url
@@ -1136,25 +1389,31 @@ async def browser_action(request: Request):
                         tree_data = await client.send("Accessibility.getFullAXTree")
                         nodes = tree_data.get("nodes", [])
                         node_map = {n["nodeId"]: n for n in nodes}
+
                         def format_cdp_node(node_id, depth=0):
                             n = node_map.get(node_id)
-                            if not n: return []
+                            if not n:
+                                return []
                             lines = []
                             ignored = n.get("ignored", False)
                             if not ignored:
                                 role = n.get("role", {}).get("value", "")
                                 name = n.get("name", {}).get("value", "")
                                 value = n.get("value", {}).get("value", "")
-                                if role == "StaticText" and not name and not value: return lines
-                                if role in ["generic", "RootWebArea", "WebArea"] and not name and not value: role = ""
+                                if role == "StaticText" and not name and not value:
+                                    return lines
+                                if role in ["generic", "RootWebArea", "WebArea"] and not name and not value:
+                                    role = ""
                                 if role or name or value:
                                     line = "  " * depth + f"[{role}] {name}"
-                                    if value: line += f" (val: {value})"
+                                    if value:
+                                        line += f" (val: {value})"
                                     lines.append(line)
                                     depth += 1
                             for cid in n.get("childIds", []):
                                 lines.extend(format_cdp_node(cid, depth))
                             return lines
+
                         root_id = nodes[0]["nodeId"] if nodes else None
                         result_lines = format_cdp_node(root_id) if root_id else []
                         result["content"] = "\n".join(result_lines) if result_lines else "Arbre A11y vide ou indisponible."
@@ -1162,8 +1421,10 @@ async def browser_action(request: Request):
                         logger.error(f"[{sid}] CDP A11y Error: {e}")
                         result["content"] = f"Erreur d'extraction A11y : {str(e)}"
                     finally:
-                        try: await client.detach()
-                        except: pass
+                        try:
+                            await client.detach()
+                        except Exception:
+                            pass
                     result["url"] = page.url
 
                 elif target in ["vision", "dom_map"]:
@@ -1173,15 +1434,24 @@ async def browser_action(request: Request):
                     await page.bring_to_front()
                     await wait_for_settle(page, quiet_ms=300, timeout_ms=1500)
                     vp = page.viewport_size or {"width": 1280, "height": 800}
+                    session.viewport = vp
                     clean_bytes = await jpeg_capped(lambda q: page.screenshot(type="jpeg", quality=q, scale="css"))
                     clean_b64 = base64.b64encode(clean_bytes).decode('utf-8')
                 
                     all_elements = []
                     if params.get("reindex", True):
                         session.index_gen += 1
-                        all_elements = await collect_dom_map(page, session.index_gen, vp)
+                        all_elements, selectors = await collect_dom_map(
+                            page, session.index_gen, vp, found_sel=session.last_found_selector
+                        )
+                        session.dom_selectors = selectors
+                        session.dom_elements = {
+                            int(el["id"].split(":")[1]): el
+                            for el in all_elements
+                            if "id" in el and ":" in el["id"]
+                        }
 
-                    mouse = [int(session.mouse_x), int(session.mouse_y)] if hasattr(session, "mouse_x") else None
+                    mouse = [int(session.mouse_x), int(session.mouse_y)] if session.mouse_x is not None and session.mouse_y is not None else None
                     result.update({
                         "viewport": vp, "mouse_position": mouse, "metadata": all_elements,
                         "count": len(all_elements), "url": page.url,
@@ -1213,7 +1483,8 @@ async def browser_action(request: Request):
                 logger.info(f"[{sid}] ⚙️ Browser Control: {cmd} {val or ''}")
             
                 if cmd == "navigate":
-                    if not val: return {"status": "error", "message": "URL manquante."}
+                    if not val:
+                        return {"status": "error", "message": "URL manquante."}
                     await page.goto(val, wait_until="load", timeout=60000)
                     result["title"], result["url"] = await page.title(), page.url
                 elif cmd == "scroll":
@@ -1224,8 +1495,10 @@ async def browser_action(request: Request):
                         await wait_for_settle(page, quiet_ms=250, timeout_ms=1500)
                         if await page.evaluate("() => window.scrollY") == before:
                             await page.evaluate("(d) => window.scrollBy(0, d)", dy)
-                    elif val == "top": await page.evaluate("window.scrollTo(0, 0)")
-                    elif val == "bottom": await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    elif val == "top":
+                        await page.evaluate("window.scrollTo(0, 0)")
+                    elif val == "bottom":
+                        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                     result["at_bottom"] = await page.evaluate("() => window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2")
                     result["url"] = page.url
                 elif cmd == "press_key":
@@ -1247,7 +1520,8 @@ async def browser_action(request: Request):
                 elif cmd == "tab_new":
                     new_p = await session.context.new_page()
                     await new_p.goto(val or "about:blank", wait_until="load")
-                    if new_p not in session.pages: session.pages.append(new_p)
+                    if new_p not in session.pages:
+                        session.pages.append(new_p)
                     session.active_page_index = len(session.pages) - 1
                     result["message"] = f"Nouvel onglet ouvert (Index: {session.active_page_index})"
                 elif cmd == "tab_switch":
@@ -1255,14 +1529,16 @@ async def browser_action(request: Request):
                     if 0 <= idx < len(session.pages):
                         session.active_page_index = idx
                         result["message"] = f"Basculé sur l'onglet {idx}"
-                    else: return {"status": "error", "message": "Index invalide."}
+                    else:
+                        return {"status": "error", "message": "Index invalide."}
                 elif cmd == "tab_close":
                     if len(session.pages) > 1:
                         p = session.pages.pop(session.active_page_index)
                         await p.close()
                         session.active_page_index = max(0, session.active_page_index - 1)
                         result["message"] = "Onglet fermé."
-                    else: return {"status": "error", "message": "Impossible de fermer le dernier onglet."}
+                    else:
+                        return {"status": "error", "message": "Impossible de fermer le dernier onglet."}
 
             if session.new_tab_opened:
                 page = await session.get_active_page()
@@ -1276,9 +1552,101 @@ async def browser_action(request: Request):
         logger.error(f"[{sid}] 💥 Action Error: {str(e)}")
         return {"status": "error", "message": f"ERREUR_CRITIQUE : {str(e)}"}
 
+
+@app.post("/render_ephemeral_view")
+async def render_ephemeral_view(request: Request) -> dict[str, Any]:
+    """Rendu HTML éphémère en contexte incognito isolé (100 % RAM, Zéro-Trace, Zéro-Disque)."""
+    if not state.browser:
+        return {"status": "error", "ok": False, "error": "Navigateur Playwright non initialisé."}
+    data = await request.json()
+    html_content = data.get("html") or ""
+    selector = data.get("selector") or "#visual-target, #visual-target-container, #celestial-map, .echo-container"
+    timeout_ms = int(data.get("timeout_ms") or 15000)
+    settle_ms = int(data.get("settle_ms") or 250)
+    viewport_w = int(data.get("viewport_w") or 1200)
+    viewport_h = int(data.get("viewport_h") or 800)
+
+    if not html_content.strip():
+        return {"status": "error", "ok": False, "error": "Payload HTML vide."}
+
+    context = await state.browser.new_context(
+        viewport={"width": viewport_w, "height": viewport_h},
+        device_scale_factor=1,
+    )
+    js_errors = []
+    try:
+        page = await context.new_page()
+        page.on("pageerror", lambda exc: js_errors.append(str(exc)))
+        page.on(
+            "console",
+            lambda msg: js_errors.append(msg.text) if msg.type == "error" else None,
+        )
+        await page.set_content(html_content, wait_until="load", timeout=timeout_ms)
+        max_wait_ms = max(settle_ms, 2000)
+        elapsed_ms = 0
+        while elapsed_ms < max_wait_ms:
+            await asyncio.sleep(0.1)
+            elapsed_ms += 100
+            if elapsed_ms < settle_ms:
+                continue
+            is_ready = await page.evaluate(
+                """() => {
+                    if (document.body && document.body.getAttribute('data-echo-visual-error')) return true;
+                    const el = document.querySelector('#visual-target, #visual-target-container, #celestial-map');
+                    if (!el) return true;
+                    const txt = (el.innerText || el.textContent || '').trim();
+                    if (txt.includes('⚠️')) return true;
+                    if (txt.startsWith('Chargement')) return false;
+                    if (el.tagName === 'SVG' && el.children.length > 0) return true;
+                    if (el.querySelector('svg, canvas, .tl-timeline, a-scene, .leaflet-pane')) return true;
+                    return el.children.length > 0;
+                }"""
+            )
+            if is_ready:
+                break
+
+        dom_error = await page.evaluate(
+            """() => {
+                const attrErr = (document.body && document.body.getAttribute('data-echo-visual-error')) || '';
+                const el = document.querySelector('#visual-target, #visual-target-container, #celestial-map');
+                const txt = el ? (el.innerText || el.textContent || '').trim() : '';
+                const warnTxt = txt.includes('⚠️') ? txt : '';
+                if (attrErr && warnTxt && !attrErr.includes(warnTxt)) return attrErr + ' | ' + warnTxt;
+                return attrErr || warnTxt;
+            }"""
+        )
+        target = page.locator(selector).first
+        if await target.count() > 0 and await target.is_visible():
+            png_bytes = await target.screenshot(type="png", timeout=5000)
+        else:
+            png_bytes = await page.screenshot(type="png", timeout=5000)
+
+        return {
+            "status": "success",
+            "ok": True,
+            "b64": base64.b64encode(png_bytes).decode("utf-8"),
+            "mime": "image/png",
+            "js_errors": js_errors,
+            "dom_error": dom_error,
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "ok": False,
+            "error": str(e),
+            "js_errors": js_errors,
+        }
+    finally:
+        try:
+            await context.close()
+        except Exception:
+            pass
+
+
 @app.get("/health")
-async def health():
+async def health() -> dict[str, Any]:
     return {"status": "ready", "browser": state.browser is not None}
+
 
 if __name__ == '__main__':
     import uvicorn

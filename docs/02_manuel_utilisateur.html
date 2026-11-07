@@ -52,7 +52,9 @@
       <h4>💡 Comportement du Single Sign-On (SSO)</h4>
       <p>
         Une fois l'authentification validée, votre session est automatiquement propagée à l'interface de discussion
-        (Open WebUI) ainsi qu'aux services autorisés sans ressaisie de mot de passe. Lors d'une déconnexion, la session
+        (Open WebUI) ainsi qu'aux services autorisés sans ressaisie de mot de passe. Lors de la connexion, vous pouvez
+        indiquer s'il s'agit d'un appareil personnel de confiance (pour bénéficier d'une session prolongée) ou d'un
+        poste partagé (session temporaire à expiration rapide). Lors d'une déconnexion, la session
         est purgée sur l'ensemble des composants.
       </p>
     </div>
@@ -80,7 +82,8 @@
         <tr>
           <td><strong><code>AUTO_PROM</code></strong></td>
           <td>Autorise l'escalade autonome complète de <code>ZEPHYR</code> vers <code>APOLLO</code> puis jusqu'à
-            <code>PROMETHEUS</code> pour les problèmes d'architecture ou d'orchestration lourde.</td>
+            <code>PROMETHEUS</code> pour les problèmes d'architecture ou d'orchestration lourde.
+          </td>
           <td>Projets d'ingénierie, R&amp;D et missions complexes.</td>
         </tr>
         <tr>
@@ -157,10 +160,13 @@
         pendant la réflexion de l'IA, ainsi que les jauges de <strong>Quota 5h</strong> et <strong>Quota
           Semaine</strong> du fournisseur Cloud. Survolez l'icône cadenas ou les barres colorées pour consulter le
         tableau récapitulatif des quotas et le détail différentiel du dernier échange.</li>
-      <li><strong>Continuité Spatiale Multi-Discussions &amp; Liens Codex Directs :</strong> Vos fenêtres de travail
+      <li><strong>Continuité Spatiale Multi-Discussions, Branches &amp; Liens Codex Directs :</strong> Vos fenêtres de
+        travail
         (éditeur Codex, moniteurs) sont mémorisées par conversation. Si vous passez d'une discussion à une autre, les
         fenêtres de la première sont mises de côté sans être fermées et réapparaissent à leur emplacement exact (même
-        après un rafraîchissement de page ou depuis un second navigateur). De plus, tout fichier mentionné par ECHO dans
+        après un rafraîchissement de page ou depuis un second navigateur). Si vous supprimez un message intermédiaire ou
+        bifurquez la conversation, ECHO nettoie la branche abandonnée tout en conservant intacts les fichiers, plans et
+        images déjà produits. De plus, tout fichier mentionné par ECHO dans
         ses réponses devient un lien cliquable (<code>✏️</code> ou <code>👁️</code>) qui ouvre directement le document
         dans l'éditeur Codex.</li>
       <li><strong>Tiroir d'Actions (ECHO App Drawer, bouton flottant à droite) :</strong> Regroupe en un clic toutes les
@@ -182,7 +188,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.56 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.237.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

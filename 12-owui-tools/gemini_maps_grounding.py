@@ -1,16 +1,16 @@
 """
 title: ECHO Maps Grounding
 author: Wilfried BARNAVON
-version: 5.229.0.0
+version: 5.233.0.1
 description: Composant système interne : ECHO Maps Grounding.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.233.0.1: Décoration @echo_tool sur search_places_and_routes et simplification des retours wrap_tool_output.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 13.8: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 # 13.6: Refactoring: Renommage ECHO_API_KEY_THRESHOLD en ECHO_API_KEY_RETRIES.
-# 13.5: Nettoyage du code : suppression des imports inutilisés (PEP8).
 
 import sys
 from typing import Any, Tuple, Union
@@ -20,7 +20,7 @@ from fastapi.responses import HTMLResponse
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_events import EchoEvents
-from echo_core import wrap_tool_output
+from echo_core import wrap_tool_output, echo_tool
 from echo_gemini_client import EchoGeminiClient
 from echo_ui import EchoUI
 from echo_constants import (
@@ -47,6 +47,7 @@ class Tools:
     def __init__(self):
         self.valves = self.Valves()
 
+    @echo_tool
     async def search_maps(
         self,
         query: str,
@@ -106,14 +107,14 @@ class Tools:
                     text="❌ Google Maps : aucun modèle disponible (cascade épuisée). "
                          "Le Modèle DOIT vérifier les quotas API.",
                     status={"status": "cascade_exhausted"}
-                , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                )
 
             candidates = data.get("candidates", [])
             if not candidates:
                 return wrap_tool_output(
                     text="⚠️ Google Maps n'a renvoyé aucun résultat. Le Modèle DOIT demander à l'utilisateur de préciser sa recherche.",
                     status={"status": "no_results"}
-                , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                )
 
             # Extraction du texte enrichi retourné par le grounding Gemini
             cand = candidates[0]
@@ -128,7 +129,7 @@ class Tools:
                     text="⚠️ Recherche Maps complétée mais aucune information textuelle "
                          "n'a été fournie par l'API.",
                     status={"status": "empty_response"}
-                , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                )
 
             await events.status("Carte interactive prête.", done=True)
 
@@ -136,12 +137,9 @@ class Tools:
             suppress_ui = (__metadata__ or {}).get("_echo_suppress_map_ui", False)
             if print_map and not suppress_ui:
                 response = EchoUI.map_viewer(query=query, title=f"ECHO Maps : {query}")
-                return response, wrap_tool_output(text=full_text, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return response, full_text
             
-            return wrap_tool_output(text=full_text, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return full_text
 
         except Exception as e:
-            return wrap_tool_output(
-                text=f"❌ Erreur Maps: {str(e)}",
-                status={"status": "error"}
-            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"❌ Erreur Maps: {str(e)}"

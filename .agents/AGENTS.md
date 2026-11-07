@@ -9,3 +9,9 @@
 2. **Interdiction de Coder Sans Plan** : Ne génère, ne modifie et n'écris AUCUN code métier sans avoir préalablement soumis un plan d'implémentation (HLD, algorithme) à l'Utilisateur.
 3. **Attente de Validation** : Une fois ton plan ou ton analyse exposée, arrête-toi et attends l'approbation explicite de l'Utilisateur (ex: "OK", "Fais-le") avant de déclencher des outils de modification de fichiers (`replace_file_content`, `write_to_file`).
 </RULE[Méthodologie Top-Down (Anti-Vibe-Coding)]>
+
+<RULE[Sources Externes (.tmp_audit)]>
+1. **Inspection Externe** : Le dossier `.tmp_audit/` permet de télécharger et d'inspecter, en lecture seule, du code tiers ou de la documentation (API, manuels développeur, etc.) lorsque c'est utile.
+2. **Open WebUI** : Le code source d'Open WebUI est disponible dans `.tmp_audit/` en lecture seule.
+3. **Scripts de Tâches** : Tout script créé pour exécuter une tâche ponctuelle (audit, diagnostic, extraction) DOIT être placé dans `.tmp_audit/`.
+</RULE[Sources Externes (.tmp_audit)]>

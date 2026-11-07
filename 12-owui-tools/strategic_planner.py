@@ -1,16 +1,16 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 5.231.29.1
+version: 5.233.0.1
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.233.0.1: Unification du wrapper dans wrap_tool_output, décoration @echo_tool sur les 7 méthodes publiques et simplification des retours.
+# 5.232.5.1: Isolement et versionnement Git des plans et listes de tâches dans le workspace dédié CODEX_WORKSPACE_PLANS ("plans") avec synchronisation de last_commit dans echo_resources.
+# 5.232.1.1: Harmonisation des notifications UI (events.status) avec emojis distinctifs pour le cycle de vie du plan et des tâches.
 # 5.231.29.1: Alignement sur la constante SSOT CODEX_WORKSPACE_MAIN lors de l'indexation des plans dans echo_resources.
 # 5.231.28.1: Normalisation de storage_path via format_codex_storage_path (codex/main/<filename>) et suppression des appels à la table obsolète plans.
-# 5.231.20.1: Synchronisation par verrou partagé get_codex_lock(user_id, chat_id), déportation asyncio.to_thread des accès Dulwich et suffixe UUID anti-collision sur plan_id.
-# 5.229.0.0: Compression des docstrings OpenAPI et externalisation de la documentation vers 14-owui-libs/tool_guides/strategic_planner.md.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 import sys
 import uuid
@@ -25,7 +25,7 @@ from typing import Optional, Any
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_core import wrap_tool_output, wrap_cascade_output
+from echo_core import wrap_tool_output, echo_tool
 from echo_events import EchoEvents
 from echo_gemini_client import EchoGeminiClient
 from echo_state_manager import EchoStateManager
@@ -37,7 +37,7 @@ from echo_codex_git import CodexRepo
 from echo_paths import get_codex_lock, format_codex_storage_path
 from echo_ui import EchoUI
 from echo_constants import (
-    CODEX_WORKSPACE_MAIN,
+    CODEX_WORKSPACE_PLANS,
     PLAN_STATUS,
     PLANNER_MODEL_BUILD,
     PLANNER_MODEL_UPDATE,
@@ -89,8 +89,8 @@ class Tools:
 
     @staticmethod
     def _read_plan_from_codex(uid: str, chat_id: str, plan_id: str) -> Optional[dict]:
-        """Lit un plan depuis le Codex via glob sur {plan_id}_*.md dans le repo Git."""
-        repo = CodexRepo(uid, chat_id)
+        """Lit un plan depuis le Codex (workspace plans) via glob sur {plan_id}_*.md dans le repo Git."""
+        repo = CodexRepo(uid, chat_id, CODEX_WORKSPACE_PLANS)
         files = repo.list_files()
         for f_dict in files:
             f_name = f_dict["filename"]
@@ -142,6 +142,7 @@ class Tools:
     # FUNCTION CALLS PUBLIQUES
     # ==========================================================================
 
+    @echo_tool
     async def build_plan(
         self,
         goal: str,
@@ -151,14 +152,14 @@ class Tools:
         __tools__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None,
-    ) -> dict:
+    ) -> Any:
         """Conçoit un plan stratégique formel et sa liste de tâches dans le Codex (statut `proposed`) et retourne son `plan_id`."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
 
         if not chat_id:
-            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "❌ Erreur: Aucun chat_id détecté."
 
         await events.status("🗂️ Préparation du plan stratégique...")
 
@@ -210,13 +211,13 @@ class Tools:
 
         if not res_json:
             await events.status("❌ Échec — tous les modèles sont indisponibles.", done=True)
-            return wrap_tool_output(text="❌ Échec : aucun modèle disponible pour la planification.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "❌ Échec : aucun modèle disponible pour la planification."
 
         # Extraction du texte généré
         plan_content = self._extract_llm_text(res_json)
         if not plan_content:
             await events.status("❌ Réponse vide du planificateur.", done=True)
-            return wrap_tool_output(text="❌ Erreur : le planificateur n'a produit aucun contenu.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "❌ Erreur : le planificateur n'a produit aucun contenu."
 
         # Remplacement du placeholder author_model dans le frontmatter
         plan_content = plan_content.replace("{author_model}", model_key_used)
@@ -229,10 +230,10 @@ class Tools:
         plan_filename = filename
         tasks_filename = f"tasks_{plan_id}_{slug}.md"
 
-        # Persistance dans le Codex (Git)
+        # Persistance dans le Codex (Git, workspace plans)
         async with get_codex_lock(user_id, chat_id):
-            repo = CodexRepo(user_id, chat_id)
-            await asyncio.to_thread(repo.commit_file, plan_filename, plan_part, f"Strategy {plan_id}: {goal[:60]}")
+            repo = CodexRepo(user_id, chat_id, CODEX_WORKSPACE_PLANS)
+            plan_commit_sha = await asyncio.to_thread(repo.commit_file, plan_filename, plan_part, f"Strategy {plan_id}: {goal[:60]}")
             await asyncio.to_thread(repo.commit_file, tasks_filename, tasks_part, f"Tasks {plan_id}: {goal[:60]}")
 
         # Enregistrement dans le registre unifié
@@ -240,27 +241,35 @@ class Tools:
         state.save_resource(
             id=plan_id, name=goal[:80], resource_type='plan', status='proposed',
             mime='text/markdown', plan_goal=goal[:200], author_model=model_key_used,
-            git_tracked=True, storage_path=format_codex_storage_path(filename, CODEX_WORKSPACE_MAIN),
+            git_tracked=True, last_commit=(plan_commit_sha or "")[:12],
+            commit_msg=f"Strategy {plan_id}: {goal[:60]}",
+            storage_path=format_codex_storage_path(filename, CODEX_WORKSPACE_PLANS),
         )
 
         if __event_emitter__:
-            await events.status(f"Plan {plan_id} créé.", done=True)
+            await events.status(f"✅ Plan {plan_id} créé.", done=True)
         
-        user_decision = "Le plan a été créé au statut 'proposed'. L'Utilisateur a été informé implicitement. Le Modèle DOIT lui indiquer qu'il peut proposer des ajustements via le chat, modifier manuellement le plan dans le Codex, ou demander formellement son exécution via process_plan."
+        user_decision = (
+            "Le plan a été créé au statut 'proposed'. L'Utilisateur a été informé implicitement. "
+            "Le Modèle DOIT lui indiquer qu'il peut proposer des ajustements via le chat (`update_plan`) "
+            "ou demander formellement son exécution via `process_plan`."
+        )
         final_status = "proposed"
 
-        return wrap_cascade_output(
+        return wrap_tool_output(
             text=f"### Plan stratégique créé — `{plan_id}`\n\n"
                  f"**Décision Utilisateur :** {user_decision}\n"
                  f"**Statut :** {final_status}\n"
                  f"**Modèle :** {model_key_used}\n"
-                 f"**Fichier :** `{filename}`\n\n"
+                 f"**Fichier :** [{filename}](codex:current:{CODEX_WORKSPACE_PLANS}/{filename})\n"
+                 f"**Tâches :** [{tasks_filename}](codex:current:{CODEX_WORKSPACE_PLANS}/{tasks_filename})\n\n"
                  f"---\n\n{plan_content}",
             model_requested=PLANNER_MODEL_BUILD,
             model_used=model_key_used,
-            reason=reason
-        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            reason=reason,
+        )
 
+    @echo_tool
     async def read_plan(
         self,
         plan_id: str,
@@ -268,33 +277,37 @@ class Tools:
         __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None,
-    ) -> dict:
+    ) -> Any:
         """Lit le document de stratégie et la liste des tâches associés à un `plan_id`."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
 
         if not chat_id:
-            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "❌ Erreur: Aucun chat_id détecté."
 
         result = await self._read_plan_from_codex_async(user_id, chat_id, plan_id)
         if not result:
-            return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"❌ Plan `{plan_id}` introuvable dans le Codex."
 
         plan_content = result["content"]
         tasks_filename = "tasks_" + result["filename"]
         
         # Lecture silencieuse des tâches
         async with get_codex_lock(user_id, chat_id):
-            repo = CodexRepo(user_id, chat_id)
+            repo = CodexRepo(user_id, chat_id, CODEX_WORKSPACE_PLANS)
             tasks_result = await asyncio.to_thread(repo.read_file, tasks_filename)
         tasks_text = tasks_result["content"] if tasks_result else "- [ ] Fichier de tâches introuvable."
         
-        full_content = f"=== STRATÉGIE (Fichier: {result['filename']}) ===\n{plan_content}\n\n=== TÂCHES (Fichier: {tasks_filename}) ===\n{tasks_text}"
+        full_content = (
+            f"=== STRATÉGIE (Fichier: [{result['filename']}](codex:current:{CODEX_WORKSPACE_PLANS}/{result['filename']})) ===\n{plan_content}\n\n"
+            f"=== TÂCHES (Fichier: [{tasks_filename}](codex:current:{CODEX_WORKSPACE_PLANS}/{tasks_filename})) ===\n{tasks_text}"
+        )
 
         await events.status(f"📖 Plan `{plan_id}` et ses tâches lus.", done=True)
-        return wrap_tool_output(text=full_content, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        return full_content
 
+    @echo_tool
     async def update_plan(
         self,
         plan_id: str,
@@ -303,18 +316,18 @@ class Tools:
         __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None,
-    ) -> dict:
+    ) -> Any:
         """Modifie la stratégie d'un plan d'action existant (autorisé uniquement au statut `proposed`)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
 
         if not chat_id:
-            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "❌ Erreur: Aucun chat_id détecté."
 
         result = await self._read_plan_from_codex_async(user_id, chat_id, plan_id)
         if not result:
-            return wrap_tool_output(text=f"❌ Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"❌ Plan `{plan_id}` introuvable dans le Codex."
 
         # 1. Lecture du plan actuel
         current_content = result["content"]
@@ -347,13 +360,13 @@ class Tools:
         )
 
         if not res_json:
-            await events.status("Échec — tous les modèles sont indisponibles.", done=True)
-            return wrap_tool_output(text="Échec : aucun modèle disponible pour la modification.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            await events.status("❌ Échec — tous les modèles sont indisponibles.", done=True)
+            return "Échec : aucun modèle disponible pour la modification."
 
         new_content = self._extract_llm_text(res_json)
         if not new_content:
-            await events.status("Réponse vide du planificateur.", done=True)
-            return wrap_tool_output(text="Erreur : le planificateur n'a produit aucun contenu.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            await events.status("❌ Réponse vide du planificateur.", done=True)
+            return "Erreur : le planificateur n'a produit aucun contenu."
 
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
         current_status = self._extract_frontmatter_status(current_content)
@@ -361,41 +374,55 @@ class Tools:
 
         # Gatekeeper 1 : Verrouillage strict dès que le plan n'est plus "proposed"
         if current_status != 'proposed':
-            await events.status("Action refusée : Le plan est verrouillé.", done=True)
-            return wrap_tool_output(
-                text=f"Action refusée : Un plan au statut '{current_status}' est verrouillé stratégiquement. Le Modèle ne PEUT modifier qu'un plan au statut 'proposed'.",
-                user_id=user_id, chat_id=chat_id, metadata=__metadata__
-            )
+            await events.status("⚠️ Action refusée : Le plan est verrouillé.", done=True)
+            return f"Action refusée : Un plan au statut '{current_status}' est verrouillé stratégiquement. Le Modèle ne PEUT modifier qu'un plan au statut 'proposed'."
 
         # Gatekeeper 2 : Interdiction absolue de bypass process_plan
         if new_status == 'executing':
-            await events.status("ERREUR : Tentative de démarrage illicite bloquée.", done=True)
-            return wrap_tool_output(
-                text="ACTION INTERDITE : Le passage au statut 'executing' est verrouillé pour des raisons de sécurité. Le Modèle n'a pas l'autorisation d'utiliser `update_plan` pour cela. Le Modèle DOIT obligatoirement invoquer l'outil `process_plan` pour démarrer l'exécution d'un plan.",
-                user_id=user_id, chat_id=chat_id, metadata=__metadata__
-            )
+            await events.status("⛔ ERREUR : Tentative de démarrage illicite bloquée.", done=True)
+            return "ACTION INTERDITE : Le passage au statut 'executing' est verrouillé pour des raisons de sécurité. Le Modèle n'a pas l'autorisation d'utiliser `update_plan` pour cela. Le Modèle DOIT obligatoirement invoquer l'outil `process_plan` pour démarrer l'exécution d'un plan."
 
         # Application silencieuse de la modification
         async with get_codex_lock(user_id, chat_id):
-            repo = CodexRepo(user_id, chat_id)
-            await asyncio.to_thread(repo.commit_file, plan_filename, new_content, f"Update plan {plan_id}")
+            repo = CodexRepo(user_id, chat_id, CODEX_WORKSPACE_PLANS)
+            upd_commit_sha = await asyncio.to_thread(repo.commit_file, plan_filename, new_content, f"Update plan {plan_id}")
         if new_status and new_status in PLAN_STATUS:
             state.update_resource_status(plan_id, new_status)
+        existing_res = state.get_resource(plan_id) or {}
+        state.save_resource(
+            id=plan_id,
+            name=existing_res.get("name") or plan_filename,
+            resource_type="plan",
+            status=new_status if (new_status and new_status in PLAN_STATUS) else (existing_res.get("status") or "proposed"),
+            mime="text/markdown",
+            plan_goal=existing_res.get("plan_goal") or "",
+            author_model=model_key_used,
+            git_tracked=True,
+            last_commit=(upd_commit_sha or "")[:12],
+            commit_msg=f"Update plan {plan_id}",
+            storage_path=format_codex_storage_path(plan_filename, CODEX_WORKSPACE_PLANS),
+        )
         
-        user_decision = "Mise à jour effectuée silencieusement au statut 'proposed'. L'Utilisateur a été informé implicitement. Le Modèle DOIT lui indiquer qu'il peut proposer des ajustements via le chat, modifier manuellement le plan dans le Codex, ou demander formellement son exécution via process_plan."
+        user_decision = (
+            "Mise à jour effectuée silencieusement au statut 'proposed'. L'Utilisateur a été informé implicitement. "
+            "Le Modèle DOIT lui indiquer qu'il peut proposer des ajustements via le chat (`update_plan`) "
+            "ou demander formellement son exécution via `process_plan`."
+        )
         if __event_emitter__:
-            await events.status(f"Plan {plan_id} mis à jour.", done=True)
+            await events.status(f"✅ Plan {plan_id} mis à jour.", done=True)
 
-        return wrap_cascade_output(
+        return wrap_tool_output(
             text=f"### Tentative de mise à jour du plan `{plan_id}`\n\n"
                  f"**Décision Utilisateur :** {user_decision}\n"
-                 f"**Modèle :** {model_key_used}\n\n"
+                 f"**Modèle :** {model_key_used}\n"
+                 f"**Fichier :** [{plan_filename}](codex:current:{CODEX_WORKSPACE_PLANS}/{plan_filename})\n\n"
                  f"---\n\n{new_content}",
             model_requested=PLANNER_MODEL_UPDATE,
             model_used=model_key_used,
-            reason=reason
-        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            reason=reason,
+        )
 
+    @echo_tool
     async def update_tasks(
         self,
         plan_id: str,
@@ -404,26 +431,26 @@ class Tools:
         __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None,
-    ) -> dict:
+    ) -> Any:
         """Met à jour le statut des tâches (`[ ]`, `[/]`, `[x]`, `[!]`, `[-]`) dans le fichier de tâches d'un plan (`plan_id`)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
 
         if not chat_id:
-            return wrap_tool_output(text="❌ Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "❌ Erreur: Aucun chat_id détecté."
 
         # 1. Vérifier que le plan existe pour obtenir le nom de fichier
         result = await self._read_plan_from_codex_async(user_id, chat_id, plan_id)
         if not result:
-            return wrap_tool_output(text=f"Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"Plan `{plan_id}` introuvable dans le Codex."
         
         plan_filename = result["filename"]
         tasks_filename = "tasks_" + plan_filename
 
         # 2. Lecture des tâches
         async with get_codex_lock(user_id, chat_id):
-            repo = CodexRepo(user_id, chat_id)
+            repo = CodexRepo(user_id, chat_id, CODEX_WORKSPACE_PLANS)
             tasks_result = await asyncio.to_thread(repo.read_file, tasks_filename)
         current_tasks = tasks_result["content"] if tasks_result else "- [ ] Aucune tâche trouvée."
 
@@ -451,53 +478,71 @@ class Tools:
         )
 
         if not res_json:
-            await events.status("Échec de la mise à jour des tâches.", done=True)
-            return wrap_tool_output(text="Échec : aucun modèle disponible.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            await events.status("❌ Échec de la mise à jour des tâches.", done=True)
+            return "Échec : aucun modèle disponible."
 
         new_tasks_content = self._extract_llm_text(res_json)
         if not new_tasks_content:
-            await events.status("Réponse vide pour les tâches.", done=True)
-            return wrap_tool_output(text="Erreur : aucune tâche générée.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            await events.status("❌ Réponse vide pour les tâches.", done=True)
+            return "Erreur : aucune tâche générée."
 
         # 4. Commit silencieux
         async with get_codex_lock(user_id, chat_id):
-            await asyncio.to_thread(repo.commit_file, tasks_filename, new_tasks_content, f"Update tasks {plan_id}")
+            tasks_commit_sha = await asyncio.to_thread(repo.commit_file, tasks_filename, new_tasks_content, f"Update tasks {plan_id}")
+
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        existing_res = state.get_resource(plan_id) or {}
+        if existing_res:
+            state.save_resource(
+                id=plan_id,
+                name=existing_res.get("name") or plan_filename,
+                resource_type="plan",
+                status=existing_res.get("status") or "executing",
+                mime="text/markdown",
+                plan_goal=existing_res.get("plan_goal") or "",
+                author_model=existing_res.get("author_model") or model_key_used,
+                git_tracked=True,
+                last_commit=(tasks_commit_sha or "")[:12],
+                commit_msg=f"Update tasks {plan_id}",
+                storage_path=format_codex_storage_path(plan_filename, CODEX_WORKSPACE_PLANS),
+            )
 
         # 5. Évènement de notification UI
         short_inst = instructions.replace('\n', ' ')
         if len(short_inst) > 80:
             short_inst = short_inst[:77] + "..."
-        await events.status(f"Tâches (Plan {plan_id}) : {short_inst}", done=True)
+        await events.status(f"📋 Tâches (Plan {plan_id}) : {short_inst}", done=True)
 
-        return wrap_cascade_output(
+        return wrap_tool_output(
             text=f"### Tâches du plan `{plan_id}` mises à jour\n\n"
                  f"**Modèle :** {model_key_used}\n"
-                 f"**Fichier :** `{tasks_filename}`\n\n"
+                 f"**Fichier :** [{tasks_filename}](codex:current:{CODEX_WORKSPACE_PLANS}/{tasks_filename})\n\n"
                  f"---\n\n{new_tasks_content}",
             model_requested=PLANNER_MODEL_UPDATE,
             model_used=model_key_used,
-            reason=reason
-        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            reason=reason,
+        )
 
+    @echo_tool
     async def process_plan(
         self, plan_id: str, user_already_validated: bool = False,
         __user__: Optional[dict] = None, __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None, __event_call__: Optional[Any] = None,
-    ) -> dict:
+    ) -> Any:
         """Amorçage obligatoire déclenchant la validation et le passage d'un plan `proposed` au statut `executing` avant l'exécution de ses tâches."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
 
         if not chat_id:
-            await events.status("Erreur : Aucun chat_id détecté.", done=True)
-            return wrap_tool_output(text="Erreur : Aucun chat_id détecté.", user_id=user_id, chat_id=None, metadata=__metadata__)
+            await events.status("❌ Erreur : Aucun chat_id détecté.", done=True)
+            return "Erreur : Aucun chat_id détecté."
 
         # 1. Vérification d'existence
         result = await self._read_plan_from_codex_async(user_id, chat_id, plan_id)
         if not result:
-            await events.status(f"Erreur : Plan {plan_id} introuvable.", done=True)
-            return wrap_tool_output(text=f"Erreur : Plan `{plan_id}` introuvable.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+            await events.status(f"❌ Erreur : Plan {plan_id} introuvable.", done=True)
+            return f"Erreur : Plan `{plan_id}` introuvable."
 
         plan_filename = result["filename"]
         tasks_filename = "tasks_" + plan_filename
@@ -505,8 +550,8 @@ class Tools:
 
         current_status = self._extract_frontmatter_status(plan_content)
         if current_status != 'proposed':
-            await events.status(f"Erreur : Le statut doit être 'proposed' (actuel: {current_status}).", done=True)
-            return wrap_tool_output(text=f"Erreur : Le plan doit être au statut 'proposed' pour être exécuté. Statut actuel: {current_status}", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+            await events.status(f"⚠️ Erreur : Le statut doit être 'proposed' (actuel: {current_status}).", done=True)
+            return f"Erreur : Le plan doit être au statut 'proposed' pour être exécuté. Statut actuel: {current_status}"
 
         # 2. Modale de confirmation (Si non validé précédemment)
         from echo_constants import ECHO_SUBAGENT_CONTEXT
@@ -526,30 +571,45 @@ class Tools:
             }});
             """
             if __event_emitter__:
-                await events.status(f"Attente de confirmation pour lancer le plan {plan_id}...", done=False)
+                await events.status(f"⏳ Attente de confirmation pour lancer le plan {plan_id}...", done=False)
                 
             user_confirmed = await events.call_execute(js_code)
             if not user_confirmed:
-                await events.status(f"Lancement du plan {plan_id} refusé par l'utilisateur.", done=True)
-                return wrap_tool_output(text="Refus : L'Utilisateur a refusé de lancer l'exécution du plan. Attendez ses consignes.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+                await events.status(f"🛑 Lancement du plan {plan_id} refusé par l'utilisateur.", done=True)
+                return "Refus : L'Utilisateur a refusé de lancer l'exécution du plan. Attendez ses consignes."
 
         # 3. Remplacement du statut dans le frontmatter (proposed -> executing)
         new_plan_content = re.sub(r"^status:\s*(\w+)", "status: executing", plan_content, flags=re.MULTILINE)
         
         async with get_codex_lock(user_id, chat_id):
-            repo = CodexRepo(user_id, chat_id)
-            await asyncio.to_thread(repo.commit_file, plan_filename, new_plan_content, f"Start execution {plan_id}")
+            repo = CodexRepo(user_id, chat_id, CODEX_WORKSPACE_PLANS)
+            exec_commit_sha = await asyncio.to_thread(repo.commit_file, plan_filename, new_plan_content, f"Start execution {plan_id}")
             # 5. Lecture silencieuse des tâches
             tasks_result = await asyncio.to_thread(repo.read_file, tasks_filename)
 
         # 4. Mise à jour de l'état SQLite
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
         state.update_resource_status(plan_id, 'executing')
+        existing_res = state.get_resource(plan_id) or {}
+        if existing_res:
+            state.save_resource(
+                id=plan_id,
+                name=existing_res.get("name") or plan_filename,
+                resource_type="plan",
+                status="executing",
+                mime="text/markdown",
+                plan_goal=existing_res.get("plan_goal") or "",
+                author_model=existing_res.get("author_model") or "",
+                git_tracked=True,
+                last_commit=(exec_commit_sha or "")[:12],
+                commit_msg=f"Start execution {plan_id}",
+                storage_path=format_codex_storage_path(plan_filename, CODEX_WORKSPACE_PLANS),
+            )
 
         tasks_text = tasks_result["content"] if tasks_result else "- [ ] Fichier de tâches introuvable."
 
         # 6. Évènement UI
-        await events.status(f"Exécution du plan {plan_id} amorcée.", done=True)
+        await events.status(f"🚀 Exécution du plan {plan_id} amorcée.", done=True)
 
         # 7. Directive Cognitive
         directive = f"""=== STRATÉGIE ===
@@ -566,8 +626,9 @@ Le plan `{plan_id}` est officiellement EN COURS D'EXÉCUTION.
 3. ENDURANCE : Le Modèle DOIT POURSUIVRE l'exécution ininterrompue des tâches jusqu'à la finalisation intégrale du plan.
 4. CLÔTURE : Une fois la dernière tâche terminée, le Modèle DOIT utiliser `update_plan` pour modifier le statut du plan en `success` (ou `failed`) ET ajouter une section `## Synthèse d'exécution` résumant les actions menées.
 """
-        return wrap_tool_output(text=directive, user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+        return directive
 
+    @echo_tool
     async def delete_plan(
         self,
         plan_id: str,
@@ -575,25 +636,25 @@ Le plan `{plan_id}` est officiellement EN COURS D'EXÉCUTION.
         __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None,
-    ) -> dict:
+    ) -> Any:
         """Supprime définitivement un plan stratégique (`plan_id`) du Codex et du Registre Unifié."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
 
         if not chat_id:
-            return wrap_tool_output(text="Erreur: Aucun chat_id détecté.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "Erreur: Aucun chat_id détecté."
 
         result = await self._read_plan_from_codex_async(user_id, chat_id, plan_id)
         if not result:
-            return wrap_tool_output(text=f"Plan `{plan_id}` introuvable dans le Codex.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"Plan `{plan_id}` introuvable dans le Codex."
 
         plan_filename = result["filename"]
         tasks_filename = "tasks_" + plan_filename
 
         # 1. Suppression dans le Codex (Git)
         async with get_codex_lock(user_id, chat_id):
-            repo = CodexRepo(user_id, chat_id)
+            repo = CodexRepo(user_id, chat_id, CODEX_WORKSPACE_PLANS)
             await asyncio.to_thread(repo.delete_file, plan_filename, f"Delete plan {plan_id}")
             await asyncio.to_thread(repo.delete_file, tasks_filename, f"Delete tasks {plan_id}")
 
@@ -601,12 +662,11 @@ Le plan `{plan_id}` est officiellement EN COURS D'EXÉCUTION.
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
         state.delete_resource(plan_id)
 
-        await events.status(f"Plan `{plan_id}` supprimé.", done=True)
+        await events.status(f"🗑️ Plan `{plan_id}` supprimé.", done=True)
 
-        return wrap_tool_output(
-            text=f"Plan `{plan_id}` (`{plan_filename}`) supprimé définitivement."
-        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        return f"Plan `{plan_id}` (`{plan_filename}`) supprimé définitivement."
 
+    @echo_tool
     async def analyze_plan(
         self,
         plan_id: str,
@@ -616,29 +676,29 @@ Le plan `{plan_id}` est officiellement EN COURS D'EXÉCUTION.
         __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None,
-    ) -> dict:
+    ) -> Any:
         """Exécute un audit critique non modificateur sur la robustesse et la cohérence d'un plan (`plan_id`)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
 
         if not chat_id:
-            return wrap_tool_output(text="Erreur: Aucun chat_id détecté.", user_id=user_id, chat_id=None, metadata=__metadata__)
+            return "Erreur: Aucun chat_id détecté."
 
         # 1. Vérification d'existence
         result = await self._read_plan_from_codex_async(user_id, chat_id, plan_id)
         if not result:
-            return wrap_tool_output(text=f"Plan `{plan_id}` introuvable.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+            return f"Plan `{plan_id}` introuvable."
 
         # 2. Lecture des tâches associées
         plan_content = result["content"]
         tasks_filename = "tasks_" + result["filename"]
         async with get_codex_lock(user_id, chat_id):
-            repo = CodexRepo(user_id, chat_id)
+            repo = CodexRepo(user_id, chat_id, CODEX_WORKSPACE_PLANS)
             tasks_result = await asyncio.to_thread(repo.read_file, tasks_filename)
         tasks_content = tasks_result["content"] if tasks_result else "- [ ] Aucune tâche."
 
-        await events.status(f"Analyse du plan {plan_id} en cours...")
+        await events.status(f"🔍 Analyse du plan {plan_id} en cours...")
 
         # 3. Appel du LLM auditeur
         user_prompt = f"## Stratégie actuelle\n{plan_content}\n\n"
@@ -665,13 +725,13 @@ Le plan `{plan_id}` est officiellement EN COURS D'EXÉCUTION.
         )
 
         if not res_json:
-            await events.status("Échec : aucun modèle disponible pour l'analyse.", done=True)
-            return wrap_tool_output(text="Échec : aucun modèle disponible.", user_id=user_id, chat_id=chat_id, metadata=__metadata__)
+            await events.status("❌ Échec : aucun modèle disponible pour l'analyse.", done=True)
+            return "Échec : aucun modèle disponible."
 
         analysis_content = self._extract_llm_text(res_json)
-        await events.status(f"Analyse du plan {plan_id} terminée.", done=True)
+        await events.status(f"✅ Analyse du plan {plan_id} terminée.", done=True)
 
-        return wrap_cascade_output(
+        return wrap_tool_output(
             text=f"### Audit du plan `{plan_id}`\n\n"
                  f"**Modèle Auditeur :** {model_key_used}\n"
                  f"**Focus :** {focus}\n"
@@ -680,5 +740,4 @@ Le plan `{plan_id}` est officiellement EN COURS D'EXÉCUTION.
             model_requested=PLANNER_MODEL_BUILD,
             model_used=model_key_used,
             reason=reason,
-            user_id=user_id, chat_id=chat_id, metadata=__metadata__
         )

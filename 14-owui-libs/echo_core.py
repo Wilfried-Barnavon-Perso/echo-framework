@@ -2,22 +2,22 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 5.231.31.1
+version: 5.235.5.3
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.231.31.1: Prise en charge asynchrone de Chats.get_chat_by_id et correction de l'appel EchoGeminiClient.call_distillation (is_json=False, system_instruction).
-# 5.231.28.2: Implémentation de EchoCompactionEngine en % de CONTEXT_MAX (63% HEAD / 37% TAIL de 20%), zéro troncature, conservation des balises AEC et fallback ZoneInfo.
-# 5.231.10.1: Suppression de detect_verbal_escalation ; conservation de attach_thought_signature (conformité Gemini 3/4).
-# 5.231.7.1: Factorisation de attach_thought_signature (conformité Gemini 3/4).
-# 5.227.1.1: Suppression de EchoCompactionEngine suite au remplacement du compactage in-place par resume_in_new_chat_action.
-import os
+# 5.235.5.3: Cantonnement strict de user_message_id aux rôles user dans rehydrate_messages_metadata.
+# 5.235.5.2: Résolution load_active_branch_ids, rehydrate_messages_metadata, merge_consecutive_user_parts et split_into_turns résilient aux messages supprimés.
+# 5.235.1.1: Injonction positive d'exploitation capacitaire dans <COMPRESSION_BUDGET> et actualisation des ratios 31.25%/68.75% dans EchoCompactionEngine.
+# 5.233.0.1: Absorption de l'ancienne cascade dans wrap_tool_output et création du décorateur universel @echo_tool (async/sync, introspection Pydantic et drainage AEC centralisé).
+# 5.232.0.1: Prise en charge de la balise <thinking> dans split_thought_process.
 import re
 import time
-import sqlite3
+import inspect
+import functools
+import contextvars
 import logging
-from contextlib import closing
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple
@@ -177,22 +177,28 @@ def smart_truncate_history(history: list, start_index: int = 0) -> int:
 
 def split_thought_process(text: str) -> Tuple[str, Optional[str]]:
     if not isinstance(text, str): return text, None
-    for tag in ["think", "thought"]:
+    for tag in ["think", "thought", "thinking"]:
         pattern = rf"<{tag}>(.*?)</{tag}>"
-        match = re.search(pattern, text, re.DOTALL)
+        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
         if match:
             thoughts = match.group(1).strip()
-            clean_text = re.sub(pattern, "", text, flags=re.DOTALL).strip()
+            clean_text = re.sub(pattern, "", text, flags=re.DOTALL | re.IGNORECASE).strip()
             return clean_text, thoughts
     return text, None
 
-def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[dict] = None, user_id: str = None, chat_id: str = None, metadata: dict = None) -> dict:
+_ECHO_IN_TOOL_CALL: contextvars.ContextVar[bool] = contextvars.ContextVar("_ECHO_IN_TOOL_CALL", default=False)
+
+
+def _drain_tool_aec_events(user_id: str = None, chat_id: str = None, metadata: dict = None) -> Optional[str]:
+    """
+    Draine et formate les événements système AEC en attente pour un outil.
+    """
     aec_events = None
     if user_id and chat_id and metadata is not None:
         # [NOUVEAU] Rappels Cognitifs par Outil (AVANT le delta)
         call_count = metadata.get("_echo_tool_call_count", 0) + 1
         metadata["_echo_tool_call_count"] = call_count
-        
+
         state_manager = None
         for reminder in AEC_REMINDERS:
             threshold = reminder.get("tool_calls_threshold", 0)
@@ -200,9 +206,9 @@ def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[
                 if state_manager is None:
                     state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
                 EchoAEC.record_event(
-                    state_manager=state_manager, 
-                    event_name=reminder["id"], 
-                    status="avertissement", 
+                    state_manager=state_manager,
+                    event_name=reminder["id"],
+                    status="avertissement",
                     summary=reminder["message"],
                     resource_type="aec_directive"
                 )
@@ -231,16 +237,16 @@ def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[
                         "message": r.get("summary"),
                         "resource_type": r.get("resource_type")
                     } for r in delta]
-                    
+
                     # Nettoyage des clés avec des valeurs None
                     events = [{k: v for k, v in e.items() if v is not None} for e in events]
-                    
+
                     # Appel de la fonction factorisée
                     events_text = EchoAEC.render_system_events(sys_events=events)
                     if events_text:
                         aec_events = events_text
                         metadata["_echo_last_event_check_at"] = time.time()
-                        
+
                     # FIFO destructif : Purge EXCLUSIVE des événements purement système (AEC).
                     # Les fichiers (codex, uploads) remontés dans ce delta sont conservés.
                     for r in delta:
@@ -248,26 +254,218 @@ def wrap_tool_output(text: str, status: dict = None, echo_tool_multiparts: List[
                             try:
                                 state_manager.delete_resource(r.get("id"))
                             except Exception as e:
-                                print(f"[wrap_tool_output] Erreur purge AEC {r.get('id')}: {e}")
+                                print(f"[_drain_tool_aec_events] Erreur purge AEC {r.get('id')}: {e}")
             except Exception as e:
-                print(f"[wrap_tool_output] Erreur Delta SQLite: {e}")
-            
-    return {"text": text, "aec_events": aec_events, "status": status or {"status": "success"}, "echo_tool_multiparts": echo_tool_multiparts or []}
+                print(f"[_drain_tool_aec_events] Erreur Delta SQLite: {e}")
 
-def wrap_cascade_output(text: str, model_requested: str, model_used: str, status: dict = None, echo_tool_multiparts: List[dict] = None, reason: str = None, user_id: str = None, chat_id: str = None, metadata: dict = None) -> dict:
+    return aec_events
+
+
+def wrap_tool_output(
+    text: str,
+    status: dict = None,
+    echo_tool_multiparts: List[dict] = None,
+    user_id: str = None,
+    chat_id: str = None,
+    metadata: dict = None,
+    model_requested: str = None,
+    model_used: str = None,
+    reason: str = None
+) -> dict:
     """
-    Enrichit wrap_tool_output avec les métadonnées de cascade.
-    Le LLM orchestrateur voit model_used dans le status dict ET dans un préfixe texte si le modèle a changé.
-    reason : cause du changement de modèle (ex: "policy", "503/429").
+    Enveloppe le résultat d'un outil ECHO avec métadonnées de statut, multiparts,
+    drainage automatique des événements AEC, et traçabilité de cascade de modèles.
     """
-    s = status or {"status": "success"}
-    s["model_requested"] = model_requested
-    s["model_used"] = model_used
-    if model_requested != model_used:
-        s["status"] = "warning"
-        s["warning"] = reason or f"{model_requested} unavailable"
-        text = f"[Modèle effectif : {model_used} (demandé : {model_requested})]\n\n{text}"
-    return wrap_tool_output(text, status=s, echo_tool_multiparts=echo_tool_multiparts, user_id=user_id, chat_id=chat_id, metadata=metadata)
+    s = dict(status) if status else {"status": "success"}
+    if model_requested or model_used:
+        if model_requested:
+            s["model_requested"] = model_requested
+        if model_used:
+            s["model_used"] = model_used
+        if model_requested and model_used and model_requested != model_used:
+            s["status"] = "warning"
+            s["warning"] = reason or f"{model_requested} unavailable"
+            text = f"[Modèle effectif : {model_used} (demandé : {model_requested})]\n\n{text}"
+
+    aec_events = _drain_tool_aec_events(user_id=user_id, chat_id=chat_id, metadata=metadata)
+
+    out = {
+        "text": text,
+        "aec_events": aec_events,
+        "status": s,
+        "echo_tool_multiparts": echo_tool_multiparts or []
+    }
+    if user_id and chat_id and metadata is not None:
+        out["_aec_drained"] = True
+    return out
+
+
+def _infer_string_status(text_str: str) -> str:
+    """
+    Infère un statut succès / warning / erreur depuis une chaîne brute de retour d'outil.
+    """
+    if not isinstance(text_str, str):
+        return "success"
+    t = text_str.lower().strip()
+    if t.startswith(("❌", "[erreur]", "erreur", "error", "[error]", "exception")):
+        return "error"
+    if t.startswith(("⚠️", "[attention]", "attention", "warning", "[warning]")):
+        return "warning"
+    return "success"
+
+
+def _finalize_tool_result(
+    res: Any,
+    uid: Optional[str] = None,
+    cid: Optional[str] = None,
+    meta_dict: Optional[dict] = None,
+    is_nested: bool = False
+) -> Any:
+    """
+    Finalise le résultat d'un outil en gérant la sérialisation Pydantic,
+    le drainage AEC unifié et la purge absolue de la clé interne '_aec_drained'.
+    """
+    if hasattr(res, "model_dump") and callable(getattr(res, "model_dump")):
+        res = res.model_dump()
+    elif hasattr(res, "dict") and callable(getattr(res, "dict")):
+        res = res.dict()
+
+    if isinstance(res, tuple):
+        return tuple(
+            _finalize_tool_result(item, uid=uid, cid=cid, meta_dict=meta_dict, is_nested=is_nested)
+            if isinstance(item, (dict, str, list)) or hasattr(item, "model_dump") or hasattr(item, "dict")
+            else item
+            for item in res
+        )
+
+    if isinstance(res, dict):
+        already_drained = res.pop("_aec_drained", False)
+        if not already_drained and not is_nested and uid and meta_dict is not None:
+            aec_events = _drain_tool_aec_events(user_id=uid, chat_id=cid, metadata=meta_dict)
+            if aec_events:
+                if "text" in res:
+                    if not res.get("aec_events"):
+                        res["aec_events"] = aec_events
+                else:
+                    res["aec_events"] = aec_events
+        res.pop("_aec_drained", False)
+        return res
+
+    if isinstance(res, str):
+        status_val = _infer_string_status(res)
+        out = wrap_tool_output(
+            text=res,
+            status={"status": status_val},
+            user_id=uid if not is_nested else None,
+            chat_id=cid if not is_nested else None,
+            metadata=meta_dict if not is_nested else None
+        )
+        out.pop("_aec_drained", False)
+        return out
+
+    text_val = "" if res is None else (std_json.dumps(res).decode("utf-8") if isinstance(res, list) else str(res))
+    out = wrap_tool_output(
+        text=text_val,
+        status={"status": "success"},
+        user_id=uid if not is_nested else None,
+        chat_id=cid if not is_nested else None,
+        metadata=meta_dict if not is_nested else None
+    )
+    out.pop("_aec_drained", False)
+    return out
+
+
+def echo_tool(func):
+    """
+    Décorateur universel pour les outils ECHO (asynchrones ou synchrones).
+
+    Fonctionnalités :
+    1. Introspection de signature et exposition transparente de __user__ et __metadata__
+       pour permettre l'injection automatique par Open WebUI sans contraindre l'outil.
+    2. Extraction du schéma de retour Pydantic (responseSchema) vers __echo_response_schema__.
+    3. Drainage automatique et dédupliqué des événements AEC via le contexte d'appel (_ECHO_IN_TOOL_CALL).
+    4. Normalisation automatique du retour (dict wrap_tool_output, Pydantic model_dump, str).
+    """
+    sig = inspect.signature(func)
+    params = list(sig.parameters.values())
+    func_params = sig.parameters
+    has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params)
+
+    # Introspection du type de retour pour responseSchema
+    response_schema = None
+    return_annotation = sig.return_annotation
+    if return_annotation is not inspect.Signature.empty and return_annotation is not None:
+        try:
+            from echo_protocol import normalize_response_schema
+            response_schema = normalize_response_schema(return_annotation)
+        except Exception as e:
+            logger.debug(f"[echo_tool] Impossible de normaliser le schéma de retour: {e}")
+
+    # Construction de la signature exposée à Open WebUI (avec __user__ et __metadata__)
+    extra_params = []
+    if "__user__" not in func_params:
+        extra_params.append(
+            inspect.Parameter("__user__", inspect.Parameter.KEYWORD_ONLY, default=None, annotation=dict)
+        )
+    if "__metadata__" not in func_params:
+        extra_params.append(
+            inspect.Parameter("__metadata__", inspect.Parameter.KEYWORD_ONLY, default=None, annotation=dict)
+        )
+
+    if extra_params:
+        var_kw_idx = next((i for i, p in enumerate(params) if p.kind == inspect.Parameter.VAR_KEYWORD), None)
+        if var_kw_idx is not None:
+            exposed_params = params[:var_kw_idx] + extra_params + params[var_kw_idx:]
+        else:
+            exposed_params = params + extra_params
+        exposed_sig = sig.replace(parameters=exposed_params)
+    else:
+        exposed_sig = sig
+
+    def _prepare_call_kwargs(kwargs: dict) -> Tuple[dict, Optional[str], Optional[str], Optional[dict]]:
+        user_arg = kwargs.get("__user__")
+        meta_arg = kwargs.get("__metadata__")
+        uid = user_arg.get("id") if isinstance(user_arg, dict) else None
+        cid = meta_arg.get("chat_id") if isinstance(meta_arg, dict) else None
+        meta_dict = meta_arg if isinstance(meta_arg, dict) else None
+
+        if not has_var_kw:
+            call_kwargs = {k: v for k, v in kwargs.items() if k in func_params}
+        else:
+            call_kwargs = dict(kwargs)
+            if "__user__" not in func_params:
+                call_kwargs.pop("__user__", None)
+            if "__metadata__" not in func_params:
+                call_kwargs.pop("__metadata__", None)
+
+        return call_kwargs, uid, cid, meta_dict
+
+    if inspect.iscoroutinefunction(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            call_kwargs, uid, cid, meta_dict = _prepare_call_kwargs(kwargs)
+            is_nested = _ECHO_IN_TOOL_CALL.get()
+            token = _ECHO_IN_TOOL_CALL.set(True)
+            try:
+                res = await func(*args, **call_kwargs)
+            finally:
+                _ECHO_IN_TOOL_CALL.reset(token)
+            return _finalize_tool_result(res, uid=uid, cid=cid, meta_dict=meta_dict, is_nested=is_nested)
+    else:
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            call_kwargs, uid, cid, meta_dict = _prepare_call_kwargs(kwargs)
+            is_nested = _ECHO_IN_TOOL_CALL.get()
+            token = _ECHO_IN_TOOL_CALL.set(True)
+            try:
+                res = func(*args, **call_kwargs)
+            finally:
+                _ECHO_IN_TOOL_CALL.reset(token)
+            return _finalize_tool_result(res, uid=uid, cid=cid, meta_dict=meta_dict, is_nested=is_nested)
+
+    wrapper.__signature__ = exposed_sig
+    wrapper.__echo_response_schema__ = response_schema
+    return wrapper
 
 def resolve_model_policy(metadata: dict, user_id: str = None) -> tuple:
     """
@@ -441,12 +639,23 @@ def attach_thought_signature(
                 return
 
 
+class TurnDict(dict):
+    """Tour conversationnel compatible dict et itérable sur ses messages."""
+    def __iter__(self):
+        return iter(self.get("messages", []))
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return self.get("messages", [])[key]
+        return super().__getitem__(key)
+
+
 class EchoCompactionEngine:
     """
     Moteur de Compaction Contextuelle In-Place piloté en pourcentages de ECHO_MAX_CONTEXT_SIZE.
     Décompose l'enveloppe cible (ex: 20% de CONTEXT_MAX = 209 715 tokens) en :
-    - Part compressée HEAD : ex. 63% de 20% = 12.6% de CONTEXT_MAX (~132 120 tokens max budget, plafonné à maxOutputTokens=65535 API)
-    - Part gardée intacte TAIL : 1 - COMPACTION_COMPRESSED_SHARE_PCT (ex. 37% de 20% = 7.4% de CONTEXT_MAX, ~77 594 tokens max budget)
+    - Part compressée HEAD : ex. 31.25% de 20% = 6.25% de CONTEXT_MAX (65 535 tokens max budget, plafonné à maxOutputTokens=65535 API)
+    - Part gardée intacte TAIL : 1 - COMPACTION_COMPRESSED_SHARE_PCT (ex. 68.75% de 20% = 13.75% de CONTEXT_MAX, ~144 179 tokens max budget)
     Sans troncature des messages entrants ni retrait des balises <artifact id="AEC_...">.
     """
 
@@ -515,6 +724,18 @@ class EchoCompactionEngine:
         return None
 
     @classmethod
+    async def load_active_branch_ids(cls, chat_id: str) -> List[str]:
+        """Retourne la liste ordonnée des message_id de la branche active dans Open WebUI."""
+        if not chat_id:
+            return []
+        branch = await cls.load_active_branch_messages(chat_id) or []
+        return [
+            str(m.get("id"))
+            for m in branch
+            if isinstance(m, dict) and m.get("id")
+        ]
+
+    @classmethod
     def is_real_user_turn(cls, msg: Dict[str, Any]) -> bool:
         """Détermine si un message 'user' est un vrai tour utilisateur (ignore les messages synthétiques d'images d'outils)."""
         if msg.get("role") != "user":
@@ -548,14 +769,25 @@ class EchoCompactionEngine:
                 continue
             if cls.is_real_user_turn(msg):
                 if current_turn is not None:
-                    turns.append(current_turn)
-                current_turn = {
-                    "turn_idx": len(turns),
-                    "start_msg_idx": idx,
-                    "user_msg_id": msg.get("id"),
-                    "messages": [msg],
-                    "tokens_est": 0,
-                }
+                    if any(not cls.is_real_user_turn(m) for m in current_turn["messages"]):
+                        turns.append(current_turn)
+                        current_turn = TurnDict({
+                            "turn_idx": len(turns),
+                            "start_msg_idx": idx,
+                            "user_msg_id": msg.get("id"),
+                            "messages": [msg],
+                            "tokens_est": 0,
+                        })
+                    else:
+                        current_turn["messages"].append(msg)
+                else:
+                    current_turn = TurnDict({
+                        "turn_idx": len(turns),
+                        "start_msg_idx": idx,
+                        "user_msg_id": msg.get("id"),
+                        "messages": [msg],
+                        "tokens_est": 0,
+                    })
             else:
                 if current_turn is not None:
                     current_turn["messages"].append(msg)
@@ -580,8 +812,8 @@ class EchoCompactionEngine:
         """
         Calcule le pivot de compaction selon les pourcentages de ECHO_MAX_CONTEXT_SIZE :
         - Enveloppe cible totale = ECHO_MAX_CONTEXT_SIZE * target_context_pct (ex: 20% = 209 715 tokens)
-        - Part compressée HEAD = compressed_share_pct (ex: 63% de 20% = 12.6% de CONTEXT_MAX = 132 120 tokens)
-        - Part gardée intacte TAIL = 1 - compressed_share_pct (ex: 37% de 20% = 7.4% de CONTEXT_MAX = 77 594 tokens)
+        - Part compressée HEAD = compressed_share_pct (ex: 31.25% de 20% = 6.25% de CONTEXT_MAX = 65 535 tokens)
+        - Part gardée intacte TAIL = 1 - compressed_share_pct (ex: 68.75% de 20% = 13.75% de CONTEXT_MAX = ~144 179 tokens)
         Au moins 1 tour non-compressé (le plus ancien) est systématiquement intégré dans HEAD.
         """
         from echo_constants import (
@@ -726,38 +958,214 @@ class EchoCompactionEngine:
     @staticmethod
     def build_sqlite_resources_snapshot(user_id: str, chat_id: str) -> str:
         """Extrait un instantané déterministe du Registre Unifié SQLite (table echo_resources uniquement)."""
-        from echo_paths import get_echo_session_path
-
-        session_db = get_echo_session_path(user_id, chat_id, "db")
-        if not os.path.exists(session_db):
+        if not user_id or not chat_id:
             return ""
-
         lines: List[str] = []
         try:
-            with closing(sqlite3.connect(session_db, timeout=5.0)) as conn:
-                cur = conn.cursor()
-                cur.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='echo_resources'"
+            state_mgr = EchoStateManager(user_id=user_id, chat_id=chat_id)
+            resources = state_mgr.get_resources()
+            filtered = [
+                r for r in resources
+                if isinstance(r, dict) and r.get("resource_type") not in ("aec_event", "aec_directive")
+            ][:30]
+            for r in filtered:
+                rid = r.get("id", "")
+                rname = r.get("name", "")
+                rtype = r.get("resource_type", "")
+                rst = r.get("status", "")
+                spath = r.get("storage_path")
+                pgoal = r.get("plan_goal")
+                if not pgoal and r.get("metadata"):
+                    try:
+                        meta = std_json.loads(r["metadata"]) if isinstance(r["metadata"], str) else r["metadata"]
+                        pgoal = meta.get("plan_goal")
+                    except Exception:
+                        pass
+                loc = f" (`{spath}`)" if spath else ""
+                goal_str = f" — Objectif: *{pgoal}*" if pgoal else ""
+                lines.append(
+                    f"- `{rid}` [{rtype}] : **{rname}**{loc} — Statut: `{rst}`{goal_str}"
                 )
-                if cur.fetchone():
-                    cur.execute(
-                        "SELECT id, name, resource_type, status, storage_path, plan_goal "
-                        "FROM echo_resources "
-                        "WHERE resource_type NOT IN ('aec_event', 'aec_directive') "
-                        "ORDER BY updated_at DESC LIMIT 30"
-                    )
-                    rows = cur.fetchall()
-                    if rows:
-                        for rid, rname, rtype, rst, spath, pgoal in rows:
-                            loc = f" (`{spath}`)" if spath else ""
-                            goal_str = f" — Objectif: *{pgoal}*" if pgoal else ""
-                            lines.append(
-                                f"- `{rid}` [{rtype}] : **{rname}**{loc} — Statut: `{rst}`{goal_str}"
-                            )
         except Exception as e:
             logger.warning(f"ECHO Compaction: Snapshot SQLite partiel: {e}")
-
         return "\n".join(lines)
+
+    @classmethod
+    def rehydrate_messages_metadata(
+        cls,
+        messages: List[Dict[str, Any]],
+        branch_messages: Optional[List[Dict[str, Any]]] = None,
+    ) -> None:
+        """Réhydrate en O(1) les clés 'id' et 'updated_at' depuis branch_messages sur messages, et restaure user_message_id."""
+        if not messages:
+            return
+        if branch_messages:
+            non_sys_branch = [
+                bm for bm in branch_messages if bm.get("role") != "system"
+            ]
+            non_sys_payload_indices = [
+                idx
+                for idx, m in enumerate(messages)
+                if m.get("role") != "system"
+                and cls.SYNTHETIC_IMAGE_MARKER not in str(m.get("content", ""))
+            ]
+            # Si messages contient le nouveau tour entrant non encore sauvé dans branch_messages, on aligne le préfixe
+            if len(non_sys_branch) == len(non_sys_payload_indices):
+                pairs = zip(non_sys_payload_indices, non_sys_branch)
+            elif len(non_sys_branch) < len(non_sys_payload_indices):
+                pairs = zip(non_sys_payload_indices[: len(non_sys_branch)], non_sys_branch)
+            else:
+                pairs = zip(
+                    non_sys_payload_indices,
+                    non_sys_branch[-len(non_sys_payload_indices) :],
+                )
+
+            for p_idx, bm in pairs:
+                if bm.get("role") == messages[p_idx].get("role"):
+                    if not messages[p_idx].get("id") and bm.get("id"):
+                        messages[p_idx]["id"] = bm["id"]
+                    if not messages[p_idx].get("updated_at") and (
+                        bm.get("updated_at") or bm.get("timestamp")
+                    ):
+                        messages[p_idx]["updated_at"] = bm.get("updated_at") or bm.get(
+                            "timestamp"
+                        )
+
+        for m in messages:
+            if isinstance(m, dict) and m.get("id") and m.get("role") == "user":
+                meta = m.setdefault("metadata", {})
+                if isinstance(meta, dict) and "user_message_id" not in meta:
+                    meta["user_message_id"] = m["id"]
+
+    PERISHABLE_AEC_IDS = (
+        "AEC_modele",
+        "AEC_identite",
+        "AEC_temporalite",
+        "AEC_horloge",
+        "AEC_localisation",
+    )
+
+    @classmethod
+    def _is_perishable_aec_part(cls, part: Dict[str, Any]) -> bool:
+        if not isinstance(part, dict) or "text" not in part or len(part) != 1:
+            return False
+        txt = str(part.get("text") or "").strip()
+        if not txt.startswith("<artifact") or not txt.endswith("</artifact>"):
+            return False
+        return any(f'id="{aid}"' in txt for aid in cls.PERISHABLE_AEC_IDS)
+
+    @classmethod
+    def _merge_parts_sequences(cls, sequences: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+        """Fusionne plusieurs listes de parts de messages user consécutifs."""
+        if not sequences:
+            return []
+        if len(sequences) == 1:
+            return list(sequences[0])
+
+        last_seq = sequences[-1] or []
+        fresh_headers = [
+            p for p in last_seq
+            if isinstance(p, dict) and cls._is_perishable_aec_part(p)
+        ]
+
+        re_req = re.compile(r"<REQUETE_UTILISATEUR>(.*?)</REQUETE_UTILISATEUR>", re.DOTALL)
+        queries: List[str] = []
+        substantial_parts: List[Dict[str, Any]] = []
+        seen_keys: set = set()
+
+        for seq in sequences:
+            for p in (seq or []):
+                if not isinstance(p, dict) or cls._is_perishable_aec_part(p):
+                    continue
+                txt = p.get("text")
+                if isinstance(txt, str) and "<REQUETE_UTILISATEUR>" in txt:
+                    for match in re_req.finditer(txt):
+                        q_content = match.group(1).strip()
+                        if q_content:
+                            queries.append(q_content)
+                    remainder = re_req.sub("", txt).strip()
+                    if remainder:
+                        p_rem = dict(p)
+                        p_rem["text"] = remainder
+                        try:
+                            key = std_json.dumps(p_rem, option=std_json.OPT_SORT_KEYS)
+                        except Exception:
+                            key = repr(p_rem).encode("utf-8", errors="ignore")
+                        if key not in seen_keys:
+                            seen_keys.add(key)
+                            substantial_parts.append(p_rem)
+                else:
+                    try:
+                        key = std_json.dumps(p, option=std_json.OPT_SORT_KEYS)
+                    except Exception:
+                        key = repr(p).encode("utf-8", errors="ignore")
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        substantial_parts.append(p)
+
+        merged: List[Dict[str, Any]] = list(fresh_headers) + list(substantial_parts)
+        if queries:
+            joined = "\n\n".join(queries)
+            merged.append({"text": f"<REQUETE_UTILISATEUR>{joined}</REQUETE_UTILISATEUR>"})
+        return merged
+
+    @classmethod
+    def merge_consecutive_user_parts(
+        cls,
+        prev_or_messages: Any,
+        next_parts: Optional[List[Dict[str, Any]]] = None,
+    ) -> Any:
+        """
+        Fusionne les tours user consécutifs.
+        Supporte deux signatures :
+        1. merge_consecutive_user_parts(messages: List[Dict]) -> List[Dict]
+           Fusionne les messages Gemini/OWUI successifs ayant role == 'user'.
+        2. merge_consecutive_user_parts(prev_parts: List[Dict], next_parts: List[Dict]) -> List[Dict]
+           Fusionne directement deux listes de parts Gemini.
+        """
+        if next_parts is not None:
+            return cls._merge_parts_sequences([prev_or_messages, next_parts])
+
+        if not isinstance(prev_or_messages, list):
+            return prev_or_messages
+
+        is_msg_list = bool(prev_or_messages and isinstance(prev_or_messages[0], dict) and "role" in prev_or_messages[0])
+        if not is_msg_list:
+            return prev_or_messages
+
+        merged_messages: List[Dict[str, Any]] = []
+        user_group: List[Dict[str, Any]] = []
+
+        def flush_user_group():
+            nonlocal user_group
+            if not user_group:
+                return
+            if len(user_group) == 1:
+                merged_messages.append(user_group[0])
+            else:
+                all_ids = [m.get("_msg_id") or m.get("id") for m in user_group if m.get("_msg_id") or m.get("id")]
+                last_id = all_ids[-1] if all_ids else None
+                parts_seq = [m.get("parts", []) for m in user_group]
+                merged_parts = cls._merge_parts_sequences(parts_seq)
+                merged_msg = {
+                    "role": "user",
+                    "parts": merged_parts,
+                }
+                if last_id:
+                    merged_msg["_msg_id"] = last_id
+                if all_ids:
+                    merged_msg["_merged_from"] = all_ids
+                merged_messages.append(merged_msg)
+            user_group = []
+
+        for msg in prev_or_messages:
+            if isinstance(msg, dict) and msg.get("role") == "user":
+                user_group.append(msg)
+            else:
+                flush_user_group()
+                merged_messages.append(msg)
+        flush_user_group()
+        return merged_messages
 
     @classmethod
     def resolve_active_window(
@@ -791,36 +1199,7 @@ class EchoCompactionEngine:
 
         # Réhydratation O(1) des IDs et timestamps depuis branch_messages avant recherche d'ID
         if branch_messages:
-            non_sys_branch = [
-                bm for bm in branch_messages if bm.get("role") != "system"
-            ]
-            non_sys_payload_indices = [
-                idx
-                for idx, m in enumerate(messages)
-                if m.get("role") != "system"
-                and cls.SYNTHETIC_IMAGE_MARKER not in str(m.get("content", ""))
-            ]
-            # Si messages contient le nouveau tour entrant non encore sauvé dans branch_messages, on aligne le préfixe
-            if len(non_sys_branch) == len(non_sys_payload_indices):
-                pairs = zip(non_sys_payload_indices, non_sys_branch)
-            elif len(non_sys_branch) < len(non_sys_payload_indices):
-                pairs = zip(non_sys_payload_indices[: len(non_sys_branch)], non_sys_branch)
-            else:
-                pairs = zip(
-                    non_sys_payload_indices,
-                    non_sys_branch[-len(non_sys_payload_indices) :],
-                )
-
-            for p_idx, bm in pairs:
-                if bm.get("role") == messages[p_idx].get("role"):
-                    if not messages[p_idx].get("id") and bm.get("id"):
-                        messages[p_idx]["id"] = bm["id"]
-                    if not messages[p_idx].get("updated_at") and (
-                        bm.get("updated_at") or bm.get("timestamp")
-                    ):
-                        messages[p_idx]["updated_at"] = bm.get("updated_at") or bm.get(
-                            "timestamp"
-                        )
+            cls.rehydrate_messages_metadata(messages, branch_messages)
 
         cut_msg_idx: Optional[int] = None
         if pivot_msg_id:
@@ -858,15 +1237,17 @@ class EchoCompactionEngine:
         compressed_share_pct: Optional[float] = None,
         kept_share_pct: Optional[float] = None,
         min_turns_required: Optional[int] = None,
+        target_model: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Exécute la Compaction Contextuelle In-Place sur les tours passés complets (past_messages) :
         1. Découpe past_messages en tours et calcule le pivot selon la répartition (ex: 63% compressé / 37% gardé de 20%).
         2. Sérialise les tours de HEAD sans aucune troncature et avec leurs AEC.
-        3. Appelle EchoGeminiClient.call_distillation avec max_tokens = min(compressed_budget_tokens, 65535).
-        4. Scelle <artifact id="AEC_context_checkpoint"> dans echo_settings['context_checkpoint'].
+        3. Résout le modèle le plus haut disponible par clamping et cascade descendante.
+        4. Appelle EchoGeminiClient.call_distillation en préservant température et thinking par défaut.
+        5. Scelle <artifact id="AEC_context_checkpoint"> dans echo_settings['context_checkpoint'].
         """
-        from echo_constants import COMPACTION_MIN_TURNS_REQUIRED
+        from echo_constants import COMPACTION_MIN_TURNS_REQUIRED, get_descending_cascade, ECHO_MODELS_REGISTRY
         from echo_prompts import SYS_COMPACTION_DISTILL
         from echo_gemini_client import EchoGeminiClient
 
@@ -921,7 +1302,7 @@ class EchoCompactionEngine:
             f"<COMPRESSION_BUDGET>\n"
             f"Budget cible maximal pour ce Checkpoint : {compressed_budget} tokens "
             f"(capacité de sortie maximale : {api_max_output_tokens} tokens).\n"
-            f"Conserve le maximum de détails techniques pertinents, le code, les décisions et le sens complet sans dépasser ce budget.\n"
+            f"INJONCTION D'EXHAUSTIVITÉ & EXPLOITATION CAPACITAIRE : Le Modèle DOIT exploiter pleinement la capacité disponible pour fournir une archive technique hautement détaillée et approfondie, restituant l'intégralité du code critique, des données extraites, des raisonnements complets et de la chronologie des échanges.\n"
             f"</COMPRESSION_BUDGET>"
         ]
         if existing_ckpt and existing_ckpt.get("summary_md"):
@@ -941,15 +1322,36 @@ class EchoCompactionEngine:
             )
 
         user_prompt = "\n\n".join(prompt_parts)
-        summary_md = await EchoGeminiClient.call_distillation(
-            prompt=user_prompt,
-            __user__={"id": user_id},
-            __metadata__={**(metadata or {}), "chat_id": chat_id},
-            is_json=False,
-            max_tokens=api_max_output_tokens,
-            system_instruction=SYS_COMPACTION_DISTILL,
-            timeout=240,
-        )
+
+        # Résolution du modèle le plus haut disponible par clamping
+        start_model = target_model or clamp_model("MODEL_PROMETHEUS", metadata, user_id=user_id)
+        if start_model not in ECHO_MODELS_REGISTRY:
+            start_model = "MODEL_APOLLO"
+        candidate_models = get_descending_cascade(start_model, include_start=True)
+        if not candidate_models:
+            candidate_models = [start_model]
+
+        summary_md = ""
+        model_used = None
+        for cand_model in candidate_models:
+            try:
+                res = await EchoGeminiClient.call_distillation(
+                    prompt=user_prompt,
+                    __user__={"id": user_id},
+                    __metadata__={**(metadata or {}), "chat_id": chat_id},
+                    is_json=False,
+                    max_tokens=api_max_output_tokens,
+                    target_model=cand_model,
+                    system_instruction=SYS_COMPACTION_DISTILL,
+                    timeout=240,
+                )
+                if res and str(res).strip():
+                    summary_md = str(res).strip()
+                    model_used = cand_model
+                    break
+                logger.warning(f"ECHO Compaction: Distillation vide avec {cand_model}, tentative suivante...")
+            except Exception as e:
+                logger.warning(f"ECHO Compaction: Échec {cand_model} ({e}), repli cascade...")
 
         if not summary_md or not summary_md.strip():
             return {
@@ -1000,7 +1402,7 @@ class EchoCompactionEngine:
             event_name="context_compaction",
             status="completed",
             summary=(
-                f"Compaction contextuelle #{compaction_count} exécutée : "
+                f"Compaction contextuelle #{compaction_count} exécutée via {model_used or 'LLM'} : "
                 f"tours 1 à {plan['new_pivot_turn_idx']} consolidés dans <artifact id=\"AEC_context_checkpoint\">, "
                 f"{plan['keep_recent_turns']} tour(s) récent(s) maintenu(s) intact(s)."
             ),
@@ -1011,10 +1413,10 @@ class EchoCompactionEngine:
             "ok": True,
             "compaction_count": compaction_count,
             "compacted_turns": plan["new_pivot_turn_idx"],
+            "model_used": model_used,
             "delta_turns_count": plan["delta_turns_count"],
             "keep_recent_turns": plan["keep_recent_turns"],
             "checkpoint_tokens": estimate_token_size(summary_xml),
             "tail_tokens_est": plan["tail_tokens_est"],
         }
-
 

@@ -2,14 +2,17 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - FLASK ROUTES
-VERSION : 5.228.0.1
+VERSION : 5.236.1.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.236.1.1: Validation Dual-Tier untrusted_session_timeout/session_timeout dans auth_settings_save et exposition directe de is_trusted, expires_at, expires_dt et time_remaining_sec dans api_auth_sessions.
+# 5.235.5.1: Prise en charge de purge_dead_branches dans update_maint et reset d'authentification via get_echo_identity_db_path et open_db.
 # 5.228.0.1: Ajout du calcul et de l'exposition de la taille du profil utilisateur (profile_size_bytes, profile_size_fmt) dans /api/user_stats.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 import configparser
+from contextlib import closing
 import datetime
 import glob
 import json
@@ -36,6 +39,7 @@ from core.config import (
     DEFAULT_MAINT_CONFIG,
     DOCKER_AVAILABLE,
     ECHO_USERS_ROOT,
+    HAS_ECHO_LIBS,
     HAS_PSUTIL,
     HOST_GATEWAY,
     MAINTENANCE_STATE,
@@ -54,6 +58,10 @@ from core.config import (
     paramiko,
     psutil,
 )
+
+if HAS_ECHO_LIBS:
+    from echo_paths import get_echo_identity_db_path
+    from echo_db_schema import open_db
 from core.utils import (
     _format_bytes,
     _get_tree_size,
@@ -520,12 +528,21 @@ def auth_reset_user(user_id):
         return redirect(url_for('index'))
 
     safe_uid = secure_filename(user_id)
-    db_path = os.path.join(ECHO_USERS_ROOT, safe_uid, 'identity.db')
+    if HAS_ECHO_LIBS:
+        db_path = get_echo_identity_db_path(user_id)
+    else:
+        db_path = os.path.join(ECHO_USERS_ROOT, safe_uid, 'identity.db')
     purged_any = False
     if os.path.exists(db_path):
         try:
-            with sqlite3.connect(db_path, timeout=5.0) as conn:
-                conn.execute("DELETE FROM auth_data")
+            if HAS_ECHO_LIBS:
+                with closing(open_db(db_path, timeout=5.0)) as conn:
+                    conn.execute("DELETE FROM auth_data")
+                    conn.commit()
+            else:
+                with closing(sqlite3.connect(db_path, timeout=5.0)) as conn:
+                    conn.execute("DELETE FROM auth_data")
+                    conn.commit()
             purged_any = True
         except Exception as e:
             flash(f'Erreur lors de la purge identity.db: {e}', 'danger')
@@ -724,6 +741,7 @@ def update_maint():
     c["consolidation"]["similarity_threshold"] = float(request.form.get("consol_similarity", 0.75))
     
     c["purge_orphaned_chats"] = 'purge_orphaned_chats' in request.form
+    c["purge_dead_branches"] = 'purge_dead_branches' in request.form
     c["purge_orphaned_users"] = 'purge_orphaned_users' in request.form
 
     ok = save_maint_config(c)
@@ -943,7 +961,10 @@ def auth_settings_save():
         settings["pwd_require_special"] = request.form.get("pwd_require_special") == "on"
         settings["temp_pass_hours"] = int(request.form.get("temp_pass_hours", 24))
         settings["totp_tolerance"] = int(request.form.get("totp_tolerance", 1))
-        settings["session_timeout"] = int(request.form.get("session_timeout", 0))
+        untrusted_val = int(request.form.get("untrusted_session_timeout", 24))
+        settings["untrusted_session_timeout"] = untrusted_val if untrusted_val in (1, 2, 4, 8, 12, 24) else 24
+        trusted_val = int(request.form.get("session_timeout", 2160))
+        settings["session_timeout"] = trusted_val if trusted_val in (168, 720, 2160, 4380, 8760, 0) else 2160
         
         if save_auth_settings(settings):
             flash("Paramètres de sécurité SSO sauvegardés avec succès.", "success")
@@ -974,12 +995,11 @@ def auth_disable_user():
 def api_auth_sessions():
     if not session.get('logged_in'): return jsonify({"error": "Unauthorized"}), 401
     try:
-        settings = get_auth_settings()
-        timeout_h = int(settings.get("session_timeout", 2160))
+        now = int(time.time())
         sessions_dict = {}
         with sqlite3.connect("/app/auth-data/auth.db") as conn:
             conn.row_factory = sqlite3.Row
-            for row in conn.execute("SELECT * FROM sessions"):
+            for row in conn.execute("SELECT * FROM sessions ORDER BY created_at DESC"):
                 s = dict(row)
                 sid = s['session_id']
                 if sid in sessions_dict:
@@ -991,10 +1011,15 @@ def api_auth_sessions():
                         else:
                             sessions_dict[sid]['ip_address'] = new_ip
                 else:
+                    is_trusted = bool(s.get('is_trusted', 0))
+                    exp_at = s.get('expires_at')
+                    if exp_at is None and not is_trusted:
+                        exp_at = int(s['created_at']) + 86400
+                    s['is_trusted'] = is_trusted
+                    s['expires_at'] = int(exp_at) if exp_at is not None else None
                     s['created_dt'] = datetime.datetime.fromtimestamp(s['created_at']).strftime('%d/%m/%Y %H:%M')
-                    s['expires_at'] = s['created_at'] + (timeout_h * 3600) if timeout_h > 0 else None
-                    s['expires_dt'] = datetime.datetime.fromtimestamp(s['expires_at']).strftime('%d/%m/%Y %H:%M') if s['expires_at'] else "Infini"
-                    s['time_remaining_sec'] = s['expires_at'] - int(time.time()) if s['expires_at'] else None
+                    s['expires_dt'] = datetime.datetime.fromtimestamp(exp_at).strftime('%d/%m/%Y %H:%M:%S') if exp_at is not None else "Éternelle"
+                    s['time_remaining_sec'] = (int(exp_at) - now) if exp_at is not None else None
                     sessions_dict[sid] = s
         return jsonify({"sessions": list(sessions_dict.values())})
     except Exception as e:

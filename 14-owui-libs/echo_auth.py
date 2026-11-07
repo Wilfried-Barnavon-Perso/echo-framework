@@ -2,19 +2,19 @@
 """
 title: ECHO Echo Auth
 author: Wilfried BARNAVON
-version: 5.231.24.1
+version: 5.236.5.1
 description: Gestion de l'authentification et OAuth2.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.236.5.1: Rectification du prompt get_auth_prompt documentant le support simultané et le failover transparent OAuth2 / Clés API.
+# 5.235.5.2: Séparation stricte identity.db via get_echo_identity_db_path, capture EchoDbMissingError et méthode delete_auth_data_by_prefixes.
+# 5.234.0.1: Factorisation de get_auth_prompt via les constantes SSOT ECHO_AUTH_TITLE_CONFIG et ECHO_AUTH_PENDING_MARKER.
 # 5.231.24.1: Utilisation des constantes SSOT ECHO_QUOTA_REFRESH_THROTTLE_SEC, ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC et ECHO_QUOTA_RESET_IMMINENT_LABEL.
 # 5.231.13.1: Support de la clé disabled dans get_ui_quota_snapshot et rafraîchissement Cloud réactif (60s / échéance Imminent) dans refresh_quota_if_needed.
-# 5.231.12.1: Résolution systématique de ca_model_id et suppression du court-circuit de get_quota_summary dans get_ui_quota_snapshot.
-# 5.231.10.1: Factorisation de format_quota_reset_time, get_active_auth_providers et get_ui_quota_snapshot pour le HUD.
-# 5.228.3.2: Traçabilité typée des erreurs réseau httpx, verrouillage Circuit Breaker sur RequestError, Auto-Heal unlock_agy_endpoint sur 200 OK et ciblage prioritaire Gemini dans le fallback fetch_available_models.
 import os
 import time
-import sqlite3
+from contextlib import closing
 import re
 from echo_http import _get_global_client
 
@@ -26,6 +26,8 @@ import orjson as std_json
 import base64
 import httpx
 from echo_state_manager import EchoStateManager
+from echo_db_schema import EchoDbMissingError, open_db
+from echo_paths import get_echo_identity_db_path
 
 from echo_constants import (
     GOOGLE_API_BASE_URL, ECHO_USER_AGENT, ECHO_AGY_USER_AGENT, GOOGLE_API_KEY_PATTERN,
@@ -38,7 +40,7 @@ from echo_constants import (
     AUTH_DATA_USER_TIER, AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_KEY_SECONDARY, AUTH_METHOD_OAUTH2,
     ECHO_USERS_ROOT, GOOGLE_OAUTH_TOKEN_URL, GOOGLE_OAUTH_TOKEN_LIFETIME,
     ECHO_QUOTA_REFRESH_THROTTLE_SEC, ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC,
-    ECHO_QUOTA_RESET_IMMINENT_LABEL
+    ECHO_QUOTA_RESET_IMMINENT_LABEL, ECHO_AUTH_PENDING_MARKER, ECHO_AUTH_TITLE_CONFIG
 )
 class EchoAuth:
     def __init__(self, user_id: str = "system"):
@@ -53,27 +55,31 @@ class EchoAuth:
         os.makedirs(self.user_dir, exist_ok=True)
 
     def _get_db_path(self, user_id: str = None) -> str:
-        uid = user_id or self.user_id
-        safe_uid = "".join(x for x in str(uid) if x.isalnum() or x in "-_")
-        return os.path.join(ECHO_USERS_ROOT, safe_uid, "identity.db")
+        return get_echo_identity_db_path(user_id or self.user_id)
 
     def get_api_keys(self, user_id: str = None) -> List[str]:
         db_path = self._get_db_path(user_id)
-        if not os.path.exists(db_path): return []
         try:
-            with sqlite3.connect(db_path, timeout=5.0) as conn:
+            with closing(open_db(db_path, readonly=True, timeout=5.0)) as conn:
                 rows = conn.execute("SELECT key FROM auth_data").fetchall()
                 return [r[0] for r in rows]
-        except: return []
+        except EchoDbMissingError:
+            return []
+        except Exception as e:
+            print(f"[EchoAuth] Erreur lecture clés API: {e}")
+            return []
 
     def get_auth_data(self, key_name: str, user_id: str = None) -> Optional[str]:
         db_path = self._get_db_path(user_id)
-        if not os.path.exists(db_path): return None
         try:
-            with sqlite3.connect(db_path, timeout=5.0) as conn:
+            with closing(open_db(db_path, readonly=True, timeout=5.0)) as conn:
                 row = conn.execute("SELECT value FROM auth_data WHERE key = ?", (key_name,)).fetchone()
                 return row[0] if row else None
-        except: return None
+        except EchoDbMissingError:
+            return None
+        except Exception as e:
+            print(f"[EchoAuth] Erreur lecture auth_data {key_name}: {e}")
+            return None
 
     def get_model_quota(self, ca_model_id: str) -> dict:
         """
@@ -237,22 +243,44 @@ class EchoAuth:
     def save_api_key(self, key_name: str, value: str, user_id: str = None):
         db_path = self._get_db_path(user_id)
         try:
-            with sqlite3.connect(db_path, timeout=10.0) as conn:
-                conn.execute("CREATE TABLE IF NOT EXISTS auth_data (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
+            with closing(open_db(db_path, timeout=10.0)) as conn:
                 conn.execute("INSERT OR REPLACE INTO auth_data (key, value, updated_at) VALUES (?, ?, ?)", (key_name, value, int(time.time())))
                 conn.commit()
         except Exception as e:
             print(f"[EchoAuth] Erreur sauvegarde clé {key_name}: {e}")
 
+    save_auth_data = save_api_key
+
     def delete_api_key(self, key_name: str, user_id: str = None):
         db_path = self._get_db_path(user_id)
-        if not os.path.exists(db_path): return
         try:
-            with sqlite3.connect(db_path, timeout=10.0) as conn:
+            with closing(open_db(db_path, timeout=10.0)) as conn:
                 conn.execute("DELETE FROM auth_data WHERE key = ?", (key_name,))
                 conn.commit()
+        except EchoDbMissingError:
+            return
         except Exception as e:
             print(f"[EchoAuth] Erreur suppression clé {key_name}: {e}")
+
+    delete_auth_data = delete_api_key
+
+    def delete_auth_data_by_prefixes(self, prefixes: Tuple[str, ...], user_id: str = None) -> int:
+        """Supprime les entrées auth_data dont la clé commence par l'un des préfixes fournis."""
+        if not prefixes:
+            return 0
+        db_path = self._get_db_path(user_id)
+        clauses = " OR ".join("key LIKE ?" for _ in prefixes)
+        params = tuple(f"{p}%" for p in prefixes)
+        try:
+            with closing(open_db(db_path, timeout=10.0)) as conn:
+                cur = conn.execute(f"DELETE FROM auth_data WHERE {clauses}", params)
+                conn.commit()
+                return cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
+        except EchoDbMissingError:
+            return 0
+        except Exception as e:
+            print(f"[EchoAuth] Erreur suppression préfixes {prefixes}: {e}")
+            return 0
 
 
 class AuthService:
@@ -731,13 +759,13 @@ class AuthService:
 
         return (
 
-            "\U0001f510 **Configuration de l'Authentification ECHO**\n\n"
+            f"\U0001f510 **{ECHO_AUTH_TITLE_CONFIG}**\n\n"
 
-            "⚠️ **Priorisation des accès :** L'authentification Google (OAuth2) est toujours prioritaire. "
+            "ℹ️ **Priorisation des accès :** L'authentification Google (OAuth2) est prioritaire lors des requêtes. "
 
-            "Si vous fournissez une clé API, elle ne sera enregistrée que si la vérification "
+            "Vous pouvez enregistrer simultanément des clés d'API Google AI Studio : elles serviront de relais "
 
-            "du bon fonctionnement d'OAuth échoue.\n\n"
+            "de secours (failover) automatique en cas d'indisponibilité ou d'épuisement des quotas OAuth2.\n\n"
 
             f"{pkce_section}\n"
 
@@ -749,7 +777,7 @@ class AuthService:
 
             "ECHO la détecte, la valide et l'enregistre automatiquement.\n\n"
 
-            "*(ECHO_SESSION_AUTH_PENDING)*"
+            f"*{ECHO_AUTH_PENDING_MARKER}*"
 
         )
 

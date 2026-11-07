@@ -1,23 +1,30 @@
 """
 title: ECHO Browser Lib
 author: ECHO Framework
-version: 5.231.20.1
+version: 5.232.0.1
 description: Composant système interne : ECHO Browser Lib.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.232.0.1: Ajout du helper factorisé render_ephemeral_html pour la rasterisation incognito Zéro-Disque en mémoire vive via /render_ephemeral_view.
 # 5.231.20.1: Propagation explicite de chat_id dans EchoBrowserLib pour isoler les sessions Playwright éphémères et sous-agents sans perdre le coffre de fichiers du chat.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.15: Nouveaux types d'action (select, click_current), option clear_before, et zoom réel CDP (absolute_grid).
 # 1.14: Mise à jour description action_zoom_in pour mentionner le VISEUR ROUGE.
-# 1.13: Ajout de action_zoom_in et action_zoom_out pour le ciblage géométrique de précision (Multimodal).
 
 import httpx
 import logging
 from typing import Dict, Callable
 
 # On suppose que echo_constants est disponible dans le chemin PYTHONPATH (/app/backend/echo_libs)
-from echo_constants import NAVIGATION_ENGINE_URL, DEFAULT_VISION_GRID_STEP
+from echo_constants import (
+    NAVIGATION_ENGINE_URL,
+    DEFAULT_VISION_GRID_STEP,
+    EPHEMERAL_RENDER_ENDPOINT,
+    EPHEMERAL_RENDER_VIEWPORT_W,
+    EPHEMERAL_RENDER_VIEWPORT_H,
+    EPHEMERAL_RENDER_SETTLE_MS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +130,31 @@ async def req_to_browser(timeout: int, endpoint: str, data: dict = None, user_id
         return resp.json()
     except Exception as e:
         return {"status": "error", "message": f"Worker inaccessible : {str(e)}"}
+
+
+async def render_ephemeral_html(
+    html: str,
+    timeout_ms: int = 15000,
+    settle_ms: int = EPHEMERAL_RENDER_SETTLE_MS,
+    viewport_w: int = EPHEMERAL_RENDER_VIEWPORT_W,
+    viewport_h: int = EPHEMERAL_RENDER_VIEWPORT_H,
+    user_id: str = "system",
+) -> dict:
+    """Rendu HTML incognito en mémoire vive via le Browser Worker (Zéro-Disque)."""
+    req_timeout = max(20, (int(timeout_ms) // 1000) + 10)
+    return await req_to_browser(
+        timeout=req_timeout,
+        endpoint=EPHEMERAL_RENDER_ENDPOINT,
+        data={
+            "html": html,
+            "timeout_ms": timeout_ms,
+            "settle_ms": settle_ms,
+            "viewport_w": viewport_w,
+            "viewport_h": viewport_h,
+        },
+        user_id=user_id,
+    )
+
 
 class EchoBrowserLib:
     """Encapsule les actions réseau pour le sous-agent navigateur."""

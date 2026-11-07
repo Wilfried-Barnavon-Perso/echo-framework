@@ -2,161 +2,190 @@
 """
 title: ECHO Echo State Manager
 author: Wilfried BARNAVON
-version: 5.231.28.2
+version: 5.236.0.1
 description: Gestionnaire d'état SQLite et RAG.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.236.0.1: Auto-matérialisation déclarative idempotente via ensure_db en écriture non-readonly.
+# 5.235.5.3: Alignement sur les 20 colonnes déclaratives de echo_resources (CRUD, allowed fields et _row_to_resource).
+# 5.235.5.2: Décorateur @_session_scope, suppression des DDL et tables mortes, intégration ECHO_TURN_CONTEXT et alignement 14 colonnes echo_resources.
+# 5.232.5.1: Filtrage par workspace dans get_resources et ajout des méthodes delete_codex_resource et clear_codex_workspace_resources.
 # 5.231.28.2: Suppression des tables obsolètes plans et codex_docs et de leurs méthodes CRUD (unification exclusive dans echo_resources).
-# 5.231.24.1: Ajout de init_session_context_baseline pour l'amorçage du différentiel et des quotas dès le tour 1.
-# 5.231.21.3: Centralisation CRUD chiffré AES-256-GCM de identity_vault via _get_identity_connection (lecture seule pure sans Lazy Migration).
-# 5.231.13.1: Séparation de archive_previous_context_stats (début de tour) et save_context_stats (fusion sans écrasement de previous_context_stats).
-# 5.231.10.1: Auto-archivage de previous_context_stats et méthode get_previous_context_stats pour le calcul de différentiel.
-import os
-import time
-import sqlite3
-import shutil
+import contextlib
+import functools
 import hashlib
+import os
+import shutil
+import sqlite3
+import time
+from typing import Any, Dict, List, Optional, Tuple
+
 import orjson as json
 import orjson as std_json
-from typing import Any, List, Optional
-from echo_paths import get_echo_session_path, resolve_upload_file_path
-from echo_constants import ECHO_UPLOADS_TRANSIT_DIR, ECHO_USERS_ROOT
+
+from echo_constants import ECHO_TURN_CONTEXT, ECHO_UPLOADS_TRANSIT_DIR, ECHO_USERS_ROOT
+from echo_db_schema import (
+    DB_KIND_IDENTITY,
+    DB_KIND_SESSION,
+    EchoDbMissingError,
+    ensure_db,
+    open_db,
+)
+from echo_paths import get_echo_identity_db_path, get_echo_session_path, resolve_upload_file_path, sanitize_echo_id
+
+
+def _session_scope(default_return: Any = None):
+    """Garde-fou d'étanchéité interdisant l'accès aux tables de session sans chat_id."""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(self, *args, **kwargs):
+            if not self.chat_id:
+                print(f"[EchoStateManager] {func.__name__} ignoré : portée session requise (chat_id absent).")
+                return default_return() if callable(default_return) else default_return
+            return func(self, *args, **kwargs)
+        return wrapper
+    return decorator
+
+
+class BranchShadowsList(list):
+    """Liste ordonnée d'ombres conversationnelles supportant l'accès rétrocompatible par clés (dict)."""
+    def keys(self):
+        return [r.get("message_id") for r in self if isinstance(r, dict) and r.get("message_id")]
+
+    def __eq__(self, other):
+        if isinstance(other, dict) and len(other) == 0 and len(self) == 0:
+            return True
+        return super().__eq__(other)
+
+    def __getitem__(self, item):
+        res = super().__getitem__(item)
+        if isinstance(item, slice):
+            return BranchShadowsList(res)
+        return res
+
 
 class EchoStateManager:
-    def __init__(self, user_id: str = "system", chat_id: Optional[str] = None):
-        if user_id and "/" in str(user_id): self.user_id = "system"
-        else: self.user_id = user_id
-        self.chat_id = chat_id
-        safe_uid = "".join(x for x in str(self.user_id) if x.isalnum() or x in "-_")
-        self.user_dir = os.path.join(ECHO_USERS_ROOT, safe_uid)
-        
-        if chat_id:
-            self.db_path = get_echo_session_path(self.user_id, self.chat_id, "db")
+    def __init__(self, user_id: str = "system", chat_id: Optional[str] = None, db_root_dir: Optional[str] = None):
+        if user_id and "/" in str(user_id):
+            self.user_id = "system"
         else:
-            self.db_path = os.path.join(self.user_dir, "identity.db")
-            
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        self._init_db()
+            self.user_id = user_id
+        self.chat_id = chat_id
+        self.safe_uid = sanitize_echo_id(self.user_id)
 
-    def _get_connection(self):
-        conn = sqlite3.connect(self.db_path, timeout=10.0)
-        conn.execute("PRAGMA journal_mode=WAL;"); return conn
+        if db_root_dir is None or db_root_dir == ECHO_USERS_ROOT:
+            self.identity_db_path = get_echo_identity_db_path(self.user_id)
+            self.session_dir = os.path.dirname(get_echo_session_path(self.user_id, self.chat_id, "db")) if chat_id else os.path.dirname(self.identity_db_path)
+            self.db_path = get_echo_session_path(self.user_id, self.chat_id, "db") if chat_id else self.identity_db_path
+            self.user_dir = os.path.dirname(self.identity_db_path)
+        else:
+            self.user_dir = os.path.join(db_root_dir, self.safe_uid)
+            self.identity_db_path = os.path.join(self.user_dir, "identity.db")
+            self.session_dir = os.path.join(self.user_dir, "chats", sanitize_echo_id(chat_id)) if chat_id else self.user_dir
+            self.db_path = os.path.join(self.session_dir, "session.db") if chat_id else self.identity_db_path
 
-    def _get_identity_connection(self) -> sqlite3.Connection:
-        """Retourne une connexion pointant exclusivement vers identity.db (indépendamment de self.chat_id)."""
-        os.makedirs(self.user_dir, exist_ok=True)
-        id_db_path = os.path.join(self.user_dir, "identity.db")
-        conn = sqlite3.connect(id_db_path, timeout=10.0)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS identity_vault ("
-            "user_id TEXT, service TEXT, account_id TEXT, credentials TEXT, "
-            "PRIMARY KEY (user_id, service, account_id))"
-        )
-        return conn
-
-    def _init_db(self):
+    @contextlib.contextmanager
+    def _get_connection(self, readonly: bool = False):
+        """Ouvre une connexion sur la base courante (session.db si chat_id, sinon identity.db)."""
+        if not readonly and not os.path.exists(self.db_path):
+            kind = DB_KIND_SESSION if self.chat_id else DB_KIND_IDENTITY
+            ensure_db(self.db_path, kind)
+        conn = open_db(self.db_path, readonly=readonly)
         try:
-            with self._get_connection() as conn:
-                conn.execute("CREATE TABLE IF NOT EXISTS suture_index (cumulative_hash TEXT PRIMARY KEY, chat_id TEXT NOT NULL, invariant_hash TEXT NOT NULL, parent_hash TEXT, message_id TEXT, timestamp INTEGER)")
-                conn.execute("CREATE TABLE IF NOT EXISTS rich_payloads (invariant_hash TEXT PRIMARY KEY, rich_parts_json TEXT NOT NULL, message_id TEXT, created_at INTEGER)")   
-                # Table 'message_shadows' : Métadonnées Spécifiques à Gemini
-                # Nom conservé pour compatibilité avec les bases de données en production.
-                # Stocke les métadonnées propres à l'API Gemini (thoughtSignature, usageMetadata,
-                # candidateIndex) nécessaires à la Suture Bit-Perfect des Métadonnées Gemini.
-                conn.execute("CREATE TABLE IF NOT EXISTS message_shadows (message_id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, role TEXT NOT NULL, full_parts_json TEXT NOT NULL, updated_at INTEGER)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_shadow_chat_id ON message_shadows (chat_id)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_id ON suture_index (chat_id)")
-                conn.execute("CREATE TABLE IF NOT EXISTS cognitive_signatures (cumulative_hash TEXT PRIMARY KEY, thought_signature TEXT NOT NULL, message_id TEXT, model_id TEXT, updated_at INTEGER)")
-                # Index crucial pour les cascades cognitives où le même message_id est stocké avec
-                # de multiples cumulative_hash. Empêche les full table scans.
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_sig_msg_id ON cognitive_signatures (message_id)")
-                conn.execute("CREATE TABLE IF NOT EXISTS tool_journal (cumulative_hash TEXT PRIMARY KEY, io_json TEXT NOT NULL, updated_at INTEGER)")
+            yield conn
+        finally:
+            conn.close()
 
-                try: conn.execute("ALTER TABLE message_shadows ADD COLUMN is_embedded INTEGER DEFAULT 0")
-                except: pass
+    @contextlib.contextmanager
+    def _get_identity_connection(self, readonly: bool = False):
+        """Ouvre une connexion pointant exclusivement vers identity.db."""
+        if not readonly and not os.path.exists(self.identity_db_path):
+            ensure_db(self.identity_db_path, DB_KIND_IDENTITY)
+        conn = open_db(self.identity_db_path, readonly=readonly)
+        try:
+            yield conn
+        finally:
+            conn.close()
 
-                conn.execute("CREATE TABLE IF NOT EXISTS processed_files (chat_id TEXT, file_id TEXT, filename TEXT, mime TEXT, mode TEXT, timestamp INTEGER, file_content TEXT, message_id TEXT, PRIMARY KEY (chat_id, file_id))")
-                conn.execute("CREATE TABLE IF NOT EXISTS call_bridge (call_id TEXT PRIMARY KEY, signature TEXT NOT NULL, function_name TEXT NOT NULL, args_json TEXT, timestamp INTEGER)")
-                conn.execute("CREATE TABLE IF NOT EXISTS auth_data (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
-                if not self.chat_id:
-                    conn.execute("CREATE TABLE IF NOT EXISTS identity_vault (user_id TEXT, service TEXT, account_id TEXT, credentials TEXT, PRIMARY KEY (user_id, service, account_id))")
-                # Préférences Pipe propagées aux outils (politique modèle, crédits) et KV session unifié
-                conn.execute("CREATE TABLE IF NOT EXISTS echo_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
+    # =========================================================================
+    # SUTURE & SHADOWS (SESSION.DB)
+    # =========================================================================
 
-                # Echos Skills & Cognitive Council (V9)
-                conn.execute("CREATE TABLE IF NOT EXISTS cognitive_threads (sub_sid TEXT, chat_id TEXT NOT NULL, role_id TEXT NOT NULL, step_index INTEGER, role TEXT NOT NULL, content_json TEXT NOT NULL, thought_signature TEXT, updated_at INTEGER, PRIMARY KEY (sub_sid, step_index))")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_thread_chat ON cognitive_threads (chat_id)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_thread_sid ON cognitive_threads (sub_sid)")
-
-                # Registre Unifié (v8.0) — Source Unique de Vérité (Plans, Codex, Fichiers, Workflows)
-                conn.execute("""CREATE TABLE IF NOT EXISTS echo_resources (
-                    id            TEXT PRIMARY KEY,
-                    name          TEXT NOT NULL,
-                    resource_type TEXT NOT NULL,
-                    mime          TEXT,
-                    status        TEXT NOT NULL,
-                    summary       TEXT,
-                    storage_path  TEXT,
-                    git_tracked   INTEGER DEFAULT 0,
-                    message_id    TEXT,
-                    plan_goal     TEXT,
-                    author_model  TEXT,
-                    language      TEXT,
-                    lines         INTEGER,
-                    last_commit   TEXT,
-                    commit_msg    TEXT,
-                    created_at    INTEGER NOT NULL,
-                    updated_at    INTEGER NOT NULL
-                )""")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_res_type ON echo_resources (resource_type)")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_res_updated ON echo_resources (updated_at)")
-
-                # MIGRATION : Ajout des colonnes manquantes si nécessaire
-                try: conn.execute("ALTER TABLE rich_payloads ADD COLUMN message_id TEXT")
-                except: pass
-                try: conn.execute("ALTER TABLE cognitive_signatures ADD COLUMN message_id TEXT")
-                except: pass
-                try: conn.execute("ALTER TABLE cognitive_signatures ADD COLUMN model_id TEXT")
-                except: pass
-                try: conn.execute("ALTER TABLE suture_index ADD COLUMN message_id TEXT")
-                except: pass
-                
-                # MIGRATION ECHO CODEX MULTI-WORKSPACE (item_type = file | directory)
-                try: conn.execute("ALTER TABLE echo_resources ADD COLUMN item_type TEXT DEFAULT 'file'")
-                except: pass
-
-                conn.commit()
-        except Exception as e: print(f"[EchoStateManager] Init DB Error: {e}")
-
+    @_session_scope()
     def save_message_shadow(self, message_id: str, chat_id: str, role: str, parts: List[dict], updated_at: Optional[int] = None):
-        if not message_id: return
+        """Persiste une ombre de message dans message_shadows (chat_id conservé pour compatibilité, ignoré en SQL)."""
+        if not message_id:
+            return
         ts = updated_at if updated_at is not None else int(time.time())
         try:
-            with self._get_connection() as conn:
+            with self._get_connection() as conn, conn:
                 conn.execute("""
-                    INSERT INTO message_shadows (message_id, chat_id, role, full_parts_json, updated_at) 
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO message_shadows (message_id, role, full_parts_json, updated_at)
+                    VALUES (?, ?, ?, ?)
                     ON CONFLICT(message_id) DO UPDATE SET
-                        chat_id = excluded.chat_id,
                         role = excluded.role,
                         full_parts_json = excluded.full_parts_json,
                         updated_at = excluded.updated_at
-                """, (message_id, chat_id, role, json.dumps(parts).decode('utf-8'), ts))
-                conn.commit()
+                """, (message_id, role, json.dumps(parts).decode('utf-8'), ts))
+        except EchoDbMissingError:
+            pass
         except Exception as e:
             print(f"[ECHO_DEBUG_FATAL] Erreur écriture save_message_shadow: {e}")
 
+    @_session_scope()
     def get_message_shadow(self, message_id: str, updated_at: int) -> Optional[List[dict]]:
-        if not message_id: return None
+        if not message_id:
+            return None
         try:
-            with self._get_connection() as conn:
-                row = conn.execute("SELECT full_parts_json FROM message_shadows WHERE message_id = ? AND updated_at = ?", (message_id, int(updated_at))).fetchone()
-                if row: return std_json.loads(row[0])
+            with self._get_connection(readonly=True) as conn:
+                row = conn.execute(
+                    "SELECT full_parts_json FROM message_shadows WHERE message_id = ? AND updated_at = ?",
+                    (message_id, int(updated_at)),
+                ).fetchone()
+                if row:
+                    return std_json.loads(row[0])
+        except EchoDbMissingError:
+            return None
         except Exception as e:
             print(f"[ECHO_DEBUG_FATAL] Erreur lecture get_message_shadow: {e}")
         return None
+
+    @_session_scope()
+    def get_shadow(self, message_id: str, updated_at: Optional[int] = None) -> Optional[List[dict]]:
+        """Alias pour la lecture d'une ombre de message avec updated_at facultatif."""
+        if not message_id:
+            return None
+        try:
+            with self._get_connection(readonly=True) as conn:
+                if updated_at is not None:
+                    row = conn.execute(
+                        "SELECT full_parts_json FROM message_shadows WHERE message_id = ? AND updated_at = ?",
+                        (message_id, int(updated_at)),
+                    ).fetchone()
+                else:
+                    row = conn.execute(
+                        "SELECT full_parts_json FROM message_shadows WHERE message_id = ? ORDER BY updated_at DESC LIMIT 1",
+                        (message_id,),
+                    ).fetchone()
+                if row and row[0]:
+                    return std_json.loads(row[0])
+        except EchoDbMissingError:
+            return None
+        except Exception as e:
+            print(f"[EchoStateManager] get_shadow error: {e}")
+        return None
+
+    @_session_scope()
+    def save_shadow(self, message_id: str, parts: List[dict], role: str = "user", updated_at: Optional[int] = None):
+        """Alias pour persister une ombre de message."""
+        return self.save_message_shadow(
+            message_id=message_id,
+            chat_id=self.chat_id or "",
+            role=role,
+            parts=parts,
+            updated_at=updated_at,
+        )
 
     def calculate_invariant_hash(self, role: str, content: Any, tool_io: dict = None) -> str:
         norm_c = content.strip() if isinstance(content, str) else json.dumps(content, option=json.OPT_SORT_KEYS).decode('utf-8')
@@ -166,121 +195,119 @@ class EchoStateManager:
     def calculate_cumulative_hash(self, inv: str, parent: str = None) -> str:
         return hashlib.sha256(f"{inv}|{parent or ''}".encode("utf-8")).hexdigest()
 
-    def get_session_registry(self, chat_id: str, active_message_ids: Optional[List[str]] = None) -> dict:
-        reg = {}
+    @_session_scope()
+    def save_call_bridge(self, call_id: str, signature: str, function_name: str, args: dict = None, message_id: Optional[str] = None):
         try:
-            with self._get_connection() as conn:
-                if active_message_ids:
-                    placeholders = ','.join('?' for _ in active_message_ids)
-                    query = f"SELECT filename, file_id, mime, mode FROM processed_files WHERE chat_id = ? AND message_id IN ({placeholders})"
-                    rows = conn.execute(query, [chat_id] + active_message_ids).fetchall()
-                else:
-                    rows = conn.execute("SELECT filename, file_id, mime, mode FROM processed_files WHERE chat_id = ?", (chat_id,)).fetchall()
-                for row in rows: reg[row[0]] = {"id": row[1], "mime": row[2] or "application/octet-stream", "statut": row[3] or "unknown"}
-        except: pass
-        return reg
+            with self._get_connection() as conn, conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO call_bridge (call_id, signature, function_name, args_json, message_id, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
+                    (call_id, signature, function_name, json.dumps(args).decode('utf-8') if args is not None else None, message_id, int(time.time())),
+                )
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(f"[EchoStateManager] save_call_bridge error: {e}")
 
-    def mark_processed(self, chat_id: str, file_id: str, filename: str, mime: str, mode: str, content: Optional[str] = None, message_id: Optional[str] = None): 
-        try:
-            with self._get_connection() as conn:
-                conn.execute("INSERT OR REPLACE INTO processed_files (chat_id, file_id, filename, mime, mode, timestamp, file_content, message_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (chat_id, file_id, filename, mime, mode, int(time.time()), content, message_id))
-                conn.commit()
-        except: pass
-
-    def save_call_bridge(self, call_id: str, signature: str, function_name: str, args: dict = None):
-        try:
-            with self._get_connection() as conn:
-                conn.execute("INSERT OR REPLACE INTO call_bridge (call_id, signature, function_name, args_json, timestamp) VALUES (?, ?, ?, ?, ?)", (call_id, signature, function_name, json.dumps(args).decode('utf-8'), int(time.time())))
-                conn.commit()
-        except: pass
-
+    @_session_scope()
     def get_call_bridge(self, call_id: str) -> Optional[dict]:
         try:
-            with self._get_connection() as conn:
-                row = conn.execute("SELECT signature, function_name, args_json FROM call_bridge WHERE call_id = ?", (call_id,)).fetchone()
-                if row: return {"signature": row[0], "name": row[1], "args": std_json.loads(row[2]) if row[2] else {}}
-        except: pass
+            with self._get_connection(readonly=True) as conn:
+                row = conn.execute(
+                    "SELECT signature, function_name, args_json FROM call_bridge WHERE call_id = ?",
+                    (call_id,),
+                ).fetchone()
+                if row:
+                    return {"signature": row[0], "name": row[1], "args": std_json.loads(row[2]) if row[2] else {}}
+        except EchoDbMissingError:
+            return None
+        except Exception as e:
+            print(f"[EchoStateManager] get_call_bridge error: {e}")
         return None
 
-    def get_rich_payload(self, inv: str) -> Optional[List[dict]]:
-        try:
-            with self._get_connection() as conn:
-                row = conn.execute("SELECT rich_parts_json FROM rich_payloads WHERE invariant_hash = ?", (inv,)).fetchone()
-                if row: return std_json.loads(row[0])
-        except: pass
-        return None
-
-    def save_rich_payload(self, inv: str, rich: List[dict], message_id: str = None):
-        try:
-            with self._get_connection() as conn:
-                conn.execute("INSERT OR REPLACE INTO rich_payloads (invariant_hash, rich_parts_json, message_id, created_at) VALUES (?, ?, ?, ?)", (inv, json.dumps(rich).decode('utf-8'), message_id, int(time.time())))
-                conn.commit()
-        except: pass
-
+    @_session_scope()
     def index_suture(self, cumul: str, chat_id: str, inv: str, parent: str = None, message_id: str = None):
+        """Indexe la suture causale dans suture_index (chat_id conservé pour compatibilité, ignoré en SQL)."""
         try:
-            with self._get_connection() as conn:
-                conn.execute("INSERT OR REPLACE INTO suture_index (cumulative_hash, chat_id, invariant_hash, parent_hash, message_id, timestamp) VALUES (?, ?, ?, ?, ?, ?)", (cumul, chat_id, inv, parent, message_id, int(time.time())))
-                conn.commit()
-        except: pass
+            with self._get_connection() as conn, conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO suture_index (cumulative_hash, invariant_hash, parent_hash, message_id, timestamp) VALUES (?, ?, ?, ?, ?)",
+                    (cumul, inv, parent, message_id, int(time.time())),
+                )
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(f"[EchoStateManager] index_suture error: {e}")
 
-    def save_cognitive_data(self, cumul: str, sig: str = None, thought: str = None, tool_io: dict = None, message_id: str = None, model_id: str = None):        
+    @_session_scope()
+    def save_cognitive_data(self, cumul: str, sig: str = None, thought: str = None, tool_io: dict = None, message_id: str = None, model_id: str = None):
         try:
-            with self._get_connection() as conn:
+            with self._get_connection() as conn, conn:
                 if sig:
-                    conn.execute("INSERT OR REPLACE INTO cognitive_signatures (cumulative_hash, thought_signature, message_id, model_id, updated_at) VALUES (?, ?, ?, ?, ?)", (cumul, sig, message_id, model_id, int(time.time())))
-                # thought_archive retiré (write-only, jamais lu — table purgée au prochain rebuild-echo)
-                if tool_io: conn.execute("INSERT OR REPLACE INTO tool_journal (cumulative_hash, io_json, updated_at) VALUES (?, ?, ?)", (cumul, json.dumps(tool_io).decode('utf-8'), int(time.time())))
+                    conn.execute(
+                        "INSERT OR REPLACE INTO cognitive_signatures (cumulative_hash, thought_signature, message_id, model_id, updated_at) VALUES (?, ?, ?, ?, ?)",
+                        (cumul, sig, message_id, model_id, int(time.time())),
+                    )
+                if tool_io:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO tool_journal (cumulative_hash, io_json, updated_at) VALUES (?, ?, ?)",
+                        (cumul, json.dumps(tool_io).decode('utf-8'), int(time.time())),
+                    )
                 if model_id:
                     self.save_session_setting('last_model_id', model_id, conn=conn)
-                conn.commit()
-        except: pass
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(f"[EchoStateManager] save_cognitive_data error: {e}")
 
+    @_session_scope()
     def get_signature_by_id(self, message_id: str) -> Optional[str]:
         try:
-            with self._get_connection() as conn:
-                # ORDER BY updated_at DESC LIMIT 1 garantit le déterminisme de la suture : 
-                # dans une cascade (outils/MAX_TOKENS), le même message_id est inséré 
-                # plusieurs fois avec des cumulative_hash différents. On extrait toujours le plus récent.
-                row = conn.execute("SELECT thought_signature FROM cognitive_signatures WHERE message_id = ? ORDER BY updated_at DESC LIMIT 1", (message_id,)).fetchone()
+            with self._get_connection(readonly=True) as conn:
+                row = conn.execute(
+                    "SELECT thought_signature FROM cognitive_signatures WHERE message_id = ? ORDER BY updated_at DESC LIMIT 1",
+                    (message_id,),
+                ).fetchone()
                 return row[0] if row else None
-        except: pass
+        except EchoDbMissingError:
+            return None
+        except Exception as e:
+            print(f"[EchoStateManager] get_signature_by_id error: {e}")
         return None
 
-    def save_signature_by_id(self, message_id: str, signature: str):
-        try:
-            with self._get_connection() as conn:
-                # Cette méthode est un fallback si le cumulative hash n'est pas encore connu
-                # On utilise un hash factice ou on met à jour par ID si la ligne existe
-                conn.execute("UPDATE cognitive_signatures SET thought_signature = ? WHERE message_id = ?", (signature, message_id))
-                conn.commit()
-        except: pass
-
+    @_session_scope()
     def get_last_active_model(self) -> Optional[str]:
         return self.get_session_setting('last_model_id')
 
+    @_session_scope()
     def get_thought_signature(self, cumul: str) -> Optional[str]:
         try:
-            with self._get_connection() as conn:
-                row = conn.execute("SELECT thought_signature FROM cognitive_signatures WHERE cumulative_hash = ?", (cumul,)).fetchone()
+            with self._get_connection(readonly=True) as conn:
+                row = conn.execute(
+                    "SELECT thought_signature FROM cognitive_signatures WHERE cumulative_hash = ?",
+                    (cumul,),
+                ).fetchone()
                 return row[0] if row else None
-        except: pass
+        except EchoDbMissingError:
+            return None
+        except Exception as e:
+            print(f"[EchoStateManager] get_thought_signature error: {e}")
         return None
 
+    @_session_scope()
     def get_tool_io(self, cumul: str) -> Optional[dict]:
         try:
-            with self._get_connection() as conn:
-                row = conn.execute("SELECT io_json FROM tool_journal WHERE cumulative_hash = ?", (cumul,)).fetchone()
-                if row: return std_json.loads(row[0])
-        except: pass
+            with self._get_connection(readonly=True) as conn:
+                row = conn.execute(
+                    "SELECT io_json FROM tool_journal WHERE cumulative_hash = ?",
+                    (cumul,),
+                ).fetchone()
+                if row:
+                    return std_json.loads(row[0])
+        except EchoDbMissingError:
+            return None
+        except Exception as e:
+            print(f"[EchoStateManager] get_tool_io error: {e}")
         return None
-
-    def save_auth_data(self, key: str, value: str):
-        try:
-            with self._get_connection() as conn:
-                conn.execute("INSERT OR REPLACE INTO auth_data (key, value, updated_at) VALUES (?, ?, ?)", (key, value, int(time.time())))
-                conn.commit()
-        except: pass
 
     # =========================================================================
     # IDENTITY VAULT (CRUD CHIFFRÉ AES-256-GCM ISOLÉ SUR IDENTITY.DB)
@@ -298,130 +325,198 @@ class EchoStateManager:
         """Chiffre en AES-256-GCM (AAD=user_id:service:account_id) et persiste une identité dans identity_vault."""
         from echo_crypto import encrypt_vault_payload
         enc_creds = encrypt_vault_payload(credentials, self.user_id, service, account_id)
-        with self._get_identity_connection() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO identity_vault (user_id, service, account_id, credentials) VALUES (?, ?, ?, ?)",
-                (self.user_id, service, account_id, enc_creds),
-            )
-            conn.commit()
+        try:
+            with self._get_identity_connection() as conn, conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO identity_vault (user_id, service, account_id, credentials) VALUES (?, ?, ?, ?)",
+                    (self.user_id, service, account_id, enc_creds),
+                )
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(f"[EchoStateManager] save_vault_credential error: {e}")
 
     def get_vault_credential(self, service: str, account_id: Optional[str] = None) -> str:
         """Récupère et déchiffre une identité depuis identity_vault (supporte account_id optionnel)."""
-        with self._get_identity_connection() as conn:
-            if account_id:
-                row = conn.execute(
-                    "SELECT account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ? AND account_id = ? LIMIT 1",
-                    (self.user_id, service, account_id),
-                ).fetchone()
-            else:
-                row = conn.execute(
-                    "SELECT account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ? LIMIT 1",
-                    (self.user_id, service),
-                ).fetchone()
-            if not row or not row[1]:
-                return ""
-            return self._decrypt_vault_row(service, row[0], row[1])
+        try:
+            with self._get_identity_connection(readonly=True) as conn:
+                if account_id:
+                    row = conn.execute(
+                        "SELECT account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ? AND account_id = ? LIMIT 1",
+                        (self.user_id, service, account_id),
+                    ).fetchone()
+                else:
+                    row = conn.execute(
+                        "SELECT account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ? LIMIT 1",
+                        (self.user_id, service),
+                    ).fetchone()
+                if not row or not row[1]:
+                    return ""
+                return self._decrypt_vault_row(service, row[0], row[1])
+        except EchoDbMissingError:
+            return ""
+        except Exception as e:
+            print(f"[EchoStateManager] get_vault_credential error: {e}")
+            return ""
 
     def list_vault_credentials(self, service: str) -> List[tuple]:
         """Retourne [(account_id, decrypted_credentials), ...] pour un service donné."""
         results = []
-        with self._get_identity_connection() as conn:
-            rows = conn.execute(
-                "SELECT account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ?",
-                (self.user_id, service),
-            ).fetchall()
-            for acc_id, raw_creds in rows:
-                results.append((acc_id, self._decrypt_vault_row(service, acc_id, raw_creds or "")))
+        try:
+            with self._get_identity_connection(readonly=True) as conn:
+                rows = conn.execute(
+                    "SELECT account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ?",
+                    (self.user_id, service),
+                ).fetchall()
+                for acc_id, raw_creds in rows:
+                    results.append((acc_id, self._decrypt_vault_row(service, acc_id, raw_creds or "")))
+        except EchoDbMissingError:
+            return []
+        except Exception as e:
+            print(f"[EchoStateManager] list_vault_credentials error: {e}")
         return results
 
     def list_vault_services(self) -> List[str]:
         """Liste les services disposant d'au moins une identité configurée."""
-        with self._get_identity_connection() as conn:
-            rows = conn.execute("SELECT DISTINCT service FROM identity_vault WHERE user_id = ?", (self.user_id,)).fetchall()
-            return [r[0] for r in rows] if rows else []
+        try:
+            with self._get_identity_connection(readonly=True) as conn:
+                rows = conn.execute(
+                    "SELECT DISTINCT service FROM identity_vault WHERE user_id = ?",
+                    (self.user_id,),
+                ).fetchall()
+                return [r[0] for r in rows] if rows else []
+        except EchoDbMissingError:
+            return []
+        except Exception as e:
+            print(f"[EchoStateManager] list_vault_services error: {e}")
+            return []
 
     def list_vault_accounts(self) -> List[dict]:
         """Liste les couples {service, account_id} sans lire ni déchiffrer la colonne credentials."""
-        with self._get_identity_connection() as conn:
-            rows = conn.execute("SELECT service, account_id FROM identity_vault WHERE user_id = ?", (self.user_id,)).fetchall()
-            return [{"service": r[0], "account_id": r[1]} for r in rows]
+        try:
+            with self._get_identity_connection(readonly=True) as conn:
+                rows = conn.execute(
+                    "SELECT service, account_id FROM identity_vault WHERE user_id = ?",
+                    (self.user_id,),
+                ).fetchall()
+                return [{"service": r[0], "account_id": r[1]} for r in rows]
+        except EchoDbMissingError:
+            return []
+        except Exception as e:
+            print(f"[EchoStateManager] list_vault_accounts error: {e}")
+            return []
 
     def has_vault_credential(self, service: str, account_id: str) -> bool:
         """Vérifie en O(1) l'existence d'un secret non vide dans identity_vault."""
-        with self._get_identity_connection() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM identity_vault WHERE user_id = ? AND service = ? AND account_id = ? AND credentials IS NOT NULL AND credentials != ''",
-                (self.user_id, service, account_id),
-            ).fetchone()
-            return row is not None
+        try:
+            with self._get_identity_connection(readonly=True) as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM identity_vault WHERE user_id = ? AND service = ? AND account_id = ? AND credentials IS NOT NULL AND credentials != ''",
+                    (self.user_id, service, account_id),
+                ).fetchone()
+                return row is not None
+        except EchoDbMissingError:
+            return False
+        except Exception as e:
+            print(f"[EchoStateManager] has_vault_credential error: {e}")
+            return False
 
     def delete_vault_credential(self, service: str, account_id: str) -> None:
         """Supprime une identité de identity_vault."""
-        with self._get_identity_connection() as conn:
-            conn.execute(
-                "DELETE FROM identity_vault WHERE user_id = ? AND service = ? AND account_id = ?",
-                (self.user_id, service, account_id),
-            )
-            conn.commit()
+        try:
+            with self._get_identity_connection() as conn, conn:
+                conn.execute(
+                    "DELETE FROM identity_vault WHERE user_id = ? AND service = ? AND account_id = ?",
+                    (self.user_id, service, account_id),
+                )
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(f"[EchoStateManager] delete_vault_credential error: {e}")
+
+    # =========================================================================
+    # RÉGLAGES UTILISATEUR & SESSION (ECHO_SETTINGS)
+    # =========================================================================
 
     def save_setting(self, key: str, value: str):
-        """Persiste une préférence Pipe dans echo_settings (identity.db)."""
+        """Persiste une préférence utilisateur dans echo_settings (identity.db)."""
         try:
-            with self._get_connection() as conn:
-                conn.execute("CREATE TABLE IF NOT EXISTS echo_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)")
-                conn.execute("INSERT OR REPLACE INTO echo_settings (key, value, updated_at) VALUES (?, ?, ?)", (key, value, int(time.time())))
-                conn.commit()
-        except: pass
+            with self._get_identity_connection() as conn, conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO echo_settings (key, value, updated_at) VALUES (?, ?, ?)",
+                    (key, value, int(time.time())),
+                )
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(f"[EchoStateManager] save_setting error: {e}")
+
+    def set_setting(self, key: str, value: str):
+        """Définit un réglage dans la portée courante (session.db si chat_id, sinon identity.db)."""
+        if self.chat_id:
+            return self.save_session_setting(key, value)
+        return self.save_setting(key, value)
 
     def get_setting(self, key: str) -> Optional[str]:
-        """Récupère une préférence Pipe globale (identity.db)."""
+        """Récupère un réglage depuis la portée courante (session.db si chat_id, sinon identity.db)."""
+        if self.chat_id:
+            val = self.get_session_setting(key)
+            if val is not None:
+                return val
         try:
-            db_path = os.path.join(self.user_dir, "identity.db")
-            if not os.path.exists(db_path): return None
-            with sqlite3.connect(db_path, timeout=5.0) as conn:
+            with self._get_identity_connection(readonly=True) as conn:
                 row = conn.execute("SELECT value FROM echo_settings WHERE key = ?", (key,)).fetchone()
-                if row: return row[0]
-        except: pass
-        return None
+                return row[0] if row else None
+        except EchoDbMissingError:
+            return None
+        except Exception as e:
+            print(f"[EchoStateManager] get_setting error: {e}")
+            return None
 
+    @_session_scope()
     def save_session_setting(self, key: str, value: str, conn: Optional[sqlite3.Connection] = None):
-        """
-        Persiste une variable KV générique dans la base unifiée.
-        Note de routage (Fallback) : Si l'instance EchoStateManager a été initialisée avec un chat_id, 
-        la base ciblée est 'session.db' (locale à la session). Sinon, elle opère un fallback sur 'identity.db' (globale à l'utilisateur).
-        """
+        """Persiste une variable KV dans echo_settings de la session active (session.db)."""
         try:
             if conn:
-                conn.execute("INSERT OR REPLACE INTO echo_settings (key, value, updated_at) VALUES (?, ?, ?)", (key, value, int(time.time())))
+                conn.execute(
+                    "INSERT OR REPLACE INTO echo_settings (key, value, updated_at) VALUES (?, ?, ?)",
+                    (key, value, int(time.time())),
+                )
             else:
-                with self._get_connection() as c:
-                    c.execute("INSERT OR REPLACE INTO echo_settings (key, value, updated_at) VALUES (?, ?, ?)", (key, value, int(time.time())))
-                    c.commit()
-        except: pass
+                with self._get_connection() as c, c:
+                    c.execute(
+                        "INSERT OR REPLACE INTO echo_settings (key, value, updated_at) VALUES (?, ?, ?)",
+                        (key, value, int(time.time())),
+                    )
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(f"[EchoStateManager] save_session_setting error: {e}")
 
+    @_session_scope()
     def get_session_setting(self, key: str) -> Optional[str]:
-        """Récupère une variable KV générique unifiée (session.db)."""
+        """Récupère une variable KV depuis echo_settings de la session active (session.db)."""
         try:
-            with self._get_connection() as conn:
+            with self._get_connection(readonly=True) as conn:
                 row = conn.execute("SELECT value FROM echo_settings WHERE key = ?", (key,)).fetchone()
-                if row: return row[0]
-        except: pass
-        return None
+                return row[0] if row else None
+        except EchoDbMissingError:
+            return None
+        except Exception as e:
+            print(f"[EchoStateManager] get_session_setting error: {e}")
+            return None
 
     def get_agy_endpoint(self) -> tuple[int, str]:
         """Analyse les verrous temporels de chaque URL. Retourne (index, url_saine)."""
-        from echo_constants import AGY_BASE_URLS
         from datetime import datetime, timezone
-        
+        from echo_constants import AGY_BASE_URLS
+
         now = datetime.now(timezone.utc).isoformat()
         for idx, url in enumerate(AGY_BASE_URLS):
             reset_time = self.get_setting(f"agy_locked_url_{idx}")
             if not reset_time or now > reset_time:
-                return idx, url # URL saine
-                
-        # Si tout est bloqué, on privilégie l'URL de secours (Canary) par défaut
-        # pour permettre à la boucle de backoff d'opérer sur l'environnement secondaire
-        # plutôt que de provoquer un rebond immédiat vers Prod (0).
+                return idx, url
+
         fallback_idx = len(AGY_BASE_URLS) - 1
         return fallback_idx, AGY_BASE_URLS[fallback_idx]
 
@@ -433,6 +528,7 @@ class EchoStateManager:
         """Déverrouille proactivement une URL sur un succès HTTP (Auto-Heal)."""
         self.save_setting(f"agy_locked_url_{idx}", "")
 
+    @_session_scope()
     def init_session_context_baseline(self, quota_5h_fraction: Optional[float] = None, quota_weekly_fraction: Optional[float] = None):
         """Initialise la référence initiale de la session au tour 1 si aucun historique n'existe."""
         if not self.get_previous_context_stats() and not self.get_last_context_stats():
@@ -447,37 +543,46 @@ class EchoStateManager:
             }
             self.save_session_setting('previous_context_stats', std_json.dumps(baseline).decode('utf-8'))
 
+    @_session_scope()
     def archive_previous_context_stats(self):
         """Archive l'état final du tour précédent au tout début d'un nouveau tour utilisateur."""
         old_dict = self.get_last_context_stats()
         if old_dict and old_dict.get("totalTokenCount", 0) > 0:
             self.save_session_setting('previous_context_stats', std_json.dumps(old_dict).decode('utf-8'))
 
+    @_session_scope()
     def save_context_stats(self, stats: dict):
         """Met à jour context_stats par fusion sans écraser previous_context_stats en cours de tour."""
         merged = self.get_last_context_stats()
         merged.update(stats)
         self.save_session_setting('context_stats', std_json.dumps(merged).decode('utf-8'))
 
+    @_session_scope(dict)
     def get_last_context_stats(self) -> dict:
         data = self.get_session_setting('context_stats')
         if data:
             try:
                 return std_json.loads(data)
-            except: pass
+            except Exception:
+                pass
         return {}
 
+    @_session_scope(dict)
     def get_previous_context_stats(self) -> dict:
         data = self.get_session_setting('previous_context_stats')
         if data:
             try:
                 return std_json.loads(data)
-            except: pass
+            except Exception:
+                pass
         return {}
 
     def move_to_vault(self, file_id: str, filename: str) -> bool:
+        if not self.chat_id:
+            return False
         old_path = resolve_upload_file_path(self.user_id, file_id, chat_id=self.chat_id)
-        if not old_path: return False
+        if not old_path:
+            return False
         new_path = os.path.join(get_echo_session_path(self.user_id, self.chat_id, "files"), os.path.basename(old_path))
         try:
             if not os.path.exists(new_path):
@@ -486,47 +591,57 @@ class EchoStateManager:
                 else:
                     shutil.copy2(old_path, new_path)
             return True
-        except: return False
+        except Exception as e:
+            print(f"[EchoStateManager] move_to_vault error: {e}")
+            return False
 
-    def save_thread_step(self, sub_sid: str, chat_id: str, role_id: str, step_index: int, role: str, content: List[dict], signature: Optional[str] = None):
+    @_session_scope()
+    def save_thread_step(self, sub_sid: str, chat_id: Optional[str], role_id: str, step_index: int, role: str, content: List[dict], signature: Optional[str] = None):
+        """Persiste une étape de thread cognitif (chat_id conservé pour compatibilité, ignoré en SQL)."""
         try:
-            with self._get_connection() as conn:
+            with self._get_connection() as conn, conn:
                 conn.execute(
-                    "INSERT OR REPLACE INTO cognitive_threads (sub_sid, chat_id, role_id, step_index, role, content_json, thought_signature, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (sub_sid, chat_id, role_id, step_index, role, json.dumps(content).decode('utf-8'), signature, int(time.time()))
+                    "INSERT OR REPLACE INTO cognitive_threads (sub_sid, step_index, role_id, role, content_json, thought_signature, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (sub_sid, step_index, role_id, role, json.dumps(content).decode('utf-8'), signature, int(time.time())),
                 )
-                conn.commit()
-        except: pass
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(f"[EchoStateManager] save_thread_step error: {e}")
 
+    @_session_scope(list)
     def get_thread_history(self, sub_sid: str) -> List[dict]:
         history = []
         try:
-            with self._get_connection() as conn:
+            with self._get_connection(readonly=True) as conn:
                 rows = conn.execute(
                     "SELECT role, content_json, thought_signature FROM cognitive_threads WHERE sub_sid = ? ORDER BY step_index ASC",
-                    (sub_sid,)
+                    (sub_sid,),
                 ).fetchall()
                 for row in rows:
                     parts = json.loads(row[1])
                     item = {"role": row[0], "parts": parts}
-                    if row[2]: # Si on a une thoughtSignature, on l'injecte dans la première part
+                    if row[2]:
                         if parts and isinstance(parts, list):
                             if "functionCall" in parts[0] or "text" in parts[0]:
                                 parts[0]["thoughtSignature"] = row[2]
                     history.append(item)
-        except: pass
+        except EchoDbMissingError:
+            return []
+        except Exception as e:
+            print(f"[EchoStateManager] get_thread_history error: {e}")
         return history
 
+    @_session_scope(list)
     def get_thread_steps_enriched(self, sub_sid: str) -> List[dict]:
-        """Retourne les steps enrichis d'un thread (role, role_id, parts, timestamp).
-        Utilisé par le Sub-Agent Monitor pour reconstruire l'arbre d'appels."""
+        """Retourne les steps enrichis d'un thread (role, role_id, parts, timestamp)."""
         steps = []
         try:
-            with self._get_connection() as conn:
+            with self._get_connection(readonly=True) as conn:
                 rows = conn.execute(
                     "SELECT step_index, role, role_id, content_json, updated_at "
                     "FROM cognitive_threads WHERE sub_sid = ? ORDER BY step_index ASC",
-                    (sub_sid,)
+                    (sub_sid,),
                 ).fetchall()
                 for row in rows:
                     parts = json.loads(row[3])
@@ -535,99 +650,172 @@ class EchoStateManager:
                         "role": row[1],
                         "role_id": row[2],
                         "parts": parts,
-                        "timestamp": row[4]
+                        "timestamp": row[4],
                     })
-        except: pass
+        except EchoDbMissingError:
+            return []
+        except Exception as e:
+            print(f"[EchoStateManager] get_thread_steps_enriched error: {e}")
         return steps
 
-
-    def list_threads(self, chat_id: str) -> List[dict]:
+    @_session_scope(list)
+    def list_threads(self, chat_id: Optional[str] = None) -> List[dict]:
         threads = []
         try:
-            with self._get_connection() as conn:
-                # On récupère le dernier message de chaque thread pour avoir un résumé
+            with self._get_connection(readonly=True) as conn:
                 rows = conn.execute(
-                    "SELECT sub_sid, role_id, MAX(step_index), content_json, updated_at FROM cognitive_threads WHERE chat_id = ? GROUP BY sub_sid ORDER BY updated_at DESC",
-                    (chat_id,)
+                    "SELECT sub_sid, role_id, MAX(step_index) as steps, MAX(updated_at) as last_active FROM cognitive_threads GROUP BY sub_sid ORDER BY last_active DESC"
                 ).fetchall()
                 for row in rows:
-                    content = json.loads(row[3])
-                    summary = content[0].get("text", "")[:100] if content and "text" in content[0] else "Appel de fonction..."
                     threads.append({
                         "sub_sid": row[0],
                         "role_id": row[1],
                         "last_step": row[2],
-                        "summary": summary,
-                        "updated_at": row[4]
+                        "updated_at": row[3],
                     })
-        except: pass
+        except EchoDbMissingError:
+            return []
+        except Exception as e:
+            print(f"[EchoStateManager] list_threads error: {e}")
         return threads
 
+    @_session_scope()
     def delete_thread(self, sub_sid: str):
         try:
-            with self._get_connection() as conn:
+            with self._get_connection() as conn, conn:
                 conn.execute("DELETE FROM cognitive_threads WHERE sub_sid = ?", (sub_sid,))
-                conn.commit()
-        except: pass
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(f"[EchoStateManager] delete_thread error: {e}")
 
     # ==========================================================================
-    # REGISTRE UNIFIÉ — echo_resources (v8.0)
+    # REGISTRE UNIFIÉ — ECHO_RESOURCES
     # ==========================================================================
 
-    def save_resource(self, id: str, name: str, resource_type: str, status: str,
-                      mime: str = None, summary: str = None, storage_path: str = None,
-                      git_tracked: bool = False, message_id: str = None,
-                      plan_goal: str = None, author_model: str = None,
-                      language: str = None, lines: int = None,
-                      last_commit: str = None, commit_msg: str = None, item_type: str = "file"):
-        """Crée ou met à jour une ressource dans le registre unifié.
-        Utilise INSERT ... ON CONFLICT pour préserver created_at lors des mises à jour.
+    def save_resource(
+        self,
+        id: str,
+        name: str = None,
+        resource_type: str = None,
+        status: str = None,
+        mime: str = None,
+        summary: str = None,
+        storage_path: str = None,
+        git_tracked: bool = False,
+        message_id: str = None,
+        plan_goal: str = None,
+        author_model: str = None,
+        language: str = None,
+        lines: int = None,
+        last_commit: str = None,
+        commit_msg: str = None,
+        item_type: str = "file",
+        content: str = None,
+        metadata: Any = None,
+        **kwargs,
+    ):
+        """Crée ou met à jour une ressource dans le registre unifié echo_resources (schéma v1).
+
+        Lot 2 : injecte automatiquement la provenance message_id depuis ECHO_TURN_CONTEXT si absent.
         """
+        # Détection adaptative d'un appel positionnel (id, type_or_name, name_or_summary, metadata, content)
+        if isinstance(status, dict):
+            metadata = status
+            content = mime
+            mime = None
+            if name == "codex_urn_directive":
+                name = "codex_urn_directive"
+                resource_type = "aec_directive"
+                status = "active"
+            elif name in ("aec_event", "aec_directive", "codex_artifact", "n8n_template", "codex", "plan", "media", "binary"):
+                actual_type = name
+                name = resource_type or name
+                resource_type = actual_type
+                status = "active" if resource_type in ("aec_event", "aec_directive") else "ready"
+            else:
+                status = "active" if resource_type in ("aec_event", "aec_directive") else "ready"
+
+        if not status:
+            status = "active" if resource_type in ("aec_event", "aec_directive") else "ready"
+        if message_id is None and self.chat_id and resource_type not in ("aec_event", "aec_directive"):
+            turn_ctx = ECHO_TURN_CONTEXT.get() or {}
+            if turn_ctx.get("chat_id") == self.chat_id:
+                message_id = turn_ctx.get("assistant_message_id") or turn_ctx.get("user_message_id") or turn_ctx.get("message_id")
+
+        # Préservation rétrocompatible des champs additionnels dans metadata JSON
+        meta_dict = {}
+        if metadata:
+            try:
+                meta_dict = json.loads(metadata) if isinstance(metadata, str) else dict(metadata)
+            except Exception:
+                meta_dict = {"raw_metadata": str(metadata)}
+        if message_id and "message_id" not in meta_dict:
+            meta_dict["message_id"] = message_id
+        for extra_key, extra_val in (
+            ("plan_goal", plan_goal),
+            ("author_model", author_model),
+            ("language", language),
+            ("lines", lines),
+            ("last_commit", last_commit),
+            ("commit_msg", commit_msg),
+        ):
+            if extra_val is not None and extra_key not in meta_dict:
+                meta_dict[extra_key] = extra_val
+        meta_str = json.dumps(meta_dict).decode("utf-8")
+
         ts = time.time()
         try:
-            with self._get_connection() as conn:
+            with self._get_connection() as conn, conn:
                 conn.execute(
                     "INSERT INTO echo_resources "
-                    "(id, name, resource_type, mime, status, summary, storage_path, "
-                    "git_tracked, message_id, plan_goal, author_model, language, lines, "
-                    "last_commit, commit_msg, created_at, updated_at, item_type) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "(id, name, resource_type, item_type, status, mime, summary, content, metadata, "
+                    "storage_path, git_tracked, message_id, plan_goal, author_model, language, lines, last_commit, commit_msg, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(id) DO UPDATE SET "
-                    "name=excluded.name, resource_type=excluded.resource_type, "
-                    "mime=excluded.mime, status=excluded.status, summary=excluded.summary, "
+                    "name=excluded.name, resource_type=excluded.resource_type, item_type=excluded.item_type, "
+                    "status=excluded.status, mime=excluded.mime, summary=excluded.summary, "
+                    "content=COALESCE(excluded.content, echo_resources.content), "
+                    "metadata=COALESCE(excluded.metadata, echo_resources.metadata), "
                     "storage_path=excluded.storage_path, git_tracked=excluded.git_tracked, "
                     "message_id=COALESCE(excluded.message_id, echo_resources.message_id), "
-                    "plan_goal=excluded.plan_goal, author_model=excluded.author_model, "
-                    "language=excluded.language, lines=excluded.lines, "
-                    "last_commit=excluded.last_commit, commit_msg=excluded.commit_msg, "
-                    "updated_at=excluded.updated_at, item_type=excluded.item_type",
-                    (id, name, resource_type, mime, status, summary, storage_path,
-                     1 if git_tracked else 0, message_id, plan_goal, author_model,
-                     language, lines, last_commit, commit_msg, ts, ts, item_type)
+                    "plan_goal=COALESCE(excluded.plan_goal, echo_resources.plan_goal), "
+                    "author_model=COALESCE(excluded.author_model, echo_resources.author_model), "
+                    "language=COALESCE(excluded.language, echo_resources.language), "
+                    "lines=COALESCE(excluded.lines, echo_resources.lines), "
+                    "last_commit=COALESCE(excluded.last_commit, echo_resources.last_commit), "
+                    "commit_msg=COALESCE(excluded.commit_msg, echo_resources.commit_msg), "
+                    "updated_at=excluded.updated_at",
+                    (
+                        id, name, resource_type, item_type, status, mime, summary, content, meta_str, storage_path,
+                        1 if git_tracked else 0, message_id, plan_goal, author_model, language, lines, last_commit, commit_msg, ts, ts,
+                    ),
                 )
-                conn.commit()
+        except EchoDbMissingError:
+            pass
         except Exception as e:
             print(f"[EchoStateManager] save_resource error: {e}")
 
     def update_resource_status(self, id: str, status: str):
         """Met à jour le statut d'une ressource (préserve les autres champs)."""
         try:
-            with self._get_connection() as conn:
+            with self._get_connection() as conn, conn:
                 conn.execute(
                     "UPDATE echo_resources SET status = ?, updated_at = ? WHERE id = ?",
-                    (status, time.time(), id)
+                    (status, time.time(), id),
                 )
-                conn.commit()
+        except EchoDbMissingError:
+            pass
         except Exception as e:
             print(f"[EchoStateManager] update_resource_status error: {e}")
 
     def update_resource_fields(self, id: str, **fields):
-        """Met à jour un ou plusieurs champs d'une ressource.
-        Les colonnes autorisées sont filtrées pour éviter l'injection SQL.
-        """
-        allowed = {"name", "status", "mime", "summary", "storage_path", "git_tracked",
-                   "message_id", "plan_goal", "author_model", "language", "lines",
-                   "last_commit", "commit_msg"}
+        """Met à jour un ou plusieurs champs d'une ressource."""
+        allowed = {
+            "name", "status", "mime", "summary", "content", "metadata",
+            "storage_path", "git_tracked", "message_id", "item_type",
+            "plan_goal", "author_model", "language", "lines", "last_commit", "commit_msg",
+        }
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return
@@ -635,49 +823,50 @@ class EchoStateManager:
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [id]
         try:
-            with self._get_connection() as conn:
+            with self._get_connection() as conn, conn:
                 conn.execute(f"UPDATE echo_resources SET {set_clause} WHERE id = ?", values)
-                conn.commit()
+        except EchoDbMissingError:
+            pass
         except Exception as e:
             print(f"[EchoStateManager] update_resource_fields error: {e}")
 
     def delete_resource(self, id: str):
         """Supprime une ressource par ID."""
         try:
-            with self._get_connection() as conn:
+            with self._get_connection() as conn, conn:
                 conn.execute("DELETE FROM echo_resources WHERE id = ?", (id,))
-                conn.commit()
+        except EchoDbMissingError:
+            pass
         except Exception as e:
             print(f"[EchoStateManager] delete_resource error: {e}")
 
     def get_resource(self, id: str) -> Optional[dict]:
         """Retourne une ressource par ID, ou None si inexistante."""
         try:
-            with self._get_connection() as conn:
+            with self._get_connection(readonly=True) as conn:
                 row = conn.execute(
-                    "SELECT id, name, resource_type, mime, status, summary, storage_path, "
-                    "git_tracked, message_id, plan_goal, author_model, language, lines, "
-                    "last_commit, commit_msg, created_at, updated_at "
-                    "FROM echo_resources WHERE id = ?", (id,)
+                    "SELECT id, name, resource_type, item_type, status, mime, summary, content, metadata, "
+                    "storage_path, git_tracked, message_id, plan_goal, author_model, language, lines, last_commit, commit_msg, created_at, updated_at "
+                    "FROM echo_resources WHERE id = ?", (id,),
                 ).fetchone()
                 if row:
                     return self._row_to_resource(row)
+        except EchoDbMissingError:
+            return None
         except Exception as e:
             print(f"[EchoStateManager] get_resource error: {e}")
         return None
 
-    def get_resources(self, resource_type: str = None, status: str = None,
-                      search: str = None, created_after: float = None,
-                      message_ids: List[str] = None) -> List[dict]:
-        """Liste les ressources avec filtres combinés (AND).
-        
-        Args:
-            resource_type: Filtre par type ('codex', 'plan', 'media', 'binary', 'weburl').
-            status: Filtre par statut.
-            search: Recherche LIKE sur le champ name.
-            created_after: Timestamp minimum (pour le mécanisme de watermark/delta).
-            message_ids: Liste de message_id pour le filtrage par messages actifs.
-        """
+    def get_resources(
+        self,
+        resource_type: str = None,
+        status: str = None,
+        search: str = None,
+        created_after: float = None,
+        message_ids: List[str] = None,
+        workspace: str = None,
+    ) -> List[dict]:
+        """Liste les ressources avec filtres combinés (AND)."""
         conditions = []
         params = []
         if resource_type:
@@ -696,19 +885,25 @@ class EchoStateManager:
             placeholders = ','.join('?' for _ in message_ids)
             conditions.append(f"message_id IN ({placeholders})")
             params.extend(message_ids)
+        if workspace:
+            clean_ws = str(workspace).strip().strip("/\\")
+            if clean_ws:
+                conditions.append("storage_path LIKE ?")
+                params.append(f"codex/{clean_ws}/%")
 
         where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         resources = []
         try:
-            with self._get_connection() as conn:
+            with self._get_connection(readonly=True) as conn:
                 rows = conn.execute(
-                    f"SELECT id, name, resource_type, mime, status, summary, storage_path, "
-                    f"git_tracked, message_id, plan_goal, author_model, language, lines, "
-                    f"last_commit, commit_msg, created_at, updated_at "
-                    f"FROM echo_resources{where} ORDER BY updated_at DESC", params
+                    f"SELECT id, name, resource_type, item_type, status, mime, summary, content, metadata, "
+                    f"storage_path, git_tracked, message_id, plan_goal, author_model, language, lines, last_commit, commit_msg, created_at, updated_at "
+                    f"FROM echo_resources{where} ORDER BY updated_at DESC", params,
                 ).fetchall()
                 for row in rows:
                     resources.append(self._row_to_resource(row))
+        except EchoDbMissingError:
+            return []
         except Exception as e:
             print(f"[EchoStateManager] get_resources error: {e}")
         return resources
@@ -716,108 +911,268 @@ class EchoStateManager:
     def clear_resources_by_type(self, resource_type: str):
         """Supprime toutes les ressources d'un type donné."""
         try:
-            with self._get_connection() as conn:
+            with self._get_connection() as conn, conn:
                 conn.execute("DELETE FROM echo_resources WHERE resource_type = ?", (resource_type,))
-                conn.commit()
+        except EchoDbMissingError:
+            pass
         except Exception as e:
             print(f"[EchoStateManager] clear_resources_by_type error: {e}")
 
-    def get_next_codex_name(self, name: str) -> str:
-        """Retourne un nom unique pour le Codex. Si `name` existe déjà, ajoute un suffixe incrémental.
-        Ex: script.py → script_1.py → script_2.py
-        """
+    def delete_codex_resource(self, workspace: str, rel_path: str):
+        """Supprime une ressource Codex ciblée par son workspace et son chemin relatif."""
+        clean_ws = str(workspace or "").strip().strip("/\\")
+        clean_rel = str(rel_path or "").strip().lstrip("/\\").replace("\\", "/")
+        storage_path = f"codex/{clean_ws}/{clean_rel}"
         try:
-            with self._get_connection() as conn:
-                # Vérifie si le nom exact existe
+            with self._get_connection() as conn, conn:
+                conn.execute(
+                    "DELETE FROM echo_resources WHERE storage_path = ? OR (id = ? AND storage_path LIKE ?)",
+                    (storage_path, clean_rel, f"codex/{clean_ws}/%"),
+                )
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(f"[EchoStateManager] delete_codex_resource error: {e}")
+
+    def clear_codex_workspace_resources(self, workspace: str):
+        """Purge toutes les ressources associées à un workspace Codex spécifique."""
+        clean_ws = str(workspace or "").strip().strip("/\\")
+        if not clean_ws:
+            return
+        try:
+            with self._get_connection() as conn, conn:
+                conn.execute("DELETE FROM echo_resources WHERE storage_path LIKE ?", (f"codex/{clean_ws}/%",))
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(f"[EchoStateManager] clear_codex_workspace_resources error: {e}")
+
+    def get_next_codex_name(self, name: str) -> str:
+        """Retourne un nom unique pour le Codex avec suffixe incrémental en cas de collision."""
+        try:
+            with self._get_connection(readonly=True) as conn:
                 existing = conn.execute(
-                    "SELECT id FROM echo_resources WHERE id = ? AND resource_type = 'codex'", (name,)
+                    "SELECT id FROM echo_resources WHERE id = ? AND resource_type = 'codex'", (name,),
                 ).fetchone()
                 if not existing:
                     return name
 
-                # Collision : chercher le prochain suffixe libre
                 base, ext = os.path.splitext(name)
                 idx = 1
                 while True:
                     candidate = f"{base}_{idx}{ext}"
                     exists = conn.execute(
-                        "SELECT id FROM echo_resources WHERE id = ? AND resource_type = 'codex'", (candidate,)
+                        "SELECT id FROM echo_resources WHERE id = ? AND resource_type = 'codex'", (candidate,),
                     ).fetchone()
                     if not exists:
                         return candidate
                     idx += 1
+        except EchoDbMissingError:
+            return name
         except Exception as e:
             print(f"[EchoStateManager] get_next_codex_name error: {e}")
         return name
 
     @staticmethod
     def _row_to_resource(row) -> dict:
-        """Convertit un tuple SQLite en dict ressource."""
+        """Convertit un tuple SQLite en dict ressource conforme au schéma v1."""
+        meta = row[8]
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta) if meta else {}
+            except Exception:
+                meta = {}
+        elif not isinstance(meta, dict):
+            meta = {}
+        msg_id = row[11]
+        if msg_id and "message_id" not in meta:
+            meta["message_id"] = msg_id
+
+        plan_goal = row[12] if row[12] is not None else meta.get("plan_goal")
+        author_model = row[13] if row[13] is not None else meta.get("author_model")
+        language = row[14] if row[14] is not None else meta.get("language")
+        lines = row[15] if row[15] is not None else meta.get("lines")
+        last_commit = row[16] if row[16] is not None else meta.get("last_commit")
+        commit_msg = row[17] if row[17] is not None else meta.get("commit_msg")
+
+        for k, v in (
+            ("plan_goal", plan_goal),
+            ("author_model", author_model),
+            ("language", language),
+            ("lines", lines),
+            ("last_commit", last_commit),
+            ("commit_msg", commit_msg),
+        ):
+            if v is not None and k not in meta:
+                meta[k] = v
+
         return {
-            "id": row[0], "name": row[1], "resource_type": row[2],
-            "mime": row[3], "status": row[4], "summary": row[5],
-            "storage_path": row[6], "git_tracked": bool(row[7]),
-            "message_id": row[8], "plan_goal": row[9], "author_model": row[10],
-            "language": row[11], "lines": row[12], "last_commit": row[13],
-            "commit_msg": row[14], "created_at": row[15], "updated_at": row[16]
+            "id": row[0],
+            "name": row[1],
+            "resource_type": row[2],
+            "type": row[2],
+            "item_type": row[3],
+            "status": row[4],
+            "mime": row[5],
+            "summary": row[6],
+            "content": row[7],
+            "metadata": meta,
+            "storage_path": row[9],
+            "git_tracked": bool(row[10]),
+            "message_id": msg_id,
+            "plan_goal": plan_goal,
+            "author_model": author_model,
+            "language": language,
+            "lines": lines,
+            "last_commit": last_commit,
+            "commit_msg": commit_msg,
+            "created_at": row[18],
+            "updated_at": row[19],
+            "timestamp": row[19],
         }
 
-    def get_active_branch_shadows(self, chat_id: str, limit: int = 20) -> List[dict]:
-        """Remonte la généalogie de la branche active via suture_index pour une distillation bit-perfect."""
-        shadows = []
+    # =========================================================================
+    # LOT 3 : BRANCHE ACTIVE & LOT 1 : RAG_INDEX_STATE & AEC / CODEX UTILS
+    # =========================================================================
+
+    @_session_scope(BranchShadowsList)
+    def get_active_branch_shadows(
+        self,
+        chat_id_or_ids: Any = None,
+        limit: int = 20,
+        active_message_ids: Optional[List[str]] = None,
+    ) -> Any:
+        """Récupère les ombres des messages appartenant à la branche active ordonnée."""
+        if isinstance(chat_id_or_ids, (list, tuple, set)):
+            effective_ids = list(chat_id_or_ids)
+        elif active_message_ids is not None:
+            effective_ids = list(active_message_ids)
+        else:
+            effective_ids = []
+
+        if not effective_ids:
+            return BranchShadowsList()
         try:
-            with self._get_connection() as conn:
-                # 1. On identifie le dernier message scellé dans la suture pour ce chat
-                row = conn.execute(
-                    "SELECT cumulative_hash, parent_hash, message_id FROM suture_index WHERE chat_id = ? ORDER BY timestamp DESC LIMIT 1",
-                    (chat_id,)
-                ).fetchone()
-                
-                if not row: return []
-                
-                chain = []
-                curr_cumul, curr_parent, curr_mid = row
-                
-                while curr_mid and len(chain) < limit:
-                    chain.append(curr_mid)
-                    if not curr_parent: break
-                    
-                    # Remontée vers le parent via son Cumulative Hash
-                    parent_row = conn.execute(
-                        "SELECT cumulative_hash, parent_hash, message_id FROM suture_index WHERE cumulative_hash = ?",
-                        (curr_parent,)
-                    ).fetchone()
-                    
-                    if not parent_row: break
-                    curr_cumul, curr_parent, curr_mid = parent_row
-                
-                # 2. Récupération des ombres (on inverse pour l'ordre chronologique)
-                for mid in reversed(chain):
-                    s_row = conn.execute("SELECT role, full_parts_json FROM message_shadows WHERE message_id = ?", (mid,)).fetchone()
-                    if s_row:
-                        shadows.append({"role": s_row[0], "parts": json.loads(s_row[1])})
+            with self._get_connection(readonly=True) as conn:
+                placeholders = ", ".join("?" for _ in effective_ids)
+                rows = conn.execute(
+                    f"SELECT message_id, role, full_parts_json FROM message_shadows WHERE message_id IN ({placeholders})",
+                    effective_ids,
+                ).fetchall()
+                shadow_by_id = {r[0]: (r[1], r[2]) for r in rows}
+
+                ordered = BranchShadowsList()
+                for mid in effective_ids:
+                    if mid in shadow_by_id:
+                        r_role, r_json = shadow_by_id[mid]
+                        try:
+                            parts = json.loads(r_json)
+                        except Exception:
+                            parts = []
+                        ordered.append({"message_id": mid, "role": r_role, "parts": parts})
+
+                return BranchShadowsList(ordered[-limit:]) if limit > 0 else ordered
+        except EchoDbMissingError:
+            return BranchShadowsList()
         except Exception as e:
-            print(f"[EchoStateManager] Error in genealogy: {e}")
-        return shadows
+            print(f"[EchoStateManager] get_active_branch_shadows error: {e}")
+            return BranchShadowsList()
 
+    @_session_scope(False)
     def is_message_embedded(self, message_id: str) -> bool:
-        if not message_id: return False
+        """Vérifie dans rag_index_state si le message a déjà été vectorisé dans Qdrant."""
+        if not message_id:
+            return False
         try:
-            with self._get_connection() as conn:
-                row = conn.execute("SELECT is_embedded FROM message_shadows WHERE message_id = ?", (message_id,)).fetchone()
-                return bool(row[0]) if row else False
-        except: pass
-        return False
+            with self._get_connection(readonly=True) as conn:
+                row = conn.execute("SELECT 1 FROM rag_index_state WHERE message_id = ?", (message_id,)).fetchone()
+                return row is not None
+        except EchoDbMissingError:
+            return False
+        except Exception as e:
+            print(f"[EchoStateManager] is_message_embedded error: {e}")
+            return False
 
+    @_session_scope()
     def mark_message_embedded(self, message_id: str):
-        if not message_id: return
+        """Enregistre le message dans rag_index_state sans créer de fausses lignes Shadows."""
+        if not message_id:
+            return
         try:
-            with self._get_connection() as conn:
-                cursor = conn.execute("UPDATE message_shadows SET is_embedded = 1 WHERE message_id = ?", (message_id,))
-                if cursor.rowcount == 0:
-                    conn.execute("""
-                        INSERT INTO message_shadows (message_id, chat_id, role, full_parts_json, updated_at, is_embedded)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (message_id, self.chat_id or "unknown", "assistant", "[]", int(time.time()), 1))
-                conn.commit()
-        except: pass
+            with self._get_connection() as conn, conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO rag_index_state (message_id, embedded_at) VALUES (?, ?)",
+                    (message_id, int(time.time())),
+                )
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(f"[EchoStateManager] mark_message_embedded error: {e}")
+
+    @_session_scope(False)
+    def has_pending_directive(self, name: str) -> bool:
+        """Vérifie l'existence d'une directive AEC active non encore consommée."""
+        try:
+            with self._get_connection(readonly=True) as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM echo_resources WHERE (resource_type = 'aec_directive' OR resource_type = ?) AND (name = ? OR resource_type = ?) AND status = 'active' LIMIT 1",
+                    (name, name, name),
+                ).fetchone()
+                return row is not None
+        except EchoDbMissingError:
+            return False
+        except Exception as e:
+            print(f"[EchoStateManager] has_pending_directive error: {e}")
+            return False
+
+    @_session_scope(list)
+    def drain_resources_by_types(self, resource_types: Tuple[str, ...] = ("aec_directive", "aec_event")) -> List[Dict[str, Any]]:
+        """Extrait et purge atomiquement les ressources des types spécifiés."""
+        if not resource_types:
+            return []
+        try:
+            with self._get_connection() as conn, conn:
+                placeholders = ", ".join("?" for _ in resource_types)
+                rows = conn.execute(
+                    f"SELECT id, name, resource_type, status, summary, content, created_at FROM echo_resources WHERE resource_type IN ({placeholders}) ORDER BY created_at ASC",
+                    resource_types,
+                ).fetchall()
+                if not rows:
+                    return []
+                ids = [r[0] for r in rows]
+                id_placeholders = ", ".join("?" for _ in ids)
+                conn.execute(f"DELETE FROM echo_resources WHERE id IN ({id_placeholders})", ids)
+                return [
+                    {
+                        "id": r[0],
+                        "name": r[1],
+                        "resource_type": r[2],
+                        "status": r[3],
+                        "summary": r[4],
+                        "content": r[5],
+                        "created_at": r[6],
+                    }
+                    for r in rows
+                ]
+        except EchoDbMissingError:
+            return []
+        except Exception as e:
+            print(f"[EchoStateManager] drain_resources_by_types error: {e}")
+            return []
+
+    @_session_scope(0)
+    def delete_resources_by_types_after(self, resource_types: Tuple[str, ...], t_pivot: float) -> int:
+        """Supprime les ressources des types spécifiés créées strictement après t_pivot."""
+        if not resource_types:
+            return 0
+        try:
+            with self._get_connection() as conn, conn:
+                placeholders = ", ".join("?" for _ in resource_types)
+                params = list(resource_types) + [t_pivot]
+                cur = conn.execute(f"DELETE FROM echo_resources WHERE resource_type IN ({placeholders}) AND created_at > ?", params)
+                return cur.rowcount
+        except EchoDbMissingError:
+            return 0
+        except Exception as e:
+            print(f"[EchoStateManager] delete_resources_by_types_after error: {e}")
+            return 0

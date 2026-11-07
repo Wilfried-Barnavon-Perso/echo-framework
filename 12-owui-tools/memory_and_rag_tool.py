@@ -1,16 +1,16 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 5.231.20.1
+version: 5.235.5.1
 description: ECHO Toolbox pour gestion RAG (Sessions & Codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.235.5.1: Filtrage automatique des recherches locales de session sur les messages de la branche active via build_branch_rag_filter.
+# 5.233.0.1: Contrainte de sortie JSON via response_schema=RagDistillOutput dans update_meta_artifact, décoration @echo_tool et simplification des retours.
 # 5.231.20.1: Isolation inter-sous-agents par sub_sid dans search_sessions_context et préservation du score memory_importance maximal dans update_meta_artifact.
 # 5.229.2.2: Ajout du paramètre tag dans search_sessions_context avec résolution SSoT par chat_id.
 # 5.229.2.1: Détente des seuils certainty_map (0.34/0.52/0.63/0.81) et extension de l'aperçu de cartographie à 120 caractères.
-# 5.229.0.0: Compression des docstrings OpenAPI et externalisation de la documentation vers 14-owui-libs/tool_guides/memory_and_rag.md.
-# 5.228.0.1: Précision d'usage de search_sessions_context par un sous-agent pour distillation en phase prospective.
 
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
@@ -24,14 +24,16 @@ from pydantic import BaseModel, Field
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
 from echo_events import EchoEvents
-from echo_core import wrap_tool_output
+from echo_core import echo_tool, wrap_tool_output, EchoCompactionEngine  # noqa: E402
 from echo_gemini_client import EchoGeminiClient
+from echo_session_gc import build_branch_rag_filter
 from echo_constants import (
     COLLECTION_META_ARTIFACTS, EMBEDDING_DIM,
     MEMORY_IMPORTANCE_WEIGHTS, MEMORY_IMPORTANCE_LABELS,
     ECHO_QDRANT_URL
 )
 from echo_prompts import SYS_RAG_DISTILL
+from echo_protocol import RagDistillOutput
 
 try:
     from open_webui.models.chats import Chats
@@ -94,6 +96,7 @@ class Tools:
     # ÉCRITURE : Mémoriser un fait explicitement
     # ==========================================================================
 
+    @echo_tool
     async def update_meta_artifact(
         self,
         artifact_name: Literal["Profil d'Alignement", "Hypothèses d'Apprentissage"],
@@ -106,20 +109,14 @@ class Tools:
         """Consigne de manière persistante un fait (`fact`) dans un Méta-Artéfact (`Profil d'Alignement` ou `Hypothèses d'Apprentissage`) avec niveau d'importance obligatoire de '1' à '5', et retourne son `memory_id`."""
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id") or not __metadata__:
-            return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "❌ Contexte manquant."
 
         try:
             imp_val = int(str(importance).strip())
             if imp_val not in (1, 2, 3, 4, 5):
                 raise ValueError
         except (ValueError, TypeError):
-            return wrap_tool_output(
-                text="❌ Paramètre `importance` invalide. Valeurs autorisées : '1', '2', '3', '4', '5'.",
-                status={"status": "error"},
-                user_id=__user__.get("id", "system") if __user__ else "system",
-                chat_id=__metadata__.get("chat_id") if __metadata__ else None,
-                metadata=__metadata__
-            )
+            return "❌ Paramètre `importance` invalide. Valeurs autorisées : '1', '2', '3', '4', '5'."
 
         user_id = __user__.get("id")
         chat_id = __metadata__.get("chat_id")
@@ -130,7 +127,8 @@ class Tools:
                 prompt=f"Fait à distiller : {fact}",
                 __user__=__user__,
                 __metadata__=__metadata__,
-                system_instruction=SYS_RAG_DISTILL
+                system_instruction=SYS_RAG_DISTILL.format(fact=fact),
+                response_schema=RagDistillOutput,
             )
             memory_id = distilled.get("memory_id", distilled.get("slug", f"note_{uuid.uuid4().hex[:8]}")) if distilled else f"note_{uuid.uuid4().hex[:8]}"
             tags = distilled.get("tags", ["user_pref"]) if distilled else ["user_pref"]
@@ -138,7 +136,7 @@ class Tools:
             # Vectorisation
             vector = await EchoGeminiClient.generate_embedding(fact, "document", __user__, __metadata__, title=memory_id)
             if not vector:
-                return wrap_tool_output(text="❌ Échec vectorisation.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return "❌ Échec vectorisation."
 
             # UUIDv5 déterministe (anti-doublons)
             point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}_{memory_id}"))
@@ -169,19 +167,20 @@ class Tools:
                     json=upsert_payload
                 )
                 if resp.status_code != 200:
-                    return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    return f"❌ Erreur Qdrant : {resp.text}"
                 imp_label = MEMORY_IMPORTANCE_LABELS.get(imp_val, str(imp_val))
                 if self.valves.DEBUG_MODE:
                     print(f"[ECHO-MEMORY] ✅ save_memory : {memory_id} inséré avec succès. (Tags: {tags}, Imp: {imp_val} - {imp_label})", flush=True)
-                return wrap_tool_output(text=f"✅ Souvenir `{memory_id}` enregistré dans la base vectorielle (Niveau {imp_val} - {imp_label}).", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return f"✅ Souvenir `{memory_id}` enregistré dans la base vectorielle (Niveau {imp_val} - {imp_label})."
 
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"❌ Erreur : {str(e)}"
 
     # ==========================================================================
     # LECTURE : Recherche sémantique
     # ==========================================================================
 
+    @echo_tool
     async def search_meta_artifacts(
         self,
         query: Optional[str] = None,
@@ -198,7 +197,7 @@ class Tools:
 
         events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
-            return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "❌ Contexte manquant."
 
         user_id = __user__.get("id")
         try:
@@ -223,7 +222,7 @@ class Tools:
                     await events.status("🧠 Recherche sémantique ciblée...")
                     vector = await EchoGeminiClient.generate_embedding(query, "query", __user__, __metadata__)
                     if not vector:
-                        return wrap_tool_output(text="❌ Échec vectorisation.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                        return "❌ Échec vectorisation."
 
                     search_payload = {
                         "vector": vector,
@@ -237,11 +236,11 @@ class Tools:
                         json=search_payload
                     )
                     if resp.status_code != 200:
-                        return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                        return f"❌ Erreur Qdrant : {resp.text}"
                     candidates = resp.json().get("result", [])
 
                     if not candidates:
-                        return wrap_tool_output(text="Aucun souvenir trouvé.", status={"status": "success", "results": []}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                        return wrap_tool_output(text="Aucun souvenir trouvé.", status={"status": "success", "results": []})
 
                     # --- RERANKING PAR IMPORTANCE ---
                     for r in candidates:
@@ -260,7 +259,7 @@ class Tools:
                             print(f"[ECHO-MEMORY] search_memory : Aucun souvenir pour '{query}' après reranking (seuil {self.valves.SCORE_THRESHOLD}).", flush=True)
                         return wrap_tool_output(
                             text="Aucun souvenir pertinent après reranking.",
-                            status={"status": "success", "results": []}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                            status={"status": "success", "results": []})
 
                     if self.valves.DEBUG_MODE:
                         print(f"[ECHO-MEMORY] search_memory : {len(reranked)} résultats retournés pour '{query}' après reranking.", flush=True)
@@ -281,7 +280,7 @@ class Tools:
                         )
 
                     await events.status("🧠 Recherche terminée.", done=True)
-                    return wrap_tool_output(text=md, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    return md
 
                 else:
                     # LECTURE GLOBALE CHRONOLOGIQUE
@@ -296,11 +295,11 @@ class Tools:
                         json=scroll_payload
                     )
                     if resp.status_code != 200:
-                        return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                        return f"❌ Erreur Qdrant : {resp.text}"
 
                     points = resp.json().get("result", {}).get("points", [])
                     if not points:
-                        return wrap_tool_output(text="La base vectorielle des souvenirs est actuellement vide pour ce contexte.", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                        return "La base vectorielle des souvenirs est actuellement vide pour ce contexte."
 
                     if self.valves.DEBUG_MODE:
                         print(f"[ECHO-MEMORY] read_memory_global : {len(points)} souvenirs trouvés pour {user_id}.", flush=True)
@@ -321,15 +320,16 @@ class Tools:
                         )
 
                     await events.status("🧠 Lecture globale terminée.", done=True)
-                    return wrap_tool_output(text=md, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    return md
 
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"❌ Erreur : {str(e)}"
 
     # ==========================================================================
     # SUPPRESSION : Oublier un souvenir
     # ==========================================================================
 
+    @echo_tool
     async def delete_meta_artifact_item(
         self,
         memory_id: str,
@@ -340,7 +340,7 @@ class Tools:
         """Supprime définitivement un fait d'un Méta-Artéfact long-terme à partir de son `memory_id`."""
         events = EchoEvents(__event_emitter__)
         if not __user__ or not __user__.get("id"):
-            return wrap_tool_output(text="❌ Erreur : Utilisateur non identifié.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "❌ Erreur : Utilisateur non identifié."
 
         user_id = __user__.get("id")
         await events.status(f"🧠 Suppression du souvenir '{memory_id}'...")
@@ -357,19 +357,20 @@ class Tools:
                     json=delete_payload
                 )
                 if resp.status_code != 200:
-                    return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    return f"❌ Erreur Qdrant : {resp.text}"
                 await events.status("🧠 Suppression terminée.", done=True)
                 if self.valves.DEBUG_MODE:
                     print(f"[ECHO-MEMORY] ✅ forget_memory : {memory_id} supprimé avec succès.", flush=True)
-                return wrap_tool_output(text=f"✅ Souvenir `{memory_id}` supprimé avec succès.", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return f"✅ Souvenir `{memory_id}` supprimé avec succès."
 
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"❌ Erreur : {str(e)}"
 
     # ==========================================================================
     # MÉMOIRE VECTORISÉE DE SESSION : Écriture + Lecture documentaire sur la session
     # ==========================================================================
 
+    @echo_tool
     async def save_session_context(
         self,
         text: str,
@@ -382,7 +383,7 @@ class Tools:
         """Vectorise et sauvegarde un texte (`text`) sous l'identifiant `source_id` dans la Mémoire Vectorielle de la session."""
         events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
-            return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "❌ Contexte manquant."
 
         user_id = __user__.get("id")
         chat_id = __metadata__.get("chat_id")
@@ -403,17 +404,16 @@ class Tools:
                 __metadata__=__metadata__
             )
             if nb_points == 0:
-                return wrap_tool_output(
-                    text=f"❌ Échec indexation Mémoire Vectorisée de Session ({source_id}) : {err}",
-                    status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return f"❌ Échec indexation Mémoire Vectorisée de Session ({source_id}) : {err}"
             await events.status("🧠 Indexation terminée.", done=True)
             return wrap_tool_output(
                 text=f"✅ `{source_id}` indexé dans la Mémoire Vectorisée de Session ({nb_points} vecteurs). "
                 f"Utilisez search_session_context(source_id=\"{source_id}\", ...) pour l'interroger.",
-                status={"status": "success", "source_id": source_id, "vectors": nb_points}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                status={"status": "success", "source_id": source_id, "vectors": nb_points})
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"❌ Erreur : {str(e)}"
 
+    @echo_tool
     async def delete_session_context_source(
         self,
         source_id: str,
@@ -425,7 +425,7 @@ class Tools:
         """Supprime tous les vecteurs associés à `source_id` dans la Mémoire Vectorielle de la session active."""
         events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
-            return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "❌ Contexte manquant."
 
         user_id = __user__.get("id")
         chat_id = __metadata__.get("chat_id")
@@ -453,13 +453,11 @@ class Tools:
                     json=count_payload
                 )
                 if count_resp.status_code != 200:
-                    return wrap_tool_output(text=f"Erreur de vérification Qdrant : {count_resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    return f"Erreur de vérification Qdrant : {count_resp.text}"
 
                 count = count_resp.json().get("result", {}).get("count", 0)
                 if count == 0:
-                    return wrap_tool_output(
-                        text="Échec : Source introuvable ou isolée dans une autre session. Suppression inter-session bloquée par sécurité.",
-                        status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    return "Échec : Source introuvable ou isolée dans une autre session. Suppression inter-session bloquée par sécurité."
 
                 delete_payload = {
                     "filter": {"must": must_filters}
@@ -469,14 +467,15 @@ class Tools:
                     json=delete_payload
                 )
                 if del_resp.status_code != 200:
-                    return wrap_tool_output(text=f"Erreur Qdrant : {del_resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    return f"Erreur Qdrant : {del_resp.text}"
 
                 await events.status(f"🧠 Source {source_id} supprimée.", done=True)
-                return wrap_tool_output(text=f"Source purgée avec succès ({count} vecteurs supprimés).", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return f"Source purgée avec succès ({count} vecteurs supprimés)."
 
         except Exception as e:
-            return wrap_tool_output(text=f"Erreur lors de la suppression : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"Erreur lors de la suppression : {str(e)}"
 
+    @echo_tool
     async def search_sessions_context(
         self,
         certainty_level: str,
@@ -496,7 +495,7 @@ class Tools:
         """Explore la Mémoire Vectorielle de la session (`global_search=False`), de toutes les sessions (`global_search=True`) ou filtrée par étiquette (`tag`), selon `certainty_level`, ou cartographie les sources indexées (`query` omis)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         if not __user__ or not __user__.get("id") or not __metadata__:
-            return wrap_tool_output(text="❌ Contexte manquant.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "❌ Contexte manquant."
 
         user_id = __user__.get("id")
         chat_id = __metadata__.get("chat_id")
@@ -512,15 +511,9 @@ class Tools:
                 if not matching_chat_ids:
                     return wrap_tool_output(
                         text=f"Aucune conversation associée au tag '{clean_tag}' n'a été trouvée.",
-                        status={"status": "success", "results": []},
-                        user_id=user_id, chat_id=chat_id, metadata=__metadata__
-                    )
+                        status={"status": "success", "results": []})
             except Exception as e:
-                return wrap_tool_output(
-                    text=f"❌ Erreur résolution du tag '{clean_tag}': {str(e)}",
-                    status={"status": "error"},
-                    user_id=user_id, chat_id=chat_id, metadata=__metadata__
-                )
+                return f"❌ Erreur résolution du tag '{clean_tag}': {str(e)}"
 
         scope = "globale" if global_search else "locale"
 
@@ -542,6 +535,9 @@ class Tools:
                     scope = f"filtrée sur tag '{tag.strip()}' ({len(matching_chat_ids)} chats)"
                 elif not global_search:
                     must_filters.append({"key": "chat_id", "match": {"value": chat_id}})
+                    active_ids = await EchoCompactionEngine.load_active_branch_ids(chat_id)
+                    if active_ids:
+                        must_filters.append(build_branch_rag_filter(active_ids))
                 if source_id:
                     must_filters.append({"key": "source_id", "match": {"value": source_id}})
                 if sub_ctx and sub_ctx.get("is_subagent") and sub_ctx.get("sub_sid"):
@@ -567,7 +563,7 @@ class Tools:
                     await events.status(f"🧠 Recherche dans la Mémoire Vectorisée de Session ({scope})...")
                     vector = await EchoGeminiClient.generate_embedding(query, "query", __user__, __metadata__)
                     if not vector:
-                        return wrap_tool_output(text="❌ Échec vectorisation.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                        return "❌ Échec vectorisation."
 
                     search_payload = {
                         "vector": vector, "limit": limit * 2, "with_payload": True,
@@ -582,9 +578,9 @@ class Tools:
                     )
 
                     if resp.status_code == 404:
-                        return wrap_tool_output(text="❌ Erreur: Aucune donnée indexée.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                        return "❌ Erreur: Aucune donnée indexée."
                     if resp.status_code != 200:
-                        return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                        return f"❌ Erreur Qdrant : {resp.text}"
 
                     results = resp.json().get("result", [])
 
@@ -594,7 +590,7 @@ class Tools:
                         results.sort(key=lambda x: x["score"], reverse=True)
 
                     if not results:
-                        return wrap_tool_output(text="Aucune information trouvée.", status={"status": "success", "results": []}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                        return wrap_tool_output(text="Aucune information trouvée.", status={"status": "success", "results": []})
 
                     import difflib
                     seen_texts = []
@@ -626,7 +622,7 @@ class Tools:
                         count += 1
 
                     await events.status("🧠 Recherche RAG terminée.", done=True)
-                    return wrap_tool_output(text=md, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    return md
 
                 else:
                     # LECTURE INDEX (Anciennement consult_session_context)
@@ -641,11 +637,11 @@ class Tools:
                         json=scroll_payload
                     )
                     if resp.status_code != 200:
-                        return wrap_tool_output(text=f"❌ Erreur Qdrant : {resp.text}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                        return f"❌ Erreur Qdrant : {resp.text}"
 
                     points = resp.json().get("result", {}).get("points", [])
                     if not points:
-                        return wrap_tool_output(text="Aucune ressource indexée trouvée.", status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                        return "Aucune ressource indexée trouvée."
 
                     sources = {}
                     tags = set()
@@ -672,7 +668,7 @@ class Tools:
                     md += f"\n**Tags détectés :** `{', '.join(sorted(tags))}`"
 
                     await events.status("🧠 Cartographie terminée.", done=True)
-                    return wrap_tool_output(text=md, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    return md
 
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur : {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"❌ Erreur : {str(e)}"

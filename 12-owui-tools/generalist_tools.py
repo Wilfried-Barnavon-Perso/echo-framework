@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 5.231.20.1
+version: 5.233.0.1
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.233.0.1: Décoration @echo_tool sur les 16 méthodes publiques et simplification de safe_owui_call et des retours wrap_tool_output.
 # 5.231.20.1: Isolation multi-chat du HUD wait_timer (data-chat-id) et suppression des fuites de listeners document.
 # 5.229.2.1: Ajout de l'outil list_ui_tags (consultation locale des tags du chat courant ou globale de toutes les conversations).
 # 5.229.1.2: Précision de la transmission par défaut aux sous-agents dans la docstring de tool_advisor.
 # 5.229.1.1: Bascule cognitive de tool_advisor vers MODEL_APOLLO (medium thinking).
-# 5.229.0.1: Renommage de delegate_to_tool_consultant en tool_advisor et enrichissement de la docstring (utilité, sous-agents).
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -23,7 +23,7 @@ from typing import Any
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_core import wrap_tool_output
+from echo_core import echo_tool, wrap_tool_output
 from echo_events import EchoEvents
 from echo_constants import ECHO_MAX_WAIT_TIMER, get_generation_config, OWUI_ORCHESTRATOR_MODEL
 from echo_ui import EchoUI
@@ -53,9 +53,6 @@ log = logging.getLogger(__name__)
 
 async def safe_owui_call(func, *args, **kwargs):
     """Proxy sécurisé pour l'exécution et l'encapsulation ECHO des fonctions natives Open WebUI."""
-    __user__ = kwargs.get("__user__", {})
-    __metadata__ = kwargs.get("__metadata__", {})
-    
     sig = inspect.signature(func)
     has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
     filtered_kwargs = kwargs if has_var_keyword else {k: v for k, v in kwargs.items() if k in sig.parameters}
@@ -79,17 +76,11 @@ async def safe_owui_call(func, *args, **kwargs):
         return wrap_tool_output(
             text=text_output, 
             status=status_dict, 
-            user_id=__user__.get("id"), 
-            chat_id=__metadata__.get("chat_id"), 
-            metadata=__metadata__
         )
     except Exception as e:
         return wrap_tool_output(
             text=f"Exception interne de l'outil : {str(e)}", 
             status={"status": "error", "message": str(e)}, 
-            user_id=__user__.get("id"), 
-            chat_id=__metadata__.get("chat_id"), 
-            metadata=__metadata__
         )
 
 class Tools:
@@ -102,6 +93,7 @@ class Tools:
     def __init__(self):
         self.valves = self.Valves()
 
+    @echo_tool
     async def wait_timer(
         self,
         seconds: int,
@@ -221,8 +213,9 @@ class Tools:
         await asyncio.sleep(sec_val)
 
         await events.status("⏱️ Timer terminé.", done=True)
-        return wrap_tool_output(text=f"Le timer de {sec_val} secondes est terminé avec succès.", user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        return f"Le timer de {sec_val} secondes est terminé avec succès."
 
+    @echo_tool
     async def ask_user_input(
         self,
         question: str,
@@ -236,17 +229,11 @@ class Tools:
     ) -> dict:
         """Affiche une boîte de dialogue interactive à l'Utilisateur pour demander une saisie texte (`input_type='text'`) ou une confirmation Oui/Non (`input_type='confirm'`)."""
         if not __user__:
-            return wrap_tool_output(text="Erreur : Contexte manquant.", status={"status": "error"})
+            return "Erreur : Contexte manquant."
 
         from echo_constants import ECHO_SUBAGENT_CONTEXT
         if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
-            return wrap_tool_output(
-                text="Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de poser une question interactive à l'Utilisateur.",
-                status={"status": "error"},
-                user_id=__user__.get("id", "system") if __user__ else "system",
-                chat_id=__metadata__.get("chat_id") if __metadata__ else None,
-                metadata=__metadata__
-            )
+            return "Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de poser une question interactive à l'Utilisateur."
 
         events = EchoEvents(__event_emitter__, __event_call__)
         await events.status(f"En attente d'une saisie de l'utilisateur ({timeout_seconds}s)...")
@@ -280,34 +267,28 @@ class Tools:
             await events.status("Opération refusée, annulée ou délai expiré.", done=True)
             return wrap_tool_output(
                 text=json.dumps({"status": "cancelled", "message": "L'utilisateur a répondu Non, annulé la saisie ou le délai imparti est expiré.", "user_input": user_input}),
-                status={"status": "cancelled"},
-                user_id=__user__["id"],
-                chat_id=__metadata__.get("chat_id"),
-                metadata=__metadata__
+                status={"status": "cancelled"}
             )
 
         await events.status("Saisie utilisateur reçue.", done=True)
-        return wrap_tool_output(
-            text=json.dumps({"status": "success", "user_input": user_input}),
-            status={"status": "success"},
-            user_id=__user__["id"],
-            chat_id=__metadata__.get("chat_id"),
-            metadata=__metadata__
-        )
+        return json.dumps({"status": "success", "user_input": user_input})
 
+    @echo_tool
     async def search_ui_calendar_events(self, query: str = "", start: str = None, end: str = None, limit: int = 10, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """Recherche des événements dans l'agenda de l'Interface Utilisateur par mot-clé et bornes `start`/`end` (ISO 8601)."""
         return await safe_owui_call(_owui_search, query=query, start=start, end=end, count=limit, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
+    @echo_tool
     async def list_ui_calendar_events(self, query: str = "", start: str = None, end: str = None, limit: int = 30, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """Liste les événements de l'agenda de l'Interface Utilisateur sur une période (`start`/`end` ISO 8601)."""
         return await safe_owui_call(_owui_search, query=query, start=start, end=end, count=limit, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
+    @echo_tool
     async def read_ui_calendar_events(self, event_ids: list[str], __user__: dict = {}, __metadata__: dict = {}) -> str:
         """Lit les détails complets d'un ou plusieurs événements de l'agenda à partir de leurs `event_ids`."""
         user_id = __user__.get("id")
         if not user_id:
-            return wrap_tool_output(text=json.dumps({"error": "User context missing"}), status={"status": "error"}, metadata=__metadata__)
+            return {"error": "User context missing"}
 
         if isinstance(event_ids, str):
             clean_ids = [eid.strip() for eid in event_ids.split(",") if eid.strip()]
@@ -317,7 +298,7 @@ class Tools:
             clean_ids = []
 
         if not clean_ids:
-            return wrap_tool_output(text=json.dumps({"error": "Aucun identifiant d'évènement valide fourni."}), status={"status": "error"}, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
+            return {"error": "Aucun identifiant d'évènement valide fourni."}
 
         try:
             tz = _get_user_tz(__user__)
@@ -361,20 +342,16 @@ class Tools:
             if not_found:
                 payload["not_found"] = not_found
 
-            return wrap_tool_output(
-                text=json.dumps(payload, ensure_ascii=False),
-                status={"status": "success"},
-                user_id=user_id,
-                chat_id=__metadata__.get("chat_id"),
-                metadata=__metadata__
-            )
+            return json.dumps(payload, ensure_ascii=False)
         except Exception as e:
-            return wrap_tool_output(text=json.dumps({"error": str(e)}), status={"status": "error"}, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
+            return {"error": str(e)}
 
+    @echo_tool
     async def create_ui_calendar_event(self, title: str, description: str = "", start: str = "", end: str = "", location: str = "", __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """Crée un événement dans l'agenda de l'Interface Utilisateur (`start`/`end` au format ISO 8601 ou 'YYYY-MM-DD HH:MM')."""
         return await safe_owui_call(_owui_create_cal, title=title, description=description, start=start, end=end, location=location, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
+    @echo_tool
     async def update_ui_calendar_event(
         self,
         event_id: str,
@@ -407,10 +384,12 @@ class Tools:
             __metadata__=__metadata__
         )
 
+    @echo_tool
     async def delete_ui_calendar_event(self, event_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """Supprime un événement de l'agenda de l'Interface Utilisateur via son `event_id`."""
         return await safe_owui_call(_owui_delete_cal, event_id=event_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
+    @echo_tool
     async def create_ui_automation(self, name: str, prompt: str, rrule: str, target_folder_name: str = "Automations", __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """Crée une tâche de fond planifiée (CRON au format iCalendar `rrule`) exécutant `prompt` dans `target_folder_name`."""
         user_id = __user__.get("id")
@@ -451,6 +430,7 @@ class Tools:
             __metadata__=call_metadata
         )
 
+    @echo_tool
     async def update_ui_automation(
         self,
         automation_id: str,
@@ -501,15 +481,17 @@ class Tools:
             __metadata__=call_metadata
         )
 
+    @echo_tool
     async def delete_ui_automation(self, automation_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """Supprime définitivement une tâche planifiée via son `automation_id`."""
         return await safe_owui_call(_owui_delete_auto, automation_id=automation_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
+    @echo_tool
     async def read_ui_automations(self, automation_ids: list[str], __user__: dict = {}, __metadata__: dict = {}) -> str:
         """Lit la configuration complète (incluant le prompt et la règle `rrule`) d'une ou plusieurs automatisations (`automation_ids`)."""
         user_id = __user__.get("id")
         if not user_id:
-            return wrap_tool_output(text=json.dumps({"error": "User context missing"}), status={"status": "error"}, metadata=__metadata__)
+            return {"error": "User context missing"}
 
         if isinstance(automation_ids, str):
             clean_ids = [aid.strip() for aid in automation_ids.split(",") if aid.strip()]
@@ -519,7 +501,7 @@ class Tools:
             clean_ids = []
 
         if not clean_ids:
-            return wrap_tool_output(text=json.dumps({"error": "Aucun identifiant d'automatisation valide fourni."}), status={"status": "error"}, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
+            return {"error": "Aucun identifiant d'automatisation valide fourni."}
 
         try:
             tasks = [Automations.get_by_id(aid) for aid in clean_ids]
@@ -555,21 +537,16 @@ class Tools:
             if not_found:
                 payload["not_found"] = not_found
 
-            return wrap_tool_output(
-                text=json.dumps(payload, ensure_ascii=False),
-                status={"status": "success"},
-                user_id=user_id,
-                chat_id=__metadata__.get("chat_id"),
-                metadata=__metadata__
-            )
+            return json.dumps(payload, ensure_ascii=False)
         except Exception as e:
-            return wrap_tool_output(text=json.dumps({"error": str(e)}), status={"status": "error"}, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
+            return {"error": str(e)}
 
+    @echo_tool
     async def list_ui_automations(self, query: str = "", limit: int = 30, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """Liste et recherche les tâches de fond planifiées (CRON) de l'Interface Utilisateur."""
         user_id = __user__.get("id")
         if not user_id:
-            return wrap_tool_output(text=json.dumps({"error": "User context missing"}), status={"status": "error"})
+            return {"error": "User context missing"}
             
         try:
             result = await Automations.search_automations(user_id=user_id, query=query, limit=limit)
@@ -583,17 +560,19 @@ class Tools:
                     "next_run_at": item.next_run_at
                 })
             res_json = json.dumps(items)
-            return wrap_tool_output(text=res_json, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
+            return res_json
         except Exception as e:
-            return wrap_tool_output(text=json.dumps({"error": str(e)}), status={"status": "error"}, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
+            return {"error": str(e)}
 
+    @echo_tool
     async def list_ui_folders(self, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """Liste l'arborescence des dossiers de conversations de l'Interface Utilisateur (`id`, `name`)."""
         user_id = __user__.get("id")
         folders = await Folders.get_folders_by_user_id(user_id) if hasattr(Folders, 'get_folders_by_user_id') else []
         res = json.dumps([{"id": f.id, "name": f.name} for f in folders])
-        return wrap_tool_output(text=res, user_id=user_id, chat_id=__metadata__.get("chat_id"), metadata=__metadata__)
+        return res
 
+    @echo_tool
     async def list_ui_tags(
         self,
         global_scope: bool = False,
@@ -616,11 +595,7 @@ class Tools:
                 }
             else:
                 if not cid:
-                    return wrap_tool_output(
-                        text=json.dumps({"error": "Contexte chat_id manquant pour la conversation en cours."}),
-                        status={"status": "error"},
-                        user_id=user_id, chat_id=cid, metadata=__metadata__
-                    )
+                    return {"error": "Contexte chat_id manquant pour la conversation en cours."}
                 chat = await Chats.get_chat_by_id_and_user_id(cid, user_id) if hasattr(Chats, "get_chat_by_id_and_user_id") else None
                 raw_tag_ids = (chat.meta or {}).get("tags", []) if chat else []
                 tag_models = await Tags.get_tags_by_ids_and_user_id(raw_tag_ids, user_id) if hasattr(Tags, "get_tags_by_ids_and_user_id") and raw_tag_ids else []
@@ -630,10 +605,11 @@ class Tools:
                     "chat_id": cid,
                     "tags": [{"id": tid, "name": tag_dict.get(tid, tid)} for tid in raw_tag_ids]
                 }
-            return wrap_tool_output(text=json.dumps(data, ensure_ascii=False), user_id=user_id, chat_id=cid, metadata=__metadata__)
+            return json.dumps(data, ensure_ascii=False)
         except Exception as e:
-            return wrap_tool_output(text=json.dumps({"error": str(e)}), status={"status": "error"}, user_id=user_id, chat_id=cid, metadata=__metadata__)
+            return {"error": str(e)}
 
+    @echo_tool
     async def tool_advisor(
         self,
         objective: str = Field(
@@ -656,7 +632,7 @@ class Tools:
     ) -> str:
         """Consulte l'Expert-Conseil Opérationnel des Outils ECHO (manuels complets, paramètres exacts, séquences d'appels, utilité et diagnostic d'erreurs). Cet outil est transmis par défaut à tous les sous-agents pour assister l'orchestration, connaître l'usage d'une fonction ou diagnostiquer un échec d'appel."""
         if not __user__:
-            return wrap_tool_output(text="Erreur : contexte OWUI manquant.", status={"status": "error"}, metadata=__metadata__)
+            return "Erreur : contexte OWUI manquant."
 
         if not isinstance(target_tools, str):
             target_tools = None
@@ -775,9 +751,6 @@ class Tools:
                     return wrap_tool_output(
                         text="Erreur lors de la délégation au Conseiller Outils : Aucun modèle disponible (cascade épuisée).",
                         status={"status": "error", "message": "cascade exhausted"},
-                        user_id=user_id,
-                        chat_id=chat_id,
-                        metadata=__metadata__,
                     )
 
                 candidates = response.get("candidates", [])
@@ -823,21 +796,13 @@ class Tools:
                 for p in parts:
                     if "text" in p and not p.get("thought"):
                         text_result += p["text"]
-                break
+                    break
 
             await events.status("✅ Conseiller Outils : Recommandation opérationnelle prête.", done=True)
-            return wrap_tool_output(
-                text=f"Recommandation du Conseiller Outils :\n\n{text_result}",
-                user_id=user_id,
-                chat_id=chat_id,
-                metadata=__metadata__,
-            )
+            return f"Recommandation du Conseiller Outils :\n\n{text_result}"
         except Exception as e:
             await events.status("❌ Erreur Conseiller Outils", done=True)
             return wrap_tool_output(
                 text=f"Erreur lors de la délégation au Conseiller Outils : {str(e)}",
                 status={"status": "error", "message": str(e)},
-                user_id=user_id,
-                chat_id=chat_id,
-                metadata=__metadata__,
             )

@@ -1,17 +1,17 @@
 ---
 domain_id: strategic_planner
-version: 5.231.52.1
-updated_at: 2026-11-02
+version: 5.232.5.1
+updated_at: 2026-11-03
 name: Planification Stratégique & Suivi Tactique
-description: Conception de plans d'action (MODEL_PROMETHEUS), audit contradictoire, amorçage par validation utilisateur et pointage tactique des tâches (MODEL_APOLLO) adossés au Codex.
+description: Conception de plans d'action (MODEL_PROMETHEUS), audit contradictoire, amorçage par validation utilisateur et pointage tactique des tâches (MODEL_APOLLO) adossés au workspace plans du Codex.
 tools: [build_plan, read_plan, update_plan, update_tasks, process_plan, delete_plan, analyze_plan]
-keywords: [plan, planification, stratégie, tâches, tasks, build_plan, process_plan, update_tasks, analyze_plan, roadmap]
+keywords: [plan, planification, stratégie, tâches, tasks, build_plan, process_plan, update_tasks, analyze_plan, roadmap, plans]
 ---
 
 # MANUEL OPÉRATIONNEL : PLANIFICATION STRATÉGIQUE (`strategic_planner`)
 
 ## 1. MACHINE À ÉTATS & CYCLE DE VIE DU PLAN
-Le Planificateur Stratégique génère et maintient deux fichiers couplés dans le workspace `main` du Codex (indexés dans le Registre Unifié sous `resource_type="plan"`) :
+Le Planificateur Stratégique génère, versionne sous Git et maintient deux fichiers couplés dans le workspace dédié `plans` du Codex (indexés dans le Registre Unifié sous `resource_type="plan"`, `storage_path="codex/plans/..."`) :
 1. **Fichier de Stratégie** : `{plan_id}_{slug}.md` (Objectif, architecture, phases).
 2. **Fichier des Tâches** : `tasks_{plan_id}_{slug}.md` (Checklist tactique).
 

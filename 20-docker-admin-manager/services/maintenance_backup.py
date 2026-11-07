@@ -2,11 +2,13 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - MAINTENANCE & BACKUP SCHEDULER
-VERSION : 5.226.18.0
+VERSION : 5.235.5.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.235.5.1: Intégration des statistiques de purge des branches mortes dans le rapport de maintenance nocturne.
+# 5.235.2.1: Affichage explicite des session.db purgées dans le bilan d'élagage du cycle nocturne.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 import datetime
 import glob
@@ -421,6 +423,7 @@ def run_nightly_maintenance_cycle():
             + stats.get('drop_chats', {}).get('b', 0)
             + stats.get('drop_n8n', {}).get('b', 0)
         )
+        db_st = stats.get('dead_branches', {})
 
         pretty_report = f"""
         <div style='line-height: 1.5; font-size: 0.85rem;' class='text-light'>
@@ -441,10 +444,11 @@ def run_nightly_maintenance_cycle():
             <div class='mt-2 pt-1 border-top border-secondary'>
                 <b class='text-info'><i class='bi bi-trash'></i> Bilan Élagage & SQLite</b><br>
                 <i class='bi bi-people'></i> Utilisateurs : <b>{stats.get('users', {}).get('c', 0)}</b> <i>({_format_bytes(stats.get('users', {}).get('b', 0))})</i><br>
-                <i class='bi bi-chat-left-dots'></i> Chats : <b>{stats.get('chats', {}).get('c', 0)}</b> <i>({_format_bytes(stats.get('chats', {}).get('b', 0))})</i><br>
+                <i class='bi bi-chat-left-dots'></i> Chats : <b>{stats.get('chats', {}).get('c', 0)}</b> (<b>{stats.get('sessions_db', {}).get('c', 0)}</b> session.db) <i>({_format_bytes(stats.get('chats', {}).get('b', 0))})</i><br>
                 <i class='bi bi-file-earmark-code'></i> Fichiers FS : <b>{stats.get('files', {}).get('c', 0)}</b> <i>({_format_bytes(stats.get('files', {}).get('b', 0))})</i><br>
                 <i class='bi bi-key'></i> MCP Cache : <b>{stats.get('mcp_cache', {}).get('c', 0)}</b> <i>({_format_bytes(stats.get('mcp_cache', {}).get('b', 0))})</i><br>
                 <i class='bi bi-hdd'></i> Drop Zones : <b>{stats.get('drop_users', {}).get('c', 0)}</b> Users, <b>{stats.get('drop_chats', {}).get('c', 0)}</b> Chats, <b>{stats.get('drop_n8n', {}).get('c', 0)}</b> N8N <i>(Libéré: {_format_bytes(drop_total_b)})</i><br>
+                <i class='bi bi-diagram-2'></i> Branches mortes : <b>{db_st.get('chats', 0)}</b> chats, <b>{db_st.get('rows', 0)}</b> lignes, <b>{db_st.get('rag_points', 0)}</b> vecteurs<br>
                 <i class='bi bi-diagram-3'></i> Consolidation : <b>{stats.get('promoted_clusters', 0)}</b> clusters promus (Lvl1→Lvl2)<br>
                 <i class='bi bi-database-check'></i> SQLite : <b>{stats.get('sqlite_ghosts', 0)}</b> fantômes, <b>{stats.get('sqlite_vacuumed', 0)}</b> bases optimisées<br>
             </div>

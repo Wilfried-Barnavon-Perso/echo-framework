@@ -11,6 +11,7 @@
 <form method="POST" action="/enroll">
     <input type="hidden" name="email" value="{{ email }}">
     <input type="hidden" name="totp_secret" value="{{ totp_secret }}">
+    <input type="hidden" name="next" value="{{ next }}">
     
     <div class="form-group">
         <label for="name">Votre Nom complet (Optionnel)</label>

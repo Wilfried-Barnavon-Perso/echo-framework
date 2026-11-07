@@ -1,35 +1,43 @@
 """
 title: ECHO Session Clone & Migration Engine
 author: Wilfried BARNAVON
-version: 5.231.29.1
+version: 5.235.5.2
 description: Moteur partagé de duplication atomique des conteneurs de session ECHO (Clone, Fork et Migration).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.235.5.2: Purge arborescente exacte via compute_dead_set + purge_dead_set, support live_ids dans sync_cloned_session et duplication RAG filtrée.
+# 5.232.5.1: Alignement Git multi-workspaces (main, plans, generated) au cutoff, réécriture frontmatter dans plans et élagage mtime des workspaces non-versionnés.
 # 5.231.29.1: Alignement sur les constantes SSOT des espaces de travail Codex (CODEX_DIR_NAME, CODEX_WORKSPACE_MAIN, CODEX_WORKSPACE_SANDBOX).
 # 5.231.28.2: Suppression des requêtes SQLite sur les tables obsolètes plans et codex_docs (unification sur echo_resources).
 # 5.231.27.2: Refonte clonage/fork (résolution causale, copie Espace Utilisateur/RAG <= cutoff_ts, réassignation ID).
-# 5.228.4.1: Mise à jour echo_resources.name, reset N8N deployed_as_*, purge last_model_id, frontmatter Codex.
-# 5.227.1.1: Création du module partagé de duplication atomique de session (clone, fork et migration).
 
 from contextlib import closing
-from typing import Callable, List, Optional, Set, Tuple
-import json
 import logging
 import os
 import re
 import shutil
 import sqlite3
+import time
+from typing import Callable, List, Optional, Set, Tuple
 import uuid
 
 from echo_constants import (
     CODEX_DIR_NAME,
     CODEX_WORKSPACE_MAIN,
-    CODEX_WORKSPACE_SANDBOX,
+    CODEX_WORKSPACE_PLANS,
     COLLECTION_SESSION_RAG,
+    ECHO_CODEX_WORKSPACES,
     ECHO_QDRANT_URL,
+    is_codex_workspace_versioned,
 )
 from echo_paths import get_echo_session_path
+from echo_session_gc import (
+    compute_dead_set,
+    extract_call_ids_from_json as _extract_call_ids_from_json,
+    is_point_in_branch,
+    purge_dead_set,
+)
 import httpx
 
 logger = logging.getLogger("ECHO-SESSION-CLONE")
@@ -73,18 +81,7 @@ def backup_session_db(orig_db: str, new_db: str) -> bool:
 
 
 def reassign_session_ids(cur: sqlite3.Cursor, orig_cid: str, new_cid: str) -> None:
-    """Réassigne chat_id, les identifiants composites _C_{cid}_T_ et les chemins physiques dans SQLite."""
-    for tbl in (
-        "suture_index",
-        "message_shadows",
-        "cognitive_threads",
-        "processed_files",
-    ):
-        try:
-            cur.execute(f"UPDATE {tbl} SET chat_id = ?", (new_cid,))
-        except Exception:
-            pass
-
+    """Réassigne les identifiants composites _C_{cid}_T_ et les chemins physiques dans SQLite."""
     orig_id_marker = f"_C_{orig_cid}_T_"
     new_id_marker = f"_C_{new_cid}_T_"
     try:
@@ -102,18 +99,6 @@ def reassign_session_ids(cur: sqlite3.Cursor, orig_cid: str, new_cid: str) -> No
         )
         cur.execute(
             "UPDATE echo_resources SET summary = REPLACE(summary, ?, ?) WHERE summary LIKE ?",
-            (orig_id_marker, new_id_marker, f"%{orig_id_marker}%"),
-        )
-    except Exception:
-        pass
-
-    try:
-        cur.execute(
-            "UPDATE processed_files SET file_id = REPLACE(file_id, ?, ?) WHERE file_id LIKE ?",
-            (orig_id_marker, new_id_marker, f"%{orig_id_marker}%"),
-        )
-        cur.execute(
-            "UPDATE processed_files SET filename = REPLACE(filename, ?, ?) WHERE filename LIKE ?",
             (orig_id_marker, new_id_marker, f"%{orig_id_marker}%"),
         )
     except Exception:
@@ -179,7 +164,7 @@ def purge_conversational_state(cur: sqlite3.Cursor) -> None:
         "message_shadows",
         "cognitive_signatures",
         "tool_journal",
-        "rich_payloads",
+        "rag_index_state",
         "call_bridge",
         "cognitive_threads",
     ):
@@ -202,47 +187,14 @@ def purge_conversational_state(cur: sqlite3.Cursor) -> None:
             "'last_active_model', 'turn_origin_model', 'compaction_state', 'context_checkpoint') "
             "OR key LIKE 'aec_tier_%' OR key LIKE 'cascade_%'"
         )
-        cur.execute("DELETE FROM auth_data WHERE key LIKE 'cascade_%'")
     except Exception:
         pass
 
 
-def _extract_call_ids_from_json(raw_json: Optional[str]) -> Set[str]:
-    """Extrait tous les identifiants d'appels d'outils (call_id) depuis io_json ou full_parts_json."""
-    call_ids: Set[str] = set()
-    if not raw_json:
-        return call_ids
-    try:
-        data = json.loads(raw_json)
-    except Exception:
-        return call_ids
-
-    def _walk(node):
-        if isinstance(node, list):
-            for item in node:
-                _walk(item)
-        elif isinstance(node, dict):
-            calls = node.get("calls")
-            if isinstance(calls, list):
-                for c in calls:
-                    if isinstance(c, dict) and c.get("id"):
-                        call_ids.add(str(c["id"]))
-            fc = node.get("functionCall")
-            if isinstance(fc, dict) and fc.get("id"):
-                call_ids.add(str(fc["id"]))
-            fr = node.get("functionResponse")
-            if isinstance(fr, dict) and fr.get("id"):
-                call_ids.add(str(fr["id"]))
-            parts = node.get("parts")
-            if isinstance(parts, list):
-                _walk(parts)
-
-    _walk(data)
-    return call_ids
-
-
 def prune_forked_history(
-    cur: sqlite3.Cursor, forked_msg_id: str
+    cur: sqlite3.Cursor,
+    forked_msg_id: str,
+    live_msg_ids: Optional[Set[str]] = None,
 ) -> Tuple[Optional[int], bool]:
     """Résout la chaîne causale jusqu'à forked_msg_id et élague les tables SQLite si le fork est partiel.
     Retourne (cutoff_ts, is_partial_fork)."""
@@ -456,6 +408,70 @@ def prune_forked_history(
     has_unkept_shadows = any(
         sh_r["message_id"] not in ancestor_msg_ids for sh_r in all_shadow_rows
     )
+
+    if live_msg_ids:
+        effective_live = set(live_msg_ids) - excluded_msg_ids
+        dead = compute_dead_set(cur.connection, effective_live, float("inf"))
+        has_user_only_suture = bool(
+            is_user_only_fork
+            and any(r["message_id"] == forked_msg_id for r in suture_rows)
+        )
+        has_temporal_unkept = has_unkept_suture or has_unkept_sigs or has_unkept_shadows
+        is_partial_fork = bool(
+            dead.message_ids
+            or dead.cumuls
+            or dead.call_ids
+            or dead.rag_seeds
+            or has_user_only_suture
+            or has_temporal_unkept
+        )
+        if not is_partial_fork:
+            return cutoff_ts, False
+
+        purge_dead_set(cur.connection, dead, dry_run=False)
+
+        if is_user_only_fork and excluded_cumuls:
+            ph_ex = ",".join("?" for _ in excluded_cumuls)
+            cur.execute(
+                f"DELETE FROM suture_index WHERE cumulative_hash IN ({ph_ex})",
+                tuple(excluded_cumuls),
+            )
+            cur.execute(
+                f"DELETE FROM tool_journal WHERE cumulative_hash IN ({ph_ex})",
+                tuple(excluded_cumuls),
+            )
+            cur.execute(
+                f"DELETE FROM cognitive_signatures WHERE cumulative_hash IN ({ph_ex})",
+                tuple(excluded_cumuls),
+            )
+        if is_user_only_fork:
+            cur.execute(
+                "DELETE FROM suture_index WHERE message_id = ?",
+                (forked_msg_id,),
+            )
+
+        kept_call_ids -= dead.call_ids
+        if cutoff_ts is not None:
+            cur.execute("DELETE FROM cognitive_threads WHERE updated_at > ?", (cutoff_ts,))
+            if effective_live:
+                ph_m = ",".join("?" for _ in effective_live)
+                cur.execute(
+                    f"DELETE FROM echo_resources WHERE created_at > ? "
+                    f"AND (message_id IS NULL OR message_id NOT IN ({ph_m}))",
+                    (cutoff_ts, *tuple(effective_live)),
+                )
+            else:
+                cur.execute("DELETE FROM echo_resources WHERE created_at > ?", (cutoff_ts,))
+            if kept_call_ids:
+                ph_k = ",".join("?" for _ in kept_call_ids)
+                cur.execute(
+                    f"DELETE FROM call_bridge WHERE timestamp > ? AND call_id NOT IN ({ph_k})",
+                    (cutoff_ts, *tuple(kept_call_ids)),
+                )
+            else:
+                cur.execute("DELETE FROM call_bridge WHERE timestamp > ?", (cutoff_ts,))
+        return cutoff_ts, True
+
     is_partial_fork = has_unkept_suture or has_unkept_sigs or has_unkept_shadows
 
     if not is_partial_fork:
@@ -485,6 +501,10 @@ def prune_forked_history(
             tuple(ancestor_msg_ids),
         )
         cur.execute(
+            f"DELETE FROM rag_index_state WHERE message_id NOT IN ({ph_m})",
+            tuple(ancestor_msg_ids),
+        )
+        cur.execute(
             f"DELETE FROM cognitive_signatures WHERE message_id NOT IN ({ph_m})"
             + (
                 f" AND cumulative_hash NOT IN ({','.join('?' for _ in ancestor_cumuls)})"
@@ -496,27 +516,21 @@ def prune_forked_history(
         )
     elif cutoff_ts is not None:
         cur.execute("DELETE FROM message_shadows WHERE updated_at > ?", (cutoff_ts,))
+        cur.execute("DELETE FROM rag_index_state WHERE embedded_at > ?", (cutoff_ts,))
         cur.execute(
             "DELETE FROM cognitive_signatures WHERE updated_at > ?", (cutoff_ts,)
         )
 
     if cutoff_ts is not None:
-        cur.execute("DELETE FROM rich_payloads WHERE created_at > ?", (cutoff_ts,))
         cur.execute("DELETE FROM cognitive_threads WHERE updated_at > ?", (cutoff_ts,))
         if ancestor_msg_ids:
             ph_m = ",".join("?" for _ in ancestor_msg_ids)
-            cur.execute(
-                f"DELETE FROM processed_files WHERE timestamp > ? "
-                f"AND (message_id IS NULL OR message_id NOT IN ({ph_m}))",
-                (cutoff_ts, *tuple(ancestor_msg_ids)),
-            )
             cur.execute(
                 f"DELETE FROM echo_resources WHERE created_at > ? "
                 f"AND (message_id IS NULL OR message_id NOT IN ({ph_m}))",
                 (cutoff_ts, *tuple(ancestor_msg_ids)),
             )
         else:
-            cur.execute("DELETE FROM processed_files WHERE timestamp > ?", (cutoff_ts,))
             cur.execute("DELETE FROM echo_resources WHERE created_at > ?", (cutoff_ts,))
         if kept_call_ids:
             ph_k = ",".join("?" for _ in kept_call_ids)
@@ -526,10 +540,6 @@ def prune_forked_history(
             )
         else:
             cur.execute("DELETE FROM call_bridge WHERE timestamp > ?", (cutoff_ts,))
-        cur.execute(
-            "DELETE FROM auth_data WHERE key LIKE 'cascade_%' AND updated_at > ?",
-            (cutoff_ts,),
-        )
 
     return cutoff_ts, True
 
@@ -575,16 +585,16 @@ def rename_cloned_files(files_dir: str, orig_cid: str, new_cid: str) -> None:
 def rewrite_codex_plan_frontmatter(
     codex_dir: str, orig_cid: str, new_cid: str
 ) -> None:
-    """Met à jour chat_id dans le frontmatter YAML des plans du Codex."""
-    main_dir = os.path.join(codex_dir, CODEX_WORKSPACE_MAIN)
-    if not os.path.exists(main_dir):
+    """Met à jour chat_id dans le frontmatter YAML des plans du Codex (codex/plans)."""
+    plans_dir = os.path.join(codex_dir, CODEX_WORKSPACE_PLANS)
+    if not os.path.exists(plans_dir):
         return
     old_line = f"chat_id: {orig_cid}"
     new_line = f"chat_id: {new_cid}"
-    for entry in os.listdir(main_dir):
+    for entry in os.listdir(plans_dir):
         if not entry.endswith(".md"):
             continue
-        fp = os.path.join(main_dir, entry)
+        fp = os.path.join(plans_dir, entry)
         if not os.path.isfile(fp):
             continue
         try:
@@ -625,17 +635,6 @@ def _collect_kept_domain_markers(cur: sqlite3.Cursor) -> Tuple[Set[str], Set[str
                 kept_markers.add(os.path.basename(spath))
             if rtype == "n8n_workflow" and rid:
                 kept_wf_ids.add(rid)
-    except Exception:
-        pass
-    try:
-        cur.execute("SELECT file_id, filename FROM processed_files")
-        for row in cur.fetchall():
-            fid = str(row["file_id"] or "")
-            fname = str(row["filename"] or "")
-            if fid:
-                kept_markers.add(fid)
-            if fname:
-                kept_markers.add(os.path.basename(fname))
     except Exception:
         pass
     return kept_markers, kept_wf_ids
@@ -693,84 +692,107 @@ def _prune_domain_files_to_cutoff(
                 pass
 
     elif domain == CODEX_DIR_NAME:
-        sandbox_dir = os.path.join(domain_dir, CODEX_WORKSPACE_SANDBOX)
-        if os.path.exists(sandbox_dir):
-            for dirpath, dirnames, filenames in os.walk(sandbox_dir, topdown=False):
-                for fn in filenames:
-                    fp = os.path.join(dirpath, fn)
-                    if fn in kept_markers:
-                        continue
-                    try:
-                        if int(os.lstat(fp).st_mtime) > cutoff_ts + 1:
-                            os.unlink(fp)
-                    except Exception:
-                        pass
-                for dn in dirnames:
-                    dp = os.path.join(dirpath, dn)
-                    try:
-                        if not os.path.islink(dp) and not os.listdir(dp):
-                            os.rmdir(dp)
-                    except Exception:
-                        pass
+        for ws_name in ECHO_CODEX_WORKSPACES:
+            if is_codex_workspace_versioned(ws_name):
+                continue
+            untracked_dir = os.path.join(domain_dir, ws_name)
+            if os.path.exists(untracked_dir):
+                for dirpath, dirnames, filenames in os.walk(untracked_dir, topdown=False):
+                    for fn in filenames:
+                        fp = os.path.join(dirpath, fn)
+                        if fn in kept_markers:
+                            continue
+                        try:
+                            if int(os.lstat(fp).st_mtime) > cutoff_ts + 1:
+                                os.unlink(fp)
+                        except Exception:
+                            pass
+                    for dn in dirnames:
+                        dp = os.path.join(dirpath, dn)
+                        try:
+                            if not os.path.islink(dp) and not os.listdir(dp):
+                                os.rmdir(dp)
+                        except Exception:
+                            pass
 
 
 def align_codex_git_to_cutoff(
     user_id: str, new_cid: str, cutoff_ts: int, new_db: str
 ) -> None:
-    """Aligne le dépôt Git Codex 'main' sur le commit <= cutoff_ts et synchronise echo_resources."""
+    """Aligne tous les dépôts Git Codex versionnés ('main', 'plans', 'generated') sur le commit <= cutoff_ts et synchronise echo_resources."""
     try:
         from echo_codex_git import CodexRepo
 
-        codex_main_dir = os.path.join(
-            get_echo_session_path(user_id, new_cid, CODEX_DIR_NAME), CODEX_WORKSPACE_MAIN
-        )
-        if not os.path.exists(os.path.join(codex_main_dir, ".git")):
-            return
+        base_codex = get_echo_session_path(user_id, new_cid, CODEX_DIR_NAME)
+        ws_tracked: dict[str, set[str]] = {}
+        ws_short_sha: dict[str, Optional[str]] = {}
 
-        repo = CodexRepo(user_id=user_id, chat_id=new_cid, workspace=CODEX_WORKSPACE_MAIN)
-        res = repo.restore_repo_to_timestamp(cutoff_ts)
-        tracked_files = res.get("tracked_files") or set()
-        restored_sha = res.get("restored_commit")
-        short_sha = restored_sha[:12] if restored_sha else None
+        for ws_name in ECHO_CODEX_WORKSPACES:
+            if not is_codex_workspace_versioned(ws_name):
+                continue
+            ws_dir = os.path.join(base_codex, ws_name)
+            if not os.path.exists(os.path.join(ws_dir, ".git")):
+                ws_tracked[ws_name] = set()
+                ws_short_sha[ws_name] = None
+                continue
+            repo = CodexRepo(user_id=user_id, chat_id=new_cid, workspace=ws_name)
+            res = repo.restore_repo_to_timestamp(cutoff_ts)
+            ws_tracked[ws_name] = res.get("tracked_files") or set()
+            restored_sha = res.get("restored_commit")
+            ws_short_sha[ws_name] = restored_sha[:12] if restored_sha else None
 
         with closing(sqlite3.connect(new_db, timeout=15.0)) as conn:
             cur = conn.cursor()
-            if not tracked_files:
-                cur.execute(
-                    "DELETE FROM echo_resources WHERE resource_type IN ('codex', 'plan') AND git_tracked = 1"
-                )
-            else:
-                cur.execute(
-                    "SELECT id, name, resource_type, storage_path FROM echo_resources "
-                    "WHERE resource_type IN ('codex', 'plan') AND git_tracked = 1"
-                )
-                for r_id, r_name, r_type, r_spath in cur.fetchall():
-                    rel_fn = r_name if r_type == "codex" else os.path.basename(r_spath or r_name or "")
-                    if rel_fn not in tracked_files:
-                        cur.execute("DELETE FROM echo_resources WHERE id = ?", (r_id,))
-                    else:
-                        fp = os.path.join(codex_main_dir, rel_fn)
-                        if os.path.isfile(fp):
-                            try:
-                                with open(
-                                    fp, "r", encoding="utf-8", errors="replace"
-                                ) as f:
-                                    txt = f.read()
-                                line_cnt = txt.count("\n") + (1 if txt and not txt.endswith("\n") else 0)
-                                status_match = (
-                                    re.search(r"^status:\s*(\S+)", txt, re.MULTILINE)
-                                    if r_type == "plan"
-                                    else None
-                                )
-                                restored_status = status_match.group(1) if status_match else None
-                                cur.execute(
-                                    "UPDATE echo_resources SET lines = ?, "
-                                    "status = COALESCE(?, status), "
-                                    "last_commit = COALESCE(?, last_commit) WHERE id = ?",
-                                    (line_cnt, restored_status, short_sha, r_id),
-                                )
-                            except Exception:
-                                pass
+            cur.execute(
+                "SELECT id, name, resource_type, storage_path FROM echo_resources "
+                "WHERE resource_type IN ('codex', 'plan', 'generated') AND git_tracked = 1"
+            )
+            for r_id, r_name, r_type, r_spath in cur.fetchall():
+                spath = str(r_spath or "")
+                target_ws = CODEX_WORKSPACE_MAIN
+                rel_fn = str(r_name or "")
+                if spath.startswith(f"{CODEX_DIR_NAME}/"):
+                    parts = spath.split("/", 2)
+                    if len(parts) >= 3 and parts[1] in ECHO_CODEX_WORKSPACES:
+                        target_ws = parts[1]
+                        rel_fn = parts[2]
+                elif r_type == "plan":
+                    target_ws = CODEX_WORKSPACE_PLANS
+                    rel_fn = os.path.basename(spath or r_name or "")
+
+                tracked_files = ws_tracked.get(target_ws, set())
+                short_sha = ws_short_sha.get(target_ws)
+
+                if rel_fn not in tracked_files:
+                    cur.execute("DELETE FROM echo_resources WHERE id = ?", (r_id,))
+                else:
+                    fp = os.path.join(base_codex, target_ws, rel_fn)
+                    if os.path.isfile(fp) and r_type in ("codex", "plan"):
+                        try:
+                            with open(
+                                fp, "r", encoding="utf-8", errors="replace"
+                            ) as f:
+                                txt = f.read()
+                            line_cnt = txt.count("\n") + (1 if txt and not txt.endswith("\n") else 0)
+                            status_match = (
+                                re.search(r"^status:\s*(\S+)", txt, re.MULTILINE)
+                                if r_type == "plan"
+                                else None
+                            )
+                            restored_status = status_match.group(1) if status_match else None
+                            cur.execute(
+                                "UPDATE echo_resources SET lines = ?, "
+                                "status = COALESCE(?, status), "
+                                "last_commit = COALESCE(?, last_commit) WHERE id = ?",
+                                (line_cnt, restored_status, short_sha, r_id),
+                            )
+                        except Exception:
+                            pass
+                    elif os.path.isfile(fp) and r_type == "generated":
+                        cur.execute(
+                            "UPDATE echo_resources SET last_commit = COALESCE(?, last_commit) WHERE id = ?",
+                            (short_sha, r_id),
+                        )
             conn.commit()
     except Exception as e:
         logger.warning(f"[ECHO-SESSION-CLONE] ⚠️ Alignement Git Codex ignoré : {e}")
@@ -816,12 +838,15 @@ def sync_cloned_session(
     new_cid: str,
     forked_msg_id: Optional[str] = None,
     progress_cb: Optional[Callable[[int, str], None]] = None,
+    live_msg_ids: Optional[Set[str]] = None,
+    forked_from_msg_id: Optional[str] = None,
 ) -> Tuple[Optional[int], bool]:
     """Synchronise un clone ou fork de session (utilisé par echo_chat_cloned_event).
     1. Copie session.db et élague l'historique à l'état du message cloné (forked_msg_id).
     2. Duplique les répertoires de l'Espace Utilisateur limités à cutoff_ts (et restaure Git Codex).
     3. Réajuste chat_id (orig_cid -> new_cid) dans SQLite et sur le système de fichiers.
     Retourne (cutoff_ts, is_partial_fork)."""
+    target_fork_id = forked_msg_id or forked_from_msg_id
     orig_db = get_echo_session_path(user_id, orig_cid, "db")
     new_db = get_echo_session_path(user_id, new_cid, "db")
 
@@ -840,8 +865,10 @@ def sync_cloned_session(
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
 
-        if forked_msg_id:
-            cutoff_ts, is_partial_fork = prune_forked_history(cur, forked_msg_id)
+        if target_fork_id:
+            cutoff_ts, is_partial_fork = prune_forked_history(
+                cur, target_fork_id, live_msg_ids=live_msg_ids
+            )
 
         if is_partial_fork and cutoff_ts is not None:
             cur.execute(
@@ -870,10 +897,10 @@ def sync_cloned_session(
             else:
                 cur.execute("DELETE FROM echo_settings WHERE key = 'last_model_id'")
 
-            if forked_msg_id:
+            if target_fork_id:
                 cur.execute(
-                    "UPDATE message_shadows SET is_embedded = 0 WHERE message_id = ?",
-                    (forked_msg_id,),
+                    "DELETE FROM rag_index_state WHERE message_id = ?",
+                    (target_fork_id,),
                 )
 
             kept_markers, kept_wf_ids = _collect_kept_domain_markers(cur)
@@ -933,25 +960,19 @@ def sync_resumed_session(
             reassign_session_ids(cur, orig_cid, new_cid)
             purge_conversational_state(cur)
             if initial_embedded_msg_ids:
+                now_ts = int(time.time())
                 for mid in initial_embedded_msg_ids:
                     if mid:
                         cur.execute(
-                            "INSERT OR REPLACE INTO message_shadows "
-                            "(message_id, chat_id, role, full_parts_json, updated_at, is_embedded) "
-                            "VALUES (?, ?, 'assistant', '[]', 0, 1)",
-                            (mid, new_cid),
+                            "INSERT OR IGNORE INTO rag_index_state (message_id, embedded_at) VALUES (?, ?)",
+                            (mid, now_ts),
                         )
             conn.commit()
     elif initial_embedded_msg_ids:
-        try:
-            from echo_state_manager import EchoStateManager
-
-            state_mgr = EchoStateManager(user_id=user_id, chat_id=new_cid)
-            for mid in initial_embedded_msg_ids:
-                if mid:
-                    state_mgr.mark_message_embedded(mid)
-        except Exception:
-            pass
+        logger.info(
+            f"[ECHO-SESSION-CLONE] Base source absente pour {new_cid}, "
+            "ré-indexation RAG idempotente au prochain tour."
+        )
 
     duplicate_session_domains(user_id, orig_cid, new_cid)
 
@@ -961,6 +982,7 @@ async def duplicate_session_rag(
     orig_cid: str,
     new_cid: str,
     cutoff_ts: Optional[int] = None,
+    live_msg_ids: Optional[Set[str]] = None,
 ) -> int:
     """Duplique par pagination (lots de 256 points) les vecteurs Qdrant de COLLECTION_SESSION_RAG
     de orig_cid vers new_cid. Si cutoff_ts est fourni, filtre uniquement timestamp <= cutoff_ts
@@ -981,7 +1003,7 @@ async def duplicate_session_rag(
         {"key": "user_id", "match": {"value": user_id}},
         {"key": "chat_id", "match": {"value": orig_cid}},
     ]
-    if cutoff_ts is not None:
+    if not live_msg_ids and cutoff_ts is not None:
         must_conditions.append({"key": "timestamp", "range": {"lte": int(cutoff_ts)}})
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -1010,7 +1032,10 @@ async def duplicate_session_rag(
                 if not vec:
                     continue
                 payload = dict(pt.get("payload") or {})
-                if cutoff_ts is not None:
+                if live_msg_ids:
+                    if not is_point_in_branch(payload, set(live_msg_ids), cutoff_ts):
+                        continue
+                elif cutoff_ts is not None:
                     pt_ts = payload.get("timestamp")
                     if isinstance(pt_ts, (int, float)) and int(pt_ts) > int(cutoff_ts):
                         continue

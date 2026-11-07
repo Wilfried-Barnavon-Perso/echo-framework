@@ -5,12 +5,12 @@
 {% block content %}
 <form method="POST" action="/login">
     <input type="hidden" name="next" value="{{ next }}">
-    
+
     <div class="form-group">
         <label for="email">Adresse E-mail</label>
         <input type="email" id="email" name="email" required autofocus placeholder="votre.adresse@email">
     </div>
-    
+
     <div class="form-group">
         <label for="password">Mot de passe</label>
         <input type="password" id="password" name="password" required placeholder="****************">
@@ -18,13 +18,154 @@
 
     <div class="form-group">
         <label for="totp">Code MFA (Optionnel si premier login)</label>
-        <input type="text" id="totp" name="totp" placeholder="000000" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off">
+        <input type="text" id="totp" name="totp" placeholder="000000" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+            autocomplete="off">
     </div>
-    
+
+    <div class="form-group" style="margin-bottom: 0.75rem;">
+        <label
+            style="display: flex; align-items: center; gap: 0.6rem; cursor: pointer; color: var(--text-main); font-size: 0.9rem; user-select: none;">
+            <input type="checkbox" id="trusted_device" name="trusted_device" value="1"
+                style="width: 1.15rem; height: 1.15rem; accent-color: var(--accent); cursor: pointer;">
+            <span>Ce terminal est de confiance.</span>
+        </label>
+    </div>
+
+    <div id="trusted-warning"
+        style="display: none; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.8rem; background: rgba(234, 179, 8, 0.1); border: 1px solid rgba(234, 179, 8, 0.25); color: #fef08a; line-height: 1.4;">
+        ⚠️ <strong>Attention :</strong> Cochez cette case uniquement sur votre poste personnel sécurisé. Sur un terminal
+        public ou partagé, votre session resterait accessible.
+    </div>
+
+    <div class="form-group" style="margin-bottom: 0.75rem;">
+        <label for="session_duration">Durée de validité de la session</label>
+        <select id="session_duration" name="session_duration"
+            style="width: 100%; padding: 0.75rem 1rem; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-main); font-size: 0.95rem; outline: none; transition: border-color 0.2s; box-sizing: border-box;">
+        </select>
+    </div>
+
+    <div id="session-expiry-preview"
+        style="padding: 0.65rem 1rem; border-radius: 8px; margin-bottom: 1.5rem; font-size: 0.82rem; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.2); color: #93c5fd; text-align: center; line-height: 1.4;">
+    </div>
+
     <button type="submit" class="btn">Connexion Sécurisée</button>
 </form>
 
 <div class="links">
-    <a href="/recovery">Mot de passe ou MFA perdu ?</a>
+    <a href="/recovery?next={{ next | urlencode }}">Mot de passe ou MFA perdu ?</a>
 </div>
+
+<style>
+    #session_duration option {
+        background-color: #141928;
+        color: #f8fafc;
+    }
+</style>
+
+<script>
+    (function () {
+        const trustedCheckbox = document.getElementById('trusted_device');
+        const trustedWarning = document.getElementById('trusted-warning');
+        const durationSelect = document.getElementById('session_duration');
+        const previewEl = document.getElementById('session-expiry-preview');
+
+        const maxUntrusted = parseInt("{{ untrusted_timeout | default(24) }}", 10) || 24;
+        const maxTrusted = parseInt("{{ trusted_timeout | default(2160) }}", 10);
+
+        const UNTRUSTED_OPTIONS = [
+            { h: 1, label: "1 heure" },
+            { h: 2, label: "2 heures" },
+            { h: 4, label: "4 heures" },
+            { h: 8, label: "8 heures" },
+            { h: 12, label: "12 heures" },
+            { h: 24, label: "24 heures (Limite sans confiance)" }
+        ];
+
+        const TRUSTED_OPTIONS = [
+            { h: 168, label: "1 Semaine (7 jours)" },
+            { h: 720, label: "1 Mois (30 jours)" },
+            { h: 2160, label: "3 Mois (90 jours)" },
+            { h: 4380, label: "6 Mois (180 jours)" },
+            { h: 8760, label: "1 An (365 jours)" },
+            { h: 0, label: "Éternelle (Révocation manuelle)" }
+        ];
+
+        function populateOptions(isTrusted) {
+            durationSelect.innerHTML = '';
+            let options = [];
+            if (isTrusted) {
+                if (maxTrusted === 0) {
+                    options = TRUSTED_OPTIONS;
+                } else {
+                    options = TRUSTED_OPTIONS.filter(o => o.h > 0 && o.h <= maxTrusted);
+                }
+            } else {
+                options = UNTRUSTED_OPTIONS.filter(o => o.h <= maxUntrusted);
+            }
+
+            if (options.length === 0) {
+                options = isTrusted ? [{ h: maxTrusted, label: maxTrusted + " heures" }] : [{ h: maxUntrusted, label: maxUntrusted + " heures" }];
+            }
+
+            options.forEach(opt => {
+                const el = document.createElement('option');
+                el.value = opt.h;
+                el.textContent = opt.label;
+                durationSelect.appendChild(el);
+            });
+
+            // Sélectionner par défaut la valeur maximale autorisée
+            if (isTrusted) {
+                if (maxTrusted === 0 || !options.some(o => o.h === maxTrusted)) {
+                    durationSelect.value = options[options.length - 1].h;
+                } else {
+                    durationSelect.value = maxTrusted;
+                }
+            } else {
+                durationSelect.value = options[options.length - 1].h;
+            }
+        }
+
+        function updatePreview() {
+            const h = parseInt(durationSelect.value, 10);
+            if (h === 0) {
+                previewEl.innerHTML = "♾️ <strong>Expiration :</strong> Aucune (Session permanente sur ce terminal)";
+                return;
+            }
+
+            const now = new Date();
+            const target = new Date(now.getTime() + h * 3600 * 1000);
+            const pad = (n) => String(n).padStart(2, '0');
+            const dateStr = pad(target.getDate()) + "/" + pad(target.getMonth() + 1) + "/" + target.getFullYear() + " à " + pad(target.getHours()) + ":" + pad(target.getMinutes()) + ":" + pad(target.getSeconds());
+
+            let delayStr = "";
+            if (h >= 24) {
+                const days = Math.floor(h / 24);
+                delayStr = "dans " + days + "j (" + h + "h)";
+            } else {
+                delayStr = "dans " + h + "h 00m";
+            }
+
+            previewEl.innerHTML = "⏳ <strong>Expiration :</strong> " + dateStr + " <span style='opacity: 0.85;'>(" + delayStr + ")</span>";
+        }
+
+        trustedCheckbox.addEventListener('change', function () {
+            if (this.checked) {
+                trustedWarning.style.display = 'block';
+                populateOptions(true);
+            } else {
+                trustedWarning.style.display = 'none';
+                populateOptions(false);
+            }
+            updatePreview();
+        });
+
+        durationSelect.addEventListener('change', updatePreview);
+
+        // Initialisation
+        populateOptions(false);
+        updatePreview();
+        setInterval(updatePreview, 1000);
+    })();
+</script>
 {% endblock %}

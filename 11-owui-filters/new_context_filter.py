@@ -2,16 +2,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 5.231.55.1
+version: 5.235.5.1
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.235.5.1: Comptage des tours logiques résilient à la fusion user+user, filtrage AEC de branche active et annotation de provenance.
+# 5.234.0.1: Utilisation de ECHO_AUTH_PENDING_MARKER et aiguillage déterministe des parts image_url (anti-doublon chats sauvegardés vs préservation inline en chats temporaires/API).
 # 5.231.55.1: Réétagement de la priorité à 70 (après context_compaction_filter à 60 et avant codex_links_filter à 80).
 # 5.231.11.1: Réétagement de la priorité à 30 (après user_native_context_filter à 20 et avant codex_links_filter à 40).
 # 5.231.7.1: Ajout du fallback sur metadata.user_message_id et timestamp courant pour garantir le scellement Shadow du message utilisateur.
-# 5.227.1.1: Suppression de l'extraction de AEC_context_checkpoint et de l'offset _echo_compacted_user_turns.
-# 5.226.18.1: Attente du verrou de clonage (wait_for_chat_clone) avant l'instanciation de EchoStateManager.
 
 
 from pydantic import BaseModel, Field
@@ -32,8 +32,11 @@ from echo_auth import EchoAuth
 from echo_constants import (
     GOOGLE_API_KEY_REGEX,
     DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB,
-    FILE_INGESTION_STATUS
+    FILE_INGESTION_STATUS,
+    ECHO_AUTH_PENDING_MARKER,
 )
+from echo_core import EchoCompactionEngine
+from echo_session_gc import resource_provenance
 
 # Configuration du Logger
 logging.basicConfig(level=logging.INFO)
@@ -106,7 +109,7 @@ class Filter:
                 # le Device Flow (RFC 8628) ne génère pas de code dans le chat.
                 last_content = str(msgs[-1].get("content", "")).strip()
                 keys = re.findall(GOOGLE_API_KEY_REGEX, last_content)
-                if "(ECHO_SESSION_AUTH_PENDING)" in prev_content and keys:
+                if ECHO_AUTH_PENDING_MARKER in prev_content and keys:
                     body["_api_key"] = last_content
                     msgs[-1]["content"] = "🔐 *Vérification de la clé API Google en cours...*"
                     return body
@@ -224,6 +227,23 @@ class Filter:
                                 "content": res["summary"]
                             })
 
+            # Détermine si des images du message courant ont été prises en charge par le pipeline ECHO via un fid disque.
+            # En chat sauvegardé OWUI, middleware.py:2157 & 2254 duplique chaque image de user_msg_files en data:image/...
+            # dans msgs[-1]["content"]. Si elles ont un fid résolu, EchoIngestionPipeline les gouverne déjà (PUT_IN_CONTEXT <10Mo
+            # ou VECTORIZED_SUM_UP >=10Mo). En revanche, en chat temporaire (isTemporary) ou API directe, fid est absent.
+            resolved_fids = {
+                (f.get("id") or f.get("file", {}).get("id"))
+                for f in (files_to_process + files_already_processed)
+            }
+            has_ingested_msg_images = any(
+                (f.get("id") or f.get("file", {}).get("id")) in resolved_fids
+                and (
+                    f.get("type") == "image"
+                    or str(f.get("content_type") or f.get("mime_type") or f.get("file", {}).get("meta", {}).get("content_type") or "").startswith("image/")
+                )
+                for f in (user_msg_files + (body.get("files") or []))
+            )
+
             idx = -1
             current_user_multipart_payload = []  # Payload hybride courant (texte + inline_data)
             for i in range(len(msgs) - 1, -1, -1):
@@ -235,9 +255,21 @@ class Filter:
                         for p in orig_content:
                             if isinstance(p, dict):
                                 if p.get("type") == "image_url":
-                                    # [PURGE] Liste Noire : On ignore volontairement 'image_url' (généré par OWUI).
-                                    # ECHO gérera l'image via son propre pipeline d'ingestion (inline_data ou text_summary).
-                                    pass
+                                    # Si le tour possède des images avec fid ingérées par EchoIngestionPipeline, on ignore
+                                    # le miroir data:image/... injecté par middleware.py:2254 pour éviter tout doublon
+                                    # ou contournement de MAX_DIRECT_MMEDIA_INJECT_SIZE (VECTORIZED_SUM_UP).
+                                    # Sinon (chat temporaire sans fid ou appel API direct), on préserve l'image inline.
+                                    if not has_ingested_msg_images:
+                                        url_val = p.get("image_url", {}).get("url", "")
+                                        if url_val.startswith("data:") and ";base64," in url_val:
+                                            try:
+                                                mime_val = url_val.split(";", 1)[0].replace("data:", "").strip()
+                                                b64_val = url_val.split(",", 1)[1].strip()
+                                                current_user_multipart_payload.append({
+                                                    "inline_data": {"mime_type": mime_val, "data": b64_val}
+                                                })
+                                            except Exception as e:
+                                                print(f"[ECHO-FILTER] Erreur décodage image_url inline: {e}", flush=True)
                                 elif p.get("type") == "text":
                                     txt_val = p.get("text", "")
                                     if txt_val.strip():
@@ -262,7 +294,15 @@ class Filter:
                 u_loc = meta.get("_echo_override_location", "")
                 final_loc = u_loc if u_loc else sys_loc
 
-                tour_conversation = sum(1 for m in msgs if m.get("role") == "user")
+                tour_conversation = 0
+                prev_non_sys_role = None
+                for m in msgs:
+                    r_role = m.get("role") if isinstance(m, dict) else None
+                    if r_role == "system":
+                        continue
+                    if r_role == "user" and prev_non_sys_role != "user":
+                        tour_conversation += 1
+                    prev_non_sys_role = r_role
 
                 # === AEC : Méta-données brutes ===
                 date_heure = meta_vars.get("{{CURRENT_DATETIME}}", "Inconnu")
@@ -356,23 +396,45 @@ class Filter:
                             error_events.append(err_evt)
 
                 # === AEC : Détection delta (ressources créées par outils/HUD hors-tour) ===
-                if chat_id:
-                    last_check = body.get("metadata", {}).get("_echo_last_event_check_at")
+                if chat_id and state_manager:
+                    last_check = body.get("metadata", {}).get("_echo_last_event_check_at") or int(
+                        state_manager.get_session_setting("last_event_check_at") or 0
+                    )
                     if last_check:
-                        delta_resources = state_manager.get_resources(created_after=int(last_check))
-                        already_processed_ids = [f.get("id") or f.get("file", {}).get("id") for f in files_already_processed]
-                        for dr in delta_resources:
-                            # Ne pas dupliquer les fichiers du tour courant (sys_events) ou déjà ingérés (files_already_processed)
-                            if dr["id"] not in already_processed_ids and not any(e.get("name") == dr["name"] for e in sys_events):
-                                sys_events.append({
-                                    "type": dr["status"], "name": dr["name"],
-                                    "mime": dr.get("mime"), "resource_type": dr["resource_type"],
-                                    "date": datetime.fromtimestamp(dr.get("created_at", time.time()), tz=user_tz).strftime("%Y-%m-%d %H:%M:%S"),
-                                    "source": "outil/HUD",
-                                    "message": dr.get("summary")
-                                })
-                    # Sauvegarder le timestamp actuel pour le prochain delta
-                    body["metadata"]["_echo_last_event_check_at"] = int(time.time())
+                        delta_resources = [
+                            dr for dr in state_manager.get_resources(created_after=int(last_check))
+                            if dr.get("resource_type") not in ("aec_event", "aec_directive")
+                        ]
+                        if delta_resources:
+                            branch_ids = await EchoCompactionEngine.load_active_branch_ids(chat_id)
+                            active_ids = (
+                                set(branch_ids)
+                                | {m.get("id") for m in msgs if isinstance(m, dict) and m.get("id")}
+                                | ({meta.get("user_message_id")} if meta.get("user_message_id") else set())
+                            )
+                            already_processed_ids = [
+                                f.get("id") or f.get("file", {}).get("id")
+                                for f in files_already_processed
+                            ]
+                            for dr in delta_resources:
+                                if dr["id"] not in already_processed_ids and not any(
+                                    e.get("name") == dr["name"] for e in sys_events
+                                ):
+                                    sys_events.append({
+                                        "type": dr["status"],
+                                        "name": dr["name"],
+                                        "mime": dr.get("mime"),
+                                        "resource_type": dr["resource_type"],
+                                        "date": datetime.fromtimestamp(
+                                            dr.get("created_at", time.time()), tz=user_tz
+                                        ).strftime("%Y-%m-%d %H:%M:%S"),
+                                        "source": "outil/HUD",
+                                        "message": dr.get("summary"),
+                                        "provenance": resource_provenance(dr, active_ids),
+                                    })
+                    now_check = int(time.time())
+                    body["metadata"]["_echo_last_event_check_at"] = now_check
+                    state_manager.save_session_setting("last_event_check_at", str(now_check))
 
                 # 1. Extraction et injection du Smart Context (RAG) prioritaire (AEC_smart_context)
                 for res in results:

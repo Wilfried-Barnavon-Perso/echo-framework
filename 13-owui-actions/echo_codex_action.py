@@ -1,17 +1,17 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 5.231.39.1
+version: 5.235.4.1
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.235.4.1: Délégation factorisée à read_file_at_commit lors du chargement de versions historiques et transmission du vrai statut binaire au HUD.
+# 5.232.5.1: Verrouillage des actions mutatives sur les workspaces non-inscriptibles (plans, generated), résolution dynamique de resource_type et nettoyage ciblé par workspace.
 # 5.231.39.1: Pré-chargement atomique de initial_content à t=0ms, purge atomique de _echoCodexTarget et enregistrement anticipé de loop_id.
 # 5.231.29.1: Alignement sur le prédicat SSOT is_codex_workspace_indexed pour exclure formellement la sandbox de echo_resources.
 # 5.231.28.1: Normalisation de storage_path via format_codex_storage_path (codex/<workspace>/<filename>) et suppression des appels à codex_docs.
-# 5.231.6.1: Probe non-destructif de window._echoCodexTarget, amorçage direct via body REST et résolution sans HUD en Cold Start.
-# 5.231.5.1: Support de commit_hash dans switch_chat, et résolution active_chat_title sur chat distant.
 
 import sys
 import uuid
@@ -38,7 +38,9 @@ from echo_constants import (
     ECHO_CODEX_WORKSPACES,
     FILE_INGESTION_STATUS,
     OWUI_ORCHESTRATOR_MODEL,
+    get_codex_workspace_resource_type,
     get_generation_config,
+    is_codex_workspace_generic_writable,
     is_codex_workspace_indexed,
 )
 
@@ -252,7 +254,8 @@ class Action:
             async def _refresh_tree(is_read_only: Optional[bool] = None, target_cid: Optional[str] = None):
                 updated_files = await asyncio.to_thread(repo.list_files)
                 f_json = json.dumps(updated_files).decode("utf-8")
-                is_ro = (active_chat_id != cid) if is_read_only is None else is_read_only
+                ws_ro = not is_codex_workspace_generic_writable(current_workspace)
+                is_ro = ((active_chat_id != cid) or ws_ro) if is_read_only is None else (is_read_only or ws_ro)
                 effective_cid = target_cid or active_chat_id
                 r_code = (
                     f"if(window.echoCodexRefreshTree) "
@@ -268,15 +271,16 @@ class Action:
             def _sync_registry(filename, commit_hash, msg, line_count=0, lang=None):
                 if is_codex_workspace_indexed(current_workspace):
                     l = lang or CodexRepo.detect_language(filename)
+                    r_type = get_codex_workspace_resource_type(current_workspace) or "codex"
                     state.save_resource(
                         id=filename,
                         name=filename,
-                        resource_type='codex',
+                        resource_type=r_type,
                         status=FILE_INGESTION_STATUS['PUT_IN_CONTEXT'],
                         git_tracked=True,
                         language=l,
                         lines=line_count,
-                        last_commit=commit_hash[:12],
+                        last_commit=(commit_hash or "")[:12],
                         commit_msg=msg,
                         storage_path=format_codex_storage_path(filename, current_workspace)
                     )
@@ -310,9 +314,13 @@ class Action:
                     if action_type == "close":
                         break
 
-                    # ---- GARDE SÉCURITÉ FAIL-CLOSED : INTERDICTION DES ACTIONS MUTATIVES SUR CHAT DISTANT ----
-                    if action_type in MUTATIVE_CODEX_ACTIONS and active_chat_id != cid:
-                        await _notify_error(PermissionError("Action interdite : la conversation distante est en lecture seule."))
+                    # ---- GARDE SÉCURITÉ FAIL-CLOSED : INTERDICTION DES ACTIONS MUTATIVES SUR CHAT DISTANT OU WORKSPACE PROTÉGÉ ----
+                    if action_type in MUTATIVE_CODEX_ACTIONS and (
+                        active_chat_id != cid or not is_codex_workspace_generic_writable(current_workspace)
+                    ):
+                        await _notify_error(
+                            PermissionError("Action interdite : ce workspace ou cette conversation est en lecture seule.")
+                        )
                         continue
 
                     # ---- SWITCH CHAT / WORKSPACE (UNIFIÉ) ----
@@ -338,7 +346,7 @@ class Action:
                                     requested_file = repo._secure_path(requested_file)
                                 except Exception:
                                     requested_file = ""
-                            is_ro = (active_chat_id != cid)
+                            is_ro = (active_chat_id != cid) or not is_codex_workspace_generic_writable(current_workspace)
                             current_state = await asyncio.to_thread(repo.get_latest_state)
                             updated_files = await asyncio.to_thread(repo.list_files)
                             files_json = json.dumps(updated_files).decode("utf-8")
@@ -348,15 +356,7 @@ class Action:
                                 latest_file = requested_file
                                 req_commit = response.get("commit_hash") or response.get("commit")
                                 if req_commit:
-                                    commit_content = await asyncio.to_thread(repo.get_file_at_commit, latest_file, req_commit)
-                                    if commit_content is not None:
-                                        result = {
-                                            "content": commit_content,
-                                            "total_lines": commit_content.count("\n") + 1,
-                                            "is_binary": False
-                                        }
-                                    else:
-                                        result = None
+                                    result = await asyncio.to_thread(repo.read_file_at_commit, latest_file, req_commit)
                                 else:
                                     result = await asyncio.to_thread(repo.read_file, latest_file) if latest_file else None
                                 if not result:
@@ -747,8 +747,8 @@ class Action:
                             file_count = len(await asyncio.to_thread(repo.list_files))
                             # La confirmation est gérée côté JS (confirm dialog)
                             await asyncio.to_thread(repo.reset_all)
-                            if current_workspace != "sandbox":
-                                state.clear_resources_by_type('codex')
+                            if is_codex_workspace_indexed(current_workspace):
+                                state.clear_codex_workspace_resources(current_workspace)
                             history_nav.clear()
 
                             reset_code = "if(window.echoCodexReset) window.echoCodexReset();"
@@ -861,7 +861,7 @@ class Action:
                             commit_hash, paths_to_rm = delete_result
                             if is_codex_workspace_indexed(current_workspace):
                                 for path in paths_to_rm:
-                                    state.delete_resource(path)
+                                    state.delete_codex_resource(current_workspace, path)
 
                         current_state = await asyncio.to_thread(repo.get_latest_state)
                         updated_files = await asyncio.to_thread(repo.list_files)
@@ -917,7 +917,7 @@ class Action:
                             # Mettre à jour le registre codex (supprimer
                             # ancien, créer nouveau)
                             if is_codex_workspace_indexed(current_workspace) and not is_dir:
-                                state.delete_resource(old_name)
+                                state.delete_codex_resource(current_workspace, old_name)
                                 new_lang = CodexRepo.detect_language(new_name)
                                 line_count = result["total_lines"] if result else 0
                                 _sync_registry(new_name, commit_hash, f"Rename {old_name} → {new_name}", line_count, new_lang)

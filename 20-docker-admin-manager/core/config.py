@@ -2,18 +2,19 @@
 r"""
 # ================================================================================
 # MODULE : ECHO ADMIN MANAGER SERVER
-# VERSION : 5.226.18.0
+# VERSION : 5.236.1.1
 # ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.236.1.1: Ajout de untrusted_session_timeout (24h par défaut) dans DEFAULT_AUTH_SETTINGS.
+# 5.235.5.1: Chargement dynamique optionnel de /app/echo_libs et ajout de l'option purge_dead_branches dans DEFAULT_MAINT_CONFIG.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.137: Feature : Enrichissement du rapport nocturne (`run_nightly_maintenance_cycle`) avec les métadonnées complètes de sauvegarde (`archive_name`, taille, durée, rétention locale), le statut explicite de l'externalisation Cloud Rclone / NAS SFTP (`_build_ext_status_html`) et le bilan complet d'élagage (`Fichiers FS`, `Drop Zones` détaillées, `SQLite`). Fix : Restriction du compteur physique `real_session_count` (`Sessions Actives / Totales`) aux seuls fichiers `/users/<uid>/chats/<chat_id>/session.db` afin d'exclure les bases SQLite tierces créées dans les sous-dossiers `codex/` ou `files/`.
 # 5.136: Feature : Intégration complète des volumes `echo-n8n-data` (`/app/n8n-data`) et `echo-mcp-cache` (`/app/mcp_cache`) dans le cycle de Sauvegarde/Restauration `tar.xz`, le calcul de progression temps-réel, le `VACUUM` SQLite et la Garbage Collection. Sécurité (Critique / Fail-Closed) : Verrouillage strict sur la SSoT `webui.db::user` (« Base injoignable = Zéro Action »). Vérification préalable `PRAGMA quick_check(1)`, présence de `admin@echo.local`, filtrage de `db_valid_chats` par `valid_ids`, verrou d'intégrité `n8n_whitelist_complete` (empêchant la suppression de démons N8N si un `session.db` est verrouillé), et transaction Fail-Closed dans `auth_delete_user`.
-# 5.135: Feature : Suivi en temps réel (`MAINTENANCE_STATE` : `task_type`, `percent`, `status`) de toutes les phases de sauvegarde (`tar -cJf` via `psutil.io_counters()`, `rclone copy` via `/proc/<pid>/fdinfo`, `sftp.put` via callback natif Paramiko), d'élagage sémantique et de consolidation. Feature : Bandeau de progression Bootstrap animé (`#task-progress-card`) dans le Dashboard et enregistrement systématique d'un rapport final HTML (`save_maint_report`) lors des sauvegardes manuelles, consultable dans Système & Maintenance et dans l'onglet Sauvegardes.
-# 5.134: Fix (UI/HTML5) : Désactivation dynamique (`disabled`) des champs dans les sections masquées (`#wiz_s3`, `#wiz_webdav`) via `toggleWizardFields()`, passage de `webdav_url` en `type="text" autocomplete="off"`, et échappement du tiret dans `pattern="[a-zA-Z0-9_\-]+"` (requis par le moteur RegExp Unicode `/v` de Chrome). Empêche le blocage silencieux du bouton "Générer le Profil" (`An invalid form control with name='webdav_url' is not focusable`).
 
 import os
+import sys
 import secrets
 from flask import Flask  # pyright: ignore[reportMissingImports]
 
@@ -49,6 +50,16 @@ try:
 except ImportError:
     BackgroundScheduler = None
     HAS_SCHEDULER = False
+
+ECHO_LIBS_DIR = "/app/echo_libs"
+if ECHO_LIBS_DIR not in sys.path:
+    sys.path.append(ECHO_LIBS_DIR)
+try:
+    from echo_constants import ECHO_GC_GRACE_PERIOD_SEC
+    HAS_ECHO_LIBS = True
+except ImportError:
+    ECHO_GC_GRACE_PERIOD_SEC = None
+    HAS_ECHO_LIBS = False
 
 # ==============================================================================
 # SECTION 2 : CONFIGURATION & CHEMINS
@@ -118,6 +129,7 @@ DEFAULT_MAINT_CONFIG = {
         "similarity_threshold": 0.75  # Score cosinus minimal pour appartenir à un cluster
     },
     "purge_orphaned_chats": True,
+    "purge_dead_branches": True,
     "purge_orphaned_users": True
 }
 
@@ -130,6 +142,7 @@ DEFAULT_AUTH_SETTINGS = {
     "pwd_require_special": True,
     "temp_pass_hours": 24,
     "totp_tolerance": 1,
+    "untrusted_session_timeout": 24,
     "session_timeout": 2160
 }
 

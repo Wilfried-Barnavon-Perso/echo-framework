@@ -1,16 +1,16 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 5.229.0.0
+version: 5.233.0.1
 description: Composant système interne : ECHO Sovereign Web Search.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.233.0.1: Décoration @echo_tool sur les 3 méthodes publiques et simplification des retours wrap_tool_output.
 # 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/web_search_and_browsing.md.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.21: Fermeture explicite de la session navigateur Playwright (reset_session) en fin de delegate_deep_research.
 # 1.20: Résolution robuste de chat_id avec fallback sur __metadata__ dans delegate_deep_research.
-# 1.19: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 
 import httpx
 import sys
@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_events import EchoEvents
-from echo_core import wrap_tool_output
+from echo_core import wrap_tool_output, echo_tool
 from echo_state_manager import EchoStateManager
 from echo_constants import ECHO_USER_AGENT, ECHO_SEARXNG_BASE_URL, DEEP_RESEARCH_MAX_CALLS_DEFAULT
 from echo_prompts import SYS_SEARCH_STATIC
@@ -41,6 +41,7 @@ class Tools:
         self.valves = self.Valves()
         self.user_valves = self.UserValves()
 
+    @echo_tool
     async def search_instant_answer(
         self,
         query: str,
@@ -69,12 +70,13 @@ class Tools:
                 if answer:
                     output = f"**Source : DuckDuckGo / {data.get('DefinitionSource', 'Wikipédia')}**\n\n{answer}"
                     if source_url: output += f"\n\n[Lire la suite]({source_url})"
-                    return wrap_tool_output(text=output, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    return output
                 
-                return wrap_tool_output(text="⚠️ Aucune réponse instantanée disponible.", status={"status": "no_result"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return wrap_tool_output(text="⚠️ Aucune réponse instantanée disponible.", status={"status": "no_result"})
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur DDG: {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"❌ Erreur DDG: {str(e)}"
 
+    @echo_tool
     async def search_web(
         self,
         query: str,
@@ -109,7 +111,7 @@ class Tools:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(url, data=params, headers=headers)
                 if resp.status_code != 200:
-                    return wrap_tool_output(text=f"❌ SearxNG indisponible ({resp.status_code}). Vérifiez le conteneur Docker.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                    return f"❌ SearxNG indisponible ({resp.status_code}). Vérifiez le conteneur Docker."
                 
                 data = resp.json()
                 results = data.get("results", [])[:u_valves.MAX_RESULTS]
@@ -117,9 +119,9 @@ class Tools:
                 
                 if not results:
                     if not is_sub_agent:
-                        return wrap_tool_output(text="⚠️ Aucun résultat trouvé pour cette requête.", status={"status": "no_result"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                        return wrap_tool_output(text="⚠️ Aucun résultat trouvé pour cette requête.", status={"status": "no_result"})
                     else:
-                        return wrap_tool_output(text="⚠️ Requête sans réponse. Altération des mots-clés requise.", status={"status": "no_result"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                        return wrap_tool_output(text="⚠️ Requête sans réponse. Altération des mots-clés requise.", status={"status": "no_result"})
                 
                 formatted_results = []
                 for i, r in enumerate(results, 1):
@@ -137,10 +139,11 @@ class Tools:
                     output += f"\n\n💡 **Suggestions :** {', '.join(suggestions[:5])}"
 
                 await events.status("Recherche terminée.", done=True)
-                return wrap_tool_output(text=output, status={"status": "success"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+                return output
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur SearxNG: {str(e)}", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return f"❌ Erreur SearxNG: {str(e)}"
 
+    @echo_tool
     async def delegate_deep_research(
         self,
         query: str,
@@ -163,10 +166,7 @@ class Tools:
         # Récupération de l'agent engine via sys.modules
         _agent_mod = sys.modules.get("tool_agent_engine_tool")
         if not _agent_mod or not hasattr(_agent_mod, "Tools"):
-            return wrap_tool_output(
-                text="❌ Moteur de délégation `agent_engine_tool` indisponible.",
-                status={"status": "error"}
-            , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=chat_id or None, metadata=__metadata__)
+            return "❌ Moteur de délégation `agent_engine_tool` indisponible."
         
         # Instanciation du Delegate
         delegate = _agent_mod.Tools()

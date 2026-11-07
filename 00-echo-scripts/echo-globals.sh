@@ -1,12 +1,13 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : echo-globals.sh
-# VERSION : 5.231.21.2
+# VERSION : 5.236.5.1
 # AUTEUR : Wilfried BARNAVON
 # ROLE : Centralisation des constantes de chemins pour le framework ECHO
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.236.5.1: Ajout de la constante ECHO_DOCKER_USER pour le service 27-docker-user-manager.
 # 5.231.21.2: Factorisation de generate_secret (sans SIGPIPE sous pipefail) et ensure_echo_secrets incluant ECHO_VAULT_ENCRYPTION_KEY (64 chars).
 # 5.226.18.1: Ajout de la constante ECHO_OWUI_EVENTS pour le sous-système 15-owui-events.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
@@ -35,6 +36,7 @@ export ECHO_OWUI_EVENTS="$ECHO_ROOT/owui-events"
 
 # Dossiers Docker (Build Contexts)
 export ECHO_DOCKER_ADMIN="$ECHO_ROOT/docker-admin-manager"
+export ECHO_DOCKER_USER="$ECHO_ROOT/docker-user-manager"
 export ECHO_DOCKER_WORKER="$ECHO_ROOT/docker-python-worker"
 export ECHO_DOCKER_BROWSER="$ECHO_ROOT/docker-browser-agent"
 export ECHO_DOCKER_EMBEDDING="$ECHO_ROOT/docker-embedding-worker"

@@ -1,17 +1,17 @@
 # ==============================================================================
 # ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
-# VERSION : 5.231.36.2
+# VERSION : 5.236.5.1
 # ==============================================================================
 # ==============================================================================
 # Architecture Robuste (MariaDB Backend, Shared Config via Anchors)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.236.5.1: Déclaration du service echo-user-manager (my.${ECHO_DOMAIN}, IP .27, Forward Auth /api/verify) et extension CSP form-action.
+# 5.236.3.1: Alignement explicite de USE_ANTIBOT="no" conformément au schéma BunkerWeb v1.6.17.
+# 5.236.2.1: Mise à niveau de BunkerWeb en v1.6.17 (correctifs NGINX 1.30.6 et timeouts MariaDB).
 # 5.231.36.1: Fix du nommage de l'image echo-auth-manager (suppression du double préfixe echo-echo-* via directive image: explicite).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.35: Alignement IPAM suite au passage en pont audio in-process (retrait .31/.32).
-# 1.34: Ajout de MULTISITE="yes" pour bw-scheduler (évite www.example.com).
-# 1.33: Fix conflit Nginx: migration des variables globales vers x-bw-config.
 
 # ==============================================================================
 # 🗺️ DOMAIN-DRIVEN IPAM (PLAN D'ADRESSAGE IP STATIQUE)
@@ -30,6 +30,7 @@
 #    - auth-manager     : .24  (Dossier 24- -> voir bunkerweb-stack.yml)
 #    - download-broker  : .25  (Dossier 25-)
 #    - n8n-worker       : .26  (Dossier 26-)
+#    - user-manager     : .27  (Dossier 27- -> voir bunkerweb-stack.yml)
 #    - embedding        : .30  (Dossier 30-)
 # ==============================================================================
 
@@ -66,7 +67,7 @@ x-bw-config: &bw-config
   USE_BROTLI: "yes"
   USE_CLIENT_CACHE: "yes"
   USE_CLAMAV: "no"
-  USE_ANTIBOT: "basic"
+  USE_ANTIBOT: "no"
   DISABLE_DEFAULT_SERVER: "yes"
   USE_MODSECURITY: "yes"
   MODSEC_CRS_PARANOIA_LEVEL: "1"
@@ -77,7 +78,7 @@ services:
   
   # 1. BunkerWeb (Frontal HTTP/HTTPS)
   bunkerweb:
-    image: bunkerity/bunkerweb:1.6.15
+    image: bunkerity/bunkerweb:1.6.17
     container_name: bunkerweb
     restart: unless-stopped
     ports:
@@ -99,7 +100,7 @@ services:
 
   # 2. Autoconf (Contrôleur Dynamique)
   bw-autoconf:
-    image: bunkerity/bunkerweb-autoconf:1.6.15
+    image: bunkerity/bunkerweb-autoconf:1.6.17
     container_name: bw-autoconf
     restart: unless-stopped
     depends_on:
@@ -121,7 +122,7 @@ services:
 
   # 3. Scheduler (Tâches de fond)
   bw-scheduler:
-    image: bunkerity/bunkerweb-scheduler:1.6.15
+    image: bunkerity/bunkerweb-scheduler:1.6.17
     container_name: bw-scheduler
     restart: unless-stopped
     depends_on:
@@ -247,7 +248,81 @@ services:
       - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
       - "bunkerweb.USE_MODSECURITY=no"
       - "bunkerweb.USE_BAD_BEHAVIOR=no"
-      - "bunkerweb.CONTENT_SECURITY_POLICY=object-src 'none'; form-action 'self' https://ui.${ECHO_DOMAIN:-localhost} https://am.${ECHO_DOMAIN:-localhost}; frame-ancestors 'self';"
+      - "bunkerweb.CONTENT_SECURITY_POLICY=object-src 'none'; form-action 'self' https://ui.${ECHO_DOMAIN:-localhost} https://am.${ECHO_DOMAIN:-localhost} https://my.${ECHO_DOMAIN:-localhost}; frame-ancestors 'self';"
+
+  # 8. ECHO User Manager (Portail Utilisateur Self-Service)
+  echo-user-manager:
+    image: echo-user-manager:latest
+    build:
+      context: /opt/ECHO/docker-user-manager
+      dockerfile: Dockerfile
+    container_name: echo-user-manager
+    restart: always
+    networks:
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.27
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.27
+    environment:
+      - TZ=Europe/Paris
+      - ECHO_DOMAIN=${ECHO_DOMAIN:-localhost}
+      - ECHO_SSO_SECRET=${ECHO_SSO_SECRET}
+    volumes:
+      - /opt/ECHO/docker-user-manager/server.py:/app/server.py:ro
+      - /opt/ECHO/docker-user-manager/core:/app/core:ro
+      - /opt/ECHO/docker-user-manager/services:/app/services:ro
+      - /opt/ECHO/docker-user-manager/routes:/app/routes:ro
+      - /opt/ECHO/docker-user-manager/templates:/app/templates:ro
+      - /opt/ECHO/owui-libs:/app/echo_libs:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
+      - /opt/ECHO/echo-images:/app/static:ro
+      - echo-webui-data:/app/backend/data
+      - echo-auth-data:/app/auth-data
+      - /opt/ECHO/ECHO_VERSION:/app/ECHO_VERSION:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:3002/health\")' 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+      - "bunkerweb.SERVER_NAME=my.${ECHO_DOMAIN:-localhost}"
+      - "bunkerweb.USE_REVERSE_PROXY=yes"
+      - "bunkerweb.REVERSE_PROXY_URL=/"
+      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-user-manager:3002"
+      - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=yes"
+      - "bunkerweb.REVERSE_PROXY_READ_TIMEOUT=600s"
+      - "bunkerweb.REVERSE_PROXY_SEND_TIMEOUT=600s"
+      # 🛡️ ECHO AUTH : Forward Auth + SSO Secret
+      - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST=/api/verify"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @api_403_reject; error_page 429 = @api_429_reject; error_page 500 501 502 503 504 = @api_5xx_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @api_403_reject { if ($$request_uri ~* ^/api/) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403)\"}'; } default_type text/html; return 403 '<html><body><center><h1>403 Forbidden</h1></center></body></html>'; } location @api_429_reject { if ($$request_uri ~* ^/api/) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } default_type text/html; return 429 '<html><body><center><h1>429 Too Many Requests</h1></center></body></html>'; } location @api_5xx_reject { default_type application/json; if ($$request_uri ~* ^/api/) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } return 500 '{\"detail\":\"Internal Error (500)\"}'; }"
+      - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$webui_name $$upstream_http_x_webui_name;$$dummy $$upstream_http_dummy"
+      - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name;X-Echo-Sso-Secret ${ECHO_SSO_SECRET}"
+      - |
+        bunkerweb.CUSTOM_CONF_SERVER_HTTP_authbackend=location = /api/verify {
+            internal;
+            proxy_intercept_errors off;
+            set $$upstream_auth http://echo-auth-manager:8000;
+            proxy_pass $$upstream_auth;
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+            proxy_set_header X-Original-URI $$request_uri;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+        }
+      - "bunkerweb.USE_BAD_BEHAVIOR=yes"
+      - "bunkerweb.BAD_BEHAVIOR_STATUS_CODES=405 444"
+      - "bunkerweb.BAD_BEHAVIOR_THRESHOLD=50"
+      - "bunkerweb.BAD_BEHAVIOR_BAN_TIME=300"
+      - "bunkerweb.USE_LIMIT_REQ=yes"
+      - "bunkerweb.LIMIT_REQ_RATE=50r/s"
+      - "bunkerweb.LIMIT_REQ_BURST=150"
+      - "bunkerweb.INTERCEPTED_ERROR_CODES=403 429 500 501 502 503 504"
+      - "bunkerweb.CUSTOM_HEADER_1=X-Robots-Tag: noindex, nofollow"
 
 # ==============================================================================
 # Réseaux
@@ -277,4 +352,6 @@ volumes:
       device: /opt/ECHO/bunkerweb
   bw-db-data:
   echo-auth-data:
+    external: true
+  echo-webui-data:
     external: true

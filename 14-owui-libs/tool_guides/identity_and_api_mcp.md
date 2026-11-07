@@ -1,11 +1,11 @@
 ---
 domain_id: identity_and_api_mcp
-version: 5.231.52.1
-updated_at: 2026-11-02
+version: 5.235.5.1
+updated_at: 2026-11-06
 name: Coffre-Fort d'Identités (Identity Vault), Client API HTTP & Protocole MCP
 description: Découverte et gestion des secrets/comptes chiffrés et sécurisés (Identity Vault), requêtes HTTP universelles (call_api), instanciation/exécution sur les serveurs MCP (echo_mcp_tool) et stratégies par service.
 tools: [list_identities_services, list_identities, manage_identity, call_api, list_mcp_functions, call_mcp_function]
-keywords: [vault, secret, clé_api, token, identité, credentials, api, http, rest, mcp, serveur_mcp, broker, m365, workspace, jobs, academic, uvx, npx, sse]
+keywords: [vault, secret, clé_api, token, identité, credentials, api, http, rest, mcp, serveur_mcp, broker, m365, workspace, contacts, google_contacts, carnet_adresses, jobs, academic, uvx, npx, sse]
 ---
 
 # MANUEL OPÉRATIONNEL : IDENTITY VAULT, CLIENT API & MCP (`identity_and_api_mcp`)
@@ -96,7 +96,18 @@ L'outil MCP route dynamiquement les requêtes vers les serveurs (`mcp_native`, `
   - Drive : Opérateurs standard Google Drive (`name contains 'CV' and mimeType = 'application/pdf'`).
 - **Téléchargements Drive & Pièces Jointes (`get_drive_file_download_url`, `get_gmail_attachment_content`, `download_chat_attachment`)** :
   - Tout fichier téléchargé est automatiquement ingéré dans le Registre Unifié (`query_registry`) et retourne son `file_id` ECHO (8 caractères hexadécimaux).
-- **Outils Disponibles** : Gmail (`list_messages`, `get_message`, `send_message`), Drive (`search_files`, `download_file`), Calendar (`list_events`, `create_event`), Contacts, Docs, Sheets, Tasks.
+- **Carnet d'Adresses & Contacts Google (`list_contacts`, `list_contact_groups`, `get_contact`, `get_contact_group`, `manage_contact`, `manage_contact_group`, `manage_contacts_batch`)** :
+  - **Consultation & Sauvegarde (Lecture Seule — À PRIVILÉGIER pour tout export ou inventaire)** :
+    - `list_contacts` : Rapatrie la liste des contacts (`max_results`: int optionnel, défaut `100` ; `name_filter`: str optionnel ; `user_google_email`: str optionnel). Outil indispensable et prioritaire pour toute sauvegarde, export ou exploration des contacts.
+    - `list_contact_groups` : Rapatrie les libellés et groupes de contacts (`user_google_email`: str optionnel).
+    - `get_contact` : Détails d'un contact via son `contact_id` ou `resource_name` (`"people/c..."`).
+    - `get_contact_group` : Détails d'un groupe via `group_id` ou `resource_name` (`"contactGroups/..."`).
+  - **Mutation & Écriture (Création, Modification, Suppression)** :
+    - **RÈGLE CRITIQUE D'APPEL** : Les outils `manage_*` exigent **STRICTEMENT** le paramètre racine `action` (`"create"`, `"update"`, `"delete"`). Ne **JAMAIS** appeler un outil `manage_*` pour lire ou exporter des contacts (utiliser impérativement `list_contacts`).
+    - `manage_contact` : `action="create"` (avec `given_name`, `family_name`, `email`, `phone`), `action="update"` (avec `contact_id` et champs modifiés), ou `action="delete"` (`contact_id`).
+    - `manage_contact_group` : `action="create"` (avec `name`), `action="update"` (avec `group_id`, `name`), `action="delete"` (`group_id`), ou `action="modify_members"` (avec `group_id`, `resource_names_to_add`/`resource_names_to_remove`).
+    - `manage_contacts_batch` : Opérations par lots avec `action="create"` (`contacts=[...]`), `action="update"` (`updates=[...]`), ou `action="delete"` (`contact_ids=[...]`).
+- **Outils Disponibles** : Gmail (`list_messages`, `get_message`, `send_message`), Drive (`search_files`, `download_file`), Calendar (`list_events`, `create_event`), Contacts (`list_contacts`, `list_contact_groups`, `get_contact`, `get_contact_group`, `manage_contact`, `manage_contact_group`, `manage_contacts_batch`), Docs, Sheets, Tasks.
 
 ### 3.3 Agrégateur d'Emploi (`jobs_omnisearch`)
 - **Arguments Clés** :

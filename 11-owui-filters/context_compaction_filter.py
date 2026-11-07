@@ -1,17 +1,17 @@
 """
 title: ECHO Context Compaction Filter
 author: Wilfried BARNAVON
-version: 5.231.55.1
+version: 5.231.58.1
 description: Composant système interne : Compaction contextuelle automatique in-place sur seuil.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgMjJ2LTYiLz48cGF0aCBkPSJNMTIgOFYyIi8+PHBhdGggZD0iTTQgMTJIMiIvPjxwYXRoIGQ9Ik0xMCAxMkg4Ii8+PHBhdGggZD0iTTE2IDEyaC0yIi8+PHBhdGggZD0iTTIyIDEyaC0yIi8+PHBhdGggZD0ibTE1IDE5LTMtMy0zIDMiLz48cGF0aCBkPSJtMTUgNS0zIDMtMy0zIi8+PC9zdmc+
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.58.1: Affichage du modèle clampé dans le HUD et le toast de compaction suite à la sélection du modèle le plus haut disponible.
 # 5.231.55.1: Réétagement de la priorité à 60 (après user_native_context_filter à 50 et avant new_context_filter à 70).
 # 5.231.38.1: Activation par défaut de la compaction contextuelle automatique (ENABLE_AUTO_COMPACTION=True).
 # 5.231.31.1: Prise en charge asynchrone directe de EchoCompactionEngine.load_active_branch_messages, notification d'alerte et spinner CSS HUD.
 # 5.231.30.1: Alignement sur le modèle UserValves (ENABLE_AUTO_COMPACTION uniquement, toggle=True, icône SVG fold-vertical) et utilisation stricte des constantes SSOT.
-# 5.231.28.1: Création du filtre Inlet (priorité 25) de compaction contextuelle automatique in-place sur seuil (% de CONTEXT_MAX, désactivé par défaut).
 
 import sys
 import logging
@@ -30,7 +30,7 @@ from echo_constants import (
     COMPACTION_MIN_TURNS_REQUIRED,
     get_compaction_shares,
 )
-from echo_core import EchoCompactionEngine
+from echo_core import EchoCompactionEngine, clamp_model
 from echo_state_manager import EchoStateManager
 from echo_events import EchoEvents
 
@@ -161,13 +161,13 @@ class Filter:
             __event_emitter__, __event_call__, user_id=user_id, chat_id=chat_id
         )
         pct_display = round((current_tokens / ECHO_MAX_CONTEXT_SIZE) * 100, 1)
+        target_model_hint = clamp_model("MODEL_PROMETHEUS", __metadata__, user_id=user_id)
+        hud_subtitle = (
+            f"Seuil atteint ({pct_display}% >= {round(trigger_pct * 100, 1)}%). "
+            f"Distillation ({target_model_hint}) en cours..."
+        )
         try:
-            await events.emit_execute(
-                self._build_hud_js(
-                    True,
-                    f"Seuil atteint ({pct_display}% >= {round(trigger_pct * 100, 1)}%). Distillation structurée en cours...",
-                )
-            )
+            await events.emit_execute(self._build_hud_js(True, hud_subtitle))
             result = await EchoCompactionEngine.execute_compaction(
                 user_id=user_id,
                 chat_id=chat_id,
@@ -182,7 +182,7 @@ class Filter:
             )
             if result.get("ok"):
                 await events.toast(
-                    f"🗜️ Contexte compacté (#{result['compaction_count']} : "
+                    f"🗜️ Contexte compacté (#{result['compaction_count']} via {result.get('model_used', target_model_hint)} : "
                     f"{result['compacted_turns']} tours distillés, {result['keep_recent_turns']} gardés).",
                     "info",
                 )

@@ -2,15 +2,19 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - SEMANTIC PRUNING & GC
-VERSION : 5.231.42.1
+VERSION : 5.235.5.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.235.5.1: Purge des branches mortes dans session.db (gc_session_db) et du RAG Qdrant (_delete_rag_points) sous carence 900s.
+# 5.235.2.1: Décompte explicite des session.db purgées, couverture des utilisateurs orphelins dans purge_orphaned_chats et validation post-rmtree.
 # 5.231.42.1: Ajout de echo_resources.id à la liste blanche N8N lors du Garbage Collection des Drop-Zones pour préserver les dossiers des démons actifs.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
+from contextlib import closing
 import datetime
 import html
+import logging
 import os
 from pathlib import Path
 import shutil
@@ -22,7 +26,9 @@ from core.config import (
     COLLECTION_SESSION_RAG,
     DEFAULT_MAINT_CONFIG,
     DOWNLOADS_DIR,
+    ECHO_GC_GRACE_PERIOD_SEC,
     ECHO_USERS_ROOT,
+    HAS_ECHO_LIBS,
     HAS_HTTPX,
     MAINTENANCE_STATE,
     MCP_CACHE_DIR,
@@ -43,6 +49,66 @@ from core.settings_io import (
     save_maint_report,
 )
 from services.memory_consolidation import consolidate_memories_for_user
+
+logger = logging.getLogger("ECHO-PRUNING")
+OWUI_DB_PATH = WEBUI_DB_PATH
+
+if HAS_ECHO_LIBS:
+    from echo_session_gc import gc_session_db, build_session_rag_point_id
+    from echo_constants import SESSION_RAG_CONVERSATION_SOURCE_ID
+
+
+def _delete_rag_points(uid: str, chat_id: str, seeds: list) -> int:
+    """Purge Qdrant hybride : filtre message_id (nouveaux points) + fallback uuid5 (points legacy)."""
+    if not seeds or not HAS_HTTPX or not HAS_ECHO_LIBS:
+        return 0
+    deleted = 0
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            # 1. Suppression principale par filtre payload message_id
+            del_url = f"{QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/delete"
+            filter_payload = {
+                "filter": {
+                    "must": [
+                        {"key": "user_id", "match": {"value": str(uid)}},
+                        {"key": "chat_id", "match": {"value": str(chat_id)}},
+                        {"key": "message_id", "match": {"any": [str(s) for s in seeds]}},
+                    ]
+                }
+            }
+            resp = client.post(del_url, json=filter_payload)
+            if resp.status_code == 200:
+                deleted += len(seeds)
+
+            # 2. Fallback points legacy sans message_id via déterminisme uuid5 (lots de 32 indices)
+            pts_url = f"{QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points"
+            legacy_ids = []
+            for seed in seeds:
+                for batch_idx in range(64):
+                    batch_ids = [
+                        build_session_rag_point_id(
+                            str(uid),
+                            str(chat_id),
+                            SESSION_RAG_CONVERSATION_SOURCE_ID,
+                            batch_idx * 32 + offset,
+                            unique_seed=str(seed),
+                        )
+                        for offset in range(32)
+                    ]
+                    r_pts = client.post(pts_url, json={"ids": batch_ids, "with_payload": False})
+                    if r_pts.status_code != 200:
+                        break
+                    found = [pt.get("id") for pt in (r_pts.json().get("result") or []) if pt.get("id")]
+                    if not found:
+                        break
+                    legacy_ids.extend(found)
+            if legacy_ids:
+                client.post(del_url, json={"points": legacy_ids})
+                deleted += len(legacy_ids)
+    except Exception as e:
+        logger.warning(f"Purge RAG branches mortes échouée ({chat_id}) : {e}")
+    return deleted
+
 
 __all__ = [
     'run_semantic_pruning',
@@ -327,6 +393,8 @@ def _run_semantic_pruning(silent=False):
     stats = {
         "users": {"c": 0, "b": 0},
         "chats": {"c": 0, "b": 0},
+        "sessions_db": {"c": 0, "b": 0},
+        "dead_branches": {"chats": 0, "rows": 0, "rag_points": 0},
         "files": {"c": 0, "b": 0},
         "mcp_cache": {"c": 0, "b": 0},
         "drop_users": {"c": 0, "b": 0},
@@ -338,6 +406,7 @@ def _run_semantic_pruning(silent=False):
     }
     qdrant_synced = False
     pruning_error = ""  # Exception du bloc DB/Espace Personnel (remontée dans le rapport)
+    libs_warning_line = ""
 
     if os.path.exists(ECHO_USERS_ROOT):
         try:
@@ -486,19 +555,38 @@ def _run_semantic_pruning(silent=False):
 
             MAINTENANCE_STATE["percent"] = 55
             MAINTENANCE_STATE["status"] = "Élagage (4/7) : Purge des dossiers de l'Espace Personnel (FS)..."
+            libs_warning_line = ""
 
             # --- A. Purge des dossiers de l'Espace Personnel ---
             if config.get("purge_orphaned_users", False):
                 for folder in os.listdir(ECHO_USERS_ROOT):
-                    if folder not in valid_ids and len(folder) > 30:
-                        folder_path = os.path.join(ECHO_USERS_ROOT, folder)
+                    if folder.startswith("."):
+                        continue
+                    folder_path = os.path.join(ECHO_USERS_ROOT, folder)
+                    if os.path.isdir(folder_path) and folder not in valid_ids and len(folder) > 30:
                         sz = _get_tree_size(folder_path)
+                        # Dénombrement préalable des session.db contenues
+                        u_s_db_count = 0
+                        u_s_db_size = 0
+                        for root, _, files in os.walk(folder_path):
+                            if "session.db" in files:
+                                f_p = os.path.join(root, "session.db")
+                                try:
+                                    u_s_db_size += os.path.getsize(f_p)
+                                    u_s_db_count += 1
+                                except Exception:
+                                    pass
                         shutil.rmtree(folder_path, ignore_errors=True)
-                        stats["users"]["c"] += 1
-                        stats["users"]["b"] += sz
-            
+                        if not os.path.exists(folder_path):
+                            stats["users"]["c"] += 1
+                            stats["users"]["b"] += sz
+                            stats["sessions_db"]["c"] += u_s_db_count
+                            stats["sessions_db"]["b"] += u_s_db_size
+
             if config.get("purge_orphaned_chats", False):
-                for folder in valid_ids:
+                for folder in os.listdir(ECHO_USERS_ROOT):
+                    if folder.startswith("."):
+                        continue
                     user_chats_dir = os.path.join(ECHO_USERS_ROOT, folder, "chats")
                     if os.path.exists(user_chats_dir):
                         for cdir in os.listdir(user_chats_dir):
@@ -506,73 +594,109 @@ def _run_semantic_pruning(silent=False):
                             if os.path.isdir(cdir_path):
                                 chat_id = cdir
                                 if chat_id not in db_valid_chats:
+                                    s_db_path = os.path.join(cdir_path, "session.db")
+                                    has_s_db = os.path.exists(s_db_path)
+                                    s_db_size = os.path.getsize(s_db_path) if has_s_db else 0
                                     sz = _get_tree_size(cdir_path)
                                     shutil.rmtree(cdir_path, ignore_errors=True)
-                                    stats["chats"]["c"] += 1
-                                    stats["chats"]["b"] += sz
+                                    if not os.path.exists(cdir_path):
+                                        stats["chats"]["c"] += 1
+                                        stats["chats"]["b"] += sz
+                                        if has_s_db:
+                                            stats["sessions_db"]["c"] += 1
+                                            stats["sessions_db"]["b"] += s_db_size
 
                 # --- A.bis Purge Granulaire des Fichiers (RefCounting FS) ---
-                MAINTENANCE_STATE["percent"] = 65
-                MAINTENANCE_STATE["status"] = "Élagage (4/7) : Garbage Collection des fichiers (FS)..."
-                grace_period = time.time() - 900  # Carence de 15 minutes (900s)
-                
-                # Étape 1 : Cartographier tous les symlinks valides dans les chats existants
-                active_symlink_targets = set()
-                for folder in valid_ids:
-                    user_chats_dir = os.path.join(ECHO_USERS_ROOT, folder, "chats")
-                    if os.path.exists(user_chats_dir):
-                        for cdir in os.listdir(user_chats_dir):
-                            if cdir in db_valid_chats:
-                                chat_files_dir = os.path.join(user_chats_dir, cdir, "files")
-                                if os.path.exists(chat_files_dir):
-                                    for f_name in os.listdir(chat_files_dir):
-                                        f_path = os.path.join(chat_files_dir, f_name)
-                                        if os.path.islink(f_path):
+                if HAS_ECHO_LIBS and ECHO_GC_GRACE_PERIOD_SEC is not None:
+                    MAINTENANCE_STATE["percent"] = 65
+                    MAINTENANCE_STATE["status"] = "Élagage (4/7) : Garbage Collection des fichiers (FS)..."
+                    grace_period = time.time() - ECHO_GC_GRACE_PERIOD_SEC
+                    
+                    # Étape 1 : Cartographier tous les symlinks valides dans les chats existants
+                    active_symlink_targets = set()
+                    for folder in valid_ids:
+                        user_chats_dir = os.path.join(ECHO_USERS_ROOT, folder, "chats")
+                        if os.path.exists(user_chats_dir):
+                            for cdir in os.listdir(user_chats_dir):
+                                if cdir in db_valid_chats:
+                                    chat_files_dir = os.path.join(user_chats_dir, cdir, "files")
+                                    if os.path.exists(chat_files_dir):
+                                        for f_name in os.listdir(chat_files_dir):
+                                            f_path = os.path.join(chat_files_dir, f_name)
+                                            if os.path.islink(f_path):
+                                                try:
+                                                    active_symlink_targets.add(os.path.realpath(f_path))
+                                                except Exception:
+                                                    pass
+                    
+                    # Étape 2 : Purger les fichiers du Vault Global (fichiers originaux/dérivés orphelins)
+                    for folder in valid_ids:
+                        user_files_dir = os.path.join(ECHO_USERS_ROOT, folder, "files")
+                        if os.path.exists(user_files_dir):
+                            for f_name in os.listdir(user_files_dir):
+                                f_path = os.path.join(user_files_dir, f_name)
+                                if os.path.isfile(f_path) and not os.path.islink(f_path):
+                                    if f_path not in active_symlink_targets:
+                                        # Vérification de l'âge pour éviter la suppression d'un upload en cours
+                                        if os.path.getmtime(f_path) < grace_period:
                                             try:
-                                                active_symlink_targets.add(os.path.realpath(f_path))
+                                                sz = os.path.getsize(f_path) if os.path.exists(f_path) else 0
+                                                os.remove(f_path)
+                                                stats["files"]["c"] += 1
+                                                stats["files"]["b"] += sz
                                             except Exception:
                                                 pass
-                
-                # Étape 2 : Purger les fichiers du Vault Global (fichiers originaux/dérivés orphelins)
-                for folder in valid_ids:
-                    user_files_dir = os.path.join(ECHO_USERS_ROOT, folder, "files")
-                    if os.path.exists(user_files_dir):
-                        for f_name in os.listdir(user_files_dir):
-                            f_path = os.path.join(user_files_dir, f_name)
-                            if os.path.isfile(f_path) and not os.path.islink(f_path):
-                                if f_path not in active_symlink_targets:
-                                    # Vérification de l'âge pour éviter la suppression d'un upload en cours
-                                    if os.path.getmtime(f_path) < grace_period:
-                                        try:
-                                            sz = os.path.getsize(f_path) if os.path.exists(f_path) else 0
-                                            os.remove(f_path)
-                                            stats["files"]["c"] += 1
-                                            stats["files"]["b"] += sz
-                                        except Exception:
-                                            pass
 
-                # Étape 3 : Nettoyer le dossier UPLOADS_DIR (Fichiers en dur et Liens morts)
-                if os.path.exists(UPLOADS_DIR):
-                    for f_name in os.listdir(UPLOADS_DIR):
-                        f_path = os.path.join(UPLOADS_DIR, f_name)
-                        if os.path.islink(f_path):
-                            # os.path.exists() retourne False sur un Dead Symlink
-                            if not os.path.exists(f_path):
-                                try:
-                                    os.unlink(f_path)
-                                    stats["files"]["c"] += 1
-                                except Exception:
-                                    pass
-                        elif os.path.isfile(f_path):
-                            # Fichier physique orphelin (non converti en symlink par echo_ingestion)
-                            if os.path.getmtime(f_path) < grace_period:
-                                try:
-                                    sz = os.path.getsize(f_path)
-                                    os.remove(f_path)
-                                    stats["files"]["c"] += 1
-                                    stats["files"]["b"] += sz
-                                except Exception:
-                                    pass
+                    # Étape 3 : Nettoyer le dossier UPLOADS_DIR (Fichiers en dur et Liens morts)
+                    if os.path.exists(UPLOADS_DIR):
+                        for f_name in os.listdir(UPLOADS_DIR):
+                            f_path = os.path.join(UPLOADS_DIR, f_name)
+                            if os.path.islink(f_path):
+                                # os.path.exists() retourne False sur un Dead Symlink
+                                if not os.path.exists(f_path):
+                                    try:
+                                        os.unlink(f_path)
+                                        stats["files"]["c"] += 1
+                                    except Exception:
+                                        pass
+                            elif os.path.isfile(f_path):
+                                # Fichier physique orphelin (non converti en symlink par echo_ingestion)
+                                if os.path.getmtime(f_path) < grace_period:
+                                    try:
+                                        sz = os.path.getsize(f_path)
+                                        os.remove(f_path)
+                                        stats["files"]["c"] += 1
+                                        stats["files"]["b"] += sz
+                                    except Exception:
+                                        pass
+
+            # --- A.ter Purge des Branches Mortes (SQLite & Qdrant) ---
+            if not HAS_ECHO_LIBS:
+                libs_warning_line = "<br>⚠️ <b class='text-warning'>Libs ECHO non montées</b> : GC fichiers et branches mortes ignorés"
+            elif config.get("purge_dead_branches", True):
+                MAINTENANCE_STATE["percent"] = 70
+                MAINTENANCE_STATE["status"] = "Élagage (4/7) : Purge des branches mortes..."
+                grace_period = time.time() - ECHO_GC_GRACE_PERIOD_SEC
+                if os.path.exists(OWUI_DB_PATH):
+                    try:
+                        with closing(sqlite3.connect(f"file:{OWUI_DB_PATH}?mode=ro", uri=True, timeout=15.0)) as w_conn:
+                            for uid in valid_ids:
+                                chats_root = os.path.join(ECHO_USERS_ROOT, uid, "chats")
+                                if not os.path.exists(chats_root):
+                                    continue
+                                for cid in db_valid_chats:
+                                    session_db_path = os.path.join(chats_root, cid, "session.db")
+                                    if not os.path.isfile(session_db_path):
+                                        continue
+                                    res = gc_session_db(session_db_path, w_conn, cid, grace_period, dry_run=False)
+                                    if res.get("status") == "purged":
+                                        stats["dead_branches"]["chats"] += 1
+                                        stats["dead_branches"]["rows"] += sum(res.get("counts", {}).values())
+                                        rag_seeds = res.get("rag_seeds") or []
+                                        if rag_seeds and HAS_HTTPX:
+                                            stats["dead_branches"]["rag_points"] += _delete_rag_points(uid, cid, rag_seeds)
+                    except Exception as e:
+                        logger.error(f"Erreur GC branches mortes : {e}")
 
             # --- B. Purge Temporelle des Souvenirs & Garbage Collection (Qdrant) ---
             MAINTENANCE_STATE["percent"] = 75
@@ -723,13 +847,14 @@ def _run_semantic_pruning(silent=False):
     <div style='line-height: 1.4;'>
         <b><i class='bi bi-trash text-danger'></i> Rapport d'Élagage</b><br>
         👤 <b>Utilisateurs</b> : {stats['users']['c']} <i>({_format_bytes(stats['users']['b'])})</i><br>
-        💬 <b>Chats</b> : {stats['chats']['c']} <i>({_format_bytes(stats['chats']['b'])})</i><br>
+        💬 <b>Chats</b> : {stats['chats']['c']} orphelins ({stats['sessions_db']['c']} session.db) <i>({_format_bytes(stats['chats']['b'])})</i><br>
+        🌿 <b>Branches mortes</b> : {stats['dead_branches']['chats']} chats, {stats['dead_branches']['rows']} lignes SQLite, {stats['dead_branches']['rag_points']} vecteurs<br>
         🗂️ <b>Fichiers FS</b> : {stats['files']['c']} <i>({_format_bytes(stats['files']['b'])})</i><br>
         🔑 <b>MCP Cache</b> : {stats['mcp_cache']['c']} <i>({_format_bytes(stats['mcp_cache']['b'])})</i><br>
         📥 <b>Drop Zones</b> : {stats['drop_users']['c']} Users, {stats['drop_chats']['c']} Chats, {stats['drop_n8n']['c']} N8N <i>(Libéré: {_format_bytes(stats['drop_users']['b'] + stats['drop_chats']['b'] + stats['drop_n8n']['b'])})</i><br>
         🧠 <b>Qdrant</b> : {'Synchronisé (Orphelins & TTL)' if qdrant_synced else 'Ignoré'}<br>
         🧬 <b>Consolidation</b> : {stats['promoted_clusters']} clusters promus (Lvl1->Lvl2)<br>
-        🗃️ <b>SQLite</b> : {stats['sqlite_ghosts']} fantômes, {stats['sqlite_vacuumed']} bases optimisées{error_line}
+        🗃️ <b>SQLite</b> : {stats['sqlite_ghosts']} fantômes, {stats['sqlite_vacuumed']} bases optimisées{libs_warning_line}{error_line}
     </div>
     """
     config["last_run"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")

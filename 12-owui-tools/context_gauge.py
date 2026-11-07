@@ -1,28 +1,29 @@
 """
 title: ECHO Context Gauge
 author: Wilfried BARNAVON
-version: 5.229.0.0
+version: 5.235.5.1
 description: Composant système interne : ECHO Context Gauge.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.235.5.1: Suppression du repli identity.db et lecture exclusive des stats de contexte dans session.db.
+# 5.233.0.1: Décoration @echo_tool sur get_context_load et simplification des retours wrap_tool_output.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 3.6: Alignement sur la nomenclature cognitive (MODEL_PROMETHEUS).
-# 3.5: Migration SQL : Lecture des métriques depuis le registre KV unifié echo_settings au lieu de la table dédiée context_stats.
-# 3.3: Bascule des seuils cognitifs (WARNING/CRITICAL) sur les constantes définies dans echo_constants.py.
 
 from pydantic import BaseModel, Field
 import os
 import orjson as json
-import sqlite3
 import sys
 from typing import Any
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_core import wrap_tool_output
-from echo_constants import ECHO_BASE_DATA_DIR, CONTEXT_LOAD_WARNING_THRESHOLD, CONTEXT_LOAD_CRITICAL_THRESHOLD
+from echo_core import wrap_tool_output, echo_tool
+from echo_constants import CONTEXT_LOAD_WARNING_THRESHOLD, CONTEXT_LOAD_CRITICAL_THRESHOLD
+from echo_state_manager import EchoStateManager
+from echo_paths import get_echo_session_path
 
 class Tools:
     class Valves(BaseModel):
@@ -33,9 +34,8 @@ class Tools:
 
     def __init__(self):
         self.valves = self.Valves()
-        # Le chemin racine des bases de données unifiées (v5.76.0+)
-        self.db_root_dir = f"{ECHO_BASE_DATA_DIR}/users"
 
+    @echo_tool
     def get_context_load(
         self, 
         __messages__: list, 
@@ -51,38 +51,31 @@ class Tools:
         user_id = __user__.get("id")
 
         if not user_id:
-            return wrap_tool_output(text="❌ Erreur : Impossible d'identifier l'utilisateur.", status={"status": "error"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return "❌ Erreur : Impossible d'identifier l'utilisateur."
 
         try:
-            safe_uid = "".join(x for x in str(user_id) if x.isalnum() or x in "-_")
             chat_id = (__metadata__ or {}).get("chat_id")
-            
-            # 1. Chemin vers l'identité (Facturation)
-            identity_db = os.path.join(self.db_root_dir, safe_uid, "identity.db")
-            
-            # 2. Chemin vers la session (Tokens)
-            if chat_id:
-                from echo_paths import get_echo_session_path
-                session_db = get_echo_session_path(user_id, chat_id, "db")
-            else:
-                session_db = identity_db # Fallback sur identity si pas de chat_id
-
+            if not chat_id:
+                return wrap_tool_output(
+                    text=f"⚠️ Métrique indisponible : Pas de session active pour `{user_id}`.",
+                    status={"status": "missing_db"},
+                )
+            session_db = get_echo_session_path(user_id, chat_id, "db")
             if not os.path.exists(session_db):
-                return wrap_tool_output(text=f"⚠️ Métrique indisponible : Pas de session active pour `{user_id}`.", status={"status": "missing_db"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
-
-            # Lecture des stats de tokens (depuis session_db ou identity_db fallback)
-            with sqlite3.connect(f"file://{session_db}?mode=ro", uri=True, timeout=5.0) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT value FROM echo_settings WHERE key = 'context_stats'")
-                row = cursor.fetchone()
-                if row:
-                    real_stats = json.loads(row[0])
-                    source = "DB_SESSION" if chat_id else "DB_IDENTITY_FALLBACK"
+                return wrap_tool_output(
+                    text=f"⚠️ Métrique indisponible : Pas de session active pour `{user_id}`.",
+                    status={"status": "missing_db"},
+                )
+            real_stats = EchoStateManager(user_id=user_id, chat_id=chat_id).get_last_context_stats()
+            source = "DB_SESSION"
         except Exception as e:
-            return wrap_tool_output(text=f"❌ Erreur DB : {str(e)}", status={"status": "error", "error": str(e)}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+            return wrap_tool_output(
+                text=f"❌ Erreur DB : {str(e)}",
+                status={"status": "error", "error": str(e)},
+            )
 
         if not real_stats:
-             return wrap_tool_output(text=f"⚠️ Aucune donnée de session pour `{user_id}`.", status={"status": "no_data"}, user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+             return wrap_tool_output(text=f"⚠️ Aucune donnée de session pour `{user_id}`.", status={"status": "no_data"})
 
         est_tokens = real_stats.get("totalTokenCount", 0)
         p_tok = real_stats.get("promptTokenCount", 0)
@@ -106,7 +99,4 @@ class Tools:
             }
         }
             
-        return wrap_tool_output(
-            text=json.dumps(payload, option=json.OPT_INDENT_2).decode('utf-8'), 
-            status={"status": "success"}
-        , user_id=__user__.get("id", "system") if __user__ else "system", chat_id=__metadata__.get("chat_id") if __metadata__ else None, metadata=__metadata__)
+        return json.dumps(payload, option=json.OPT_INDENT_2).decode('utf-8')

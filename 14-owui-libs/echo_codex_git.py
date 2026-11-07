@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 5.231.29.1
+version: 5.235.4.1
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.235.4.1: Exclusion systématique des flux binaires dans search_in_file et trace_history pour éliminer les faux positifs et ralentissements.
+# 5.235.2.1: Implémentation de read_file_at_commit retournant les métadonnées complètes et factorisation de get_file_at_commit.
+# 5.232.5.2: Pilotage déclaratif de CodexRepo via is_codex_workspace_versioned(workspace), désactivation de core.autocrlf, parcours déterministe first-parent dans get_log et résolution de HEAD dans resolve_commit.
 # 5.231.29.1: Alignement sur les constantes SSOT des espaces de travail Codex (CODEX_DEFAULT_WORKSPACE, CODEX_WORKSPACE_SANDBOX, ECHO_CODEX_WORKSPACES).
 # 5.231.2.1: Filtrage SSoT strict dans get_user_codex_chats excluant les conversations orphelines supprimées de webui.db.
-# 5.230.0.1: Délégation factorisée de _secure_path vers normalize_codex_rel_path (echo_paths) avec décodage URL défensif (unquote).
-# 5.229.7.2: Résolution des SHA courts (resolve_commit) et traversée hiérarchique de Tree (lookup_path) pour read/restore/diff/log.
-# 5.229.7.1: Support Multi-Chat sélectif (découverte SSoT, UI hiérarchique, Read-Only strict et tooling transverse).
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
 # desc.
 
@@ -29,34 +29,48 @@ from echo_constants import (
     CODEX_DEFAULT_WORKSPACE,
     CODEX_DIR_NAME,
     CODEX_LANG_MAP,
-    CODEX_WORKSPACE_SANDBOX,
     ECHO_BASE_DATA_DIR,
     ECHO_CODEX_WORKSPACES,
     ECHO_SYNC_EXCLUDE_LIST,
     ECHO_USERS_ROOT,
     is_binary_file,
+    is_codex_workspace_versioned,
 )
 from echo_paths import get_echo_session_path, normalize_codex_rel_path
 
 
 class CodexRepo:
     """Gestionnaire Git (dulwich) pour un dépôt Codex user/chat.
-    Un dépôt isolé par couple (user_id, chat_id).
+    Un dépôt isolé par couple (user_id, chat_id, workspace).
     Toutes les opérations sont synchrones et sans effet de bord réseau."""
 
     def __init__(self, user_id: str, chat_id: str, workspace: str = CODEX_DEFAULT_WORKSPACE):
+        if workspace not in ECHO_CODEX_WORKSPACES:
+            workspace = CODEX_DEFAULT_WORKSPACE
         base_codex = get_echo_session_path(user_id, chat_id, CODEX_DIR_NAME)
         self.workspace = workspace
+        self.is_versioned = is_codex_workspace_versioned(workspace)
         self.repo_path = os.path.join(base_codex, workspace)
         os.makedirs(self.repo_path, exist_ok=True)
         self.repo = self._ensure_repo()
 
-    def _ensure_repo(self) -> Repo:
-        """Initialise le dépôt s'il n'existe pas, sinon l'ouvre."""
+    def _ensure_repo(self) -> Optional[Repo]:
+        """Initialise le dépôt uniquement si le workspace est versionné, sinon retourne None."""
+        if not self.is_versioned:
+            os.makedirs(self.repo_path, exist_ok=True)
+            return None
         if os.path.exists(os.path.join(self.repo_path, ".git")):
-            return Repo(self.repo_path)
-        os.makedirs(self.repo_path, exist_ok=True)
-        return Repo.init(self.repo_path)
+            repo = Repo(self.repo_path)
+        else:
+            os.makedirs(self.repo_path, exist_ok=True)
+            repo = Repo.init(self.repo_path)
+        try:
+            cfg = repo.get_config()
+            cfg.set((b"core",), b"autocrlf", b"false")
+            cfg.write_to_path()
+        except Exception:
+            pass
+        return repo
 
     # =========================================================================
     # CRUD FICHIERS
@@ -118,6 +132,9 @@ class CodexRepo:
         else:
             with open(filepath, "w", encoding="utf-8", newline="") as f:
                 f.write(content if isinstance(content, str) else content.decode("utf-8", errors="replace"))
+
+        if not self.is_versioned or self.repo is None:
+            return "untracked"
 
         porcelain.add(self.repo_path, paths=[safe_name])
         commit_sha = porcelain.commit(
@@ -200,6 +217,9 @@ class CodexRepo:
             os.remove(target_path)
             paths_to_rm = [safe_name.replace('\\', '/')]
 
+        if not self.is_versioned or self.repo is None:
+            return "untracked", paths_to_rm
+
         if paths_to_rm:
             try:
                 porcelain.rm(self.repo_path, paths=paths_to_rm)
@@ -240,6 +260,9 @@ class CodexRepo:
 
         os.rename(old_path, new_path)
 
+        if not self.is_versioned or self.repo is None:
+            return "untracked"
+
         paths_to_add = []
         if os.path.isdir(new_path):
             for root, _, files in os.walk(new_path):
@@ -279,9 +302,7 @@ class CodexRepo:
         if not os.path.exists(target_abs_path) or not os.path.isdir(target_abs_path):
             return files
 
-        is_sandbox = os.path.basename(self.repo_path.rstrip("/\\")) == CODEX_WORKSPACE_SANDBOX
-
-        if is_sandbox:
+        if not self.is_versioned or self.repo is None:
             for entry in os.scandir(target_abs_path):
                 if entry.name.startswith(".") or entry.name in ECHO_SYNC_EXCLUDE_LIST:
                     continue
@@ -445,7 +466,10 @@ class CodexRepo:
         """Permet de rechercher une occurrence textuelle ou une expression régulière au sein d'un fichier du Codex.
         Supporte l'investigation spatio-temporelle : si un identifiant de commit est fourni, la recherche s'opère sur la révision historique correspondante au lieu du fichier actif.
         """
-        content = self._get_text_content(filename, commit_hash)
+        res = self.read_file_at_commit(filename, commit_hash) if commit_hash else self.read_file(filename)
+        if not res or res.get("is_binary"):
+            return []
+        content = res.get("content", "")
         if not content:
             return []
 
@@ -482,6 +506,9 @@ class CodexRepo:
                 
                 commit_diffs = []
                 for f in files_to_check:
+                    is_bin, _ = is_binary_file(f)
+                    if is_bin:
+                        continue
                     cache_key_curr = f"{c_id}:{f}"
                     cache_key_prev = f"{p_id}:{f}" if p_id else None
                     
@@ -517,43 +544,55 @@ class CodexRepo:
     # =========================================================================
 
     def get_log(self, filename: str = None, limit: int = 20) -> List[dict]:
-        """Retourne l'historique des commits. Si filename, filtré pour ce fichier."""
+        """Retourne l'historique des commits (ordre du plus récent HEAD au plus ancien). Si filename, filtré pour ce fichier."""
+        if not self.is_versioned or self.repo is None:
+            return []
         entries = []
         try:
-            walker = self.repo.get_walker(
-                max_entries=limit * 3)  # Marge pour le filtrage
-            for walk_entry in walker:
-                commit = walk_entry.commit
+            head_sha = self.repo.head()
+            visited = set()
+            curr_sha = head_sha
+            while curr_sha and curr_sha not in visited and len(entries) < limit:
+                visited.add(curr_sha)
+                commit = self.repo[curr_sha]
+                if not isinstance(commit, Commit):
+                    break
                 msg = commit.message.decode("utf-8", errors="replace").strip()
                 ts = commit.commit_time
                 sha = commit.id.decode("ascii")
 
+                include = True
                 if filename:
-                    # Filtrage : vérifier si le fichier est modifié dans ce
-                    # commit
                     safe_name = self._secure_path(filename)
-                    if not self._file_in_commit(commit, safe_name):
-                        continue
+                    include = self._file_in_commit(commit, safe_name)
 
-                entries.append({
-                    "hash": sha[:12],
-                    "hash_full": sha,
-                    "message": msg,
-                    "author": commit.author.decode("utf-8", errors="replace"),
-                    "timestamp": ts,
-                })
+                if include:
+                    entries.append({
+                        "hash": sha[:12],
+                        "hash_full": sha,
+                        "message": msg,
+                        "author": commit.author.decode("utf-8", errors="replace"),
+                        "timestamp": ts,
+                    })
 
-                if len(entries) >= limit:
-                    break
+                curr_sha = commit.parents[0] if commit.parents else None
         except Exception:
             pass
         return entries
 
     def resolve_commit(self, commit_ref: str) -> Optional[Any]:
-        """Résout une référence de commit (SHA-1 complet 40 caractères, SHA court 7..39 caractères)."""
-        if not commit_ref:
+        """Résout une référence de commit (HEAD, SHA-1 complet 40 caractères, SHA court 7..39 caractères)."""
+        if not commit_ref or not self.is_versioned or self.repo is None:
             return None
         ref_str = str(commit_ref).strip()
+        if ref_str.upper() == "HEAD":
+            try:
+                head_sha = self.repo.head()
+                obj = self.repo[head_sha]
+                if isinstance(obj, Commit):
+                    return obj
+            except Exception:
+                return None
         if len(ref_str) == 40:
             try:
                 obj = self.repo[ref_str.encode("ascii")]
@@ -612,11 +651,11 @@ class CodexRepo:
         except Exception as e:
             return f"Erreur diff: {e}"
 
-    def get_file_at_commit(
+    def read_file_at_commit(
             self,
             filename: str,
-            commit_hash: str) -> Optional[str]:
-        """Lit le contenu d'un fichier à un commit donné (checkout virtuel via SHA complet ou court)."""
+            commit_hash: str) -> Optional[dict]:
+        """Lit un fichier à un commit donné avec métadonnées complètes {content, total_lines, range, is_binary, mime, size_bytes}."""
         try:
             commit = self.resolve_commit(commit_hash)
             if not commit:
@@ -631,16 +670,43 @@ class CodexRepo:
                 return None
 
             blob = self.repo[sha]
-            is_bin, _ = is_binary_file(safe_name, blob.data)
+            raw_bytes = blob.data
+            is_bin, mime = is_binary_file(safe_name, raw_bytes)
             if is_bin:
-                return blob.data.decode("latin-1")
+                return {
+                    "content": raw_bytes.decode("latin-1"),
+                    "total_lines": (len(raw_bytes) + 15) // 16,
+                    "range": None,
+                    "is_binary": True,
+                    "mime": mime,
+                    "size_bytes": len(raw_bytes),
+                }
+
             try:
-                return blob.data.decode("utf-8")
+                text_content = raw_bytes.decode("utf-8")
             except UnicodeDecodeError:
-                return blob.data.decode("latin-1")
+                text_content = raw_bytes.decode("latin-1")
+            lines = text_content.splitlines(True)
+            total = len(lines)
+            return {
+                "content": text_content,
+                "total_lines": total,
+                "range": None,
+                "is_binary": False,
+                "mime": mime,
+                "size_bytes": len(raw_bytes),
+            }
         except Exception:
             pass
         return None
+
+    def get_file_at_commit(
+            self,
+            filename: str,
+            commit_hash: str) -> Optional[str]:
+        """Lit le contenu d'un fichier à un commit donné (checkout virtuel via SHA complet ou court)."""
+        res = self.read_file_at_commit(filename, commit_hash)
+        return res["content"] if res else None
 
     def get_file_history_index(self, filename: str) -> List[dict]:
         """Retourne la liste ordonnée des commits touchant un fichier (pour navigation ◀ ▶).
@@ -743,8 +809,7 @@ class CodexRepo:
 
     def get_latest_state(self) -> str:
         """Retourne un identifiant d'état rapide (hash Git ou mtime) pour le ping."""
-        is_sandbox = os.path.basename(self.repo_path.rstrip("/\\")) == CODEX_WORKSPACE_SANDBOX
-        if is_sandbox:
+        if not self.is_versioned or self.repo is None:
             try:
                 max_mtime = os.path.getmtime(self.repo_path)
                 for root, dirs, files in os.walk(self.repo_path):
@@ -817,7 +882,7 @@ class CodexRepo:
                                     ws_dir = os.path.join(codex_path, ws)
                                     if os.path.exists(ws_dir):
                                         with os.scandir(ws_dir) as ws_entries:
-                                            if any(ws_entries):
+                                            if any(e.name != ".git" for e in ws_entries):
                                                 has_content = True
                                                 break
                             except Exception:

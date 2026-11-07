@@ -2,16 +2,16 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 5.231.50.1
+version: 5.231.60.1
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.231.60.1: Retrait de l'action RPC img_session_action, de EchoWM.submitChatPrompt et des écouteurs postMessage echo:img_session:* (restauration de l'agnosticisme pur).
 # 5.231.50.1: Pont postMessage echo:iframe:init / theme-update dans EchoWM pour synchroniser la couleur de fond et de police des Iframes avec la fenêtre principale Open WebUI.
 # 5.231.48.1: Factorisation SSOT de WM_SCRIPT_VERSION, teardown Hot-Upgrade de window.EchoWM, réentrance asynchrone (_execStack/_activeExecCount) et garde DOM dans bodyObs.
 # 5.231.47.1: Inclusion de EchoUI.get_media_export_js dans get_full_loader_bundle_js.
 # 5.231.46.1: Fragmentation UCTP SSE (_broadcast_execute / wm_uctp_chunk + wm_uctp_exec), wrapping Bidi echoWrapUctpPayload dans runInChatScope et inclusion de get_uctp_engine_js dans loader.js.
-# 5.231.39.1: Synchronisation de activeChatId à l'insertion sur route '/' en nouvelle session et bump de version EchoWM.
 
 import asyncio
 import os
@@ -31,7 +31,7 @@ WM_PREFIX = f"{ECHO_AUDIO_PREFIX}/wm"
 wm_router = APIRouter(prefix=WM_PREFIX, tags=["echo_wm"])
 wm_static_router = APIRouter(tags=["echo_wm_static"])
 
-WM_SCRIPT_VERSION = "5.231.50.1"
+WM_SCRIPT_VERSION = "5.231.60.1"
 LOADER_MARKER_START = "/* === ECHO_WM_START === */"
 LOADER_MARKER_END = "/* === ECHO_WM_END === */"
 WM_STATE_KEY = "wm_state"
@@ -1180,8 +1180,8 @@ def get_client_loader_js() -> str:
 
     function attachThemeBridge() {
         EchoWM._msgHandler = (ev) => {
-            if (EchoWM._destroyed) return;
-            if (ev && ev.data && ev.data.type === 'echo:iframe:init' && ev.source) {
+            if (EchoWM._destroyed || !ev || !ev.data) return;
+            if (ev.data.type === 'echo:iframe:init' && ev.source) {
                 EchoWM.broadcastThemeToIframes(ev.source);
             }
         };

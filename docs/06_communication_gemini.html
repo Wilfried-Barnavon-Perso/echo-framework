@@ -52,15 +52,18 @@
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
         <h3>1. Priorité des Identités d'Accès (<code>EchoAuth.get_ordered_auth_providers()</code>,
-          <code>echo_auth.py</code> v5.231.24.1)</h3>
+        <code>echo_auth.py</code> v5.236.5.1)</h3>
         <ol>
           <li><strong>OAuth2 (API native Code Assist, <code>google_oauth2</code>) :</strong> prioritaire, flux
             <strong>Authorization Code + PKCE (RFC 7636)</strong> via tunnel SSH éphémère (<code>asyncssh</code> sur les
             ports exposés <code>8020–8024</code> et callback loopback interne <code>8025–8034</code>). Rafraîchissement
-            proactif à <code>3 300 s</code> (55 min), extraction des quotas glissants 5h et Hebdomadaire via
-            <code>:retrieveUserQuotaSummary</code> et routage sur le tenant global <code>aicode-consumers</code>.</li>
+            proactif à <code>3 300 s</code> (55 min), extraction des quotas glissants 5h et Hebdomadaire ainsi que des
+            crédits Google One AI (<code>google_g1_credits</code>) via
+            <code>:retrieveUserQuotaSummary</code> et routage sur le tenant global <code>aicode-consumers</code>.
+          </li>
           <li><strong>Clé API primaire (<code>google_api_key</code>) :</strong> Google AI Studio (format
-            <code>AIza…</code> ou <code>AQ.…</code>).</li>
+            <code>AIza…</code> ou <code>AQ.…</code>).
+          </li>
           <li><strong>Clé API secondaire (<code>google_api_key_secondary</code>) :</strong> fallback de secours AI
             Studio.</li>
         </ol>
@@ -96,7 +99,7 @@
               <td><code>0</code></td>
               <td><code>gemini-3.5-flash-lite</code></td>
               <td><code>gemini-3.5-flash-lite</code></td>
-              <td><code>medium</code></td>
+              <td><code>high</code></td>
             </tr>
             <tr>
               <td><code>MODEL_DISTILLATION</code></td>
@@ -105,11 +108,19 @@
               <td><code>gemini-3.5-flash-lite</code></td>
               <td><code>low</code> (<code>temp=0.0</code>)</td>
             </tr>
+            <tr>
+              <td><code>MODEL_IMAGE_GEN</code></td>
+              <td><code>None</code></td>
+              <td><code>gemini-3.1-flash-image</code></td>
+              <td><code>gemini-3.1-flash-image</code></td>
+              <td><code>responseModalities: ["TEXT", "IMAGE"]</code></td>
+            </tr>
           </tbody>
         </table>
 
-        <h3>3. Client HTTP/2, Cascade Cognitive &amp; Circuit Breaker OAuth2 (<code>EchoGeminiClient</code> v5.231.33.1
-          &amp; <code>echo_orchestrator.py</code> v5.231.31.1)</h3>
+        <h3>3. Client HTTP/2, Cascade Cognitive &amp; Circuit Breaker OAuth2 (<code>echo_gemini_client.py</code>
+          v5.236.0.2
+          &amp; <code>echo_orchestrator.py</code> v5.236.0.1)</h3>
         <ul>
           <li><strong>Multiplexage HTTP/2 &amp; Streaming Zéro-RAM (Disque et Mémoire Vive) :</strong> Connexion
             persistante via <code>httpx.AsyncClient(http2=True)</code> (<code>ECHO_HTTP_CLIENT_TIMEOUT = 600s</code>),
@@ -117,26 +128,39 @@
             mémoire vive (<code>___ECHO_STREAM_MEM___</code> via <code>register_memory_stream</code> /
             <code>_zero_ram_memory_generator</code> sur <code>memoryview</code> sans écriture disque ni duplication RAM
             dans <code>deepcopy</code>), attachement conforme Gemini 3/4 de la <code>thoughtSignature</code> via
-            <code>attach_thought_signature</code> (<code>echo_core.py</code> v5.231.31.1), normalisation stricte en
+            <code>attach_thought_signature</code> (<code>echo_core.py</code> v5.235.5.3), normalisation stricte en
             <code>camelCase</code> (<code>inlineData</code>, <code>functionDeclarations</code>,
-            <code>functionCallingConfig</code>) et isolation par <code>sub_sid</code> dans le seed UUID5 de
-            <code>index_text_in_ephemeral_rag</code>.</li>
-          <li><strong>Cascade Cognitive, Rafraîchissement des Closures &amp; Distillation :</strong> Lors d'une cascade
-            descendante consécutive à un échec API (<code>429</code>/<code>503</code>),
+            <code>functionCallingConfig</code>, <code>responseMimeType</code>, <code>responseSchema</code> via
+            <code>normalize_generation_config</code> dans <code>echo_protocol.py</code> v5.233.0.1), injection dynamique
+            de <code>"requestType"</code> (<code>"agent"</code> ou <code>"image_gen"</code>) et isolation par
+            <code>sub_sid</code> dans le seed UUID5 de
+            <code>index_text_in_ephemeral_rag</code>.
+          </li>
+          <li><strong>Cascade Cognitive, Crédits Google One AI, Rafraîchissement des Closures &amp; Distillation
+              :</strong>
+            Lors d'une cascade descendante consécutive à un échec API (<code>429</code>/<code>503</code> ou trame
+            d'erreur SSE Google interceptée par <code>StreamProcessor</code>) et en l'absence de crédits Google One AI
+            utilisables (<code>google_g1_credits</code>),
             <code>get_generation_config(..., is_fallback_cascade=True)</code> force <code>thinkingLevel: "high"</code>
-            sur le modèle de repli pour compenser la réduction de palier, tandis qu'une transition cognitive volontaire
+            sur le modèle de repli tout en préservant les surcharges (<code>response_schema</code>,
+            <code>response_mime_type</code>, <code>maxOutputTokens</code>), tandis qu'une transition cognitive
+            volontaire
             (<code>new_cognitive_level</code>) ou un clamping initial préserve le niveau nominal. À chaque tour de
             <code>pipe()</code>, l'orchestrateur rafraîchit systématiquement les closures <code>__user__</code>,
             <code>__metadata__</code>, <code>__event_emitter__</code> et <code>__event_call__</code> sur les callables
             <code>functools.partial</code> de <code>_TOOLS_CACHE[chat_id]</code>. En outre, l'utilitaire
-            <code>call_distillation</code> filtre strictement les blocs de pensée (<code>if not p.get("thought")</code>)
-            lors de l'extraction de la réponse textuelle.</li>
+          <code>call_distillation</code> supporte nativement <code>response_schema</code> (validation Pydantic
+          <code>.model_validate_json().model_dump()</code>) et filtre strictement les blocs de pensée
+          (<code>if not p.get("thought")</code>).</li>
           <li><strong>Fast-Failover Intra-Retry :</strong> Lors d'une erreur HTTP <code>401</code>, <code>420</code>,
-            <code>429</code> ou <code>503</code> en OAuth2, le client verrouille immédiatement l'endpoint fautif via
+            <code>429</code>, <code>500</code> ou <code>503</code> ou d'un timeout
+            (<code>httpx.TimeoutException</code> / <code>asyncio.TimeoutError</code>) en OAuth2, le client verrouille
+            immédiatement l'endpoint fautif via
             <code>state_mgr.lock_agy_endpoint</code> (pendant <code>ECHO_ENDPOINT_LOCK_TIMEOUT_MIN = 2</code> min) et
             pivote sans délai sur l'URL saine du pool <code>AGY_BASE_URLS</code> (Prod / Daily Canary) avant d'appliquer
             le backoff exponentiel (<code>ECHO_RETRY_BASE_DELAY = 3.0s</code>, <code>ECHO_RETRY_MULTIPLIER = 1.5</code>,
-            <code>ECHO_API_MAX_RETRIES = 5</code>, <code>ECHO_API_KEY_RETRIES = 2</code>).</li>
+            <code>ECHO_API_MAX_RETRIES = 5</code>, <code>ECHO_API_KEY_RETRIES = 2</code>).
+          </li>
         </ul>
       </div>
     </details>
@@ -148,7 +172,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.56 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.237.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

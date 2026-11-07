@@ -55,9 +55,10 @@
 
       <div class="card">
         <h3>🎨 12. Édition &amp; Visuel</h3>
-        <p>ECHO modifie dynamiquement votre interface pour afficher des cartes mentales et des diagrammes interactifs.
-          Il déploie également l'éditeur <strong>Codex</strong> (texte, code, hexadécimal et aperçu visuel direct),
-          accessible en un clic depuis les liens de fichiers dans vos conversations.</p>
+        <p>ECHO modifie dynamiquement votre interface pour afficher des visualisations 2D/3D auto-vérifiées, génère,
+          fusionne et retouche des images avec contrôle qualité intégré, et déploie l'éditeur <strong>Codex</strong>
+          multi-espaces (texte, code, hexadécimal et aperçu visuel direct), accessible en un clic depuis les liens de
+          fichiers dans vos conversations.</p>
         <a href="12_edition_visuelle.html">Explorer &rarr;</a>
       </div>
 
@@ -85,13 +86,15 @@
         <h3>1. Standards de Développement OWUI &amp; Séparation Interface / Connaissance (<code>12-owui-tools/</code>
           &amp; <code>echo_tool_guides.py</code> v5.229.0.1)</h3>
         <ul>
-          <li><strong>Architecture Minimaliste des Schémas (<code>v5.229.0.0</code>) :</strong> Les docstrings Python
-            des 95 fonctions exposées dans les 19 fichiers de <code>12-owui-tools/</code> sont réduites à 1 phrase
+          <li><strong>Architecture Minimaliste des Schémas &amp; Décorateur Universel <code>@echo_tool</code>
+              (<code>v5.229.0.0</code> / <code>v5.233.0.1</code>) :</strong> Les docstrings Python
+            des 98 fonctions exposées dans les 19 fichiers de <code>12-owui-tools/</code> (toutes décorées avec
+            <code>@echo_tool</code>) sont réduites à 1 phrase
             fonctionnelle pure (~80 % de réduction du schéma OpenAPI), et les retours d'outils sont purgés des
-            directives prescriptives <code>IMPLIQUE</code>. La base de connaissances opérationnelle complète (94 outils
+            directives prescriptives <code>IMPLIQUE</code>. La base de connaissances opérationnelle complète (97 outils
             indexés) est externalisée dans 10 manuels Markdown versionnés (<code>14-owui-libs/tool_guides/*.md</code>,
-            v5.231.52.1 / v5.231.53.1) indexés par <code>EchoToolGuidesManager</code> et interrogés par l'Expert-Conseil
-            Opérationnel Hybride <code>tool_advisor</code> (<code>generalist_tools.py</code> v5.231.20.1 sur
+            v5.231.52.1 à v5.235.5.1) indexés par <code>EchoToolGuidesManager</code> et interrogés par l'Expert-Conseil
+            Opérationnel Hybride <code>tool_advisor</code> (<code>generalist_tools.py</code> v5.233.0.1 sur
             <code>MODEL_APOLLO</code>, <code>override_thinking="medium"</code>).
           </li>
           <li><strong>Injection Native du Contexte :</strong> Chaque outil déclare obligatoirement <code>__user__</code>
@@ -133,7 +136,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.231.56 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.237.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
