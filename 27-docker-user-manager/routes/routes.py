@@ -2,11 +2,12 @@
 """
 ================================================================================
 MODULE : ECHO USER MANAGER - FLASK ROUTES
-VERSION : 5.236.5.1
+VERSION : 5.237.2.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.2.1: Intégration des routes d'export asynchrone (/api/me/export/start, status, cancel, download) avec barre de progression.
 # 5.236.5.1: Routes self-service utilisateur (stats, sessions, renommage, mot de passe, export .tar.xz, suppression Option B et logout).
 
 from contextlib import closing
@@ -53,9 +54,14 @@ from core.utils import (
     get_echo_version,
 )
 from services.export_service import (
+    _EXPORT_JOBS,
+    _EXPORT_JOBS_LOCK,
     build_user_export_archive,
+    cancel_user_export_job,
     count_user_qdrant_points,
     get_user_export_lock,
+    get_user_export_status,
+    start_user_export_job,
     stream_and_cleanup_archive,
 )
 from templates.templates import HTML_USER_DASHBOARD
@@ -342,9 +348,70 @@ def action_profile_password():
     return redirect(url_for("index"))
 
 
+@app.route("/api/me/export/start", methods=["POST"])
+def api_me_export_start():
+    """Déclenche la préparation asynchrone de l'archive .tar.xz de l'utilisateur."""
+    st = start_user_export_job(g.user_id, g.user_email, g.display_name)
+    return jsonify(st)
+
+
+@app.route("/api/me/export/status", methods=["GET"])
+def api_me_export_status():
+    """Consulte l'avancement temps réel (pourcentage et étape) de l'exportation."""
+    st = get_user_export_status(g.user_id or g.user_email)
+    return jsonify(st)
+
+
+@app.route("/action/account/export/cancel", methods=["POST"])
+def action_account_export_cancel():
+    """Annule l'export en cours ou supprime l'archive prête du serveur."""
+    cancel_user_export_job(g.user_id or g.user_email)
+    return jsonify({"status": "cancelled"})
+
+
+@app.route("/action/account/export/download")
+def action_account_export_download():
+    """Télécharge l'archive préparée et détruit immédiatement (0s) les fichiers du serveur en fin de flux."""
+    key = str(g.user_id or g.user_email).strip().lower()
+    with _EXPORT_JOBS_LOCK:
+        job = _EXPORT_JOBS.get(key)
+        if not job or not job.get("ready") or not job.get("archive_path") or not os.path.isfile(job["archive_path"]):
+            flash("Aucune archive prête pour le téléchargement ou archive expirée.", "warning")
+            return redirect(url_for("index"))
+
+        archive_path = job["archive_path"]
+        download_filename = job.get("filename") or "echo_user_export.tar.xz"
+        tmp_dir = job.get("tmp_dir")
+
+        # Retrait du job pour éviter les téléchargements multiples ou rémanence
+        _EXPORT_JOBS.pop(key, None)
+
+    def _cleanup_download():
+        if tmp_dir and os.path.isdir(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    return Response(
+        stream_with_context(
+            stream_and_cleanup_archive(archive_path, tmp_dir, on_cleanup=_cleanup_download)
+        ),
+        mimetype="application/x-xz",
+        headers={
+            "Content-Disposition": f'attachment; filename="{download_filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @app.route("/action/account/export")
 def action_account_export():
-    user_lock = get_user_export_lock(g.user_id or g.user_email)
+    """Point d'entrée synchrone direct (rétrocompatibilité tests et téléchargements directs)."""
+    key = str(g.user_id or g.user_email).strip().lower()
+    with _EXPORT_JOBS_LOCK:
+        job = _EXPORT_JOBS.get(key)
+        if job and job.get("ready") and job.get("archive_path") and os.path.isfile(job["archive_path"]):
+            return redirect(url_for("action_account_export_download"))
+
+    user_lock = get_user_export_lock(key)
     if not user_lock.acquire(blocking=False):
         flash("Un export de vos données est déjà en cours de génération.", "warning")
         return redirect(url_for("index"))
@@ -355,16 +422,16 @@ def action_account_export():
             g.user_id,
             g.user_email,
             g.display_name,
+            user_key=key,
         )
 
-        def _locked_stream():
-            try:
-                yield from stream_and_cleanup_archive(archive_path, tmp_dir)
-            finally:
-                user_lock.release()
+        def _cleanup_sync():
+            user_lock.release()
 
         return Response(
-            stream_with_context(_locked_stream()),
+            stream_with_context(
+                stream_and_cleanup_archive(archive_path, tmp_dir, on_cleanup=_cleanup_sync)
+            ),
             mimetype="application/x-xz",
             headers={
                 "Content-Disposition": f'attachment; filename="{download_filename}"',
