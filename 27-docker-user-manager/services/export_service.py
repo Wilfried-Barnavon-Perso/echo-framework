@@ -2,11 +2,12 @@
 """
 ================================================================================
 MODULE : ECHO USER MANAGER - DATA EXPORT SERVICE (TAR.XZ)
-VERSION : 5.237.2.1
+VERSION : 5.237.2.2
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.2.2: Priorité système minimale (nice 19, ionice idle c3, XZ_OPT="-T2 -1", IDLE_PRIORITY_CLASS) et régulation I/O.
 # 5.237.2.1: Pipeline d'export asynchrone avec suivi de progression temps réel (0-100%), TTL de rétention (15 min) et annulation.
 # 5.236.5.1: Service d'export souverain .tar.xz (domaine utilisateur Open WebUI + collections Qdrant en JSON).
 
@@ -174,6 +175,11 @@ def start_user_export_job(
         }
 
     def _worker():
+        try:
+            if hasattr(os, "nice"):
+                os.nice(19)
+        except Exception:
+            pass
         user_lock = get_user_export_lock(key)
         with user_lock:
             def _progress_cb(pct: float, step_msg: str):
@@ -452,6 +458,7 @@ def _copy_user_domain_tree(
     total_src_bytes = max(1, _get_tree_size(src_user_dir))
     real_src_root = os.path.realpath(src_user_dir)
     exclude_set = set(ECHO_SYNC_EXCLUDE_LIST or [])
+    last_sleep_bytes = 0
 
     for root, dirs, files in os.walk(src_user_dir):
         dirs[:] = [d for d in dirs if d not in exclude_set]
@@ -501,6 +508,11 @@ def _copy_user_domain_tree(
                         curr_pct,
                         f"Copie des fichiers personnels ({summary['files_copied']} fichiers - {_format_bytes(summary['bytes_copied'])})...",
                     )
+
+                # Régulation I/O : micro-pause tous les 10 Mo pour céder les accès disque à la production
+                if summary["bytes_copied"] - last_sleep_bytes >= 10 * 1024 * 1024:
+                    last_sleep_bytes = summary["bytes_copied"]
+                    time.sleep(0.005)
             except Exception:
                 pass
     return summary
@@ -640,10 +652,27 @@ def build_user_export_archive(
 
     if os.name != "nt" and shutil.which("tar"):
         try:
+            tar_cmd = ["tar", "-cJf", archive_path, "-C", staging_dir, "."]
+            # Priorité I/O Idle (ionice -c 3) si disponible sous Linux
+            if shutil.which("ionice"):
+                tar_cmd = ["ionice", "-c", "3"] + tar_cmd
+            # Priorité CPU la plus basse (nice -n 19)
+            if shutil.which("nice"):
+                tar_cmd = ["nice", "-n", "19"] + tar_cmd
+
+            # Environnement de compression : bridage à 2 threads max et niveau rapide (-1)
+            tar_env = os.environ.copy()
+            tar_env["XZ_OPT"] = "-T2 -1"
+
+            subp_kwargs = {"stderr": subprocess.PIPE, "text": True, "env": tar_env}
+            if hasattr(os, "nice"):
+                subp_kwargs["preexec_fn"] = lambda: os.nice(19)
+            elif os.name == "nt":
+                subp_kwargs["creationflags"] = 0x00000040  # IDLE_PRIORITY_CLASS
+
             proc = subprocess.Popen(
-                ["tar", "-cJf", archive_path, "-C", staging_dir, "."],
-                stderr=subprocess.PIPE,
-                text=True,
+                tar_cmd,
+                **subp_kwargs,
             )
             if user_key:
                 with _EXPORT_JOBS_LOCK:
