@@ -2,11 +2,12 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - SEMANTIC PRUNING & GC
-VERSION : 5.235.5.1
+VERSION : 5.237.4.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.4.1: Validation stricte par couple propriétaire (user_id, chat_id) via user_valid_chats et suppression du filtre len > 30 sur les dossiers orphelins.
 # 5.235.5.1: Purge des branches mortes dans session.db (gc_session_db) et du RAG Qdrant (_delete_rag_points) sous carence 900s.
 # 5.235.2.1: Décompte explicite des session.db purgées, couverture des utilisateurs orphelins dans purge_orphaned_chats et validation post-rmtree.
 # 5.231.42.1: Ajout de echo_resources.id à la liste blanche N8N lors du Garbage Collection des Drop-Zones pour préserver les dossiers des démons actifs.
@@ -384,11 +385,12 @@ def _run_semantic_pruning(silent=False):
             save_maint_report(err_msg)
         return err_msg, {}
 
-    # Filtrage strict des chats valides par appartenance à un utilisateur présent dans la SSoT valid_ids
-    db_valid_chats = {
-        str(r[0]) for r in chat_rows
-        if r and r[0] and str(r[1]) in valid_ids
-    }
+    # Cartographie stricte des chats valides par propriétaire SSoT (user_id -> set[chat_id])
+    user_valid_chats = {uid: set() for uid in valid_ids}
+    for r in chat_rows:
+        if r and r[0] and str(r[1]) in user_valid_chats:
+            user_valid_chats[str(r[1])].add(str(r[0]))
+    db_valid_chats = {cid for cids in user_valid_chats.values() for cid in cids}
 
     stats = {
         "users": {"c": 0, "b": 0},
@@ -417,6 +419,7 @@ def _run_semantic_pruning(silent=False):
             n8n_active_ids = []
             n8n_whitelist_complete = True
             for folder in valid_ids:
+                valid_u_chats = user_valid_chats.get(folder, set())
                 user_chats_dir = os.path.join(ECHO_USERS_ROOT, folder, "chats")
                 if os.path.exists(user_chats_dir):
                     try:
@@ -426,7 +429,7 @@ def _run_semantic_pruning(silent=False):
                         n8n_whitelist_complete = False
                         continue
                     for cdir in chat_entries:
-                        if cdir in db_valid_chats:
+                        if cdir in valid_u_chats:
                             wf_dir = os.path.join(user_chats_dir, cdir, "n8n_workflows")
                             if os.path.exists(wf_dir):
                                 try:
@@ -491,9 +494,9 @@ def _run_semantic_pruning(silent=False):
                     if not svc_dir.is_dir():
                         continue
                     for uid_dir in svc_dir.iterdir():
-                        if not uid_dir.is_dir():
+                        if not uid_dir.is_dir() or uid_dir.name.startswith("."):
                             continue
-                        if uid_dir.name not in valid_ids and len(uid_dir.name) > 30:
+                        if uid_dir.name not in valid_ids:
                             try:
                                 sz = _get_tree_size(str(uid_dir))
                                 shutil.rmtree(str(uid_dir), ignore_errors=True)
@@ -513,10 +516,11 @@ def _run_semantic_pruning(silent=False):
             if downloads_root.exists() and downloads_root.is_dir():
                 active_wf_set = set(n8n_active_ids)
                 for uid_dir in downloads_root.iterdir():
-                    if not uid_dir.is_dir(): continue
+                    if not uid_dir.is_dir() or uid_dir.name.startswith("."):
+                        continue
                     
                     # 1. Purge Utilisateur Orphelin
-                    if uid_dir.name not in valid_ids and len(uid_dir.name) > 30:
+                    if uid_dir.name not in valid_ids:
                         try:
                             sz = _get_tree_size(str(uid_dir))
                             shutil.rmtree(str(uid_dir), ignore_errors=True)
@@ -526,11 +530,13 @@ def _run_semantic_pruning(silent=False):
                             pass
                         continue
 
+                    valid_u_chats = user_valid_chats.get(uid_dir.name, set())
                     for cid_dir in uid_dir.iterdir():
-                        if not cid_dir.is_dir(): continue
+                        if not cid_dir.is_dir() or cid_dir.name.startswith("."):
+                            continue
                         
-                        # 2. Purge Chat Orphelin
-                        if cid_dir.name not in db_valid_chats and len(cid_dir.name) > 30:
+                        # 2. Purge Chat Orphelin (vérification stricte par propriétaire)
+                        if cid_dir.name not in valid_u_chats:
                             try:
                                 sz = _get_tree_size(str(cid_dir))
                                 shutil.rmtree(str(cid_dir), ignore_errors=True)
@@ -563,7 +569,7 @@ def _run_semantic_pruning(silent=False):
                     if folder.startswith("."):
                         continue
                     folder_path = os.path.join(ECHO_USERS_ROOT, folder)
-                    if os.path.isdir(folder_path) and folder not in valid_ids and len(folder) > 30:
+                    if os.path.isdir(folder_path) and folder not in valid_ids:
                         sz = _get_tree_size(folder_path)
                         # Dénombrement préalable des session.db contenues
                         u_s_db_count = 0
@@ -587,13 +593,17 @@ def _run_semantic_pruning(silent=False):
                 for folder in os.listdir(ECHO_USERS_ROOT):
                     if folder.startswith("."):
                         continue
-                    user_chats_dir = os.path.join(ECHO_USERS_ROOT, folder, "chats")
+                    folder_path = os.path.join(ECHO_USERS_ROOT, folder)
+                    if not os.path.isdir(folder_path):
+                        continue
+                    valid_u_chats = user_valid_chats.get(folder, set())
+                    user_chats_dir = os.path.join(folder_path, "chats")
                     if os.path.exists(user_chats_dir):
                         for cdir in os.listdir(user_chats_dir):
                             cdir_path = os.path.join(user_chats_dir, cdir)
                             if os.path.isdir(cdir_path):
                                 chat_id = cdir
-                                if chat_id not in db_valid_chats:
+                                if chat_id not in valid_u_chats:
                                     s_db_path = os.path.join(cdir_path, "session.db")
                                     has_s_db = os.path.exists(s_db_path)
                                     s_db_size = os.path.getsize(s_db_path) if has_s_db else 0
@@ -605,6 +615,13 @@ def _run_semantic_pruning(silent=False):
                                         if has_s_db:
                                             stats["sessions_db"]["c"] += 1
                                             stats["sessions_db"]["b"] += s_db_size
+                    # Nettoyage des dossiers fantômes hors SSoT (ex: system ou email) dépourvus de chats valides
+                    if folder not in valid_ids and len(folder) <= 30:
+                        sz = _get_tree_size(folder_path)
+                        shutil.rmtree(folder_path, ignore_errors=True)
+                        if not os.path.exists(folder_path):
+                            stats["users"]["c"] += 1
+                            stats["users"]["b"] += sz
 
                 # --- A.bis Purge Granulaire des Fichiers (RefCounting FS) ---
                 if HAS_ECHO_LIBS and ECHO_GC_GRACE_PERIOD_SEC is not None:
@@ -615,10 +632,11 @@ def _run_semantic_pruning(silent=False):
                     # Étape 1 : Cartographier tous les symlinks valides dans les chats existants
                     active_symlink_targets = set()
                     for folder in valid_ids:
+                        valid_u_chats = user_valid_chats.get(folder, set())
                         user_chats_dir = os.path.join(ECHO_USERS_ROOT, folder, "chats")
                         if os.path.exists(user_chats_dir):
                             for cdir in os.listdir(user_chats_dir):
-                                if cdir in db_valid_chats:
+                                if cdir in valid_u_chats:
                                     chat_files_dir = os.path.join(user_chats_dir, cdir, "files")
                                     if os.path.exists(chat_files_dir):
                                         for f_name in os.listdir(chat_files_dir):
@@ -684,7 +702,7 @@ def _run_semantic_pruning(silent=False):
                                 chats_root = os.path.join(ECHO_USERS_ROOT, uid, "chats")
                                 if not os.path.exists(chats_root):
                                     continue
-                                for cid in db_valid_chats:
+                                for cid in user_valid_chats.get(uid, set()):
                                     session_db_path = os.path.join(chats_root, cid, "session.db")
                                     if not os.path.isfile(session_db_path):
                                         continue
@@ -730,7 +748,7 @@ def _run_semantic_pruning(silent=False):
                             str_uid = str(uid)
                             # Purge Chats
                             if config.get("purge_orphaned_chats", False):
-                                valid_chat_ids_for_qdrant = list(db_valid_chats) + ["consolidated"]
+                                valid_chat_ids_for_qdrant = list(user_valid_chats.get(str_uid, set())) + ["consolidated"]
                                 payload = {
                                     "filter": {
                                         "must": [{"key": "user_id", "match": {"value": str_uid}}],
@@ -787,6 +805,15 @@ def _run_semantic_pruning(silent=False):
                                         orphans_db += cur_del.rowcount
                             except Exception as te:
                                 print(f"⚠️ [ECHO-GC] Erreur purge orphelins table {table} : {te}")
+                    elif config.get("purge_orphaned_chats", False):
+                        try:
+                            cur_del = conn.execute(
+                                "DELETE FROM chat WHERE user_id IS NOT NULL AND user_id != '' AND user_id NOT IN (SELECT id FROM user)"
+                            )
+                            if cur_del.rowcount and cur_del.rowcount > 0:
+                                orphans_db += cur_del.rowcount
+                        except Exception as te:
+                            print(f"⚠️ [ECHO-GC] Erreur purge chats orphelins table chat : {te}")
 
                     db_files = conn.execute("SELECT id, user_id FROM file").fetchall()
                     for file_id, file_user_id in db_files:

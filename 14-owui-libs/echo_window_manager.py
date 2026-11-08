@@ -2,19 +2,21 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 5.231.60.1
+version: 5.237.4.1
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.231.60.1: Retrait de l'action RPC img_session_action, de EchoWM.submitChatPrompt et des écouteurs postMessage echo:img_session:* (restauration de l'agnosticisme pur).
-# 5.231.50.1: Pont postMessage echo:iframe:init / theme-update dans EchoWM pour synchroniser la couleur de fond et de police des Iframes avec la fenêtre principale Open WebUI.
-# 5.231.48.1: Factorisation SSOT de WM_SCRIPT_VERSION, teardown Hot-Upgrade de window.EchoWM, réentrance asynchrone (_execStack/_activeExecCount) et garde DOM dans bodyObs.
+# 5.237.4.1: Garde anti-matérialisation session.db dans _save_chat_state et résolution stricte propriétaire (user_id, chat_id) sans fallback multi-comptes.
+# 5.231.60.1: Retrait RPC img_session_action, EchoWM.submitChatPrompt et écouteurs postMessage echo:img_session:* (restauration agnosticisme pur).
+# 5.231.50.1: Pont postMessage echo:iframe:init/theme-update pour synchroniser fond et police des Iframes avec la fenêtre principale Open WebUI.
+# 5.231.48.1: Factorisation SSOT de WM_SCRIPT_VERSION, teardown Hot-Upgrade, réentrance asynchrone (_execStack/_activeExecCount) et garde DOM dans bodyObs.
 # 5.231.47.1: Inclusion de EchoUI.get_media_export_js dans get_full_loader_bundle_js.
-# 5.231.46.1: Fragmentation UCTP SSE (_broadcast_execute / wm_uctp_chunk + wm_uctp_exec), wrapping Bidi echoWrapUctpPayload dans runInChatScope et inclusion de get_uctp_engine_js dans loader.js.
 
 import asyncio
+from contextlib import closing
 import os
+import sqlite3
 import sys
 import time
 import uuid
@@ -24,19 +26,22 @@ import orjson as json
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from echo_constants import ECHO_AUDIO_PREFIX, ECHO_UCTP_CHUNK_SIZE, ECHO_USERS_ROOT
+from echo_constants import ECHO_AUDIO_PREFIX, ECHO_BASE_DATA_DIR, ECHO_UCTP_CHUNK_SIZE, ECHO_USERS_ROOT
+from echo_paths import sanitize_echo_id
 from echo_state_manager import EchoStateManager
 
 WM_PREFIX = f"{ECHO_AUDIO_PREFIX}/wm"
 wm_router = APIRouter(prefix=WM_PREFIX, tags=["echo_wm"])
 wm_static_router = APIRouter(tags=["echo_wm_static"])
 
-WM_SCRIPT_VERSION = "5.231.60.1"
+WM_SCRIPT_VERSION = "5.237.4.1"
 LOADER_MARKER_START = "/* === ECHO_WM_START === */"
 LOADER_MARKER_END = "/* === ECHO_WM_END === */"
 WM_STATE_KEY = "wm_state"
 MAX_TRACKED_WINDOWS_PER_CHAT = 32
 MAX_KV_ENTRIES_PER_CHAT = 128
+_OWUI_DB_PATH = os.path.join(ECHO_BASE_DATA_DIR, "webui.db")
+_EMAIL_TO_UID_CACHE: Dict[str, str] = {}
 
 
 def extract_closure_context(fn: Any) -> Dict[str, str]:
@@ -65,7 +70,53 @@ def extract_closure_context(fn: Any) -> Dict[str, str]:
     return result
 
 
-def resolve_wm_user_id(request: Optional[Request] = None) -> str:
+def _resolve_user_id_by_email(email: str) -> Optional[str]:
+    """Résout un email (ex: X-Webui-User) en UUID utilisateur Open WebUI via webui.db en lecture seule."""
+    clean_email = (email or "").strip().lower()
+    if not clean_email or "@" not in clean_email:
+        return None
+    cached = _EMAIL_TO_UID_CACHE.get(clean_email)
+    if cached:
+        return cached
+    if os.path.isfile(_OWUI_DB_PATH):
+        try:
+            with closing(sqlite3.connect(f"file:{_OWUI_DB_PATH}?mode=ro", uri=True, timeout=2.0)) as conn:
+                row = conn.execute("SELECT id FROM user WHERE lower(email) = ?", (clean_email,)).fetchone()
+                if row and row[0]:
+                    uid = str(row[0])
+                    _EMAIL_TO_UID_CACHE[clean_email] = uid
+                    return uid
+        except Exception:
+            pass
+    return None
+
+
+def _find_existing_chat_owner(chat_id: str) -> Optional[str]:
+    """Recherche l'identifiant utilisateur possédant déjà la session.db de ce chat_id sur disque ou dans webui.db."""
+    safe_cid = sanitize_echo_id(chat_id)
+    if not safe_cid or safe_cid == "default":
+        return None
+    try:
+        if os.path.exists(ECHO_USERS_ROOT):
+            for d in os.listdir(ECHO_USERS_ROOT):
+                if d.startswith(".") or d == "system":
+                    continue
+                if os.path.isfile(os.path.join(ECHO_USERS_ROOT, d, "chats", safe_cid, "session.db")):
+                    return d
+    except Exception:
+        pass
+    if os.path.isfile(_OWUI_DB_PATH):
+        try:
+            with closing(sqlite3.connect(f"file:{_OWUI_DB_PATH}?mode=ro", uri=True, timeout=2.0)) as conn:
+                row = conn.execute("SELECT user_id FROM chat WHERE id = ?", (chat_id,)).fetchone()
+                if row and row[0]:
+                    return str(row[0])
+        except Exception:
+            pass
+    return None
+
+
+def resolve_wm_user_id(request: Optional[Request] = None, chat_id: str = "") -> str:
     """Résout l'identifiant utilisateur depuis le JWT Bearer, le cookie token, le query param ou le disque."""
     if request is not None:
         token = ""
@@ -89,19 +140,31 @@ def resolve_wm_user_id(request: Optional[Request] = None) -> str:
         for hdr in ("x-openwebui-user-id", "x-webui-user", "x-user-id", "user-id"):
             val = request.headers.get(hdr)
             if val and val.strip():
-                return val.strip()
+                clean_val = val.strip()
+                if "@" in clean_val:
+                    resolved_uid = _resolve_user_id_by_email(clean_val)
+                    if resolved_uid:
+                        return resolved_uid
+                    continue
+                return clean_val
+
+    if chat_id:
+        owner = _find_existing_chat_owner(chat_id)
+        if owner:
+            return owner
 
     try:
         if os.path.exists(ECHO_USERS_ROOT):
             candidates = [
                 d for d in os.listdir(ECHO_USERS_ROOT)
-                if os.path.isdir(os.path.join(ECHO_USERS_ROOT, d)) and not d.startswith(".")
+                if os.path.isdir(os.path.join(ECHO_USERS_ROOT, d)) and not d.startswith(".") and d != "system"
             ]
-            for candidate in candidates:
-                if os.path.exists(os.path.join(ECHO_USERS_ROOT, candidate, "identity.db")):
-                    return candidate
-            if candidates:
-                return candidates[0]
+            identity_candidates = [
+                c for c in candidates
+                if os.path.isfile(os.path.join(ECHO_USERS_ROOT, c, "identity.db"))
+            ]
+            if len(identity_candidates) == 1:
+                return identity_candidates[0]
     except Exception:
         pass
     return "system"
@@ -169,10 +232,24 @@ class EchoWindowManager:
                     pass
         return delivered
 
+    def _resolve_owner_uid(self, user_id: str, chat_id: str) -> str:
+        """Garantit la correspondance exacte (user_id, chat_id) avec la session existante."""
+        uid = user_id or "system"
+        if "@" in uid:
+            uid = _resolve_user_id_by_email(uid) or "system"
+        if not chat_id:
+            return uid
+        if uid != "system":
+            sm = EchoStateManager(uid, chat_id)
+            if os.path.isfile(sm.db_path):
+                return uid
+        owner = _find_existing_chat_owner(chat_id)
+        return owner or uid
+
     def _load_chat_state(self, user_id: str, chat_id: str) -> Dict[str, Any]:
         if not chat_id:
             return {"windows": {}, "kv": {}}
-        uid = user_id or "system"
+        uid = self._resolve_owner_uid(user_id, chat_id)
         key = (uid, chat_id)
         if key in self._chat_states:
             return self._chat_states[key]
@@ -180,6 +257,8 @@ class EchoWindowManager:
         state = {"windows": {}, "kv": {}}
         try:
             sm = EchoStateManager(uid, chat_id)
+            if not os.path.isfile(sm.db_path):
+                return state
             raw = sm.get_session_setting(WM_STATE_KEY)
             if raw:
                 parsed = json.loads(raw)
@@ -195,7 +274,7 @@ class EchoWindowManager:
     def _save_chat_state(self, user_id: str, chat_id: str) -> None:
         if not chat_id:
             return
-        uid = user_id or "system"
+        uid = self._resolve_owner_uid(user_id, chat_id)
         key = (uid, chat_id)
         state = self._chat_states.get(key)
         if not state:
@@ -213,6 +292,8 @@ class EchoWindowManager:
                     kv.pop(k, None)
 
             sm = EchoStateManager(uid, chat_id)
+            if not os.path.isfile(sm.db_path):
+                return
             sm.save_session_setting(WM_STATE_KEY, json.dumps(state).decode("utf-8"))
         except Exception as e:
             print(f"[EchoWindowManager] Save state error ({chat_id}): {e}")
@@ -384,8 +465,11 @@ class EchoWindowManager:
             rec = self._recent_execs.get(exec_id)
             code = payload.get("code") or (rec.get("code") if rec else "")
             effective_cid = chat_id or (rec.get("chat_id") if rec else "")
+            effective_uid = (
+                rec.get("user_id") if (rec and rec.get("user_id") and rec.get("user_id") != "system") else user_id
+            )
             if effective_cid and code and window_ids:
-                state = self._load_chat_state(user_id, effective_cid)
+                state = self._load_chat_state(effective_uid, effective_cid)
                 wins = state.setdefault("windows", {})
                 now = time.time()
                 for wid in window_ids:
@@ -416,7 +500,7 @@ class EchoWindowManager:
                                 uc_list.append(code)
                             w_entry["update_codes"] = uc_list[-16:]
                     wins[wid] = w_entry
-                self._save_chat_state(user_id, effective_cid)
+                self._save_chat_state(effective_uid, effective_cid)
             return {"status": "ok"}
 
         if action == "window_closed":
@@ -477,18 +561,21 @@ class EchoWindowManager:
 
         context_stats = {}
         try:
-            sm = EchoStateManager(user_id or "system", chat_id)
-            context_stats = sm.get_last_context_stats() or {}
-            prev_stats = sm.get_previous_context_stats()
-            from echo_auth import EchoAuth
-            from echo_protocol import get_ca_model_id
-            from echo_ui import EchoUI
-            last_model = sm.get_last_active_model()
-            ca_model_id = get_ca_model_id(last_model) if last_model else None
-            quota_snap = EchoAuth(user_id or "system").get_ui_quota_snapshot(ca_model_id)
-            if quota_snap:
-                context_stats.update(quota_snap)
-            context_stats["delta"] = EchoUI.calculate_context_delta(context_stats, prev_stats)
+            uid = self._resolve_owner_uid(user_id, chat_id)
+            sm = EchoStateManager(uid, chat_id)
+            if os.path.isfile(sm.db_path):
+                context_stats = sm.get_last_context_stats() or {}
+                prev_stats = sm.get_previous_context_stats()
+                from echo_auth import EchoAuth
+                from echo_protocol import get_ca_model_id
+                from echo_ui import EchoUI
+                last_model = sm.get_last_active_model()
+                ca_model_id = get_ca_model_id(last_model) if last_model else None
+                if os.path.isfile(sm.identity_db_path):
+                    quota_snap = EchoAuth(uid).get_ui_quota_snapshot(ca_model_id)
+                    if quota_snap:
+                        context_stats.update(quota_snap)
+                context_stats["delta"] = EchoUI.calculate_context_delta(context_stats, prev_stats)
         except Exception:
             pass
 
@@ -1344,7 +1431,7 @@ async def wm_sse_stream(request: Request, client_id: str = ""):
 
 @wm_router.get("/chat/{chat_id}")
 async def wm_get_chat_state(chat_id: str, request: Request):
-    user_id = resolve_wm_user_id(request)
+    user_id = resolve_wm_user_id(request, chat_id=chat_id)
     wm = get_window_manager()
     snapshot = wm.get_chat_snapshot(user_id, chat_id)
     return JSONResponse(content=snapshot)
@@ -1352,12 +1439,13 @@ async def wm_get_chat_state(chat_id: str, request: Request):
 
 @wm_router.post("/rpc")
 async def wm_post_rpc(request: Request):
-    user_id = resolve_wm_user_id(request)
     try:
         raw = await request.body()
         payload = json.loads(raw) if raw else {}
     except Exception:
         payload = {}
+    chat_id = str(payload.get("chat_id") or "") if isinstance(payload, dict) else ""
+    user_id = resolve_wm_user_id(request, chat_id=chat_id)
     wm = get_window_manager()
     res = await wm.handle_rpc(user_id, payload)
     return JSONResponse(content=res)
