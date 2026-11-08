@@ -5,6 +5,10 @@
   "ui.enable_signup": false,
   "ui.default_user_role": "user",
   "ui.default_group_id": "",
+  "ui.default_interface_settings": {
+    "showChangelog": false,
+    "showUpdateToast": false
+  },
   "ui.enable_community_sharing": false,
   "ui.enable_message_rating": false,
   "ui.enable_user_webhooks": true,

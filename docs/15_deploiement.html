@@ -332,9 +332,9 @@ sudo bash 00-echo-scripts/install-stack.sh
               <td>MCP Broker Proxy HTTP (Port 8000)</td>
             </tr>
             <tr>
-              <td><code>24-docker-echo-auth-manager/</code></td>
-              <td><code>/opt/ECHO/docker-echo-auth-manager/</code></td>
-              <td>ECHO Auth Manager IdP SSO &amp; MFA (Port 8000)</td>
+              <td><code>24-docker-echo-auth-manager/</code> &amp; <code>27-docker-user-manager/</code></td>
+              <td><code>/opt/ECHO/docker-echo-auth-manager/</code> &amp; <code>/opt/ECHO/docker-user-manager/</code></td>
+              <td>ECHO Auth Manager IdP SSO/MFA (Port 8000) &amp; Portail Self-Service User Manager (Port 3002)</td>
             </tr>
             <tr>
               <td><code>25-docker-download-broker/</code></td>
@@ -368,7 +368,7 @@ sudo bash 00-echo-scripts/install-stack.sh
               persistant <code>echo-mcp-cache</code>), Download Broker (<code>.25</code>), N8N Worker
               (<code>.26</code>).
             </li>
-            <li><strong>Tier 3 (Cortex) :</strong> Open WebUI (<code>main-slim</code>, IP <code>.100</code>,
+            <li><strong>Tier 3 (Cortex) :</strong> Open WebUI (<code>0.12.5-slim</code>, IP <code>.100</code>,
               <code>ENABLE_CONTEXT_COMPACTION=false</code> neutralisant la compaction native d'Open WebUI pour préserver
               l'intégrité du Shadow Suture SQLite et des signatures cognitives, injection exclusive de la clé maître
               <code>ECHO_VAULT_ENCRYPTION_KEY</code> générée par <code>ensure_echo_secrets()</code> afin de l'isoler des
@@ -406,7 +406,7 @@ sudo bash 00-echo-scripts/install-stack.sh
     </div>
 
     <footer>
-      ECHO Framework - Version 5.237.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.237.8 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -31,7 +31,11 @@
       adaptant la durée de votre session selon que vous vous connectez depuis un poste partagé ou depuis votre appareil
       personnel de confiance. De plus,
       l'ensemble du système est placé derrière un bouclier de filtrage réseau qui analyse en temps réel toutes les
-      requêtes entrantes et bloque instantanément les tentatives d'intrusion ou les comportements anormaux.
+      requêtes entrantes et bloque instantanément les tentatives d'intrusion ou les comportements anormaux. En mode
+      public, chaque utilisateur dispose en outre d'un portail personnel en libre-service (<code>my.votre-domaine</code>)
+      pour contrôler ses sessions actives, mettre à jour son profil ou son mot de passe, télécharger à la demande une
+      archive complète et compressée de ses discussions et souvenirs vectoriels (immédiatement effacée du serveur après
+      récupération), ou supprimer son compte en toute autonomie.
     </p>
 
     <h2>2. Maintenance Autonome et Téléchargements</h2>
@@ -74,11 +78,14 @@
         </p>
         <ul>
           <li><strong>Gouvernance SSoT Fail-Closed (<code>webui.db::user</code> &amp;
-            <code>services/semantic_pruning.py</code> v5.235.5.1) :</strong> La table <code>user</code> d'Open WebUI
+            <code>services/semantic_pruning.py</code> v5.237.4.1) :</strong> La table <code>user</code> d'Open WebUI
             est l'unique source de vérité. Trois verrous cumulatifs (Wait-for-it post-sauvegarde vérifiant
             <code>user</code> et <code>chat</code>, API Safeguard sur <code>/api/v1/users</code>, et validation SQLite
             <code>PRAGMA quick_check(1) == "ok"</code> + présence de <code>admin@echo.local</code>) avortent toute purge
-            et tout <code>VACUUM</code> en cas d'indisponibilité. S'appuie sur <code>echo_db_schema.py</code>
+            et tout <code>VACUUM</code> en cas d'indisponibilité. L'élagage sémantique valide chaque dossier de session
+            par couple propriétaire strict <code>(user_id, chat_id)</code> via <code>user_valid_chats</code>, purge tout
+            répertoire utilisateur hors SSoT sans filtre de longueur (<code>len &gt; 30</code> supprimé) et s'appuie sur
+            <code>echo_db_schema.py</code>
             (v5.235.5.3) et <code>echo_session_gc.py</code> (v5.235.5.3) pour l'élagage transactionnel des branches
             mortes (<code>compute_dead_set</code> / <code>purge_dead_set</code>) et des fichiers orphelins après la
             période de carence (<code>ECHO_GC_GRACE_PERIOD_SEC = 900</code>). Le verrou
@@ -113,7 +120,7 @@
           </li>
         </ul>
 
-        <h3>2. ECHO Auth Manager SSO &amp; MFA (<code>auth_server.py</code> v5.236.2.1)</h3>
+        <h3>2. ECHO Auth Manager SSO &amp; MFA (<code>auth_server.py</code> v5.237.0.1)</h3>
         <p>IdP FastAPI autonome (Port 8000, IP <code>.24</code>, exposé sous <code>auth.${ECHO_DOMAIN}</code>) adossé à
           <code>auth.db</code> (SQLite WAL). Il applique une politique de session Dual-Tier (champs SQLite
           <code>is_trusted</code>
@@ -121,7 +128,12 @@
           terminaux de confiance
           étendues de 1 semaine à 1 an ou éternelles, avec avertissement de sécurité sur <code>login.html</code>, compte
           à rebours live et
-          invalidation de cache réactive par <code>mtime</code>). Il assure le hachage <strong>Argon2</strong> des mots
+          invalidation de cache réactive par <code>mtime</code>), et résout les redirections post-authentification via
+          <code>resolve_safe_next</code> / <code>get_default_redirect_url</code> (restreignant <code>next</code> aux
+          origines autorisées par la CSP <code>form-action</code> de BunkerWeb <code>ui.*</code>, <code>am.*</code>,
+          <code>my.*</code>, éliminant toute boucle <code>302</code> entre <code>/</code> et <code>/login</code>, et
+          propageant <code>next</code> sur <code>/enroll</code> et <code>/recovery</code>). Il assure le hachage
+          <strong>Argon2</strong> des mots
           de passe et questions
           de sécurité, la validation <strong>TOTP</strong> (<code>pyotp</code>), et expose l'endpoint Forward Auth
           <code>/api/verify</code> (renvoyant HTTP <code>401</code> sur expiration pour déclencher la redirection
@@ -140,7 +152,17 @@
           dynamiques. Sur Open WebUI, il applique la résolution DNS dynamique Nginx (<code>set $$upstream</code>), le
           Smart Proxy Mock sur <code>/api/version</code>, l'Auto-Heal SPA par <code>sub_filter</code> sur
           <code>/auth</code>, <code>USE_MODSECURITY=no</code> et un Rate Limit assoupli (<code>300r/s</code>, burst
-          <code>1000</code>). Il orchestre également le service <code>echo-user-manager</code> (IP <code>.27</code>, port <code>3002</code>, exposé sous <code>my.${ECHO_DOMAIN}</code> avec lien direct vers <code>ui.${ECHO_DOMAIN}</code>, gestion self-service du profil/mot de passe/sessions SSO, suppression de compte et export souverain <code>.tar.xz</code> Open WebUI + Qdrant JSON).
+          <code>1000</code>). Il orchestre également le portail self-service <code>echo-user-manager</code>
+          (<code>27-docker-user-manager/</code> v5.237.5.1 : <code>server.py</code>, <code>core/config.py</code>,
+          <code>core/utils.py</code>, <code>core/security.py</code> v5.236.5.1, <code>routes/routes.py</code>,
+          <code>templates/templates.py</code> &amp; <code>services/export_service.py</code> v5.237.5.1 ; IP
+          <code>.27</code>, port <code>3002</code>, exposé sous <code>my.${ECHO_DOMAIN}</code> sans accès au socket
+          Docker : KPIs profil/Qdrant/expiration SSO, révocation des sessions actives avec GeoIP, modification synchrone
+          du nom et du mot de passe Argon2id sous contrôle TOTP, export asynchrone <code>.tar.xz</code> en priorité
+          minimale <code>nice 19</code> / <code>ionice idle c3</code> / <code>XZ_OPT="-T2 -1"</code> avec jauge 0-100 %,
+          compte à rebours dynamique 1s avant expiration d'archive, sanctuarisation pendant le téléchargement actif
+          <code>is_downloading</code> et destruction conditionnée au succès strict 100 % ou à l'échéance du TTL 15 min,
+          et suppression autonome du compte dans <code>auth.db</code> + <code>webui.db::user</code>).
         </p>
 
         <h3>4. Pont Audio In-Process (<code>echo_audio.py</code> v5.226.18.0) &amp; Logs Unifiés</h3>
@@ -185,7 +207,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.237.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.237.8 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

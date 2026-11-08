@@ -2,11 +2,13 @@
 """
 ================================================================================
 MODULE : ECHO USER MANAGER - HTML TEMPLATES (DARK MODE)
-VERSION : 5.237.1.1
+VERSION : 5.237.5.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.5.1: Compte à rebours dynamique 1s avant expiration d'archive, attribut download et bascule automatique à échéance.
+# 5.237.2.1: Composant d'export asynchrone avec barre de progression temps réel (0-100%), bouton d'annulation et badge de téléchargement.
 # 5.237.1.1: Correction SyntaxError JS sur apostrophe dans HTML_USER_DASHBOARD (raw string r"""..."""), calcul temps restant sur timestamp expires_at et GeoIP.
 # 5.236.5.1: Interface Dark Mode Bootstrap 5.3 du portail utilisateur (my.{ECHO_DOMAIN}) avec lien direct vers ui.{ECHO_DOMAIN}.
 
@@ -328,9 +330,52 @@ HTML_USER_DASHBOARD = r"""
                                             <li><code>user_domain/</code> : Dossier personnel (<code>/users/{{ user_id }}</code>) incluant vos fichiers, productions Codex, skills, workflows et dumps JSON des bases <code>session.db</code>.</li>
                                             <li><code>qdrant/echo_meta_artifacts.json</code> & <code>qdrant/echo_session_rag.json</code> : Export JSON complet de vos souvenirs long-terme et segments vectoriels RAG.</li>
                                         </ul>
-                                        <a href="/action/account/export" class="btn btn-info w-100 fw-bold" id="btnExportArchive" onclick="onExportClick(this)">
-                                            <i class="bi bi-file-earmark-zip-fill me-1"></i> Télécharger mes données (.tar.xz)
-                                        </a>
+                                        <div id="exportActionContainer">
+                                            <button type="button" class="btn btn-info w-100 fw-bold" id="btnStartExport" onclick="startExport()">
+                                                <i class="bi bi-file-earmark-zip-fill me-1"></i> Préparer mon archive (.tar.xz)
+                                            </button>
+                                        </div>
+
+                                        <!-- CARTE DE PROGRESSION TEMPS RÉEL -->
+                                        <div id="exportProgressCard" class="card mt-3 border-info border-opacity-50 d-none" style="background-color: #0d1117;">
+                                            <div class="card-body p-3">
+                                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                                    <span class="small fw-bold text-info" id="exportProgressStep">Initialisation de l'export...</span>
+                                                    <span class="badge bg-dark border border-info text-info font-monospace" id="exportProgressPercent">0%</span>
+                                                </div>
+                                                <div class="progress mb-2" style="height: 12px; background-color: #161b22;">
+                                                    <div id="exportProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: 0%;"></div>
+                                                </div>
+                                                <div class="d-flex justify-content-between align-items-center mt-2">
+                                                    <small class="text-muted" id="exportProgressSubtext">Traitement asynchrone sur le serveur...</small>
+                                                    <button type="button" class="btn btn-sm btn-outline-danger" id="btnCancelExport" onclick="cancelExport()">
+                                                        <i class="bi bi-x-circle me-1"></i>Annuler
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- CARTE D'ARCHIVE PRÊTE -->
+                                        <div id="exportReadyCard" class="card mt-3 border-success border-opacity-50 d-none" style="background-color: #0d1117;">
+                                            <div class="card-body p-3 text-center">
+                                                <div class="text-success mb-2">
+                                                    <i class="bi bi-check-circle-fill fs-3 me-2"></i>
+                                                    <span class="fw-bold fs-6">Votre archive est prête !</span>
+                                                </div>
+                                                <p class="small text-muted mb-3" id="exportReadyInfo">Fichier compressé disponible au téléchargement.</p>
+                                                <div class="d-flex gap-2">
+                                                    <a href="/action/account/export/download" class="btn btn-success fw-bold flex-grow-1" id="btnDownloadExport" download onclick="onDownloadStarted()">
+                                                        <i class="bi bi-download me-1"></i> Télécharger l'archive (<span id="exportReadySize">--</span>)
+                                                    </a>
+                                                    <button type="button" class="btn btn-outline-secondary" onclick="cancelExport()" title="Supprimer l'archive du serveur">
+                                                        <i class="bi bi-trash3"></i>
+                                                    </button>
+                                                </div>
+                                                <div class="mt-2 text-warning small font-monospace" id="exportCountdownText">
+                                                    <i class="bi bi-hourglass-split me-1"></i>Expire dans : <span id="exportCountdownVal">--:--</span>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -475,6 +520,7 @@ HTML_USER_DASHBOARD = r"""
         // Mise à jour chaque seconde du compte à rebours KPI + Table des sessions
         setInterval(() => {
             renderKpiCountdown();
+            updateExportCountdown();
             const nowSec = Math.floor(Date.now() / 1000);
             document.querySelectorAll('.session-countdown').forEach(span => {
                 const expRaw = span.getAttribute('data-expires-at');
@@ -660,17 +706,130 @@ HTML_USER_DASHBOARD = r"""
                 .catch(() => {});
         }
 
-        function onExportClick(btn) {
-            const origHtml = btn.innerHTML;
-            btn.classList.add('disabled');
-            btn.innerHTML = "<span class=\"spinner-border spinner-border-sm me-2\"></span>Préparation de l'archive .tar.xz en cours...";
-            setTimeout(() => {
-                btn.classList.remove('disabled');
-                btn.innerHTML = origHtml;
-            }, 8000);
+        // Pilotage Asynchrone de l'Export (.tar.xz) avec Barre de Progression
+        let exportPollTimer = null;
+        let exportExpiresAt = null;
+        let exportIsReady = false;
+
+        function updateExportCountdown() {
+            if (!exportIsReady || !exportExpiresAt) return;
+            const nowSec = Math.floor(Date.now() / 1000);
+            const diff = Math.max(0, exportExpiresAt - nowSec);
+            const valEl = document.getElementById('exportCountdownVal');
+            if (valEl) valEl.textContent = formatCountdown(diff);
+            if (diff <= 0) {
+                exportIsReady = false;
+                exportExpiresAt = null;
+                const readyCard = document.getElementById('exportReadyCard');
+                const btnContainer = document.getElementById('exportActionContainer');
+                if (readyCard) readyCard.classList.add('d-none');
+                if (btnContainer) btnContainer.classList.remove('d-none');
+                alert("Le délai de téléchargement de l'archive (15 minutes) a expiré. Vous pouvez générer un nouvel export.");
+                pollExportStatus();
+            }
+        }
+
+        function renderExportState(st) {
+            const btnContainer = document.getElementById('exportActionContainer');
+            const progressCard = document.getElementById('exportProgressCard');
+            const readyCard = document.getElementById('exportReadyCard');
+            const pBar = document.getElementById('exportProgressBar');
+            const pPct = document.getElementById('exportProgressPercent');
+            const pStep = document.getElementById('exportProgressStep');
+            const readySize = document.getElementById('exportReadySize');
+            const readyInfo = document.getElementById('exportReadyInfo');
+
+            if (!btnContainer || !progressCard || !readyCard) return;
+
+            if (st.is_running) {
+                exportIsReady = false;
+                exportExpiresAt = null;
+                btnContainer.classList.add('d-none');
+                readyCard.classList.add('d-none');
+                progressCard.classList.remove('d-none');
+
+                const pct = Math.max(2, Math.min(99, Math.round(st.percent || 0)));
+                if (pBar) pBar.style.width = pct + '%';
+                if (pPct) pPct.textContent = pct + '%';
+                if (pStep) pStep.textContent = st.step || 'Exportation en cours...';
+            } else if (st.ready) {
+                exportIsReady = true;
+                if (st.expires_at) {
+                    exportExpiresAt = parseInt(st.expires_at, 10);
+                } else if (st.expires_in_sec) {
+                    exportExpiresAt = Math.floor(Date.now() / 1000) + parseInt(st.expires_in_sec, 10);
+                }
+                btnContainer.classList.add('d-none');
+                progressCard.classList.add('d-none');
+                readyCard.classList.remove('d-none');
+
+                if (readySize) readySize.textContent = st.size_fmt || 'archive';
+                if (readyInfo) {
+                    readyInfo.textContent = `${st.filename || 'Archive'} (${st.size_fmt || ''})`;
+                }
+                updateExportCountdown();
+            } else {
+                exportIsReady = false;
+                exportExpiresAt = null;
+                progressCard.classList.add('d-none');
+                readyCard.classList.add('d-none');
+                btnContainer.classList.remove('d-none');
+                if (st.error) {
+                    alert("Erreur lors de l'export : " + st.error);
+                }
+            }
+        }
+
+        function pollExportStatus() {
+            clearTimeout(exportPollTimer);
+            fetch('/api/me/export/status')
+                .then(r => r.json())
+                .then(st => {
+                    renderExportState(st);
+                    if (st.is_running) {
+                        exportPollTimer = setTimeout(pollExportStatus, 1500);
+                    } else if (st.ready) {
+                        exportPollTimer = setTimeout(pollExportStatus, 15000);
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function startExport() {
+            clearTimeout(exportPollTimer);
+            const btn = document.getElementById('btnStartExport');
+            if (btn) btn.classList.add('disabled');
+
+            fetch('/api/me/export/start', {method: 'POST'})
+                .then(r => r.json())
+                .then(st => {
+                    renderExportState(st);
+                    exportPollTimer = setTimeout(pollExportStatus, 1500);
+                })
+                .catch(err => {
+                    alert("Impossible de démarrer l'export : " + err.message);
+                })
+                .finally(() => {
+                    if (btn) btn.classList.remove('disabled');
+                });
+        }
+
+        function cancelExport() {
+            if (!confirm("Annuler l'export ou supprimer l'archive en attente ?")) return;
+            clearTimeout(exportPollTimer);
+            fetch('/action/account/export/cancel', {method: 'POST'})
+                .then(r => r.json())
+                .then(() => {
+                    pollExportStatus();
+                });
+        }
+
+        function onDownloadStarted() {
+            setTimeout(pollExportStatus, 5000);
         }
 
         fetchUserSessions();
+        pollExportStatus();
         setInterval(refreshStats, 30000);
     </script>
 </body>
