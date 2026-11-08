@@ -80,7 +80,8 @@ if ($unmerged) {
             Write-Host "   🔒 Sanctuarisé (version V6 préservée) : $file" -ForegroundColor DarkGray
             git checkout --ours -- "$file"
             git add "$file"
-        } else {
+        }
+        else {
             $remainingConflicts += $file
         }
     }
@@ -117,7 +118,8 @@ if ($functionalChanges.Count -gt 0) {
     foreach ($f in $functionalChanges) {
         Write-Host "   + $f" -ForegroundColor Green
     }
-} else {
+}
+else {
     Write-Host "   (Aucune modification applicative hors sanctuaire)" -ForegroundColor Gray
 }
 
@@ -128,7 +130,8 @@ $mergeMessage = "sync(v5): merge updates from v5-local/dev ($latestV5Hash) with 
 git commit -m "$mergeMessage"
 if ($LASTEXITCODE -eq 0) {
     Write-Host "`n✅ Synchronisation V5 -> V6 scellée avec succès !" -ForegroundColor Green
-} else {
+}
+else {
     Write-Error "❌ Erreur lors du scellement du commit de fusion."
     exit 1
 }
