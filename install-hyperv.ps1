@@ -1,7 +1,7 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# VERSION : 5.231.40.1
+# VERSION : 6.0.0.1
 # DATE    : 2026-10-31
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
@@ -32,6 +32,7 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.0.0.1: Initialisation ECHO V6 et ciblage de la branche dev_v6.
 # 5.231.40.1: Correction encodage UTF-8 BOM pour le parseur PowerShell 5.1 et alignement version.
 # 5.231.39.1: Mise à jour des références cloud-init vers echo-sync.sh.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
@@ -51,7 +52,7 @@ $GATEWAY_IP = "192.168.147.254"
 $DNS_SERVERS = "[86.54.11.100, 1.1.1.1, 8.8.8.8]"
 
 # --- CONFIGURATION BRANCHE ---
-$BRANCHE = "dev"
+$BRANCHE = "dev_v6"
 #$BRANCHE = "main"
 
 function Pause-OnError {
@@ -63,7 +64,7 @@ function Pause-OnError {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.231.40.1"
+$SCRIPT_VERSION = "6.0.0.1"
 $ScriptDir = $PSScriptRoot
 Set-Location -Path $ScriptDir
 $VersionFile = "$ScriptDir\VERSION"

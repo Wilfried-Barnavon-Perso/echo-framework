@@ -1,0 +1,22 @@
+{
+  "upstream_repo": "https://github.com/open-webui/open-webui.git",
+  "base_tag": "v0.13.2",
+  "base_commit": "b7a005e5a5c0c0d869f2aebf4b8f051c5fb37245",
+  "extracted_at": "2026-11-08",
+  "tracked_paths": [
+    "backend",
+    "src",
+    "static",
+    "scripts",
+    "package.json",
+    "package-lock.json",
+    "svelte.config.js",
+    "tailwind.config.js",
+    "postcss.config.js",
+    "tsconfig.json",
+    "vite.config.ts",
+    "pyproject.toml",
+    "Dockerfile",
+    "LICENSE"
+  ]
+}

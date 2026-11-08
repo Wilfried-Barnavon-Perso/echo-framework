@@ -49,3 +49,9 @@ i_internal_project.txtt
 # --- Scratch & Temporaires ---
 scratch/
 scratch_openwebui/
+
+# --- Node / SvelteKit (16-docker-echo-webui) ---
+node_modules/
+.svelte-kit/
+16-docker-echo-webui/build/
+

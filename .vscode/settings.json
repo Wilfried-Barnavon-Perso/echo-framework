@@ -5,13 +5,15 @@
         "${workspaceFolder}/10-owui-pipes",
         "${workspaceFolder}/11-owui-filters",
         "${workspaceFolder}/12-owui-tools",
-        "${workspaceFolder}/13-owui-actions"
+        "${workspaceFolder}/13-owui-actions",
+        "${workspaceFolder}/16-docker-echo-webui/backend"
     ],
     "python.autoComplete.extraPaths": [
         "${workspaceFolder}/14-owui-libs",
         "${workspaceFolder}/10-owui-pipes",
         "${workspaceFolder}/11-owui-filters",
         "${workspaceFolder}/12-owui-tools",
-        "${workspaceFolder}/13-owui-actions"
+        "${workspaceFolder}/13-owui-actions",
+        "${workspaceFolder}/16-docker-echo-webui/backend"
     ]
 }

@@ -1,10 +1,10 @@
-# Stratégie de Versioning ECHO 5
+# Stratégie de Versioning ECHO 6
 
-Ce document définit la politique officielle de versioning pour l'infrastructure et les composants du framework ECHO 5.
+Ce document définit la politique officielle de versioning pour l'infrastructure et les composants du framework ECHO 6.
 
 ## 1. Version de la Stack (Infrastructure Globale)
 
-La version globale d'ECHO suit le format **SemVer** (`A.B.C`, avec `A = 5`) et est pilotée exclusivement par le fichier `VERSION` à la racine du dépôt. Elle représente l'agrégat cohérent et validé des modifications apportées aux composants de la stack.
+La version globale d'ECHO suit le format **SemVer** (`A.B.C`, avec `A = 6`) et est pilotée exclusivement par le fichier `VERSION` à la racine du dépôt. Elle représente l'agrégat cohérent et validé des modifications apportées aux composants de la stack.
 
 * **Format** : `A.B.C` (ex: `5.226.18`)
 * **Incrément Mineur (`B + 1`, `C = 0`)** : Nouvelles fonctionnalités majeures ou évolutions architecturales structurantes de l'infrastructure.
