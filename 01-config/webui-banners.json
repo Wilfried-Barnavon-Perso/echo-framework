@@ -1,5 +1,21 @@
 [
   {
+    "id": "echo-banner-roadmap-v6-decoupling-20261108",
+    "type": "info",
+    "title": "Feuille de route : ECHO v6",
+    "content": "**Feuille de route : Cap sur ECHO v6** : Lancement prochain du cycle de développement majeur d'ECHO v6. L'ingénierie et l'évolution du framework ECHO sont désormais formellement découplées du cycle d'Open WebUI pour une souveraineté et une autonomie architecturales renforcées.",
+    "dismissible": true,
+    "timestamp": 1794162325
+  },
+  {
+    "id": "echo-banner-user-manager-export-20261108",
+    "type": "info",
+    "title": "Portail Self-Service & Export RGPD",
+    "content": "**ECHO User Manager disponible** : Accédez à votre portail d'auto-gestion (`https://my.<domaine>`). Consultez vos sessions actives, gérez votre profil et exportez l'intégralité souveraine de vos données et mémoires dans une archive `.tar.xz`.",
+    "dismissible": true,
+    "timestamp": 1794162325
+  },
+  {
     "id": "echo-banner-image-generation-20261102",
     "type": "success",
     "title": "Génération & Retouche d'Images IA",
@@ -14,13 +30,5 @@
     "content": "**Navigation Web nouvelle génération** : Le navigateur autonome d'Écho opère désormais en mode Zéro-Trace DOM avec contournement anti-bot renforcé. Suivez ses interactions et visualisez le curseur en temps réel dans le cockpit de rejeu vidéo.",
     "dismissible": true,
     "timestamp": 1794068156
-  },
-  {
-    "id": "echo-banner-delphi-council-multi-20261101",
-    "type": "info",
-    "title": "Conseil Delphi & Débat Contradictoire",
-    "content": "**Conseil d'experts démultiplié** : Convoquez jusqu'à 7 spécialités et intensifiez la contradiction interne (facteur multiplicateur 1 à 5 par discipline) pour éprouver rigoureusement vos architectures et choix stratégiques.",
-    "dismissible": true,
-    "timestamp": 1793530800
   }
 ]
