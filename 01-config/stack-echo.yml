@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 5.236.5.1
+# VERSION : 5.237.6.1
 # ==============================================================================
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
@@ -26,11 +26,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.6.1: Verrouillage de l'image Open WebUI sur la dernière version 0.12 (ghcr.io/open-webui/open-webui:0.12.5-slim).
 # 5.236.5.1: Référencement IPAM de user-manager (.27 -> bunkerweb-stack.yml).
 # 5.236.3.1: Alignement du plafond de streams HTTP/2 (LIMIT_CONN_MAX_HTTP2=200) et activation de HTTP/1.1 sur les locations statiques d'Open WebUI pour éviter le 500 PWA lors d'un Ctrl+F5 en mode public.
 # 5.236.2.1: Désactivation de proxy_intercept_errors dans location = /api/verify pour préserver le code 401 vers le module auth_request de BunkerWeb.
 # 5.235.5.1: Montage en lecture seule de /opt/ECHO/owui-libs vers /app/echo_libs dans echo-admin-manager.
-# 5.231.36.1: Fix du nommage des images locales buildées (suppression du double préfixe echo-echo-* via directive image: explicite).
 
 name: echo
 
@@ -38,7 +38,7 @@ services:
 
   # 1. Open WebUI (Le Cœur d'ECHO)
   echo-open-webui:
-    image: ghcr.io/open-webui/open-webui:main-slim
+    image: ghcr.io/open-webui/open-webui:0.12.5-slim
     container_name: echo-open-webui
     restart: always
     networks:
