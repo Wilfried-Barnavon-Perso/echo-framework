@@ -2,11 +2,12 @@
 """
 ================================================================================
 MODULE : ECHO USER MANAGER - FLASK ROUTES
-VERSION : 5.237.2.1
+VERSION : 5.237.5.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.5.1: Maintien du job pendant le téléchargement (suppression du pop prématuré) et en-tête Content-Length explicite.
 # 5.237.2.1: Intégration des routes d'export asynchrone (/api/me/export/start, status, cancel, download) avec barre de progression.
 # 5.236.5.1: Routes self-service utilisateur (stats, sessions, renommage, mot de passe, export .tar.xz, suppression Option B et logout).
 
@@ -63,6 +64,7 @@ from services.export_service import (
     get_user_export_status,
     start_user_export_job,
     stream_and_cleanup_archive,
+    stream_archive_file,
 )
 from templates.templates import HTML_USER_DASHBOARD
 
@@ -371,7 +373,7 @@ def action_account_export_cancel():
 
 @app.route("/action/account/export/download")
 def action_account_export_download():
-    """Télécharge l'archive préparée et détruit immédiatement (0s) les fichiers du serveur en fin de flux."""
+    """Télécharge l'archive préparée et sanctuarise le flux jusqu'à transmission complète à 100%."""
     key = str(g.user_id or g.user_email).strip().lower()
     with _EXPORT_JOBS_LOCK:
         job = _EXPORT_JOBS.get(key)
@@ -382,23 +384,20 @@ def action_account_export_download():
         archive_path = job["archive_path"]
         download_filename = job.get("filename") or "echo_user_export.tar.xz"
         tmp_dir = job.get("tmp_dir")
+        file_sz = job.get("size_bytes") or (os.path.getsize(archive_path) if os.path.isfile(archive_path) else 0)
 
-        # Retrait du job pour éviter les téléchargements multiples ou rémanence
-        _EXPORT_JOBS.pop(key, None)
-
-    def _cleanup_download():
-        if tmp_dir and os.path.isdir(tmp_dir):
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-
+    headers = {
+        "Content-Disposition": f'attachment; filename="{download_filename}"',
+        "Content-Length": str(file_sz),
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Pragma": "no-cache",
+    }
     return Response(
         stream_with_context(
-            stream_and_cleanup_archive(archive_path, tmp_dir, on_cleanup=_cleanup_download)
+            stream_archive_file(key, archive_path, tmp_dir)
         ),
         mimetype="application/x-xz",
-        headers={
-            "Content-Disposition": f'attachment; filename="{download_filename}"',
-            "Cache-Control": "no-store",
-        },
+        headers=headers,
     )
 
 

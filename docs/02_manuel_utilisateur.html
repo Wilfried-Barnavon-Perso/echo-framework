@@ -49,15 +49,23 @@
     </p>
 
     <div class="didactic-box">
-      <h4>💡 Comportement du Single Sign-On (SSO)</h4>
+      <h4>💡 Comportement du Single Sign-On (SSO) et Portail Personnel (<code>my.votre-domaine</code>)</h4>
       <p>
         Une fois l'authentification validée, votre session est automatiquement propagée à l'interface de discussion
         (Open WebUI) ainsi qu'aux services autorisés sans ressaisie de mot de passe. Lors de la connexion, vous pouvez
         indiquer s'il s'agit d'un appareil personnel de confiance (pour bénéficier d'une session prolongée) ou d'un
-        poste partagé (session temporaire à expiration rapide). Lors d'une déconnexion, la session
+        poste partagé (session temporaire à expiration rapide). En mode public, vous disposez également d'un portail
+        personnel dédié (<strong>ECHO Espace Personnel</strong> sur <code>https://my.votre-domaine</code>, accessible
+        depuis la bannière d'accueil) permettant de visualiser en un coup d'œil votre empreinte disque (Chats, Fichiers,
+        Skills, Codex), vos conversations actives, vos souvenirs vectoriels Qdrant et le compte à rebours d'expiration de
+        votre session SSO, de révoquer à distance vos connexions sur d'autres appareils (<em>Mes Connexions</em>), de
+        modifier votre nom ou votre mot de passe (<em>Mon Profil &amp; Sécurité</em>), et d'exporter à tout moment
+        l'intégralité de vos données dans une archive <code>.tar.xz</code> automatiquement détruite du serveur sitôt
+        téléchargée ou de supprimer votre compte (<em>Mes Données &amp; Compte</em>). Lors d'une déconnexion, la session
         est purgée sur l'ensemble des composants.
       </p>
     </div>
+    <img src="images/user_manager.png" alt="Portail ECHO Espace Personnel (User Manager)" class="doc-screenshot">
 
     <h2>2. Sélection du Mode Cognitif</h2>
     <p>
@@ -188,7 +196,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.237.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.237.6 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

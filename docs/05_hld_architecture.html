@@ -396,9 +396,9 @@
           </div>
           <div
             style="background: #0f172a; border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; text-align: center;">
-            <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Auth &amp; Download
+            <div style="color: #fbbf24; font-weight: bold; font-size: 11.5px; margin-bottom: 4px;">Auth, User &amp; Download
             </div>
-            <div style="color: #64748b; font-size: 10px;">ECHO Auth IdP :8000</div>
+            <div style="color: #64748b; font-size: 10px;">Auth IdP :8000 &amp; User :3002</div>
             <div style="color: #64748b; font-size: 10px;">Download Broker Daemon</div>
           </div>
         </div>
@@ -590,7 +590,9 @@
         Ce schéma représente la topologie réelle du cluster Docker ECHO. Le trafic WAN est filtré
         par BunkerWeb (WAF) <strong>si celui-ci est activé</strong> (optionnel, contrôlé via les scripts
         <code>enable-bunkerweb.sh</code> et <code>disable-bunkerweb.sh</code>).
-        En cas d'activation, BunkerWeb délègue l'authentification (SSO & MFA) au module <strong>ECHO Auth</strong>.
+        En cas d'activation, BunkerWeb délègue l'authentification (SSO &amp; MFA) au module <strong>ECHO Auth</strong>
+        (<code>auth.DOMAINE</code>) et expose le portail self-service <strong>ECHO User Manager</strong>
+        (<code>my.DOMAINE</code>, IP <code>.27</code>, port <code>3002</code>, sans accès au socket Docker).
         L'Arsenal (echo-browser-worker, echo-coding-worker, SearxNG) s'exécute sur un
         sous-réseau Docker privé sans accès entrant. Les volumes SQLite garantissent la persistance
         des données hors-conteneur. L'Admin Manager accède au Docker Daemon via
@@ -763,7 +765,7 @@
               (<code>echo_protocol.py</code> v5.233.0.1,
               <code>echo_core.py</code> v5.235.5.3, <code>echo_db_schema.py</code> v5.235.5.3,
               <code>echo_session_gc.py</code> v5.235.5.3, <code>echo_aec.py</code> v5.235.5.2,
-              <code>echo_window_manager.py</code> v5.231.60.1 &amp; <code>echo_session_clone.py</code> v5.235.5.2)
+              <code>echo_window_manager.py</code> v5.237.4.1 &amp; <code>echo_session_clone.py</code> v5.235.5.2)
             </h3>
             <ul>
               <li><strong>Schéma Déclaratif SQLite v1 &amp; Gestion des Branches Mortes :</strong>
@@ -826,8 +828,11 @@
                 événements
                 transitoires <code>aec_event</code> / <code>aec_directive</code>. Le singleton
                 <code>EchoWindowManager</code> (<code>echo_window_manager.py</code>
-                v5.231.60.1) et <code>echo_events.py</code> (v5.231.48.1) assurent le double transport non-destructif
-                UCTP
+                v5.237.4.1, intégrant la résolution stricte du couple propriétaire <code>(user_id, chat_id)</code> via
+                <code>_resolve_user_id_by_email</code> et <code>_find_existing_chat_owner</code> /
+                <code>_resolve_owner_uid</code> ainsi que la garde <code>os.path.isfile(sm.db_path)</code> interdisant
+                toute création de <code>session.db</code> orpheline) et <code>echo_events.py</code> (v5.231.48.1)
+                assurent le double transport non-destructif UCTP
                 bidirectionnel
                 (Socket.IO + SSE/RPC <code>/echo/v1/wm/*</code> avec fallback <code>EchoWindowManager</code> dans
                 <code>resolve_live_session</code>) et la persistance multi-chats des fenêtres HUD dans
@@ -925,7 +930,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.237.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.237.6 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

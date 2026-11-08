@@ -200,14 +200,20 @@
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
         <h3>1. Architecture Backend ↔ Frontend, EchoWindowManager &amp; Protocole UCTP
-          (<code>echo_window_manager.py</code> v5.231.60.1, <code>echo_events.py</code> v5.231.48.1 &amp;
+          (<code>echo_window_manager.py</code> v5.237.4.1, <code>echo_events.py</code> v5.231.48.1 &amp;
           <code>echo_ui.py</code> v5.234.1.1)
         </h3>
         <ul>
           <li><strong>Canal d'Événements &amp; Double Transport Non-Destructif (<code>EchoEvents</code> &amp;
               <code>EchoWindowManager</code>) :</strong> Extrait automatiquement
             <code>(user_id, chat_id, message_id, session_id)</code> depuis les closures Open WebUI
-            (<code>extract_closure_context</code>) et achemine les exécutions JS (<code>emit_execute</code>,
+            (<code>extract_closure_context</code>), résout strictement l'identité propriétaire
+            <code>(user_id, chat_id)</code> (traduction des e-mails <code>X-Webui-User</code> en UUID via
+            <code>_resolve_user_id_by_email</code>, recherche du propriétaire existant
+            <code>_find_existing_chat_owner</code> / <code>_resolve_owner_uid</code> sans fallback multi-comptes
+            aléatoire et garde <code>os.path.isfile(sm.db_path)</code> empêchant toute création de
+            <code>session.db</code> orpheline dans <code>_save_chat_state</code>) et achemine les exécutions JS
+            (<code>emit_execute</code>,
             <code>call_execute</code>) simultanément via Socket.IO natif et le flux SSE/RPC
             d'<code>EchoWindowManager</code> (<code>/echo/v1/wm/stream</code>, <code>/echo/v1/wm/chat/{chat_id}</code>,
             <code>/echo/v1/wm/rpc</code>) avec déduplication atomique par <code>exec_id</code>
@@ -287,7 +293,7 @@
 
         <h3>3. Caractéristiques Techniques (ECHO Codex, Liens URN, Agent Monitor &amp; Mobile First)</h3>
         <ul>
-          <li><strong>Moteur Codex (<code>EchoCodexUI</code> v5.231.55.1) &amp; Liens URN
+          <li><strong>Moteur Codex (<code>EchoCodexUI</code> v5.232.5.1) &amp; Liens URN
               (<code>codex_links_filter.py</code> v5.231.55.1, priorité 80) :</strong> Monaco Editor doublé d'un Éditeur
             Hexadécimal
             virtualisé (<code>#echo-codex-hud-hex</code>), sérialisation JSON intégrale des variables JS
@@ -313,7 +319,7 @@
             iOS, cibles tactiles 44px, modales asynchrones (<code>window.echoCustomConfirm</code>,
             <code>window.echoCustomPrompt</code> à boutons <em>pills</em>, <code>window.mcpAlert</code>), CRUD du HUD
             Identity Vault intégralement chiffré en <code>AES-256-GCM</code> (<code>save_vault_credential</code> /
-            <code>list_vault_credentials</code> via <code>EchoStateManager</code> v5.231.28.2 et
+            <code>list_vault_credentials</code> via <code>EchoStateManager</code> v5.236.0.1 et
             <code>echo_crypto.py</code> v5.231.21.3) et assainissement DOM systématique via
             <code>window.echoSanitizeHTML</code>.
           </li>
@@ -328,7 +334,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.237.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.237.6 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

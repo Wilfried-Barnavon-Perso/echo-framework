@@ -2,11 +2,13 @@
 """
 ================================================================================
 MODULE : ECHO USER MANAGER - DATA EXPORT SERVICE (TAR.XZ)
-VERSION : 5.237.2.2
+VERSION : 5.237.5.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.5.1: Sanctuarisation de l'archive pendant le téléchargement (is_downloading),
+#            purge conditionnée au succès strict à 100% et exposition de expires_at.
 # 5.237.2.2: Priorité système minimale (nice 19, ionice idle c3, XZ_OPT="-T2 -1", IDLE_PRIORITY_CLASS) et régulation I/O.
 # 5.237.2.1: Pipeline d'export asynchrone avec suivi de progression temps réel (0-100%), TTL de rétention (15 min) et annulation.
 # 5.236.5.1: Service d'export souverain .tar.xz (domaine utilisateur Open WebUI + collections Qdrant en JSON).
@@ -47,6 +49,7 @@ __all__ = [
     "export_webui_user_records",
     "dump_sqlite_db_to_json",
     "build_user_export_archive",
+    "stream_archive_file",
     "stream_and_cleanup_archive",
 ]
 
@@ -78,7 +81,7 @@ def cleanup_expired_export_jobs():
     with _EXPORT_JOBS_LOCK:
         expired_keys = [
             k for k, j in _EXPORT_JOBS.items()
-            if j.get("expires_at") and j["expires_at"] < now and not j.get("is_running")
+            if j.get("expires_at") and j["expires_at"] < now and not j.get("is_running") and not j.get("is_downloading")
         ]
         for k in expired_keys:
             job = _EXPORT_JOBS.pop(k, None)
@@ -105,6 +108,8 @@ def get_user_export_status(user_key: str) -> dict:
                 "size_fmt": None,
                 "error": None,
                 "expires_in_sec": None,
+                "expires_at": None,
+                "is_downloading": False,
             }
         expires_in = max(0, int(job["expires_at"] - time.time())) if job.get("expires_at") else None
         return {
@@ -116,6 +121,8 @@ def get_user_export_status(user_key: str) -> dict:
             "size_fmt": job.get("size_fmt"),
             "error": job.get("error"),
             "expires_in_sec": expires_in,
+            "expires_at": job.get("expires_at"),
+            "is_downloading": bool(job.get("is_downloading", False)),
         }
 
 
@@ -162,6 +169,7 @@ def start_user_export_job(
         _EXPORT_STOP_EVENTS[key] = stop_event
         _EXPORT_JOBS[key] = {
             "is_running": True,
+            "is_downloading": False,
             "ready": False,
             "percent": 2.0,
             "step": "Initialisation de l'exportation...",
@@ -208,6 +216,7 @@ def start_user_export_job(
                 with _EXPORT_JOBS_LOCK:
                     _EXPORT_JOBS[key] = {
                         "is_running": False,
+                        "is_downloading": False,
                         "ready": True,
                         "percent": 100.0,
                         "step": "Archive prête pour le téléchargement !",
@@ -224,6 +233,7 @@ def start_user_export_job(
                 with _EXPORT_JOBS_LOCK:
                     _EXPORT_JOBS[key] = {
                         "is_running": False,
+                        "is_downloading": False,
                         "ready": False,
                         "percent": 0.0,
                         "step": "Échec de l'exportation",
@@ -750,6 +760,54 @@ def build_user_export_archive(
 
     shutil.rmtree(staging_dir, ignore_errors=True)
     return archive_path, download_filename, tmp_dir
+
+
+def stream_archive_file(
+    user_key: str,
+    archive_path: str,
+    tmp_dir: str,
+    chunk_size: int = 65536,
+):
+    """
+    Générateur de streaming sécurisé pour le téléchargement de l'archive .tar.xz.
+    Marque le job en cours de téléchargement (is_downloading=True) pour sanctuariser l'archive
+    face au nettoyage automatique (cleanup_expired_export_jobs).
+    Ne purge l'archive et tmp_dir qu'en cas de succès strict à 100% (bytes_sent >= file_size).
+    En cas de coupure réseau ou d'abandon côté client, l'archive est conservée jusqu'à expiration du TTL.
+    """
+    key = str(user_key or "anonymous").strip().lower()
+    with _EXPORT_JOBS_LOCK:
+        job = _EXPORT_JOBS.get(key)
+        if job:
+            job["is_downloading"] = True
+
+    bytes_sent = 0
+    file_size = os.path.getsize(archive_path) if (archive_path and os.path.isfile(archive_path)) else 0
+    completed = False
+
+    try:
+        if file_size > 0:
+            with open(archive_path, "rb") as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    bytes_sent += len(chunk)
+                    yield chunk
+            if bytes_sent >= file_size:
+                completed = True
+    finally:
+        with _EXPORT_JOBS_LOCK:
+            job = _EXPORT_JOBS.get(key)
+            if job:
+                job["is_downloading"] = False
+            if completed:
+                _EXPORT_JOBS.pop(key, None)
+                if user_key != key:
+                    _EXPORT_JOBS.pop(user_key, None)
+
+        if completed and tmp_dir and os.path.isdir(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def stream_and_cleanup_archive(archive_path: str, tmp_dir: str, on_cleanup=None):

@@ -2,11 +2,12 @@
 """
 ================================================================================
 MODULE : ECHO USER MANAGER - HTML TEMPLATES (DARK MODE)
-VERSION : 5.237.2.1
+VERSION : 5.237.5.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.5.1: Compte à rebours dynamique 1s avant expiration d'archive, attribut download et bascule automatique à échéance.
 # 5.237.2.1: Composant d'export asynchrone avec barre de progression temps réel (0-100%), bouton d'annulation et badge de téléchargement.
 # 5.237.1.1: Correction SyntaxError JS sur apostrophe dans HTML_USER_DASHBOARD (raw string r"""..."""), calcul temps restant sur timestamp expires_at et GeoIP.
 # 5.236.5.1: Interface Dark Mode Bootstrap 5.3 du portail utilisateur (my.{ECHO_DOMAIN}) avec lien direct vers ui.{ECHO_DOMAIN}.
@@ -363,15 +364,15 @@ HTML_USER_DASHBOARD = r"""
                                                 </div>
                                                 <p class="small text-muted mb-3" id="exportReadyInfo">Fichier compressé disponible au téléchargement.</p>
                                                 <div class="d-flex gap-2">
-                                                    <a href="/action/account/export/download" class="btn btn-success fw-bold flex-grow-1" id="btnDownloadExport" onclick="onDownloadStarted()">
+                                                    <a href="/action/account/export/download" class="btn btn-success fw-bold flex-grow-1" id="btnDownloadExport" download onclick="onDownloadStarted()">
                                                         <i class="bi bi-download me-1"></i> Télécharger l'archive (<span id="exportReadySize">--</span>)
                                                     </a>
                                                     <button type="button" class="btn btn-outline-secondary" onclick="cancelExport()" title="Supprimer l'archive du serveur">
                                                         <i class="bi bi-trash3"></i>
                                                     </button>
                                                 </div>
-                                                <div class="text-muted small mt-2" style="font-size: 0.78rem;">
-                                                    <i class="bi bi-shield-check text-info me-1"></i>Rétention serveur : disponible 15 min. Détruite immédiatement après téléchargement.
+                                                <div class="mt-2 text-warning small font-monospace" id="exportCountdownText">
+                                                    <i class="bi bi-hourglass-split me-1"></i>Expire dans : <span id="exportCountdownVal">--:--</span>
                                                 </div>
                                             </div>
                                         </div>
@@ -519,6 +520,7 @@ HTML_USER_DASHBOARD = r"""
         // Mise à jour chaque seconde du compte à rebours KPI + Table des sessions
         setInterval(() => {
             renderKpiCountdown();
+            updateExportCountdown();
             const nowSec = Math.floor(Date.now() / 1000);
             document.querySelectorAll('.session-countdown').forEach(span => {
                 const expRaw = span.getAttribute('data-expires-at');
@@ -706,6 +708,26 @@ HTML_USER_DASHBOARD = r"""
 
         // Pilotage Asynchrone de l'Export (.tar.xz) avec Barre de Progression
         let exportPollTimer = null;
+        let exportExpiresAt = null;
+        let exportIsReady = false;
+
+        function updateExportCountdown() {
+            if (!exportIsReady || !exportExpiresAt) return;
+            const nowSec = Math.floor(Date.now() / 1000);
+            const diff = Math.max(0, exportExpiresAt - nowSec);
+            const valEl = document.getElementById('exportCountdownVal');
+            if (valEl) valEl.textContent = formatCountdown(diff);
+            if (diff <= 0) {
+                exportIsReady = false;
+                exportExpiresAt = null;
+                const readyCard = document.getElementById('exportReadyCard');
+                const btnContainer = document.getElementById('exportActionContainer');
+                if (readyCard) readyCard.classList.add('d-none');
+                if (btnContainer) btnContainer.classList.remove('d-none');
+                alert("Le délai de téléchargement de l'archive (15 minutes) a expiré. Vous pouvez générer un nouvel export.");
+                pollExportStatus();
+            }
+        }
 
         function renderExportState(st) {
             const btnContainer = document.getElementById('exportActionContainer');
@@ -720,6 +742,8 @@ HTML_USER_DASHBOARD = r"""
             if (!btnContainer || !progressCard || !readyCard) return;
 
             if (st.is_running) {
+                exportIsReady = false;
+                exportExpiresAt = null;
                 btnContainer.classList.add('d-none');
                 readyCard.classList.add('d-none');
                 progressCard.classList.remove('d-none');
@@ -729,16 +753,24 @@ HTML_USER_DASHBOARD = r"""
                 if (pPct) pPct.textContent = pct + '%';
                 if (pStep) pStep.textContent = st.step || 'Exportation en cours...';
             } else if (st.ready) {
+                exportIsReady = true;
+                if (st.expires_at) {
+                    exportExpiresAt = parseInt(st.expires_at, 10);
+                } else if (st.expires_in_sec) {
+                    exportExpiresAt = Math.floor(Date.now() / 1000) + parseInt(st.expires_in_sec, 10);
+                }
                 btnContainer.classList.add('d-none');
                 progressCard.classList.add('d-none');
                 readyCard.classList.remove('d-none');
 
                 if (readySize) readySize.textContent = st.size_fmt || 'archive';
                 if (readyInfo) {
-                    const minLeft = st.expires_in_sec ? Math.ceil(st.expires_in_sec / 60) : 15;
-                    readyInfo.textContent = `${st.filename || 'Archive'} (${st.size_fmt || ''}) • Expire dans ~${minLeft} min`;
+                    readyInfo.textContent = `${st.filename || 'Archive'} (${st.size_fmt || ''})`;
                 }
+                updateExportCountdown();
             } else {
+                exportIsReady = false;
+                exportExpiresAt = null;
                 progressCard.classList.add('d-none');
                 readyCard.classList.add('d-none');
                 btnContainer.classList.remove('d-none');
@@ -749,12 +781,15 @@ HTML_USER_DASHBOARD = r"""
         }
 
         function pollExportStatus() {
+            clearTimeout(exportPollTimer);
             fetch('/api/me/export/status')
                 .then(r => r.json())
                 .then(st => {
                     renderExportState(st);
                     if (st.is_running) {
                         exportPollTimer = setTimeout(pollExportStatus, 1500);
+                    } else if (st.ready) {
+                        exportPollTimer = setTimeout(pollExportStatus, 15000);
                     }
                 })
                 .catch(() => {});
@@ -790,9 +825,7 @@ HTML_USER_DASHBOARD = r"""
         }
 
         function onDownloadStarted() {
-            setTimeout(() => {
-                pollExportStatus();
-            }, 4000);
+            setTimeout(pollExportStatus, 5000);
         }
 
         fetchUserSessions();
