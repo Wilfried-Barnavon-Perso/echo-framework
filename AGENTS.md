@@ -5,7 +5,7 @@
 - **IDE :** VS Code.
 - **Terminal :** PowerShell (Admin requis pour Hyper-V).
 - **Infrastructure Cible :** Machine Virtuelle Ubuntu 26.04 sur Hyper-V (Allouée à 8Go RAM au démarrage, dynamique 4Go-10Go, 4 vCPU, disque principal VHDX dynamique de 100Go et disque Seed CIDATA de 64Mo).
-- **Orchestration :** Docker Compose (Standardisé `stack-echo.yml` v5.237.6.1 et `bunkerweb-stack.yml` v5.236.5.1 : Forward Auth SSO `/api/verify` avec `proxy_intercept_errors off`, proxy HTTP/1.1 sur les locations statiques/bypass, Rate Limiting `300r/s`, `LIMIT_CONN_MAX_HTTP2=200`, `USE_ANTIBOT=no`, `USE_MODSECURITY=no` sur Open WebUI, et protection `BAD_BEHAVIOR` ciblée sur les codes `405 444`).
+- **Orchestration :** Docker Compose (Standardisé `stack-echo.yml` v5.237.6.2 et `bunkerweb-stack.yml` v5.236.5.1 : Forward Auth SSO `/api/verify` avec `proxy_intercept_errors off`, proxy HTTP/1.1 sur les locations statiques/bypass, Rate Limiting `300r/s`, `LIMIT_CONN_MAX_HTTP2=200`, `USE_ANTIBOT=no`, `USE_MODSECURITY=no` sur Open WebUI, et protection `BAD_BEHAVIOR` ciblée sur les codes `405 444`).
 - **Note Critique :** L'agent opère depuis l'hôte Windows. L'interaction avec la cible se fait via `install-hyperv.ps1` (injection ZIP via disque Seed, pointant par défaut sur la branche `dev`), `echo-sync.sh` (distribution), et `echo-upgrade.sh` (mise à niveau majeure).
 
 ---
@@ -122,10 +122,10 @@ L'infrastructure s'est enrichie pour supporter les flux asynchrones Headless N8N
 
 ## 9. 🚦 Orchestration Séquentielle (Docker Compose)
 
-L'infrastructure est désormais pilotée via la configuration standardisée `stack-echo.yml` (v5.237.6.1) et `bunkerweb-stack.yml` (v5.236.5.1) et opère sur deux réseaux IPAM dynamiques isolés (`echo-network` via `${ECHO_NET_MAIN_PREFIX}` par défaut en `10.20.40.0/24` et `echo-sandbox` via `${ECHO_NET_SANDBOX_PREFIX}` par défaut en `10.20.50.0/24`) suivant un adressage statique **Domain-Driven IPAM** (`.100-.103` pour les briques Core/Externes et `.20-.30` calqués sur les numéros de dossiers des Workers ECHO). Démarrage ordonné par hostnames stricts (`echo-*`) via `healthcheck` + `depends_on: condition: service_healthy`. Elle intègre une limitation stricte du parallélisme de compilation (`CMAKE_BUILD_PARALLEL_LEVEL=2`) pour prévenir les OOM Killers lors des déploiements massifs :
+L'infrastructure est désormais pilotée via la configuration standardisée `stack-echo.yml` (v5.237.6.2) et `bunkerweb-stack.yml` (v5.236.5.1) et opère sur deux réseaux IPAM dynamiques isolés (`echo-network` via `${ECHO_NET_MAIN_PREFIX}` par défaut en `10.20.40.0/24` et `echo-sandbox` via `${ECHO_NET_SANDBOX_PREFIX}` par défaut en `10.20.50.0/24`) suivant un adressage statique **Domain-Driven IPAM** (`.100-.103` pour les briques Core/Externes et `.20-.30` calqués sur les numéros de dossiers des Workers ECHO). Démarrage ordonné par hostnames stricts (`echo-*`) via `healthcheck` + `depends_on: condition: service_healthy`. Elle intègre une limitation stricte du parallélisme de compilation (`CMAKE_BUILD_PARALLEL_LEVEL=2`) pour prévenir les OOM Killers lors des déploiements massifs :
 - **Tier 1 (Fondations)** : Qdrant (`v1.19.1`), SearXNG, Watchtower.
 - **Tier 2 (Workers)** : Embedding, Coding Worker, Browser Worker, MCP Broker, Download Broker, N8N Worker (Volumes Hot-Reload).
-- **Tier 3** : Open WebUI (`0.12.5-slim`).
+- **Tier 3** : Open WebUI (`0.13.2-slim`).
 - **Tier 4** : Admin Manager, ECHO Auth Manager (exposé via BunkerWeb sous `auth.${ECHO_DOMAIN}`), ECHO User Manager (exposé via BunkerWeb sous `my.${ECHO_DOMAIN}`).
 
 ## 10. 🔢 Stratégie de Versioning (`VERSIONING.md`)
@@ -158,4 +158,4 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 ---
 ---
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.237.8*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 5.237.9*
