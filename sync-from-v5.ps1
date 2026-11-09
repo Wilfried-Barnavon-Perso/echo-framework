@@ -1,10 +1,11 @@
-﻿<#
+<#
 .SYNOPSIS
     ECHO V6 - Synchronisation intelligente des évolutions depuis la branche dev (V5)
-    VERSION : 6.0.0.2
+    VERSION : 6.0.0.3
 #>
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.0.0.3: Sanctuarisation des manifestes Compose YAML (01-config/*.yml) contre les écrasements V5.
 # 6.0.0.2: Sanctuarisation automatique des métadonnées V6 (VERSION, Hyper-V, docs) et scellement propre du merge.
 # 6.0.0.1: Création initiale du pont de synchronisation V5 (dev) -> V6 (dev_v6).
 
@@ -55,6 +56,7 @@ $SanctuaryPatterns = @(
     "^install-hyperv\.ps1$",
     "^README\.md$",
     "^AGENTS\.md$",
+    "^01-config/.*\.ya?ml$",
     "^docs/.*",
     "^16-docker-echo-webui/.*",
     "^check-owui-news\.ps1$",
@@ -93,6 +95,20 @@ if ($unmerged) {
         }
         Write-Host "`nRésolvez ces fichiers puis terminez la fusion avec 'git commit'." -ForegroundColor Red
         exit 1
+    }
+}
+
+# 5.bis Rétablissement des fichiers sanctuarisés fusionnés automatiquement sans conflit
+$stagedChanges = git diff --name-only --cached
+foreach ($rawFile in $stagedChanges) {
+    $file = $rawFile.Trim().Replace("\", "/")
+    foreach ($pattern in $SanctuaryPatterns) {
+        if ($file -match $pattern) {
+            Write-Host "   🔒 Sanctuarisé (version V6 restaurée) : $file" -ForegroundColor DarkGray
+            git checkout HEAD -- "$file"
+            git add "$file"
+            break
+        }
     }
 }
 

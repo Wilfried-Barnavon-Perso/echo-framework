@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 5.237.6.2
+# VERSION : 6.0.0.1
 # ==============================================================================
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
@@ -26,19 +26,22 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.0.0.1: Bascule d'Open WebUI vers le build local natif ECHO V6 (16-docker-echo-webui).
 # 5.237.6.2: Verrouillage de l'image Open WebUI sur la version 0.13.2 (ghcr.io/open-webui/open-webui:0.13.2-slim).
 # 5.236.5.1: Référencement IPAM de user-manager (.27 -> bunkerweb-stack.yml).
 # 5.236.3.1: Alignement du plafond de streams HTTP/2 (LIMIT_CONN_MAX_HTTP2=200) et activation de HTTP/1.1 sur les locations statiques d'Open WebUI pour éviter le 500 PWA lors d'un Ctrl+F5 en mode public.
 # 5.236.2.1: Désactivation de proxy_intercept_errors dans location = /api/verify pour préserver le code 401 vers le module auth_request de BunkerWeb.
-# 5.235.5.1: Montage en lecture seule de /opt/ECHO/owui-libs vers /app/echo_libs dans echo-admin-manager.
 
 name: echo
 
 services:
 
-  # 1. Open WebUI (Le Cœur d'ECHO)
+  # 1. Open WebUI (Le Cœur d'ECHO - Fork Natif ECHO V6)
   echo-open-webui:
-    image: ghcr.io/open-webui/open-webui:0.13.2-slim
+    image: echo-open-webui:latest
+    build:
+      context: /opt/ECHO/docker-echo-webui
+      dockerfile: Dockerfile
     container_name: echo-open-webui
     restart: always
     networks:
@@ -90,7 +93,7 @@ services:
       - /opt/ECHO/config/system-prompt.md:/app/backend/data/system-prompt.md:ro
       - echo-webui-data:/app/backend/data
     labels:
-      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
       # 🛡️ TUNING SECURE EDGE (BunkerWeb)
       - "bunkerweb.SERVER_NAME=ui.${ECHO_DOMAIN:-localhost}"
