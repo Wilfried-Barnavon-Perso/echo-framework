@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 5.236.0.2
+version: 5.237.11.1
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.11.1: Prise en charge du paramètre override_thinking dans call_distillation.
 # 5.236.0.2: Activation inconditionnelle et fallback SSOT des crédits Google One AI en OAuth2.
 # 5.235.5.1: Indexation Session RAG factorisée via build_session_rag_point_id et injection systématique de message_id pour source conversation.
 # 5.234.0.1: Normalisation symétrique Zéro-Copie de inline_data/mime_type vers inlineData/mimeType pour Code Assist et AI Studio.
 # 5.233.0.1: Support natif de response_schema (Pydantic BaseModel / dict) dans call_distillation et call_cascade, et normalisation camelCase unifiée via normalize_generation_config.
-# 5.232.3.2: Préservation des surcharges generationConfig (override_thinking, response_mime_type, maxOutputTokens) dans call_cascade, Fast-Failover OAuth2 sur TimeoutException dans call et stream, et nettoyage F541.
 import copy
 import time
 import random
@@ -428,6 +428,7 @@ class EchoGeminiClient:
         system_instruction: Optional[str] = None,
         timeout: int = 120,
         response_schema: Optional[Union[Type[BaseModel], dict]] = None,
+        override_thinking: Optional[str] = None,
     ) -> Union[Dict, str]:
         """
         Exécute une tâche de distillation (extraction sémantique).
@@ -448,6 +449,10 @@ class EchoGeminiClient:
         # --- ROUTAGE API ---
         base_gen = copy.deepcopy(ECHO_MODELS_REGISTRY.get(actual_model, ECHO_MODELS_REGISTRY.get("MODEL_ZEPHYR", {})).get("generationConfig", {}))
         base_gen["maxOutputTokens"] = max_tokens
+        if override_thinking:
+            if "thinkingConfig" not in base_gen:
+                base_gen["thinkingConfig"] = {}
+            base_gen["thinkingConfig"]["thinkingLevel"] = override_thinking
         
         payload = {
             "contents": contents,

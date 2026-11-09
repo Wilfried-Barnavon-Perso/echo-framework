@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 5.235.5.3
+version: 5.237.11.1
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.11.1: Surcharge thinking_override="low" pour MODEL_PROMETHEUS dans execute_in_place_compaction.
 # 5.235.5.3: Cantonnement strict de user_message_id aux rôles user dans rehydrate_messages_metadata.
 # 5.235.5.2: Résolution load_active_branch_ids, rehydrate_messages_metadata, merge_consecutive_user_parts et split_into_turns résilient aux messages supprimés.
 # 5.235.1.1: Injonction positive d'exploitation capacitaire dans <COMPRESSION_BUDGET> et actualisation des ratios 31.25%/68.75% dans EchoCompactionEngine.
 # 5.233.0.1: Absorption de l'ancienne cascade dans wrap_tool_output et création du décorateur universel @echo_tool (async/sync, introspection Pydantic et drainage AEC centralisé).
-# 5.232.0.1: Prise en charge de la balise <thinking> dans split_thought_process.
 import re
 import time
 import inspect
@@ -1244,7 +1244,7 @@ class EchoCompactionEngine:
         1. Découpe past_messages en tours et calcule le pivot selon la répartition (ex: 63% compressé / 37% gardé de 20%).
         2. Sérialise les tours de HEAD sans aucune troncature et avec leurs AEC.
         3. Résout le modèle le plus haut disponible par clamping et cascade descendante.
-        4. Appelle EchoGeminiClient.call_distillation en préservant température et thinking par défaut.
+        4. Appelle EchoGeminiClient.call_distillation en surchargeant le thinking à "low" pour Prometheus et en préservant le thinking nominal en cascade.
         5. Scelle <artifact id="AEC_context_checkpoint"> dans echo_settings['context_checkpoint'].
         """
         from echo_constants import COMPACTION_MIN_TURNS_REQUIRED, get_descending_cascade, ECHO_MODELS_REGISTRY
@@ -1335,6 +1335,7 @@ class EchoCompactionEngine:
         model_used = None
         for cand_model in candidate_models:
             try:
+                thinking_override = "low" if cand_model == "MODEL_PROMETHEUS" else None
                 res = await EchoGeminiClient.call_distillation(
                     prompt=user_prompt,
                     __user__={"id": user_id},
@@ -1344,6 +1345,7 @@ class EchoCompactionEngine:
                     target_model=cand_model,
                     system_instruction=SYS_COMPACTION_DISTILL,
                     timeout=240,
+                    override_thinking=thinking_override,
                 )
                 if res and str(res).strip():
                     summary_md = str(res).strip()
