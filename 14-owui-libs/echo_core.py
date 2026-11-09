@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 5.237.11.1
+version: 5.237.11.2
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.11.2: Exclusion des pensées en compaction, pesée des tours via Shadows SQLite, filtrage du placeholder assistant vide et alignement par tours.
 # 5.237.11.1: Surcharge thinking_override="low" pour MODEL_PROMETHEUS dans execute_in_place_compaction.
 # 5.235.5.3: Cantonnement strict de user_message_id aux rôles user dans rehydrate_messages_metadata.
 # 5.235.5.2: Résolution load_active_branch_ids, rehydrate_messages_metadata, merge_consecutive_user_parts et split_into_turns résilient aux messages supprimés.
 # 5.235.1.1: Injonction positive d'exploitation capacitaire dans <COMPRESSION_BUDGET> et actualisation des ratios 31.25%/68.75% dans EchoCompactionEngine.
-# 5.233.0.1: Absorption de l'ancienne cascade dans wrap_tool_output et création du décorateur universel @echo_tool (async/sync, introspection Pydantic et drainage AEC centralisé).
 import re
 import time
 import inspect
@@ -176,14 +176,20 @@ def smart_truncate_history(history: list, start_index: int = 0) -> int:
     return removed_size
 
 def split_thought_process(text: str) -> Tuple[str, Optional[str]]:
-    if not isinstance(text, str): return text, None
-    for tag in ["think", "thought", "thinking"]:
-        pattern = rf"<{tag}>(.*?)</{tag}>"
-        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-        if match:
-            thoughts = match.group(1).strip()
-            clean_text = re.sub(pattern, "", text, flags=re.DOTALL | re.IGNORECASE).strip()
-            return clean_text, thoughts
+    if not isinstance(text, str):
+        return text, None
+    thoughts_list: List[str] = []
+    clean_text = text
+    for pattern in (
+        r'<details\b[^>]*\btype=["\']reasoning["\'][^>]*>(.*?)</details>',
+        r"<(?:think|thought|thinking)>(.*?)</(?:think|thought|thinking)>",
+    ):
+        for match in re.finditer(pattern, clean_text, flags=re.DOTALL | re.IGNORECASE):
+            if match.group(1).strip():
+                thoughts_list.append(match.group(1).strip())
+        clean_text = re.sub(pattern, "", clean_text, flags=re.DOTALL | re.IGNORECASE)
+    if thoughts_list:
+        return clean_text.strip(), "\n\n".join(thoughts_list)
     return text, None
 
 _ECHO_IN_TOOL_CALL: contextvars.ContextVar[bool] = contextvars.ContextVar("_ECHO_IN_TOOL_CALL", default=False)
@@ -689,6 +695,13 @@ class EchoCompactionEngine:
                 visited.add(curr)
                 node = messages_map[curr]
                 if isinstance(node, dict):
+                    if (
+                        node.get("role") == "assistant"
+                        and not node.get("content")
+                        and not node.get("output")
+                    ):
+                        curr = node.get("parentId")
+                        continue
                     chain.append({**node, "id": node.get("id") or curr})
                     curr = node.get("parentId")
                 else:
@@ -754,7 +767,39 @@ class EchoCompactionEngine:
         return True
 
     @classmethod
-    def split_into_turns(cls, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _estimate_message_tokens(
+        cls, msg: Dict[str, Any], state_mgr: Optional[EchoStateManager] = None
+    ) -> int:
+        """Estime les tokens réels d'un message (via son Shadow SQLite ou hors pensées)."""
+        msg_id = msg.get("id")
+        if state_mgr is not None and msg_id:
+            shadow = state_mgr.get_shadow(str(msg_id))
+            if shadow:
+                return estimate_token_size(shadow)
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            clean_c, _ = split_thought_process(content)
+            toks = estimate_token_size(clean_c)
+        else:
+            toks = estimate_token_size(content)
+        if msg.get("tool_calls"):
+            toks += estimate_token_size(msg["tool_calls"])
+        output = msg.get("output")
+        if isinstance(output, list):
+            for item in output:
+                if isinstance(item, dict) and item.get("type") in (
+                    "function_call",
+                    "function_call_output",
+                ):
+                    toks += estimate_token_size(item)
+        return toks
+
+    @classmethod
+    def split_into_turns(
+        cls,
+        messages: List[Dict[str, Any]],
+        state_mgr: Optional[EchoStateManager] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Découpe une liste linéaire de messages (hors 'system') en tours logiques complets.
         Chaque tour débute par un vrai message 'user' et inclut toutes les réponses 'assistant'/'tool'
@@ -796,7 +841,9 @@ class EchoCompactionEngine:
             turns.append(current_turn)
 
         for t in turns:
-            t["tokens_est"] = estimate_token_size(t["messages"])
+            t["tokens_est"] = sum(
+                cls._estimate_message_tokens(m, state_mgr) for m in t["messages"]
+            )
         return turns
 
     @classmethod
@@ -918,6 +965,7 @@ class EchoCompactionEngine:
                 else:
                     text_val = str(content or "")
 
+                text_val, _ = split_thought_process(text_val)
                 text_val = b64_pattern.sub("[MÉDIA BINAIRE OMIS]", text_val).strip()
 
                 tool_calls = m.get("tool_calls") or []
@@ -996,40 +1044,41 @@ class EchoCompactionEngine:
         messages: List[Dict[str, Any]],
         branch_messages: Optional[List[Dict[str, Any]]] = None,
     ) -> None:
-        """Réhydrate en O(1) les clés 'id' et 'updated_at' depuis branch_messages sur messages, et restaure user_message_id."""
+        """Réhydrate par tour logique les clés 'id' et 'updated_at' depuis branch_messages sur messages, et restaure user_message_id."""
         if not messages:
             return
         if branch_messages:
-            non_sys_branch = [
-                bm for bm in branch_messages if bm.get("role") != "system"
-            ]
-            non_sys_payload_indices = [
-                idx
-                for idx, m in enumerate(messages)
-                if m.get("role") != "system"
-                and cls.SYNTHETIC_IMAGE_MARKER not in str(m.get("content", ""))
-            ]
-            # Si messages contient le nouveau tour entrant non encore sauvé dans branch_messages, on aligne le préfixe
-            if len(non_sys_branch) == len(non_sys_payload_indices):
-                pairs = zip(non_sys_payload_indices, non_sys_branch)
-            elif len(non_sys_branch) < len(non_sys_payload_indices):
-                pairs = zip(non_sys_payload_indices[: len(non_sys_branch)], non_sys_branch)
+            p_turns = cls.split_into_turns(messages)
+            b_turns = cls.split_into_turns(branch_messages)
+            if len(b_turns) == len(p_turns):
+                turn_pairs = zip(p_turns, b_turns)
+            elif len(b_turns) < len(p_turns):
+                turn_pairs = zip(p_turns[: len(b_turns)], b_turns)
             else:
-                pairs = zip(
-                    non_sys_payload_indices,
-                    non_sys_branch[-len(non_sys_payload_indices) :],
-                )
+                turn_pairs = zip(p_turns, b_turns[-len(p_turns):])
 
-            for p_idx, bm in pairs:
-                if bm.get("role") == messages[p_idx].get("role"):
-                    if not messages[p_idx].get("id") and bm.get("id"):
-                        messages[p_idx]["id"] = bm["id"]
-                    if not messages[p_idx].get("updated_at") and (
-                        bm.get("updated_at") or bm.get("timestamp")
-                    ):
-                        messages[p_idx]["updated_at"] = bm.get("updated_at") or bm.get(
-                            "timestamp"
-                        )
+            for pt, bt in turn_pairs:
+                p_users = [m for m in pt["messages"] if cls.is_real_user_turn(m)]
+                b_users = [bm for bm in bt["messages"] if cls.is_real_user_turn(bm)]
+                for pm, bm in zip(p_users, b_users):
+                    if not pm.get("id") and bm.get("id"):
+                        pm["id"] = bm["id"]
+                    ts = bm.get("updated_at") or bm.get("timestamp")
+                    if not pm.get("updated_at") and ts:
+                        pm["updated_at"] = ts
+
+                p_assts = [
+                    m for m in pt["messages"]
+                    if m.get("role") == "assistant" and not m.get("tool_calls")
+                ]
+                b_assts = [bm for bm in bt["messages"] if bm.get("role") == "assistant"]
+                if p_assts and b_assts:
+                    pm, bm = p_assts[-1], b_assts[-1]
+                    if not pm.get("id") and bm.get("id"):
+                        pm["id"] = bm["id"]
+                    ts = bm.get("updated_at") or bm.get("timestamp")
+                    if not pm.get("updated_at") and ts:
+                        pm["updated_at"] = ts
 
         for m in messages:
             if isinstance(m, dict) and m.get("id") and m.get("role") == "user":
@@ -1191,29 +1240,30 @@ class EchoCompactionEngine:
         pivot_msg_id = checkpoint.get("pivot_msg_id")
         pivot_turn_idx = int(checkpoint.get("pivot_turn_idx", 0))
 
-        real_user_indices = [
-            idx for idx, m in enumerate(messages) if cls.is_real_user_turn(m)
-        ]
-        if not real_user_indices:
-            return [], 0
-
         # Réhydratation O(1) des IDs et timestamps depuis branch_messages avant recherche d'ID
         if branch_messages:
             cls.rehydrate_messages_metadata(messages, branch_messages)
 
+        p_turns = cls.split_into_turns(messages)
+        if not p_turns:
+            return [], 0
+
         cut_msg_idx: Optional[int] = None
         if pivot_msg_id:
-            for idx in real_user_indices:
-                if messages[idx].get("id") == pivot_msg_id:
-                    cut_msg_idx = idx
+            for t in p_turns:
+                if any(
+                    cls.is_real_user_turn(m) and m.get("id") == pivot_msg_id
+                    for m in t["messages"]
+                ):
+                    cut_msg_idx = t["start_msg_idx"]
                     break
 
         if cut_msg_idx is None:
-            if pivot_turn_idx < len(real_user_indices):
-                cut_msg_idx = real_user_indices[pivot_turn_idx]
+            if pivot_turn_idx < len(p_turns):
+                cut_msg_idx = p_turns[pivot_turn_idx]["start_msg_idx"]
             else:
                 # Si tous les tours passés ont été compactés, on coupe au dernier tour utilisateur (le tour entrant)
-                cut_msg_idx = real_user_indices[-1]
+                cut_msg_idx = p_turns[-1]["start_msg_idx"]
 
         if cut_msg_idx <= 0:
             return [], 0
@@ -1260,7 +1310,7 @@ class EchoCompactionEngine:
             except Exception:
                 existing_ckpt = None
 
-        turns = cls.split_into_turns(past_messages)
+        turns = cls.split_into_turns(past_messages, state_mgr=state_mgr)
         min_req = (
             min_turns_required
             if min_turns_required is not None
@@ -1392,8 +1442,13 @@ class EchoCompactionEngine:
         )
 
         # Enregistre les métriques de compaction dans context_stats
+        new_est_prompt = (
+            new_ckpt["checkpoint_tokens"] + plan["tail_tokens_est"] + incoming_tokens
+        )
         state_mgr.save_context_stats(
             {
+                "promptTokenCount": new_est_prompt,
+                "totalTokenCount": new_est_prompt,
                 "compaction_count": compaction_count,
                 "compacted_turns": plan["new_pivot_turn_idx"],
             }

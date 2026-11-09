@@ -7,7 +7,8 @@
   "ui.default_group_id": "",
   "ui.default_interface_settings": {
     "showChangelog": false,
-    "showUpdateToast": false
+    "showUpdateToast": false,
+    "showInputSelections": true
   },
   "ui.enable_community_sharing": false,
   "ui.enable_message_rating": false,
