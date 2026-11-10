@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.234.1.1
+version: 5.237.19.2
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.19.2: Ajout du mode plein écran proportionnel (echoBindFrameFullscreen) dans image_viewer et refonte de build_rich_view_html avec cadre unifié, verrou souris/clavier OFF par défaut et export/copie PNG universel (html-to-image + hook WebGL preserveDrawingBuffer).  # noqa: E501
 # 5.234.1.1: Ajout du canal RPC Bidi dans get_floating_monitor_js (_echoUIInboxByChat, echoPushMonitorEvent, window.echoRequest, window.onEchoEvent).  # noqa: E501
 # 5.232.2.1: Support tactile mobile en mode 1:1 dans image_viewer (pan 1 doigt, pinch-to-zoom focalisé 2 doigts, touch-action dynamique et double-tap).  # noqa: E501
 # 5.232.0.1: Factorisation de build_rich_view_html et instrumentation JS d'interception d'erreurs (data-echo-visual-error sur console.error, error et unhandledrejection).  # noqa: E501
 # 5.231.60.1: Retrait des boutons hors-tour Recommencer/Clôturer (session_meta) dans image_viewer ; conservation de la galerie multi-essais (gallery).  # noqa: E501
-# 5.231.56.1: Maximisation de l'image à la largeur de l'Iframe, hauteur auto-adaptative sans plafond 640px et hauteur figée hors zoom/pan dans image_viewer.  # noqa: E501
 
 
 import sys
@@ -58,7 +58,10 @@ class EchoRichUI:
         "Rewind": "<polygon points='11 19 2 12 11 5 11 19'/><polygon points='22 19 13 12 22 5 22 19'/>",
         "Pause": "<rect x='6' y='4' width='4' height='16'/><rect x='14' y='4' width='4' height='16'/>",
         "Crop": "<path d='M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/>",
-        "Cpu": "<rect x='4' y='4' width='16' height='16' rx='2' ry='2'/><rect x='9' y='9' width='6' height='6'/><line x1='9' y1='1' x2='9' y2='4'/><line x1='15' y1='1' x2='15' y2='4'/><line x1='9' y1='20' x2='9' y2='23'/><line x1='15' y1='20' x2='15' y2='23'/><line x1='20' y1='9' x2='23' y2='9'/><line x1='20' y1='14' x2='23' y2='14'/><line x1='1' y1='9' x2='4' y2='9'/><line x1='1' y1='14' x2='4' y2='14'/>"
+        "Cpu": "<rect x='4' y='4' width='16' height='16' rx='2' ry='2'/><rect x='9' y='9' width='6' height='6'/><line x1='9' y1='1' x2='9' y2='4'/><line x1='15' y1='1' x2='15' y2='4'/><line x1='9' y1='20' x2='9' y2='23'/><line x1='15' y1='20' x2='15' y2='23'/><line x1='20' y1='9' x2='23' y2='9'/><line x1='20' y1='14' x2='23' y2='14'/><line x1='1' y1='9' x2='4' y2='9'/><line x1='1' y1='14' x2='4' y2='14'/>",
+        "Shrink": "<path d='M4 14h6v6m10-10h-6V4m0 6 7-7M3 21l7-7'/>",
+        "Lock": "<rect x='3' y='11' width='18' height='11' rx='2' ry='2'/><path d='M7 11V7a5 5 0 0 1 10 0v4'/>",
+        "Unlock": "<rect x='3' y='11' width='18' height='11' rx='2' ry='2'/><path d='M7 11V7a5 5 0 0 1 9.9-1'/>"
     }
 
     @staticmethod
@@ -1426,9 +1429,126 @@ class EchoRichUI:
           font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; overflow: hidden; transition: background 0.15s, color 0.15s;
         }}
         .echo-container {{ width: 100%; display: flex; flex-direction: column; }}
+        #echo-iv-root {{
+          display: flex;
+          flex-direction: column;
+          width: 100%;
+          border: 1px solid var(--echo-hud-border);
+          border-radius: 10px;
+          overflow: hidden;
+          background: var(--echo-bg);
+          box-sizing: border-box;
+        }}
+        html.echo-is-fullscreen,
+        html.echo-is-fullscreen body,
+        html.echo-is-fullscreen .echo-container,
+        html.echo-is-fullscreen #echo-iv-root {{
+          width: 100vw !important;
+          height: 100dvh !important;
+          max-height: 100dvh !important;
+          border-radius: 0 !important;
+          border: none !important;
+          margin: 0 !important;
+        }}
+        html.echo-is-fullscreen #canvas-area {{
+          flex: 1 1 auto !important;
+          min-height: 0 !important;
+        }}
         #hud-bar {{
-          background: var(--echo-hud-bg); padding: 8px 16px; border-bottom: 1px solid var(--echo-hud-border);
-          display: flex; align-items: center; justify-content: space-between; z-index: 100; color: var(--echo-hud-text); font-size: 12px;
+          margin-bottom: 0 !important;
+          border: none !important;
+          border-bottom: 1px solid var(--echo-hud-border) !important;
+          border-radius: 0 !important;
+          padding: 8px 12px !important;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          flex-wrap: wrap;
+          background: var(--echo-bg);
+          z-index: 100;
+          color: var(--echo-hud-text);
+          font-size: 12px;
+        }}
+        .echo-iv-title-group {{
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
+          flex: 1;
+        }}
+        .echo-iv-title {{
+          font-weight: 600;
+          font-size: 13px;
+          color: var(--echo-text);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }}
+        .echo-iv-dims {{
+          font-size: 11px;
+          color: var(--echo-hud-text);
+          font-family: 'JetBrains Mono', monospace;
+          white-space: nowrap;
+          padding: 2px 6px;
+          border-radius: 4px;
+          background: var(--echo-btn-bg);
+          border: 1px solid var(--echo-hud-border);
+        }}
+        .echo-iv-actions {{
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-wrap: wrap;
+        }}
+        .echo-iv-btn {{
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          height: 28px;
+          padding: 0 9px;
+          border-radius: 6px;
+          border: 1px solid var(--echo-btn-border);
+          background: var(--echo-btn-bg);
+          color: var(--echo-text);
+          font-size: 11px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.15s ease;
+          user-select: none;
+        }}
+        .echo-iv-btn:hover {{
+          border-color: var(--echo-accent);
+          color: var(--echo-accent);
+        }}
+        .echo-iv-btn.is-active {{
+          border-color: var(--echo-accent);
+          background: rgba(59, 130, 246, 0.14);
+          color: var(--echo-accent);
+        }}
+        .echo-iv-btn:disabled {{
+          opacity: 0.55;
+          cursor: default;
+        }}
+        #canvas-area {{
+          width: 100%;
+          min-height: 80px;
+          position: relative;
+          overflow: hidden;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background-color: var(--echo-bg);
+          box-sizing: border-box;
+          padding: 8px;
+        }}
+        #echo-rv-lock-shield {{
+          position: absolute;
+          inset: 0;
+          z-index: 50;
+          background: transparent;
+          cursor: default;
         }}
         .btn {{
           background: var(--echo-btn-bg); border: 1px solid var(--echo-btn-border); color: var(--echo-btn-text);
@@ -1452,6 +1572,81 @@ class EchoRichUI:
       let lastHeight = 0;
       let reportTimeout = null;
       let disableAutoResize = false;
+
+      window.echoBindFrameFullscreen = function(opts) {{
+        opts = opts || {{}};
+        const btnEl = opts.btnEl || null;
+        const maxIcon = opts.maxIcon || '';
+        const shrinkIcon = opts.shrinkIcon || maxIcon;
+        const onChange = opts.onChange || null;
+        let isFs = false;
+
+        function applyFsState(nextFs) {{
+          const changed = (isFs !== !!nextFs);
+          isFs = !!nextFs;
+          document.documentElement.classList.toggle('echo-is-fullscreen', isFs);
+          disableAutoResize = isFs;
+          if (btnEl) {{
+            btnEl.classList.toggle('is-active', isFs);
+            btnEl.innerHTML = (isFs ? shrinkIcon : maxIcon) + ' <span>' + (isFs ? 'Quitter' : 'Plein écran') + '</span>';
+            btnEl.title = isFs ? 'Quitter le mode plein écran (Échap)' : 'Afficher en plein écran maximisé';
+          }}
+          if (changed && typeof onChange === 'function') {{
+            onChange(isFs);
+          }}
+          if (!isFs && typeof reportHeight === 'function') {{
+            setTimeout(reportHeight, 50);
+          }}
+        }}
+
+        function toggleFs() {{
+          const targetFs = !isFs;
+          try {{
+            parent.postMessage({{ type: 'echo:iframe:fullscreen', active: targetFs }}, '*');
+          }} catch (e) {{}}
+          if (!targetFs && document.fullscreenElement && document.exitFullscreen) {{
+            try {{ document.exitFullscreen().catch(() => {{}}); }} catch (e) {{}}
+          }}
+          applyFsState(targetFs);
+        }}
+
+        window.addEventListener('message', (ev) => {{
+          if (ev.data && ev.data.type === 'echo:iframe:fullscreen-state') {{
+            applyFsState(!!ev.data.active);
+          }}
+        }});
+
+        document.addEventListener('fullscreenchange', () => {{
+          if (!document.fullscreenElement && isFs) {{
+            try {{ parent.postMessage({{ type: 'echo:iframe:fullscreen', active: false }}, '*'); }} catch (e) {{}}
+            applyFsState(false);
+          }}
+        }});
+
+        window.addEventListener('keydown', (ke) => {{
+          if (ke.key === 'Escape' && isFs) {{
+            ke.stopPropagation();
+            try {{ parent.postMessage({{ type: 'echo:iframe:fullscreen', active: false }}, '*'); }} catch (e) {{}}
+            if (document.fullscreenElement && document.exitFullscreen) {{
+              try {{ document.exitFullscreen().catch(() => {{}}); }} catch (e) {{}}
+            }}
+            applyFsState(false);
+          }}
+        }}, true);
+
+        if (btnEl) {{
+          btnEl.onclick = function(e) {{
+            e.stopPropagation();
+            toggleFs();
+          }};
+        }}
+
+        return {{
+          isFullscreen: () => isFs,
+          setFullscreen: applyFsState,
+          toggle: toggleFs
+        }};
+      }};
 
       function reportHeight() {{
         if (disableAutoResize) return;
@@ -2626,6 +2821,9 @@ class EchoUI(EchoRichUI):
         copy_icon = cls.get_icon("Copy", size=15)
         export_icon = cls.get_icon("Export", size=15)
         max_icon = cls.get_icon("Maximize", size=14)
+        shrink_icon = cls.get_icon("Shrink", size=14)
+        max_icon_j = std_json.dumps(max_icon).decode("utf-8")
+        shrink_icon_j = std_json.dumps(shrink_icon).decode("utf-8")
         media_export_js = cls.get_media_export_js()
         fallback_badge = (
             '<span id="echo-iv-badge-mode" style="font-size:10px; padding:2px 7px; border-radius:999px; '
@@ -2644,101 +2842,6 @@ class EchoUI(EchoRichUI):
 
         content = f"""
     <style>
-      #echo-iv-root {{
-        display: flex;
-        flex-direction: column;
-        width: 100%;
-        border: 1px solid var(--echo-hud-border);
-        border-radius: 10px;
-        overflow: hidden;
-        background: var(--echo-bg);
-        box-sizing: border-box;
-      }}
-      #hud-bar {{
-        margin-bottom: 0 !important;
-        border: none !important;
-        border-bottom: 1px solid var(--echo-hud-border) !important;
-        border-radius: 0 !important;
-        padding: 8px 12px !important;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-        flex-wrap: wrap;
-        background: var(--echo-bg);
-      }}
-      .echo-iv-title-group {{
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        min-width: 0;
-        flex: 1;
-      }}
-      .echo-iv-title {{
-        font-weight: 600;
-        font-size: 13px;
-        color: var(--echo-text);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }}
-      .echo-iv-dims {{
-        font-size: 11px;
-        color: var(--echo-hud-text);
-        font-family: 'JetBrains Mono', monospace;
-        white-space: nowrap;
-        padding: 2px 6px;
-        border-radius: 4px;
-        background: var(--echo-btn-bg);
-        border: 1px solid var(--echo-hud-border);
-      }}
-      .echo-iv-actions {{
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }}
-      .echo-iv-btn {{
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 5px;
-        height: 28px;
-        padding: 0 9px;
-        border-radius: 6px;
-        border: 1px solid var(--echo-btn-border);
-        background: var(--echo-btn-bg);
-        color: var(--echo-text);
-        font-size: 11px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: all 0.15s ease;
-        user-select: none;
-      }}
-      .echo-iv-btn:hover {{
-        border-color: var(--echo-accent);
-        color: var(--echo-accent);
-      }}
-      .echo-iv-btn.is-active {{
-        border-color: var(--echo-accent);
-        background: rgba(59, 130, 246, 0.14);
-        color: var(--echo-accent);
-      }}
-      .echo-iv-btn:disabled {{
-        opacity: 0.55;
-        cursor: default;
-      }}
-      #canvas-area {{
-        width: 100%;
-        min-height: 80px;
-        position: relative;
-        overflow: hidden;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        background-color: var(--echo-bg);
-        box-sizing: border-box;
-        padding: 8px;
-      }}
       #echo-iv-img {{
         display: block;
         width: 100%;
@@ -2763,6 +2866,9 @@ class EchoUI(EchoRichUI):
         <div class="echo-iv-actions">
           <button id="echo-iv-btn-fit" class="echo-iv-btn" title="Basculer Ajuster au cadre / Taille réelle (1:1)">
             {max_icon} <span id="echo-iv-fit-label">1:1</span>
+          </button>
+          <button id="echo-iv-btn-fs" class="echo-iv-btn" title="Afficher en plein écran maximisé">
+            {max_icon} <span>Plein écran</span>
           </button>
           <button id="echo-iv-btn-copy" class="echo-iv-btn" title="Copier l'image dans le presse-papier (Qualité native)">
             {copy_icon} <span>Copier</span>
@@ -2795,10 +2901,12 @@ class EchoUI(EchoRichUI):
         const extLink = document.getElementById('echo-iv-ext-link');
         const btnFit = document.getElementById('echo-iv-btn-fit');
         const fitLabel = document.getElementById('echo-iv-fit-label');
+        const btnFs = document.getElementById('echo-iv-btn-fs');
         const btnCopy = document.getElementById('echo-iv-btn-copy');
         const btnExport = document.getElementById('echo-iv-btn-export');
         const galleryBar = document.getElementById('echo-iv-gallery-bar');
 
+        let isFullscreen = false;
         let fitMode = true;
         let zoom = 1.0;
         let panX = 0, panY = 0;
@@ -2818,31 +2926,51 @@ class EchoUI(EchoRichUI):
           if (fitMode) {{
             area.style.touchAction = '';
             img.style.touchAction = '';
-            disableAutoResize = false;
             zoom = 1.0;
             panX = 0;
             panY = 0;
             area.style.cursor = 'zoom-in';
-            img.style.width = '100%';
-            img.style.maxWidth = '100%';
-            img.style.height = 'auto';
-            img.style.maxHeight = 'none';
-            img.style.transform = 'none';
-            fitLabel.textContent = '1:1';
 
-            const scaledH = Math.round(areaW * (natH / natW));
-            const targetH = Math.max(60, scaledH + 16);
-            const prevH = area.style.height;
-            area.style.height = targetH + 'px';
+            if (isFullscreen) {{
+              disableAutoResize = true;
+              const hudH = (document.getElementById('hud-bar') ? document.getElementById('hud-bar').offsetHeight : 46) + (galleryBar ? galleryBar.offsetHeight : 0);
+              const availH = Math.max(120, (window.innerHeight || 800) - hudH);
+              area.style.height = availH + 'px';
+              img.style.width = '100%';
+              img.style.height = '100%';
+              img.style.maxWidth = '100%';
+              img.style.maxHeight = '100%';
+              img.style.objectFit = 'contain';
+              img.style.transform = 'none';
+              fitLabel.textContent = '1:1';
+            }} else {{
+              disableAutoResize = false;
+              img.style.width = '100%';
+              img.style.maxWidth = '100%';
+              img.style.height = 'auto';
+              img.style.maxHeight = 'none';
+              img.style.objectFit = 'contain';
+              img.style.transform = 'none';
+              fitLabel.textContent = '1:1';
 
-            if (prevH !== area.style.height && typeof reportHeight === 'function') {{
-              setTimeout(reportHeight, 30);
+              const scaledH = Math.round(areaW * (natH / natW));
+              const targetH = Math.max(60, scaledH + 16);
+              const prevH = area.style.height;
+              area.style.height = targetH + 'px';
+
+              if (prevH !== area.style.height && typeof reportHeight === 'function') {{
+                setTimeout(reportHeight, 30);
+              }}
             }}
           }} else {{
             area.style.touchAction = 'none';
             img.style.touchAction = 'none';
             disableAutoResize = true;
             area.style.cursor = isDragging ? 'grabbing' : 'grab';
+            if (isFullscreen) {{
+              const hudH = (document.getElementById('hud-bar') ? document.getElementById('hud-bar').offsetHeight : 46) + (galleryBar ? galleryBar.offsetHeight : 0);
+              area.style.height = Math.max(120, (window.innerHeight || 800) - hudH) + 'px';
+            }}
             img.style.width = natW + 'px';
             img.style.maxWidth = 'none';
             img.style.height = natH + 'px';
@@ -3078,6 +3206,21 @@ class EchoUI(EchoRichUI):
         }} else {{
           img.src = IMG_SRC;
         }}
+
+        if (window.echoBindFrameFullscreen) {{
+          window.echoBindFrameFullscreen({{
+            btnEl: btnFs,
+            maxIcon: {max_icon_j},
+            shrinkIcon: {shrink_icon_j},
+            onChange: function(fs) {{
+              isFullscreen = fs;
+              updateLayout();
+            }}
+          }});
+        }}
+        window.addEventListener('resize', function() {{
+          if (isFullscreen) updateLayout();
+        }});
       }})();
     </script>
     """
@@ -3120,11 +3263,38 @@ class EchoUI(EchoRichUI):
         cfg = VisualEngine.get_config(
             moteur, payload, cdn_timeout_ms=cdn_timeout_ms)
 
+        safe_title = (
+            (title or "ECHO Rendu Visuel")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
+        safe_moteur = (moteur or "mermaid").upper()
+        copy_icon = cls.get_icon("Copy", size=15)
+        export_icon = cls.get_icon("Export", size=15)
+        max_icon = cls.get_icon("Maximize", size=14)
+        shrink_icon = cls.get_icon("Shrink", size=14)
+        lock_icon = cls.get_icon("Lock", size=14)
+        unlock_icon = cls.get_icon("Unlock", size=14)
+        media_export_js = cls.get_media_export_js()
+        moteur_j = std_json.dumps(moteur or "visual").decode("utf-8")
+        max_icon_j = std_json.dumps(max_icon).decode("utf-8")
+        shrink_icon_j = std_json.dumps(shrink_icon).decode("utf-8")
+        lock_icon_j = std_json.dumps(lock_icon).decode("utf-8")
+        unlock_icon_j = std_json.dumps(unlock_icon).decode("utf-8")
+
         styles_list = [s for s in cfg.get("scripts", []) if s.endswith('.css')]
         scripts_list = [
             s for s in cfg.get(
                 "scripts",
                 []) if not s.endswith('.css')]
+
+        html_to_image_cdn = (
+            "https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"
+        )
+        if html_to_image_cdn not in scripts_list:
+            scripts_list.append(html_to_image_cdn)
 
         styles_html = "\n".join(
             [f'<link rel="stylesheet" href="{s}">' for s in styles_list])
@@ -3137,8 +3307,53 @@ class EchoUI(EchoRichUI):
       {cfg.get('style', '')}
     </style>
     {styles_html}
-    {cfg.get('container', '<div id="visual-target"></div>')}
+    <script>
+      (function() {{
+        try {{
+          const origGetContext = HTMLCanvasElement.prototype.getContext;
+          HTMLCanvasElement.prototype.getContext = function(type, attribs) {{
+            if (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl') {{
+              attribs = Object.assign({{}}, attribs, {{ preserveDrawingBuffer: true }});
+            }}
+            return origGetContext.call(this, type, attribs);
+          }};
+        }} catch(e) {{}}
+      }})();
+    </script>
     {scripts_html}
+
+    <div id="echo-iv-root">
+      <div id="hud-bar">
+        <div class="echo-iv-title-group">
+          <span style="font-size:15px;">📊</span>
+          <span class="echo-iv-title" title="{safe_title}">{safe_title}</span>
+          <span class="echo-iv-dims">{safe_moteur}</span>
+        </div>
+        <div class="echo-iv-actions">
+          <button id="echo-rv-btn-lock" class="echo-iv-btn" title="Activer/Désactiver l'interaction souris et clavier dans le schéma">
+            {lock_icon} <span id="echo-rv-lock-label">Verrouillé</span>
+          </button>
+          <button id="echo-iv-btn-fit" class="echo-iv-btn" title="Basculer Ajuster au cadre / Taille réelle (1:1)">
+            {max_icon} <span id="echo-iv-fit-label">1:1</span>
+          </button>
+          <button id="echo-iv-btn-fs" class="echo-iv-btn" title="Afficher en plein écran maximisé">
+            {max_icon} <span>Plein écran</span>
+          </button>
+          <button id="echo-iv-btn-copy" class="echo-iv-btn" title="Copier la vue en cours en PNG dans le presse-papier">
+            {copy_icon} <span>Copier</span>
+          </button>
+          <button id="echo-iv-btn-export" class="echo-iv-btn" title="Télécharger la vue en cours en PNG">
+            {export_icon} <span>Exporter</span>
+          </button>
+        </div>
+      </div>
+      <div id="canvas-area" style="padding:0; display:block; position:relative;">
+        <div id="echo-rv-lock-shield" title="Interaction verrouillée (cliquez sur Verrouillé pour interagir)"></div>
+        <div id="visual-stage" style="width:100%; height:100%; pointer-events:none; transform-origin:0 0;">
+          {cfg.get('container', '<div id="visual-target"></div>')}
+        </div>
+      </div>
+    </div>
 
     <script>
       (function() {{
@@ -3158,6 +3373,174 @@ class EchoUI(EchoRichUI):
         window.addEventListener('error', (e) => recordErr(e.message || e.error));
         window.addEventListener('unhandledrejection', (e) => recordErr(e.reason));
       }})();
+
+      {media_export_js}
+
+      (function() {{
+        const area = document.getElementById('canvas-area');
+        const shield = document.getElementById('echo-rv-lock-shield');
+        const stage = document.getElementById('visual-stage');
+        const target = document.getElementById('visual-target');
+        const btnLock = document.getElementById('echo-rv-btn-lock');
+        const btnFit = document.getElementById('echo-iv-btn-fit');
+        const fitLabel = document.getElementById('echo-iv-fit-label');
+        const btnFs = document.getElementById('echo-iv-btn-fs');
+        const btnCopy = document.getElementById('echo-iv-btn-copy');
+        const btnExport = document.getElementById('echo-iv-btn-export');
+        const MOTEUR = {moteur_j};
+        const lockIcon = {lock_icon_j};
+        const unlockIcon = {unlock_icon_j};
+        const maxIcon = {max_icon_j};
+        const shrinkIcon = {shrink_icon_j};
+
+        let interactiveMode = false;
+        function setInteractiveMode(enabled) {{
+          interactiveMode = !!enabled;
+          if (!interactiveMode && stage && document.activeElement && stage.contains(document.activeElement)) {{
+            try {{
+              document.activeElement.blur();
+            }} catch(err) {{}}
+          }}
+          if (shield) shield.style.display = interactiveMode ? 'none' : 'block';
+          if (stage) stage.style.pointerEvents = interactiveMode ? 'auto' : 'none';
+          if (btnLock) {{
+            btnLock.classList.toggle('is-active', interactiveMode);
+            btnLock.innerHTML = (interactiveMode ? unlockIcon : lockIcon) +
+              ' <span id="echo-rv-lock-label">' + (interactiveMode ? 'Interactif' : 'Verrouillé') + '</span>';
+            btnLock.title = interactiveMode
+              ? "Interaction active (cliquez pour verrouiller)"
+              : "Interaction verrouillée (cliquez pour interagir)";
+          }}
+        }}
+
+        if (btnLock) {{
+          btnLock.onclick = function(e) {{
+            e.stopPropagation();
+            setInteractiveMode(!interactiveMode);
+          }};
+        }}
+
+        const blockKeyEvent = function(e) {{
+          if (!interactiveMode && e.key !== 'Escape') {{
+            e.stopPropagation();
+            e.preventDefault();
+          }}
+        }};
+        window.addEventListener('keydown', blockKeyEvent, true);
+        window.addEventListener('keyup', blockKeyEvent, true);
+        window.addEventListener('keypress', blockKeyEvent, true);
+
+        let isFit11 = false;
+        if (btnFit) {{
+          btnFit.onclick = function(e) {{
+            e.stopPropagation();
+            isFit11 = !isFit11;
+            btnFit.classList.toggle('is-active', isFit11);
+            if (fitLabel) fitLabel.textContent = isFit11 ? 'Ajuster' : '1:1';
+            if (stage) {{
+              if (isFit11) {{
+                stage.style.transform = 'scale(1.25)';
+                stage.style.transformOrigin = 'top left';
+              }} else {{
+                stage.style.transform = 'none';
+                stage.style.transformOrigin = '0 0';
+              }}
+            }}
+            try {{
+              window.dispatchEvent(new Event('resize'));
+            }} catch(err) {{}}
+          }};
+        }}
+
+        let origTargetHeight = target ? target.style.height : '';
+        let isFullscreen = false;
+        function updateFullscreenLayout(fs) {{
+          if (fs && !isFullscreen && target) {{
+            origTargetHeight = target.style.height || origTargetHeight;
+          }}
+          isFullscreen = !!fs;
+          if (isFullscreen) {{
+            const hud = document.getElementById('hud-bar');
+            const hudH = hud ? hud.offsetHeight : 46;
+            const availH = Math.max(120, (window.innerHeight || 800) - hudH);
+            if (area) area.style.height = availH + 'px';
+            if (target) target.style.height = availH + 'px';
+          }} else {{
+            if (area) area.style.height = '';
+            if (target) target.style.height = origTargetHeight;
+          }}
+          try {{
+            window.dispatchEvent(new Event('resize'));
+          }} catch(e) {{}}
+        }}
+
+        if (window.echoBindFrameFullscreen) {{
+          window.echoBindFrameFullscreen({{
+            btnEl: btnFs,
+            maxIcon: maxIcon,
+            shrinkIcon: shrinkIcon,
+            onChange: function(fs) {{
+              updateFullscreenLayout(fs);
+            }}
+          }});
+        }}
+        window.addEventListener('resize', function() {{
+          if (isFullscreen) updateFullscreenLayout(true);
+        }});
+
+        async function exportCurrentView(mode, btnEl) {{
+          if (!window.htmlToImage || !window.htmlToImage.toPng || !area) return;
+          try {{
+            let bg = '#171717';
+            try {{
+              const cs = window.getComputedStyle(area);
+              if (cs && cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent') {{
+                bg = cs.backgroundColor;
+              }} else if (document.body) {{
+                const bcs = window.getComputedStyle(document.body);
+                if (bcs && bcs.backgroundColor && bcs.backgroundColor !== 'rgba(0, 0, 0, 0)' && bcs.backgroundColor !== 'transparent') {{
+                  bg = bcs.backgroundColor;
+                }}
+              }}
+            }} catch(e) {{}}
+
+            const dataUrl = await window.htmlToImage.toPng(area, {{
+              pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+              skipFonts: true,
+              backgroundColor: bg
+            }});
+
+            const tmpImg = new Image();
+            tmpImg.onload = function() {{
+              if (window.echoExportImage) {{
+                window.echoExportImage({{
+                  imgEl: tmpImg,
+                  mode: mode,
+                  btnEl: btnEl,
+                  filename: 'ECHO_' + (MOTEUR || 'VISUAL').toUpperCase() + '_' + Date.now() + '.png'
+                }});
+              }}
+            }};
+            tmpImg.src = dataUrl;
+          }} catch(err) {{
+            console.error('Erreur exportCurrentView:', err);
+          }}
+        }}
+
+        if (btnCopy) {{
+          btnCopy.onclick = function(e) {{
+            e.stopPropagation();
+            exportCurrentView('copy', btnCopy);
+          }};
+        }}
+        if (btnExport) {{
+          btnExport.onclick = function(e) {{
+            e.stopPropagation();
+            exportCurrentView('save', btnExport);
+          }};
+        }}
+      }})();
+
       {cfg.get('init', '')}
     </script>
     """
