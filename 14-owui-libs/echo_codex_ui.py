@@ -1,16 +1,16 @@
 """
 title: ECHO Codex UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.232.5.1
+version: 5.237.18.1
 description: Composant système interne : Moteur de rendu HUD Monaco et Éditeur Hexadécimal pour ECHO Codex.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.18.1: Inversion ergonomique des icônes Import (flèche montante Export) et Export (flèche descendante Download) dans le header du HUD Codex.
 # 5.232.5.1: Support déclaratif de ECHO_CODEX_WORKSPACES, verrouillage Read-Only automatique sur les workspaces non-inscriptibles (plans, generated) et rafraîchissement de l'aperçu image lors de la navigation d'historique Git (◀ ▶).
 # 5.231.55.1: Export direct client-side (0 aller-retour RPC), noWatchdogActions sur download/upload et délégation sécurisée à echoTriggerDownload.
 # 5.231.47.1: Factorisation des icônes Import/Export/Copy via EchoUI.get_icon et activation de la copie d'image (window.echoExportImage) dans PREVIEW_REGISTRY.
 # 5.231.46.1: Alignement de la docstring _generate_codex_js sur events.call_execute.
-# 5.231.39.1: Sérialisation JSON intégrale des variables JS (activeChatTitle), pré-injection initial_content à t=0ms et isolation multi-chat de echoOpenCodex.
 
 
 import sys
@@ -419,8 +419,8 @@ class EchoCodexUI(EchoUI):
         <span id="${{CODEX_ID}}-readonly-badge" class="codex-readonly-badge" style="font-size:11px; padding:2px 8px; border-radius:4px; background:rgba(239,68,68,0.15); color:#ef4444; font-weight:600; border:1px solid rgba(239,68,68,0.3); display:inline-flex; align-items:center; gap:4px; margin-right:4px;">🔒 Lecture Seule</span>
         <select id="${{CODEX_ID}}-lang" style="background:transparent; border:1px solid ${{borderColor}};
           color:${{textColor}}; padding:2px 6px; border-radius:4px; font-size:12px;"></select>
-        <button id="${{CODEX_ID}}-import" class="codex-editable" title="Importer (PC → Codex)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;">{cls.get_icon('Download', size=16)}</button>
-        <button id="${{CODEX_ID}}-export" title="Exporter (Codex → PC)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;">{cls.get_icon('Export', size=16)}</button>
+        <button id="${{CODEX_ID}}-import" class="codex-editable" title="Importer (PC → Codex)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;">{cls.get_icon('Export', size=16)}</button>
+        <button id="${{CODEX_ID}}-export" title="Exporter (Codex → PC)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;">{cls.get_icon('Download', size=16)}</button>
         <button id="${{CODEX_ID}}-copy" title="Copier" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;">{cls.get_icon('Copy', size=16)}</button>
         <button id="${{CODEX_ID}}-refresh" title="Actualiser" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='23 4 23 10 17 10'/><polyline points='1 20 1 14 7 14'/><path d='M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15'/></svg></button>
         <button id="${{CODEX_ID}}-save" class="codex-editable" title="Sauvegarder (Ctrl+S)" style="background:none; border:none; color:${{textColor}}; cursor:pointer; font-size:14px; line-height:1; opacity:0.3; transition:opacity 0.2s;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z'/><polyline points='17 21 17 13 7 13 7 21'/><polyline points='7 3 7 8 15 8'/></svg></button>
