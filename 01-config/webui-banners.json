@@ -1,5 +1,13 @@
 [
   {
+    "id": "echo-banner-update-snapshot-20261110",
+    "type": "warning",
+    "title": "Mise à jour sous snapshot",
+    "content": "**Mise à jour sous snapshot** : Mise à jour en cours sous snapshot. Rollback possible, avec perte de votre travail actuel. Le travail mené avant cet avertissement ne sera pas perdu.",
+    "dismissible": false,
+    "timestamp": 1794338056
+  },
+  {
     "id": "echo-banner-roadmap-v6-decoupling-20261108",
     "type": "info",
     "title": "Feuille de route : ECHO v6",
