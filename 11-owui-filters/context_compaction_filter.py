@@ -1,22 +1,23 @@
 """
 title: ECHO Context Compaction Filter
 author: Wilfried BARNAVON
-version: 5.231.58.1
+version: 5.237.20.1
 description: Composant système interne : Compaction contextuelle automatique in-place sur seuil.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgMjJ2LTYiLz48cGF0aCBkPSJNMTIgOFYyIi8+PHBhdGggZD0iTTQgMTJIMiIvPjxwYXRoIGQ9Ik0xMCAxMkg4Ii8+PHBhdGggZD0iTTE2IDEyaC0yIi8+PHBhdGggZD0iTTIyIDEyaC0yIi8+PHBhdGggZD0ibTE1IDE5LTMtMy0zIDMiLz48cGF0aCBkPSJtMTUgNS0zIDMtMy0zIi8+PC9zdmc+
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.20.1: Retrait de tous les messages user finaux consécutifs et recalcul préventif du contexte actif après suppression de messages.
+# 5.231.58.2: Remplacement de l'encart modal #echo-compact-hud et des toasts par des notifications natives EchoEvents.status.
 # 5.231.58.1: Affichage du modèle clampé dans le HUD et le toast de compaction suite à la sélection du modèle le plus haut disponible.
 # 5.231.55.1: Réétagement de la priorité à 60 (après user_native_context_filter à 50 et avant new_context_filter à 70).
 # 5.231.38.1: Activation par défaut de la compaction contextuelle automatique (ENABLE_AUTO_COMPACTION=True).
-# 5.231.31.1: Prise en charge asynchrone directe de EchoCompactionEngine.load_active_branch_messages, notification d'alerte et spinner CSS HUD.
-# 5.231.30.1: Alignement sur le modèle UserValves (ENABLE_AUTO_COMPACTION uniquement, toggle=True, icône SVG fold-vertical) et utilisation stricte des constantes SSOT.
 
 import sys
 import logging
 from typing import Optional, Callable, Any
 from pydantic import BaseModel, Field
+import orjson as std_json
 
 for _p in ("/app/backend/echo_libs", "/opt/ECHO/owui-libs"):
     if _p not in sys.path:
@@ -30,7 +31,7 @@ from echo_constants import (
     COMPACTION_MIN_TURNS_REQUIRED,
     get_compaction_shares,
 )
-from echo_core import EchoCompactionEngine, clamp_model
+from echo_core import EchoCompactionEngine, clamp_model, estimate_token_size
 from echo_state_manager import EchoStateManager
 from echo_events import EchoEvents
 
@@ -65,38 +66,6 @@ class Filter:
         if isinstance(__user__, dict) and __user__.get("valves") is not None:
             return __user__["valves"]
         return self.user_valves
-
-    @staticmethod
-    def _build_hud_js(active: bool, subtitle: str = "") -> str:
-        if not active:
-            return "(() => { const el = document.getElementById('echo-compact-hud'); if (el) el.remove(); })();"
-        safe_sub = (
-            subtitle.replace("\\", "\\\\")
-            .replace("'", "\\'")
-            .replace("\n", " ")
-        )
-        return (
-            "(() => {"
-            "  let el = document.getElementById('echo-compact-hud');"
-            "  if (!el) {"
-            "    const styleEl = document.createElement('style');"
-            "    styleEl.textContent = '@keyframes echo-compact-spin { to { transform: rotate(360deg); } }';"
-            "    document.head.appendChild(styleEl);"
-            "    el = document.createElement('div');"
-            "    el.id = 'echo-compact-hud';"
-            "    el.setAttribute('data-echo-scope', 'global');"
-            "    el.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(10,12,18,0.72);"
-            "backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;font-family:system-ui,sans-serif;';"
-            "    el.innerHTML = `<div style=\"background:#151924;border:1px solid rgba(56,189,248,0.35);border-radius:14px;"
-            "padding:24px 32px;max-width:460px;color:#f1f5f9;box-shadow:0 20px 50px rgba(0,0,0,0.5);text-align:center;\">"
-            "<div style=\"display:inline-block;width:22px;height:22px;border:2.5px solid rgba(56,189,248,0.25);border-top-color:#38bdf8;border-radius:50%;animation:echo-compact-spin 0.8s linear infinite;margin-bottom:10px;\"></div>"
-            "<div style=\"font-size:16px;font-weight:600;margin-bottom:8px;color:#38bdf8;\">🗜️ Compaction Contextuelle en cours...</div>"
-            "<div id=\"echo-compact-hud-sub\" style=\"font-size:13px;color:#94a3b8;\"></div></div>`;"
-            "    document.body.appendChild(el);"
-            "  }"
-            f"  const sub = document.getElementById('echo-compact-hud-sub'); if (sub) sub.textContent = '{safe_sub}';"
-            "})();"
-        )
 
     async def inlet(
         self,
@@ -149,11 +118,38 @@ class Filter:
         try:
             branch = await EchoCompactionEngine.load_active_branch_messages(chat_id)
             if branch:
-                # Si le dernier message de branch est déjà le message entrant sans réponse assistant, l'exclure de past_messages
-                if branch[-1].get("role") == "user":
-                    past_messages = branch[:-1]
-                else:
-                    past_messages = branch
+                branch_ids = {
+                    str(m.get("id"))
+                    for m in branch
+                    if isinstance(m, dict) and m.get("id")
+                }
+                past_messages = list(branch)
+                trailing_users = []
+                while past_messages and EchoCompactionEngine.is_real_user_turn(past_messages[-1]):
+                    trailing_users.insert(0, past_messages.pop())
+                if len(trailing_users) > 1:
+                    incoming_msg = {
+                        "role": "user",
+                        "content": "\n\n".join(str(u.get("content", "")) for u in trailing_users),
+                    }
+
+                last_turn_id = last_stats.get("last_turn_msg_id")
+                if last_turn_id and str(last_turn_id) not in branch_ids:
+                    raw_ckpt = state_mgr.get_session_setting("context_checkpoint")
+                    ckpt = std_json.loads(raw_ckpt) if raw_ckpt else None
+                    turns = EchoCompactionEngine.split_into_turns(past_messages, state_mgr=state_mgr)
+                    p_idx = EchoCompactionEngine.resolve_pivot_turn_index(turns, ckpt) if ckpt else 0
+                    ckpt_toks = int((ckpt or {}).get("checkpoint_tokens", 0)) if p_idx > 0 else 0
+                    tail_toks = sum(int(t.get("tokens_est", 0)) for t in turns[p_idx:])
+                    inc_toks = estimate_token_size(incoming_msg)
+                    current_tokens = ckpt_toks + tail_toks + inc_toks
+                    if current_tokens < trigger_tokens:
+                        updated_stats = dict(last_stats)
+                        updated_stats["promptTokenCount"] = current_tokens
+                        updated_stats["totalTokenCount"] = current_tokens
+                        updated_stats["last_turn_msg_id"] = turns[-1]["user_msg_id"] if turns else None
+                        state_mgr.save_context_stats(updated_stats)
+                        return body
         except Exception:
             pass
 
@@ -162,12 +158,11 @@ class Filter:
         )
         pct_display = round((current_tokens / ECHO_MAX_CONTEXT_SIZE) * 100, 1)
         target_model_hint = clamp_model("MODEL_PROMETHEUS", __metadata__, user_id=user_id)
-        hud_subtitle = (
-            f"Seuil atteint ({pct_display}% >= {round(trigger_pct * 100, 1)}%). "
-            f"Distillation ({target_model_hint}) en cours..."
-        )
         try:
-            await events.emit_execute(self._build_hud_js(True, hud_subtitle))
+            await events.status(
+                f"🗜️ Compaction contextuelle en cours ({pct_display}% — {target_model_hint})...",
+                done=False,
+            )
             result = await EchoCompactionEngine.execute_compaction(
                 user_id=user_id,
                 chat_id=chat_id,
@@ -179,25 +174,22 @@ class Filter:
                 compressed_share_pct=compressed_share,
                 kept_share_pct=kept_share,
                 min_turns_required=COMPACTION_MIN_TURNS_REQUIRED,
+                target_model=target_model_hint,
             )
             if result.get("ok"):
-                await events.toast(
-                    f"🗜️ Contexte compacté (#{result['compaction_count']} via {result.get('model_used', target_model_hint)} : "
-                    f"{result['compacted_turns']} tours distillés, {result['keep_recent_turns']} gardés).",
-                    "info",
+                await events.status(
+                    f"✅ Compaction #{result['compaction_count']} terminée "
+                    f"({result['compacted_turns']} tours consolidés, "
+                    f"{result['keep_recent_turns']} récents intacts).",
+                    done=True,
                 )
             else:
                 reason = result.get("reason", "Inconnue")
                 logger.info(f"ECHO Compaction ignorée ({chat_id}): {reason}")
-                await events.toast(f"ℹ️ Compaction différée : {reason}", "info")
+                await events.status(f"⚠️ Compaction reportée : {reason}", done=True)
         except Exception as e:
             logger.error(f"ECHO Compaction erreur ({chat_id}): {e}")
-            await events.toast(f"⚠️ Échec de compaction : {e}", "warning")
-        finally:
-            try:
-                await events.emit_execute(self._build_hud_js(False))
-            except Exception:
-                pass
+            await events.status(f"⚠️ Échec de compaction : {e}", done=True)
 
         return body
 

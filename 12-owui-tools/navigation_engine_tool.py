@@ -1,16 +1,16 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 5.233.0.1
+version: 5.238.1.1
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.238.1.1: Ajout de MODEL_ATHENA dans target_model_key de delegate_web_browsing.
 # 5.233.0.1: Décoration @echo_tool sur les 6 méthodes publiques et simplification des retours wrap_tool_output.
 # 5.231.41.1: Tour de synthèse finale garanti en functionCallingConfig mode NONE à l'épuisement de max_iterations dans delegate_web_browsing, injection d'alerte de budget dans functionResponse et garde-fou de récupération.
 # 5.231.20.1: Isolation des sessions Playwright par sub_sid/sid dans delegate_web_browsing et close_web_thread, sessions éphémères parallélisables dans analyze/archive_web_page et nommage anti-écrasement des archives.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 import os
 import time
@@ -128,7 +128,7 @@ class Tools:
     @echo_tool
     async def delegate_web_browsing(
         self, task_objective: str, start_url: Optional[str] = None, 
-        target_model_key: Literal["MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_APOLLO", 
+        target_model_key: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_APOLLO", 
         max_iterations: int = 30,
         __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None
     ) -> dict:

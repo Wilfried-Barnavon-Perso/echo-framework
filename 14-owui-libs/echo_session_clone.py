@@ -1,16 +1,16 @@
 """
 title: ECHO Session Clone & Migration Engine
 author: Wilfried BARNAVON
-version: 5.235.5.2
+version: 5.237.20.3
 description: Moteur partagé de duplication atomique des conteneurs de session ECHO (Clone, Fork et Migration).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.20.3: Alignement généalogique strict de ancestor_msg_ids sur live_msg_ids dans prune_forked_history.
+# 5.237.20.2: Simplification de prune_forked_history et sync_cloned_session sur message_shadows v2 (support tuple/Row et lecture directe model_id).
 # 5.235.5.2: Purge arborescente exacte via compute_dead_set + purge_dead_set, support live_ids dans sync_cloned_session et duplication RAG filtrée.
 # 5.232.5.1: Alignement Git multi-workspaces (main, plans, generated) au cutoff, réécriture frontmatter dans plans et élagage mtime des workspaces non-versionnés.
 # 5.231.29.1: Alignement sur les constantes SSOT des espaces de travail Codex (CODEX_DIR_NAME, CODEX_WORKSPACE_MAIN, CODEX_WORKSPACE_SANDBOX).
-# 5.231.28.2: Suppression des requêtes SQLite sur les tables obsolètes plans et codex_docs (unification sur echo_resources).
-# 5.231.27.2: Refonte clonage/fork (résolution causale, copie Espace Utilisateur/RAG <= cutoff_ts, réassignation ID).
 
 from contextlib import closing
 import logging
@@ -51,9 +51,7 @@ def _is_session_db_populated(db_path: str) -> bool:
         with closing(sqlite3.connect(db_path, timeout=5.0)) as conn:
             cur = conn.cursor()
             for tbl in (
-                "suture_index",
                 "message_shadows",
-                "cognitive_signatures",
                 "call_bridge",
                 "echo_resources",
             ):
@@ -105,7 +103,7 @@ def reassign_session_ids(cur: sqlite3.Cursor, orig_cid: str, new_cid: str) -> No
         pass
 
     for tbl, col in (
-        ("tool_journal", "io_json"),
+        ("message_shadows", "full_parts_json"),
         ("call_bridge", "args_json"),
         ("cognitive_threads", "content_json"),
     ):
@@ -128,7 +126,7 @@ def reassign_session_ids(cur: sqlite3.Cursor, orig_cid: str, new_cid: str) -> No
         except Exception:
             pass
         for tbl, col in (
-            ("tool_journal", "io_json"),
+            ("message_shadows", "full_parts_json"),
             ("call_bridge", "args_json"),
             ("cognitive_threads", "content_json"),
         ):
@@ -160,10 +158,7 @@ def reassign_session_ids(cur: sqlite3.Cursor, orig_cid: str, new_cid: str) -> No
 def purge_conversational_state(cur: sqlite3.Cursor) -> None:
     """Purge l'état conversationnel d'une session migrée en préservant les ressources (Codex, Plans, Fichiers, N8N)."""
     for tbl in (
-        "suture_index",
         "message_shadows",
-        "cognitive_signatures",
-        "tool_journal",
         "rag_index_state",
         "call_bridge",
         "cognitive_threads",
@@ -199,256 +194,101 @@ def prune_forked_history(
     """Résout la chaîne causale jusqu'à forked_msg_id et élague les tables SQLite si le fork est partiel.
     Retourne (cutoff_ts, is_partial_fork)."""
     cur.execute(
-        "SELECT cumulative_hash, parent_hash, message_id, timestamp FROM suture_index"
-    )
-    suture_rows = cur.fetchall()
-    by_cumul = {r["cumulative_hash"]: r for r in suture_rows}
-
-    cur.execute(
-        "SELECT cumulative_hash, message_id, updated_at FROM cognitive_signatures"
-    )
-    all_sig_rows = cur.fetchall()
-
-    cur.execute(
         "SELECT message_id, role, full_parts_json, updated_at FROM message_shadows"
     )
-    all_shadow_rows = cur.fetchall()
-    shadow_by_id = {r["message_id"]: r for r in all_shadow_rows if r["message_id"]}
+    raw_rows = cur.fetchall()
+    shadow_by_id = {}
+    for r in raw_rows:
+        if isinstance(r, (sqlite3.Row, dict)):
+            mid, role, fpj, uat = r["message_id"], r["role"], r["full_parts_json"], r["updated_at"]
+        else:
+            mid, role, fpj, uat = r[0], r[1], r[2], r[3]
+        if mid:
+            shadow_by_id[str(mid)] = {
+                "message_id": str(mid),
+                "role": role,
+                "full_parts_json": fpj,
+                "updated_at": uat,
+            }
+    all_shadow_rows = list(shadow_by_id.values())
 
-    cur.execute("SELECT cumulative_hash, io_json, updated_at FROM tool_journal")
-    all_journal_rows = cur.fetchall()
-    journal_by_cumul = {
-        r["cumulative_hash"]: r for r in all_journal_rows if r["cumulative_hash"]
-    }
-
-    target_sig_rows = [r for r in all_sig_rows if r["message_id"] == forked_msg_id]
     target_shadow = shadow_by_id.get(forked_msg_id)
-    target_suture_rows = [r for r in suture_rows if r["message_id"] == forked_msg_id]
-
     is_user_only_fork = (
-        not target_sig_rows
-        and target_shadow is not None
-        and target_shadow["role"] == "user"
+        target_shadow is not None and target_shadow["role"] == "user"
     )
 
     cutoff_candidates: List[int] = []
-    target_cumuls: Set[str] = set()
-    target_msg_ids: Set[str] = {forked_msg_id}
+    if target_shadow and target_shadow["updated_at"]:
+        cutoff_candidates.append(int(target_shadow["updated_at"]))
 
-    if is_user_only_fork:
-        cutoff_candidates.append(int(target_shadow["updated_at"] or 0))
-    else:
-        for r in target_sig_rows:
-            if r["cumulative_hash"]:
-                target_cumuls.add(r["cumulative_hash"])
-            if r["updated_at"]:
-                cutoff_candidates.append(int(r["updated_at"]))
-        for r in target_suture_rows:
-            if r["cumulative_hash"]:
-                target_cumuls.add(r["cumulative_hash"])
-            if r["timestamp"]:
-                cutoff_candidates.append(int(r["timestamp"]))
-        if target_shadow and target_shadow["updated_at"]:
-            cutoff_candidates.append(int(target_shadow["updated_at"]))
-
-        for ch in list(target_cumuls):
-            s_node = by_cumul.get(ch)
-            if s_node:
-                if s_node["timestamp"]:
-                    cutoff_candidates.append(int(s_node["timestamp"]))
-                if s_node["message_id"]:
-                    target_msg_ids.add(s_node["message_id"])
-                    for sr in suture_rows:
-                        if (
-                            sr["message_id"] == s_node["message_id"]
-                            and sr["cumulative_hash"]
-                        ):
-                            target_cumuls.add(sr["cumulative_hash"])
-                            if sr["timestamp"]:
-                                cutoff_candidates.append(int(sr["timestamp"]))
-
-        for mid in list(target_msg_ids):
-            sh_row = shadow_by_id.get(mid)
-            if sh_row and sh_row["updated_at"]:
-                cutoff_candidates.append(int(sh_row["updated_at"]))
-
-        target_call_ids: Set[str] = set()
-        for ch in target_cumuls:
-            j_row = journal_by_cumul.get(ch)
-            if j_row:
-                if j_row["updated_at"]:
-                    cutoff_candidates.append(int(j_row["updated_at"]))
-                target_call_ids |= _extract_call_ids_from_json(j_row["io_json"])
-        for mid in target_msg_ids:
-            sh_row = shadow_by_id.get(mid)
-            if sh_row:
-                target_call_ids |= _extract_call_ids_from_json(
-                    sh_row["full_parts_json"]
-                )
-
+    if not is_user_only_fork:
+        target_call_ids: Set[str] = (
+            _extract_call_ids_from_json(target_shadow["full_parts_json"])
+            if (target_shadow and target_shadow["full_parts_json"])
+            else set()
+        )
         if target_call_ids:
             ph_cb = ",".join("?" for _ in target_call_ids)
             cur.execute(
-                f"SELECT MAX(timestamp) as max_cb FROM call_bridge WHERE call_id IN ({ph_cb})",
-                tuple(target_call_ids),
+                f"SELECT MAX(timestamp) as max_cb FROM call_bridge WHERE message_id = ? OR call_id IN ({ph_cb})",
+                (forked_msg_id, *tuple(target_call_ids)),
             )
-            row_cb = cur.fetchone()
-            if row_cb and row_cb["max_cb"]:
-                cutoff_candidates.append(int(row_cb["max_cb"]))
+        else:
+            cur.execute(
+                "SELECT MAX(timestamp) as max_cb FROM call_bridge WHERE message_id = ?",
+                (forked_msg_id,),
+            )
+        row_cb = cur.fetchone()
+        if row_cb:
+            val_cb = row_cb["max_cb"] if (isinstance(row_cb, sqlite3.Row) or isinstance(row_cb, dict)) else row_cb[0]
+            if val_cb is not None:
+                cutoff_candidates.append(int(val_cb))
 
-    if not cutoff_candidates and not target_cumuls:
+    if not cutoff_candidates:
         return None, False
 
-    cutoff_ts = max(cutoff_candidates) if cutoff_candidates else None
+    cutoff_ts = max(cutoff_candidates)
 
-    ancestor_cumuls: Set[str] = set(target_cumuls)
-    ancestor_msg_ids: Set[str] = set(target_msg_ids)
-    excluded_cumuls: Set[str] = {
-        r["cumulative_hash"]
-        for r in suture_rows
-        if is_user_only_fork
-        and r["message_id"] == forked_msg_id
-        and r["cumulative_hash"]
-    }
-    excluded_msg_ids: Set[str] = {
-        r["message_id"]
-        for r in all_sig_rows
-        if is_user_only_fork
-        and r["cumulative_hash"] in excluded_cumuls
-        and r["message_id"]
-    }
-
-    if cutoff_ts is not None:
-        for sr in suture_rows:
-            sr_ts = int(sr["timestamp"] or 0)
-            if sr_ts <= cutoff_ts and sr["cumulative_hash"] not in excluded_cumuls:
-                if sr["cumulative_hash"]:
-                    ancestor_cumuls.add(sr["cumulative_hash"])
-                if sr["message_id"]:
-                    ancestor_msg_ids.add(sr["message_id"])
-
-        for sig_r in all_sig_rows:
-            if (
-                sig_r["cumulative_hash"] in excluded_cumuls
-                or sig_r["message_id"] in excluded_msg_ids
-            ):
-                continue
-            sig_ts = int(sig_r["updated_at"] or 0)
-            if (
-                sig_ts <= cutoff_ts
-                or sig_r["cumulative_hash"] in ancestor_cumuls
-                or (not is_user_only_fork and sig_r["message_id"] in ancestor_msg_ids)
-            ):
-                if (
-                    is_user_only_fork
-                    and sig_r["cumulative_hash"] not in ancestor_cumuls
-                    and sig_r["message_id"] != forked_msg_id
-                ):
-                    continue
-                if sig_r["cumulative_hash"]:
-                    ancestor_cumuls.add(sig_r["cumulative_hash"])
-                if sig_r["message_id"]:
-                    ancestor_msg_ids.add(sig_r["message_id"])
-
-        for sr in suture_rows:
-            if sr["cumulative_hash"] in excluded_cumuls:
-                continue
-            if sr["cumulative_hash"] in ancestor_cumuls and sr["message_id"]:
-                ancestor_msg_ids.add(sr["message_id"])
-            elif (
-                not is_user_only_fork
-                and sr["message_id"] in ancestor_msg_ids
-                and sr["cumulative_hash"]
-            ):
-                ancestor_cumuls.add(sr["cumulative_hash"])
-
-        for sig_r in all_sig_rows:
-            if (
-                sig_r["cumulative_hash"] in excluded_cumuls
-                or sig_r["message_id"] in excluded_msg_ids
-            ):
-                continue
-            if sig_r["cumulative_hash"] in ancestor_cumuls and sig_r["message_id"]:
-                ancestor_msg_ids.add(sig_r["message_id"])
-            elif sig_r["message_id"] in ancestor_msg_ids and sig_r["cumulative_hash"]:
-                ancestor_cumuls.add(sig_r["cumulative_hash"])
-
+    if live_msg_ids is not None:
+        ancestor_msg_ids: Set[str] = {str(m) for m in live_msg_ids if m} | {forked_msg_id}
+    else:
+        ancestor_msg_ids = {forked_msg_id}
         for sh_r in all_shadow_rows:
-            if sh_r["message_id"] in excluded_msg_ids or (
+            sh_mid = sh_r["message_id"]
+            sh_ts = int(sh_r["updated_at"] or 0)
+            if (
                 is_user_only_fork
                 and sh_r["role"] != "user"
-                and sh_r["message_id"] not in ancestor_msg_ids
+                and sh_ts >= cutoff_ts
+                and sh_mid != forked_msg_id
             ):
                 continue
-            sh_ts = int(sh_r["updated_at"] or 0)
-            if sh_ts <= cutoff_ts or sh_r["message_id"] in ancestor_msg_ids:
-                if sh_r["message_id"]:
-                    ancestor_msg_ids.add(sh_r["message_id"])
-                if not is_user_only_fork and sh_ts > cutoff_ts:
-                    cutoff_ts = sh_ts
+            elif sh_ts <= cutoff_ts and sh_mid:
+                ancestor_msg_ids.add(sh_mid)
 
     kept_call_ids: Set[str] = set()
-    for ch in ancestor_cumuls:
-        j_row = journal_by_cumul.get(ch)
-        if j_row:
-            kept_call_ids |= _extract_call_ids_from_json(j_row["io_json"])
     for mid in ancestor_msg_ids:
         sh_row = shadow_by_id.get(mid)
-        if sh_row:
+        if sh_row and sh_row["full_parts_json"]:
             kept_call_ids |= _extract_call_ids_from_json(sh_row["full_parts_json"])
 
-    has_unkept_suture = any(
-        sr["cumulative_hash"] not in ancestor_cumuls for sr in suture_rows
-    )
-    has_unkept_sigs = any(
-        sig_r["cumulative_hash"] not in ancestor_cumuls
-        and sig_r["message_id"] not in ancestor_msg_ids
-        for sig_r in all_sig_rows
-    )
     has_unkept_shadows = any(
         sh_r["message_id"] not in ancestor_msg_ids for sh_r in all_shadow_rows
     )
 
-    if live_msg_ids:
-        effective_live = set(live_msg_ids) - excluded_msg_ids
+    if live_msg_ids is not None:
+        effective_live = set(live_msg_ids)
         dead = compute_dead_set(cur.connection, effective_live, float("inf"))
-        has_user_only_suture = bool(
-            is_user_only_fork
-            and any(r["message_id"] == forked_msg_id for r in suture_rows)
-        )
-        has_temporal_unkept = has_unkept_suture or has_unkept_sigs or has_unkept_shadows
         is_partial_fork = bool(
             dead.message_ids
-            or dead.cumuls
             or dead.call_ids
             or dead.rag_seeds
-            or has_user_only_suture
-            or has_temporal_unkept
+            or has_unkept_shadows
         )
         if not is_partial_fork:
             return cutoff_ts, False
 
         purge_dead_set(cur.connection, dead, dry_run=False)
-
-        if is_user_only_fork and excluded_cumuls:
-            ph_ex = ",".join("?" for _ in excluded_cumuls)
-            cur.execute(
-                f"DELETE FROM suture_index WHERE cumulative_hash IN ({ph_ex})",
-                tuple(excluded_cumuls),
-            )
-            cur.execute(
-                f"DELETE FROM tool_journal WHERE cumulative_hash IN ({ph_ex})",
-                tuple(excluded_cumuls),
-            )
-            cur.execute(
-                f"DELETE FROM cognitive_signatures WHERE cumulative_hash IN ({ph_ex})",
-                tuple(excluded_cumuls),
-            )
-        if is_user_only_fork:
-            cur.execute(
-                "DELETE FROM suture_index WHERE message_id = ?",
-                (forked_msg_id,),
-            )
 
         kept_call_ids -= dead.call_ids
         if cutoff_ts is not None:
@@ -472,27 +312,8 @@ def prune_forked_history(
                 cur.execute("DELETE FROM call_bridge WHERE timestamp > ?", (cutoff_ts,))
         return cutoff_ts, True
 
-    is_partial_fork = has_unkept_suture or has_unkept_sigs or has_unkept_shadows
-
-    if not is_partial_fork:
+    if not has_unkept_shadows:
         return cutoff_ts, False
-
-    if ancestor_cumuls:
-        ph_c = ",".join("?" for _ in ancestor_cumuls)
-        cur.execute(
-            f"DELETE FROM suture_index WHERE cumulative_hash NOT IN ({ph_c})",
-            tuple(ancestor_cumuls),
-        )
-        cur.execute(
-            f"DELETE FROM tool_journal WHERE cumulative_hash NOT IN ({ph_c})",
-            tuple(ancestor_cumuls),
-        )
-    elif is_user_only_fork:
-        cur.execute("DELETE FROM suture_index")
-        cur.execute("DELETE FROM tool_journal")
-    elif cutoff_ts is not None:
-        cur.execute("DELETE FROM suture_index WHERE timestamp > ?", (cutoff_ts,))
-        cur.execute("DELETE FROM tool_journal WHERE updated_at > ?", (cutoff_ts,))
 
     if ancestor_msg_ids:
         ph_m = ",".join("?" for _ in ancestor_msg_ids)
@@ -504,22 +325,9 @@ def prune_forked_history(
             f"DELETE FROM rag_index_state WHERE message_id NOT IN ({ph_m})",
             tuple(ancestor_msg_ids),
         )
-        cur.execute(
-            f"DELETE FROM cognitive_signatures WHERE message_id NOT IN ({ph_m})"
-            + (
-                f" AND cumulative_hash NOT IN ({','.join('?' for _ in ancestor_cumuls)})"
-                if ancestor_cumuls
-                else ""
-            ),
-            tuple(ancestor_msg_ids)
-            + (tuple(ancestor_cumuls) if ancestor_cumuls else ()),
-        )
     elif cutoff_ts is not None:
         cur.execute("DELETE FROM message_shadows WHERE updated_at > ?", (cutoff_ts,))
         cur.execute("DELETE FROM rag_index_state WHERE embedded_at > ?", (cutoff_ts,))
-        cur.execute(
-            "DELETE FROM cognitive_signatures WHERE updated_at > ?", (cutoff_ts,)
-        )
 
     if cutoff_ts is not None:
         cur.execute("DELETE FROM cognitive_threads WHERE updated_at > ?", (cutoff_ts,))
@@ -884,7 +692,7 @@ def sync_cloned_session(
                 (cutoff_ts,),
             )
             cur.execute(
-                "SELECT model_id FROM cognitive_signatures "
+                "SELECT model_id FROM message_shadows "
                 "WHERE model_id IS NOT NULL AND model_id != '' "
                 "ORDER BY updated_at DESC, rowid DESC LIMIT 1"
             )

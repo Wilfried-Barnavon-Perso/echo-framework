@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 5.235.5.1
+version: 5.238.1.1
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.238.1.1: Ajout de MODEL_ATHENA dans target_model_key de delegate_to_agent.
 # 5.235.5.1: Restriction de la distillation du contexte aux seuls messages de la branche active via load_active_branch_ids.
 # 5.233.0.1: Passage explicite de is_json=False dans _distill_main_context, décoration @echo_tool sur les 4 méthodes publiques et simplification des retours.
 # 5.231.59.1: Reconnaissance du préfixe de session dlg_img_ (type image_gen, icône 🎨) dans list_agent_sessions.
 # 5.231.41.1: Verrouillage explicite functionCallingConfig mode NONE à l'épuisement du budget, injection de télémétrie/alerte de budget dans functionResponse, relance de récupération en CAS 4 et assainissement des functionCall orphelins en base SQLite.
-# 5.231.20.2: Support hybride des outils synchrones/asynchrones via asyncio.to_thread et rafraîchissement non-mutatif des closures (__event_emitter__, __event_call__, __metadata__, __user__) par copie locale de functools.partial.
 
 import sys
 import uuid
@@ -20,7 +20,7 @@ import datetime
 import inspect
 import asyncio
 from pydantic import BaseModel, Field
-from typing import Optional, Any, List
+from typing import Optional, Any, List, Literal
 
 sys.path.append("/app/backend/echo_libs")
 from echo_core import (
@@ -88,7 +88,7 @@ class Tools:
         skill_id: Optional[str] = None,
         sub_sid: Optional[str] = None,
         with_context_distillate: bool = False,
-        target_model_key: Optional[str] = None,
+        target_model_key: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_APOLLO",
         # --- Paramètres internes (non exposés au LLM) ---
         allowed_tools: Optional[List[str]] = None,
         max_calls_override: Optional[int] = None,

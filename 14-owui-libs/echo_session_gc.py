@@ -1,11 +1,13 @@
 """
 title: ECHO Session GC
 author: ECHO Framework
-version: 5.235.5.3
+version: 5.237.20.2
 description: Purge des branches mortes, filtrage RAG par branche active et provenance des productions (stdlib-only).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.20.2: Auto-migration ensure_db en amont de gc_session_db (hors dry_run) pour la maintenance nocturne admin-manager.
+# 5.237.20.1: Simplification de compute_dead_set et purge_dead_set sur le schéma v2 (message_shadows, call_bridge, rag_index_state).
 # 5.235.5.3: Normalisation timestamp dans is_point_in_branch et flexibilité CLI (alias --backfill-rag et défaut gc).
 # 5.235.5.2: Garbage collection arborescent des branches mortes (SAVEPOINT echo_purge_dead, compute_dead_set, build_branch_rag_filter, provenance).
 
@@ -29,8 +31,10 @@ from echo_constants import (
     SESSION_RAG_CONVERSATION_SOURCE_ID,
 )
 from echo_db_schema import (
+    DB_KIND_SESSION,
     EchoDbMissingError,
     EchoDbOutdatedError,
+    ensure_db,
     extract_call_ids_from_json,
     open_db,
 )
@@ -167,19 +171,13 @@ def compute_dead_set(
 
     Logique fondamentale :
     1. Identification des messages morts : tout message_id absent de live_ids dont l'horodatage
-       maximal est strictly inférieur à grace_ts (protégeant les créations récentes en vol).
+       maximal est strictement inférieur à grace_ts (protégeant les créations récentes en vol).
        Les messages présents dans live_ids ou sous délai de grâce forment protected_msg_ids.
-    2. Priorité de propriété cognitive_signatures sur suture_index : historiquement, suture_index
-       pouvait enregistrer un tour assistant sous le user_message_id (parent). En donnant priorité
-       au message_id de cognitive_signatures sur le cumulative_hash, on réattribue infailliblement
-       le hash à son véritable propriétaire assistant.
-    3. Propagation causale le long de suture_index.parent_hash :
-       - Les ancêtres d'un cumulative_hash vivant sont impérativement sanctuarisés (protection
-         du préfixe de contexte commun partagé entre la branche principale et les branches dérivées).
-       - Les descendants d'un cumulative_hash mort sans propriétaire vivant sont entraînés dans
-         l'élagage des branches mortes.
-    4. Isolement des appels d'outils (call_ids) : un call_id n'est mort que s'il n'est rattaché
-       à aucun message ni cumulative_hash vivant.
+    2. Résolution directe par message_id : les tables de session (message_shadows, call_bridge,
+       rag_index_state) sont directement rattachées aux identifiants de messages sans index de suture.
+    3. Isolement des appels d'outils (call_ids) : un call_id n'est mort que s'il est rattaché
+       exclusivement à des messages morts et absent des messages protégés.
+    4. Extraction des graines RAG pour invalidation vectorielle dans Qdrant.
     """
     max_ts: Dict[str, float] = {}
 
@@ -195,8 +193,6 @@ def compute_dead_set(
             pass
 
     _collect_ts("SELECT message_id, updated_at FROM message_shadows WHERE message_id IS NOT NULL")
-    _collect_ts("SELECT message_id, updated_at FROM cognitive_signatures WHERE message_id IS NOT NULL")
-    _collect_ts("SELECT message_id, timestamp FROM suture_index WHERE message_id IS NOT NULL")
     _collect_ts("SELECT message_id, timestamp FROM call_bridge WHERE message_id IS NOT NULL")
     _collect_ts("SELECT message_id, embedded_at FROM rag_index_state WHERE message_id IS NOT NULL")
 
@@ -212,80 +208,7 @@ def compute_dead_set(
     if not dead_message_ids:
         return DeadSet(set(), set(), set(), set())
 
-    # --- Résolution des cumulative_hash ---
-    suture_rows = session_conn.execute(
-        "SELECT cumulative_hash, parent_hash, message_id FROM suture_index"
-    ).fetchall()
-    sig_rows = session_conn.execute(
-        "SELECT cumulative_hash, message_id FROM cognitive_signatures"
-    ).fetchall()
-
-    sig_owners: Dict[str, Set[str]] = {}
-    for chash, mid in sig_rows:
-        if chash and mid and not str(mid).isdigit():
-            sig_owners.setdefault(chash, set()).add(str(mid))
-
-    suture_owners: Dict[str, Set[str]] = {}
-    parent_map: Dict[str, str] = {}
-    children_map: Dict[str, Set[str]] = {}
-    for chash, parent, mid in suture_rows:
-        if chash:
-            if mid and not str(mid).isdigit():
-                suture_owners.setdefault(chash, set()).add(str(mid))
-            if parent and parent != chash:
-                parent_map[chash] = parent
-                children_map.setdefault(parent, set()).add(chash)
-
-    all_cumuls = set(sig_owners.keys()) | set(suture_owners.keys()) | set(parent_map.keys())
-    for chash, _, _ in suture_rows:
-        if chash:
-            all_cumuls.add(chash)
-
-    # Attribution avec priorité cognitive_signatures sur suture_index
-    direct_owners: Dict[str, Set[str]] = {}
-    for chash in all_cumuls:
-        if chash in sig_owners:
-            direct_owners[chash] = sig_owners[chash]
-        elif chash in suture_owners:
-            direct_owners[chash] = suture_owners[chash]
-        else:
-            direct_owners[chash] = set()
-
-    live_cumuls: Set[str] = set()
-    dead_cumuls: Set[str] = set()
-
-    for chash, owners in direct_owners.items():
-        if owners & protected_msg_ids:
-            live_cumuls.add(chash)
-        elif owners & dead_message_ids:
-            dead_cumuls.add(chash)
-
-    # (a) Sanctuarisation des ancêtres des cumuls vivants (préservation du tronc commun)
-    queue = list(live_cumuls)
-    visited_live = set(live_cumuls)
-    while queue:
-        curr = queue.pop()
-        p = parent_map.get(curr)
-        if p and p not in visited_live:
-            visited_live.add(p)
-            live_cumuls.add(p)
-            dead_cumuls.discard(p)
-            queue.append(p)
-
-    # (b) Propagation vers les enfants des cumuls morts n'ayant pas de propriétaire protégé
-    dead_queue = list(dead_cumuls - live_cumuls)
-    visited_dead = set(dead_queue)
-    while dead_queue:
-        curr = dead_queue.pop()
-        for child in children_map.get(curr, ()):
-            if child not in live_cumuls and child not in visited_dead:
-                child_owners = direct_owners.get(child, set())
-                if not (child_owners & protected_msg_ids):
-                    visited_dead.add(child)
-                    dead_cumuls.add(child)
-                    dead_queue.append(child)
-
-    final_dead_cumuls = dead_cumuls - live_cumuls
+    final_dead_cumuls: Set[str] = set()
 
     # --- Résolution des call_ids ---
     dead_calls: Set[str] = set()
@@ -314,19 +237,6 @@ def compute_dead_set(
             if s_mid in dead_message_ids:
                 dead_calls.update(extracted)
             elif s_mid not in dead_message_ids:
-                live_calls.update(extracted)
-    except Exception:
-        pass
-
-    try:
-        tj_rows = session_conn.execute(
-            "SELECT cumulative_hash, io_json FROM tool_journal WHERE io_json IS NOT NULL"
-        ).fetchall()
-        for chash, raw_json in tj_rows:
-            extracted = extract_call_ids_from_json(raw_json)
-            if chash in final_dead_cumuls:
-                dead_calls.update(extracted)
-            elif chash not in final_dead_cumuls:
                 live_calls.update(extracted)
     except Exception:
         pass
@@ -386,9 +296,6 @@ def purge_dead_set(
     counts = {
         "message_shadows": 0,
         "rag_index_state": 0,
-        "cognitive_signatures": 0,
-        "suture_index": 0,
-        "tool_journal": 0,
         "call_bridge": 0,
     }
     if dead.is_empty:
@@ -398,9 +305,6 @@ def purge_dead_set(
     try:
         counts["message_shadows"] = _chunked_delete(session_conn, "message_shadows", "message_id", dead.message_ids)
         counts["rag_index_state"] = _chunked_delete(session_conn, "rag_index_state", "message_id", dead.message_ids)
-        counts["cognitive_signatures"] = _chunked_delete(session_conn, "cognitive_signatures", "cumulative_hash", dead.cumuls)
-        counts["suture_index"] = _chunked_delete(session_conn, "suture_index", "cumulative_hash", dead.cumuls)
-        counts["tool_journal"] = _chunked_delete(session_conn, "tool_journal", "cumulative_hash", dead.cumuls)
 
         cb_del_calls = _chunked_delete(session_conn, "call_bridge", "call_id", dead.call_ids)
         cb_del_msgs = _chunked_delete(session_conn, "call_bridge", "message_id", dead.message_ids)
@@ -432,6 +336,12 @@ def gc_session_db(
     dry_run: bool = False,
 ) -> Dict[str, Any]:
     """Exécute le GC sur une base session.db individuelle en confrontant ses identifiants à webui.db."""
+    if not dry_run and os.path.isfile(session_db_path):
+        try:
+            ensure_db(session_db_path, DB_KIND_SESSION)
+        except Exception:
+            pass
+
     try:
         conn = open_db(session_db_path, readonly=False, create=False, require_version=True, timeout=2.0)
     except sqlite3.OperationalError as e:

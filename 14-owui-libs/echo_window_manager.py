@@ -2,16 +2,16 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 5.237.4.1
+version: 5.237.19.1
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.19.1: Support du plein écran d'Iframe via EchoWM.toggleIframeFullscreen (echo:iframe:fullscreen, echo:iframe:fullscreen-state et touche Escape).
 # 5.237.4.1: Garde anti-matérialisation session.db dans _save_chat_state et résolution stricte propriétaire (user_id, chat_id) sans fallback multi-comptes.
 # 5.231.60.1: Retrait RPC img_session_action, EchoWM.submitChatPrompt et écouteurs postMessage echo:img_session:* (restauration agnosticisme pur).
 # 5.231.50.1: Pont postMessage echo:iframe:init/theme-update pour synchroniser fond et police des Iframes avec la fenêtre principale Open WebUI.
 # 5.231.48.1: Factorisation SSOT de WM_SCRIPT_VERSION, teardown Hot-Upgrade, réentrance asynchrone (_execStack/_activeExecCount) et garde DOM dans bodyObs.
-# 5.231.47.1: Inclusion de EchoUI.get_media_export_js dans get_full_loader_bundle_js.
 
 import asyncio
 from contextlib import closing
@@ -34,7 +34,7 @@ WM_PREFIX = f"{ECHO_AUDIO_PREFIX}/wm"
 wm_router = APIRouter(prefix=WM_PREFIX, tags=["echo_wm"])
 wm_static_router = APIRouter(tags=["echo_wm_static"])
 
-WM_SCRIPT_VERSION = "5.237.4.1"
+WM_SCRIPT_VERSION = "5.237.19.1"
 LOADER_MARKER_START = "/* === ECHO_WM_START === */"
 LOADER_MARKER_END = "/* === ECHO_WM_END === */"
 WM_STATE_KEY = "wm_state"
@@ -756,6 +756,34 @@ def get_client_loader_js() -> str:
             });
         },
 
+        toggleIframeFullscreen: function(sourceWin, forceState) {
+            if (!sourceWin) return;
+            let targetIframe = null;
+            document.querySelectorAll('iframe').forEach(ifr => {
+                try {
+                    if (ifr.contentWindow === sourceWin) targetIframe = ifr;
+                } catch (e) {}
+            });
+            if (!targetIframe) return;
+            const isCurrentlyFs = targetIframe.getAttribute('data-echo-iframe-fs') === '1';
+            const nextState = (typeof forceState === 'boolean') ? forceState : !isCurrentlyFs;
+            if (nextState) {
+                if (!isCurrentlyFs) {
+                    targetIframe.setAttribute('data-echo-prev-style', targetIframe.getAttribute('style') || '');
+                    targetIframe.setAttribute('data-echo-iframe-fs', '1');
+                }
+                targetIframe.style.cssText = 'position:fixed !important; inset:0 !important; width:100vw !important; height:100dvh !important; max-width:100vw !important; max-height:100dvh !important; z-index:999999 !important; border:none !important; border-radius:0 !important; margin:0 !important; background:#000 !important;';
+            } else {
+                const prevStyle = targetIframe.getAttribute('data-echo-prev-style') || '';
+                targetIframe.removeAttribute('data-echo-iframe-fs');
+                targetIframe.removeAttribute('data-echo-prev-style');
+                targetIframe.setAttribute('style', prevStyle);
+            }
+            try {
+                sourceWin.postMessage({ type: 'echo:iframe:fullscreen-state', active: nextState }, '*');
+            } catch (e) {}
+        },
+
         postRpc: async function(payload) {
             try {
                 const token = getAuthToken();
@@ -1271,8 +1299,18 @@ def get_client_loader_js() -> str:
             if (ev.data.type === 'echo:iframe:init' && ev.source) {
                 EchoWM.broadcastThemeToIframes(ev.source);
             }
+            if (ev.data.type === 'echo:iframe:fullscreen' && ev.source) {
+                EchoWM.toggleIframeFullscreen(ev.source, ev.data.active);
+            }
         };
         window.addEventListener('message', EchoWM._msgHandler);
+        window.addEventListener('keydown', (ke) => {
+            if (ke.key === 'Escape') {
+                document.querySelectorAll('iframe[data-echo-iframe-fs="1"]').forEach(ifr => {
+                    if (ifr.contentWindow) EchoWM.toggleIframeFullscreen(ifr.contentWindow, false);
+                });
+            }
+        });
         if (document.documentElement && typeof MutationObserver !== 'undefined') {
             EchoWM.themeObs = new MutationObserver(() => {
                 if (!EchoWM._destroyed) EchoWM.broadcastThemeToIframes();

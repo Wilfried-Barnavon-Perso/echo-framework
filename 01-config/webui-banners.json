@@ -1,5 +1,13 @@
 [
   {
+    "id": "echo-banner-athena-cognitive-20261110",
+    "type": "warning",
+    "title": "Nouveau Palier Cognitif : ATHENA (Usage Raisonné)",
+    "content": "**Arrivée de MODEL_ATHENA (Gemini 4 Carbon)** : Activation du 4ème niveau cognitif dédié aux analyses formelles de pointe et à l'arbitrage critique. **Attention** : ATHENA et PROMETHEUS génèrent d'importants volumes de tokens de réflexion et saturent rapidement vos quotas glissants (5h/hebdo). Privilégiez le mode `COGNITIVE_MODE: AUTO` pour réserver ces modèles aux tâches complexes.",
+    "dismissible": true,
+    "timestamp": 1794345834
+  },
+  {
     "id": "echo-banner-roadmap-v6-decoupling-20261108",
     "type": "info",
     "title": "Feuille de route : ECHO v6",
@@ -14,21 +22,5 @@
     "content": "**ECHO User Manager disponible** : Accédez à votre portail d'auto-gestion (`https://my.<domaine>`). Consultez vos sessions actives, gérez votre profil et exportez l'intégralité souveraine de vos données et mémoires dans une archive `.tar.xz`.",
     "dismissible": true,
     "timestamp": 1794162325
-  },
-  {
-    "id": "echo-banner-image-generation-20261102",
-    "type": "success",
-    "title": "Génération & Retouche d'Images IA",
-    "content": "**Génération d'images native** : Écho conçoit et retouche désormais vos images sur simple description. Définissez vos formats (1:1, 16:9, 9:16, 4:3, 3:4), affinez le rendu par dialogue itératif et retrouvez vos visuels enregistrés dans le Codex.",
-    "dismissible": true,
-    "timestamp": 1793652000
-  },
-  {
-    "id": "echo-banner-stealth-browser-20261107",
-    "type": "info",
-    "title": "Navigation Web Furtive & Rejeu Vidéo",
-    "content": "**Navigation Web nouvelle génération** : Le navigateur autonome d'Écho opère désormais en mode Zéro-Trace DOM avec contournement anti-bot renforcé. Suivez ses interactions et visualisez le curseur en temps réel dans le cockpit de rejeu vidéo.",
-    "dismissible": true,
-    "timestamp": 1794068156
   }
 ]
