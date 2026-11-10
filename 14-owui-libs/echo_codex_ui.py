@@ -1,16 +1,16 @@
 """
 title: ECHO Codex UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.237.18.1
+version: 5.237.19.1
 description: Composant système interne : Moteur de rendu HUD Monaco et Éditeur Hexadécimal pour ECHO Codex.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.19.1: Centrage géométrique du label d'en-tête du volet de prévisualisation (Markdown Preview et équivalents).
 # 5.237.18.1: Inversion ergonomique des icônes Import (flèche montante Export) et Export (flèche descendante Download) dans le header du HUD Codex.
 # 5.232.5.1: Support déclaratif de ECHO_CODEX_WORKSPACES, verrouillage Read-Only automatique sur les workspaces non-inscriptibles (plans, generated) et rafraîchissement de l'aperçu image lors de la navigation d'historique Git (◀ ▶).
 # 5.231.55.1: Export direct client-side (0 aller-retour RPC), noWatchdogActions sur download/upload et délégation sécurisée à echoTriggerDownload.
 # 5.231.47.1: Factorisation des icônes Import/Export/Copy via EchoUI.get_icon et activation de la copie d'image (window.echoExportImage) dans PREVIEW_REGISTRY.
-# 5.231.46.1: Alignement de la docstring _generate_codex_js sur events.call_execute.
 
 
 import sys
@@ -494,14 +494,16 @@ class EchoCodexUI(EchoUI):
       previewPanel.id = CODEX_ID + '-preview';
       previewPanel.style.cssText = `flex:${{previewRatio}} 1 0%; min-width:0; display:none; flex-direction:column; overflow:hidden; background:${{bgColor}};`;
       previewPanel.innerHTML = `
-        <div style="padding:6px 10px; font-size:11px; color:${{isDark ? '#a6adc8' : '#888'}}; border-bottom:1px solid ${{borderColor}}; user-select:none; flex-shrink:0; display:flex; align-items:center; gap:8px;">
-          <button id="${{CODEX_ID}}-preview-copy" title="Copier le rendu" style="background:none; border:none; color:${{textColor}}; cursor:pointer; padding:0; display:none; align-items:center; opacity:0.8; transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-          </button>
-          <button id="${{CODEX_ID}}-preview-print" title="Print / PDF" style="background:none; border:none; color:${{textColor}}; cursor:pointer; padding:0; display:none; align-items:center; opacity:0.8; transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><polyline points="9 15 12 18 15 15"/></svg>
-          </button>
-          <span id="${{CODEX_ID}}-preview-label" style="flex:1;">Preview</span>
+        <div style="position:relative; padding:6px 10px; font-size:11px; color:${{isDark ? '#a6adc8' : '#888'}}; border-bottom:1px solid ${{borderColor}}; user-select:none; flex-shrink:0; display:flex; align-items:center; min-height:28px;">
+          <div style="display:flex; align-items:center; gap:8px; z-index:1;">
+            <button id="${{CODEX_ID}}-preview-copy" title="Copier le rendu" style="background:none; border:none; color:${{textColor}}; cursor:pointer; padding:0; display:none; align-items:center; opacity:0.8; transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+            <button id="${{CODEX_ID}}-preview-print" title="Print / PDF" style="background:none; border:none; color:${{textColor}}; cursor:pointer; padding:0; display:none; align-items:center; opacity:0.8; transition:opacity 0.2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.8">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="12" x2="12" y2="18"/><polyline points="9 15 12 18 15 15"/></svg>
+            </button>
+          </div>
+          <span id="${{CODEX_ID}}-preview-label" style="position:absolute; left:0; right:0; text-align:center; pointer-events:none; font-weight:500;">Preview</span>
         </div>
         <div id="${{CODEX_ID}}-preview-content" style="flex:1; padding:12px; overflow:auto; font-size:14px; line-height:1.6; min-width:0;"></div>
       `;
