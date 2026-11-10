@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 5.237.11.2
+version: 5.237.20.2
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.20.2: Ancrage head_last_msg_id dans le checkpoint de compaction pour isoler les branches sœurs antérieures au pivot.
+# 5.237.20.1: Division entière sur CHARS_PER_TOKEN=3.2, exclusion de thoughtSignature, pesée max(shadow, output) et résolution résiliente du pivot (resolve_pivot_turn_index, tail_anchor_ids, break_on_ids).
 # 5.237.11.2: Exclusion des pensées en compaction, pesée des tours via Shadows SQLite, filtrage du placeholder assistant vide et alignement par tours.
 # 5.237.11.1: Surcharge thinking_override="low" pour MODEL_PROMETHEUS dans execute_in_place_compaction.
 # 5.235.5.3: Cantonnement strict de user_message_id aux rôles user dans rehydrate_messages_metadata.
-# 5.235.5.2: Résolution load_active_branch_ids, rehydrate_messages_metadata, merge_consecutive_user_parts et split_into_turns résilient aux messages supprimés.
-# 5.235.1.1: Injonction positive d'exploitation capacitaire dans <COMPRESSION_BUDGET> et actualisation des ratios 31.25%/68.75% dans EchoCompactionEngine.
 import re
 import time
 import inspect
@@ -20,7 +20,7 @@ import contextvars
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from echo_state_manager import EchoStateManager
 from echo_aec import EchoAEC
 import orjson as std_json
@@ -106,44 +106,47 @@ def estimate_token_size(content: Any) -> int:
                 mime_type = media_node.get("mimeType", media_node.get("mime_type", "image/unknown"))
                 b64_data = media_node.get("data", "")
                 b64_length = len(b64_data) if isinstance(b64_data, str) else 0
-                
+
                 tokens = _estimate_media_tokens(mime_type, b64_length)
-                
+
                 for k, v in item.items():
-                    if k not in ["inlineData", "inline_data"]:
-                        tokens += len(str(k)) // CHARS_PER_TOKEN
-                        tokens += _calc_size(v)
+                    if k in ("inlineData", "inline_data", "thoughtSignature"):
+                        continue
+                    tokens += int(len(str(k)) / CHARS_PER_TOKEN)
+                    tokens += _calc_size(v)
                 return tokens
             elif "image_url" in item:
                 tokens = 258
                 for k, v in item.items():
-                    if k != "image_url":
-                        tokens += len(str(k)) // CHARS_PER_TOKEN
+                    if k not in ("image_url", "thoughtSignature"):
+                        tokens += int(len(str(k)) / CHARS_PER_TOKEN)
                         tokens += _calc_size(v)
                 return tokens
             else:
                 tokens = 0
                 for k, v in item.items():
-                    tokens += len(str(k)) // CHARS_PER_TOKEN
+                    if k == "thoughtSignature":
+                        continue
+                    tokens += int(len(str(k)) / CHARS_PER_TOKEN)
                     tokens += _calc_size(v)
                 return tokens
         elif isinstance(item, list):
             return sum(_calc_size(i) for i in item)
         elif isinstance(item, str):
-            return len(item) // CHARS_PER_TOKEN
+            return int(len(item) / CHARS_PER_TOKEN)
         else:
-            return len(str(item)) // CHARS_PER_TOKEN
+            return int(len(str(item)) / CHARS_PER_TOKEN)
 
     if isinstance(content, (dict, list)):
         try:
             return _calc_size(content)
         except Exception:
             try:
-                return len(std_json.dumps(content)) // CHARS_PER_TOKEN
+                return int(len(std_json.dumps(content)) / CHARS_PER_TOKEN)
             except Exception:
                 pass
 
-    return len(str(content)) // CHARS_PER_TOKEN
+    return int(len(str(content)) / CHARS_PER_TOKEN)
 
 def smart_truncate_history(history: list, start_index: int = 0) -> int:
     """
@@ -772,10 +775,11 @@ class EchoCompactionEngine:
     ) -> int:
         """Estime les tokens réels d'un message (via son Shadow SQLite ou hors pensées)."""
         msg_id = msg.get("id")
+        shadow_toks = 0
         if state_mgr is not None and msg_id:
             shadow = state_mgr.get_shadow(str(msg_id))
             if shadow:
-                return estimate_token_size(shadow)
+                shadow_toks = estimate_token_size(shadow)
         content = msg.get("content", "")
         if isinstance(content, str):
             clean_c, _ = split_thought_process(content)
@@ -792,13 +796,14 @@ class EchoCompactionEngine:
                     "function_call_output",
                 ):
                     toks += estimate_token_size(item)
-        return toks
+        return max(shadow_toks, toks)
 
     @classmethod
     def split_into_turns(
         cls,
         messages: List[Dict[str, Any]],
         state_mgr: Optional[EchoStateManager] = None,
+        break_on_ids: Optional[Set[str]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Découpe une liste linéaire de messages (hors 'system') en tours logiques complets.
@@ -814,7 +819,10 @@ class EchoCompactionEngine:
                 continue
             if cls.is_real_user_turn(msg):
                 if current_turn is not None:
-                    if any(not cls.is_real_user_turn(m) for m in current_turn["messages"]):
+                    if (
+                        any(not cls.is_real_user_turn(m) for m in current_turn["messages"])
+                        or (break_on_ids is not None and str(msg.get("id") or "") in break_on_ids)
+                    ):
                         turns.append(current_turn)
                         current_turn = TurnDict({
                             "turn_idx": len(turns),
@@ -845,6 +853,47 @@ class EchoCompactionEngine:
                 cls._estimate_message_tokens(m, state_mgr) for m in t["messages"]
             )
         return turns
+
+    @classmethod
+    def resolve_pivot_turn_index(
+        cls,
+        turns: List[Dict[str, Any]],
+        checkpoint: Optional[Dict[str, Any]],
+    ) -> int:
+        """Résout l'indice du premier tour de TAIL par ancrage UUID (pivot_msg_id puis tail_anchor_ids)."""
+        if not checkpoint or not isinstance(checkpoint, dict) or not turns:
+            return 0
+        pivot_msg_id = checkpoint.get("pivot_msg_id")
+        if pivot_msg_id:
+            s_piv = str(pivot_msg_id)
+            for t_idx, t in enumerate(turns):
+                if any(cls.is_real_user_turn(m) and str(m.get("id") or "") == s_piv for m in t["messages"]):
+                    return t_idx
+        tail_anchors = checkpoint.get("tail_anchor_ids")
+        if isinstance(tail_anchors, list) and tail_anchors:
+            for aid in tail_anchors:
+                if not aid:
+                    continue
+                s_aid = str(aid)
+                for t_idx, t in enumerate(turns):
+                    if any(cls.is_real_user_turn(m) and str(m.get("id") or "") == s_aid for m in t["messages"]):
+                        return t_idx
+
+        # Lorsque pivot_msg_id et tail_anchor_ids ne correspondent à aucun tour dans turns
+        head_last_id = checkpoint.get("head_last_msg_id")
+        if head_last_id is not None:
+            s_head = str(head_last_id)
+            for t_idx, t in enumerate(turns):
+                if any(cls.is_real_user_turn(m) and str(m.get("id") or "") == s_head for m in t["messages"]):
+                    return t_idx + 1
+            return 0
+
+        if isinstance(tail_anchors, list) and tail_anchors:
+            if len(turns) < int(checkpoint.get("pivot_turn_idx", 0)):
+                return 0
+            return len(turns)
+
+        return min(max(0, int(checkpoint.get("pivot_turn_idx", 0))), len(turns))
 
     @classmethod
     def compute_adaptive_pivot(
@@ -889,7 +938,7 @@ class EchoCompactionEngine:
         )
 
         total_turns = len(turns)
-        old_pivot_idx = int((existing_checkpoint or {}).get("pivot_turn_idx", 0))
+        old_pivot_idx = cls.resolve_pivot_turn_index(turns, existing_checkpoint)
         uncompacted_count = total_turns - old_pivot_idx
 
         if uncompacted_count < COMPACTION_MIN_TURNS_REQUIRED:
@@ -900,6 +949,14 @@ class EchoCompactionEngine:
                     f"(tours totaux : {total_turns}, pivot actuel : {old_pivot_idx}, "
                     f"minimum requis : {COMPACTION_MIN_TURNS_REQUIRED})."
                 ),
+                "total_turns": total_turns,
+            }
+
+        uncompacted_tokens = sum(int(t.get("tokens_est", 0)) for t in turns[old_pivot_idx:])
+        if existing_checkpoint and uncompacted_tokens <= kept_budget_tokens:
+            return {
+                "eligible": False,
+                "reason": f"La fenêtre active ({uncompacted_tokens} tokens) respecte déjà le budget cible ({kept_budget_tokens} tokens).",
                 "total_turns": total_turns,
             }
 
@@ -920,6 +977,11 @@ class EchoCompactionEngine:
         pivot_msg_id = (
             turns[new_pivot_idx]["user_msg_id"] if new_pivot_idx < total_turns else None
         )
+        head_last_msg_id = (
+            str(delta_turns[-1]["user_msg_id"])
+            if (delta_turns and delta_turns[-1].get("user_msg_id"))
+            else (existing_checkpoint or {}).get("head_last_msg_id")
+        )
 
         return {
             "eligible": len(delta_turns) > 0,
@@ -927,6 +989,8 @@ class EchoCompactionEngine:
             "old_pivot_turn_idx": old_pivot_idx,
             "new_pivot_turn_idx": new_pivot_idx,
             "pivot_msg_id": pivot_msg_id,
+            "head_last_msg_id": head_last_msg_id,
+            "tail_anchor_ids": [str(t["user_msg_id"]) for t in turns[new_pivot_idx:] if t.get("user_msg_id")],
             "keep_recent_turns": keep_turns,
             "tail_tokens_est": tail_tokens,
             "delta_turns": delta_turns,
@@ -937,7 +1001,11 @@ class EchoCompactionEngine:
         }
 
     @classmethod
-    def format_turns_for_distillation(cls, turns_slice: List[Dict[str, Any]]) -> str:
+    def format_turns_for_distillation(
+        cls,
+        turns_slice: List[Dict[str, Any]],
+        state_mgr: Optional[EchoStateManager] = None,
+    ) -> str:
         """
         Sérialise les tours de HEAD pour le LLM de distillation :
         - ZÉRO troncature de caractères sur les messages ou résultats d'outils.
@@ -953,17 +1021,32 @@ class EchoCompactionEngine:
             for m in t["messages"]:
                 role = (m.get("role") or "unknown").upper()
                 content = m.get("content", "")
-                if isinstance(content, list):
-                    parts_txt = []
-                    for item in content:
-                        if isinstance(item, dict):
-                            if item.get("type") == "text":
-                                parts_txt.append(item.get("text", ""))
-                            elif item.get("type") == "image_url" or "inline_data" in item:
-                                parts_txt.append("[MÉDIA BINAIRE OMIS]")
-                    text_val = "\n".join(parts_txt)
-                else:
-                    text_val = str(content or "")
+                text_val = ""
+                used_shadow = False
+                if state_mgr is not None and m.get("role") == "user" and m.get("id"):
+                    u_sh = state_mgr.get_shadow(str(m["id"]))
+                    if isinstance(u_sh, list):
+                        parts_txt = [
+                            p.get("text", "")
+                            for p in u_sh
+                            if isinstance(p, dict) and "text" in p and not cls._is_perishable_aec_part(p)
+                        ]
+                        if parts_txt:
+                            text_val = "\n".join(parts_txt)
+                            used_shadow = True
+
+                if not used_shadow:
+                    if isinstance(content, list):
+                        parts_txt = []
+                        for item in content:
+                            if isinstance(item, dict):
+                                if item.get("type") == "text":
+                                    parts_txt.append(item.get("text", ""))
+                                elif item.get("type") == "image_url" or "inline_data" in item:
+                                    parts_txt.append("[MÉDIA BINAIRE OMIS]")
+                        text_val = "\n".join(parts_txt)
+                    else:
+                        text_val = str(content or "")
 
                 text_val, _ = split_thought_process(text_val)
                 text_val = b64_pattern.sub("[MÉDIA BINAIRE OMIS]", text_val).strip()
@@ -1067,18 +1150,25 @@ class EchoCompactionEngine:
                     if not pm.get("updated_at") and ts:
                         pm["updated_at"] = ts
 
-                p_assts = [
-                    m for m in pt["messages"]
-                    if m.get("role") == "assistant" and not m.get("tool_calls")
-                ]
                 b_assts = [bm for bm in bt["messages"] if bm.get("role") == "assistant"]
-                if p_assts and b_assts:
-                    pm, bm = p_assts[-1], b_assts[-1]
-                    if not pm.get("id") and bm.get("id"):
-                        pm["id"] = bm["id"]
+                p_non_users = [m for m in pt["messages"] if not cls.is_real_user_turn(m)]
+                p_assts_all = [m for m in p_non_users if m.get("role") in ("assistant", "model")]
+                p_assts_text = [m for m in p_assts_all if not m.get("tool_calls")]
+                if b_assts:
+                    bm = b_assts[-1]
+                    b_id = bm.get("id")
                     ts = bm.get("updated_at") or bm.get("timestamp")
-                    if not pm.get("updated_at") and ts:
-                        pm["updated_at"] = ts
+                    for m in p_non_users:
+                        if b_id:
+                            m["_echo_turn_asst_id"] = b_id
+                        if ts:
+                            m["_echo_turn_asst_ts"] = ts
+                    pm = p_assts_text[-1] if p_assts_text else (p_assts_all[-1] if p_assts_all else None)
+                    if pm is not None:
+                        if not pm.get("id") and b_id:
+                            pm["id"] = b_id
+                        if not pm.get("updated_at") and ts:
+                            pm["updated_at"] = ts
 
         for m in messages:
             if isinstance(m, dict) and m.get("id") and m.get("role") == "user":
@@ -1238,32 +1328,24 @@ class EchoCompactionEngine:
         from echo_prompts import CONTEXT_COMPACTION_ACK_MESSAGE
 
         pivot_msg_id = checkpoint.get("pivot_msg_id")
-        pivot_turn_idx = int(checkpoint.get("pivot_turn_idx", 0))
+        break_ids: Set[str] = set()
+        if pivot_msg_id:
+            break_ids.add(str(pivot_msg_id))
+        if checkpoint.get("head_last_msg_id"):
+            break_ids.add(str(checkpoint["head_last_msg_id"]))
+        for tid in checkpoint.get("tail_anchor_ids") or []:
+            break_ids.add(str(tid))
 
         # Réhydratation O(1) des IDs et timestamps depuis branch_messages avant recherche d'ID
         if branch_messages:
             cls.rehydrate_messages_metadata(messages, branch_messages)
 
-        p_turns = cls.split_into_turns(messages)
+        p_turns = cls.split_into_turns(messages, break_on_ids=break_ids)
         if not p_turns:
             return [], 0
 
-        cut_msg_idx: Optional[int] = None
-        if pivot_msg_id:
-            for t in p_turns:
-                if any(
-                    cls.is_real_user_turn(m) and m.get("id") == pivot_msg_id
-                    for m in t["messages"]
-                ):
-                    cut_msg_idx = t["start_msg_idx"]
-                    break
-
-        if cut_msg_idx is None:
-            if pivot_turn_idx < len(p_turns):
-                cut_msg_idx = p_turns[pivot_turn_idx]["start_msg_idx"]
-            else:
-                # Si tous les tours passés ont été compactés, on coupe au dernier tour utilisateur (le tour entrant)
-                cut_msg_idx = p_turns[-1]["start_msg_idx"]
+        pivot_idx = cls.resolve_pivot_turn_index(p_turns, checkpoint)
+        cut_msg_idx = p_turns[pivot_idx]["start_msg_idx"] if pivot_idx < len(p_turns) else p_turns[-1]["start_msg_idx"]
 
         if cut_msg_idx <= 0:
             return [], 0
@@ -1310,7 +1392,16 @@ class EchoCompactionEngine:
             except Exception:
                 existing_ckpt = None
 
-        turns = cls.split_into_turns(past_messages, state_mgr=state_mgr)
+        break_ids: Set[str] = set()
+        if existing_ckpt:
+            if existing_ckpt.get("pivot_msg_id"):
+                break_ids.add(str(existing_ckpt["pivot_msg_id"]))
+            if existing_ckpt.get("head_last_msg_id"):
+                break_ids.add(str(existing_ckpt["head_last_msg_id"]))
+            for tid in existing_ckpt.get("tail_anchor_ids") or []:
+                break_ids.add(str(tid))
+
+        turns = cls.split_into_turns(past_messages, state_mgr=state_mgr, break_on_ids=break_ids)
         min_req = (
             min_turns_required
             if min_turns_required is not None
@@ -1342,7 +1433,7 @@ class EchoCompactionEngine:
                 "reason": plan.get("reason", "Compaction non éligible."),
             }
 
-        serialized_delta = cls.format_turns_for_distillation(plan["delta_turns"])
+        serialized_delta = cls.format_turns_for_distillation(plan["delta_turns"], state_mgr=state_mgr)
         sqlite_snapshot = cls.build_sqlite_resources_snapshot(user_id, chat_id)
 
         compressed_budget = int(plan["compressed_budget_tokens"])
@@ -1430,7 +1521,9 @@ class EchoCompactionEngine:
             "compaction_count": compaction_count,
             "pivot_turn_idx": plan["new_pivot_turn_idx"],
             "pivot_msg_id": plan["pivot_msg_id"],
+            "head_last_msg_id": plan.get("head_last_msg_id"),
             "keep_recent_turns": plan["keep_recent_turns"],
+            "tail_anchor_ids": plan.get("tail_anchor_ids", []),
             "summary_md": summary_md.strip(),
             "summary_xml": summary_xml,
             "checkpoint_tokens": estimate_token_size(summary_xml),

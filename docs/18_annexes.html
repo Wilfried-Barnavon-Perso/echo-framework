@@ -341,122 +341,32 @@
         <tr>
           <td><code>message_id</code></td>
           <td>TEXT PK</td>
-          <td>UUID du message fourni par Open WebUI (indexé également sur <code>chat_id</code>).</td>
-        </tr>
-        <tr>
-          <td><code>chat_id</code></td>
-          <td>TEXT NOT NULL</td>
-          <td>Identifiant de la session de chat.</td>
+          <td>UUID du message fourni par Open WebUI.</td>
         </tr>
         <tr>
           <td><code>role</code></td>
-          <td>TEXT NOT NULL</td>
-          <td>Rôle de l'émetteur (<code>user</code> ou <code>model</code>).</td>
+          <td>TEXT</td>
+          <td>Rôle de l'émetteur (<code>user</code> ou <code>assistant</code>).</td>
         </tr>
         <tr>
           <td><code>full_parts_json</code></td>
           <td>TEXT (JSON)</td>
-          <td>Structure Gemini complète des <code>parts</code> (texte, inlineData, functionCall, etc.).</td>
-        </tr>
-        <tr>
-          <td><code>updated_at</code></td>
-          <td>INT</td>
-          <td>Verrou de Version - timestamp physique de la dernière modification du message.</td>
-        </tr>
-        <tr>
-          <td><code>is_embedded</code></td>
-          <td>INT DEFAULT 0</td>
-          <td>Flag booléen O(1) interrogé par <code>conversation_rag_filter.py</code> pour éviter toute réindexation
-            redondante dans Qdrant.</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <h3>Table <code>suture_index</code></h3>
-    <table>
-      <thead>
-        <tr>
-          <th>Colonne</th>
-          <th>Type</th>
-          <th>Description</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><code>cumulative_hash</code></td>
-          <td>TEXT PK</td>
-          <td>SHA-256 cumulatif - ADN de la conversation.</td>
-        </tr>
-        <tr>
-          <td><code>chat_id</code></td>
-          <td>TEXT NOT NULL</td>
-          <td>Identifiant de la session (index <code>idx_chat_id</code>).</td>
-        </tr>
-        <tr>
-          <td><code>invariant_hash</code></td>
-          <td>TEXT NOT NULL</td>
-          <td>SHA-256 du contenu seul, indépendant de la position dans l'historique.</td>
-        </tr>
-        <tr>
-          <td><code>parent_hash</code></td>
-          <td>TEXT</td>
-          <td>Hash cumulatif du tour précédent - forme la chaîne Merkle.</td>
-        </tr>
-        <tr>
-          <td><code>message_id</code></td>
-          <td>TEXT</td>
-          <td>Référence vers <code>message_shadows</code>.</td>
-        </tr>
-        <tr>
-          <td><code>timestamp</code></td>
-          <td>INT</td>
-          <td>Timestamp de scellement.</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <h3>Table <code>cognitive_signatures</code></h3>
-    <table>
-      <thead>
-        <tr>
-          <th>Colonne</th>
-          <th>Type</th>
-          <th>Description</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><code>cumulative_hash</code></td>
-          <td>TEXT PK</td>
-          <td>Lié au tour courant (chaîne Merkle).</td>
-        </tr>
-        <tr>
-          <td><code>thought_signature</code></td>
-          <td>TEXT NOT NULL</td>
-          <td>ThoughtSignature Gemini 3+ - jeton opaque cryptographique rattaché au premier <code>functionCall</code>.
-          </td>
-        </tr>
-        <tr>
-          <td><code>message_id</code></td>
-          <td>TEXT</td>
-          <td>UUID du message (indexé par <code>idx_sig_msg_id</code> avec tri
-            <code>ORDER BY updated_at DESC LIMIT 1</code>).
-          </td>
+          <td>Structure Gemini complète des <code>parts</code> (texte, inlineData, functionCall, functionResponse).</td>
         </tr>
         <tr>
           <td><code>model_id</code></td>
           <td>TEXT</td>
-          <td>Identifiant du modèle ayant généré la pensée.</td>
+          <td>Identifiant du modèle ayant généré le tour (optionnel).</td>
         </tr>
         <tr>
           <td><code>updated_at</code></td>
-          <td>INT</td>
-          <td>Timestamp de scellement.</td>
+          <td>INT NOT NULL</td>
+          <td>Horodatage physique de scellement (indexé sur <code>updated_at</code>).</td>
         </tr>
       </tbody>
     </table>
 
-    <h3>Table <code>tool_journal</code></h3>
+    <h3>Table <code>rag_index_state</code></h3>
     <table>
       <thead>
         <tr>
@@ -467,19 +377,95 @@
       </thead>
       <tbody>
         <tr>
-          <td><code>cumulative_hash</code></td>
+          <td><code>message_id</code></td>
           <td>TEXT PK</td>
-          <td>Lié au tour courant.</td>
+          <td>Identifiant du message indexé dans Qdrant.</td>
         </tr>
         <tr>
-          <td><code>io_json</code></td>
+          <td><code>point_id</code></td>
+          <td>TEXT</td>
+          <td>Point ID UUID5 déterministe dans la collection <code>echo_session_rag</code>.</td>
+        </tr>
+        <tr>
+          <td><code>embedded_at</code></td>
+          <td>INT NOT NULL</td>
+          <td>Horodatage d'indexation vectorielle O(1).</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Table <code>call_bridge</code></h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Colonne</th>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>call_id</code></td>
+          <td>TEXT PK</td>
+          <td>Identifiant unique de l'appel d'outil.</td>
+        </tr>
+        <tr>
+          <td><code>signature</code></td>
+          <td>TEXT</td>
+          <td>Signature cognitive associée à l'appel.</td>
+        </tr>
+        <tr>
+          <td><code>function_name</code></td>
+          <td>TEXT</td>
+          <td>Nom canonique de la fonction ou outil exécuté.</td>
+        </tr>
+        <tr>
+          <td><code>args_json</code></td>
           <td>TEXT (JSON)</td>
-          <td>Appels d'outils (arguments) et sorties (réponses multipart). Journalisation traçable.</td>
+          <td>Arguments d'appel sérialisés en JSON.</td>
+        </tr>
+        <tr>
+          <td><code>message_id</code></td>
+          <td>TEXT</td>
+          <td>Identifiant du message assistant parent.</td>
+        </tr>
+        <tr>
+          <td><code>timestamp</code></td>
+          <td>INT NOT NULL</td>
+          <td>Horodatage de l'appel.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Table <code>cognitive_threads</code></h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Colonne</th>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>thread_id</code></td>
+          <td>TEXT PK</td>
+          <td>Identifiant unique du fil de réflexion cognitive.</td>
+        </tr>
+        <tr>
+          <td><code>chat_id</code></td>
+          <td>TEXT NOT NULL</td>
+          <td>Identifiant de la session hôte.</td>
+        </tr>
+        <tr>
+          <td><code>content_json</code></td>
+          <td>TEXT (JSON)</td>
+          <td>État sérialisé et mémoire locale du fil cognitif.</td>
         </tr>
         <tr>
           <td><code>updated_at</code></td>
-          <td>INT</td>
-          <td>Timestamp de scellement.</td>
+          <td>INT NOT NULL</td>
+          <td>Horodatage de dernière mise à jour.</td>
         </tr>
       </tbody>
     </table>
@@ -799,30 +785,30 @@
       </thead>
       <tbody>
         <tr>
-          <td><code>get_message_shadow</code></td>
-          <td><code>(message_id, updated_at) → list | None</code></td>
-          <td>Lit l'Ombre du message. Retourne <code>None</code> si absente ou si le Verrou de Version diffère.</td>
+          <td><code>get_shadow</code></td>
+          <td><code>(message_id, updated_at=None) → list | None</code></td>
+          <td>Lit l'Ombre du message dans <code>message_shadows</code>. Restauration bit-perfect par ID physique.</td>
         </tr>
         <tr>
           <td><code>save_message_shadow</code></td>
-          <td><code>(message_id, chat_id, role, parts, updated_at)</code></td>
-          <td>Scelle l'Ombre en base. Upsert idempotent.</td>
+          <td><code>(message_id, chat_id, role, parts, updated_at=None, model_id=None)</code></td>
+          <td>Scelle l'Ombre multi-messages en base avec horodatage et modèle optionnel. Upsert idempotent.</td>
         </tr>
         <tr>
           <td><code>is_message_embedded</code></td>
           <td><code>(message_id) → bool</code></td>
-          <td>Validation O(1) en amont vérifiant le flag <code>is_embedded</code> dans <code>message_shadows</code>.
+          <td>Validation O(1) en amont vérifiant l'indexation dans <code>rag_index_state</code>.
           </td>
         </tr>
         <tr>
           <td><code>get_signature_by_id</code></td>
           <td><code>(message_id) → str | None</code></td>
-          <td>Lit la dernière <code>thoughtSignature</code> via <code>ORDER BY updated_at DESC LIMIT 1</code>.</td>
+          <td>Extrait la signature <code>thoughtSignature</code> directement depuis le Shadow JSON de <code>message_shadows</code>.</td>
         </tr>
         <tr>
-          <td><code>index_suture</code></td>
-          <td><code>(cumul, chat_id, inv, parent, message_id)</code></td>
-          <td>Met à jour la chaîne Merkle dans <code>suture_index</code>.</td>
+          <td><code>save_call_bridge</code></td>
+          <td><code>(call_id, signature, function_name, args_json, message_id=None)</code></td>
+          <td>Enregistre le pont d'appel d'outil dans <code>call_bridge</code> avec sa signature cognitive.</td>
         </tr>
         <tr>
           <td><code>save_session_setting</code></td>
@@ -908,7 +894,7 @@ Content-Type: application/json</code></pre>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.237.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.238.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

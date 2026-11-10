@@ -555,10 +555,10 @@
         OWUI->>P: Routage /api/chat/completions
 
         note over P,DB: PHASE 2 : SUTURE (BIT-PERFECT) & VERROU DE TOUR
-        P->>DB: get_message_shadow(msg_id, updated_at) + purge_orphaned_events()
-        DB-->>P: Parts JSON originales + Verrou de Version
+        P->>DB: get_shadow(msg_id) + synchronisation in-place OWUI + purge_orphaned_events()
+        DB-->>P: Parts JSON originales + Invariant de message
         P->>DB: get_signature_by_id(message_id) + drain_pending_directives()
-        DB-->>P: thoughtSignature + directives XML drainées atomiquement
+        DB-->>P: thoughtSignature (Shadows) + directives XML drainées atomiquement
         P->>P: Verrou turn_origin_model & mutation chirurgicale dernière occurrence AEC_modele
 
         note over P,G: PHASE 3 : INFÉRENCE & BOUCLE OUTILS
@@ -572,10 +572,9 @@
         G-->>P: Génération finale (stream Markdown + thoughtSignature)
 
         note over P,DB: PHASE 4 : SCELLEMENT
-        P->>DB: save_message_shadow(final_parts + updated_at)
-        P->>DB: save_signature_by_id(message_id, thoughtSignature)
-        P->>DB: save_cognitive_data(cumulative_hash, tool_io)
-        P->>DB: index_suture(cumulative_hash, parent_hash) + save_session_setting()
+        P->>DB: save_shadow(full_asst_shadow, model_id)
+        P->>DB: save_call_bridge(call_id, signature, message_id)
+        P->>DB: save_session_setting(last_model_id, last_turn_msg_id) + save_context_stats()
 
         P-->>OWUI: Forward SSE Stream
         OWUI-->>U: Rendu HUD & Markdown
@@ -675,49 +674,40 @@
     <p>
       ECHO conserve une mémoire inaltérable de chaque conversation sous forme d'<strong>Ombres Riches</strong> en mode
       SQLite WAL.
-      Ces empreintes contiennent les parts multimodales, le registre unifié des ressources et les signatures cognitives,
-      reliés par une chaîne de hachage de Merkle (<code>suture_index</code>) garantissant la continuité bit-perfect de
-      la session.
+      Ces empreintes contiennent les parts multimodales, le registre unifié des ressources, les signatures cognitives et les ponts d'outils au sein du <strong>Schéma Déclaratif SQLite v2</strong> (6 tables unifiées dans <code>session.db</code>), garantissant la continuité bit-perfect de la session et la synchronisation chirurgicale des éditions in-place sans dépendance à une chaîne de Merkle.
     </p>
 
     <div class="mermaid-wrapper">
       <div class="mermaid-header">
         <span>Entity-Relationship Diagram (ERD)</span>
-        <span>[SCHÉMA SQL - RICH SHADOWS]</span>
+        <span>[SCHÉMA SQL - RICH SHADOWS V2]</span>
       </div>
       <div class="mermaid">
         erDiagram
         MESSAGE_SHADOWS {
         string message_id PK "UUID du message"
-        string chat_id "ID de la session"
-        string role "user ou model"
-        json full_parts_json "Parts Gemini originales"
-        integer updated_at "Verrou de Version"
+        string role "user ou assistant"
+        json full_parts_json "Parts Gemini multi-messages"
+        string model_id "Modèle générateur"
+        integer updated_at "Horodatage de scellement"
         }
         RAG_INDEX_STATE {
         string message_id PK "Message indexé"
-        string chat_id "ID de la session"
-        integer is_embedded "Flag RAG O(1) (0 ou 1)"
-        integer updated_at "Horodatage"
+        string point_id "UUID5 déterministe Qdrant"
+        integer embedded_at "Horodatage d'indexation"
         }
-        SUTURE_INDEX {
-        string cumulative_hash PK "Hash SHA-256 cumulatif"
-        string chat_id "ID de la session"
-        string invariant_hash "Hash du contenu seul"
-        string parent_hash "Hash cumulatif parent"
-        string message_id FK "Message associé"
-        integer timestamp "Horodatage de scellement"
+        CALL_BRIDGE {
+        string call_id PK "ID d'appel d'outil"
+        string signature "Signature cognitive associée"
+        string function_name "Nom canonique de l'outil"
+        json args_json "Arguments d'appel JSON"
+        string message_id FK "UUID du message assistant"
+        integer timestamp "Horodatage d'appel"
         }
-        COGNITIVE_SIGNATURES {
-        string cumulative_hash PK "Lié au tour Merkle"
-        string thought_signature "Ancre Gemini 3+"
-        string message_id "Indexé (idx_sig_msg_id)"
-        string model_id "Modèle générateur"
-        integer updated_at "Tri chronologique DESC"
-        }
-        TOOL_JOURNAL {
-        string cumulative_hash PK "Lié au tour Merkle"
-        json io_json "Entrées et sorties outils"
+        COGNITIVE_THREADS {
+        string thread_id PK "UUID du thread cognitif"
+        string chat_id "ID de la session hôte"
+        json content_json "État sérialisé du fil"
         integer updated_at "Horodatage"
         }
         ECHO_RESOURCES {
@@ -729,16 +719,15 @@
         integer updated_at "Horodatage"
         }
         ECHO_SETTINGS {
-        string key PK "turn_origin_model, context_stats, previous_context_stats, wm_state..."
+        string key PK "turn_origin_model, context_stats, context_checkpoint, wm_state..."
         string value "Valeur sérialisée KV"
         integer updated_at "Horodatage"
         }
 
-        MESSAGE_SHADOWS ||--o| RAG_INDEX_STATE : "suit l'indexation"
-        MESSAGE_SHADOWS ||--o{ SUTURE_INDEX : "indexé par"
-        SUTURE_INDEX ||--o| COGNITIVE_SIGNATURES : "scelle"
-        SUTURE_INDEX ||--o{ TOOL_JOURNAL : "journalise"
-        MESSAGE_SHADOWS ||--o{ ECHO_RESOURCES : "référence"
+        MESSAGE_SHADOWS ||--o| RAG_INDEX_STATE : "suit l'indexation RAG"
+        MESSAGE_SHADOWS ||--o{ CALL_BRIDGE : "relie les appels d'outils"
+        MESSAGE_SHADOWS ||--o{ ECHO_RESOURCES : "référence les productions"
+        MESSAGE_SHADOWS ||--o{ COGNITIVE_THREADS : "ancre les réflexions"
       </div>
     </div>
     <details class="tech-spec">
@@ -763,43 +752,34 @@
 
             <h3>2. Moteur de Protocole, Suture Bit-Perfect, Schéma Déclaratif SQLite, Window Manager &amp; Clonage
               (<code>echo_protocol.py</code> v5.233.0.1,
-              <code>echo_core.py</code> v5.235.5.3, <code>echo_db_schema.py</code> v5.235.5.3,
-              <code>echo_session_gc.py</code> v5.235.5.3, <code>echo_aec.py</code> v5.235.5.2,
-              <code>echo_window_manager.py</code> v5.237.4.1 &amp; <code>echo_session_clone.py</code> v5.235.5.2)
+              <code>echo_core.py</code> v5.237.20.2, <code>echo_db_schema.py</code> v5.237.20.2,
+              <code>echo_session_gc.py</code> v5.237.20.2, <code>echo_aec.py</code> v5.235.5.2,
+              <code>echo_window_manager.py</code> v5.237.19.1 &amp; <code>echo_session_clone.py</code> v5.237.20.3)
             </h3>
             <ul>
-              <li><strong>Schéma Déclaratif SQLite v1 &amp; Gestion des Branches Mortes :</strong>
-                <code>echo_db_schema.py</code> (v5.235.5.3) sépare strictement <code>identity.db</code> (4 tables :
+              <li><strong>Schéma Déclaratif SQLite v2 &amp; Gestion des Branches Mortes :</strong>
+                <code>echo_db_schema.py</code> (v5.237.20.2) sépare strictement <code>identity.db</code> (4 tables :
                 <code>auth_data</code>, <code>identity_vault</code>, <code>echo_settings</code>,
-                <code>echo_resources</code>) et <code>session.db</code> (9 tables : <code>message_shadows</code>,
-                <code>rag_index_state</code>, <code>suture_index</code>, <code>cognitive_signatures</code>,
-                <code>tool_journal</code>, <code>call_bridge</code>, <code>cognitive_threads</code>,
-                <code>echo_resources</code>, <code>echo_settings</code>). <code>echo_session_gc.py</code> (v5.235.5.3)
+                <code>echo_resources</code>) et <code>session.db</code> (6 tables : <code>message_shadows</code>,
+                <code>rag_index_state</code>, <code>call_bridge</code>, <code>cognitive_threads</code>,
+                <code>echo_resources</code>, <code>echo_settings</code>). <code>echo_session_gc.py</code> (v5.237.20.2)
                 assure l'élagage transactionnel (<code>SAVEPOINT echo_purge_dead</code>) des branches supprimées via
-                <code>compute_dead_set</code> et <code>purge_dead_set</code> tout en conservant sur disque les
-                productions
-                sous provenance <code>hors_branche</code>.
+                <code>compute_dead_set</code> et <code>purge_dead_set</code> directement par <code>message_id</code> sans
+                hachage cumulatif tout en conservant sur disque les productions sous provenance <code>hors_branche</code>.
               </li>
-              <li><strong>Suture, Fusion User+User, Compaction In-Place, Signatures &amp; Drainage AEC :</strong>
+              <li><strong>Suture Bit-Perfect, Synchronisation In-Place, Compaction Contextuelle &amp; Ancrage Généalogique :</strong>
                 <code>Orchestrator.prepare_context()</code> reconstruit l'historique depuis <code>message_shadows</code>
-                (dans <code>/users/{uid}/chats/{cid}/session.db</code>, avec fallback
-                <code>metadata.user_message_id</code>,
-                fusion déterministe des messages utilisateur consécutifs via <code>merge_consecutive_user_parts</code>
-                lorsqu'un message assistant intermédiaire a été supprimé, et garde anti-duplication
-                <code>&lt;REQUETE_UTILISATEUR&gt;</code>) sous contrôle du Verrou de Version
-                (<code>message_id + updated_at</code>) et du Verrou de Tour (<code>turn_origin_model</code>), applique
-                la
-                fenêtre de compaction in-place via <code>EchoCompactionEngine.resolve_active_window()</code> (injectant
-                <code>&lt;artifact id="AEC_context_checkpoint"&gt;</code> via
-                <code>EchoAEC.render_context_checkpoint()</code>), extrait la dernière <code>thoughtSignature</code> de
-                <code>cognitive_signatures</code> par tri déterministe (<code>ORDER BY updated_at DESC LIMIT 1</code>,
-                rattachée via <code>attach_thought_signature</code> exclusivement au premier <code>functionCall</code>
-                ou à
-                la première part <code>text</code>), assemble le brouillon <code>metadata._echo_user_parts_draft</code>
-                et
-                draine atomiquement les directives et événements XML (<code>&lt;artifact id="AEC_..."&gt;</code>, dotés
-                d'un
-                suffixe UUID anti-collision sur <code>event_id</code>) via
+                (dans <code>/users/{uid}/chats/{cid}/session.db</code>, synchronisation chirurgicale des éditions in-place de
+                messages utilisateur ou assistant dans Open WebUI sans dépendre du timestamp, préservation intégrale du préfixe scellé
+                lors des sous-tours d'outils en vol, fusion déterministe des messages utilisateur consécutifs via
+                <code>merge_consecutive_user_parts</code> lorsqu'un message assistant intermédiaire a été supprimé, et garde
+                anti-duplication <code>&lt;REQUETE_UTILISATEUR&gt;</code>) sous contrôle du Verrou de Tour
+                (<code>turn_origin_model</code>), applique la fenêtre de compaction in-place via
+                <code>EchoCompactionEngine.resolve_active_window()</code> (injectant
+                <code>&lt;artifact id="AEC_context_checkpoint"&gt;</code> ancré par <code>head_last_msg_id</code> isolant les branches sœurs antérieures),
+                extrait la signature <code>thoughtSignature</code> directement depuis les Shadows de <code>message_shadows</code>
+                (rattachée via <code>attach_thought_signature</code> conformément à Gemini 3/4 exclusivement au premier
+                <code>functionCall</code> ou à la première part <code>text</code>), et draine atomiquement les directives et événements XML via
                 <code>EchoAEC.drain_pending_directives()</code>.
               </li>
               <li><strong>Traduction, Schémas OpenAPI 3.0 Contraints &amp; Pondération RAG :</strong> Convertit les
@@ -930,7 +910,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.237.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.238.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

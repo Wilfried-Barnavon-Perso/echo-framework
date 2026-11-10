@@ -116,14 +116,13 @@
             troisième personne (« Permet au Modèle de... »).</li>
         </ul>
 
-        <h3>2. Isolation Multi-Tenant et Journalisation (<code>tool_journal</code>)</h3>
+        <h3>2. Isolation Multi-Tenant et Persistance des Outils (<code>call_bridge</code>)</h3>
         <ul>
           <li><strong>Cloisonnement par <code>user_id</code> :</strong> Toutes les opérations fichiers, SQLite et Qdrant
             filtrent strictement par <code>user_id</code> (et <code>chat_id</code> pour les domaines de session).</li>
-          <li><strong>Journalisation Cryptographique :</strong> Chaque appel et retour d'outil est scellé dans la table
-            SQLite <code>tool_journal</code> et lié au <code>cumulative_hash</code> du tour dans
-            <code>suture_index</code>, garantissant la reconstruction Bit-Perfect de l'historique sans ré-exécution des
-            outils.
+          <li><strong>Scellement Bit-Perfect :</strong> Chaque appel et retour d'outil est scellé dans le Shadow multi-messages
+            de <code>message_shadows</code> et indexé dans <code>call_bridge</code> avec sa signature cognitive, garantissant
+            la reconstruction Bit-Perfect de l'historique et la continuité des sous-tours en vol sans ré-exécution des outils.
           </li>
         </ul>
       </div>
@@ -136,7 +135,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.237.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.238.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

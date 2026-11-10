@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.235.5.1
+version: 5.237.20.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.20.1: Calibration de CHARS_PER_TOKEN à 3.2 pour la tokenisation Gemini FR/JSON/Code.
 # 5.235.5.1: Ajout de ECHO_GC_GRACE_PERIOD_SEC (900s) et de la variable contextuelle ECHO_TURN_CONTEXT.
 # 5.235.1.1: Calibrage de COMPACTION_COMPRESSED_SHARE_PCT à 0.3125 (31.25% HEAD soit 65 535 tokens / 68.75% TAIL soit ~144 179 tokens) pour alignement sur le plafond matériel maxOutputTokens.
 # 5.234.1.1: Ajout des constantes SSOT de concurrence, rétention et écoute de la Sandbox (SANDBOX_MAX_CONCURRENT_JOBS_PER_CHAT, SANDBOX_MAX_CONCURRENT_JOBS_GLOBAL, SANDBOX_FINISHED_JOBS_MAX_PER_CHAT, SANDBOX_FINISHED_JOBS_TTL_SEC, SANDBOX_LISTEN_MAX_WAIT_SEC).
 # 5.234.0.1: Ajout des constantes SSOT d'authentification (ECHO_AUTH_PENDING_MARKER, ECHO_AUTH_TITLE_CONFIG, ECHO_AUTH_TITLE_PENDING, ECHO_AUTH_NOTICE_MARKERS).
-# 5.233.0.1: Ajout de la constante SSOT IMAGE_GEN_MAX_INPUT_IMAGES=10 pour borner la fusion multi-images dans generate_image.
 
 
 import os
@@ -903,7 +903,7 @@ CONTEXT_WARNING_THRESHOLD = 0.80  # Alerte jaune
 CONTEXT_TRUNCATE_THRESHOLD = 0.90 # Alerte rouge et Troncature
 PRUNE_CONTENT_THRESHOLD = 60000   # Seuil de tolérance (caractères) pour la troncature des UI brutes (env. 15k tokens)
 DEFAULT_VISION_GRID_STEP = 48     # Pas du maillage (pixels) pour la grille de vision spatiale (Anti-bot/Captcha)
-CHARS_PER_TOKEN = 4               # Heuristique standard
+CHARS_PER_TOKEN = 3.2             # Heuristique calibrée Gemini (FR / JSON / Code)
 
 # Limite maximale (en secondes) pour le Wait Timer Généraliste
 ECHO_MAX_WAIT_TIMER = 180

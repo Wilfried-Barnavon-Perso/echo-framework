@@ -2,19 +2,18 @@
 """
 title: ECHO Echo State Manager
 author: Wilfried BARNAVON
-version: 5.236.0.1
+version: 5.237.20.1
 description: Gestionnaire d'état SQLite et RAG.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.20.1: Persistance model_id dans message_shadows, lecture get_signature_by_id depuis les Shadows et suppression des méthodes de hachage cumulatif.
 # 5.236.0.1: Auto-matérialisation déclarative idempotente via ensure_db en écriture non-readonly.
 # 5.235.5.3: Alignement sur les 20 colonnes déclaratives de echo_resources (CRUD, allowed fields et _row_to_resource).
 # 5.235.5.2: Décorateur @_session_scope, suppression des DDL et tables mortes, intégration ECHO_TURN_CONTEXT et alignement 14 colonnes echo_resources.
 # 5.232.5.1: Filtrage par workspace dans get_resources et ajout des méthodes delete_codex_resource et clear_codex_workspace_resources.
-# 5.231.28.2: Suppression des tables obsolètes plans et codex_docs et de leurs méthodes CRUD (unification exclusive dans echo_resources).
 import contextlib
 import functools
-import hashlib
 import os
 import shutil
 import sqlite3
@@ -113,7 +112,15 @@ class EchoStateManager:
     # =========================================================================
 
     @_session_scope()
-    def save_message_shadow(self, message_id: str, chat_id: str, role: str, parts: List[dict], updated_at: Optional[int] = None):
+    def save_message_shadow(
+        self,
+        message_id: str,
+        chat_id: str,
+        role: str,
+        parts: List[dict],
+        updated_at: Optional[int] = None,
+        model_id: Optional[str] = None,
+    ):
         """Persiste une ombre de message dans message_shadows (chat_id conservé pour compatibilité, ignoré en SQL)."""
         if not message_id:
             return
@@ -121,13 +128,16 @@ class EchoStateManager:
         try:
             with self._get_connection() as conn, conn:
                 conn.execute("""
-                    INSERT INTO message_shadows (message_id, role, full_parts_json, updated_at)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO message_shadows (message_id, role, full_parts_json, model_id, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(message_id) DO UPDATE SET
                         role = excluded.role,
                         full_parts_json = excluded.full_parts_json,
+                        model_id = COALESCE(excluded.model_id, message_shadows.model_id),
                         updated_at = excluded.updated_at
-                """, (message_id, role, json.dumps(parts).decode('utf-8'), ts))
+                """, (message_id, role, json.dumps(parts).decode('utf-8'), model_id, ts))
+                if model_id:
+                    self.save_session_setting('last_model_id', model_id, conn=conn)
         except EchoDbMissingError:
             pass
         except Exception as e:
@@ -177,7 +187,14 @@ class EchoStateManager:
         return None
 
     @_session_scope()
-    def save_shadow(self, message_id: str, parts: List[dict], role: str = "user", updated_at: Optional[int] = None):
+    def save_shadow(
+        self,
+        message_id: str,
+        parts: List[dict],
+        role: str = "user",
+        updated_at: Optional[int] = None,
+        model_id: Optional[str] = None,
+    ):
         """Alias pour persister une ombre de message."""
         return self.save_message_shadow(
             message_id=message_id,
@@ -185,15 +202,8 @@ class EchoStateManager:
             role=role,
             parts=parts,
             updated_at=updated_at,
+            model_id=model_id,
         )
-
-    def calculate_invariant_hash(self, role: str, content: Any, tool_io: dict = None) -> str:
-        norm_c = content.strip() if isinstance(content, str) else json.dumps(content, option=json.OPT_SORT_KEYS).decode('utf-8')
-        norm_t = json.dumps(tool_io, option=json.OPT_SORT_KEYS).decode('utf-8') if tool_io else ""
-        return hashlib.sha256(f"{role.lower()}|{norm_c}|{norm_t}".encode("utf-8")).hexdigest()
-
-    def calculate_cumulative_hash(self, inv: str, parent: str = None) -> str:
-        return hashlib.sha256(f"{inv}|{parent or ''}".encode("utf-8")).hexdigest()
 
     @_session_scope()
     def save_call_bridge(self, call_id: str, signature: str, function_name: str, args: dict = None, message_id: Optional[str] = None):
@@ -225,49 +235,31 @@ class EchoStateManager:
         return None
 
     @_session_scope()
-    def index_suture(self, cumul: str, chat_id: str, inv: str, parent: str = None, message_id: str = None):
-        """Indexe la suture causale dans suture_index (chat_id conservé pour compatibilité, ignoré en SQL)."""
-        try:
-            with self._get_connection() as conn, conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO suture_index (cumulative_hash, invariant_hash, parent_hash, message_id, timestamp) VALUES (?, ?, ?, ?, ?)",
-                    (cumul, inv, parent, message_id, int(time.time())),
-                )
-        except EchoDbMissingError:
-            pass
-        except Exception as e:
-            print(f"[EchoStateManager] index_suture error: {e}")
-
-    @_session_scope()
-    def save_cognitive_data(self, cumul: str, sig: str = None, thought: str = None, tool_io: dict = None, message_id: str = None, model_id: str = None):
-        try:
-            with self._get_connection() as conn, conn:
-                if sig:
-                    conn.execute(
-                        "INSERT OR REPLACE INTO cognitive_signatures (cumulative_hash, thought_signature, message_id, model_id, updated_at) VALUES (?, ?, ?, ?, ?)",
-                        (cumul, sig, message_id, model_id, int(time.time())),
-                    )
-                if tool_io:
-                    conn.execute(
-                        "INSERT OR REPLACE INTO tool_journal (cumulative_hash, io_json, updated_at) VALUES (?, ?, ?)",
-                        (cumul, json.dumps(tool_io).decode('utf-8'), int(time.time())),
-                    )
-                if model_id:
-                    self.save_session_setting('last_model_id', model_id, conn=conn)
-        except EchoDbMissingError:
-            pass
-        except Exception as e:
-            print(f"[EchoStateManager] save_cognitive_data error: {e}")
-
-    @_session_scope()
     def get_signature_by_id(self, message_id: str) -> Optional[str]:
+        if not message_id:
+            return None
         try:
             with self._get_connection(readonly=True) as conn:
                 row = conn.execute(
-                    "SELECT thought_signature FROM cognitive_signatures WHERE message_id = ? ORDER BY updated_at DESC LIMIT 1",
+                    "SELECT full_parts_json FROM message_shadows WHERE message_id = ?",
                     (message_id,),
                 ).fetchone()
-                return row[0] if row else None
+                if not row or not row[0]:
+                    return None
+                data = std_json.loads(row[0])
+                last_sig: Optional[str] = None
+                if isinstance(data, list):
+                    if data and isinstance(data[0], dict) and "role" in data[0]:
+                        for msg in data:
+                            if isinstance(msg, dict):
+                                for p in msg.get("parts", []):
+                                    if isinstance(p, dict) and p.get("thoughtSignature"):
+                                        last_sig = p["thoughtSignature"]
+                    else:
+                        for p in data:
+                            if isinstance(p, dict) and p.get("thoughtSignature"):
+                                last_sig = p["thoughtSignature"]
+                return last_sig
         except EchoDbMissingError:
             return None
         except Exception as e:
@@ -277,37 +269,6 @@ class EchoStateManager:
     @_session_scope()
     def get_last_active_model(self) -> Optional[str]:
         return self.get_session_setting('last_model_id')
-
-    @_session_scope()
-    def get_thought_signature(self, cumul: str) -> Optional[str]:
-        try:
-            with self._get_connection(readonly=True) as conn:
-                row = conn.execute(
-                    "SELECT thought_signature FROM cognitive_signatures WHERE cumulative_hash = ?",
-                    (cumul,),
-                ).fetchone()
-                return row[0] if row else None
-        except EchoDbMissingError:
-            return None
-        except Exception as e:
-            print(f"[EchoStateManager] get_thought_signature error: {e}")
-        return None
-
-    @_session_scope()
-    def get_tool_io(self, cumul: str) -> Optional[dict]:
-        try:
-            with self._get_connection(readonly=True) as conn:
-                row = conn.execute(
-                    "SELECT io_json FROM tool_journal WHERE cumulative_hash = ?",
-                    (cumul,),
-                ).fetchone()
-                if row:
-                    return std_json.loads(row[0])
-        except EchoDbMissingError:
-            return None
-        except Exception as e:
-            print(f"[EchoStateManager] get_tool_io error: {e}")
-        return None
 
     # =========================================================================
     # IDENTITY VAULT (CRUD CHIFFRÉ AES-256-GCM ISOLÉ SUR IDENTITY.DB)

@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 5.236.0.1
+version: 5.237.20.2
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.20.2: Synchronisation chirurgicale des éditions in-place Open WebUI (user/assistant) dans message_shadows et préservation intégrale du préfixe multi-étapes en vol.
+# 5.237.20.1: Suture par tour logique, scellement complet des Shadows assistant multi-messages (outils et cascades inclus), retrait du hachage cumulatif et suivi de last_turn_msg_id.
 # 5.236.0.1: Interception explicite des trames SSE d'erreur Google API (429/quota) dans StreamProcessor.
 # 5.235.5.2: Filtrage is_real_user_turn pour exclure les tours synthétiques d'images de la fusion des user consécutifs.
 # 5.235.5.1: Pose de ECHO_TURN_CONTEXT, réhydratation systématique dès l'entrée, fusion des user consécutifs et correction auto-parenté.
-# 5.234.0.1: Suppression du faux-positif Base64 ("PKCE") dans prepare_context via ECHO_AUTH_NOTICE_MARKERS cantonné aux rôles assistant/model et factorisation du bloc pkce_pending.
-# 5.233.0.1: Injection des schémas JSON contraints FAST_TRACK_TASK_SCHEMAS (responseSchema) pour title_generation, tags_generation et follow_up_generation.
 
 
 # ==============================================================================
@@ -97,34 +97,19 @@ class UserDataManager:
         self.identity_manager = EchoStateManager(user_id=user_id, chat_id=None)
         self.debug_mode = debug_mode
 
-    def calculate_invariant(self, role: str, content: Any, tool_io: dict = None) -> str:
-        return self.state_manager.calculate_invariant_hash(role, content, tool_io)
+    def get_shadow(self, message_id: str, updated_at: Optional[int] = None) -> Optional[List[dict]]:
+        """Restauration Bit-Perfect par ID physique (et Timestamp optionnel pour user)."""
+        return self.state_manager.get_shadow(message_id, updated_at)
 
-    def calculate_cumulative(self, invariant: str, parent: str = None) -> str:
-        return self.state_manager.calculate_cumulative_hash(invariant, parent)
-
-    def get_shadow(self, message_id: str, updated_at: int) -> Optional[List[dict]]:
-        """Restoration Bit-Perfect par ID physique et Timestamp (Verrou de Version)."""
-        return self.state_manager.get_message_shadow(message_id, updated_at)
-
-    def save_shadow(self, message_id: str, updated_at: int, parts: List[dict], chat_id: str, role: str):
+    def save_shadow(self, message_id: str, updated_at: Optional[int], parts: List[dict], chat_id: str, role: str, model_id: Optional[str] = None):
         """Scellement définitif de l'ombre d'un message."""
-        self.state_manager.save_message_shadow(message_id, chat_id, role, parts, updated_at)
-
-    def index_suture(self, cumul: str, chat_id: str, inv: str, parent: str = None, message_id: str = None):
-        self.state_manager.index_suture(cumul, chat_id, inv, parent, message_id)
+        self.state_manager.save_message_shadow(message_id, chat_id, role, parts, updated_at, model_id=model_id)
 
     def get_signature_by_id(self, message_id: str) -> Optional[str]:
         return self.state_manager.get_signature_by_id(message_id)
 
-    def get_signature(self, cumul: str) -> Optional[str]:
-        return self.state_manager.get_thought_signature(cumul)
-
     def get_call_bridge(self, call_id: str) -> Optional[dict]:
         return self.state_manager.get_call_bridge(call_id)
-
-    def save_cognitive(self, cumul: str, sig: str = None, thought: str = None, tool_io: dict = None, message_id: str = None, model_id: str = None):
-        self.state_manager.save_cognitive_data(cumul, sig, thought, tool_io, message_id, model_id)
 
     def get_last_active_model(self) -> Optional[str]:
         return self.state_manager.get_last_active_model()
@@ -264,144 +249,236 @@ class Orchestrator:
             except Exception as e:
                 log.warning(f"[PipeEngine] Lecture context_checkpoint ignorée: {e}")
 
-        final_contents = list(ckpt_prefix); last_cumul = None
-        i = cut_msg_idx
-        last_was_real_user = False
-        while i < len(messages):
-            m = messages[i]; role = m.get("role"); content = m.get("content", "")
-            msg_id = m.get("id"); updated_at = m.get("updated_at")
-            # Exclusion des messages système et des invites d'authentification assistant (ne pas injecter dans le contexte Gemini)
-            if role == "system":
-                i += 1; continue
-            if role in ["assistant", "model"]:
-                text_to_check = content if isinstance(content, str) else str(content)
-                if any(marker in text_to_check for marker in ECHO_AUTH_NOTICE_MARKERS):
-                    i += 1; continue
+        final_contents = list(ckpt_prefix)
+        active_turns = EchoCompactionEngine.split_into_turns(messages[cut_msg_idx:])
 
-            # --- PRIORITÉ 1 : SHADOW BIT-PERFECT (ID + TIMESTAMP) ---
-            if msg_id and updated_at:
-                shadow_data = self.user_data_manager.get_shadow(msg_id, updated_at)
-                if shadow_data:
-                    # Support des Shadows Multi-Messages (Cascade Cognitive)
-                    if isinstance(shadow_data, list) and len(shadow_data) > 0 and "role" in shadow_data[0]:
-                        for msg in shadow_data:
-                            final_contents.append(msg)
-                            inv_hash = self.user_data_manager.calculate_invariant(msg["role"], msg["parts"])
-                            last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
-                        last_was_real_user = False
-                        i += 1; continue
-                    else:
-                        # Shadow Classique (Parts uniquement)
-                        role_gemini = "model" if role in ["assistant", "model"] else "user"
-                        is_real_u = EchoCompactionEngine.is_real_user_turn(m)
-                        if is_real_u and last_was_real_user and final_contents and final_contents[-1].get("role") == "user":
-                            final_contents[-1]["parts"] = EchoCompactionEngine.merge_consecutive_user_parts(
-                                final_contents[-1]["parts"], shadow_data
-                            )
+        for t_idx, turn in enumerate(active_turns):
+            is_in_flight_tool_turn = (
+                t_idx == len(active_turns) - 1
+                and bool(messages)
+                and messages[-1].get("role") == "tool"
+            )
+
+            # A. Messages user réels du tour
+            u_msgs = [m for m in turn["messages"] if EchoCompactionEngine.is_real_user_turn(m)]
+            for u_idx, m in enumerate(u_msgs):
+                msg_id = m.get("id")
+                updated_at = m.get("updated_at")
+                u_parts = self.user_data_manager.get_shadow(msg_id) if msg_id else None
+                if u_parts:
+                    if not (m is messages[-1] and meta.get("_echo_user_parts_draft") is not None):
+                        raw_c = m.get("content", "")
+                        if isinstance(raw_c, list):
+                            curr_txt = "".join(str(it.get("text", "")) for it in raw_c if isinstance(it, dict) and it.get("type") == "text")
                         else:
-                            final_contents.append({"role": role_gemini, "parts": shadow_data})
-                        last_was_real_user = is_real_u
-                        inv_hash = self.user_data_manager.calculate_invariant(role, shadow_data)
-                        last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
-
-                        i += 1; continue
-
-            # --- PRIORITÉ 2 : RECONSTRUCTION NORMALE (Fallback ou Cache Miss Temporel) ---
-            restored_parts = []
-            role_gemini = "model" if role in ["assistant", "model"] else "user"
-
-            if role == "tool":
-                aggregated_tool_parts = []
-                while i < len(messages) and messages[i].get("role") == "tool":
-                    m_tool = messages[i]; content_tool = m_tool.get("content", "")
-                    call_id = m_tool.get("tool_call_id"); bridge = self.user_data_manager.get_call_bridge(call_id)
-                    func_name = bridge["name"] if bridge else "unknown"
-                    rich_tool_parts = unbox_tool_output(func_name, content_tool, model_id, self.model_origin, call_id)
-                    aggregated_tool_parts.extend(rich_tool_parts)
-                    i += 1
-                restored_parts = aggregated_tool_parts
-                role_gemini = "user"  # Les réponses d'outils sont toujours 'user' pour Gemini
-
-            else:
-                # USER / ASSISTANT
-                if role in ["assistant", "model"]:
-                    content, _ = split_thought_process(content if isinstance(content, str) else str(content))
-
-                draft_parts = meta.get("_echo_user_parts_draft") if (role == "user" and i == len(messages) - 1) else None
-
-                if role == "user":
-                    if draft_parts is not None:
-                        restored_parts = []
-                        restored_parts.extend(ensure_gemini_parts(draft_parts, model_id, self.model_origin))
+                            curr_txt = str(raw_c or "")
+                        curr_txt = re.sub(r'^\s*<artifact\s+id="AEC_evenement_systeme">.*?</artifact>\s*', '', curr_txt, flags=re.DOTALL)
+                        m_req = re.search(r'<REQUETE_UTILISATEUR>(.*?)</REQUETE_UTILISATEUR>', curr_txt, flags=re.DOTALL)
+                        if m_req:
+                            curr_txt = m_req.group(1)
+                        resolved_curr = resolve_placeholders(curr_txt, model_id, self.model_origin).strip()
+                        if resolved_curr:
+                            sh_mod = False
+                            for p in u_parts:
+                                if isinstance(p, dict) and "text" in p and "<REQUETE_UTILISATEUR>" in p["text"]:
+                                    m_sh = re.search(r'<REQUETE_UTILISATEUR>(.*?)</REQUETE_UTILISATEUR>', p["text"], flags=re.DOTALL)
+                                    if m_sh and m_sh.group(1).strip() != resolved_curr:
+                                        p["text"] = re.sub(
+                                            r'<REQUETE_UTILISATEUR>.*?</REQUETE_UTILISATEUR>',
+                                            f'<REQUETE_UTILISATEUR>\n{resolved_curr}\n</REQUETE_UTILISATEUR>',
+                                            p["text"],
+                                            flags=re.DOTALL,
+                                        )
+                                        sh_mod = True
+                                        break
+                            if sh_mod and msg_id:
+                                self.user_data_manager.save_shadow(msg_id, updated_at or int(time.time()), u_parts, chat_id, "user")
+                else:
+                    if m is messages[-1] and meta.get("_echo_user_parts_draft") is not None:
+                        u_parts = ensure_gemini_parts(meta.get("_echo_user_parts_draft"), model_id, self.model_origin)
                     else:
-                        restored_parts = ensure_gemini_parts(content, model_id, self.model_origin)
-                        for p in restored_parts:
+                        content = m.get("content", "")
+                        u_parts = ensure_gemini_parts(content, model_id, self.model_origin)
+                        for p in u_parts:
                             if "text" in p and "<REQUETE_UTILISATEUR>" not in p["text"] and not p["text"].strip().startswith("<artifact"):
                                 p["text"] = f"<REQUETE_UTILISATEUR>\n{p['text']}\n</REQUETE_UTILISATEUR>"
+                    u_parts = ensure_gemini_parts(u_parts, model_id, self.model_origin)
+                    if msg_id and updated_at and u_parts:
+                        self.user_data_manager.save_shadow(msg_id, updated_at, u_parts, chat_id, "user")
+
+                if u_idx > 0 and final_contents and final_contents[-1].get("role") == "user":
+                    final_contents[-1]["parts"] = EchoCompactionEngine.merge_consecutive_user_parts(
+                        final_contents[-1]["parts"], u_parts
+                    )
                 else:
-                    # Assistant
-                    tool_calls = m.get("tool_calls", [])
-                    sig = self.user_data_manager.get_signature_by_id(msg_id) if msg_id else None
-                    if not sig and tool_calls:
+                    final_contents.append({"role": "user", "parts": u_parts})
+
+            # B. Sous-messages non-user du tour (assistant, tool, ou user image synthétique)
+            non_u_msgs = [
+                m for m in turn["messages"]
+                if not EchoCompactionEngine.is_real_user_turn(m)
+                and m.get("role") != "system"
+                and not (
+                    m.get("role") in ("assistant", "model")
+                    and any(marker in str(m.get("content", "")) for marker in ECHO_AUTH_NOTICE_MARKERS)
+                )
+            ]
+            if not non_u_msgs:
+                continue
+
+            turn_asst_id = next((m.get("_echo_turn_asst_id") or m.get("id") for m in reversed(non_u_msgs) if m.get("_echo_turn_asst_id") or m.get("id")), None)
+            turn_asst_ts = next((m.get("_echo_turn_asst_ts") or m.get("updated_at") for m in reversed(non_u_msgs) if m.get("_echo_turn_asst_ts") or m.get("updated_at")), None)
+
+            existing_asst_sh = self.user_data_manager.get_shadow(turn_asst_id) if turn_asst_id else None
+            is_multi_sh = isinstance(existing_asst_sh, list) and len(existing_asst_sh) > 0 and isinstance(existing_asst_sh[0], dict) and "role" in existing_asst_sh[0]
+            has_tool_msgs = any(m.get("role") == "tool" for m in non_u_msgs)
+            sh_has_tool_resp = is_multi_sh and any(
+                any(
+                    isinstance(p, dict) and "functionResponse" in p and p["functionResponse"].get("name") != "new_cognitive_level"
+                    for p in msg.get("parts", [])
+                )
+                for msg in existing_asst_sh
+            )
+
+            if not is_in_flight_tool_turn and is_multi_sh and (not has_tool_msgs or sh_has_tool_resp):
+                last_owui_asst = next(
+                    (m for m in reversed(non_u_msgs) if m.get("role") in ("assistant", "model")),
+                    None,
+                )
+                if last_owui_asst:
+                    c_raw = last_owui_asst.get("content", "")
+                    c_clean, _ = split_thought_process(c_raw if isinstance(c_raw, str) else str(c_raw or ""))
+                    owui_clean = resolve_placeholders(c_clean, model_id, self.model_origin).strip()
+                    last_sh_model = next(
+                        (m for m in reversed(existing_asst_sh) if m.get("role") == "model"),
+                        None,
+                    )
+                    if last_sh_model and owui_clean:
+                        sh_parts = last_sh_model.get("parts", [])
+                        sh_text = "".join(
+                            str(p.get("text", "")) for p in sh_parts if isinstance(p, dict) and "text" in p
+                        ).strip()
+                        if sh_text != owui_clean:
+                            old_sig = next(
+                                (p.get("thoughtSignature") for p in sh_parts if isinstance(p, dict) and p.get("thoughtSignature")),
+                                None,
+                            )
+                            fc_parts = [p for p in sh_parts if isinstance(p, dict) and "functionCall" in p]
+                            new_text_parts = ensure_gemini_parts(owui_clean, model_id, self.model_origin)
+                            updated_parts = new_text_parts + fc_parts
+                            attach_thought_signature(
+                                updated_parts,
+                                old_sig,
+                                fallback_magic_key=MAGIC_KEY_SKIP_VALIDATION if fc_parts else None,
+                            )
+                            last_sh_model["parts"] = ensure_gemini_parts(updated_parts, model_id, self.model_origin)
+                            if turn_asst_id:
+                                self.user_data_manager.save_shadow(
+                                    turn_asst_id,
+                                    turn_asst_ts or int(time.time()),
+                                    existing_asst_sh,
+                                    chat_id,
+                                    "assistant",
+                                )
+                final_contents.extend(existing_asst_sh)
+                continue
+
+            last_asst_idx = -1
+            for i_m, m_cand in enumerate(non_u_msgs):
+                if m_cand.get("role") in ("assistant", "model"):
+                    last_asst_idx = i_m
+
+            turn_asst_msgs: List[Dict] = []
+            k = 0
+            if (
+                is_in_flight_tool_turn
+                and is_multi_sh
+                and last_asst_idx >= 0
+                and existing_asst_sh[-1].get("role") == "model"
+                and any(isinstance(p, dict) and "functionCall" in p for p in existing_asst_sh[-1].get("parts", []))
+            ):
+                turn_asst_msgs = list(existing_asst_sh)
+                k = last_asst_idx + 1
+            elif is_multi_sh:
+                for msg in existing_asst_sh:
+                    parts = msg.get("parts", [])
+                    is_ncl = any(
+                        isinstance(p, dict) and (
+                            p.get("functionCall", {}).get("name") == "new_cognitive_level"
+                            or p.get("functionResponse", {}).get("name") == "new_cognitive_level"
+                        )
+                        for p in parts
+                    )
+                    if is_ncl:
+                        turn_asst_msgs.append(msg)
+                    else:
+                        break
+                k = 0
+            while k < len(non_u_msgs):
+                cur_m = non_u_msgs[k]
+                cur_role = cur_m.get("role")
+                if cur_role == "tool":
+                    aggregated_tool_parts = []
+                    while k < len(non_u_msgs) and non_u_msgs[k].get("role") == "tool":
+                        m_tool = non_u_msgs[k]
+                        content_tool = m_tool.get("content", "")
+                        call_id = m_tool.get("tool_call_id")
+                        bridge = self.user_data_manager.get_call_bridge(call_id) if call_id else None
+                        func_name = bridge["name"] if bridge else "unknown"
+                        rich_tool_parts = unbox_tool_output(func_name, content_tool, model_id, self.model_origin, call_id)
+                        aggregated_tool_parts.extend(rich_tool_parts)
+                        k += 1
+                    turn_asst_msgs.append({"role": "user", "parts": ensure_gemini_parts(aggregated_tool_parts, model_id, self.model_origin)})
+                elif cur_role == "user":
+                    # Image synthétique d'outil
+                    turn_asst_msgs.append({"role": "user", "parts": ensure_gemini_parts(cur_m.get("content", ""), model_id, self.model_origin)})
+                    k += 1
+                else:
+                    # assistant / model
+                    content_raw = cur_m.get("content", "")
+                    content_clean, _ = split_thought_process(content_raw if isinstance(content_raw, str) else str(content_raw))
+                    tool_calls = cur_m.get("tool_calls", [])
+                    sig = None
+                    if tool_calls:
                         for tc in tool_calls:
-                            cb = self.user_data_manager.get_call_bridge(tc.get("id"))
+                            cb = self.user_data_manager.get_call_bridge(tc.get("id")) if tc.get("id") else None
                             if cb and cb.get("signature"):
                                 sig = cb["signature"]
                                 break
-                    if not sig:
-                        inv_hash = self.user_data_manager.calculate_invariant(role, content)
-                        current_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
-                        sig = self.user_data_manager.get_signature(current_cumul)
+                    if not sig and turn_asst_id:
+                        sig = self.user_data_manager.get_signature_by_id(turn_asst_id)
 
-                    restored_parts = ensure_gemini_parts(content, model_id, self.model_origin)
+                    text_parts = ensure_gemini_parts(content_clean, model_id, self.model_origin)
+                    parsed_tc = []
                     if tool_calls:
-                        parsed_tc = []
                         for tc in tool_calls:
-                            raw_args = tc["function"].get("arguments", "{}")
+                            raw_args = tc.get("function", {}).get("arguments", "{}")
                             if not raw_args:
                                 raw_args = "{}"
                             try:
                                 args = std_json.loads(raw_args)
                             except Exception:
                                 args = {}
-                            call_part = {"name": tc["function"]["name"], "args": args}
+                            call_part = {"name": tc.get("function", {}).get("name"), "args": args}
                             if "id" in tc:
                                 call_part["id"] = tc["id"]
                             parsed_tc.append({"functionCall": call_part})
-                        restored_parts = parsed_tc + restored_parts
-                    else:
-                        inv_hash = self.user_data_manager.calculate_invariant(role, content)
-                        current_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
-                        tool_io = self.user_data_manager.state_manager.get_tool_io(current_cumul)
-                        if tool_io:
-                            restored_parts = [{"functionCall": {"name": tc["name"], "args": tc["args"], **({"id": tc["id"]} if "id" in tc else {})}} for tc in tool_io.get("calls", [])] + restored_parts
 
+                    restored_parts = text_parts + parsed_tc
                     attach_thought_signature(
                         restored_parts,
                         sig,
                         fallback_magic_key=MAGIC_KEY_SKIP_VALIDATION if tool_calls else None,
                     )
+                    restored_parts = ensure_gemini_parts(restored_parts, model_id, self.model_origin)
+                    turn_asst_msgs.append({"role": "model", "parts": restored_parts})
+                    k += 1
 
-                restored_parts = ensure_gemini_parts(restored_parts, model_id, self.model_origin)
-                i += 1
-
-            # --- RÉPARATION DE LA SUTURE (Scellement immédiat pour le tour suivant) ---
-            is_real_u = EchoCompactionEngine.is_real_user_turn(m)
-            if is_real_u and last_was_real_user and final_contents and final_contents[-1].get("role") == "user":
-                final_contents[-1]["parts"] = EchoCompactionEngine.merge_consecutive_user_parts(
-                    final_contents[-1]["parts"], restored_parts
-                )
-            else:
-                final_contents.append({"role": role_gemini, "parts": restored_parts})
-            last_was_real_user = is_real_u
-            if msg_id and updated_at and restored_parts:
-                self.user_data_manager.save_shadow(msg_id, updated_at, restored_parts, chat_id, role)
-
-            inv_hash = self.user_data_manager.calculate_invariant(role, restored_parts)
-            last_cumul = self.user_data_manager.calculate_cumulative(inv_hash, last_cumul)
-
-            if role == "user" and msg_id:
-                pass
+            final_contents.extend(turn_asst_msgs)
+            if is_in_flight_tool_turn:
+                body["_echo_in_flight_asst_prefix"] = list(turn_asst_msgs)
+            elif turn_asst_id and turn_asst_msgs:
+                self.user_data_manager.save_shadow(turn_asst_id, turn_asst_ts, turn_asst_msgs, chat_id, "assistant")
 
         # --- SATURATION ET TRONCATURE ---
         if events:
@@ -421,7 +498,6 @@ class Orchestrator:
                     size -= removed
                 await events.toast("🚨 Troncature active : les messages les plus anciens sont ignorés pour éviter le crash.", "error", "ECHO V5")
 
-        body["_echo_last_cumul"] = last_cumul
         if self.logger:
             self.logger.log("context_reconstructed", final_contents)
         return final_contents
@@ -473,7 +549,9 @@ class StreamProcessor:
         for msg in cascade_history:
             if msg["role"] in ["model", "assistant"]:
                 fused_parts.extend(msg.get("parts", []))
-        return fused_parts
+        if not fused_parts:
+            return []
+        return [{"role": "model", "parts": fused_parts}]
 
     async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
         in_think = False; buffer = ""; decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
@@ -986,7 +1064,6 @@ class Pipe:
 
         # [NOUVEAU] HISTORIQUE DE CASCADE POUR SUTURE & SHADOW
         cascade_history = []
-        current_cumul = body.get("_echo_last_cumul")
         meta_init = {**(__metadata__ or {}), **body.get("metadata", {})}
         user_msg_id = meta_init.get("_echo_user_msg_id") or meta_init.get("user_message_id")
         asst_msg_id = kwargs.get("__message_id__") or meta_init.get("message_id")
@@ -1015,12 +1092,6 @@ class Pipe:
                 directive_part = [{"text": aec_directive_xml}]
                 directive_msg = {"role": "user", "parts": directive_part}
                 context.append(directive_msg)
-
-                # Suture sémantique pour capture bit-perfect dans le Shadow
-                inv_d = orch.user_data_manager.calculate_invariant("user", directive_part)
-                prev_cumul = current_cumul
-                current_cumul = orch.user_data_manager.calculate_cumulative(inv_d, prev_cumul)
-                orch.user_data_manager.index_suture(current_cumul, chat_id, inv_d, prev_cumul, suture_msg_id)
                 cascade_history.append(directive_msg)
 
             # --- [NOUVEAU] RÉSOLUTION DYNAMIQUE DES INSTRUCTIONS SYSTÈME ---
@@ -1232,7 +1303,6 @@ class Pipe:
 
                 # 2. Suture Sémantique (Relais Protocolé avec réinjection signée du texte précédent)
                 sig_to_apply = proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION
-                tool_io = {"calls": [{"id": c.get("id"), "name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
                 model_parts = []
                 if proc.accumulated_text:
                     model_parts.append({"text": proc.accumulated_text})
@@ -1255,12 +1325,7 @@ class Pipe:
 
                 # [NOUVEAU] INDEXATION INTERMÉDIAIRE (SUTURE)
                 model_msg = {"role": "model", "parts": model_parts}
-                inv = orch.user_data_manager.calculate_invariant("model", model_parts, tool_io=tool_io)
-                new_cumul = orch.user_data_manager.calculate_cumulative(inv, current_cumul)
-                orch.user_data_manager.index_suture(new_cumul, chat_id, inv, current_cumul, suture_msg_id)
-                orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, tool_io, asst_msg_id, target_model)
                 cascade_history.append(model_msg)
-                current_cumul = new_cumul
 
                 # Structure status alignée sur wrap_tool_output (KEYs uniquement)
                 escalation_status = {
@@ -1288,23 +1353,20 @@ class Pipe:
                         user_resp_parts.append({"functionResponse": cancel_resp})
 
                 user_msg = {"role": "user", "parts": user_resp_parts}
-                inv_u = orch.user_data_manager.calculate_invariant("user", user_resp_parts)
-                new_cumul_u = orch.user_data_manager.calculate_cumulative(inv_u, current_cumul)
-                orch.user_data_manager.index_suture(new_cumul_u, chat_id, inv_u, current_cumul, suture_msg_id)
                 cascade_history.append(user_msg)
-                current_cumul = new_cumul_u
 
                 context.append(model_msg)
                 context.append(user_msg)
 
                 target_model = new_target
+                orch.user_data_manager.save_session_setting("last_model_id", target_model)
                 applied_model = new_target
                 is_fallback_cascade = False
                 continue
             else:
                 # [NOUVEAU] INDEXATION FINALE (SUTURE)
+                orch.user_data_manager.save_session_setting("last_model_id", target_model)
                 sig_to_apply = proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION
-                tool_io = {"calls": [{"id": c.get("id"), "name": c["name"], "args": c["args"]} for c in proc.accumulated_calls]} if proc.accumulated_calls else None
                 model_parts = []
                 if proc.accumulated_text:
                     model_parts.append({"text": proc.accumulated_text})
@@ -1318,12 +1380,7 @@ class Pipe:
                 if model_parts:
                     attach_thought_signature(model_parts, sig_to_apply)
                     model_msg = {"role": "model", "parts": model_parts}
-                    inv = orch.user_data_manager.calculate_invariant("model", model_parts, tool_io=tool_io)
-                    new_cumul = orch.user_data_manager.calculate_cumulative(inv, current_cumul)
-                    orch.user_data_manager.index_suture(new_cumul, chat_id, inv, current_cumul, suture_msg_id)
-                    orch.user_data_manager.save_cognitive(new_cumul, sig_to_apply, proc.accumulated_text, tool_io, asst_msg_id, target_model)
                     cascade_history.append(model_msg)
-                    current_cumul = new_cumul
 
                 # [NOUVEAU] GESTION DE L'AUTO-CONTINUE (MAX_TOKENS)
                 # Mécanisme de relance encapsulée empêchant l'arrêt prématuré de la génération.
@@ -1348,11 +1405,7 @@ class Pipe:
 
                     # Suture sémantique de l'événement système pour maintenir l'invariant cognitif bit-perfect
                     user_msg = {"role": "user", "parts": user_resp_parts}
-                    inv_u = orch.user_data_manager.calculate_invariant("user", user_resp_parts)
-                    new_cumul_u = orch.user_data_manager.calculate_cumulative(inv_u, current_cumul)
-                    orch.user_data_manager.index_suture(new_cumul_u, chat_id, inv_u, current_cumul, suture_msg_id)
                     cascade_history.append(user_msg)
-                    current_cumul = new_cumul_u
 
                     # Mise à jour du contexte pour la boucle suivante
                     context.append(model_msg)
@@ -1410,24 +1463,27 @@ class Pipe:
                     if res_type != 'codex':
                         orch.user_data_manager.state_manager.move_to_vault(f['fid'], f['name'])
 
-            # 3. Scellement Ombre de l'Assistant (Multi-Messages Cascade)
-            # On utilise le message_id de l'assistant (qui sera créé par Open WebUI au retour)
-            # Note: OWUI ne fournit pas l'ID de l'assistant à l'avance, on utilise une heuristique de suture
-            # Mais ECHO stocke l'historique de cascade dans l'ombre du message_id s'il est dispo,
-            # ou laisse prepare_context reconstruire via le cumulative_hash final.
-            # ACTION : Sauvegarder l'historique complet dans le Shadow du message assistant si on a un ID.
-            # En l'absence d'ID (courant pour la réponse en cours), la suture indexée via current_cumul suffit.
-            # Si on a un ID dans kwargs (ex: retry), on scelle.
-            if asst_msg_id and cascade_history:
-                final_shadow_content = proc._filter_cascade_for_shadow(cascade_history)
-                if final_shadow_content:
-                    orch.user_data_manager.save_shadow(asst_msg_id, int(time.time()), final_shadow_content, chat_id, "assistant")
+            # 3. Scellement Ombre de l'Assistant
+            in_flight_prefix = body.get("_echo_in_flight_asst_prefix") or []
+            current_step_msgs = proc._filter_cascade_for_shadow(cascade_history) if cascade_history else []
+            full_asst_shadow = list(in_flight_prefix) + list(current_step_msgs)
+            if asst_msg_id and full_asst_shadow:
+                orch.user_data_manager.save_shadow(
+                    asst_msg_id,
+                    int(time.time()),
+                    full_asst_shadow,
+                    chat_id,
+                    "assistant",
+                    model_id=target_model,
+                )
 
             # Sauvegarde des ponts d'outils pour la navigation future
             for c in proc.accumulated_calls:
                 orch.user_data_manager.save_call_bridge(c["id"], proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION, c["name"], c["args"], message_id=suture_msg_id)
 
         # --- PERSISTANCE DES MÉTRIQUES CONTEXTUELLES ---
+        if user_msg_id:
+            cumulative_usage_stats["last_turn_msg_id"] = user_msg_id
         if cumulative_usage_stats.get("totalTokenCount", 0) > 0:
             orch.user_data_manager.save_context_stats(cumulative_usage_stats)
             yield {"usage": {"prompt_tokens": cumulative_usage_stats.get("promptTokenCount", 0), "completion_tokens": cumulative_usage_stats.get("candidatesTokenCount", 0), "total_tokens": cumulative_usage_stats.get("totalTokenCount", 0)}}
