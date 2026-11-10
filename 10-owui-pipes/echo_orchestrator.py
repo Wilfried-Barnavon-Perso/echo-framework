@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 5.238.1.1
+version: 5.239.0.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.0.1: Concision maximale des descriptions des vannes UserValves (mode, cible, crédits, cascades, relances).
 # 5.238.1.1: Intégration de MODEL_ATHENA et refonte orthogonale des UserValves (COGNITIVE_MODE + COGNITIVE_MODEL) avec routage et menu d'escalade pilotés par get_allowed_models.
 # 5.237.20.2: Synchronisation chirurgicale des éditions in-place Open WebUI (user/assistant) dans message_shadows et préservation intégrale du préfixe multi-étapes en vol.
 # 5.237.20.1: Suture par tour logique, scellement complet des Shadows assistant multi-messages (outils et cascades inclus), retrait du hachage cumulatif et suivi de last_turn_msg_id.
 # 5.235.5.2: Filtrage is_real_user_turn pour exclure les tours synthétiques d'images de la fusion des user consécutifs.
-# 5.235.5.1: Pose de ECHO_TURN_CONTEXT, réhydratation systématique dès l'entrée, fusion des user consécutifs et correction auto-parenté.
 
 
 # ==============================================================================
@@ -683,15 +683,15 @@ class Pipe:
         SHOW_CONTEXT_METRICS: bool = Field(default=True)
         COGNITIVE_MODE: Literal["AUTO", "MANUAL"] = Field(
             default="AUTO",
-            description="Mode de pilotage cognitif : 'AUTO' (Défaut, adaptation dynamique PCD depuis ZEPHYR jusqu'au plafond COGNITIVE_MODEL) ou 'MANUAL' (verrouillage à 100 % sur COGNITIVE_MODEL)."
+            description="Mode : AUTO (dynamique) ou MANUAL (fixe)."
         )
         COGNITIVE_MODEL: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = Field(
             default="MODEL_APOLLO",
-            description="Modèle cognitif plafond (en mode AUTO) ou modèle forcé (en mode MANUAL). Défaut : MODEL_APOLLO (0 % de consommation de tokens Argon/Carbon en mode AUTO)."
+            description="Cible : plafond en AUTO, forcé en MANUAL."
         )
-        ENABLE_PAID_CREDITS: bool = Field(default=False, description="Activer l'utilisation des crédits Google One AI pour les requêtes OAuth2. Désactivé par défaut.")
-        MAX_CASCADE_ATTEMPTS: int = Field(default=5, ge=3, le=10, description="Nombre max de transferts de modèles autorisés par tour.")
-        ECHO_AUTO_CONTINUE_MAX: int = Field(default=2, ge=1, le=10, description="Nombre max de relances si le modèle est interrompu (MAX_TOKENS).")
+        ENABLE_PAID_CREDITS: bool = Field(default=False, description="Autoriser les crédits Google One AI (OAuth2).")
+        MAX_CASCADE_ATTEMPTS: int = Field(default=5, ge=3, le=10, description="Cascades maximales par tour.")
+        ECHO_AUTO_CONTINUE_MAX: int = Field(default=2, ge=1, le=10, description="Relances max sur interruption (MAX_TOKENS).")
 
         @model_validator(mode="before")
         @classmethod
