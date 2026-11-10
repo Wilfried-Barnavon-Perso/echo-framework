@@ -1,12 +1,12 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.237.19.2
+version: 5.238.0.1
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.237.19.2: Ajout du mode plein écran proportionnel (echoBindFrameFullscreen) dans image_viewer et refonte de build_rich_view_html avec cadre unifié, verrou souris/clavier OFF par défaut et export/copie PNG universel (html-to-image + hook WebGL preserveDrawingBuffer).  # noqa: E501
+# 5.238.0.1: Factorisation intégrale du plein écran d'Iframe dans _get_boilerplate (script en <head>, Fullscreen API native + fallback postMessage, auto-binding #echo-iv-btn-fs et dimensionnement CSS déclaratif).  # noqa: E501
 # 5.234.1.1: Ajout du canal RPC Bidi dans get_floating_monitor_js (_echoUIInboxByChat, echoPushMonitorEvent, window.echoRequest, window.onEchoEvent).  # noqa: E501
 # 5.232.2.1: Support tactile mobile en mode 1:1 dans image_viewer (pan 1 doigt, pinch-to-zoom focalisé 2 doigts, touch-action dynamique et double-tap).  # noqa: E501
 # 5.232.0.1: Factorisation de build_rich_view_html et instrumentation JS d'interception d'erreurs (data-echo-visual-error sur console.error, error et unhandledrejection).  # noqa: E501
@@ -1377,6 +1377,8 @@ class EchoRichUI:
     @staticmethod
     def _get_boilerplate(content: str, title: str = "ECHO Visual") -> str:
         """Encapsulation HTML standard avec détection de thème hybride (Open WebUI Native)."""
+        max_icon_j = std_json.dumps(EchoRichUI.get_icon("Maximize", size=14)).decode("utf-8")
+        shrink_icon_j = std_json.dumps(EchoRichUI.get_icon("Shrink", size=14)).decode("utf-8")
         return f"""
     <!DOCTYPE html>
     <html lang="fr" class="dark">
@@ -1452,6 +1454,14 @@ class EchoRichUI:
         }}
         html.echo-is-fullscreen #canvas-area {{
           flex: 1 1 auto !important;
+          height: calc(100dvh - 46px) !important;
+          min-height: 0 !important;
+        }}
+        html.echo-is-fullscreen #visual-stage,
+        html.echo-is-fullscreen #visual-target,
+        html.echo-is-fullscreen #visual-target-container,
+        html.echo-is-fullscreen #celestial-map {{
+          height: 100% !important;
           min-height: 0 !important;
         }}
         #hud-bar {{
@@ -1563,27 +1573,38 @@ class EchoRichUI:
           }}
         }}
       </style>
-    </head>
-    <body>
-      <div class="echo-container">
-        {content}
-      </div>
-    <script>
-      let lastHeight = 0;
-      let reportTimeout = null;
-      let disableAutoResize = false;
+      <script>
+      var lastHeight = 0;
+      var reportTimeout = null;
+      var disableAutoResize = false;
+
+      function reportHeight() {{
+        if (disableAutoResize) return;
+        const container = document.querySelector('.echo-container');
+        if (!container && !document.body) return;
+        const rawH = container ? container.getBoundingClientRect().height : document.body.offsetHeight;
+        const h = Math.max(Math.ceil(rawH), 100);
+        if (Math.abs(h - lastHeight) > 2) {{
+            lastHeight = h;
+            parent.postMessage({{ type: 'iframe:height', height: h }}, '*');
+        }}
+      }}
 
       window.echoBindFrameFullscreen = function(opts) {{
         opts = opts || {{}};
-        const btnEl = opts.btnEl || null;
-        const maxIcon = opts.maxIcon || '';
-        const shrinkIcon = opts.shrinkIcon || maxIcon;
+        const btnEl = opts.btnEl || document.getElementById('echo-iv-btn-fs');
+        const maxIcon = opts.maxIcon || {max_icon_j};
+        const shrinkIcon = opts.shrinkIcon || {shrink_icon_j};
         const onChange = opts.onChange || null;
-        let isFs = false;
+        let isFs = document.documentElement.classList.contains('echo-is-fullscreen');
 
         function applyFsState(nextFs) {{
           const changed = (isFs !== !!nextFs);
           isFs = !!nextFs;
+          if (isFs && reportTimeout) {{
+            clearTimeout(reportTimeout);
+            reportTimeout = null;
+          }}
           document.documentElement.classList.toggle('echo-is-fullscreen', isFs);
           disableAutoResize = isFs;
           if (btnEl) {{
@@ -1591,54 +1612,72 @@ class EchoRichUI:
             btnEl.innerHTML = (isFs ? shrinkIcon : maxIcon) + ' <span>' + (isFs ? 'Quitter' : 'Plein écran') + '</span>';
             btnEl.title = isFs ? 'Quitter le mode plein écran (Échap)' : 'Afficher en plein écran maximisé';
           }}
-          if (changed && typeof onChange === 'function') {{
-            onChange(isFs);
+          if (changed) {{
+            if (typeof onChange === 'function') onChange(isFs);
+            try {{ window.dispatchEvent(new Event('resize')); }} catch (e) {{}}
           }}
           if (!isFs && typeof reportHeight === 'function') {{
+            lastHeight = 0;
             setTimeout(reportHeight, 50);
           }}
         }}
 
         function toggleFs() {{
           const targetFs = !isFs;
-          try {{
-            parent.postMessage({{ type: 'echo:iframe:fullscreen', active: targetFs }}, '*');
-          }} catch (e) {{}}
-          if (!targetFs && document.fullscreenElement && document.exitFullscreen) {{
-            try {{ document.exitFullscreen().catch(() => {{}}); }} catch (e) {{}}
-          }}
           applyFsState(targetFs);
+          if (targetFs) {{
+            const rootEl = document.documentElement;
+            const reqFs = rootEl.requestFullscreen || rootEl.webkitRequestFullscreen;
+            if (reqFs) {{
+              try {{
+                Promise.resolve(reqFs.call(rootEl)).catch(() => {{
+                  try {{ parent.postMessage({{ type: 'echo:iframe:fullscreen', active: true }}, '*'); }} catch (e) {{}}
+                }});
+                return;
+              }} catch (e) {{}}
+            }}
+            try {{ parent.postMessage({{ type: 'echo:iframe:fullscreen', active: true }}, '*'); }} catch (e) {{}}
+          }} else {{
+            if (document.fullscreenElement || document.webkitFullscreenElement) {{
+              const exitFs = document.exitFullscreen || document.webkitExitFullscreen;
+              if (exitFs) {{
+                try {{ Promise.resolve(exitFs.call(document)).catch(() => {{}}); }} catch (e) {{}}
+              }}
+            }}
+            try {{ parent.postMessage({{ type: 'echo:iframe:fullscreen', active: false }}, '*'); }} catch (e) {{}}
+          }}
         }}
 
-        window.addEventListener('message', (ev) => {{
-          if (ev.data && ev.data.type === 'echo:iframe:fullscreen-state') {{
-            applyFsState(!!ev.data.active);
-          }}
-        }});
-
-        document.addEventListener('fullscreenchange', () => {{
-          if (!document.fullscreenElement && isFs) {{
-            try {{ parent.postMessage({{ type: 'echo:iframe:fullscreen', active: false }}, '*'); }} catch (e) {{}}
-            applyFsState(false);
-          }}
-        }});
-
-        window.addEventListener('keydown', (ke) => {{
-          if (ke.key === 'Escape' && isFs) {{
-            ke.stopPropagation();
-            try {{ parent.postMessage({{ type: 'echo:iframe:fullscreen', active: false }}, '*'); }} catch (e) {{}}
-            if (document.fullscreenElement && document.exitFullscreen) {{
-              try {{ document.exitFullscreen().catch(() => {{}}); }} catch (e) {{}}
-            }}
-            applyFsState(false);
-          }}
-        }}, true);
-
-        if (btnEl) {{
+        if (btnEl && !btnEl.dataset.echoFsBound) {{
+          btnEl.dataset.echoFsBound = '1';
           btnEl.onclick = function(e) {{
             e.stopPropagation();
             toggleFs();
           }};
+          window.addEventListener('message', (ev) => {{
+            if (ev.data && ev.data.type === 'echo:iframe:fullscreen-state') {{
+              applyFsState(!!ev.data.active);
+            }}
+          }});
+          document.addEventListener('fullscreenchange', () => {{
+            const nativeFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+            if (nativeFs && !isFs) {{
+              applyFsState(true);
+            }} else if (!nativeFs && isFs) {{
+              try {{ parent.postMessage({{ type: 'echo:iframe:fullscreen', active: false }}, '*'); }} catch (e) {{}}
+              applyFsState(false);
+            }}
+          }});
+          window.addEventListener('keydown', (ke) => {{
+            if (ke.key === 'Escape' && isFs) {{
+              ke.stopPropagation();
+              if (document.fullscreenElement && document.exitFullscreen) {{
+                try {{ document.exitFullscreen().catch(() => {{}}); }} catch (e) {{}}
+              }}
+              try {{ parent.postMessage({{ type: 'echo:iframe:fullscreen', active: false }}, '*'); }} catch (e) {{}}
+              applyFsState(false);
+            }}
+          }}, true);
         }}
 
         return {{
@@ -1647,16 +1686,15 @@ class EchoRichUI:
           toggle: toggleFs
         }};
       }};
-
-      function reportHeight() {{
-        if (disableAutoResize) return;
-        const container = document.querySelector('.echo-container');
-        const rawH = container ? container.getBoundingClientRect().height : document.body.offsetHeight;
-        const h = Math.max(Math.ceil(rawH), 100);
-        if (Math.abs(h - lastHeight) > 2) {{
-            lastHeight = h;
-            parent.postMessage({{ type: 'iframe:height', height: h }}, '*');
-        }}
+      </script>
+    </head>
+    <body>
+      <div class="echo-container">
+        {content}
+      </div>
+    <script>
+      if (window.echoBindFrameFullscreen && document.getElementById('echo-iv-btn-fs')) {{
+        window.echoBindFrameFullscreen();
       }}
 
       function applyThemeClass(theme, customColors) {{
@@ -2821,9 +2859,6 @@ class EchoUI(EchoRichUI):
         copy_icon = cls.get_icon("Copy", size=15)
         export_icon = cls.get_icon("Export", size=15)
         max_icon = cls.get_icon("Maximize", size=14)
-        shrink_icon = cls.get_icon("Shrink", size=14)
-        max_icon_j = std_json.dumps(max_icon).decode("utf-8")
-        shrink_icon_j = std_json.dumps(shrink_icon).decode("utf-8")
         media_export_js = cls.get_media_export_js()
         fallback_badge = (
             '<span id="echo-iv-badge-mode" style="font-size:10px; padding:2px 7px; border-radius:999px; '
@@ -2901,12 +2936,10 @@ class EchoUI(EchoRichUI):
         const extLink = document.getElementById('echo-iv-ext-link');
         const btnFit = document.getElementById('echo-iv-btn-fit');
         const fitLabel = document.getElementById('echo-iv-fit-label');
-        const btnFs = document.getElementById('echo-iv-btn-fs');
         const btnCopy = document.getElementById('echo-iv-btn-copy');
         const btnExport = document.getElementById('echo-iv-btn-export');
         const galleryBar = document.getElementById('echo-iv-gallery-bar');
 
-        let isFullscreen = false;
         let fitMode = true;
         let zoom = 1.0;
         let panX = 0, panY = 0;
@@ -2917,6 +2950,7 @@ class EchoUI(EchoRichUI):
         let lastTapTime = 0, tapStartPos = {{ x: 0, y: 0 }};
 
         function updateLayout() {{
+          const isFullscreen = document.documentElement.classList.contains('echo-is-fullscreen');
           const natW = img.naturalWidth || 0;
           const natH = img.naturalHeight || 0;
           if (!natW || !natH) return;
@@ -3207,20 +3241,7 @@ class EchoUI(EchoRichUI):
           img.src = IMG_SRC;
         }}
 
-        if (window.echoBindFrameFullscreen) {{
-          window.echoBindFrameFullscreen({{
-            btnEl: btnFs,
-            maxIcon: {max_icon_j},
-            shrinkIcon: {shrink_icon_j},
-            onChange: function(fs) {{
-              isFullscreen = fs;
-              updateLayout();
-            }}
-          }});
-        }}
-        window.addEventListener('resize', function() {{
-          if (isFullscreen) updateLayout();
-        }});
+        window.addEventListener('resize', updateLayout);
       }})();
     </script>
     """
@@ -3274,13 +3295,10 @@ class EchoUI(EchoRichUI):
         copy_icon = cls.get_icon("Copy", size=15)
         export_icon = cls.get_icon("Export", size=15)
         max_icon = cls.get_icon("Maximize", size=14)
-        shrink_icon = cls.get_icon("Shrink", size=14)
         lock_icon = cls.get_icon("Lock", size=14)
         unlock_icon = cls.get_icon("Unlock", size=14)
         media_export_js = cls.get_media_export_js()
         moteur_j = std_json.dumps(moteur or "visual").decode("utf-8")
-        max_icon_j = std_json.dumps(max_icon).decode("utf-8")
-        shrink_icon_j = std_json.dumps(shrink_icon).decode("utf-8")
         lock_icon_j = std_json.dumps(lock_icon).decode("utf-8")
         unlock_icon_j = std_json.dumps(unlock_icon).decode("utf-8")
 
@@ -3380,18 +3398,14 @@ class EchoUI(EchoRichUI):
         const area = document.getElementById('canvas-area');
         const shield = document.getElementById('echo-rv-lock-shield');
         const stage = document.getElementById('visual-stage');
-        const target = document.getElementById('visual-target');
         const btnLock = document.getElementById('echo-rv-btn-lock');
         const btnFit = document.getElementById('echo-iv-btn-fit');
         const fitLabel = document.getElementById('echo-iv-fit-label');
-        const btnFs = document.getElementById('echo-iv-btn-fs');
         const btnCopy = document.getElementById('echo-iv-btn-copy');
         const btnExport = document.getElementById('echo-iv-btn-export');
         const MOTEUR = {moteur_j};
         const lockIcon = {lock_icon_j};
         const unlockIcon = {unlock_icon_j};
-        const maxIcon = {max_icon_j};
-        const shrinkIcon = {shrink_icon_j};
 
         let interactiveMode = false;
         function setInteractiveMode(enabled) {{
@@ -3451,42 +3465,6 @@ class EchoUI(EchoRichUI):
             }} catch(err) {{}}
           }};
         }}
-
-        let origTargetHeight = target ? target.style.height : '';
-        let isFullscreen = false;
-        function updateFullscreenLayout(fs) {{
-          if (fs && !isFullscreen && target) {{
-            origTargetHeight = target.style.height || origTargetHeight;
-          }}
-          isFullscreen = !!fs;
-          if (isFullscreen) {{
-            const hud = document.getElementById('hud-bar');
-            const hudH = hud ? hud.offsetHeight : 46;
-            const availH = Math.max(120, (window.innerHeight || 800) - hudH);
-            if (area) area.style.height = availH + 'px';
-            if (target) target.style.height = availH + 'px';
-          }} else {{
-            if (area) area.style.height = '';
-            if (target) target.style.height = origTargetHeight;
-          }}
-          try {{
-            window.dispatchEvent(new Event('resize'));
-          }} catch(e) {{}}
-        }}
-
-        if (window.echoBindFrameFullscreen) {{
-          window.echoBindFrameFullscreen({{
-            btnEl: btnFs,
-            maxIcon: maxIcon,
-            shrinkIcon: shrinkIcon,
-            onChange: function(fs) {{
-              updateFullscreenLayout(fs);
-            }}
-          }});
-        }}
-        window.addEventListener('resize', function() {{
-          if (isFullscreen) updateFullscreenLayout(true);
-        }});
 
         async function exportCurrentView(mode, btnEl) {{
           if (!window.htmlToImage || !window.htmlToImage.toPng || !area) return;
