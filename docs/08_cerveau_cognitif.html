@@ -43,7 +43,7 @@
       réflexion supérieur sans jamais dupliquer ni interrompre le fil de sa réponse. Il va ensuite s'armer des outils
       adéquats (recherche web, lecture de fichiers, exécution de code) et mener son enquête avant de revenir vers vous
       avec une réponse élaborée. De plus, ECHO sélectionne en toute autonomie son niveau de cognition (ZEPHYR, APOLLO,
-      ou PROMETHEUS) en évaluant la difficulté intrinsèque de la tâche, et catégorise automatiquement vos discussions à
+      PROMETHEUS ou ATHENA) en évaluant la difficulté intrinsèque de la tâche, et catégorise automatiquement vos discussions à
       l'aide d'étiquettes cohérentes avec votre classement existant.
     </p>
 
@@ -106,14 +106,14 @@
             </li>
           </ul>
 
-          <h3>2. L'Orchestrateur Cognitif (<code>echo_orchestrator.py</code> v5.236.0.1 &amp; <code>echo_aec.py</code>
+          <h3>2. L'Orchestrateur Cognitif (<code>echo_orchestrator.py</code> v5.238.1.1 &amp; <code>echo_aec.py</code>
             v5.235.5.2)</h3>
           <p>Le Cortex principal gouverne la Suture Bit-Perfect, la Compaction Contextuelle In-Place et le routage
             cognitif :</p>
           <ul>
             <li><strong>Registre Cognitif, Closures &amp; Élasticité :</strong> Interroge
               <code>ECHO_MODELS_REGISTRY</code> (<code>MODEL_ZEPHYR</code> et <code>MODEL_APOLLO</code> en
-              <code>thinkingLevel="high"</code>, et <code>MODEL_PROMETHEUS</code> en
+              <code>thinkingLevel="high"</code>, et <code>MODEL_PROMETHEUS</code> / <code>MODEL_ATHENA</code> en
               <code>thinkingLevel="medium"</code> en nominal avec <code>"high"</code> forcé en cascade 429 via
               <code>get_generation_config(..., is_fallback_cascade=True)</code>). Fusionne déterministement les messages
               <code>user</code> consécutifs (<code>merge_consecutive_user_parts</code>) lorsqu'un message assistant
@@ -190,7 +190,7 @@
             </li>
             <li><strong>PGCU (Gestion du Contexte Unifié) &amp; PCD (Cognition Dynamique) :</strong> Hiérarchie
               d'attention stricte (Kernel &gt; AEC &gt; Mémoires &gt; Outils &gt; Requêtes) et répartition des rôles
-              ZEPHYR / APOLLO / PROMETHEUS.</li>
+              ZEPHYR / APOLLO / PROMETHEUS / ATHENA.</li>
             <li><strong>PRAF (Rigueur Analytique et Factuelle) &amp; PLM (Liens et Médias) :</strong> Pipeline
               séquentiel strict en 4 blocs (<code>&lt;scope&gt;</code>, <code>&lt;verification&gt;</code>,
               <code>&lt;integrity_gate&gt;</code>, <code>&lt;analysis&gt;</code>) présumant incertaine toute hypothèse
@@ -265,7 +265,7 @@
               contextuelle in-place automatique (activée par défaut via
               <code>UserValves.ENABLE_AUTO_COMPACTION = True</code> et commutable via l'icône UI
               <code>fold-vertical</code>) déclenchée via <code>EchoCompactionEngine.execute_compaction</code>
-              (<code>echo_core.py</code> v5.235.5.3) dès <code>COMPACTION_TRIGGER_THRESHOLD_PCT = 60%</code> de
+              (<code>echo_core.py</code> v5.238.1.1) dès <code>COMPACTION_TRIGGER_THRESHOLD_PCT = 60%</code> de
               <code>ECHO_MAX_CONTEXT_SIZE</code>, ciblant <code>COMPACTION_TARGET_CONTEXT_PCT = 20%</code>
               (<code>31.25%</code> <code>HEAD</code> compressé / <code>68.75%</code> <code>TAIL</code> gardé intact).
             </li>
@@ -304,7 +304,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.238.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

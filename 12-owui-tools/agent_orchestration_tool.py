@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.233.0.1
+version: 5.238.1.1
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.238.1.1: Ajout de MODEL_ATHENA dans target_model, synthesis_model et critic_model de consult_council et consult_supervised_workers.
 # 5.233.0.1: Contrainte de sortie JSON via response_schema (SkillRouterOutput et SupervisorCriticOutput), décoration @echo_tool et simplification des retours.
 # 5.231.43.1: Ajout du paramètre multiplier (1..5) dans consult_council, renommage COUNCIL_MAX_SKILLS=7, COUNCIL_ROUNDS_MIN=3, COUNCIL_ROUNDS_MAX=10, COUNCIL_MAX_PR_COMPLEXITY=60, validation arithmétique PAS et droit d'abstention.
 # 5.231.20.1: Parallélisation asyncio.gather des ouvriers dans consult_supervised_workers, correction du parsing de task_id (sup_*) dans list/close_supervised_task, verrou par council_id et sécurisation async des skills.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides) et purge des directives IMPLIQUE.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 import sys
 import re
@@ -291,8 +291,8 @@ class Tools:
         question: str,
         participants: List[str],
         council_id: str,
-        target_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_PROMETHEUS",
-        synthesis_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_PROMETHEUS",
+        target_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_PROMETHEUS",
+        synthesis_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_PROMETHEUS",
         rounds: Optional[int] = None,
         multiplier: int = 1,
         close_on_finish: bool = False,
@@ -591,8 +591,8 @@ class Tools:
         self,
         objective: str,
         workers: dict,
-        target_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_APOLLO",
-        critic_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_PROMETHEUS",
+        target_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_APOLLO",
+        critic_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_PROMETHEUS",
         max_correction_rounds: Optional[int] = None,
         close_on_finish: bool = False,
         __user__: Optional[dict] = None,

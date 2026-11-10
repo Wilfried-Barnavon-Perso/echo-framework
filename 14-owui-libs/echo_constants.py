@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.237.20.1
+version: 5.238.1.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.238.1.1: Intégration de MODEL_ATHENA (gemini-4-carbon / gemini-4-carbon-high, hierarchy 3), déduplication de MODEL_ENUM_BY_POLICY et ajout de parse_model_policy / get_allowed_models.
 # 5.237.20.1: Calibration de CHARS_PER_TOKEN à 3.2 pour la tokenisation Gemini FR/JSON/Code.
 # 5.235.5.1: Ajout de ECHO_GC_GRACE_PERIOD_SEC (900s) et de la variable contextuelle ECHO_TURN_CONTEXT.
 # 5.235.1.1: Calibrage de COMPACTION_COMPRESSED_SHARE_PCT à 0.3125 (31.25% HEAD soit 65 535 tokens / 68.75% TAIL soit ~144 179 tokens) pour alignement sur le plafond matériel maxOutputTokens.
 # 5.234.1.1: Ajout des constantes SSOT de concurrence, rétention et écoute de la Sandbox (SANDBOX_MAX_CONCURRENT_JOBS_PER_CHAT, SANDBOX_MAX_CONCURRENT_JOBS_GLOBAL, SANDBOX_FINISHED_JOBS_MAX_PER_CHAT, SANDBOX_FINISHED_JOBS_TTL_SEC, SANDBOX_LISTEN_MAX_WAIT_SEC).
-# 5.234.0.1: Ajout des constantes SSOT d'authentification (ECHO_AUTH_PENDING_MARKER, ECHO_AUTH_TITLE_CONFIG, ECHO_AUTH_TITLE_PENDING, ECHO_AUTH_NOTICE_MARKERS).
 
 
 import os
@@ -334,6 +334,17 @@ AEC_REMINDERS = [
 # REGISTRE COGNITIF ECHO (SINGLE SOURCE OF TRUTH)
 # ==============================================================================
 ECHO_MODELS_REGISTRY = {
+    "MODEL_ATHENA": {
+        "ai_studio_id": "gemini-4-carbon",
+        "ca_model_id":  "gemini-4-carbon-high",
+        "hierarchy": 3,
+        "generationConfig": {
+            "temperature": 1.0,
+            "topP": 0.9,
+            "maxOutputTokens": 65535,
+            "thinkingConfig": {"thinkingLevel": "medium"}
+        }
+    },
     "MODEL_PROMETHEUS": {
         "ai_studio_id": "gemini-4-argon",
         "ca_model_id":  "gemini-4-argon-high",
@@ -395,6 +406,7 @@ ECHO_MODELS_REGISTRY = {
 }
 
 # L'Abstraction pure
+MODEL_ATHENA       = "MODEL_ATHENA"
 MODEL_PROMETHEUS          = "MODEL_PROMETHEUS"
 MODEL_APOLLO        = "MODEL_APOLLO"
 MODEL_ZEPHYR         = "MODEL_ZEPHYR"
@@ -423,15 +435,6 @@ ECHO_SAFETY_SETTINGS = [
     {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
 ]
-
-# Unique survivant : la politique métier UI (qui reste statique)
-MODEL_ENUM_BY_POLICY = {
-    "MODEL_ZEPHYR":  ["MODEL_ZEPHYR"],
-    "MODEL_APOLLO": ["MODEL_APOLLO"],
-    "MODEL_PROMETHEUS":   ["MODEL_PROMETHEUS"],
-    "AUTO":        ["MODEL_ZEPHYR", "MODEL_APOLLO"],
-    "AUTO_PROM":    ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"],
-}
 
 EMBEDDING_DIM      = 1024               # Dimension Harrier-OSS
 COLLECTION_META_ARTIFACTS = "echo_meta_artifacts"
@@ -750,15 +753,67 @@ SÉQUENTIALITÉ OBLIGATOIRE : Le Modèle DOIT appeler les outils STRICTEMENT UN 
 
 # ENUM MODÈLES PAR POLITIQUE — utilisé par convert_owui_tools() pour filtrage dynamique
 MODEL_ENUM_BY_POLICY = {
+    "AUTO:MODEL_ZEPHYR":       ["MODEL_ZEPHYR"],
+    "AUTO:MODEL_APOLLO":       ["MODEL_ZEPHYR", "MODEL_APOLLO"],
+    "AUTO:MODEL_PROMETHEUS":   ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"],
+    "AUTO:MODEL_ATHENA":       ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"],
+    "MANUAL:MODEL_ZEPHYR":     ["MODEL_ZEPHYR"],
+    "MANUAL:MODEL_APOLLO":     ["MODEL_APOLLO"],
+    "MANUAL:MODEL_PROMETHEUS": ["MODEL_PROMETHEUS"],
+    "MANUAL:MODEL_ATHENA":     ["MODEL_ATHENA"],
+    # Rétrocompatibilité legacy (MODEL_SELECTION)
     "MODEL_ZEPHYR":  ["MODEL_ZEPHYR"],
     "MODEL_APOLLO": ["MODEL_APOLLO"],
     "MODEL_PROMETHEUS":   ["MODEL_PROMETHEUS"],
+    "MODEL_ATHENA": ["MODEL_ATHENA"],
     "AUTO":        ["MODEL_ZEPHYR", "MODEL_APOLLO"],
     "AUTO_PROM":    ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"],
+    "AUTO_ATHENA":  ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"],
 }
 
 # Set de référence pour détecter les enum modèle dans les specs d'outils
-MODEL_ENUM_REFERENCE = {"MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"}
+MODEL_ENUM_REFERENCE = {"MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"}
+
+
+def parse_model_policy(policy: str) -> tuple[str, str]:
+    """
+    Normalise toute chaîne de politique cognitive ('MODE:MODEL' ou format legacy)
+    en un tuple canonique (mode, model_key) où mode ∈ {'AUTO', 'MANUAL'}.
+    """
+    raw = (policy or "").strip()
+    if ":" in raw:
+        mode_part, model_part = raw.split(":", 1)
+        mode_part = mode_part.strip().upper()
+        model_part = model_part.strip()
+        if mode_part in ("AUTO", "MANUAL") and model_part in MODEL_ENUM_REFERENCE:
+            return (mode_part, model_part)
+    if raw == "AUTO":
+        return ("AUTO", "MODEL_APOLLO")
+    if raw == "AUTO_PROM":
+        return ("AUTO", "MODEL_PROMETHEUS")
+    if raw == "AUTO_ATHENA":
+        return ("AUTO", "MODEL_ATHENA")
+    if raw in MODEL_ENUM_REFERENCE:
+        return ("MANUAL", raw)
+    return ("AUTO", "MODEL_APOLLO")
+
+
+def get_allowed_models(policy: str) -> list[str]:
+    """
+    Retourne la liste ordonnée par hiérarchie croissante des modèles autorisés
+    pour une politique donnée (mode MANUAL -> [model_key], mode AUTO -> [0 .. plafond]).
+    """
+    mode, model_key = parse_model_policy(policy)
+    if mode == "MANUAL":
+        return [model_key]
+    registry = globals().get("ECHO_MODELS_REGISTRY", {})
+    ceil_h = registry.get(model_key, {}).get("hierarchy")
+    ceil_h = ceil_h if ceil_h is not None else 1
+    allowed = [
+        k for k, v in registry.items()
+        if v.get("hierarchy") is not None and v.get("hierarchy") <= ceil_h
+    ]
+    return sorted(allowed, key=lambda k: registry[k]["hierarchy"])
 
 # ==============================================================================
 # 1.6 INFRASTRUCTURE & RÉSEAU (CENTRALISATION V5)

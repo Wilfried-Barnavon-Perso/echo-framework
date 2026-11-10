@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 5.237.20.2
+version: 5.238.1.1
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.238.1.1: Support orthogonal COGNITIVE_MODE:COGNITIVE_MODEL dans resolve_model_policy et convert_owui_tools (copie profonde sans mutation in-place) et surcharge thinking_override="low" étendue à MODEL_ATHENA en compaction.
 # 5.237.20.2: Ancrage head_last_msg_id dans le checkpoint de compaction pour isoler les branches sœurs antérieures au pivot.
 # 5.237.20.1: Division entière sur CHARS_PER_TOKEN=3.2, exclusion de thoughtSignature, pesée max(shadow, output) et résolution résiliente du pivot (resolve_pivot_turn_index, tail_anchor_ids, break_on_ids).
 # 5.237.11.2: Exclusion des pensées en compaction, pesée des tours via Shadows SQLite, filtrage du placeholder assistant vide et alignement par tours.
 # 5.237.11.1: Surcharge thinking_override="low" pour MODEL_PROMETHEUS dans execute_in_place_compaction.
-# 5.235.5.3: Cantonnement strict de user_message_id aux rôles user dans rehydrate_messages_metadata.
 import re
 import time
 import inspect
@@ -482,9 +482,9 @@ def resolve_model_policy(metadata: dict, user_id: str = None) -> tuple:
     Fallback : lecture identity.db si absent de metadata (OWUI ne propage pas __metadata__ du pipe aux outils).
     Retourne (mode, plafond_key).
     - mode "fixed" + plafond = modèle forcé
-    - mode "auto"/"auto_pro" + plafond = choix libre jusqu'au plafond
+    - mode "auto" + plafond = choix libre jusqu'au plafond
     """
-    from echo_constants import ECHO_MODELS_REGISTRY
+    from echo_constants import parse_model_policy
     selection = (metadata or {}).get("_echo_model_policy")
 
     # Fallback SQLite (echo_settings) si absent de metadata
@@ -495,16 +495,10 @@ def resolve_model_policy(metadata: dict, user_id: str = None) -> tuple:
         except Exception:
             pass
 
-    if not selection:
-        selection = "AUTO"
-
-    if selection == "AUTO":
-        return ("auto", "MODEL_APOLLO")
-    elif selection == "AUTO_PROM":
-        return ("auto_pro", "MODEL_PROMETHEUS")
-    elif selection in ECHO_MODELS_REGISTRY:
-        return ("fixed", selection)
-    return ("auto", "MODEL_APOLLO")
+    mode_norm, model_key = parse_model_policy(selection or "AUTO:MODEL_APOLLO")
+    if mode_norm == "MANUAL":
+        return ("fixed", model_key)
+    return ("auto", model_key)
 
 def clamp_model(requested: str, metadata: dict, user_id: str = None) -> str:
     """
@@ -586,27 +580,36 @@ def unbox_tool_output(name: str, content: Any, model_id: str, model_origin: str 
             })
     return final_parts
 
-def convert_owui_tools(tools: Optional[List[Dict]], model_policy: str = "AUTO") -> Optional[List[Dict]]:
+def convert_owui_tools(tools: Optional[List[Dict]], model_policy: str = "AUTO:MODEL_APOLLO") -> Optional[List[Dict]]:
     """
     Convertit les specs OWUI → format Gemini.
-    Filtre dynamiquement les enum des paramètres modèle selon MODEL_SELECTION.
+    Filtre dynamiquement les enum des paramètres modèle selon la politique cognitive active.
     """
     if not tools: return None
-    from echo_constants import MODEL_ENUM_BY_POLICY, MODEL_ENUM_REFERENCE
-    allowed_models = MODEL_ENUM_BY_POLICY.get(model_policy, list(MODEL_ENUM_REFERENCE))
+    import copy
+    from echo_constants import MODEL_ENUM_REFERENCE, get_allowed_models, parse_model_policy
+    mode_norm, _ = parse_model_policy(model_policy)
+    allowed_models = get_allowed_models(model_policy)
 
     funcs = []
     for t in tools:
         if t.get("type") == "function":
             f = t.get("function", {})
-            params = f.get("parameters", {"type": "object", "properties": {}})
+            params = copy.deepcopy(f.get("parameters", {"type": "object", "properties": {}}))
 
             # Filtrage dynamique : tout paramètre dont l'enum est un sous-ensemble de MODEL_ENUM_REFERENCE
             for prop_name, prop_val in params.get("properties", {}).items():
                 if "enum" in prop_val:
                     enum_set = set(prop_val["enum"])
                     if enum_set.issubset(MODEL_ENUM_REFERENCE):
-                        prop_val["enum"] = allowed_models
+                        if mode_norm == "MANUAL":
+                            prop_val["enum"] = list(allowed_models)
+                        elif prop_name in ("critic_model", "synthesis_model"):
+                            capped = [m for m in allowed_models if m != "MODEL_ATHENA" and m in enum_set]
+                            prop_val["enum"] = capped or list(allowed_models)
+                        else:
+                            filtered = [m for m in allowed_models if m in enum_set]
+                            prop_val["enum"] = filtered or list(allowed_models)
 
             funcs.append({
                 "name": f.get("name"),
@@ -1476,7 +1479,7 @@ class EchoCompactionEngine:
         model_used = None
         for cand_model in candidate_models:
             try:
-                thinking_override = "low" if cand_model == "MODEL_PROMETHEUS" else None
+                thinking_override = "low" if cand_model in ("MODEL_PROMETHEUS", "MODEL_ATHENA") else None
                 res = await EchoGeminiClient.call_distillation(
                     prompt=user_prompt,
                     __user__={"id": user_id},

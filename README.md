@@ -1,11 +1,11 @@
 <div align="center">
   <img src="docs/logo-echo-full.png" alt="ECHO Framework Logo" width="350">
   
-  # 🧠 ECHO Framework v5.238.1
+  # 🧠 ECHO Framework v5.239.0
   
   **The Sovereign Intelligence Orchestrator**
   
-  [![Version](https://img.shields.io/badge/version-5.238.1-blue.svg)](#)
+  [![Version](https://img.shields.io/badge/version-5.239.0-blue.svg)](#)
   [![Open WebUI](https://img.shields.io/badge/Powered%20by-Open%20WebUI-4CAF50.svg)](#)
   [![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-F9AB00.svg)](#)
   [![License](https://img.shields.io/badge/license-Apache%202.0-purple.svg)](#)
@@ -36,7 +36,7 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
 ┌────────────────────────────────────▼────────────────────────────────────┐
 │                          CORTEX (OPEN WEBUI)                            │
 │   • Echo Orchestrator : routage cognitif, suture SQLite bit-perfect     │
-│   • SSOT Registry : gouvernance unifiée (PROMETHEUS, APOLLO, ZEPHYR)    │
+│   • SSOT Registry : gouvernance (ATHENA, PROMETHEUS, APOLLO, ZEPHYR)    │
 │   • Filtres & Contexte : Migration/Fork Session, Smart Context, AEC XML │
 │   • Window Manager & HUD : fenêtres multi-chats, jauge quotas, Codex UI │
 └──────────────────┬───────────────────────────────────┬──────────────────┘
@@ -58,7 +58,7 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
 
 - 🔒 **Souveraineté & Sécurité Périmétrique** : Vos bases vectorielles (Qdrant), votre historique de session (SQLite) et vos fichiers (Codex) restent confinés localement sur des réseaux Docker isolés. L'accès est protégé par **ECHO Auth** (IdP natif avec MFA/TOTP, SSO et gestion de sessions Dual-Tier adaptative selon le niveau de confiance de l'appareil) placé derrière un reverse-proxy WAF **BunkerWeb**, supervisé par un **Admin Manager** dédié (monitoring temps réel, élagage SSoT par propriétaire et sauvegardes automatisées sur NAS / Cloud), et complété par le **User Manager** (`my.DOMAINE`, portail self-service de suivi d'empreinte, révocation des sessions SSO, export intégral `.tar.xz` auto-détruit après téléchargement et suppression autonome du compte sous contrôle MFA).
 - 🧠 **Mémoire Biomimétique & Edge Bridge** : Fini l'amnésie des LLMs. Calquée sur la mémoire humaine, l'architecture hiérarchise les souvenirs selon leur importance et consolide automatiquement les apprentissages récurrents. L'indexation vectorielle s'appuie sur un **Edge Embedding Bridge** exploitant l'accélération matérielle (`WebGPU` / `WASM` en `fp16`, validée en amont par une sonde matérielle et un smoke test de calcul avant tout téléchargement) du navigateur client, relayé côté serveur par le modèle local **Harrier-OSS-v1-0.6B** sous `llama.cpp`.
-- 🪢 **Suture Sémantique (Bit-perfect), Compaction In-Place & Continuité de Session** : L'**Echo Orchestrator** garantit une continuité de session chirurgicale et pilote dynamiquement l'escalade cognitive entre les modèles (`PROMETHEUS`, `APOLLO`, `ZEPHYR`) avec bascule instantanée (Circuit Breaker OAuth2 en HTTP/2). Lorsque la conversation s'allonge, que vous supprimez un tour intermédiaire ou que vous explorez une piste alternative, la **Compaction Contextuelle Automatique In-Place**, l'**Élagage Transactionnel des Branches Mortes** (préservant vos fichiers produits), l'action **Poursuivre dans une nouvelle conversation** (distillation en deux passes et conservation des étiquettes) ainsi que le support natif du **Clonage et de la Bifurcation (Fork)** condensent ou transfèrent automatiquement vos échanges, vos fichiers, votre Codex Git multi-espaces et la mémoire vectorielle de session.
+- 🪢 **Suture Sémantique (Bit-perfect), Compaction In-Place & Continuité de Session** : L'**Echo Orchestrator** garantit une continuité de session chirurgicale et pilote dynamiquement l'escalade cognitive entre les modèles (`ATHENA`, `PROMETHEUS`, `APOLLO`, `ZEPHYR`) avec bascule instantanée (Circuit Breaker OAuth2 en HTTP/2). Lorsque la conversation s'allonge, que vous supprimez un tour intermédiaire ou que vous explorez une piste alternative, la **Compaction Contextuelle Automatique In-Place**, l'**Élagage Transactionnel des Branches Mortes** (préservant vos fichiers produits), l'action **Poursuivre dans une nouvelle conversation** (distillation en deux passes et conservation des étiquettes) ainsi que le support natif du **Clonage et de la Bifurcation (Fork)** condensent ou transfèrent automatiquement vos échanges, vos fichiers, votre Codex Git multi-espaces et la mémoire vectorielle de session.
 - 🔐 **Identity Vault & Chiffrement Authentifié (`AES-256-GCM`)** : Coffre-fort de secrets chiffré au repos avec dérivation cryptographique par utilisateur (`HKDF-SHA256`) et liaison contextuelle anti-substitution (`AAD`), permettant de connecter des services tiers, des workflows N8N ou des serveurs Model Context Protocol (MCP) multi-comptes sans jamais exposer vos clés en clair au modèle ni dans les journaux d'exécution.
 - 🛠️ **Sovereign Toolbox & Workers Dédiés** :
   - **ECHO N8N Orchestrator** : Conception, test en Sandbox isolée et déploiement de workflows d'automatisation autonomes directement pilotés par l'IA, avec injection à la volée et masquage automatique des secrets.

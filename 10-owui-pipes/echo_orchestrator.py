@@ -1,15 +1,15 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 5.237.20.2
+version: 5.238.1.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.238.1.1: Intégration de MODEL_ATHENA et refonte orthogonale des UserValves (COGNITIVE_MODE + COGNITIVE_MODEL) avec routage et menu d'escalade pilotés par get_allowed_models.
 # 5.237.20.2: Synchronisation chirurgicale des éditions in-place Open WebUI (user/assistant) dans message_shadows et préservation intégrale du préfixe multi-étapes en vol.
 # 5.237.20.1: Suture par tour logique, scellement complet des Shadows assistant multi-messages (outils et cascades inclus), retrait du hachage cumulatif et suivi de last_turn_msg_id.
-# 5.236.0.1: Interception explicite des trames SSE d'erreur Google API (429/quota) dans StreamProcessor.
 # 5.235.5.2: Filtrage is_real_user_turn pour exclure les tours synthétiques d'images de la fusion des user consécutifs.
 # 5.235.5.1: Pose de ECHO_TURN_CONTEXT, réhydratation systématique dès l'entrée, fusion des user consécutifs et correction auto-parenté.
 
@@ -58,7 +58,8 @@ try:
 except ImportError:
     register_echo_wm_routes = None
 from echo_constants import (
-    MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS,
+    MODEL_ZEPHYR,
+    get_allowed_models, parse_model_policy,
     FILE_INGESTION_STATUS,
     CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE,
     ECHO_TOOLS_CACHE_MAX_SIZE,
@@ -77,7 +78,7 @@ from echo_protocol import FAST_TRACK_TASK_SCHEMAS, normalize_response_schema
 # --- IMPORTATIONS TIERCES CRITIQUES ---
 try:
     import httpx  # noqa: F401
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, Field, model_validator
     # Protocole HTTP/2 obligatoire (h2)
     import h2  # noqa: F401
     import logging
@@ -680,13 +681,29 @@ class Pipe:
 
     class UserValves(BaseModel):
         SHOW_CONTEXT_METRICS: bool = Field(default=True)
-        MODEL_SELECTION: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "AUTO", "AUTO_PROM"] = Field(default="AUTO")
-        # Thinking, temperature, topP et max_tokens sont des constantes ECHO (echo_constants.py v4.8).
-        # Plus de valves pour ces paramètres.
+        COGNITIVE_MODE: Literal["AUTO", "MANUAL"] = Field(
+            default="AUTO",
+            description="Mode de pilotage cognitif : 'AUTO' (Défaut, adaptation dynamique PCD depuis ZEPHYR jusqu'au plafond COGNITIVE_MODEL) ou 'MANUAL' (verrouillage à 100 % sur COGNITIVE_MODEL)."
+        )
+        COGNITIVE_MODEL: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = Field(
+            default="MODEL_APOLLO",
+            description="Modèle cognitif plafond (en mode AUTO) ou modèle forcé (en mode MANUAL). Défaut : MODEL_APOLLO (0 % de consommation de tokens Argon/Carbon en mode AUTO)."
+        )
         ENABLE_PAID_CREDITS: bool = Field(default=False, description="Activer l'utilisation des crédits Google One AI pour les requêtes OAuth2. Désactivé par défaut.")
         MAX_CASCADE_ATTEMPTS: int = Field(default=5, ge=3, le=10, description="Nombre max de transferts de modèles autorisés par tour.")
-        # [AUTO-CONTINUE] Valve contrôlant le nombre maximal de boucles de relance automatique autorisées en cas de troncature API (MAX_TOKENS).
         ECHO_AUTO_CONTINUE_MAX: int = Field(default=2, ge=1, le=10, description="Nombre max de relances si le modèle est interrompu (MAX_TOKENS).")
+
+        @model_validator(mode="before")
+        @classmethod
+        def _migrate_legacy_model_selection(cls, data: Any) -> Any:
+            if isinstance(data, dict) and "MODEL_SELECTION" in data:
+                data = dict(data)
+                legacy_val = data.pop("MODEL_SELECTION")
+                if "COGNITIVE_MODE" not in data or "COGNITIVE_MODEL" not in data:
+                    mode, mod = parse_model_policy(str(legacy_val))
+                    data.setdefault("COGNITIVE_MODE", mode)
+                    data.setdefault("COGNITIVE_MODEL", mod)
+            return data
 
     def __init__(self):
         self.valves, self.data_dir = self.Valves(), "/app/backend/data"
@@ -814,7 +831,8 @@ class Pipe:
         # Injection politiques Pipe → __metadata__ (non propagé aux outils par OWUI, conservé pour usage interne pipe)
         if __metadata__ is None:
             __metadata__ = {}
-        __metadata__["_echo_model_policy"] = user_valves.MODEL_SELECTION
+        model_policy = f"{user_valves.COGNITIVE_MODE}:{user_valves.COGNITIVE_MODEL}"
+        __metadata__["_echo_model_policy"] = model_policy
         __metadata__["_echo_enable_paid_credits"] = user_valves.ENABLE_PAID_CREDITS
 
         # -----------------------------------------------------------------------
@@ -897,7 +915,7 @@ class Pipe:
 
         # Persistance identity.db → lu par clamp_model() côté outils (fallback SQLite)
         _settings = EchoStateManager(user_id=__user__["id"])
-        _settings.save_setting("model_policy", user_valves.MODEL_SELECTION)
+        _settings.save_setting("model_policy", model_policy)
         _settings.save_setting("enable_paid_credits", str(user_valves.ENABLE_PAID_CREDITS))
 
         # --- [NOUVEAU] DETECTION ET INTERCEPTION DE CLÉ API ---
@@ -979,7 +997,8 @@ class Pipe:
             return
 
         # --- [NOUVEAU] ROUTAGE DYNAMIQUE (Fluctuation Continue) ---
-        model_selection = user_valves.MODEL_SELECTION
+        is_auto = user_valves.COGNITIVE_MODE == "AUTO"
+        selected_model = user_valves.COGNITIVE_MODEL
         last_model = orch.user_data_manager.get_last_active_model()
 
         # Reverse-lookup (Auto-heal SQLite)
@@ -1009,12 +1028,12 @@ class Pipe:
         if is_tool_continuation:
             # Sous-tour d'outil : Le modèle actif poursuit le traitement de son propre outil.
             # L'origine du tour utilisateur est préservée via le Verrou de Tour (interdiction d'écraser avec last_model).
-            target_model = last_model or MODEL_ZEPHYR
+            target_model = (last_model or MODEL_ZEPHYR) if is_auto else selected_model
             saved_turn_origin = orch.user_data_manager.state_manager.get_session_setting("turn_origin_model")
             origine_model = saved_turn_origin if saved_turn_origin else (last_model or "aucun")
-        elif model_selection in ["AUTO", "AUTO_PROM"]:
+        elif is_auto:
             # Nouveau tour utilisateur : Calcul normal de la cible et fixation du Verrou de Tour
-            ceiling = MODEL_PROMETHEUS if model_selection == "AUTO_PROM" else MODEL_APOLLO
+            ceiling = selected_model
             if last_model and last_model != "aucun":
                 # Clamping dynamique via la hiérarchie du SSOT
                 last_hierarchy = ECHO_MODELS_REGISTRY.get(last_model, {}).get("hierarchy")
@@ -1034,7 +1053,7 @@ class Pipe:
             # Enregistrement du Verrou de Tour pour les sous-tours d'outils subséquents
             orch.user_data_manager.state_manager.save_session_setting("turn_origin_model", origine_model)
         else:
-            target_model = model_selection
+            target_model = selected_model
             origine_model = last_model if last_model else "aucun"
             orch.user_data_manager.state_manager.save_session_setting("turn_origin_model", origine_model)
             await events.status(f"Model Fixé : {_get_ui_display(target_model)}")
@@ -1049,11 +1068,7 @@ class Pipe:
             orch._mutate_context_identity(context, target_model, origine_model)
 
         # --- [NOUVEAU] CONFIGURATION CASCADE ---
-        is_auto = user_valves.MODEL_SELECTION in ["AUTO", "AUTO_PROM"]
-        # Détermination des niveaux autorisés pour le schéma de l'outil (Approach: Clean Prompt)
-        niveaux_autorises = ["MODEL_APOLLO"]
-        if user_valves.MODEL_SELECTION == "AUTO_PROM":
-            niveaux_autorises.append("MODEL_PROMETHEUS")
+        allowed_for_policy = get_allowed_models(model_policy)
 
         max_cascade_attempts = user_valves.MAX_CASCADE_ATTEMPTS
         cascade_attempt = 0
@@ -1111,23 +1126,16 @@ class Pipe:
                 "generationConfig": gen_config
             }
 
-            tools = convert_owui_tools(body.get("tools"), user_valves.MODEL_SELECTION)
+            tools = convert_owui_tools(body.get("tools"), model_policy)
 
             # --- [NOUVEAU] INJECTION OUTIL CHANGEMENT COGNITIF (BIDIRECTIONNEL) ---
             if is_auto:
-                # Construction simplifiée : tous les modèles dispos, moins le modèle actif
-                menu_escalade = ["MODEL_ZEPHYR", "MODEL_APOLLO"]
-                if user_valves.MODEL_SELECTION == "AUTO_PROM":
-                    menu_escalade.append("MODEL_PROMETHEUS")
                 target_identity = get_model_identity(target_model)
-                if target_identity in menu_escalade:
-                    menu_escalade.remove(target_identity)
-
-                # Exclusion formelle des modèles ayant échoué lors de ce tour (Anti-boucle)
-                for failed_m in failed_models_this_turn:
-                    failed_id = get_model_identity(failed_m)
-                    if failed_id in menu_escalade:
-                        menu_escalade.remove(failed_id)
+                failed_identities = {get_model_identity(fm) for fm in failed_models_this_turn}
+                menu_escalade = [
+                    m for m in allowed_for_policy
+                    if m != target_identity and m not in failed_identities
+                ]
 
                 if menu_escalade:
                     escalation_tool = {
@@ -1250,6 +1258,7 @@ class Pipe:
 
                 if not new_target or new_target == "UNKNOWN":
                     sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
+                    valid_choices = ", ".join(allowed_for_policy)
                     # Signalement d'erreur de paramètre au modèle actuel
                     context.append({
                         "role": "model",
@@ -1257,13 +1266,13 @@ class Pipe:
                     })
                     context.append({
                         "role": "user",
-                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "message": f"ERREUR : Niveau '{target_req}' inconnu. Choisissez parmi MODEL_ZEPHYR, MODEL_APOLLO ou MODEL_PROMETHEUS."}, "id": sys_tc_id}}]
+                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "message": f"ERREUR : Niveau '{target_req}' inconnu. Choisissez parmi {valid_choices}."}, "id": sys_tc_id}}]
                     })
                     continue
 
                 # Vérification des droits (Valve)
-                if user_valves.MODEL_SELECTION == "AUTO" and new_target == MODEL_PROMETHEUS:
-                    await events.status("⚠️  Transfert vers MODEL_PROMETHEUS refusé (Valve AUTO).")
+                if new_target not in allowed_for_policy:
+                    await events.status(f"⚠️  Transfert vers {new_target} refusé (Plafond {selected_model}).")
                     sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
                     # Signalement de refus au modèle actuel
                     context.append({

@@ -42,7 +42,7 @@
       <li><strong>Basculement de serveur :</strong> Si un serveur Google met trop de temps à répondre ou renvoie une
         erreur de quota, ECHO bascule immédiatement la requête sur un serveur secondaire ou sur votre clé d'API de
         secours.</li>
-      <li><strong>Cascade cognitive descendante :</strong> Si un modèle de haute capacité (<code>PROMETHEUS</code>) est
+      <li><strong>Cascade cognitive descendante :</strong> Si un modèle de haute capacité (<code>ATHENA</code> ou <code>PROMETHEUS</code>) est
         temporairement indisponible, le système replie automatiquement la requête sur le modèle inférieur
         (<code>APOLLO</code> puis <code>ZEPHYR</code>) en poussant sa profondeur de réflexion au maximum et en
         conservant le fil de ses pensées précédentes afin que votre conversation ne s'interrompe jamais.</li>
@@ -81,10 +81,10 @@
           </thead>
           <tbody>
             <tr>
-              <td><code>MODEL_PROMETHEUS</code></td>
-              <td><code>2</code></td>
-              <td><code>gemini-4-argon</code></td>
-              <td><code>gemini-4-argon-high</code></td>
+              <td><code>MODEL_ATHENA</code> / <code>MODEL_PROMETHEUS</code></td>
+              <td><code>3</code> / <code>2</code></td>
+              <td><code>gemini-4-carbon</code> / <code>gemini-4-argon</code></td>
+              <td><code>gemini-4-carbon-high</code> / <code>gemini-4-argon-high</code></td>
               <td><code>medium</code> (nominal) / <code>high</code> (cascade 429)</td>
             </tr>
             <tr>
@@ -119,8 +119,8 @@
         </table>
 
         <h3>3. Client HTTP/2, Cascade Cognitive &amp; Circuit Breaker OAuth2 (<code>echo_gemini_client.py</code>
-          v5.236.0.2
-          &amp; <code>echo_orchestrator.py</code> v5.236.0.1)</h3>
+          v5.237.11.1
+          &amp; <code>echo_orchestrator.py</code> v5.238.1.1)</h3>
         <ul>
           <li><strong>Multiplexage HTTP/2 &amp; Streaming Zéro-RAM (Disque et Mémoire Vive) :</strong> Connexion
             persistante via <code>httpx.AsyncClient(http2=True)</code> (<code>ECHO_HTTP_CLIENT_TIMEOUT = 600s</code>),
@@ -128,7 +128,7 @@
             mémoire vive (<code>___ECHO_STREAM_MEM___</code> via <code>register_memory_stream</code> /
             <code>_zero_ram_memory_generator</code> sur <code>memoryview</code> sans écriture disque ni duplication RAM
             dans <code>deepcopy</code>), attachement conforme Gemini 3/4 de la <code>thoughtSignature</code> via
-            <code>attach_thought_signature</code> (<code>echo_core.py</code> v5.235.5.3), normalisation stricte en
+            <code>attach_thought_signature</code> (<code>echo_core.py</code> v5.238.1.1), normalisation stricte en
             <code>camelCase</code> (<code>inlineData</code>, <code>functionDeclarations</code>,
             <code>functionCallingConfig</code>, <code>responseMimeType</code>, <code>responseSchema</code> via
             <code>normalize_generation_config</code> dans <code>echo_protocol.py</code> v5.233.0.1), injection dynamique
@@ -172,7 +172,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.238.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

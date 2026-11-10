@@ -82,35 +82,29 @@
       </thead>
       <tbody>
         <tr>
-          <td><strong><code>AUTO</code></strong></td>
-          <td>Démarre en mode léger (<code>ZEPHYR</code>) et escalade de lui-même jusqu'à <code>APOLLO</code> si la
-            demande nécessite des outils ou une recherche.</td>
-          <td>Usage quotidien polyvalent (compromis vitesse / autonomie).</td>
-        </tr>
-        <tr>
-          <td><strong><code>AUTO_PROM</code></strong></td>
-          <td>Autorise l'escalade autonome complète de <code>ZEPHYR</code> vers <code>APOLLO</code> puis jusqu'à
-            <code>PROMETHEUS</code> pour les problèmes d'architecture ou d'orchestration lourde.
-          </td>
-          <td>Projets d'ingénierie, R&amp;D et missions complexes.</td>
+          <td><strong><code>COGNITIVE_MODE</code></strong> (<code>AUTO</code> / <code>MANUAL</code>)</td>
+          <td><code>AUTO</code> adapte dynamiquement la cognition jusqu'au plafond fixé. <code>MANUAL</code> verrouille le modèle sur <code>COGNITIVE_MODEL</code>.</td>
+          <td>Gouvernance du pilotage cognitif (adaptatif PCD ou forçage strict).</td>
         </tr>
         <tr>
           <td><strong><code>ZEPHYR</code></strong> (<code>MODEL_ZEPHYR</code>)</td>
-          <td>Verrouille le modèle rapide pour la discussion courante, la synthèse rapide et la consultation de vos
-            préférences.</td>
+          <td>Modèle rapide pour la discussion courante, la synthèse rapide et la consultation de vos préférences.</td>
           <td>Échanges conversationnels rapides et économie de quota.</td>
         </tr>
         <tr>
           <td><strong><code>APOLLO</code></strong> (<code>MODEL_APOLLO</code>)</td>
-          <td>Active d'emblée le modèle agentique doté d'une réflexion approfondie et de l'exécution d'outils (Web,
-            Code, Codex).</td>
+          <td>Modèle agentique doté d'une réflexion approfondie et de l'exécution d'outils (Web, Code, Codex).</td>
           <td>Développement, recherche web et analyse de fichiers.</td>
         </tr>
         <tr>
           <td><strong><code>PROMETHEUS</code></strong> (<code>MODEL_PROMETHEUS</code>)</td>
-          <td>Mobilise la capacité de raisonnement maximale pour les arbitrages critiques et l'orchestration
-            multi-agents.</td>
-          <td>Conception système (HLD), débats d'experts (Delphi) et débogage ardu.</td>
+          <td>Moteur d'analyse profonde, d'architecture système et d'orchestration multi-agents.</td>
+          <td>Conception système (HLD), débats d'experts (Delphi) et débogage complexe.</td>
+        </tr>
+        <tr>
+          <td><strong><code>ATHENA</code></strong> (<code>MODEL_ATHENA</code>)</td>
+          <td>Moteur suprême de raisonnement formel, d'ingénierie critique et de cyber-défense.</td>
+          <td>Complexité algorithmique extrême, audit de sécurité et arbitrage critique.</td>
         </tr>
       </tbody>
     </table>
@@ -196,7 +190,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.238.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
   <script src="nav.js"></script>

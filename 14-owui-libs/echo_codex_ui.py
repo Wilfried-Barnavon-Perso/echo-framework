@@ -1,16 +1,16 @@
 """
 title: ECHO Codex UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.237.19.1
+version: 5.238.1.1
 description: Composant système interne : Moteur de rendu HUD Monaco et Éditeur Hexadécimal pour ECHO Codex.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.238.1.1: Ajout de l'option MODEL_ATHENA dans le sélecteur de modèle IA du HUD Codex (#echo-codex-ai-model).
 # 5.237.19.1: Centrage géométrique du label d'en-tête du volet de prévisualisation (Markdown Preview et équivalents).
 # 5.237.18.1: Inversion ergonomique des icônes Import (flèche montante Export) et Export (flèche descendante Download) dans le header du HUD Codex.
 # 5.232.5.1: Support déclaratif de ECHO_CODEX_WORKSPACES, verrouillage Read-Only automatique sur les workspaces non-inscriptibles (plans, generated) et rafraîchissement de l'aperçu image lors de la navigation d'historique Git (◀ ▶).
 # 5.231.55.1: Export direct client-side (0 aller-retour RPC), noWatchdogActions sur download/upload et délégation sécurisée à echoTriggerDownload.
-# 5.231.47.1: Factorisation des icônes Import/Export/Copy via EchoUI.get_icon et activation de la copie d'image (window.echoExportImage) dans PREVIEW_REGISTRY.
 
 
 import sys
@@ -531,6 +531,7 @@ class EchoCodexUI(EchoUI):
             color:${{textColor}}; padding:2px 6px; border-radius:4px; font-size:11px; max-width:90px;">
             <option value="MODEL_APOLLO" selected>Apollo</option>
             <option value="MODEL_PROMETHEUS">Prometheus</option>
+            <option value="MODEL_ATHENA">Athena</option>
             <option value="MODEL_ZEPHYR">Zephyr</option>
           </select>
           <button id="${{CODEX_ID}}-ai-send" style="background:${{accentColor}}; border:none; color:#1e1e2e;
