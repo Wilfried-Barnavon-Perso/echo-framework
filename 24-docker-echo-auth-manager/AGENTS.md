@@ -8,7 +8,7 @@ Ce dossier contient l'application **ECHO Auth Manager**, qui agit comme un **IdP
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `auth_server.py` (v5.239.2.1)
+### `auth_server.py` (v5.239.3.1)
 Le cœur du gestionnaire d'identités (FastAPI).
 - **Authentification Locale & Hachage Argon2** : Gère les comptes utilisateurs et sessions SSO dans SQLite (`auth.db` en mode WAL, tables `users` et `sessions`) avec hachage de mots de passe et réponses de sécurité via **Argon2** (`passlib.hash.argon2`), gestion de l'expiration des mots de passe temporaires (`temp_pass_expires`), suivi de la date d'enrôlement (`last_enrollment`) et traçabilité de session (`ip_address`, `os`, `browser`, `device`). Dans `stack-echo.yml`, `JWT_EXPIRES_IN` d'Open WebUI est aligné sur `${ECHO_JWT_EXPIRES_IN:-4w}` (4 semaines par défaut) et soutenu par un bounce `/sso-logout` (`Clear-Site-Data: "cache"`).
 - **Garde Anti-Bruteforce & Politique de Verrouillage Dual-Tier** :
@@ -43,7 +43,8 @@ Le cœur du gestionnaire d'identités (FastAPI).
       - *Verrouillage définitif (`lockoutSec === -1`)* : alerte rouge persistante et désactivation stricte du bouton en attente d'une réinitialisation MFA par l'administrateur.
       - *Verrouillage temporaire (`lockoutSec > 0`)* : alerte live décrémentée chaque seconde au format `HH:MM:SS` / `MM:SS` / `Xs`, bouton verrouillé, bascule en message de succès vert à échéance avec restauration du quota nominal (`N/N`) et réactivation immédiate du formulaire.
       - *Délai inter-essais (`cooldownSec > 0`)* : bandeau ambre live bloquant les soumissions précipitées pendant la temporisation configurée (ex: 5s, 10s, 20s), masquage automatique et déverrouillage fluide du bouton à `0s`.
-- **`templates/enroll.html`** : Le formulaire d'enrôlement exige la Question de Sécurité avant la saisie du code TOTP.
+- **`templates/base.html`** : Définit le layout Flexbox vertical (`flex-direction: column`), le conteneur `.auth-container` doté d'une hauteur maximale bornée au viewport (`max-height: calc(100dvh - 2rem); overflow-y: auto`) avec ascenseur personnalisé visible (`scrollbar-width: thin`, `::-webkit-scrollbar`), la redirection des événements `wheel` externes vers `.auth-container`, le contraste sombre universel des options `<select option>`, et le bloc `{% block container_class %}` permettant d'activer `.auth-container-wide` (`max-width: 880px`).
+- **`templates/enroll.html`** : Active `.auth-container-wide` et structure le formulaire d'enrôlement en grille responsive 2 colonnes (`.enroll-grid` : colonne gauche dédiée aux identifiants, règles de complexité en grille 2x2 `.complexity-grid` et question/réponse de sécurité ; colonne droite dédiée au QR Code TOTP, clé manuelle, code à 6 chiffres et bouton de validation) avec repli automatique en 1 colonne sous `768px`.
 
 ### Migration CLI `docker exec` (Plafonnement de l'existant à 24h)
 Pour migrer à chaud les bases de données existantes sans déconnecter immédiatement les utilisateurs mais en bridant les sessions non marquées à un maximum de 24h résiduelles :

@@ -2,10 +2,12 @@
 
 {% block title %}ECHO Auth - Enrôlement{% endblock %}
 
+{% block container_class %}auth-container-wide{% endblock %}
+
 {% block content %}
-<div style="text-align: center; margin-bottom: 1.5rem;">
-    <h2 style="margin-top: 0; font-size: 1.2rem; color: #fff;">Finalisation du compte</h2>
-    <p style="font-size: 0.85rem; color: var(--text-muted);">Veuillez configurer vos accès de sécurité définitifs.</p>
+<div style="text-align: center; margin-bottom: 1.25rem;">
+    <h2 style="margin-top: 0; margin-bottom: 0.25rem; font-size: 1.2rem; color: #fff;">Finalisation du compte</h2>
+    <p style="margin: 0; font-size: 0.85rem; color: var(--text-muted);">Veuillez configurer vos accès de sécurité définitifs.</p>
 </div>
 
 <form method="POST" action="/enroll">
@@ -13,70 +15,127 @@
     <input type="hidden" name="totp_secret" value="{{ totp_secret }}">
     <input type="hidden" name="next" value="{{ next }}">
     
-    <div class="form-group">
-        <label for="name">Votre Nom complet (Optionnel)</label>
-        <input type="text" id="name" name="name" placeholder="Prénom Nom" autocomplete="name" style="width: 100%; padding: 0.75rem 1rem; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-main); font-size: 0.9rem; margin-bottom: 1rem; box-sizing: border-box;">
-    </div>
-    
-    <div class="form-group">
-        <label for="new_password">Nouveau mot de passe définitif</label>
-        <div style="position: relative;">
-            <input type="password" id="new_password" name="new_password" required style="width: 100%; padding-right: 40px; box-sizing: border-box;">
-            <span class="password-toggle" onclick="togglePasswordVisibility('new_password', this)" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); cursor: pointer; color: var(--text-muted);">👁️</span>
+    <div class="enroll-grid">
+        <!-- Colonne Gauche : Identifiants & Récupération -->
+        <div class="enroll-col">
+            <h3 class="section-title">1. Identifiants & Récupération</h3>
+
+            <div class="form-group">
+                <label for="name">Votre Nom complet (Optionnel)</label>
+                <input type="text" id="name" name="name" placeholder="Prénom Nom" autocomplete="name">
+            </div>
+            
+            <div class="form-group">
+                <label for="new_password">Nouveau mot de passe définitif</label>
+                <div style="position: relative;">
+                    <input type="password" id="new_password" name="new_password" required style="width: 100%; padding-right: 40px; box-sizing: border-box;">
+                    <span class="password-toggle" onclick="togglePasswordVisibility('new_password', this)" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); cursor: pointer; color: var(--text-muted);">👁️</span>
+                </div>
+                <div id="password-complexity" class="complexity-grid">
+                    <div id="rule-length">❌ Au moins {{ pwd_min_length|default(12) }} caractères</div>
+                    {% if pwd_require_upper %}<div id="rule-upper">❌ Au moins une majuscule</div>{% endif %}
+                    {% if pwd_require_lower %}<div id="rule-lower">❌ Au moins une minuscule</div>{% endif %}
+                    {% if pwd_require_digit %}<div id="rule-digit">❌ Au moins un chiffre</div>{% endif %}
+                    {% if pwd_require_special %}<div id="rule-special">❌ Au moins un caractère spécial</div>{% endif %}
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="confirm_password">Confirmer le mot de passe</label>
+                <div style="position: relative;">
+                    <input type="password" id="confirm_password" name="confirm_password" required style="width: 100%; padding-right: 40px; box-sizing: border-box;">
+                    <span class="password-toggle" onclick="togglePasswordVisibility('confirm_password', this)" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); cursor: pointer; color: var(--text-muted);">👁️</span>
+                </div>
+                <div id="rule-match" style="font-size: 0.78rem; margin-top: 0.4rem; color: var(--text-muted);">❌ Les mots de passe correspondent</div>
+            </div>
+
+            <div class="form-group" style="margin-bottom: 0;">
+                <label for="security_question">Question de sécurité (Récupération)</label>
+                <select id="security_question" name="security_question" required style="width: 100%; padding: 0.7rem 1rem; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-main); font-size: 0.9rem; margin-bottom: 0.75rem; box-sizing: border-box;">
+                    <option value="" disabled selected>-- Choisissez une question --</option>
+                    <option value="Quel est le nom de votre premier animal de compagnie ?">Quel est le nom de votre premier animal de compagnie ?</option>
+                    <option value="Dans quelle ville êtes-vous né(e) ?">Dans quelle ville êtes-vous né(e) ?</option>
+                    <option value="Quel est le nom de jeune fille de votre mère ?">Quel est le nom de jeune fille de votre mère ?</option>
+                    <option value="Quel était le modèle de votre première voiture ?">Quel était le modèle de votre première voiture ?</option>
+                </select>
+                
+                <label for="security_answer">Réponse secrète</label>
+                <input type="text" id="security_answer" name="security_answer" required placeholder="Votre réponse...">
+            </div>
         </div>
-        <div id="password-complexity" style="font-size: 0.8rem; margin-top: 0.5rem; color: var(--text-muted); line-height: 1.4;">
-            <div id="rule-length">❌ Au moins {{ pwd_min_length|default(12) }} caractères</div>
-            {% if pwd_require_upper %}<div id="rule-upper">❌ Au moins une majuscule</div>{% endif %}
-            {% if pwd_require_lower %}<div id="rule-lower">❌ Au moins une minuscule</div>{% endif %}
-            {% if pwd_require_digit %}<div id="rule-digit">❌ Au moins un chiffre</div>{% endif %}
-            {% if pwd_require_special %}<div id="rule-special">❌ Au moins un caractère spécial</div>{% endif %}
+
+        <!-- Colonne Droite : Double Authentification (TOTP) & Validation -->
+        <div class="enroll-col enroll-col-right">
+            <div>
+                <h3 class="section-title">2. Authentification Forte (MFA)</h3>
+
+                <div class="form-group">
+                    <label>Scannez ce QR Code avec Google Authenticator ou Authy</label>
+                    <div class="qr-container" style="margin-bottom: 0; padding: 0.85rem;">
+                        <img src="{{ qr_code_b64 }}" alt="QR Code MFA" style="max-width: 160px; height: auto;">
+                        <p style="margin: 0.5rem 0 0 0; font-size: 0.78rem; color: #333; word-break: break-all;">
+                            Clé manuelle : <strong>{{ totp_secret }}</strong>
+                        </p>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="totp_code">Code généré à 6 chiffres</label>
+                    <input type="text" id="totp_code" name="totp_code" required inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000" autocomplete="off" style="text-align: center; letter-spacing: 4px; font-weight: 600; font-size: 1.05rem;">
+                </div>
+            </div>
+            
+            <button type="submit" class="btn" style="transition: opacity 0.3s; margin-top: 0.5rem;" id="submit_btn">Valider mon enrôlement</button>
         </div>
     </div>
-
-    <div class="form-group" style="margin-top: 1rem;">
-        <label for="confirm_password">Confirmer le mot de passe</label>
-        <div style="position: relative;">
-            <input type="password" id="confirm_password" name="confirm_password" required style="width: 100%; padding-right: 40px; box-sizing: border-box;">
-            <span class="password-toggle" onclick="togglePasswordVisibility('confirm_password', this)" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); cursor: pointer; color: var(--text-muted);">👁️</span>
-        </div>
-        <div id="rule-match" style="font-size: 0.8rem; margin-top: 0.5rem; color: var(--text-muted);">❌ Les mots de passe correspondent</div>
-    </div>
-
-    <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 1.5rem 0;">
-
-    <div class="form-group">
-        <label for="security_question">Question de sécurité (Récupération)</label>
-        <select id="security_question" name="security_question" required style="width: 100%; padding: 0.75rem 1rem; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-main); font-size: 0.9rem; margin-bottom: 1rem;">
-            <option value="" disabled selected>-- Choisissez une question --</option>
-            <option value="Quel est le nom de votre premier animal de compagnie ?">Quel est le nom de votre premier animal de compagnie ?</option>
-            <option value="Dans quelle ville êtes-vous né(e) ?">Dans quelle ville êtes-vous né(e) ?</option>
-            <option value="Quel est le nom de jeune fille de votre mère ?">Quel est le nom de jeune fille de votre mère ?</option>
-            <option value="Quel était le modèle de votre première voiture ?">Quel était le modèle de votre première voiture ?</option>
-        </select>
-        
-        <label for="security_answer">Réponse secrète</label>
-        <input type="text" id="security_answer" name="security_answer" required placeholder="Votre réponse...">
-    </div>
-
-    <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 1.5rem 0;">
-
-    <div class="form-group">
-        <label>1. Scannez ce QR Code avec Google Authenticator ou Authy</label>
-        <div class="qr-container">
-            <img src="{{ qr_code_b64 }}" alt="QR Code MFA">
-            <p style="margin: 0.5rem 0 0 0; font-size: 0.8rem; color: #333; word-break: break-all;">
-                Clé manuelle : {{ totp_secret }}
-            </p>
-        </div>
-    </div>
-
-    <div class="form-group">
-        <label for="totp_code">2. Saisissez le code généré pour valider</label>
-        <input type="text" id="totp_code" name="totp_code" required inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000" autocomplete="off">
-    </div>
-    
-    <button type="submit" class="btn" style="transition: opacity 0.3s;" id="submit_btn">Valider mon enrôlement</button>
 </form>
+
+<style>
+    .auth-container-wide .logo-container {
+        margin-bottom: 1rem;
+    }
+    .enroll-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 2rem;
+        align-items: stretch;
+    }
+    .enroll-grid .form-group {
+        margin-bottom: 1rem;
+    }
+    .enroll-col-right {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+    }
+    .section-title {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: #93c5fd;
+        margin-top: 0;
+        margin-bottom: 1rem;
+        padding-bottom: 0.4rem;
+        border-bottom: 1px solid var(--border-color);
+    }
+    .complexity-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.25rem 0.5rem;
+        font-size: 0.76rem;
+        margin-top: 0.5rem;
+        color: var(--text-muted);
+        line-height: 1.35;
+    }
+    @media (max-width: 768px) {
+        .enroll-grid {
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
+        }
+        .complexity-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
 
 <script>
     const minLength = {{ pwd_min_length|default(12) }};

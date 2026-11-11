@@ -1,18 +1,18 @@
 """
 ================================================================================
 MODULE : ECHO AUTH MANAGER
-VERSION : 5.239.2.1
+VERSION : 5.239.3.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-11-11
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.3.1: Ergonomie responsive et ascenseur sur les templates (grille 2 colonnes pour enroll.html, conteneur .auth-container-wide, max-height dynamique avec scrollbar stylisée et correction du contraste des options <select>).
 # 5.239.2.1: Politique anti-bruteforce paramétrable (délai inter-essais 0/5/10/20s universel, quota d'essais et verrouillage temporisé ou définitif pour les comptes non-enrôlés) et affichage temps réel sur login.html.
 # 5.237.0.1: Correction de la boucle de redirection 302 (/ <-> /login), résolution SSOT resolve_safe_next vers ui.{ECHO_DOMAIN} alignée sur la CSP form-action de BunkerWeb, et propagation de next dans /enroll et /recovery.
 # 5.236.2.1: Durcissement SELECT * dans resolve_session_state pour garantir la tolérance aux colonnes SQLite dynamiques.
 # 5.236.1.1: Politique Dual-Tier des sessions SSO (sans confiance 1-24h vs terminal de confiance 168-8760h/éternel), colonnes SQLite is_trusted/expires_at, factorisation _render_login et resolve_session_state, invalidation cache par mtime et endpoint /api/session/status.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 import os
 import sqlite3
 import httpx
