@@ -1,18 +1,18 @@
 """
 ================================================================================
 MODULE : ECHO AUTH MANAGER
-VERSION : 5.237.0.1
+VERSION : 5.239.2.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-11-07
+DATE MAJ : 2026-11-11
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.2.1: Politique anti-bruteforce paramétrable (délai inter-essais 0/5/10/20s universel, quota d'essais et verrouillage temporisé ou définitif pour les comptes non-enrôlés) et affichage temps réel sur login.html.
 # 5.237.0.1: Correction de la boucle de redirection 302 (/ <-> /login), résolution SSOT resolve_safe_next vers ui.{ECHO_DOMAIN} alignée sur la CSP form-action de BunkerWeb, et propagation de next dans /enroll et /recovery.
 # 5.236.2.1: Durcissement SELECT * dans resolve_session_state pour garantir la tolérance aux colonnes SQLite dynamiques.
 # 5.236.1.1: Politique Dual-Tier des sessions SSO (sans confiance 1-24h vs terminal de confiance 168-8760h/éternel), colonnes SQLite is_trusted/expires_at, factorisation _render_login et resolve_session_state, invalidation cache par mtime et endpoint /api/session/status.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.6: Passage 403 vers 401 pour session OWUI
 import os
 import sqlite3
 import httpx
@@ -43,6 +43,10 @@ SETTINGS_PATH = os.environ.get("AUTH_SETTINGS_PATH", "/app/auth-data/auth-settin
 UNTRUSTED_VALID_HOURS = (1, 2, 4, 8, 12, 24)
 TRUSTED_VALID_HOURS = (168, 720, 2160, 4380, 8760, 0)
 COOKIE_ETERNAL_MAX_AGE = 315360000  # 10 ans (persistance navigateur pour session éternelle de confiance)
+
+LOGIN_RETRY_DELAY_VALID_SEC = (0, 5, 10, 20)
+UNENROLLED_LOCKOUT_VALID_MIN = (-1, 1, 3, 10, 60, 180, 1440)
+_ip_last_attempt: dict[str, int] = {}
 
 _settings_cache = {}
 _settings_cache_time = 0
@@ -93,7 +97,10 @@ def init_db():
                 security_answer_hash TEXT,
                 must_enroll INTEGER DEFAULT 1,
                 temp_pass_expires INTEGER DEFAULT 0,
-                last_enrollment INTEGER DEFAULT 0
+                last_enrollment INTEGER DEFAULT 0,
+                failed_attempts INTEGER DEFAULT 0,
+                last_attempt_at INTEGER DEFAULT 0,
+                locked_until INTEGER DEFAULT 0
             )
         """)
         cursor.execute("""
@@ -105,14 +112,17 @@ def init_db():
                 expires_at INTEGER
             )
         """)
-        try:
-            cursor.execute("ALTER TABLE users ADD COLUMN temp_pass_expires INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            cursor.execute("ALTER TABLE users ADD COLUMN last_enrollment INTEGER DEFAULT 0")
-        except sqlite3.OperationalError:
-            pass
+        for col_name, col_type in [
+            ("temp_pass_expires", "INTEGER DEFAULT 0"),
+            ("last_enrollment", "INTEGER DEFAULT 0"),
+            ("failed_attempts", "INTEGER DEFAULT 0"),
+            ("last_attempt_at", "INTEGER DEFAULT 0"),
+            ("locked_until", "INTEGER DEFAULT 0")
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+            except sqlite3.OperationalError:
+                pass
         
         # Migrations pour sessions
         for col_name, col_type in [("ip_address", "TEXT"), ("os", "TEXT"), ("browser", "TEXT"), ("device", "TEXT"), ("is_trusted", "INTEGER DEFAULT 0"), ("expires_at", "INTEGER")]:
@@ -138,7 +148,7 @@ def update_user_enrollment(email: str, pass_hash: str, totp_secret: str, securit
         current_time = int(time.time())
         cursor.execute("""
             UPDATE users 
-            SET pass_hash = ?, totp_secret = ?, security_question = ?, security_answer_hash = ?, must_enroll = 0, last_enrollment = ?, name = ?
+            SET pass_hash = ?, totp_secret = ?, security_question = ?, security_answer_hash = ?, must_enroll = 0, last_enrollment = ?, name = ?, failed_attempts = 0, locked_until = 0
             WHERE email = ?
         """, (pass_hash, totp_secret, security_question, security_answer_hash, current_time, name, email))
         conn.commit()
@@ -184,6 +194,225 @@ def generate_qr_base64(secret: str, email: str) -> str:
     return f"data:image/png;base64,{img_b64}"
 
 # ==============================================================================
+# LOGIN SECURITY & GUARD UTILS
+# ==============================================================================
+def _extract_client_ip(request: Optional[Request]) -> str:
+    """Extrait l'IP cliente réelle en tenant compte des reverse-proxies (BunkerWeb)."""
+    if not request:
+        return ""
+    ip = request.headers.get("X-Forwarded-For", request.headers.get("X-Real-IP", request.client.host if request.client else ""))
+    if ip and "," in ip:
+        ip = ip.split(",")[0].strip()
+    return ip or ""
+
+def _format_duration_fr(seconds: int) -> str:
+    """Formate une durée en secondes de manière lisible (ex: X min Ys, Xh Ym, Xs)."""
+    if seconds <= 0:
+        return "0s"
+    m, s = divmod(seconds, 60)
+    h, m = divmod(m, 60)
+    d, h = divmod(h, 24)
+    if d > 0:
+        return f"{d}j {h}h" if h > 0 else f"{d}j"
+    if h > 0:
+        return f"{h}h {m}m" if m > 0 else f"{h}h"
+    if m > 0:
+        return f"{m}min {s}s" if s > 0 else f"{m}min"
+    return f"{s}s"
+
+def _format_sanction_label(lockout_min: int) -> str:
+    """Retourne le libellé textuel de la sanction associée à un verrouillage."""
+    mapping = {
+        -1: "Verrouillage définitif (attente réinit. MFA par l'Admin)",
+        1: "Temporisation de 1 minute",
+        3: "Temporisation de 3 minutes",
+        10: "Temporisation de 10 minutes",
+        60: "Temporisation de 1 heure",
+        180: "Temporisation de 3 heures",
+        1440: "Temporisation de 24 heures"
+    }
+    if lockout_min in mapping:
+        return mapping[lockout_min]
+    if lockout_min < 0:
+        return "Verrouillage définitif (attente réinit. MFA par l'Admin)"
+    return f"Temporisation de {lockout_min} minutes"
+
+def get_security_policy(settings: dict) -> tuple[int, int, int, str]:
+    """Retourne (retry_delay_sec, max_attempts, lockout_min, sanction_label) avec clamping strict."""
+    try:
+        retry_delay = int(settings.get("login_retry_delay_sec", 5))
+    except (ValueError, TypeError):
+        retry_delay = 5
+    if retry_delay not in LOGIN_RETRY_DELAY_VALID_SEC:
+        retry_delay = 5
+
+    try:
+        max_attempts = int(settings.get("unenrolled_max_attempts", 5))
+    except (ValueError, TypeError):
+        max_attempts = 5
+    if max_attempts < 1:
+        max_attempts = 1
+    elif max_attempts > 20:
+        max_attempts = 20
+
+    try:
+        lockout_min = int(settings.get("unenrolled_lockout_min", 10))
+    except (ValueError, TypeError):
+        lockout_min = 10
+    if lockout_min not in UNENROLLED_LOCKOUT_VALID_MIN:
+        lockout_min = 10
+
+    sanction_label = _format_sanction_label(lockout_min)
+    return retry_delay, max_attempts, lockout_min, sanction_label
+
+def check_login_guard(user, client_ip: str, now: int, settings: dict) -> dict:
+    """Vérifie si la tentative de connexion est bloquée par un délai ou un verrouillage."""
+    retry_delay, max_attempts, lockout_min, _ = get_security_policy(settings)
+
+    if user is None:
+        last_ts = _ip_last_attempt.get(client_ip, 0)
+        if retry_delay > 0 and (now - last_ts) < retry_delay:
+            rem = retry_delay - (now - last_ts)
+            return {
+                "blocked": True,
+                "error": f"Veuillez patienter {rem}s avant un nouvel essai.",
+                "cooldown_sec": rem,
+                "lockout_sec": 0,
+                "attempts_remaining": None
+            }
+        return {"blocked": False}
+
+    user_keys = user.keys() if hasattr(user, "keys") else ()
+    failed_att = int(user["failed_attempts"] or 0) if "failed_attempts" in user_keys else 0
+
+    if user["must_enroll"] == 1:
+        locked_until = int(user["locked_until"] or 0) if "locked_until" in user_keys else 0
+        if locked_until == -1:
+            return {
+                "blocked": True,
+                "error": "Compte verrouillé définitivement. Contactez l'administrateur pour réinitialiser le MFA.",
+                "cooldown_sec": 0,
+                "lockout_sec": -1,
+                "attempts_remaining": 0
+            }
+        if locked_until > now:
+            rem_lock = locked_until - now
+            return {
+                "blocked": True,
+                "error": f"Compte temporairement verrouillé. Réessayez dans {_format_duration_fr(rem_lock)}.",
+                "cooldown_sec": 0,
+                "lockout_sec": rem_lock,
+                "attempts_remaining": 0
+            }
+        if locked_until > 0 and locked_until <= now:
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.execute("UPDATE users SET failed_attempts = 0, locked_until = 0 WHERE email = ?", (user["email"],))
+                conn.commit()
+            failed_att = 0
+
+    # Vérification délai inter-essais retry_delay > 0 (pour must_enroll == 1 ET must_enroll == 0)
+    last_att = int(user["last_attempt_at"] or 0) if "last_attempt_at" in user_keys else 0
+    if retry_delay > 0 and last_att > 0 and (now - last_att) < retry_delay:
+        rem_cd = retry_delay - (now - last_att)
+        att_rem = max(0, max_attempts - failed_att) if user["must_enroll"] == 1 else None
+        return {
+            "blocked": True,
+            "error": f"Veuillez patienter {rem_cd}s entre chaque essai.",
+            "cooldown_sec": rem_cd,
+            "lockout_sec": 0,
+            "attempts_remaining": att_rem
+        }
+
+    return {"blocked": False}
+
+def record_login_attempt(user, client_ip: str, is_success: bool, now: int, settings: dict) -> dict:
+    """Enregistre le résultat d'une tentative et met à jour les sanctions éventuelles."""
+    retry_delay, max_attempts, lockout_min, sanction_label = get_security_policy(settings)
+
+    if user is None:
+        if len(_ip_last_attempt) > 2048:
+            _ip_last_attempt.clear()
+        _ip_last_attempt[client_ip] = now
+        return {
+            "error": "Identifiants incorrects.",
+            "cooldown_sec": retry_delay,
+            "lockout_sec": 0,
+            "attempts_remaining": None
+        }
+
+    email = user["email"]
+    user_keys = user.keys() if hasattr(user, "keys") else ()
+
+    if is_success:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "UPDATE users SET failed_attempts = 0, locked_until = 0, last_attempt_at = ? WHERE email = ?",
+                (now, email)
+            )
+            conn.commit()
+        return {"cooldown_sec": 0, "lockout_sec": 0, "attempts_remaining": None}
+
+    if user["must_enroll"] == 0:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "UPDATE users SET last_attempt_at = ? WHERE email = ?",
+                (now, email)
+            )
+            conn.commit()
+        return {"cooldown_sec": retry_delay, "lockout_sec": 0, "attempts_remaining": None}
+
+    # must_enroll == 1
+    cur_failed = int(user["failed_attempts"] or 0) if "failed_attempts" in user_keys else 0
+    cur_locked = int(user["locked_until"] or 0) if "locked_until" in user_keys else 0
+    if cur_locked > 0 and cur_locked <= now:
+        cur_failed = 0
+
+    new_failed = cur_failed + 1
+    if new_failed >= max_attempts:
+        if lockout_min == -1:
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.execute(
+                    "UPDATE users SET failed_attempts = ?, last_attempt_at = ?, locked_until = -1 WHERE email = ?",
+                    (new_failed, now, email)
+                )
+                conn.commit()
+            return {
+                "error": f"Identifiants incorrects ({max_attempts}/{max_attempts}). Compte verrouillé définitivement en attente de réinitialisation MFA par l'Admin.",
+                "cooldown_sec": 0,
+                "lockout_sec": -1,
+                "attempts_remaining": 0
+            }
+        else:
+            lock_sec = lockout_min * 60
+            locked_until_ts = now + lock_sec
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.execute(
+                    "UPDATE users SET failed_attempts = ?, last_attempt_at = ?, locked_until = ? WHERE email = ?",
+                    (new_failed, now, locked_until_ts, email)
+                )
+                conn.commit()
+            return {
+                "error": f"Identifiants incorrects ({max_attempts}/{max_attempts}). Compte verrouillé ({sanction_label}).",
+                "cooldown_sec": 0,
+                "lockout_sec": lock_sec,
+                "attempts_remaining": 0
+            }
+    else:
+        rem_tries = max_attempts - new_failed
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "UPDATE users SET failed_attempts = ?, last_attempt_at = ?, locked_until = 0 WHERE email = ?",
+                (new_failed, now, email)
+            )
+            conn.commit()
+        return {
+            "error": f"Identifiants incorrects ({rem_tries} essai(s) restant(s) avant {sanction_label.lower()}).",
+            "cooldown_sec": retry_delay,
+            "lockout_sec": 0,
+            "attempts_remaining": rem_tries
+        }
+
+# ==============================================================================
 # SESSION UTILS
 # ==============================================================================
 def create_session(email: str, request: Request = None, is_trusted: bool = False, expires_at: Optional[int] = None) -> str:
@@ -195,9 +424,7 @@ def create_session(email: str, request: Request = None, is_trusted: bool = False
     now = int(time.time())
     
     if request:
-        ip_address = request.headers.get("X-Forwarded-For", request.headers.get("X-Real-IP", request.client.host if request.client else ""))
-        if ip_address and "," in ip_address:
-            ip_address = ip_address.split(",")[0].strip()
+        ip_address = _extract_client_ip(request)
             
         ua_string = request.headers.get("User-Agent", "")
         if ua_string:
@@ -385,7 +612,16 @@ def session_status(echo_auth_session: Optional[str] = Cookie(None)):
 # ==============================================================================
 # PAGES UI & LOGIQUE METIER
 # ==============================================================================
-def _render_login(request: Request, next_url: Optional[str] = None, error: Optional[str] = None, success: Optional[str] = None):
+def _render_login(
+    request: Request,
+    next_url: Optional[str] = None,
+    error: Optional[str] = None,
+    success: Optional[str] = None,
+    email_prefill: Optional[str] = None,
+    cooldown_sec: int = 0,
+    lockout_sec: int = 0,
+    attempts_remaining: Optional[int] = None
+):
     safe_next = resolve_safe_next(next_url)
     settings = get_auth_settings()
     untrusted_timeout = int(settings.get("untrusted_session_timeout", 24))
@@ -394,11 +630,21 @@ def _render_login(request: Request, next_url: Optional[str] = None, error: Optio
     trusted_timeout = int(settings.get("session_timeout", 2160))
     if trusted_timeout not in TRUSTED_VALID_HOURS:
         trusted_timeout = 2160
+
+    retry_delay_sec, max_attempts, lockout_min, sanction_label = get_security_policy(settings)
+
     ctx = {
         "request": request,
         "next": safe_next,
         "untrusted_timeout": untrusted_timeout,
-        "trusted_timeout": trusted_timeout
+        "trusted_timeout": trusted_timeout,
+        "email_prefill": email_prefill or "",
+        "retry_delay_sec": retry_delay_sec,
+        "cooldown_sec": cooldown_sec,
+        "lockout_sec": lockout_sec,
+        "attempts_remaining": attempts_remaining,
+        "max_attempts": max_attempts,
+        "sanction_label": sanction_label
     }
     if error:
         ctx["error"] = error
@@ -425,23 +671,47 @@ async def login_post(
     next: Optional[str] = Form(None)
 ):
     safe_next = resolve_safe_next(next)
+    now = int(time.time())
+    settings = get_auth_settings()
+    client_ip = _extract_client_ip(request)
     user = get_user(email)
-    if not user:
-        return _render_login(request, next_url=safe_next, error="Identifiants incorrects.")
-    
-    if not verify_password(password, user["pass_hash"]):
-        return _render_login(request, next_url=safe_next, error="Identifiants incorrects.")
+
+    guard = check_login_guard(user, client_ip, now, settings)
+    if guard.get("blocked"):
+        return _render_login(
+            request,
+            next_url=safe_next,
+            error=guard.get("error"),
+            email_prefill=email,
+            cooldown_sec=guard.get("cooldown_sec", 0),
+            lockout_sec=guard.get("lockout_sec", 0),
+            attempts_remaining=guard.get("attempts_remaining")
+        )
+
+    if not user or not verify_password(password, user["pass_hash"]):
+        attempt_res = record_login_attempt(user, client_ip, False, now, settings)
+        return _render_login(
+            request,
+            next_url=safe_next,
+            error=attempt_res.get("error", "Identifiants incorrects."),
+            email_prefill=email,
+            cooldown_sec=attempt_res.get("cooldown_sec", 0),
+            lockout_sec=attempt_res.get("lockout_sec", 0),
+            attempts_remaining=attempt_res.get("attempts_remaining")
+        )
 
     if user["must_enroll"] == 1:
         # Vérification de l'expiration du mot de passe temporaire
         if user["temp_pass_expires"] and user["temp_pass_expires"] > 0:
-            if time.time() > user["temp_pass_expires"]:
-                return _render_login(request, next_url=safe_next, error="Mot de passe temporaire expiré. Contactez l'administrateur.")
+            if now > user["temp_pass_expires"]:
+                return _render_login(request, next_url=safe_next, error="Mot de passe temporaire expiré. Contactez l'administrateur.", email_prefill=email)
+
+        record_login_attempt(user, client_ip, True, now, settings)
+
         # Redirection vers l'enrôlement
         totp_secret = generate_totp_secret()
         qr_b64 = generate_qr_base64(totp_secret, email)
         
-        settings = get_auth_settings()
         return templates.TemplateResponse(request=request, name="enroll.html", context={
             "request": request, 
             "email": email, 
@@ -457,12 +727,20 @@ async def login_post(
 
     # Utilisateur normal, vérification MFA
     if not totp or not verify_totp(user["totp_secret"], totp):
-        return _render_login(request, next_url=safe_next, error="Code MFA invalide.")
+        attempt_res = record_login_attempt(user, client_ip, False, now, settings)
+        return _render_login(
+            request,
+            next_url=safe_next,
+            error="Code MFA invalide.",
+            email_prefill=email,
+            cooldown_sec=attempt_res.get("cooldown_sec", 0),
+            lockout_sec=attempt_res.get("lockout_sec", 0),
+            attempts_remaining=attempt_res.get("attempts_remaining")
+        )
 
     # Succès
+    record_login_attempt(user, client_ip, True, now, settings)
     is_trusted = str(trusted_device).lower() in ("1", "on", "true")
-    settings = get_auth_settings()
-    now = int(time.time())
 
     if is_trusted:
         admin_max_h = int(settings.get("session_timeout", 2160))
