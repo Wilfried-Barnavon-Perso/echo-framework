@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     ECHO V6 - Synchronisation intelligente des évolutions depuis la branche dev (V5)
     VERSION : 6.0.0.5
