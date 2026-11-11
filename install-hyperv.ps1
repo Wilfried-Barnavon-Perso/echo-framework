@@ -1,8 +1,8 @@
-﻿# ==============================================================================
+# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# VERSION : 6.0.0.1
-# DATE    : 2026-10-31
+# VERSION : 6.0.0.3
+# DATE    : 2026-11-11
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
@@ -32,22 +32,23 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.0.0.3: RAM min a 8Go, benchmark I/O hors-cache (WriteThrough 8Ko) et bridage QoS VHD a 66%.
+# 6.0.0.2: IP statique 192.168.147.101, VHD 60GB, memoire dynamique priorite 15% et services invite.
 # 6.0.0.1: Initialisation ECHO V6 et ciblage de la branche dev_v6.
 # 5.231.40.1: Correction encodage UTF-8 BOM pour le parseur PowerShell 5.1 et alignement version.
 # 5.231.39.1: Mise à jour des références cloud-init vers echo-sync.sh.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # --- FONCTION UTILITAIRE : PAUSE SUR ERREUR ---
 $SwitchName = "Bridge LAN" # /!\ Vérifiez le nom de votre switch Hyper-V
 $ISOPath = "D:\ISO\ubuntu-26.04-live-server-amd64-autoinstall.iso"
 $VMPath = "D:\Virtual Machines"
-$VHDSize = 100GB
+$VHDSize = 60GB
 
 # RAM de démarrage fixée à 8 Go
 $RAMStartup = 8192MB
 
 # --- CONFIGURATION RESEAU (IP STATIQUE) ---
-$STATIC_IP_CIDR = "192.168.147.100/24"
+$STATIC_IP_CIDR = "192.168.147.101/24"
 $GATEWAY_IP = "192.168.147.254"
 $DNS_SERVERS = "[86.54.11.100, 1.1.1.1, 8.8.8.8]"
 
@@ -63,8 +64,45 @@ function Pause-OnError {
   Exit 1
 }
 
+# --- FONCTION UTILITAIRE : BENCHMARK DISQUE HORS-CACHE (8 Ko UNBUFFERED) ---
+function Measure-DiskIOPS {
+  param(
+    [string]$TargetDir = "D:\Virtual Machines",
+    [double]$DurationSec = 1.5,
+    [int]$BlockSize = 8192
+  )
+  Write-Host "⏱️  Mesure de la performance disque hors-cache (8 Ko WriteThrough)..." -ForegroundColor Cyan
+  if (-not (Test-Path $TargetDir)) { New-Item -Path $TargetDir -ItemType Directory -Force | Out-Null }
+  $TestFile = Join-Path $TargetDir "__echo_qos_bench_$([Guid]::NewGuid()).tmp"
+  $Buffer = New-Object byte[] $BlockSize
+  (New-Object Random).NextBytes($Buffer)
+  
+  $Count = 0
+  $Sw = [System.Diagnostics.Stopwatch]::StartNew()
+  try {
+    $Fs = New-Object System.IO.FileStream($TestFile, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None, $BlockSize, [System.IO.FileOptions]::WriteThrough)
+    while ($Sw.ElapsedMilliseconds -lt ($DurationSec * 1000)) {
+      $Fs.Write($Buffer, 0, $BlockSize)
+      $Count++
+    }
+    $Fs.Flush([bool]$true)
+    $Fs.Close()
+    $Fs.Dispose()
+  }
+  finally {
+    $Sw.Stop()
+    if (Test-Path $TestFile) { Remove-Item $TestFile -Force -ErrorAction SilentlyContinue }
+  }
+  
+  $ElapsedSec = $Sw.ElapsedMilliseconds / 1000
+  $MeasuredIOPS = if ($ElapsedSec -gt 0) { [math]::Round($Count / $ElapsedSec) } else { 5000 }
+  $MeasuredThroughput = [math]::Round(($Count * $BlockSize) / (1MB * $ElapsedSec), 1)
+  Write-Host "   📊 Performance brute mesurée : $MeasuredIOPS IOPS (~$MeasuredThroughput Mo/s)" -ForegroundColor Green
+  return [Math]::Max(1000, $MeasuredIOPS)
+}
+
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "6.0.0.1"
+$SCRIPT_VERSION = "6.0.0.3"
 $ScriptDir = $PSScriptRoot
 Set-Location -Path $ScriptDir
 $VersionFile = "$ScriptDir\VERSION"
@@ -262,13 +300,22 @@ if (-not (Get-VM -Name $VMName -ErrorAction SilentlyContinue)) {
 
   New-VM -Name $VMName -MemoryStartupBytes $RAMStartup -Generation 2 -SwitchName $SwitchName -NoVHD
   
-  # Le seuil minimal de RAM dynamique est relevé à 4 Go pour satisfaire le noyau d'Ubuntu 26.04
-  Set-VM -Name $VMName -DynamicMemory -MemoryMinimumBytes 4096MB -MemoryMaximumBytes 10240MB -ProcessorCount 4
+  # RAM dynamique : 8 Go minimum / 10 Go maximum
+  Set-VM -Name $VMName -DynamicMemory -MemoryMinimumBytes 8192MB -MemoryMaximumBytes 10240MB -ProcessorCount 4
+  Set-VMMemory -VMName $VMName -Priority 15
+  Get-VMIntegrationService -VMName $VMName | Where-Object { $_.Name -match "Guest|invit" } | Enable-VMIntegrationService
   Set-VMFirmware -VMName $VMName -EnableSecureBoot Off
   
   Add-VMDvdDrive -VMName $VMName -Path $ISOPath
   Add-VMHardDiskDrive -VMName $VMName -Path $VHDPath
   Add-VMHardDiskDrive -VMName $VMName -Path $SeedPath
+  
+  # Benchmark I/O hors-cache et bridage QoS VHD à 66% (34% sanctuarisé pour l'hôte)
+  $MeasuredIOPS = Measure-DiskIOPS -TargetDir $VMPath -DurationSec 1.5
+  $TargetIOPS = [math]::Round($MeasuredIOPS * 0.66)
+  Write-Host "   🛡️  QoS Disque : Plafond fixé à $TargetIOPS IOPS (66% de la capacité mesurée)" -ForegroundColor Yellow
+  (Get-VMHardDiskDrive -VMName $VMName | Where-Object { $_.Path -eq $VHDPath }) | Set-VMHardDiskDrive -MaximumIOPS $TargetIOPS
+  
   Set-VMFirmware -VMName $VMName -FirstBootDevice (Get-VMDvdDrive -VMName $VMName)
 
   Write-Host "✅ VM Prête ! Lancement..."
