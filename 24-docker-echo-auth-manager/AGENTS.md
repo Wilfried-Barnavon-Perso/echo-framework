@@ -8,9 +8,19 @@ Ce dossier contient l'application **ECHO Auth Manager**, qui agit comme un **IdP
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `auth_server.py` (v5.237.0.1)
+### `auth_server.py` (v5.239.2.1)
 Le cœur du gestionnaire d'identités (FastAPI).
 - **Authentification Locale & Hachage Argon2** : Gère les comptes utilisateurs et sessions SSO dans SQLite (`auth.db` en mode WAL, tables `users` et `sessions`) avec hachage de mots de passe et réponses de sécurité via **Argon2** (`passlib.hash.argon2`), gestion de l'expiration des mots de passe temporaires (`temp_pass_expires`), suivi de la date d'enrôlement (`last_enrollment`) et traçabilité de session (`ip_address`, `os`, `browser`, `device`). Dans `stack-echo.yml`, `JWT_EXPIRES_IN` d'Open WebUI est aligné sur `${ECHO_JWT_EXPIRES_IN:-4w}` (4 semaines par défaut) et soutenu par un bounce `/sso-logout` (`Clear-Site-Data: "cache"`).
+- **Garde Anti-Bruteforce & Politique de Verrouillage Dual-Tier** :
+  - **Délai inter-essais paramétrable (`login_retry_delay_sec`)** : Constante `LOGIN_RETRY_DELAY_VALID_SEC = (0, 5, 10, 20)`. Imposé sur tous les comptes (enrôlés ou non via `last_attempt_at` SQLite) ainsi que sur les IP inconnues/adresses non reconnues via le cache mémoire LRU `_ip_last_attempt` (purge automatique au-delà de 2048 entrées).
+  - **Verrouillage des comptes non-enrôlés (`must_enroll == 1`)** : Seuil d'échecs `unenrolled_max_attempts` clamped dans `[1..20]` et sanction `unenrolled_lockout_min` validée sur `UNENROLLED_LOCKOUT_VALID_MIN = (-1, 1, 3, 10, 60, 180, 1440)`. Le verrouillage est persisté dans `users` (`failed_attempts`, `last_attempt_at`, `locked_until`). La valeur `-1` correspond à un verrouillage définitif (nécessitant une réinitialisation MFA par l'administrateur) ; les durées positives temporisent le compte avec déverrouillage automatique à échéance pour un nouveau cycle de tentatives.
+  - **Fonctions factorisées de sécurité** :
+    * `_extract_client_ip(request)` : Extraction unifiée de l'IP cliente réelle (`X-Forwarded-For` / `X-Real-IP` / `request.client.host`), partagée entre le garde et `create_session()`.
+    * `_format_duration_fr(seconds)` & `_format_sanction_label(lockout_min)` : Formatage en français des durées restantes (`X min Ys`, `Xh Ym`, `Xs`) et des libellés de sanction.
+    * `get_security_policy(settings)` : Extraction et clamping strict des paramètres de sécurité avec valeurs par défaut robustes (`5s`, `5` tentatives, `10` minutes).
+    * `check_login_guard(user, client_ip, now, settings)` & `record_login_attempt(user, client_ip, is_success, now, settings)` : Gestion unifiée des vérifications pré-authentification et de l'enregistrement des tentatives (succès / échecs) avec mise à jour SQLite atomique.
+  - **Enrichissement de `_render_login()`** : Injection dans le contexte Jinja2 de `email_prefill`, `retry_delay_sec`, `cooldown_sec`, `lockout_sec`, `attempts_remaining`, `max_attempts` et `sanction_label`.
+  - **Réinitialisation automatique** : Réinitialisation à zéro de `failed_attempts` et `locked_until` lors d'un enrôlement réussi (`update_user_enrollment()`) ou d'une authentification valide.
 - **Politique Dual-Tier des Sessions SSO** :
   - **Champs de session SQLite** : Chaque session stocke explicitement `is_trusted` (INTEGER 0 ou 1) et `expires_at` (INTEGER timestamp Unix ou NULL pour session éternelle).
   - **Mode sans confiance (défaut)** : Limité aux durées courtes `UNTRUSTED_VALID_HOURS = (1, 2, 4, 8, 12, 24)` bornées par `untrusted_session_timeout` (24h max). Purge opportuniste lors de `create_session()`.
@@ -24,7 +34,15 @@ Le cœur du gestionnaire d'identités (FastAPI).
 - **Synchronisation avec BunkerWeb (`/api/verify`)** : Le serveur valide les cookies de session et renvoie les en-têtes `X-Webui-User` et `X-Webui-Name` à BunkerWeb (Forward Auth) pour laisser passer le trafic légitime ou bloquer l'accès. Il renvoie un code HTTP `401` en cas d'absence ou d'expiration de session afin de déclencher proprement la redirection vers le portail `/login` ou la déconnexion transparente côté Open WebUI.
 
 ### Dossiers `static/` & `templates/`
-- **`templates/login.html`** : Intègre la case à cocher `trusted_device` (`value="1"`, libellé *"Ce terminal est de confiance."*), le bloc d'avertissement de sécurité explicite `#trusted-warning` (affiché dynamiquement uniquement si la case est cochée), le sélecteur dynamique `session_duration` (filtré par le seuil de sécurité actif) et le bandeau d'aperçu live `#session-expiry-preview` actualisé chaque seconde via `setInterval(updatePreview, 1000)` affichant date, heure d'expiration et délai restant, ou la mention permanente pour la session éternelle.
+- **`templates/login.html`** :
+  - **Gestion de session** : Intègre la case à cocher `trusted_device` (`value="1"`, libellé *"Ce terminal est de confiance."*), le bloc d'avertissement de sécurité explicite `#trusted-warning` (affiché dynamiquement uniquement si la case est cochée), le sélecteur dynamique `session_duration` (filtré par le seuil de sécurité actif) et le bandeau d'aperçu live `#session-expiry-preview` actualisé chaque seconde via `setInterval(updatePreview, 1000)` affichant date, heure d'expiration et délai restant, ou la mention permanente pour la session éternelle.
+  - **Protection Anti-Bruteforce & Compte à Rebours Temps Réel** :
+    * Pré-remplissage résilient de l'adresse email (`value="{{ email_prefill | default('') }}"`) lors des réaffichages post-échec.
+    * Bloc informatif `#login-security-policy` restituant dynamiquement les conditions d'accès (délai inter-essais `retry_delay_sec`, nombre d'essais max avant sanction) ou le quota résiduel précis d'essais d'un compte non-enrôlé (`attempts_remaining / max_attempts`) et la sanction encourue (`sanction_label`).
+    * Bandeau live `#login-countdown-banner` et contrôle d'état dynamique du bouton `#login-submit-btn` cadencé à 1000ms :
+      - *Verrouillage définitif (`lockoutSec === -1`)* : alerte rouge persistante et désactivation stricte du bouton en attente d'une réinitialisation MFA par l'administrateur.
+      - *Verrouillage temporaire (`lockoutSec > 0`)* : alerte live décrémentée chaque seconde au format `HH:MM:SS` / `MM:SS` / `Xs`, bouton verrouillé, bascule en message de succès vert à échéance avec restauration du quota nominal (`N/N`) et réactivation immédiate du formulaire.
+      - *Délai inter-essais (`cooldownSec > 0`)* : bandeau ambre live bloquant les soumissions précipitées pendant la temporisation configurée (ex: 5s, 10s, 20s), masquage automatique et déverrouillage fluide du bouton à `0s`.
 - **`templates/enroll.html`** : Le formulaire d'enrôlement exige la Question de Sécurité avant la saisie du code TOTP.
 
 ### Migration CLI `docker exec` (Plafonnement de l'existant à 24h)

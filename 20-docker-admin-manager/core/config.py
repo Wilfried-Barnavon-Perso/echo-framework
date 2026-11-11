@@ -2,16 +2,16 @@
 r"""
 # ================================================================================
 # MODULE : ECHO ADMIN MANAGER SERVER
-# VERSION : 5.236.1.1
+# VERSION : 5.239.2.1
 # ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.2.1: Ajout de login_retry_delay_sec (5s), unenrolled_max_attempts (5) et unenrolled_lockout_min (10m) dans DEFAULT_AUTH_SETTINGS.
 # 5.236.1.1: Ajout de untrusted_session_timeout (24h par défaut) dans DEFAULT_AUTH_SETTINGS.
 # 5.235.5.1: Chargement dynamique optionnel de /app/echo_libs et ajout de l'option purge_dead_branches dans DEFAULT_MAINT_CONFIG.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 5.137: Feature : Enrichissement du rapport nocturne (`run_nightly_maintenance_cycle`) avec les métadonnées complètes de sauvegarde (`archive_name`, taille, durée, rétention locale), le statut explicite de l'externalisation Cloud Rclone / NAS SFTP (`_build_ext_status_html`) et le bilan complet d'élagage (`Fichiers FS`, `Drop Zones` détaillées, `SQLite`). Fix : Restriction du compteur physique `real_session_count` (`Sessions Actives / Totales`) aux seuls fichiers `/users/<uid>/chats/<chat_id>/session.db` afin d'exclure les bases SQLite tierces créées dans les sous-dossiers `codex/` ou `files/`.
-# 5.136: Feature : Intégration complète des volumes `echo-n8n-data` (`/app/n8n-data`) et `echo-mcp-cache` (`/app/mcp_cache`) dans le cycle de Sauvegarde/Restauration `tar.xz`, le calcul de progression temps-réel, le `VACUUM` SQLite et la Garbage Collection. Sécurité (Critique / Fail-Closed) : Verrouillage strict sur la SSoT `webui.db::user` (« Base injoignable = Zéro Action »). Vérification préalable `PRAGMA quick_check(1)`, présence de `admin@echo.local`, filtrage de `db_valid_chats` par `valid_ids`, verrou d'intégrité `n8n_whitelist_complete` (empêchant la suppression de démons N8N si un `session.db` est verrouillé), et transaction Fail-Closed dans `auth_delete_user`.
 
 import os
 import sys
@@ -143,7 +143,10 @@ DEFAULT_AUTH_SETTINGS = {
     "temp_pass_hours": 24,
     "totp_tolerance": 1,
     "untrusted_session_timeout": 24,
-    "session_timeout": 2160
+    "session_timeout": 2160,
+    "login_retry_delay_sec": 5,
+    "unenrolled_max_attempts": 5,
+    "unenrolled_lockout_min": 10
 }
 
 MAINT_HISTORY_FILE = os.path.join(OWUI_DATA_ROOT, "maintenance_history.json")

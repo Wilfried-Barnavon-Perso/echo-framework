@@ -1,11 +1,12 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : echo-clean.sh
-# VERSION : 5.231.39.1
+# VERSION : 5.239.1.1
 # ROLE   : Nettoyage système et gestion dynamique du cache Docker
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.1.1: Ajout de la purge quotidienne du Page Cache noyau (sync && drop_caches=1) en fin de maintenance.
 # 5.231.39.1: Renommage de clean-echo.sh en echo-clean.sh et alignement du fichier de log.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 
@@ -46,5 +47,9 @@ else
     docker system prune -af --filter "until=168h"
     docker buildx prune -f --filter "until=168h"
 fi
+
+# 4. Purge du Page Cache Linux (évince les pages fichiers en RAM après les I/O lourds)
+echo "-> Purge du Page Cache noyau (drop_caches=1)..."
+sync && echo 1 > /proc/sys/vm/drop_caches
 
 echo "✅ Fin de la maintenance."

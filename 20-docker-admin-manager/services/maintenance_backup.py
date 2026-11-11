@@ -2,11 +2,12 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - MAINTENANCE & BACKUP SCHEDULER
-VERSION : 5.235.5.1
+VERSION : 5.239.1.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.1.1: Exécution de la sauvegarde tar.xz à priorité minimale (nice 19, ionice idle c3, XZ_OPT="-T2 -1", IDLE_PRIORITY_CLASS).
 # 5.235.5.1: Intégration des statistiques de purge des branches mortes dans le rapport de maintenance nocturne.
 # 5.235.2.1: Affichage explicite des session.db purgées dans le bilan d'élagage du cycle nocturne.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
@@ -15,6 +16,7 @@ import glob
 import html
 import json
 import os
+import shutil
 import subprocess
 import time
 from core.config import (
@@ -145,12 +147,23 @@ def perform_backup_task(record_report: bool = False):
             except Exception:
                 pass
 
-        # Phase 2 : Compression locale tar -cJf avec suivi temps réel
-        proc_tar = subprocess.Popen(
-            ['tar', '-cJf', fpath, *tar_sources],
-            stderr=subprocess.PIPE,
-            text=True
-        )
+        # Phase 2 : Compression locale tar -cJf à priorité minimale (nice 19, ionice idle c3, XZ_OPT="-T2 -1")
+        tar_cmd = ['tar', '-cJf', fpath, *tar_sources]
+        if shutil.which("ionice"):
+            tar_cmd = ["ionice", "-c", "3"] + tar_cmd
+        if shutil.which("nice"):
+            tar_cmd = ["nice", "-n", "19"] + tar_cmd
+
+        tar_env = os.environ.copy()
+        tar_env["XZ_OPT"] = "-T2 -1"
+
+        subp_kwargs = {"stderr": subprocess.PIPE, "text": True, "env": tar_env}
+        if hasattr(os, "nice"):
+            subp_kwargs["preexec_fn"] = lambda: os.nice(19)
+        elif os.name == "nt":
+            subp_kwargs["creationflags"] = 0x00000040  # IDLE_PRIORITY_CLASS
+
+        proc_tar = subprocess.Popen(tar_cmd, **subp_kwargs)
         while proc_tar.poll() is None:
             try:
                 read_b = 0

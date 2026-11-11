@@ -2,16 +2,16 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - UI TEMPLATES
-VERSION : 5.236.1.1
+VERSION : 5.239.2.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.2.1: Section Protection Anti-Brute-Force & Verrouillage dans #authSettingsModal et badges d'état de verrouillage/échecs dans refreshAuthUsers().
 # 5.236.1.1: Sélecteurs Dual-Tier (Sans Confiance 1-24h / Terminal de Confiance 1sem-1an-Éternelle) dans #authSettingsModal, badges de confiance et compte à rebours temps réel dans #ssoSessionsPane.
 # 5.235.5.1: Ajout du commutateur UI purge_dead_branches dans l'onglet Élagage & Cycle de Vie.
 # 5.235.2.1: Clarification du libellé du bouton de purge Docker/APT et infobulle explicite des sessions.
 # 5.228.0.1: Ajout de la colonne "Taille Profil" dans le tableau d'activité Open WebUI et affichage badge formaté.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 __all__ = [
     'HTML_LOGIN',
@@ -190,6 +190,35 @@ HTML_DASHBOARD = """
                                     </select>
                                 </div>
                             </div>
+                            <hr class="border-secondary">
+                            <h6 class="text-danger">Protection Anti-Brute-Force & Verrouillage</h6>
+                            <div class="row g-2">
+                                <div class="col-md-4">
+                                    <label class="form-label x-small text-muted" data-bs-toggle="tooltip" title="Délai minimal imposé entre deux tentatives de connexion (comptes enrôlés et non-enrôlés).">Délai entre essais (Tous)</label>
+                                    <select name="login_retry_delay_sec" class="form-select form-select-sm bg-dark text-light border-secondary">
+                                        <option value="0" {% if auth_settings.get('login_retry_delay_sec', 5) == 0 %}selected{% endif %}>0 seconde (Aucun)</option>
+                                        <option value="5" {% if auth_settings.get('login_retry_delay_sec', 5) == 5 %}selected{% endif %}>5 secondes</option>
+                                        <option value="10" {% if auth_settings.get('login_retry_delay_sec', 5) == 10 %}selected{% endif %}>10 secondes</option>
+                                        <option value="20" {% if auth_settings.get('login_retry_delay_sec', 5) == 20 %}selected{% endif %}>20 secondes</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <label class="form-label x-small text-muted" data-bs-toggle="tooltip" title="Nombre d'échecs autorisés avant verrouillage pour un compte non-enrôlé.">Essais max (Non-enrôlé)</label>
+                                    <input type="number" name="unenrolled_max_attempts" class="form-control form-control-sm bg-dark text-light border-secondary" value="{{ auth_settings.get('unenrolled_max_attempts', 5) }}" min="1" max="20">
+                                </div>
+                                <div class="col-md-5">
+                                    <label class="form-label x-small text-muted" data-bs-toggle="tooltip" title="Sanction appliquée après N échecs sur un compte non-enrôlé.">Verrouillage après N essais (Non-enrôlé)</label>
+                                    <select name="unenrolled_lockout_min" class="form-select form-select-sm bg-dark text-light border-secondary">
+                                        <option value="-1" {% if auth_settings.get('unenrolled_lockout_min', 10) == -1 %}selected{% endif %}>Verrouillage définitif (Réinit. MFA Admin)</option>
+                                        <option value="1" {% if auth_settings.get('unenrolled_lockout_min', 10) == 1 %}selected{% endif %}>Temporisation : 1 minute</option>
+                                        <option value="3" {% if auth_settings.get('unenrolled_lockout_min', 10) == 3 %}selected{% endif %}>Temporisation : 3 minutes</option>
+                                        <option value="10" {% if auth_settings.get('unenrolled_lockout_min', 10) == 10 %}selected{% endif %}>Temporisation : 10 minutes</option>
+                                        <option value="60" {% if auth_settings.get('unenrolled_lockout_min', 10) == 60 %}selected{% endif %}>Temporisation : 1 heure</option>
+                                        <option value="180" {% if auth_settings.get('unenrolled_lockout_min', 10) == 180 %}selected{% endif %}>Temporisation : 3 heures</option>
+                                        <option value="1440" {% if auth_settings.get('unenrolled_lockout_min', 10) == 1440 %}selected{% endif %}>Temporisation : 24 heures</option>
+                                    </select>
+                                </div>
+                            </div>
                         </div>
                         <div class="modal-footer border-secondary">
                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
@@ -339,7 +368,7 @@ HTML_DASHBOARD = """
         pollTaskStatus();
 
         function showLoader(m='Action en cours...'){document.getElementById('loader-msg').innerText=m;document.getElementById('loader').style.display='flex'}
-        async function refreshAuthUsers(){try{const r=await fetch('/api/auth/users');const d=await r.json();document.getElementById('auth-users-list').innerHTML=d.map(u=>{let t='';if(u.status==='Pending'&&u.expires){const e=new Date(u.expires*1000);t=`<br><small class="${e<new Date()?'text-danger':'text-info'}">⏳ Exp. ${e.toLocaleDateString()} ${e.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</small>`;}else if(u.status==='Active'&&u.last_enrollment){const l=new Date(u.last_enrollment*1000);t=`<br><small class="text-success">✅ Enrôlé le ${l.toLocaleDateString()}</small>`;}const statusBadge=u.status==='Pending'?'<span class="badge bg-warning text-dark">En attente d\\'enrôlement</span>':'<span class="badge bg-success">Actif (MFA)</span>';const disableMsg = u.email === 'admin@echo.local' ? 'DANGER : La désactivation coupera l\\'accès externe à admin@echo.local. Seul un accès local via le Fallback (Port 3001) permettra de le réimporter. Confirmer ?' : 'Désactiver l\\'accès externe de ce compte ? Son historique interne ECHO sera conservé.';const nameDisplay = u.name ? u.name : 'Aucun nom défini';return `<tr><td class="align-middle">${u.email}<br><small class="text-secondary">${nameDisplay}</small></td><td class="align-middle">${statusBadge}${t}</td><td class="text-end align-middle"><form action="/action/auth/rename" method="post" class="d-inline" onsubmit="let n=prompt('Nouveau nom pour ${u.email}:', '${u.name||''}'); if(n!==null){this.name.value=n; return true;} return false;"><input type="hidden" name="email" value="${u.email}"><input type="hidden" name="name" value=""><button class="btn btn-sm btn-outline-info py-0 me-1" title="Modifier le Nom">✏️</button></form><form action="/action/auth/reset" method="post" class="d-inline" onsubmit="return confirm('Forcer la réinitialisation MFA pour cet utilisateur ?')"><input type="hidden" name="email" value="${u.email}"><button class="btn btn-sm btn-warning py-0 me-1" title="Réinitialiser MFA">🔑</button></form><form action="/action/auth/disable" method="post" class="d-inline" onsubmit="return confirm('${disableMsg}')"><input type="hidden" name="email" value="${u.email}"><button class="btn btn-sm btn-outline-warning py-0 me-1" title="Désactiver l'accès WAN">🚫</button></form><form action="/action/auth/delete" method="post" class="d-inline" onsubmit="return confirm('ATTENTION : Supprimer définitivement cet accès ET purger ses chats de l\\'espace ECHO ?')"><input type="hidden" name="email" value="${u.email}"><button class="btn btn-sm btn-danger py-0" title="Supprimer Totalement">🗑️</button></form></td></tr>`}).join('')}catch(e){console.error('Erreur AuthUsers:',e)}}
+        async function refreshAuthUsers(){try{const r=await fetch('/api/auth/users');const d=await r.json();document.getElementById('auth-users-list').innerHTML=d.map(u=>{let t='';let lockBadge='';let failText='';if(u.status==='Pending'){if(u.locked_until===-1){lockBadge='<span class="badge bg-danger ms-1">🔒 Verrouillé (Définitif - Réinit. MFA requise)</span>';}else if(u.locked_until&&u.locked_until*1000>Date.now()){lockBadge=`<span class="badge bg-danger ms-1">🔒 Verrouillé (jusqu'à ${new Date(u.locked_until*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})})</span>`;}if(u.failed_attempts&&u.failed_attempts>0){failText=`<br><small class="text-warning">⚠️ ${u.failed_attempts} échec(s) de connexion</small>`;}if(u.expires){const e=new Date(u.expires*1000);t=`<br><small class="${e<new Date()?'text-danger':'text-info'}">⏳ Exp. ${e.toLocaleDateString()} ${e.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</small>`;}}else if(u.status==='Active'&&u.last_enrollment){const l=new Date(u.last_enrollment*1000);t=`<br><small class="text-success">✅ Enrôlé le ${l.toLocaleDateString()}</small>`;}const statusBadge=u.status==='Pending'?'<span class="badge bg-warning text-dark">En attente d\\'enrôlement</span>':'<span class="badge bg-success">Actif (MFA)</span>';const disableMsg = u.email === 'admin@echo.local' ? 'DANGER : La désactivation coupera l\\'accès externe à admin@echo.local. Seul un accès local via le Fallback (Port 3001) permettra de le réimporter. Confirmer ?' : 'Désactiver l\\'accès externe de ce compte ? Son historique interne ECHO sera conservé.';const nameDisplay = u.name ? u.name : 'Aucun nom défini';return `<tr><td class="align-middle">${u.email}<br><small class="text-secondary">${nameDisplay}</small></td><td class="align-middle">${statusBadge}${lockBadge}${t}${failText}</td><td class="text-end align-middle"><form action="/action/auth/rename" method="post" class="d-inline" onsubmit="let n=prompt('Nouveau nom pour ${u.email}:', '${u.name||''}'); if(n!==null){this.name.value=n; return true;} return false;"><input type="hidden" name="email" value="${u.email}"><input type="hidden" name="name" value=""><button class="btn btn-sm btn-outline-info py-0 me-1" title="Modifier le Nom">✏️</button></form><form action="/action/auth/reset" method="post" class="d-inline" onsubmit="return confirm('Forcer la réinitialisation MFA pour cet utilisateur ?')"><input type="hidden" name="email" value="${u.email}"><button class="btn btn-sm btn-warning py-0 me-1" title="Réinitialiser MFA">🔑</button></form><form action="/action/auth/disable" method="post" class="d-inline" onsubmit="return confirm('${disableMsg}')"><input type="hidden" name="email" value="${u.email}"><button class="btn btn-sm btn-outline-warning py-0 me-1" title="Désactiver l'accès WAN">🚫</button></form><form action="/action/auth/delete" method="post" class="d-inline" onsubmit="return confirm('ATTENTION : Supprimer définitivement cet accès ET purger ses chats de l\\'espace ECHO ?')"><input type="hidden" name="email" value="${u.email}"><button class="btn btn-sm btn-danger py-0" title="Supprimer Totalement">🗑️</button></form></td></tr>`}).join('')}catch(e){console.error('Erreur AuthUsers:',e)}}
         
         // Cache GeoIP en mémoire pour ne pas appeler l'API à chaque rafraîchissement
         const geoIpCache = {};

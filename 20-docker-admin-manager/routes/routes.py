@@ -2,11 +2,12 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - FLASK ROUTES
-VERSION : 5.236.1.1
+VERSION : 5.239.2.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.2.1: Persistance et validation des paramètres anti-bruteforce dans /action/auth/settings, exposition de failed_attempts/locked_until dans /api/auth/users et déblocage dans /action/auth/reset.
 # 5.236.1.1: Validation Dual-Tier untrusted_session_timeout/session_timeout dans auth_settings_save et exposition directe de is_trusted, expires_at, expires_dt et time_remaining_sec dans api_auth_sessions.
 # 5.235.5.1: Prise en charge de purge_dead_branches dans update_maint et reset d'authentification via get_echo_identity_db_path et open_db.
 # 5.228.0.1: Ajout du calcul et de l'exposition de la taille du profil utilisateur (profile_size_bytes, profile_size_fmt) dans /api/user_stats.
@@ -784,12 +785,32 @@ def auth_users():
             except: pass
             try: conn.execute("ALTER TABLE users ADD COLUMN last_enrollment INTEGER DEFAULT 0")
             except: pass
-            users = conn.execute("SELECT email, must_enroll, temp_pass_expires, last_enrollment, name FROM users").fetchall()
+            try: conn.execute("ALTER TABLE users ADD COLUMN failed_attempts INTEGER DEFAULT 0")
+            except: pass
+            try: conn.execute("ALTER TABLE users ADD COLUMN last_attempt_at INTEGER DEFAULT 0")
+            except: pass
+            try: conn.execute("ALTER TABLE users ADD COLUMN locked_until INTEGER DEFAULT 0")
+            except: pass
+            users = conn.execute("SELECT email, must_enroll, temp_pass_expires, last_enrollment, name, failed_attempts, locked_until FROM users").fetchall()
             
+            now_ts = int(time.time())
             result = []
             for u in users:
                 display_name = owui_names.get(u[0]) or u[4]
-                result.append({"email": u[0], "status": "Pending" if u[1] else "Active", "expires": u[2], "last_enrollment": u[3], "name": display_name})
+                failed_att = int(u[5] or 0)
+                locked_val = int(u[6] or 0)
+                if locked_val > 0 and locked_val <= now_ts:
+                    locked_val = 0
+                    failed_att = 0
+                result.append({
+                    "email": u[0],
+                    "status": "Pending" if u[1] else "Active",
+                    "expires": u[2],
+                    "last_enrollment": u[3],
+                    "name": display_name,
+                    "failed_attempts": failed_att,
+                    "locked_until": locked_val
+                })
             return jsonify(result)
     except Exception: return jsonify([])
 
@@ -941,7 +962,13 @@ def auth_reset_mfa():
             except: pass
             try: conn.execute("ALTER TABLE users ADD COLUMN last_enrollment INTEGER DEFAULT 0")
             except: pass
-            conn.execute("UPDATE users SET pass_hash=?, totp_secret=NULL, security_question=NULL, security_answer_hash=NULL, must_enroll=1, temp_pass_expires=?, last_enrollment=0 WHERE email=?", (pass_hash, expire_timestamp, email))
+            try: conn.execute("ALTER TABLE users ADD COLUMN failed_attempts INTEGER DEFAULT 0")
+            except: pass
+            try: conn.execute("ALTER TABLE users ADD COLUMN last_attempt_at INTEGER DEFAULT 0")
+            except: pass
+            try: conn.execute("ALTER TABLE users ADD COLUMN locked_until INTEGER DEFAULT 0")
+            except: pass
+            conn.execute("UPDATE users SET pass_hash=?, totp_secret=NULL, security_question=NULL, security_answer_hash=NULL, must_enroll=1, temp_pass_expires=?, last_enrollment=0, failed_attempts=0, last_attempt_at=0, locked_until=0 WHERE email=?", (pass_hash, expire_timestamp, email))
             conn.execute("DELETE FROM sessions WHERE email=?", (email,))
             conn.commit()
         expire_str = datetime.datetime.fromtimestamp(expire_timestamp).strftime('%d/%m/%Y à %H:%M')
@@ -965,6 +992,12 @@ def auth_settings_save():
         settings["untrusted_session_timeout"] = untrusted_val if untrusted_val in (1, 2, 4, 8, 12, 24) else 24
         trusted_val = int(request.form.get("session_timeout", 2160))
         settings["session_timeout"] = trusted_val if trusted_val in (168, 720, 2160, 4380, 8760, 0) else 2160
+        retry_delay = int(request.form.get("login_retry_delay_sec", 5))
+        settings["login_retry_delay_sec"] = retry_delay if retry_delay in (0, 5, 10, 20) else 5
+        max_att = int(request.form.get("unenrolled_max_attempts", 5))
+        settings["unenrolled_max_attempts"] = max(1, min(20, max_att))
+        lockout_min = int(request.form.get("unenrolled_lockout_min", 10))
+        settings["unenrolled_lockout_min"] = lockout_min if lockout_min in (-1, 1, 3, 10, 60, 180, 1440) else 10
         
         if save_auth_settings(settings):
             flash("Paramètres de sécurité SSO sauvegardés avec succès.", "success")
