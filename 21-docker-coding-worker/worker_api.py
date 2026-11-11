@@ -1,31 +1,41 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 5.234.1.3
+VERSION : 6.4.0.1
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-11-04
+DATE MAJ : 2026-11-11
 
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.234.1.3: Rétablissement du bind-mount --ro-bind /proc /proc (retrait de --proc et --unshare-pid) pour compatibilité Docker imbriqué.
-# 5.232.5.1: Montage Bubblewrap en lecture seule (--ro-bind-try) des workspaces Codex /main, /plans et /generated dans la Sandbox.
+# 6.4.0.1: Serveur PTY WebSocket (/api/terminals), endpoints config/openapi et factorisation bwrap.
+# 5.234.1.3: Bind-mount --ro-bind /proc /proc (retrait --proc et --unshare-pid) pour Docker imbriqué.
+# 5.232.5.1: Montage bwrap en lecture seule (--ro-bind-try) des workspaces Codex (/main, /plans, /generated).
 # 5.232.1.2: Unification SSOT de sandbox-agent-readme.md et suppression définitive du .txt redondant.
 # 5.232.1.1: Prise en charge du double montage bwrap sandbox-agent-readme (.md et .txt).
-# 5.231.20.1: Sérialisation par verrou de session (_SANDBOX_LOCKS) des exécutions concurrentes d'un même chat et harmonisation pid/pids sur /kill.
 
+import asyncio
+import json
 import logging
 import logging.config
 import orjson
 import os
+import queue
+import shutil
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
 
 from flask import Flask, jsonify, request  # pyright: ignore[reportMissingImports]
+from starlette.applications import Starlette
+from starlette.middleware.wsgi import WSGIMiddleware
+from starlette.routing import Mount, WebSocketRoute
+from starlette.websockets import WebSocket, WebSocketDisconnect
+import uvicorn
 
 # Configuration des logs pour voir qui fait quoi dans la console Docker
 
@@ -271,6 +281,92 @@ def _build_job_response(job):
     return res
 
 
+def _build_base_bwrap_cmd(
+    safe_uid: str,
+    safe_cid: str,
+    sandbox_dir: str,
+    sandbox_tmp: str,
+    files_dir: str | None = None,
+    global_files_dir: str | None = None,
+    deps_dir: str | None = None,
+) -> list[str]:
+    """Construit la base immuable des arguments bubblewrap partagée entre batch et PTY."""
+    cmd = [
+        "bwrap",
+        "--ro-bind", "/usr", "/usr",
+        "--ro-bind", "/lib", "/lib",
+        "--ro-bind", "/bin", "/bin",
+        "--dev", "/dev",
+        "--ro-bind", "/proc", "/proc",
+        "--ro-bind-try", "/lib64", "/lib64",
+        "--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf",
+        "--ro-bind-try", "/etc/ssl/certs", "/etc/ssl/certs",
+        "--bind", sandbox_tmp, "/tmp",
+        "--unshare-ipc",
+        "--unshare-uts",
+        "--unshare-cgroup",
+        "--die-with-parent",
+        "--unshare-user", "--uid", "65534", "--gid", "65534",
+        "--bind", sandbox_dir, "/sandbox",
+        "--ro-bind-try", "/app/echo_libs_sandbox", "/echo_libs_sandbox",
+        "--ro-bind-try", "/app/sandbox-agent-readme.md", "/sandbox-agent-readme.md",
+        "--chdir", "/sandbox",
+    ]
+    if files_dir:
+        cmd.extend(["--ro-bind-try", files_dir, "/files"])
+    if global_files_dir:
+        cmd.extend(["--ro-bind-try", global_files_dir, global_files_dir])
+    if sandbox_dir:
+        codex_root = os.path.dirname(sandbox_dir)
+        for ro_ws in ("main", "plans", "generated"):
+            cmd.extend(["--ro-bind-try", os.path.join(codex_root, ro_ws), f"/{ro_ws}"])
+    if deps_dir:
+        cmd.extend(["--bind-try", deps_dir, "/.deps"])
+    return cmd
+
+
+def _build_interactive_bwrap_cmd(
+    safe_uid: str,
+    safe_cid: str,
+    sandbox_dir: str,
+    deps_dir: str | None = None,
+) -> list[str]:
+    """Construit la commande bwrap pour le shell interactif PTY XTerminal."""
+    sandbox_tmp = os.path.join(sandbox_dir, ".tmp")
+    os.makedirs(sandbox_tmp, exist_ok=True)
+
+    files_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/files" if sandbox_dir else None
+    global_files_dir = f"/app/backend/data/users/{safe_uid}/files" if sandbox_dir else None
+    if deps_dir is None and sandbox_dir:
+        deps_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/dependencies"
+
+    cmd = _build_base_bwrap_cmd(
+        safe_uid=safe_uid,
+        safe_cid=safe_cid,
+        sandbox_dir=sandbox_dir,
+        sandbox_tmp=sandbox_tmp,
+        files_dir=files_dir,
+        global_files_dir=global_files_dir,
+        deps_dir=deps_dir,
+    )
+
+    python_paths = ["/echo_libs_sandbox"] + (["/.deps/python"] if deps_dir else [])
+    node_paths = (["/.deps/node/node_modules"] if deps_dir else []) + ["/echo_libs_sandbox", "/usr/lib/node_modules"]
+
+    cmd.extend([
+        "--setenv", "HOME", "/sandbox",
+        "--setenv", "TERM", "xterm-256color",
+        "--setenv", "PYTHONPATH", ":".join(python_paths),
+        "--setenv", "NODE_PATH", ":".join(node_paths),
+        "--setenv", "ECHO_SESSION_USER", safe_uid,
+        "--setenv", "ECHO_SESSION_CHAT", safe_cid,
+    ])
+
+    shell_bin = "/bin/bash" if os.path.exists("/bin/bash") else "/bin/sh"
+    cmd.extend([shell_bin, "--norc", "-i"])
+    return cmd
+
+
 def _start_sandbox_job(
     safe_uid, safe_cid, run_id, file_path, dependencies,
     sandbox_dir, files_dir, global_files_dir, deps_dir,
@@ -314,12 +410,20 @@ def _start_sandbox_job(
                 python_deps_dir = os.path.join(deps_dir, "python")
                 os.makedirs(python_deps_dir, exist_ok=True)
                 os.chmod(python_deps_dir, 0o777)
-                subprocess.run(["python", "-m", "pip", "install", "--target", python_deps_dir] + dependencies, capture_output=True, text=True)
+                subprocess.run(
+                    ["python", "-m", "pip", "install", "--target", python_deps_dir] + dependencies,
+                    capture_output=True,
+                    text=True,
+                )
             elif is_node:
                 node_deps_dir = os.path.join(deps_dir, "node")
                 os.makedirs(node_deps_dir, exist_ok=True)
                 os.chmod(node_deps_dir, 0o777)
-                subprocess.run(["npm", "install", "--prefix", node_deps_dir] + dependencies, capture_output=True, text=True)
+                subprocess.run(
+                    ["npm", "install", "--prefix", node_deps_dir] + dependencies,
+                    capture_output=True,
+                    text=True,
+                )
 
     mon_fname, pay_fname, inb_fname = _get_ipc_filenames(run_id)
     _cleanup_ipc_files(sandbox_dir, run_id)
@@ -332,47 +436,30 @@ def _start_sandbox_job(
         except Exception:
             pass
 
-    bwrap_cmd = [
-        "bwrap",
-        "--ro-bind", "/usr", "/usr",
-        "--ro-bind", "/lib", "/lib",
-        "--ro-bind", "/bin", "/bin",
-        "--dev", "/dev",
-        "--ro-bind", "/proc", "/proc",
-        "--ro-bind-try", "/lib64", "/lib64",
-        "--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf",
-        "--ro-bind-try", "/etc/ssl/certs", "/etc/ssl/certs",
-        "--bind", sandbox_tmp, "/tmp",
-        "--unshare-ipc",
-        "--unshare-uts",
-        "--unshare-cgroup",
-        "--die-with-parent",
-        "--unshare-user", "--uid", "65534", "--gid", "65534",
-        "--bind", sandbox_dir, "/sandbox",
-        "--ro-bind-try", "/app/echo_libs_sandbox", "/echo_libs_sandbox",
-        "--ro-bind-try", "/app/sandbox-agent-readme.md", "/sandbox-agent-readme.md",
-        "--chdir", "/sandbox",
+    bwrap_cmd = _build_base_bwrap_cmd(
+        safe_uid=safe_uid,
+        safe_cid=safe_cid,
+        sandbox_dir=sandbox_dir,
+        sandbox_tmp=sandbox_tmp,
+        files_dir=files_dir,
+        global_files_dir=global_files_dir,
+        deps_dir=deps_dir,
+    )
+    bwrap_cmd.extend([
         "--setenv", "PYTHONUNBUFFERED", "1",
         "--setenv", "ECHO_RUN_ID", str(run_id),
         "--setenv", "ECHO_MONITOR_FILE", mon_fname,
         "--setenv", "ECHO_UI_PAYLOAD_FILE", pay_fname,
         "--setenv", "ECHO_UI_INBOX_FILE", inb_fname,
-    ]
-    if files_dir:
-        bwrap_cmd.extend(["--ro-bind-try", files_dir, "/files"])
-    if global_files_dir:
-        bwrap_cmd.extend(["--ro-bind-try", global_files_dir, global_files_dir])
-    codex_root = os.path.dirname(sandbox_dir)
-    for ro_ws in ("main", "plans", "generated"):
-        bwrap_cmd.extend(["--ro-bind-try", os.path.join(codex_root, ro_ws), f"/{ro_ws}"])
-    if deps_dir:
-        bwrap_cmd.extend(["--bind-try", deps_dir, "/.deps"])
+    ])
 
     if is_python:
         python_paths = ["/echo_libs_sandbox"] + (["/.deps/python"] if deps_dir else [])
         bwrap_cmd.extend(["--setenv", "PYTHONPATH", ":".join(python_paths), "python", f"/sandbox/{file_path}"])
     else:
-        node_paths = (["/.deps/node/node_modules"] if deps_dir else []) + ["/echo_libs_sandbox", "/usr/lib/node_modules"]
+        node_paths = (
+            (["/.deps/node/node_modules"] if deps_dir else []) + ["/echo_libs_sandbox", "/usr/lib/node_modules"]
+        )
         bwrap_cmd.extend(["--setenv", "NODE_PATH", ":".join(node_paths), "node", f"/sandbox/{file_path}"])
 
     with _JOBS_LOCK:
@@ -383,12 +470,12 @@ def _start_sandbox_job(
         if active_chat >= MAX_CONCURRENT_JOBS_PER_CHAT:
             return None, {
                 "status": "error",
-                "error": f"Quota dépassé : {active_chat}/{MAX_CONCURRENT_JOBS_PER_CHAT} processus actifs dans cette session.",
+                "error": f"Quota dépassé : {active_chat}/{MAX_CONCURRENT_JOBS_PER_CHAT} processus actifs session.",
             }
         if active_global >= MAX_CONCURRENT_JOBS_GLOBAL:
             return None, {
                 "status": "error",
-                "error": f"Quota global dépassé : {active_global}/{MAX_CONCURRENT_JOBS_GLOBAL} processus actifs sur le Worker.",
+                "error": f"Quota global dépassé : {active_global}/{MAX_CONCURRENT_JOBS_GLOBAL} processus actifs.",
             }
 
         proc = subprocess.Popen(
@@ -402,8 +489,16 @@ def _start_sandbox_job(
         job_lock = threading.Lock()
         stdout_buf, stderr_buf = [], []
         out_sz, err_sz = [0], [0]
-        t_out = threading.Thread(target=_stream_reader, args=(proc.stdout, stdout_buf, out_sz, job_lock, max_output_length, True), daemon=True)
-        t_err = threading.Thread(target=_stream_reader, args=(proc.stderr, stderr_buf, err_sz, job_lock, max_output_length, False), daemon=True)
+        t_out = threading.Thread(
+            target=_stream_reader,
+            args=(proc.stdout, stdout_buf, out_sz, job_lock, max_output_length, True),
+            daemon=True,
+        )
+        t_err = threading.Thread(
+            target=_stream_reader,
+            args=(proc.stderr, stderr_buf, err_sz, job_lock, max_output_length, False),
+            daemon=True,
+        )
         t_out.start()
         t_err.start()
 
@@ -437,6 +532,229 @@ def _start_sandbox_job(
     return job, None
 
 
+# ================================================================================
+# GESTIONNAIRE DE SESSIONS PTY INTERACTIVES (XTerminal.svelte)
+# ================================================================================
+
+class TerminalSession:
+    def __init__(self, session_id: str, user_id: str, chat_id: str, sandbox_dir: str):
+        self.id = session_id
+        self.user_id = user_id
+        self.chat_id = chat_id
+        self.sandbox_dir = sandbox_dir
+        self.created_at = time.time()
+        self.cursor = 0
+        self.max_buffer = 65536
+        self.buffer = bytearray()
+        self.truncated = False
+        self.lock = threading.Lock()
+        self.out_queue = queue.Queue()
+        self.alive = True
+        self.is_pty = False
+        self.master_fd = None
+        self.proc = None
+        self.cols = 80
+        self.rows = 24
+
+        self._start()
+
+    def _start(self):
+        has_bwrap = shutil.which("bwrap") is not None
+        has_pty = False
+        try:
+            import pty
+            has_pty = hasattr(pty, "openpty") and hasattr(os, "fork")
+        except ImportError:
+            has_pty = False
+
+        if has_bwrap and has_pty:
+            import fcntl
+            import pty
+            import struct
+            import termios
+
+            master_fd, slave_fd = pty.openpty()
+            self.master_fd = master_fd
+            self.is_pty = True
+            try:
+                fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", self.rows, self.cols, 0, 0))
+            except Exception:
+                pass
+
+            flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+            fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+            cmd = _build_interactive_bwrap_cmd(self.user_id, self.chat_id, self.sandbox_dir)
+            self.proc = subprocess.Popen(
+                cmd,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                start_new_session=True,
+                close_fds=True,
+            )
+            os.close(slave_fd)
+        else:
+            # Fallback portable multi-plateforme (tests locaux .venv Windows ou hôte sans bwrap)
+            if os.name == "nt":
+                cmd = ["cmd.exe", "/q"]
+            else:
+                shell_bin = "/bin/bash" if os.path.exists("/bin/bash") else "/bin/sh"
+                cmd = [shell_bin, "-i"]
+
+            self.proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=self.sandbox_dir if os.path.isdir(self.sandbox_dir) else None,
+                bufsize=0,
+            )
+
+        self.reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
+        self.reader_thread.start()
+
+    def _reader_loop(self):
+        try:
+            if self.is_pty and self.master_fd is not None:
+                import select
+                while self.alive:
+                    r, _, _ = select.select([self.master_fd], [], [], 0.1)
+                    if r:
+                        try:
+                            chunk = os.read(self.master_fd, 4096)
+                            if not chunk:
+                                break
+                            self._handle_output(chunk)
+                        except OSError:
+                            break
+                    if self.proc.poll() is not None:
+                        try:
+                            while True:
+                                chunk = os.read(self.master_fd, 4096)
+                                if not chunk:
+                                    break
+                                self._handle_output(chunk)
+                        except OSError:
+                            pass
+                        break
+            else:
+                while self.alive:
+                    chunk = self.proc.stdout.read(512)
+                    if not chunk:
+                        break
+                    self._handle_output(chunk)
+        except Exception as e:
+            logger.debug(f"Terminal reader loop ended: {e}")
+        finally:
+            self.alive = False
+            self.out_queue.put(b"")
+
+    def _handle_output(self, chunk: bytes):
+        with self.lock:
+            self.cursor += len(chunk)
+            self.buffer.extend(chunk)
+            if len(self.buffer) > self.max_buffer:
+                self.buffer = self.buffer[-self.max_buffer:]
+                self.truncated = True
+        self.out_queue.put(chunk)
+
+    def write_input(self, data: bytes | str):
+        if not self.is_alive():
+            return
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        try:
+            if self.is_pty and self.master_fd is not None:
+                os.write(self.master_fd, data)
+            elif self.proc and self.proc.stdin:
+                self.proc.stdin.write(data)
+                self.proc.stdin.flush()
+        except Exception as e:
+            logger.warning(f"Terminal write_input error: {e}")
+
+    def resize(self, cols: int, rows: int):
+        self.cols = cols
+        self.rows = rows
+        if self.is_pty and self.master_fd is not None:
+            try:
+                import fcntl
+                import struct
+                import termios
+                fcntl.ioctl(self.master_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+            except Exception as e:
+                logger.debug(f"Terminal resize failed: {e}")
+
+    def is_alive(self) -> bool:
+        return self.alive and self.proc is not None and self.proc.poll() is None
+
+    def terminate(self):
+        self.alive = False
+        if self.proc:
+            _kill_process_group(self.proc)
+        if self.master_fd is not None:
+            try:
+                os.close(self.master_fd)
+            except Exception:
+                pass
+            self.master_fd = None
+        self.out_queue.put(b"")
+
+
+class TerminalSessionManager:
+    def __init__(self):
+        self._sessions: dict[str, TerminalSession] = {}
+        self._lock = threading.Lock()
+
+    def create_session(self, user_id: str, chat_id: str) -> TerminalSession:
+        safe_uid = _sanitize_id(user_id)
+        safe_cid = _sanitize_id(chat_id, default="")
+        sandbox_dir = _get_sandbox_dir(safe_uid, safe_cid)
+        if not sandbox_dir:
+            sandbox_dir = os.path.join(tempfile.gettempdir(), "echo_terminals", safe_uid, safe_cid or "general")
+        os.makedirs(sandbox_dir, exist_ok=True)
+
+        session_id = f"term_{uuid.uuid4().hex[:12]}"
+        session = TerminalSession(
+            session_id=session_id,
+            user_id=safe_uid,
+            chat_id=safe_cid,
+            sandbox_dir=sandbox_dir,
+        )
+        with self._lock:
+            self._prune_sessions()
+            self._sessions[session_id] = session
+        logger.info(f"🖥️ Terminal session CREATED | ID: {session_id} | User: {safe_uid} | Chat: {safe_cid}")
+        return session
+
+    def get_session(self, session_id: str) -> TerminalSession | None:
+        with self._lock:
+            return self._sessions.get(session_id)
+
+    def terminate_session(self, session_id: str):
+        with self._lock:
+            session = self._sessions.pop(session_id, None)
+        if session:
+            session.terminate()
+            logger.info(f"🛑 Terminal session TERMINATED | ID: {session_id}")
+
+    def _prune_sessions(self):
+        now = time.time()
+        to_del = []
+        for sid, s in self._sessions.items():
+            if not s.is_alive() and (now - s.created_at > 300):
+                to_del.append(sid)
+        for sid in to_del:
+            del self._sessions[sid]
+
+
+TERMINAL_MANAGER = TerminalSessionManager()
+
+
+# ================================================================================
+# ROUTES FLASK REST EXISTANTES & TERMINAL
+# ================================================================================
+
 @app.route('/execute', methods=['POST'])
 def execute_code():
     data = request.json or {}
@@ -447,7 +765,6 @@ def execute_code():
     max_output_length = int(data.get('max_output_length', 131072))
     background = bool(data.get('background', False))
     run_id = _sanitize_id(data.get('run_id') or f"run_{uuid.uuid4().hex[:8]}")
-
     safe_uid = _sanitize_id(data.get('user_id', 'system'))
     safe_cid = _sanitize_id(data.get('chat_id'), default="")
 
@@ -644,7 +961,7 @@ def update_payload():
         tgt = os.path.join(sandbox_dir, pay_fname)
         try:
             with open(tmp, 'w', encoding='utf-8') as f:
-                f.write(orjson.dumps(ui_payload).decode('utf-8'))
+                f.write(orjson.dumps(ui_payload).decode("utf-8"))
             os.replace(tmp, tgt)
         except Exception:
             return jsonify({"status": "error"}), 500
@@ -657,6 +974,176 @@ def health():
     return jsonify({"status": "ready"})
 
 
+@app.route('/api/config', methods=['GET'])
+def terminal_config():
+    """Configuration déclarative des fonctionnalités requise par Open WebUI."""
+    return jsonify({
+        "features": {
+            "terminal": True,
+            "files": False,
+            "desktop": False,
+            "browser": False,
+        }
+    })
+
+
+@app.route('/openapi.json', methods=['GET'])
+def openapi_spec():
+    """Spécification OpenAPI minimale pour découverte et connexion Open WebUI."""
+    return jsonify({
+        "openapi": "3.1.0",
+        "info": {
+            "title": "ECHO Coding Sandbox Terminal",
+            "version": "6.4.0.1",
+        },
+        "paths": {},
+    })
+
+
+@app.route('/api/terminals', methods=['POST'])
+def create_terminal():
+    """Crée une session terminal interactive PTY."""
+    req_json = request.json or {}
+    user_id = request.headers.get("X-User-Id") or req_json.get("user_id") or "system"
+    chat_id = (
+        request.headers.get("X-Session-Id")
+        or request.headers.get("X-Terminal-Context-Id")
+        or req_json.get("chat_id")
+        or ""
+    )
+    session = TERMINAL_MANAGER.create_session(user_id=user_id, chat_id=chat_id)
+    return jsonify({"id": session.id})
+
+
+@app.route('/api/terminals/<session_id>', methods=['GET'])
+def get_terminal(session_id):
+    """Vérifie l'existence et l'état d'une session terminal."""
+    session = TERMINAL_MANAGER.get_session(session_id)
+    if not session:
+        return jsonify({"error": "Terminal session not found"}), 404
+    return jsonify({
+        "id": session.id,
+        "chat_id": session.chat_id,
+        "alive": session.is_alive(),
+    })
+
+
+@app.route('/api/terminals/<session_id>', methods=['DELETE'])
+def delete_terminal(session_id):
+    """Termine une session terminal."""
+    TERMINAL_MANAGER.terminate_session(session_id)
+    return jsonify({"status": "terminated", "id": session_id})
+
+
+# ================================================================================
+# ENDPOINT WEBSOCKET ASGI & WRAPPER STARLETTE
+# ================================================================================
+
+async def ws_terminal_endpoint(websocket: WebSocket):
+    """Endpoint WebSocket bidirectionnel pour le streaming PTY XTerminal."""
+    await websocket.accept()
+    session_id = websocket.path_params.get("session_id", "")
+    session = TERMINAL_MANAGER.get_session(session_id)
+    if not session or not session.is_alive():
+        await websocket.close(code=4404)
+        return
+
+    try:
+        init_raw = await websocket.receive_text()
+        init_data = json.loads(init_raw)
+        if init_data.get("chat_id"):
+            session.chat_id = init_data["chat_id"]
+    except Exception:
+        pass
+
+    # Confirmer la liaison au chat
+    await websocket.send_text(json.dumps({"type": "chat", "chat_id": session.chat_id}))
+
+    # Envoyer le buffer accumulé si présent
+    with session.lock:
+        buffered = bytes(session.buffer)
+        curr_cursor = session.cursor
+        is_trunc = session.truncated
+
+    if buffered:
+        await websocket.send_text(json.dumps({"type": "output", "end": curr_cursor, "truncated": is_trunc}))
+        await websocket.send_bytes(buffered)
+
+    stop_event = asyncio.Event()
+
+    async def _reader():
+        loop = asyncio.get_running_loop()
+        while not stop_event.is_set() and session.is_alive():
+            def get_chunk():
+                try:
+                    return session.out_queue.get(timeout=0.1)
+                except queue.Empty:
+                    return None
+            chunk = await loop.run_in_executor(None, get_chunk)
+            if chunk == b"":
+                break
+            if chunk and not stop_event.is_set():
+                try:
+                    await websocket.send_text(
+                        json.dumps({"type": "output", "end": session.cursor, "truncated": False})
+                    )
+                    await websocket.send_bytes(chunk)
+                except Exception:
+                    break
+
+    async def _writer():
+        try:
+            while not stop_event.is_set():
+                msg = await websocket.receive()
+                if msg.get("type") == "websocket.disconnect":
+                    break
+                if "bytes" in msg and msg["bytes"]:
+                    session.write_input(msg["bytes"])
+                elif "text" in msg and msg["text"]:
+                    try:
+                        payload = json.loads(msg["text"])
+                        p_type = payload.get("type")
+                        if p_type == "resize":
+                            session.resize(int(payload.get("cols", 80)), int(payload.get("rows", 24)))
+                        elif p_type == "ping":
+                            await websocket.send_text(json.dumps({"type": "pong"}))
+                        elif p_type == "chat":
+                            c_id = payload.get("chat_id")
+                            if c_id:
+                                session.chat_id = c_id
+                            await websocket.send_text(json.dumps({"type": "chat", "chat_id": session.chat_id}))
+                        elif p_type in ("ack", "activity", "auth"):
+                            pass
+                    except Exception as e:
+                        logger.debug(f"Terminal WS JSON error: {e}")
+        except Exception:
+            pass
+        finally:
+            stop_event.set()
+
+    tasks = [asyncio.create_task(_reader()), asyncio.create_task(_writer())]
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    except (asyncio.CancelledError, WebSocketDisconnect):
+        pass
+    finally:
+        stop_event.set()
+        for t in tasks:
+            t.cancel()
+        for t in tasks:
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
+
+
+asgi_app = Starlette(
+    routes=[
+        WebSocketRoute("/api/terminals/{session_id}", ws_terminal_endpoint),
+        Mount("/", app=WSGIMiddleware(app)),
+    ]
+)
+
+
 if __name__ == '__main__':
-    # threaded=True permet de traiter les requêtes HTTP en parallèle
-    app.run(host='0.0.0.0', port=5000, threaded=True)
+    uvicorn.run(asgi_app, host='0.0.0.0', port=5000)

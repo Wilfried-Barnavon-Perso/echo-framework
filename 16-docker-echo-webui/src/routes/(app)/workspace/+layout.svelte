@@ -13,11 +13,8 @@
 	} from '$lib/stores';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
-	import { getModelItems } from '$lib/apis/models';
-	import { searchKnowledgeBases } from '$lib/apis/knowledge';
 	import { getPromptItems } from '$lib/apis/prompts';
-	import { getSkillItems } from '$lib/apis/skills';
-	import { getToolList } from '$lib/apis/tools';
+	import { listEchoSkills, listEchoMetaArtifacts } from '$lib/apis/echo';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Sidebar from '$lib/components/icons/Sidebar.svelte';
 	import SplitCreateButton from '$lib/components/common/SplitCreateButton.svelte';
@@ -46,59 +43,32 @@
 	const formatCount = (count: number | null) => formatNumber(count ?? 0);
 
 	const loadWorkspaceCounts = async () => {
-		const canViewModels = $user?.role === 'admin' || $user?.permissions?.workspace?.models;
-		const canViewKnowledge = $user?.role === 'admin' || $user?.permissions?.workspace?.knowledge;
-		const canViewPrompts = $user?.role === 'admin' || $user?.permissions?.workspace?.prompts;
-		const canViewSkills = $user?.role === 'admin' || $user?.permissions?.workspace?.skills;
-		const canViewTools =
-			$config?.features?.enable_tools &&
-			($user?.role === 'admin' || $user?.permissions?.workspace?.tools);
-
-		const [modelRes, knowledgeRes, promptRes, skillRes, toolRes] = await Promise.all([
-			canViewModels
-				? getModelItems(localStorage.token, null, null, null, null, null, 1).catch(() => null)
-				: null,
-			canViewKnowledge
-				? searchKnowledgeBases(localStorage.token, null, null, 1, null).catch(() => null)
-				: null,
-			canViewPrompts
-				? getPromptItems(localStorage.token, null, null, null, null, null, 1).catch(() => null)
-				: null,
-			canViewSkills ? getSkillItems(localStorage.token, null, null, 1).catch(() => null) : null,
-			canViewTools ? getToolList(localStorage.token).catch(() => null) : null
+		const token = localStorage.token || '';
+		const [promptRes, skillRes, metaRes] = await Promise.all([
+			getPromptItems(token, null, null, null, null, null, 1).catch(() => null),
+			listEchoSkills(token).catch(() => null),
+			listEchoMetaArtifacts(token).catch(() => null)
 		]);
 
 		workspaceCounts.set({
-			models: getCount(modelRes),
-			knowledge: getCount(knowledgeRes),
+			models: null,
+			knowledge: null,
 			prompts: getCount(promptRes),
-			skills: getCount(skillRes),
-			tools: getCount(toolRes)
+			skills: Array.isArray(skillRes) ? skillRes.length : null,
+			metaArtifacts: metaRes?.total ?? (Array.isArray(metaRes?.items) ? metaRes.items.length : null),
+			tools: null
 		});
 	};
 
 	onMount(async () => {
-		if ($user?.role !== 'admin') {
-			if ($page.url.pathname.includes('/models') && !$user?.permissions?.workspace?.models) {
-				goto('/', { replaceState: true });
-			} else if (
-				$page.url.pathname.includes('/knowledge') &&
-				!$user?.permissions?.workspace?.knowledge
-			) {
-				goto('/', { replaceState: true });
-			} else if (
-				$page.url.pathname.includes('/prompts') &&
-				!$user?.permissions?.workspace?.prompts
-			) {
-				goto('/', { replaceState: true });
-			} else if (
-				$page.url.pathname.includes('/tools') &&
-				(!$config?.features?.enable_tools || !$user?.permissions?.workspace?.tools)
-			) {
-				goto('/', { replaceState: true });
-			} else if ($page.url.pathname.includes('/skills') && !$user?.permissions?.workspace?.skills) {
-				goto('/', { replaceState: true });
-			}
+		// [ECHO-V6-HOOK] Redirection des sections obsolètes vers /workspace/skills
+		if (
+			$page.url.pathname.includes('/workspace/models') ||
+			$page.url.pathname.includes('/workspace/knowledge') ||
+			$page.url.pathname.includes('/workspace/tools')
+		) {
+			goto('/workspace/skills', { replaceState: true });
+			return;
 		}
 
 		loaded = true;
@@ -150,95 +120,60 @@
 						<div
 							class="flex min-w-0 mr-1.5 items-center gap-0.5 md:gap-1 scrollbar-none overflow-x-auto w-fit text-center text-sm font-normal bg-transparent py-1 touch-auto pointer-events-auto"
 						>
-							{#if $user?.role === 'admin' || $user?.permissions?.workspace?.models}
-								<a
-									draggable="false"
-									data-sveltekit-keepfocus
-									aria-current={activeWorkspaceSection === 'models' ? 'page' : null}
-									class="min-w-fit px-1 text-sm inline-flex items-center gap-1 {activeWorkspaceSection ===
-									'models'
-										? 'text-gray-900 dark:text-gray-100'
-										: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition select-none"
-									href="/workspace/models"
-								>
-									<span>{$i18n.t('Models')}</span>
-									<span class="text-sm opacity-60">
-										{formatCount($workspaceCounts.models)}
-									</span>
-								</a>
-							{/if}
-
-							{#if $user?.role === 'admin' || $user?.permissions?.workspace?.knowledge}
-								<a
-									draggable="false"
-									data-sveltekit-keepfocus
-									aria-current={activeWorkspaceSection === 'knowledge' ? 'page' : null}
-									class="min-w-fit px-1 text-sm inline-flex items-center gap-1 {activeWorkspaceSection ===
-									'knowledge'
-										? 'text-gray-900 dark:text-gray-100'
-										: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition select-none"
-									href="/workspace/knowledge"
-								>
-									<span>{$i18n.t('Knowledge')}</span>
-									<span class="text-sm opacity-60">
-										{formatCount($workspaceCounts.knowledge)}
-									</span>
-								</a>
-							{/if}
-
-							{#if $user?.role === 'admin' || $user?.permissions?.workspace?.prompts}
-								<a
-									draggable="false"
-									data-sveltekit-keepfocus
-									aria-current={activeWorkspaceSection === 'prompts' ? 'page' : null}
-									class="min-w-fit px-1 text-sm inline-flex items-center gap-1 {activeWorkspaceSection ===
-									'prompts'
-										? 'text-gray-900 dark:text-gray-100'
-										: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition select-none"
-									href="/workspace/prompts"
-								>
-									<span>{$i18n.t('Prompts')}</span>
-									<span class="text-sm opacity-60">
-										{formatCount($workspaceCounts.prompts)}
-									</span>
-								</a>
-							{/if}
-
-							{#if $user?.role === 'admin' || $user?.permissions?.workspace?.skills}
-								<a
-									draggable="false"
-									data-sveltekit-keepfocus
-									aria-current={activeWorkspaceSection === 'skills' ? 'page' : null}
-									class="min-w-fit px-1 text-sm inline-flex items-center gap-1 {activeWorkspaceSection ===
-									'skills'
-										? 'text-gray-900 dark:text-gray-100'
-										: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition select-none"
-									href="/workspace/skills"
-								>
-									<span>{$i18n.t('Skills')}</span>
-									<span class="text-sm opacity-60">
+							<!-- [ECHO-V6-HOOK] 3 Onglets Souverains : Skills, Méta-Artéfacts, Prompts -->
+							<a
+								draggable="false"
+								data-sveltekit-keepfocus
+								aria-current={activeWorkspaceSection === 'skills' ? 'page' : null}
+								class="min-w-fit px-2 py-1 text-sm inline-flex items-center gap-1.5 {activeWorkspaceSection ===
+								'skills'
+									? 'text-gray-900 dark:text-gray-100 font-semibold'
+									: 'text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200'} transition select-none"
+								href="/workspace/skills"
+							>
+								<span>Skills</span>
+								{#if $workspaceCounts?.skills !== null && $workspaceCounts?.skills !== undefined}
+									<span class="text-xs opacity-75 font-mono">
 										{formatCount($workspaceCounts.skills)}
 									</span>
-								</a>
-							{/if}
+								{/if}
+							</a>
 
-							{#if $config?.features?.enable_tools && ($user?.role === 'admin' || $user?.permissions?.workspace?.tools)}
-								<a
-									draggable="false"
-									data-sveltekit-keepfocus
-									aria-current={activeWorkspaceSection === 'tools' ? 'page' : null}
-									class="min-w-fit px-1 text-sm inline-flex items-center gap-1 {activeWorkspaceSection ===
-									'tools'
-										? 'text-gray-900 dark:text-gray-100'
-										: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition select-none"
-									href="/workspace/tools"
-								>
-									<span>{$i18n.t('Tools')}</span>
-									<span class="text-sm opacity-60">
-										{formatCount($workspaceCounts.tools)}
+							<a
+								draggable="false"
+								data-sveltekit-keepfocus
+								aria-current={activeWorkspaceSection === 'meta-artifacts' ? 'page' : null}
+								class="min-w-fit px-2 py-1 text-sm inline-flex items-center gap-1.5 {activeWorkspaceSection ===
+								'meta-artifacts'
+									? 'text-gray-900 dark:text-gray-100 font-semibold'
+									: 'text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200'} transition select-none"
+								href="/workspace/meta-artifacts"
+							>
+								<span>Méta-Artéfacts</span>
+								{#if ($workspaceCounts as any)?.metaArtifacts !== null && ($workspaceCounts as any)?.metaArtifacts !== undefined}
+									<span class="text-xs opacity-75 font-mono">
+										{formatCount(($workspaceCounts as any).metaArtifacts)}
 									</span>
-								</a>
-							{/if}
+								{/if}
+							</a>
+
+							<a
+								draggable="false"
+								data-sveltekit-keepfocus
+								aria-current={activeWorkspaceSection === 'prompts' ? 'page' : null}
+								class="min-w-fit px-2 py-1 text-sm inline-flex items-center gap-1.5 {activeWorkspaceSection ===
+								'prompts'
+									? 'text-gray-900 dark:text-gray-100 font-semibold'
+									: 'text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200'} transition select-none"
+								href="/workspace/prompts"
+							>
+								<span>Prompts</span>
+								{#if $workspaceCounts?.prompts !== null && $workspaceCounts?.prompts !== undefined}
+									<span class="text-xs opacity-75 font-mono">
+										{formatCount($workspaceCounts.prompts)}
+									</span>
+								{/if}
+							</a>
 						</div>
 
 						<div class="ml-auto flex shrink-0 items-center gap-1">

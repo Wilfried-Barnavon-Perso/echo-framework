@@ -418,6 +418,11 @@ async def lifespan(app: FastAPI):
             # Disable signup since we now have an admin
             await Config.upsert({'ui.enable_signup': False})
 
+    # [ECHO-V6-HOOK] Declarative ECHO runtime bootstrap (replaces host-driven config-owui.sh)
+    from open_webui.echo.bootstrap import bootstrap_echo_runtime
+
+    await bootstrap_echo_runtime(app)
+
     if SAFE_MODE:
         await Functions.deactivate_all_functions()
 
@@ -815,7 +820,8 @@ app.add_middleware(
 app.mount('/ws', socket_app)
 
 
-app.include_router(ollama.router, prefix='/ollama', tags=['ollama'])
+# [ECHO-V6-HOOK] Désactivation du routeur Ollama (souveraineté Gemini/ECHO)
+# app.include_router(ollama.router, prefix='/ollama', tags=['ollama'])
 app.include_router(openai.router, prefix='/openai', tags=['openai'])
 
 
@@ -838,26 +844,42 @@ app.include_router(users.router, prefix='/api/v1/users', tags=['users'])
 
 
 app.include_router(apps.router, prefix='/api/v1/apps', tags=['apps'])
-app.include_router(channels.router, prefix='/api/v1/channels', tags=['channels'])
+# [ECHO-V6-HOOK] Désactivation des routeurs Channels, Notes, Models CRUD, Knowledge, Memories, Evaluations
+# app.include_router(channels.router, prefix='/api/v1/channels', tags=['channels'])
 app.include_router(chats.router, prefix='/api/v1/chats', tags=['chats'])
 app.include_router(comments.router, prefix='/api/v1/comments', tags=['comments'])
-app.include_router(notes.router, prefix='/api/v1/notes', tags=['notes'])
+# app.include_router(notes.router, prefix='/api/v1/notes', tags=['notes'])
 app.include_router(search.router, prefix='/api/v1/search', tags=['search'])
 
 
-app.include_router(models.router, prefix='/api/v1/models', tags=['models'])
+# app.include_router(models.router, prefix='/api/v1/models', tags=['models'])
 app.include_router(notifications.router, prefix='/api/v1/notifications', tags=['notifications'])
-app.include_router(knowledge.router, prefix='/api/v1/knowledge', tags=['knowledge'])
+# app.include_router(knowledge.router, prefix='/api/v1/knowledge', tags=['knowledge'])
 app.include_router(prompts.router, prefix='/api/v1/prompts', tags=['prompts'])
 app.include_router(tools.router, prefix='/api/v1/tools', tags=['tools'])
-app.include_router(skills.router, prefix='/api/v1/skills', tags=['skills'])
 
-app.include_router(memories.router, prefix='/api/v1/memories', tags=['memories'])
+# [ECHO-V6-HOOK] Montage des routeurs souverains ECHO (Skills, Meta-Artifacts, Window Manager, Cognition, Codex, Vault)
+from open_webui.echo.routers import (
+    skills as echo_skills_router,
+    meta_artifacts as echo_meta_artifacts_router,
+    wm as echo_wm_router,
+    cognition as echo_cognition_router,
+    codex as echo_codex_router,
+    vault as echo_vault_router,
+)
+app.include_router(echo_skills_router.router, prefix='/echo/v1/skills', tags=['echo-skills'])
+app.include_router(echo_skills_router.router, prefix='/api/v1/skills', tags=['skills'])
+app.include_router(echo_meta_artifacts_router.router, prefix='/echo/v1/meta-artifacts', tags=['echo-meta-artifacts'])
+app.include_router(echo_wm_router.router, prefix='/echo/v1/wm', tags=['echo-wm'])
+app.include_router(echo_cognition_router.router, prefix='/echo/v1/cognition', tags=['echo-cognition'])
+app.include_router(echo_codex_router.router, prefix='/echo/v1/codex', tags=['echo-codex'])
+app.include_router(echo_vault_router.router, prefix='/echo/v1/vault', tags=['echo-vault'])
+# app.include_router(memories.router, prefix='/api/v1/memories', tags=['memories'])
 app.include_router(folders.router, prefix='/api/v1/folders', tags=['folders'])
 app.include_router(groups.router, prefix='/api/v1/groups', tags=['groups'])
 app.include_router(files.router, prefix='/api/v1/files', tags=['files'])
 app.include_router(functions.router, prefix='/api/v1/functions', tags=['functions'])
-app.include_router(evaluations.router, prefix='/api/v1/evaluations', tags=['evaluations'])
+# app.include_router(evaluations.router, prefix='/api/v1/evaluations', tags=['evaluations'])
 if ENABLE_ADMIN_ANALYTICS:
     app.include_router(analytics.router, prefix='/api/v1/analytics', tags=['analytics'])
 app.include_router(utils.router, prefix='/api/v1/utils', tags=['utils'])

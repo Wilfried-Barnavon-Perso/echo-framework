@@ -1,18 +1,18 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 5.231.39.1
+# VERSION : 6.0.0.1
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.0.0.1: Retrait de l'appel à config-owui.sh au profit du bootstrap déclaratif lifespan ECHO V6.
 # 5.231.39.1: Alignement du cron quotidien sur echo-clean (/etc/cron.daily/echo-clean) et de l'aide sur echo-show-admin.
 # 5.231.21.1: Délégation de la génération des secrets .env (dont ECHO_VAULT_ENCRYPTION_KEY) à ensure_echo_secrets (echo-globals.sh).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 6.33: Mise à jour du chemin de build pour l'image parente docker-python-base.
-# 6.32: Utilisation des variables d'environnement ECHO_NET_MAIN_PREFIX pour la création dynamique des sous-réseaux IPAM.
 
 set -e # Arrêt en cas d'erreur critique
 
@@ -313,12 +313,7 @@ else
     echo "   ⚠️  Aucun service marqué echo.hot-reload=true trouvé."
 fi
 
-echo "🔧 Configuration Auto (API Host-Driven)..."
-if [ -f "$ECHO_SCRIPTS/config-owui.sh" ]; then
-    /bin/bash "$ECHO_SCRIPTS/config-owui.sh"
-else
-    echo "⚠️ Script de configuration introuvable ($ECHO_SCRIPTS/config-owui.sh)"
-fi
+echo "🧠 Provisioning déclaratif ECHO V6 assuré nativement par le lifespan de echo-open-webui."
 
 docker image prune -f >/dev/null 2>&1
 

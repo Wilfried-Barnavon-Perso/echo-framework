@@ -116,7 +116,8 @@
 	import MoreHorizontalIcon from './Sidebar/icons/MoreHorizontal.svelte';
 	import MobileSwipePanel from '../common/MobileSwipePanel.svelte';
 
-	const DEFAULT_PINNED_ITEMS = ['notes', 'workspace'];
+	// [ECHO-V6-HOOK] Épuration du menu latéral : seul Workspace reste épinglé par défaut
+	const DEFAULT_PINNED_ITEMS = ['workspace'];
 
 	let scrollTop = 0;
 
@@ -283,19 +284,11 @@
 	$: isMenuItemVisible = (id) => {
 		switch (id) {
 			case 'notes':
-				return (
-					($config?.features?.enable_notes ?? false) &&
-					($user?.role === 'admin' || ($user?.permissions?.features?.notes ?? true))
-				);
+				// [ECHO-V6-HOOK] Notes désactivées au profit du Codex et des Méta-Artéfacts
+				return false;
 			case 'workspace':
-				return (
-					$user?.role === 'admin' ||
-					$user?.permissions?.workspace?.models ||
-					$user?.permissions?.workspace?.knowledge ||
-					$user?.permissions?.workspace?.prompts ||
-					$user?.permissions?.workspace?.tools ||
-					$user?.permissions?.workspace?.skills
-				);
+				// [ECHO-V6-HOOK] Workspace souverain ECHO accessible
+				return true;
 			case 'automations':
 				return (
 					$config?.features?.enable_automations &&
@@ -307,7 +300,8 @@
 					($user?.role === 'admin' || $user?.permissions?.features?.calendar)
 				);
 			case 'playground':
-				return $user?.role === 'admin';
+				// [ECHO-V6-HOOK] Playground désactivé
+				return false;
 			default:
 				return false;
 		}
@@ -508,14 +502,7 @@
 				tags.set(_tags);
 			})(),
 			(async () => {
-				if (
-					$config?.features?.enable_notes &&
-					($user?.role === 'admin' || ($user?.permissions?.features?.notes ?? true))
-				) {
-					console.log('Init pinned notes');
-					const _pinnedNotes = await getPinnedNoteList(localStorage.token).catch(() => []);
-					pinnedNotes.set(_pinnedNotes);
-				}
+				// [ECHO-V6-HOOK] Désactivation de la récupération des pinned notes
 			})(),
 			(async () => {
 				console.log('Init chat list');
@@ -525,14 +512,7 @@
 	};
 
 	const initSidebarData = async () => {
-		// Only fetch channels if the feature is enabled and user has permission
-		if (
-			$config?.features?.enable_channels &&
-			($user?.role === 'admin' || ($user?.permissions?.features?.channels ?? true))
-		) {
-			initChannels();
-		}
-
+		// [ECHO-V6-HOOK] Désactivation de l'initialisation des channels
 		await initChatList();
 	};
 
@@ -1498,7 +1478,8 @@
 						</SidebarSection>
 					{/if}
 
-					{#if ($config?.features?.enable_notes ?? false) && ($user?.role === 'admin' || ($user?.permissions?.features?.notes ?? true)) && $pinnedNotes.length > 0}
+					<!-- [ECHO-V6-HOOK] Neutralisation de la section Notes dans la barre latérale -->
+					{#if false && ($config?.features?.enable_notes ?? false) && ($user?.role === 'admin' || ($user?.permissions?.features?.notes ?? true)) && $pinnedNotes.length > 0}
 						<SidebarSection
 							id="sidebar-pinned-notes"
 							bind:open={showPinnedNotes}
@@ -1516,7 +1497,8 @@
 						</SidebarSection>
 					{/if}
 
-					{#if $config?.features?.enable_channels && ($user?.role === 'admin' || ($user?.permissions?.features?.channels ?? true))}
+					<!-- [ECHO-V6-HOOK] Neutralisation de la section Channels dans la barre latérale -->
+					{#if false && $config?.features?.enable_channels && ($user?.role === 'admin' || ($user?.permissions?.features?.channels ?? true))}
 						<SidebarSection
 							id="sidebar-channels"
 							bind:open={showChannels}

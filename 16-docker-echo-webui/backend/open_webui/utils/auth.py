@@ -488,6 +488,10 @@ async def get_current_user(
             request.state.user = user
             request.state.auth_type = 'jwt'
             request.state.claims = data
+            # [ECHO-V6-HOOK] Liaison déterministe SSO X-Webui-User <-> User UUID <-> identity.db
+            from open_webui.echo.identity_bridge import resolve_canonical_user
+
+            await resolve_canonical_user(request, user)
             return user
         else:
             raise HTTPException(
@@ -564,6 +568,10 @@ async def get_current_user_by_api_key(request, api_key: str):
             current_span.set_attribute('client.auth.type', 'api_key')
 
     await Users.update_last_active_by_id(user.id)
+    # [ECHO-V6-HOOK] Liaison déterministe API Key <-> User UUID <-> identity.db
+    from open_webui.echo.identity_bridge import resolve_canonical_user
+
+    await resolve_canonical_user(request, user)
     return user
 
 

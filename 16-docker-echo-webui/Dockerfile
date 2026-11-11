@@ -5,15 +5,9 @@ ARG USE_CUDA=false
 ARG USE_OLLAMA=false
 ARG USE_SLIM=false
 ARG USE_PERMISSION_HARDENING=false
-# Tested with cu117 for CUDA 11 and cu121 for CUDA 12 (default)
-ARG USE_CUDA_VER=cu128
-# any sentence transformer model; models to use can be found at https://huggingface.co/models?library=sentence-transformers
-# Leaderboard: https://huggingface.co/spaces/mteb/leaderboard 
-# for better performance and multilangauge support use "intfloat/multilingual-e5-large" (~2.5GB) or "intfloat/multilingual-e5-base" (~1.5GB)
-# IMPORTANT: If you change the embedding model (sentence-transformers/all-MiniLM-L6-v2) and vice versa, you aren't able to use RAG Chat with your previous documents loaded in the WebUI! You need to re-embed them.
-ARG USE_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+ARG USE_EMBEDDING_MODEL=""
 ARG USE_RERANKING_MODEL=""
-ARG USE_AUXILIARY_EMBEDDING_MODEL=TaylorAI/bge-micro-v2
+ARG USE_AUXILIARY_EMBEDDING_MODEL=""
 
 # Tiktoken encoding name; models to use can be found at https://huggingface.co/models?library=tiktoken
 ARG USE_TIKTOKEN_ENCODING_NAME="cl100k_base"
@@ -62,7 +56,6 @@ FROM python:3.12-slim-trixie AS base
 # Use args
 ARG USE_CUDA
 ARG USE_OLLAMA
-ARG USE_CUDA_VER
 ARG USE_SLIM
 ARG USE_PERMISSION_HARDENING
 ARG USE_EMBEDDING_MODEL
@@ -81,10 +74,11 @@ ENV ENV=prod \
     USE_OLLAMA_DOCKER=${USE_OLLAMA} \
     USE_CUDA_DOCKER=${USE_CUDA} \
     USE_SLIM_DOCKER=${USE_SLIM} \
-    USE_CUDA_DOCKER_VER=${USE_CUDA_VER} \
     USE_EMBEDDING_MODEL_DOCKER=${USE_EMBEDDING_MODEL} \
     USE_RERANKING_MODEL_DOCKER=${USE_RERANKING_MODEL} \
-    USE_AUXILIARY_EMBEDDING_MODEL_DOCKER=${USE_AUXILIARY_EMBEDDING_MODEL}
+    USE_AUXILIARY_EMBEDDING_MODEL_DOCKER=${USE_AUXILIARY_EMBEDDING_MODEL} \
+    VECTOR_DB="qdrant" \
+    ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS="false"
 
 ## Basis URL Config ##
 ENV OLLAMA_BASE_URL="/ollama" \
@@ -145,13 +139,8 @@ RUN if [ "$USE_SLIM" = "true" ] && { [ "$USE_CUDA" = "true" ] || [ "$USE_OLLAMA"
 # Git-based tool requirements require the standard image.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    curl jq ca-certificates \
-    && if [ "$USE_SLIM" != "true" ]; then \
-    apt-get install -y --no-install-recommends \
-    git build-essential pandoc gcc libmariadb-dev ffmpeg libsm6 libxext6; \
-    fi && if [ "$USE_OLLAMA" = "true" ]; then \
-    apt-get install -y --no-install-recommends zstd; \
-    fi && rm -rf /var/lib/apt/lists/*
+    curl jq ca-certificates git ffmpeg pandoc \
+    && rm -rf /var/lib/apt/lists/*
 
 # install python dependencies
 COPY --chown=$UID:$GID ./backend/requirements*.txt ./
@@ -161,43 +150,11 @@ ENV UV_LINK_MODE=copy
 
 RUN --mount=from=ghcr.io/astral-sh/uv:0.12.10,source=/uv,target=/bin/uv \
     set -e; \
-    if [ "$USE_SLIM" = "true" ]; then \
-    uv pip install --system -r requirements-slim.txt --no-cache-dir; \
-    elif [ "$USE_CUDA" = "true" ]; then \
-    # If you use CUDA the whisper and embedding model will be downloaded on first use
-    # fix: pin torch<=2.9.1 - torch 2.10.0 aarch64 wheels cause SIGILL on ARM devices (RPi 4 Cortex-A72) #21349
-    pip3 install 'torch<=2.9.1' torchvision torchaudio --index-url https://download.pytorch.org/whl/$USE_CUDA_DOCKER_VER --no-cache-dir; \
     uv pip install --system -r requirements.txt --no-cache-dir; \
-    python -c "import os; from sentence_transformers import SentenceTransformer; SentenceTransformer(os.environ['RAG_EMBEDDING_MODEL'], device='cpu')"; \
-    python -c "import os; from sentence_transformers import SentenceTransformer; SentenceTransformer(os.environ.get('AUXILIARY_EMBEDDING_MODEL', 'TaylorAI/bge-micro-v2'), device='cpu')"; \
-    python -c "import os; from faster_whisper import WhisperModel; WhisperModel(os.environ['WHISPER_MODEL'], device='cpu', compute_type='int8', download_root=os.environ['WHISPER_MODEL_DIR'])"; \
     python -c "import os; import tiktoken; tiktoken.get_encoding(os.environ['TIKTOKEN_ENCODING_NAME'])"; \
-    else \
-    pip3 install 'torch<=2.9.1' torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir; \
-    uv pip install --system -r requirements.txt --no-cache-dir; \
-    if [ "$USE_SLIM" != "true" ]; then \
-    python -c "import os; from sentence_transformers import SentenceTransformer; SentenceTransformer(os.environ['RAG_EMBEDDING_MODEL'], device='cpu')"; \
-    python -c "import os; from sentence_transformers import SentenceTransformer; SentenceTransformer(os.environ.get('AUXILIARY_EMBEDDING_MODEL', 'TaylorAI/bge-micro-v2'), device='cpu')"; \
-    python -c "import os; from faster_whisper import WhisperModel; WhisperModel(os.environ['WHISPER_MODEL'], device='cpu', compute_type='int8', download_root=os.environ['WHISPER_MODEL_DIR'])"; \
-    python -c "import os; import tiktoken; tiktoken.get_encoding(os.environ['TIKTOKEN_ENCODING_NAME'])"; \
-    fi; \
-    fi; \
     mkdir -p /app/backend/data; chown -R $UID:$GID /app/backend/data/; \
     if [ -d /app/backend/data/cache ]; then chmod -R a+rX /app/backend/data/cache; fi; \
     rm -rf /var/lib/apt/lists/*;
-
-# Optional: PPTX parsing through unstructured may need spaCy's English model.
-# Keep this out of the default image to avoid the extra image bloat; deployments
-# with read-only site-packages can uncomment it and bake the model in.
-# RUN python -m spacy download en_core_web_sm
-
-# Install Ollama if requested
-RUN if [ "$USE_OLLAMA" = "true" ]; then \
-    date +%s > /tmp/ollama_build_hash && \
-    echo "Cache broken at timestamp: `cat /tmp/ollama_build_hash`" && \
-    curl -fsSL https://ollama.com/install.sh | sh && \
-    rm -rf /var/lib/apt/lists/*; \
-    fi
 
 # copy embedding weight from build
 # RUN mkdir -p /root/.cache/chroma/onnx_models/all-MiniLM-L6-v2

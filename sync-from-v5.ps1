@@ -1,15 +1,15 @@
-<#
+﻿<#
 .SYNOPSIS
     ECHO V6 - Synchronisation intelligente des évolutions depuis la branche dev (V5)
-    VERSION : 6.0.0.5
+    VERSION : 6.3.0.1
 #>
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.3.0.1: Sanctuarisation des filtres allégés et supprimés (tcp_keepalive, edge_embed, window_manager, context_gauge).
+# 6.0.0.6: Sanctuarisation de 00-echo-scripts et open_webui_bug_correction_filter.py et gestion git rm des fichiers supprimés en V6.
 # 6.0.0.5: Remplacement des émojis bruts par des points de code Unicode dynamiques (immunité d'encodage PowerShell 5.1).
 # 6.0.0.4: Fix encodage UTF-8 BOM pour PowerShell 5.1 et résilience de restauration sanctuarisée.
 # 6.0.0.3: Sanctuarisation des manifestes Compose YAML (01-config/*.yml) contre les écrasements V5.
-# 6.0.0.2: Sanctuarisation automatique des métadonnées V6 (VERSION, Hyper-V, docs) et scellement propre du merge.
-# 6.0.0.1: Création initiale du pont de synchronisation V5 (dev) -> V6 (dev_v6).
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
@@ -70,6 +70,13 @@ $SanctuaryPatterns = @(
     "^AGENTS\.md$",
     "^01-config/.*\.ya?ml$",
     "^docs/.*",
+    "^00-echo-scripts/.*",
+    "^11-owui-filters/open_webui_bug_correction_filter\.py$",
+    "^11-owui-filters/tcp_keepalive_filter\.py$",
+    "^11-owui-filters/edge_embed_bridge_filter\.py$",
+    "^11-owui-filters/window_manager_filter\.py$",
+    "^11-owui-filters/context_gauge_filter\.py$",
+    "^11-owui-filters/AGENTS\.md$",
     "^16-docker-echo-webui/.*",
     "^check-owui-news\.ps1$",
     "^sync-from-v5\.ps1$"
@@ -92,8 +99,14 @@ if ($unmerged) {
         
         if ($isProtected) {
             Write-Host "   $icoLock Sanctuarisé (version V6 préservée) : $file" -ForegroundColor DarkGray
-            git checkout --ours -- "$file"
-            git add "$file"
+            & git cat-file -e "HEAD:$file" *>$null
+            if ($LASTEXITCODE -eq 0) {
+                git checkout HEAD -- "$file"
+                git add "$file"
+            }
+            else {
+                git rm -f --quiet -- "$file" *>$null
+            }
         }
         else {
             $remainingConflicts += $file

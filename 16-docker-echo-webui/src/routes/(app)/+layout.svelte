@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
-	import { onMount, tick, getContext } from 'svelte';
+	import { onMount, onDestroy, tick, getContext } from 'svelte';
+
+import EchoEdgeEmbedding from '$lib/components/echo/EchoEdgeEmbedding.svelte';
+import { echoContextGauge, echoCanvasFrames, echoCanvasOpenRequest } from '$lib/stores/echo';
 
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
@@ -125,7 +128,7 @@
 
 		// Fetch terminal servers the user has access to (for FileNav + terminal_id)
 		const systemTerminals = await getTerminalServers(localStorage.token);
-		terminalServers.set([
+		const allTerminals = [
 			...(enabledTerminals.length > 0
 				? (
 						await getToolServersData(
@@ -164,7 +167,13 @@
 				contexts: t.contexts ?? {},
 				config: t.config ?? {}
 			}))
-		]);
+		];
+		terminalServers.set(allTerminals);
+		if (allTerminals.length > 0 && !$selectedTerminalId) {
+			const defaultServer = allTerminals.find((t) => t.id === 'echo-coding-worker') ?? allTerminals[0];
+			selectedTerminalId.set(defaultServer.id);
+			localStorage.selectedTerminalId = defaultServer.id;
+		}
 	};
 
 	const setBanners = async () => {
@@ -443,7 +452,59 @@
 
 		await tick();
 
+		// [ECHO-V6-HOOK] Keep-Alive TCP 120s pour proxys & WAF
+		keepAliveInterval = setInterval(() => {
+			fetch('/health', { method: 'HEAD', cache: 'no-store', keepalive: true }).catch(() => {});
+		}, 120000);
+
+		// [ECHO-V6-HOOK] Flux SSE Window Manager pour jauge contextuelle et frames Canvas
+		if (localStorage?.token) {
+			try {
+				const wmUrl = `/echo/v1/wm/stream?token=${encodeURIComponent(localStorage.token)}`;
+				wmEventSource = new EventSource(wmUrl);
+				wmEventSource.onmessage = (event) => {
+					try {
+						const data = JSON.parse(event.data);
+						if (data.type === 'echo_context_gauge' && data.payload) {
+							echoContextGauge.set(data.payload);
+						} else if (data.type === 'wm_uctp_exec' || data.type === 'window_mounted') {
+							const cid = data.chat_id || $chatId || '';
+							const frame = {
+								id: data.id || data.frame_id || crypto.randomUUID(),
+								title: data.title || data.name || 'Application',
+								html: data.html || data.code || '',
+								src: data.src || '',
+								created_at: Date.now(),
+								options: data.options || {}
+							};
+							if (cid) {
+								echoCanvasFrames.update((all) => {
+									const list = all[cid] || [];
+									return { ...all, [cid]: [...list, frame] };
+								});
+								echoCanvasOpenRequest.set({ chatId: cid, frameId: frame.id });
+							}
+						}
+					} catch (e) {}
+				};
+			} catch (e) {}
+		}
+
 		loaded = true;
+	});
+
+	let keepAliveInterval: any = null;
+	let wmEventSource: EventSource | null = null;
+
+	onDestroy(() => {
+		if (keepAliveInterval) {
+			clearInterval(keepAliveInterval);
+			keepAliveInterval = null;
+		}
+		if (wmEventSource) {
+			wmEventSource.close();
+			wmEventSource = null;
+		}
 	});
 
 	// `$page.url` must be referenced here: `$:` only tracks variables used in
@@ -483,6 +544,9 @@
 {/if}
 
 {#if $user}
+	<!-- [ECHO-V6-HOOK] Sonde & Pont WebGPU Edge Embedding -->
+	<EchoEdgeEmbedding />
+
 	<div class="app relative">
 		<div
 			class=" text-gray-700 dark:text-gray-100 bg-white dark:bg-gray-900 h-screen max-h-[100dvh] overflow-auto flex flex-row justify-end"

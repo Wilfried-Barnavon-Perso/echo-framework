@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.238.0.1
+version: 6.3.0.1
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.3.0.1: Allègement de deploy_context_gauge vers diffusion SSE native et événement CustomEvent pour composant Svelte.  # noqa: E501
 # 5.238.0.1: Factorisation intégrale du plein écran d'Iframe dans _get_boilerplate (script en <head>, Fullscreen API native + fallback postMessage, auto-binding #echo-iv-btn-fs et dimensionnement CSS déclaratif).  # noqa: E501
 # 5.234.1.1: Ajout du canal RPC Bidi dans get_floating_monitor_js (_echoUIInboxByChat, echoPushMonitorEvent, window.echoRequest, window.onEchoEvent).  # noqa: E501
 # 5.232.2.1: Support tactile mobile en mode 1:1 dans image_viewer (pan 1 doigt, pinch-to-zoom focalisé 2 doigts, touch-action dynamique et double-tap).  # noqa: E501
 # 5.232.0.1: Factorisation de build_rich_view_html et instrumentation JS d'interception d'erreurs (data-echo-visual-error sur console.error, error et unhandledrejection).  # noqa: E501
-# 5.231.60.1: Retrait des boutons hors-tour Recommencer/Clôturer (session_meta) dans image_viewer ; conservation de la galerie multi-essais (gallery).  # noqa: E501
 
 
 import sys
@@ -2827,15 +2827,26 @@ class EchoUI(EchoRichUI):
             "is_pending": is_pending,
         }
         json_payload = std_json.dumps(payload).decode("utf-8")
-        js_code = f"""
-(function() {{
-  {EchoUI.get_context_gauge_renderer_js().strip()}
-  if (typeof window.echoRenderContextGauge === 'function') {{
-    window.echoRenderContextGauge({json_payload});
-  }}
-}})();
-"""
-        await events.emit_execute(js_code)
+
+        # 1. Diffusion SSE immédiate via EchoWindowManager
+        try:
+            from echo_window_manager import get_window_manager
+            uid = getattr(events, "user_id", None) or "system"
+            await get_window_manager().broadcast(uid, {
+                "type": "echo_context_gauge",
+                "chat_id": payload.get("chat_id"),
+                "payload": payload,
+            })
+        except Exception:
+            pass
+
+        # 2. Événement DOM léger pour le composant et store Svelte natif
+        if events and hasattr(events, "emit_execute"):
+            try:
+                js_code = f"window.dispatchEvent(new CustomEvent('echo:context_gauge', {{ detail: {json_payload} }}));"
+                await events.emit_execute(js_code)
+            except Exception:
+                pass
 
     @classmethod
     def image_viewer(

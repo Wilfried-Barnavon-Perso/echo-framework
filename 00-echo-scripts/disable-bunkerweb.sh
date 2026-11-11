@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : disable-bunkerweb.sh
-# VERSION : 5.226.18.0
+# VERSION : 6.0.0.1
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Désactivation de la couche de sécurité BunkerWeb (Secure Edge)
@@ -9,11 +9,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.0.0.1: Retrait de l'appel à config-owui.sh au profit du bootstrap déclaratif lifespan.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.5: Prévention du crash getwd() via un `cd $ECHO_ROOT` forcé.
 # 2.4: Ajout de l'option opt-in --purge pour détruire la BDD et le dossier complet. Le comportement par défaut devient conservateur.
 # 2.3: Ajout de la purge du cache physique Let's Encrypt (évite le Split-Brain).
-# 2.2: Ajout de la purge systématique du volume de base de données bw-db.
 
 set -euo pipefail
 
@@ -151,15 +151,6 @@ echo "🚀 Redémarrage en mode Local (sans BunkerWeb)..."
 $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" \
     -f "$ECHO_STACK_FILE" \
     up -d --remove-orphans
-
-# --- 6. RECONFIGURATION OPEN WEBUI ---
-echo "🔧 Reconfiguration des paramètres internes d'Open WebUI (CORS, URLs)..."
-if [ -f "$ECHO_SCRIPTS/config-owui.sh" ]; then
-    /bin/bash "$ECHO_SCRIPTS/config-owui.sh"
-    echo "   ✅ Reconfiguration terminée."
-else
-    echo "   ⚠️  Script 'config-owui.sh' non trouvé ($ECHO_SCRIPTS/config-owui.sh)."
-fi
 
 # --- 7. HOT RELOAD (Services Python avec code en bind mount) ---
 echo "⚡ Hot Reload des services Python..."

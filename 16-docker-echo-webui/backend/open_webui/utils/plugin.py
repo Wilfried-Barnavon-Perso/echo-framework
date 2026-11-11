@@ -210,6 +210,12 @@ async def load_tool_module_by_id(tool_id, content=None):
     if not ENABLE_TOOLS:
         raise RuntimeError('Tools are disabled by ENABLE_PLUGINS or ENABLE_TOOLS')
 
+    # [ECHO-V6-HOOK] Direct disk loader with native stacktraces & st_mtime_ns hot-reload
+    if content is None:
+        from open_webui.echo.runtime import load_echo_tool_from_disk
+        if (echo_loaded := await load_echo_tool_from_disk(tool_id, sync_db_specs_on_reload=False)) is not None:
+            return echo_loaded[0], echo_loaded[1], echo_loaded[2]
+
     frontmatter = None
     if content is None:
         tool = await Tools.get_tool_by_id(tool_id)
@@ -260,6 +266,12 @@ async def load_function_module_by_id(function_id: str, content: str | None = Non
     """Prepare a Function instance, type, frontmatter, and Python module without publishing it."""
     if not ENABLE_FUNCTIONS:
         raise RuntimeError('Functions are disabled by ENABLE_PLUGINS or ENABLE_FUNCTIONS')
+
+    # [ECHO-V6-HOOK] Direct disk loader with native stacktraces & st_mtime_ns hot-reload
+    if content is None:
+        from open_webui.echo.runtime import load_echo_function_from_disk
+        if (echo_loaded := await load_echo_function_from_disk(function_id)) is not None:
+            return echo_loaded[0], echo_loaded[1], echo_loaded[2], echo_loaded[3]
 
     frontmatter = None
     if content is None:
@@ -356,6 +368,11 @@ async def get_tool_module_from_cache(request, tool_id, load_from_db=True):
     if not ENABLE_TOOLS:
         raise RuntimeError('Tools are disabled by ENABLE_PLUGINS or ENABLE_TOOLS')
 
+    # [ECHO-V6-HOOK] Fast O(1) st_mtime_ns check bypassing SQLite content read & NamedTemporaryFile
+    from open_webui.echo.runtime import load_echo_tool_from_disk
+    if (echo_loaded := await load_echo_tool_from_disk(tool_id, request=request)) is not None:
+        return echo_loaded[0], echo_loaded[1]
+
     tools_cache = get_tools_cache(request)
     tool_contents_cache = get_tool_contents_cache(request)
     content = None
@@ -386,6 +403,11 @@ async def get_function_module_from_cache(
 ):
     if not ENABLE_FUNCTIONS:
         raise RuntimeError('Functions are disabled by ENABLE_PLUGINS or ENABLE_FUNCTIONS')
+
+    # [ECHO-V6-HOOK] Fast O(1) st_mtime_ns check bypassing SQLite content read & NamedTemporaryFile
+    from open_webui.echo.runtime import load_echo_function_from_disk
+    if (echo_loaded := await load_echo_function_from_disk(function_id, request=request)) is not None:
+        return echo_loaded[0], echo_loaded[1], echo_loaded[2]
 
     functions_cache = get_functions_cache(request)
     function_contents_cache = get_function_contents_cache(request)

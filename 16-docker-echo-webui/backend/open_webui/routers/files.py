@@ -387,6 +387,16 @@ async def upload_file_handler(
             'OpenWebUI-User-Id': user.id,
             'OpenWebUI-User-Name': user.name,
             'OpenWebUI-File-Id': id,
+            # [ECHO-V6-HOOK] Contextual tags for EchoStorageProvider direct session/global vault routing
+            'Echo-Chat-Id': str(
+                file_metadata.get('chat_id')
+                or request.query_params.get('chat_id')
+                or request.headers.get('X-Chat-Id')
+                or ''
+            ).strip(),
+            'Echo-Message-Id': str(file_metadata.get('message_id') or '').strip(),
+            'Echo-Original-Name': name,
+            'Echo-Mime-Type': str(file.content_type or 'application/octet-stream'),
         }
         try:
             contents, file_path = await asyncio.to_thread(Storage.upload_file, file.file, filename, tags)

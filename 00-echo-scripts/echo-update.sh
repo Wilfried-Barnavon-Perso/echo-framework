@@ -1,13 +1,14 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : echo-update.sh
-# VERSION : 5.231.42.1
+# VERSION : 6.0.0.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À JOUR RAPIDE (CODE ONLY) + HOT RELOAD
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.0.0.1: Retrait de l'appel post-restart à config-owui.sh.
 # 5.231.42.1: Passage explicite de --env-file "$ECHO_ENV_FILE" à docker compose lors de la vérification du conteneur echo-open-webui.
 # 5.231.39.1: Renommage en echo-update.sh et ciblage de echo-sync.sh.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
@@ -69,16 +70,6 @@ if [ -n "$CONTAINERS_TO_RELOAD" ]; then
     echo "   ✅ Services rechargés : $FORMATTED_LIST"
 else
     echo "   ⚠️  Aucun service marqué echo.hot-reload=true trouvé."
-fi
-
-# --- 3. CONFIG API ---
-echo "🤖 [UPDATE] Configuration Open WebUI..."
-ENV_FILE_ARG=()
-if [ -f "${ECHO_ENV_FILE:-$ECHO_ROOT/.env}" ]; then
-    ENV_FILE_ARG=(--env-file "${ECHO_ENV_FILE:-$ECHO_ROOT/.env}")
-fi
-if [ -n "$($DOCKER_COMPOSE_CMD "${ENV_FILE_ARG[@]}" -f "$COMPOSE_FILE" ps -q echo-open-webui 2>/dev/null)" ]; then
-    /bin/bash "$ECHO_SCRIPTS/config-owui.sh"
 fi
 
 echo "✨ UPDATE TERMINÉ."

@@ -97,6 +97,11 @@
 	import Artifacts from './Artifacts.svelte';
 	import Embeds from './ChatTabs/Embeds.svelte';
 	import SideChat from './ChatTabs/SideChat.svelte';
+	import EchoCognitionTab from '$lib/components/echo/EchoCognitionTab.svelte';
+	import EchoCodexTab from '$lib/components/echo/EchoCodexTab.svelte';
+	import EchoVaultTab from '$lib/components/echo/EchoVaultTab.svelte';
+	import EchoCanvasTab from '$lib/components/echo/EchoCanvasTab.svelte';
+	import { echoCanvasOpenRequest } from '$lib/stores/echo';
 	import FileNav from './FileNav.svelte';
 	import PyodideFileNav from './PyodideFileNav.svelte';
 	import Overview from './Overview.svelte';
@@ -130,6 +135,7 @@
 	export let modelId;
 	export let systemPrompt = '';
 	export let canSideChat = false;
+	$: canSideChat = false; // [ECHO-V6-HOOK] Forcé à false pour préserver la suture bit-perfect
 
 	export let codeInterpreterEnabled = false;
 	// Retired layout controls: keep their translations.
@@ -405,7 +411,11 @@
 			preview: 'browser',
 			voice: 'microphone',
 			comments: 'chat-bubble',
-			side: 'chat-lines'
+			side: 'chat-lines',
+			'echo-cognition': 'sparkles',
+			'echo-codex': 'code',
+			'echo-vault': 'lock',
+			'echo-canvas': 'browser'
 		})[kind];
 	const domId = (id: string) => `chat-panel-${encodeURIComponent(id)}`;
 	$: activeTabId = tabs.activeId;
@@ -540,7 +550,16 @@
 		});
 	};
 	const openFeature = (
-		kind: 'artifacts' | 'preview' | 'voice' | 'comments' | 'side',
+		kind:
+			| 'artifacts'
+			| 'preview'
+			| 'voice'
+			| 'comments'
+			| 'side'
+			| 'echo-cognition'
+			| 'echo-codex'
+			| 'echo-vault'
+			| 'echo-canvas',
 		inSidePanel = false
 	) => {
 		if (!availableViews.some((view) => view.kind === kind && view.available)) return;
@@ -566,6 +585,11 @@
 		}
 		openPanel({ id: kind, kind, label: view.label }, inSidePanel);
 	};
+
+	$: if ($echoCanvasOpenRequest && $echoCanvasOpenRequest.chatId === chatId) {
+		echoCanvasOpenRequest.set(null);
+		openFeature('echo-canvas', true);
+	}
 
 	type SplitDrop = PanelRect & { groupId: string; edge: SplitEdge | null };
 	let chatDropPreview: SplitDrop | null = null;
@@ -1050,7 +1074,11 @@
 		{ kind: 'artifacts', label: $i18n.t('Artifacts'), available: showArtifactsTab },
 		{ kind: 'preview', label: $i18n.t('Preview'), available: showPreviewTab },
 		{ kind: 'voice', label: $i18n.t('Voice'), available: $showCallOverlay },
-		{ kind: 'comments', label: $i18n.t('Comments'), available: showCommentsTab }
+		{ kind: 'comments', label: $i18n.t('Comments'), available: showCommentsTab },
+		{ kind: 'echo-cognition', label: 'Sous-Agents & Outils', available: true },
+		{ kind: 'echo-codex', label: 'Codex & Fichiers', available: true },
+		{ kind: 'echo-vault', label: 'Coffre & Identité', available: true },
+		{ kind: 'echo-canvas', label: 'Canvas & Applications', available: true }
 	];
 
 	$: newTabViews = availableViews.filter(
@@ -1063,7 +1091,7 @@
 			const view = availableViews.find((view) => view.available);
 			if (!view) return;
 			if (view.kind === 'files') openFiles();
-			else openFeature(view.kind as 'artifacts' | 'preview' | 'voice' | 'comments' | 'side');
+			else openFeature(view.kind as any);
 		}
 		tabs = setSplitTabs(tabs, true);
 	};
@@ -1147,6 +1175,13 @@
 		action();
 	};
 
+	$: if ($terminalServers && $terminalServers.length > 0 && !$selectedTerminalId) {
+		const target = $terminalServers.find((t) => t.id === 'echo-coding-worker') ?? $terminalServers[0];
+		if (target) {
+			selectedTerminalId.set(target.id);
+		}
+	}
+
 	$: directTerminals =
 		($settings as { terminalServers?: { url: string; key?: string }[] })?.terminalServers ?? [];
 	const terminalAccessible = (selector: string) => {
@@ -1218,7 +1253,7 @@
 				.filter((view) => view.available && view.kind !== 'side')
 				.map((view) => () => {
 					if (view.kind === 'files') openFiles();
-					else openFeature(view.kind as 'artifacts' | 'preview' | 'voice' | 'comments' | 'side');
+					else openFeature(view.kind as any);
 				}),
 			...(terminalFilesAvailable ? [newFile] : []),
 			...(terminalEnabled ? [newTerminal] : []),
@@ -1626,6 +1661,14 @@
 					<Embeds overlay={dragged} />
 				{:else if tab.kind === 'artifacts'}
 					<Artifacts overlay={dragged} />
+				{:else if tab.kind === 'echo-cognition'}
+					<EchoCognitionTab chatId={owner.chatId ?? chatId ?? ''} />
+				{:else if tab.kind === 'echo-codex'}
+					<EchoCodexTab chatId={owner.chatId ?? chatId ?? ''} />
+				{:else if tab.kind === 'echo-vault'}
+					<EchoVaultTab />
+				{:else if tab.kind === 'echo-canvas'}
+					<EchoCanvasTab chatId={owner.chatId ?? chatId ?? ''} />
 				{:else if tab.kind === 'side'}
 					<SideChat
 						bind:this={sideViews[tab.id]}
@@ -1993,9 +2036,7 @@
 							{#each newTabViews as view}
 								<button
 									on:click={() =>
-										openFeature(
-											view.kind as 'artifacts' | 'preview' | 'voice' | 'comments' | 'side'
-										)}
+										openFeature(view.kind as any)}
 								>
 									{#if view.kind === 'comments'}
 										<Annotation className="size-3.5 shrink-0" />

@@ -780,6 +780,10 @@ async def signin(
         user, auth = authenticated if authenticated else (None, None)
 
     if user:
+        # [ECHO-V6-HOOK] Matérialisation immédiate de identity.db à la connexion
+        from open_webui.echo.identity_bridge import ensure_user_identity_db
+
+        ensure_user_identity_db(user.id, user.email, user.name)
         return await create_signin_response(request, user, db, response, set_cookie=True, source=auth_source, auth=auth)
     else:
         raise HTTPException(400, detail=ERROR_MESSAGES.INVALID_CRED)
@@ -843,6 +847,10 @@ async def signup_handler(
         data={'role': user.role},
     )
 
+    # [ECHO-V6-HOOK] Matérialisation initiale de identity.db à la création du compte
+    from open_webui.echo.identity_bridge import ensure_user_identity_db
+
+    ensure_user_identity_db(user.id, user.email, user.name)
     return user
 
 

@@ -11,8 +11,14 @@ export const uploadFile = async (
 ) => {
 	const data = new FormData();
 	data.append('file', file);
-	if (metadata) {
-		data.append('metadata', JSON.stringify(metadata));
+	// [ECHO-V6-HOOK] Auto-attach active chat_id from /c/{chat_id} route for direct session vault storage
+	const urlChatMatch =
+		typeof window !== 'undefined' ? window.location.pathname.match(/^\/c\/([A-Za-z0-9_-]+)/) : null;
+	const activeChatId =
+		(metadata as Record<string, string> | null)?.chat_id || (urlChatMatch ? urlChatMatch[1] : '');
+	const enrichedMetadata = activeChatId ? { ...(metadata || {}), chat_id: activeChatId } : metadata;
+	if (enrichedMetadata) {
+		data.append('metadata', JSON.stringify(enrichedMetadata));
 	}
 
 	const searchParams = new URLSearchParams();

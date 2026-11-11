@@ -345,7 +345,10 @@ def get_storage_provider(storage_provider: str):
             'or use the standard image for other storage providers.'
         )
     if storage_provider == 'local':
-        Storage = LocalStorageProvider()
+        # [ECHO-V6-HOOK] Route local file storage to EchoStorageProvider (Vault & echo_resources SSoT)
+        from open_webui.echo.storage import EchoStorageProvider
+
+        Storage = EchoStorageProvider()
     elif storage_provider == 's3':
         Storage = S3StorageProvider()
     elif storage_provider == 'gcs':

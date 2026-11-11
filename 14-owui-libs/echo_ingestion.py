@@ -2,16 +2,16 @@
 ECHO Ingestion Pipeline
 Gestion unifiée, asynchrone et Zéro-RAM de l'ingestion des fichiers (CAS 1, 2, 3, 4).
 Factorisé à partir de new_context_filter.py pour permettre le traitement en arrière-plan.
-version: 5.231.29.1
+version: 6.1.0.1
 description: Composant du système ECHO : Echo Ingestion.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.1.0.1: Idempotence de _sync_file_to_global_vault lorsque le fichier réside déjà dans le Vault de session.
 # 5.231.29.1: Alignement sur la constante SSOT CODEX_WORKSPACE_MAIN lors de l'indexation Codex.
 # 5.231.28.1: Normalisation de storage_path via format_codex_storage_path (codex/main/<filename>) et retrait de save_codex_doc.
 # 5.228.7.1: Factorisation de la détection textuelle via is_text_mime (echo_constants).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.3: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 
 import os
 import asyncio
@@ -244,8 +244,12 @@ class EchoIngestionPipeline:
         os.makedirs(chat_vault_dir, exist_ok=True)
         chat_vault_path = os.path.join(chat_vault_dir, vault_name)
 
+        # 0. Si EchoStorageProvider a déjà écrit directement dans le Vault de session, garantir la copie/lien global
+        if os.path.abspath(path) == os.path.abspath(chat_vault_path) and os.path.exists(chat_vault_path):
+            if not os.path.exists(global_path) and not os.path.islink(global_path):
+                shutil.copy2(chat_vault_path, global_path)
         # 1. Sécurisation physique dans le Vault Global
-        if path != global_path:
+        elif os.path.abspath(path) != os.path.abspath(global_path):
             if os.path.islink(path):
                 # Si path est déjà un lien symbolique, cela veut dire qu'il est déjà pris en charge, on s'assure juste d'utiliser la vraie source
                 global_path = os.path.realpath(path)

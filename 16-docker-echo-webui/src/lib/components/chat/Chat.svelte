@@ -441,9 +441,8 @@
 	$: isShared = chat != null && chat.user_id !== $user?.id;
 	$: if (isShared && $showCallOverlay) showCallOverlay.set(false);
 	$: canClone = isShared && ($user?.role === 'admin' || ($user?.permissions?.chat?.import ?? true));
-	$: sideChatAllowed =
-		$user?.role === 'admin' ||
-		($user?.role === 'user' && ($user.permissions?.chat?.side_chat ?? false));
+	// [ECHO-V6-HOOK] Désactivation de sideChat pour préserver la suture bit-perfect et l'unicité du fil
+	$: sideChatAllowed = false;
 	let cloning = false;
 
 	const cloneSharedChat = async () => {

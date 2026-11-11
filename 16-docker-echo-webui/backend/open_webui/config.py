@@ -480,16 +480,23 @@ CODE_INTERPRETER_PYODIDE_PROMPT = """
 
 # Vector Database
 
-VECTOR_DB = os.getenv('VECTOR_DB', 'pgvector' if USE_SLIM else 'chroma')
+# [ECHO-V6-HOOK] Default vector engine set to Qdrant; guard optional chromadb import after V6 slimming
+VECTOR_DB = os.getenv('VECTOR_DB', 'qdrant')
 
 # Chroma
 CHROMA_DATA_PATH = f'{DATA_DIR}/vector_db'
 
 if VECTOR_DB == 'chroma' and not USE_SLIM:
-    import chromadb
+    try:
+        import chromadb
+        _default_tenant = chromadb.DEFAULT_TENANT
+        _default_db = chromadb.DEFAULT_DATABASE
+    except ImportError:
+        _default_tenant = 'default_tenant'
+        _default_db = 'default_database'
 
-    CHROMA_TENANT = os.getenv('CHROMA_TENANT', chromadb.DEFAULT_TENANT)
-    CHROMA_DATABASE = os.getenv('CHROMA_DATABASE', chromadb.DEFAULT_DATABASE)
+    CHROMA_TENANT = os.getenv('CHROMA_TENANT', _default_tenant)
+    CHROMA_DATABASE = os.getenv('CHROMA_DATABASE', _default_db)
     CHROMA_HTTP_HOST = os.getenv('CHROMA_HTTP_HOST', '')
     CHROMA_HTTP_PORT = int(os.getenv('CHROMA_HTTP_PORT', '8000'))
     CHROMA_CLIENT_AUTH_PROVIDER = os.getenv('CHROMA_CLIENT_AUTH_PROVIDER', '')

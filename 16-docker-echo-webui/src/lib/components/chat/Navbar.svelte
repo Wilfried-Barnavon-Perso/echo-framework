@@ -46,6 +46,7 @@
 	import { getOutputText } from './Messages/structuredOutput';
 	import { refreshChatList, refreshFolderChatLists } from '$lib/stores/chatList';
 	import ChatParticipants from '$lib/components/common/ChatParticipants.svelte';
+	import EchoContextGauge from '$lib/components/echo/EchoContextGauge.svelte';
 
 	const i18n: any = getContext('i18n');
 
@@ -398,20 +399,22 @@
 				<div class="lg:mr-1 flex flex-none items-center gap-2 self-center">
 					<!-- <div class="md:hidden flex self-center w-[0.0625rem] h-5 mx-2 bg-gray-300 dark:bg-stone-700" /> -->
 
+					<!-- [ECHO-V6-HOOK] Jauge contextuelle & Quotas intégrés dans la navbar -->
+					<EchoContextGauge chatId={history?.currentId ?? $chatId} />
+
 					{#if !tabbed}{@render renderChatActions()}{/if}
 
-					{#if history.currentId || $selectedTerminalId || $user?.role === 'admin' || ($user?.role === 'user' && ($user.permissions?.chat?.side_chat ?? false))}
-						<Tooltip content={$i18n.t('Tabs')}>
-							<button
-								class="flex size-6 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
-								on:click={() => showTabs.set(!$showTabs)}
-								aria-label={$i18n.t('Tabs')}
-								aria-expanded={!!$showTabs}
-							>
-								<SplitPanel className="size-4.5" strokeWidth="1" />
-							</button>
-						</Tooltip>
-					{/if}
+					<!-- [ECHO-V6-HOOK] Bouton Tabs toujours accessible -->
+					<Tooltip content={$i18n.t('Tabs')}>
+						<button
+							class="flex size-6 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+							on:click={() => showTabs.set(!$showTabs)}
+							aria-label={$i18n.t('Tabs')}
+							aria-expanded={!!$showTabs}
+						>
+							<SplitPanel className="size-4.5" strokeWidth="1" />
+						</button>
+					</Tooltip>
 				</div>
 			</div>
 		</div>

@@ -1,18 +1,18 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : enable-bunkerweb.sh
-# VERSION : 5.236.5.1
+# VERSION : 6.0.0.1
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Activation de la couche de sécurité BunkerWeb (Secure Edge).
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.0.0.1: Retrait des appels à config-owui.sh au profit du bootstrap déclaratif lifespan.
 # 5.236.5.1: Affichage du sous-domaine my.$DOMAIN et vérification préalable de l'image echo-python-base:latest.
 # 5.231.21.2: Délégation de la génération des secrets .env (dont ECHO_VAULT_ENCRYPTION_KEY) à ensure_echo_secrets (y compris en sortie idempotente).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 4.2: Sécurisation de la création IPAM dynamique pour echo-network et echo-sandbox.
-# 4.1: Correction du grep pour le parsing de echo-open-webui.
 
 set -euo pipefail
 
@@ -99,10 +99,7 @@ if [ -n "$BW_RUNNING" ] && [ "$CURRENT_DOMAIN" = "$DOMAIN" ]; then
     read -r -p "Forcer la reconfiguration complète ? (y/N) : " FORCE
     if [[ "$FORCE" != "y" && "$FORCE" != "Y" ]]; then
         ensure_echo_secrets
-        echo "✅ Reconfiguration Open WebUI uniquement..."
-        if [ -f "$ECHO_SCRIPTS/config-owui.sh" ]; then
-            /bin/bash "$ECHO_SCRIPTS/config-owui.sh"
-        fi
+        echo "✅ Secrets vérifiés (le bootstrap déclaratif ECHO V6 est géré au démarrage de echo-open-webui)."
         exit 0
     fi
 fi
@@ -168,15 +165,6 @@ $DOCKER_COMPOSE_CMD \
     -f "$BW_STACK_FILE" \
     -f "$ECHO_STACK_FILE" \
     up -d --build --remove-orphans
-
-# --- 6. RECONFIGURATION OPEN WEBUI ---
-echo "🔧 Reconfiguration des paramètres internes d'Open WebUI (CORS, URLs)..."
-if [ -f "$ECHO_SCRIPTS/config-owui.sh" ]; then
-    /bin/bash "$ECHO_SCRIPTS/config-owui.sh"
-    echo "   ✅ Reconfiguration terminée."
-else
-    echo "   ⚠️  Script 'config-owui.sh' non trouvé ($ECHO_SCRIPTS/config-owui.sh)."
-fi
 
 # --- 7. HOT RELOAD (Services Python avec code en bind mount) ---
 echo "⚡ Hot Reload des services Python..."

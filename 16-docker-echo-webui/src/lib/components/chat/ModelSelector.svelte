@@ -1,15 +1,11 @@
 <script lang="ts">
 	import { models, pinnedModels, settings, user } from '$lib/stores';
 	import { getContext } from 'svelte';
-	import { toast } from 'svelte-sonner';
-	import Selector from './ModelSelector/Selector.svelte';
+	import Tooltip from '$lib/components/common/Tooltip.svelte';
 
-	import { updateUserSettings } from '$lib/apis/users';
-	import { resolveLocalizedModelName } from '$lib/utils/localizedContent';
-	import equal from 'fast-deep-equal';
 	const i18n = getContext('i18n');
 
-	export let selectedModels = [''];
+	export let selectedModels = ['echo_orchestrator'];
 	export let onModelSelect: (models: string[]) => void = () => {};
 	export let disabled = false;
 	export let multipleEnabled = true;
@@ -20,76 +16,26 @@
 	export let placement: 'top' | 'bottom' | 'auto' = 'bottom';
 	export let align: 'start' | 'end' = 'start';
 
-	let compareModels = selectedModels.length > 1;
-	let selector;
+	let compareModels = false;
 
-	export const open = () => selector?.open();
-
-	const saveDefaultModel = async () => {
-		const hasEmptyModel = selectedModels.filter((it) => it === '');
-		if (hasEmptyModel.length) {
-			toast.error($i18n.t('Choose a model before saving...'));
-			return;
-		}
-		settings.set({ ...$settings, models: selectedModels });
-		await updateUserSettings(localStorage.token, { ui: { models: selectedModels } });
-
-		toast.success($i18n.t('Default model updated'));
-	};
-
-	const pinModelHandler = async (modelId) => {
-		settings.set({
-			...$settings,
-			pinnedModels: $pinnedModels.includes(modelId)
-				? $pinnedModels.filter((id) => id !== modelId)
-				: [...$pinnedModels, modelId]
-		});
-		await updateUserSettings(localStorage.token, { ui: { pinnedModels: $settings.pinnedModels } });
-	};
-
-	$: if (selectedModels.length > 0 && $models.length > 0) {
-		const _selectedModels = selectedModels.map((model) =>
-			model.startsWith('agent:') || $models.map((m) => m.id).includes(model) ? model : ''
-		);
-
-		if (!equal(_selectedModels, selectedModels)) {
-			selectedModels = _selectedModels;
-		}
+	// [ECHO-V6-HOOK] Verrouillage réactif strict sur le modèle souverain echo_orchestrator
+	$: if (selectedModels.length !== 1 || selectedModels[0] !== 'echo_orchestrator') {
+		selectedModels = ['echo_orchestrator'];
+		compareModels = false;
+		onModelSelect(selectedModels);
 	}
 
-	$: if (selectedModels.length > 1 && !compareModels) {
-		compareModels = true;
-	}
+	export const open = () => {};
 </script>
 
-<div class="flex min-w-0 max-w-full flex-col items-start">
-	<div class="flex min-w-0 max-w-full">
-		<div class="min-w-0 max-w-full overflow-hidden">
-			<div class="min-w-0 max-w-full">
-				<Selector
-					bind:this={selector}
-					id="model"
-					placeholder={$i18n.t('Select a model')}
-					items={$models.map((model) => ({
-						value: model.id,
-						label: resolveLocalizedModelName(model, $i18n.language),
-						model: model
-					}))}
-					{pinModelHandler}
-					{className}
-					{triggerClassName}
-					{placement}
-					{align}
-					{showSetDefault}
-					onSetDefault={saveDefaultModel}
-					multipleEnabled={multipleEnabled &&
-						($user?.role === 'admin' || ($user?.permissions?.chat?.multiple_models ?? true))}
-					{disabled}
-					bind:compareEnabled={compareModels}
-					bind:values={selectedModels}
-					{onModelSelect}
-				/>
-			</div>
+<div class="flex min-w-0 max-w-full flex-col items-start select-none">
+	<Tooltip content="Cortex Cognitif Dynamique (Zéphyr · Apollon · Prométhée)" placement="top">
+		<div
+			class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-gray-100/80 dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 text-gray-900 dark:text-gray-100 cursor-default shadow-xs transition"
+		>
+			<span class="size-2 rounded-full bg-emerald-500 animate-pulse"></span>
+			<span class="text-sm font-semibold tracking-wide">Écho</span>
+			<span class="text-[11px] font-mono text-gray-400 dark:text-gray-400 font-medium">v6</span>
 		</div>
-	</div>
+	</Tooltip>
 </div>

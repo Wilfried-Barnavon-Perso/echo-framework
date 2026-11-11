@@ -1,17 +1,17 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : echo-globals.sh
-# VERSION : 6.0.0.1
+# VERSION : 6.0.0.2
 # AUTEUR : Wilfried BARNAVON
 # ROLE : Centralisation des constantes de chemins pour le framework ECHO
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.0.0.2: Remplacement de ECHO_SERVICE_ACCOUNT par ECHO_ADMIN_EMAIL et synchronisation bidirectionnelle .owui-admin-secret <-> ECHO_ADMIN_PASSWORD.
 # 6.0.0.1: Ajout de la constante ECHO_DOCKER_WEBUI pour le service docker-echo-webui.
 # 5.236.5.1: Ajout de la constante ECHO_DOCKER_USER pour le service 27-docker-user-manager.
 # 5.231.21.2: Factorisation de generate_secret (sans SIGPIPE sous pipefail) et ensure_echo_secrets incluant ECHO_VAULT_ENCRYPTION_KEY (64 chars).
 # 5.226.18.1: Ajout de la constante ECHO_OWUI_EVENTS pour le sous-système 15-owui-events.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # Racine principale du framework
 export ECHO_ROOT="/opt/ECHO"
@@ -48,7 +48,7 @@ export ECHO_BRANCH_FILE="$ECHO_ROOT/ECHO_BRANCH"
 export ECHO_DEPLOY_VER_FILE="$ECHO_ROOT/echo_deploy_script_version"
 
 # Comptes Systèmes
-export ECHO_SERVICE_ACCOUNT="install-stack@echo.local"
+export ECHO_ADMIN_EMAIL="admin@echo.local"
 
 # --- NETWORKING (SOUS-RÉSEAUX IP) ---
 export ECHO_NET_BW_UNIVERSE_PREFIX="10.20.30"
@@ -77,4 +77,24 @@ ensure_echo_secrets() {
     generate_secret "ECHO_SSO_SECRET" 32
     generate_secret "N8N_ENCRYPTION_KEY" 64
     generate_secret "ECHO_VAULT_ENCRYPTION_KEY" 64
+
+    # Synchronisation bidirectionnelle idempotente (.owui-admin-secret <-> ECHO_ADMIN_PASSWORD)
+    # Préserve le secret existant en migration V5->V6 pour 20-docker-admin-manager et echo-show-admin.sh
+    local target_env="${ENV_FILE:-$ECHO_ENV_FILE}"
+    local admin_secret_file="$ECHO_SECRETS/.owui-admin-secret"
+    if [ -s "$admin_secret_file" ] && ! grep -qE "^ECHO_ADMIN_PASSWORD=[^\"'[:space:]]+" "$target_env" 2>/dev/null; then
+        local existing_admin_pwd
+        existing_admin_pwd=$(tr -d '[:space:]' < "$admin_secret_file")
+        sed -i "/^ECHO_ADMIN_PASSWORD=/d" "$target_env" 2>/dev/null || true
+        echo "ECHO_ADMIN_PASSWORD=${existing_admin_pwd}" >> "$target_env"
+    else
+        generate_secret "ECHO_ADMIN_PASSWORD" 16
+    fi
+    local admin_pwd
+    admin_pwd=$(grep "^ECHO_ADMIN_PASSWORD=" "$target_env" 2>/dev/null | cut -d '=' -f2- || true)
+    if [ -n "$admin_pwd" ] && [ ! -s "$admin_secret_file" ]; then
+        mkdir -p "$ECHO_SECRETS"
+        (umask 077 && printf "%s" "$admin_pwd" > "$admin_secret_file")
+        chmod 400 "$admin_secret_file"
+    fi
 }

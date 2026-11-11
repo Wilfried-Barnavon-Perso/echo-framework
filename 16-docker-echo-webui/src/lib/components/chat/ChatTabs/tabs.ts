@@ -13,7 +13,11 @@ export type PanelTabKind =
 	| 'preview'
 	| 'voice'
 	| 'comments'
-	| 'side';
+	| 'side'
+	| 'echo-cognition'
+	| 'echo-codex'
+	| 'echo-vault'
+	| 'echo-canvas';
 export type PanelTab = {
 	id: string;
 	kind: PanelTabKind;

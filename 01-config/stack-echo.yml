@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 6.0.0.1
+# VERSION : 6.0.0.2
 # ==============================================================================
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
@@ -78,10 +78,16 @@ services:
 
       - DATA_DIR=/app/backend/data
       # Désactivation RAG natif au boot
+      - VECTOR_DB=qdrant
       - RAG_EMBEDDING_ENGINE=openai
       - RAG_EMBEDDING_MODEL=dummy_model
       - ENABLE_RAG_WEB_SEARCH=false
       - ENABLE_CONTEXT_COMPACTION=false
+      - ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS=false
+      - ECHO_PLUGIN_ROOT=/opt/ECHO
+      - WEBUI_ADMIN_EMAIL=admin@echo.local
+      - WEBUI_ADMIN_NAME=ECHO Architect
+      - WEBUI_ADMIN_PASSWORD=${ECHO_ADMIN_PASSWORD:-}
       - ECHO_VERSION_PATH=/app/backend/data/ECHO_VERSION
       - ENABLE_FORWARD_USER_INFO_HEADERS=true
       # Désactivation de l'expiration du token interne (géré par SSO/WAF)
@@ -90,6 +96,14 @@ services:
     volumes:
       - /opt/ECHO/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
       - /opt/ECHO/owui-libs:/app/backend/echo_libs:ro
+      - /opt/ECHO/owui-libs:/opt/ECHO/owui-libs:ro
+      - /opt/ECHO/owui-pipes:/opt/ECHO/owui-pipes:ro
+      - /opt/ECHO/owui-filters:/opt/ECHO/owui-filters:ro
+      - /opt/ECHO/owui-tools:/opt/ECHO/owui-tools:ro
+      - /opt/ECHO/owui-actions:/opt/ECHO/owui-actions:ro
+      - /opt/ECHO/owui-events:/opt/ECHO/owui-events:ro
+      - /opt/ECHO/config:/opt/ECHO/config:ro
+      - /opt/ECHO/echo-images:/opt/ECHO/echo-images:ro
       - /opt/ECHO/config/system-prompt.md:/app/backend/data/system-prompt.md:ro
       - echo-webui-data:/app/backend/data
     labels:
@@ -207,14 +221,12 @@ services:
       
       # 📍 Autoriser la géolocalisation pour ce serveur spécifique (Standard BunkerWeb)
       - "bunkerweb.PERMISSIONS_POLICY=geolocation=(self), camera=(self), microphone=(self)"      
-    command: >
-      /bin/bash -c "PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=2 pip install mgzip dulwich 'markitdown[all]' h2 pybase64 edge-tts imageio-ffmpeg && ./start.sh"
     healthcheck:
       test: ["CMD-SHELL", "curl --silent --fail http://localhost:8080/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 180s
+      start_period: 60s
     depends_on:
       echo-qdrant:
         condition: service_healthy

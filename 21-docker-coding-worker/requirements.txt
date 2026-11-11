@@ -2,6 +2,9 @@ flask
 flask-cors
 requests
 httpx
+starlette
+uvicorn
+wsproto
 pandas
 numpy
 scipy

@@ -2,16 +2,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 5.235.5.1
+version: 6.1.0.1
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.1.0.1: Prise en charge des fichiers pré-positionnés par EchoStorageProvider (pending_ingestion) et déduplication.
 # 5.235.5.1: Comptage des tours logiques résilient à la fusion user+user, filtrage AEC de branche active et annotation de provenance.
 # 5.234.0.1: Utilisation de ECHO_AUTH_PENDING_MARKER et aiguillage déterministe des parts image_url (anti-doublon chats sauvegardés vs préservation inline en chats temporaires/API).
 # 5.231.55.1: Réétagement de la priorité à 70 (après context_compaction_filter à 60 et avant codex_links_filter à 80).
 # 5.231.11.1: Réétagement de la priorité à 30 (après user_native_context_filter à 20 et avant codex_links_filter à 40).
-# 5.231.7.1: Ajout du fallback sur metadata.user_message_id et timestamp courant pour garantir le scellement Shadow du message utilisateur.
 
 
 from pydantic import BaseModel, Field
@@ -122,22 +122,30 @@ class Filter:
             if chat_id:
                 from echo_paths import get_echo_session_path
                 vault_dir = os.path.normpath(get_echo_session_path(user_id, chat_id, "files"))
+                pending_st = FILE_INGESTION_STATUS.get("PENDING_INGESTION", "pending_ingestion")
                 for f in all_files:
                     fid = f.get("id") or f.get("file", {}).get("id")
                     if fid:
                         path = resolve_upload_file_path(user_id, fid, chat_id=chat_id)
                         if path:
-                            if os.path.normpath(path).startswith(vault_dir):
+                            res_existing = state_manager.get_resource(fid) if state_manager else None
+                            is_pending = not res_existing or res_existing.get("status") == pending_st
+                            if os.path.normpath(path).startswith(vault_dir) and not is_pending:
                                 files_already_processed.append(f)
                             else:
                                 files_to_process.append(f)
 
             # [NEW] Injection des téléchargements Playwright en attente d'ingestion
             if chat_id and state_manager:
+                existing_to_process_ids = {
+                    (x.get("id") or x.get("file", {}).get("id")) for x in files_to_process
+                }
                 pending_resources = state_manager.get_resources(
                     status=FILE_INGESTION_STATUS.get("PENDING_INGESTION", "pending_ingestion")
                 )
                 for pr in pending_resources:
+                    if pr["id"] in existing_to_process_ids:
+                        continue
                     f_obj = {
                         "id": pr["id"],
                         "name": pr["name"],

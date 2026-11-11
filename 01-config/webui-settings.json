@@ -2,6 +2,30 @@
   "version": 0,
   "models.base_models_cache": true,
   "tool_server.connections": [],
+  "terminal_server.connections": [
+    {
+      "id": "echo-coding-worker",
+      "name": "ECHO Sandbox Terminal",
+      "url": "http://echo-coding-worker:5000",
+      "path": "/openapi.json",
+      "key": "",
+      "auth_type": "none",
+      "enabled": true,
+      "config": {
+        "working_directory_context": true,
+        "user_shell_tools": "auto",
+        "chat_uploads": "default",
+        "access_grants": [
+          {
+            "principal_type": "user",
+            "principal_id": "*",
+            "permission": "read"
+          }
+        ]
+      }
+    }
+  ],
+  "features.enable_tool_servers": true,
   "ui.enable_signup": false,
   "ui.default_user_role": "user",
   "ui.default_group_id": "",

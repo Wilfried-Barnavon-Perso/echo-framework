@@ -2424,6 +2424,19 @@ async def process_chat_payload(request, form_data, user, metadata, model):
 
     form_data['messages'] = set_tool_approval_prompt(form_data['messages'])
     tool_ids = form_data.pop('tool_ids', None)
+    # [ECHO-V6-HOOK] Native server-side merge of model.meta.toolIds (fixes [BUG-OWUI-01] at source)
+    if model and isinstance(model, dict):
+        model_tool_ids = (
+            ((model.get('info') or {}).get('meta') or {}).get('toolIds')
+            or (model.get('meta') or {}).get('toolIds')
+            or []
+        )
+        if isinstance(model_tool_ids, list) and model_tool_ids:
+            if not isinstance(tool_ids, list) or not tool_ids:
+                tool_ids = list(dict.fromkeys(model_tool_ids))
+            else:
+                tool_ids = list(dict.fromkeys([*tool_ids, *model_tool_ids]))
+
     terminal_id = form_data.pop('terminal_id', None)
     if not ENABLE_TOOL_SERVERS:
         if terminal_id or metadata.get('tool_servers'):
