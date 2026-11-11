@@ -2,16 +2,16 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - FLASK ROUTES
-VERSION : 5.239.2.1
+VERSION : 5.239.4.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.4.1: Validation obligatoire du champ nom dans /action/auth/create pour prévenir les profils SSO sans nom ou corrompus.
 # 5.239.2.1: Persistance et validation des paramètres anti-bruteforce dans /action/auth/settings, exposition de failed_attempts/locked_until dans /api/auth/users et déblocage dans /action/auth/reset.
 # 5.236.1.1: Validation Dual-Tier untrusted_session_timeout/session_timeout dans auth_settings_save et exposition directe de is_trusted, expires_at, expires_dt et time_remaining_sec dans api_auth_sessions.
 # 5.235.5.1: Prise en charge de purge_dead_branches dans update_maint et reset d'authentification via get_echo_identity_db_path et open_db.
 # 5.228.0.1: Ajout du calcul et de l'exposition de la taille du profil utilisateur (profile_size_bytes, profile_size_fmt) dans /api/user_stats.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 import configparser
 from contextlib import closing
 import datetime
@@ -819,8 +819,8 @@ def auth_create_user():
     if not session.get('logged_in'): return redirect(url_for('index'))
     email = request.form.get('email', '').strip()
     name = request.form.get('name', '').strip()
-    if not email or (email.endswith('@echo.local') and email != SYSTEM_ADMIN_EMAIL):
-        flash("Email invalide ou réservé au système.", "danger")
+    if not email or not name or (email.endswith('@echo.local') and email != SYSTEM_ADMIN_EMAIL):
+        flash("Le nom d'affichage et l'email sont obligatoires (email système réservé).", "danger")
         return redirect(url_for('index'))
     
     temp_pwd = generate_complex_temp_password()
