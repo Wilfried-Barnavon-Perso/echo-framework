@@ -1,8 +1,8 @@
-﻿# ==============================================================================
+# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# VERSION : 5.231.40.1
-# DATE    : 2026-10-31
+# VERSION : 5.239.3.2
+# DATE    : 2026-11-11
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
@@ -17,7 +17,7 @@
 #
 # --- COMMENT (HOW - ALGO) ---
 # 1. PRE-FLIGHT : Vérifie que le fichier VERSION est présent.
-# 2. CONFIGURATION : Définit les ressources VM.
+# 2. CONFIGURATION : Définit les ressources VM (RAM 8-10 Go dynamique, QoS Stockage 66% en 2^N).
 # 3. PACKAGING : 
 #    - Zippe le dossier courant (Exclusions: .git, .venv, etc.)
 #    - Monte un disque VHD temporaire (Seed) pour y copier le ZIP.
@@ -25,13 +25,15 @@
 #    - Crée l'utilisateur initial ($AutoUser).
 #    - Monte le disque Seed au démarrage.
 #    - Dézippe les sources dans /opt/ECHO/source.
-#    - Installe les outils (Docker, yq, jq).
+#    - Installe les outils (Docker, yq, jq, linux-cloud-tools-virtual).
 #    - Lance echo-sync.sh --local-only.
 #    - Lance install-stack.sh.
-# 5. HYPER-V : Crée et lance la VM.
+# 5. HYPER-V : Crée la VM, calibre la QoS de stockage hors cache quantifiée en puissance de 2 et démarre la VM.
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.3.2: Quantification de la Storage QoS sur des puissances de 2 (2^N).
+# 5.239.3.1: Mémoire dynamique 8-10 Go (priorité 35%), Services d'invité et Storage QoS 66% hors cache.
 # 5.231.40.1: Correction encodage UTF-8 BOM pour le parseur PowerShell 5.1 et alignement version.
 # 5.231.39.1: Mise à jour des références cloud-init vers echo-sync.sh.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
@@ -42,8 +44,14 @@ $ISOPath = "D:\ISO\ubuntu-26.04-live-server-amd64-autoinstall.iso"
 $VMPath = "D:\Virtual Machines"
 $VHDSize = 100GB
 
-# RAM de démarrage fixée à 8 Go
+# Configuration Mémoire Dynamique (8 Go - 10 Go, Priorité 35%)
 $RAMStartup = 8192MB
+$RAMMinimum = 8192MB
+$RAMMaximum = 10240MB
+$MemoryPriority = 35
+
+# QoS Stockage : Marge de limitation à 66% des IOPS mesurées hors cache
+$QoSMarginPercent = 66
 
 # --- CONFIGURATION RESEAU (IP STATIQUE) ---
 $STATIC_IP_CIDR = "192.168.147.100/24"
@@ -62,8 +70,57 @@ function Pause-OnError {
   Exit 1
 }
 
+# --- FONCTION UTILITAIRE : MESURE IOPS DISQUE HORS CACHE (QoS) ---
+function Measure-DiskPhysicalIOPS {
+  param(
+    [string]$TargetFolder = "D:\Virtual Machines"
+  )
+  $benchDir = if (Test-Path $TargetFolder) { $TargetFolder } else { $env:TEMP }
+  $testFile = Join-Path -Path $benchDir -ChildPath "__echo_qos_bench_$([Guid]::NewGuid().ToString('N')).tmp"
+  $blockSize = 64KB
+  $totalMB = 64
+  $buffer = [byte[]]::new($blockSize)
+  $rng = [System.Random]::new()
+  $rng.NextBytes($buffer)
+
+  Write-Host "⚡ Mesure physique du stockage hors cache (Direct I/O WriteThrough)..." -ForegroundColor Cyan
+  try {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $fs = [System.IO.FileStream]::new(
+      $testFile,
+      [System.IO.FileMode]::Create,
+      [System.IO.FileAccess]::Write,
+      [System.IO.FileShare]::None,
+      $blockSize,
+      [System.IO.FileOptions]::WriteThrough
+    )
+
+    $loops = ($totalMB * 1MB) / $blockSize
+    for ($i = 0; $i -lt $loops; $i++) {
+      $fs.Write($buffer, 0, $blockSize)
+    }
+    $fs.Flush($true)
+    $fs.Close()
+    $fs.Dispose()
+    $sw.Stop()
+
+    $seconds = $sw.Elapsed.TotalSeconds
+    $measuredIOPS = [Math]::Round(($totalMB * 1024 / 8) / $seconds)
+    $throughputMBps = [Math]::Round($totalMB / $seconds, 2)
+    Write-Host "   📊 Débit physique mesuré : $throughputMBps Mo/s ($measuredIOPS IOPS normalisées 8K)" -ForegroundColor Green
+    return $measuredIOPS
+  }
+  catch {
+    Write-Warning "⚠️  Impossible de mesurer le disque hors cache ($_). Repli sur valeur par défaut (10000 IOPS)."
+    return 10000
+  }
+  finally {
+    if (Test-Path $testFile) { Remove-Item -Path $testFile -Force -ErrorAction SilentlyContinue }
+  }
+}
+
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.231.40.1"
+$SCRIPT_VERSION = "5.239.3.2"
 $ScriptDir = $PSScriptRoot
 Set-Location -Path $ScriptDir
 $VersionFile = "$ScriptDir\VERSION"
@@ -189,6 +246,7 @@ autoinstall:
       - docker.io
       - docker-compose-v2
       - docker-buildx
+      - linux-cloud-tools-virtual
     write_files:
       - path: /etc/chrony/conf.d/hyperv.conf
         content: |
@@ -261,13 +319,28 @@ if (-not (Get-VM -Name $VMName -ErrorAction SilentlyContinue)) {
 
   New-VM -Name $VMName -MemoryStartupBytes $RAMStartup -Generation 2 -SwitchName $SwitchName -NoVHD
   
-  # Le seuil minimal de RAM dynamique est relevé à 4 Go pour satisfaire le noyau d'Ubuntu 26.04
-  Set-VM -Name $VMName -DynamicMemory -MemoryMinimumBytes 4096MB -MemoryMaximumBytes 10240MB -ProcessorCount 4
+  # Configuration Mémoire Dynamique (8 Go min, 10 Go max, 4 vCPU et priorité 35%)
+  Set-VM -Name $VMName -DynamicMemory -MemoryMinimumBytes $RAMMinimum -MemoryMaximumBytes $RAMMaximum -ProcessorCount 4
+  Set-VMMemory -VMName $VMName -Priority $MemoryPriority
+
+  # Activation des Services d'invité (Guest Service Interface pour Copy-VMFile)
+  Get-VMIntegrationService -VMName $VMName | Where-Object { $_.Name -like "*Guest*" -or $_.Name -like "*invit*" } | Enable-VMIntegrationService
+
   Set-VMFirmware -VMName $VMName -EnableSecureBoot Off
   
   Add-VMDvdDrive -VMName $VMName -Path $ISOPath
   Add-VMHardDiskDrive -VMName $VMName -Path $VHDPath
   Add-VMHardDiskDrive -VMName $VMName -Path $SeedPath
+
+  # Mesure physique hors cache et application de la Storage QoS (Plafond 66% quantifié en 2^N)
+  $diskIOPS = Measure-DiskPhysicalIOPS -TargetFolder $VMPath
+  $targetRawIOPS = [double]($diskIOPS * ($QoSMarginPercent / 100))
+  # Règle : Alignement de la limite QoS sur la puissance de 2 immédiatement inférieure (2^N)
+  $power = [Math]::Floor([Math]::Log($targetRawIOPS, 2))
+  $capIOPS = [uint64][Math]::Pow(2, $power)
+  Write-Host "🛡️  Application de la QoS Stockage (Plafond $QoSMarginPercent% quantifié à 2^$power = $capIOPS IOPS)..." -ForegroundColor Cyan
+  Get-VMHardDiskDrive -VMName $VMName | Where-Object { $_.Path -eq $VHDPath } | Set-VMHardDiskDrive -MaximumIOPS $capIOPS
+
   Set-VMFirmware -VMName $VMName -FirstBootDevice (Get-VMDvdDrive -VMName $VMName)
 
   Write-Host "✅ VM Prête ! Lancement..."
