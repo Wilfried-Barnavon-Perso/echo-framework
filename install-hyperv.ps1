@@ -1,7 +1,7 @@
-# ==============================================================================
+﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# VERSION : 6.0.0.3
+# VERSION : 6.0.0.6
 # DATE    : 2026-11-11
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
@@ -32,11 +32,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.0.0.6: Extension du disque Seed temporaire a 256Mo (marge securite archive ZIP).
+# 6.0.0.5: Exclusion dynamique automatique de l'ensemble des regles du .gitignore pour le ZIP.
+# 6.0.0.4: QoS bridee aux puissances de 2 (2^n) et bridage dynamique.
 # 6.0.0.3: RAM min a 8Go, benchmark I/O hors-cache (WriteThrough 8Ko) et bridage QoS VHD a 66%.
 # 6.0.0.2: IP statique 192.168.147.101, VHD 60GB, memoire dynamique priorite 15% et services invite.
-# 6.0.0.1: Initialisation ECHO V6 et ciblage de la branche dev_v6.
-# 5.231.40.1: Correction encodage UTF-8 BOM pour le parseur PowerShell 5.1 et alignement version.
-# 5.231.39.1: Mise à jour des références cloud-init vers echo-sync.sh.
 
 # --- FONCTION UTILITAIRE : PAUSE SUR ERREUR ---
 $SwitchName = "Bridge LAN" # /!\ Vérifiez le nom de votre switch Hyper-V
@@ -102,7 +102,7 @@ function Measure-DiskIOPS {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "6.0.0.3"
+$SCRIPT_VERSION = "6.0.0.6"
 $ScriptDir = $PSScriptRoot
 Set-Location -Path $ScriptDir
 $VersionFile = "$ScriptDir\VERSION"
@@ -150,11 +150,21 @@ if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]:
 Write-Host "📦 Création de l'archive source..." -ForegroundColor Cyan
 
 $TempZipPath = "$env:TEMP\echo-framework-source-$([Guid]::NewGuid()).zip"
-$Exclusions = @(".git", ".venv", ".vscode", "__pycache__", "tmp", "*.zip", "deploy-*.ps1", ".idea", "node_modules")
+
+# Exclusion dynamique : aspiration automatique de toutes les regles du fichier .gitignore
+$GitIgnorePath = Join-Path $ScriptDir ".gitignore"
+$GitExclusions = @()
+if (Test-Path $GitIgnorePath) {
+  $GitExclusions = Get-Content $GitIgnorePath | 
+  ForEach-Object { $_.Trim() } | 
+  Where-Object { $_ -and -not $_.StartsWith("#") } | 
+  ForEach-Object { $_.TrimEnd("/").TrimStart("/") }
+}
+$Exclusions = (@(".git", "tmp", "*.zip", "deploy-*.ps1", ".idea") + $GitExclusions) | Select-Object -Unique
 
 try {
-  # Compression intelligente (exclut les dossiers lourds ou inutiles)
-  # Get-ChildItem est utilisé pour filtrer avant de passer à Compress-Archive qui gère mal les exclusions récursives complexes par défaut
+  # Compression intelligente (exclut les dossiers lourds ou ignores par Git)
+  # Get-ChildItem est utilise pour filtrer avant de passer a Compress-Archive qui gere mal les exclusions recursives complexes par defaut
   Get-ChildItem -Path $ScriptDir -Exclude $Exclusions | Compress-Archive -DestinationPath $TempZipPath -CompressionLevel Optimal -Force
 
   if (-not (Test-Path $TempZipPath)) { throw "Le fichier ZIP n'a pas été créé." }
@@ -274,7 +284,7 @@ if (-not (Test-Path $VHDPath)) {
 
 # Création Disque Seed (ISO Cloud-Init)
 if (Test-Path $SeedPath) { Remove-Item $SeedPath -Force }
-New-VHD -Path $SeedPath -SizeBytes 64MB -Dynamic | Out-Null
+New-VHD -Path $SeedPath -SizeBytes 256MB -Dynamic | Out-Null
 $Disk = Mount-VHD -Path $SeedPath -Passthru | Get-Disk
 Initialize-Disk -Number $Disk.Number -PartitionStyle MBR
 $Partition = New-Partition -DiskNumber $Disk.Number -UseMaximumSize -AssignDriveLetter
@@ -310,10 +320,17 @@ if (-not (Get-VM -Name $VMName -ErrorAction SilentlyContinue)) {
   Add-VMHardDiskDrive -VMName $VMName -Path $VHDPath
   Add-VMHardDiskDrive -VMName $VMName -Path $SeedPath
   
-  # Benchmark I/O hors-cache et bridage QoS VHD à 66% (34% sanctuarisé pour l'hôte)
+  # Benchmark I/O hors-cache et bridage QoS VHD à 66% plafonné en puissance de 2 (2^n)
   $MeasuredIOPS = Measure-DiskIOPS -TargetDir $VMPath -DurationSec 1.5
-  $TargetIOPS = [math]::Round($MeasuredIOPS * 0.66)
-  Write-Host "   🛡️  QoS Disque : Plafond fixé à $TargetIOPS IOPS (66% de la capacité mesurée)" -ForegroundColor Yellow
+  $RawTarget = $MeasuredIOPS * 0.66
+  
+  # Calcul du palier en puissance de 2 (Floor garantit que la VM ne dépasse pas les 66% alloués)
+  $Power = [math]::Floor([math]::Log($RawTarget, 2))
+  $PowerClamped = [math]::Min(16, [math]::Max(9, $Power)) # Bornes de sécurité : 512 (2^9) à 65536 (2^16)
+  $TargetIOPS = [int][math]::Pow(2, $PowerClamped)
+  $EffectiveRatio = [math]::Round(($TargetIOPS / $MeasuredIOPS) * 100, 1)
+  
+  Write-Host "   🛡️  QoS Disque : Plafond fixé à $TargetIOPS IOPS (2^$PowerClamped, ratio effectif : $EffectiveRatio% de la capacité mesurée)" -ForegroundColor Yellow
   (Get-VMHardDiskDrive -VMName $VMName | Where-Object { $_.Path -eq $VHDPath }) | Set-VMHardDiskDrive -MaximumIOPS $TargetIOPS
   
   Set-VMFirmware -VMName $VMName -FirstBootDevice (Get-VMDvdDrive -VMName $VMName)
