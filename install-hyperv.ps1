@@ -1,8 +1,8 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# VERSION : 6.0.0.6
-# DATE    : 2026-11-11
+# VERSION : 6.5.1.1
+# DATE    : 2026-11-12
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
@@ -32,15 +32,15 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.1.1: Pointage ISO vers ubuntu-26.04.1-live-server-amd64-autoinstall.iso.
 # 6.0.0.6: Extension du disque Seed temporaire a 256Mo (marge securite archive ZIP).
 # 6.0.0.5: Exclusion dynamique automatique de l'ensemble des regles du .gitignore pour le ZIP.
 # 6.0.0.4: QoS bridee aux puissances de 2 (2^n) et bridage dynamique.
 # 6.0.0.3: RAM min a 8Go, benchmark I/O hors-cache (WriteThrough 8Ko) et bridage QoS VHD a 66%.
-# 6.0.0.2: IP statique 192.168.147.101, VHD 60GB, memoire dynamique priorite 15% et services invite.
 
 # --- FONCTION UTILITAIRE : PAUSE SUR ERREUR ---
 $SwitchName = "Bridge LAN" # /!\ Vérifiez le nom de votre switch Hyper-V
-$ISOPath = "D:\ISO\ubuntu-26.04-live-server-amd64-autoinstall.iso"
+$ISOPath = "D:\ISO\ubuntu-26.04.1-live-server-amd64-autoinstall.iso"
 $VMPath = "D:\Virtual Machines"
 $VHDSize = 60GB
 
@@ -102,7 +102,7 @@ function Measure-DiskIOPS {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "6.0.0.6"
+$SCRIPT_VERSION = "6.5.1.1"
 $ScriptDir = $PSScriptRoot
 Set-Location -Path $ScriptDir
 $VersionFile = "$ScriptDir\VERSION"
