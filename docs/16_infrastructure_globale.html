@@ -105,17 +105,22 @@
             Gemini, et promeut le souvenir consolidé au niveau <code>2 - Mineur</code>.
           </li>
           <li><strong>Sauvegardes 5 Volumes, Télémétrie Temps Réel &amp; Cloud Rclone :</strong>
-            <code>perform_backup_task</code> archive en <code>tar.xz</code> les 5 volumes (<code>echo-webui-data</code>,
+            <code>perform_backup_task</code> (<code>maintenance_backup.py</code> v6.5.0.1) exécute un checkpoint WAL sur
+            <code>auth.db</code>, archive en <code>tar.xz</code> les 5 volumes (<code>echo-webui-data</code>,
             <code>echo-qdrant-data</code>, <code>echo-auth-data</code>, <code>echo-n8n-data</code>,
-            <code>echo-mcp-cache</code>). L'état <code>MAINTENANCE_STATE</code> (interrogé par
-            <code>/api/task_status</code> et affiché dans <code>#task-progress-card</code>) suit en temps réel la
-            compression <code>tar -cJf</code> via <code>psutil.Process.io_counters().read_bytes</code>, l'envoi SFTP via
-            callback Paramiko (<code>_sftp_cb</code> et <code>_sftp_mkdir_p</code>) et le transfert Cloud Rclone via
-            <code>/proc/&lt;pid&gt;/fdinfo</code> (<code>_get_proc_file_offset</code>). Le Séquenceur Nocturne
-            (<code>maintenance_backup.py</code> v5.235.5.1) restitue un rapport unifié complet
-            (<code>archive_name</code>, taille, durée, rétention locale, statut d'externalisation Cloud/NAS et bilan
-            d'élagage). L'assistant <code>/action/rclone/create</code> écrit directement les profils INI via
-            <code>configparser</code> dans <code>/app/backend/data/rclone/rclone.conf</code> (nettoyage
+            <code>echo-mcp-cache</code>) ainsi que les secrets hôtes montés en lecture seule (<code>SECRETS_DIR</code> et
+            <code>HOST_ENV_FILE</code>), et la restauration (<code>routes.py</code> v6.5.0.1) déploie un conteneur
+            éphémère one-shot (<code>echo-python-base:latest</code>, <code>remove=True</code>) pour réécrire
+            <code>.secrets/</code> (<code>0400</code>) et <code>.env</code> (<code>0600</code>), détecte toute divergence de
+            clé maître en RAM et relance les services <code>echo.hot-reload=true</code> (hors
+            <code>echo-admin-manager</code> et <code>echo-auth-manager</code>). L'état <code>MAINTENANCE_STATE</code>
+            (interrogé par <code>/api/task_status</code> et affiché dans <code>#task-progress-card</code>) suit en temps
+            réel la compression <code>tar -cJf</code> via <code>psutil.Process.io_counters().read_bytes</code>, l'envoi
+            SFTP via callback Paramiko (<code>_sftp_cb</code> et <code>_sftp_mkdir_p</code>) et le transfert Cloud Rclone
+            via <code>/proc/&lt;pid&gt;/fdinfo</code> (<code>_get_proc_file_offset</code>). Le Séquenceur Nocturne
+            restitue un rapport unifié complet (<code>archive_name</code>, taille, durée, rétention locale, statut
+            d'externalisation Cloud/NAS et bilan d'élagage). L'assistant <code>/action/rclone/create</code> écrit directement
+            les profils INI via <code>configparser</code> dans <code>/app/backend/data/rclone/rclone.conf</code> (nettoyage
             <code>\r\n</code> des tokens JSON OAuth et chiffrement <code>rclone obscure</code>).
           </li>
         </ul>
@@ -207,7 +212,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 6.5.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 6.5.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

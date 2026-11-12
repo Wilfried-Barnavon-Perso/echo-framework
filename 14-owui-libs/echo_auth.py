@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Auth
 author: Wilfried BARNAVON
-version: 5.236.5.1
+version: 6.5.0.1
 description: Gestion de l'authentification et OAuth2.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.0.1: Commande SSH interactive sans flag -N, propagation du statut final d'authentification au serveur tunnel SSH éphémère et extinction propre.
 # 5.236.5.1: Rectification du prompt get_auth_prompt documentant le support simultané et le failover transparent OAuth2 / Clés API.
 # 5.235.5.2: Séparation stricte identity.db via get_echo_identity_db_path, capture EchoDbMissingError et méthode delete_auth_data_by_prefixes.
 # 5.234.0.1: Factorisation de get_auth_prompt via les constantes SSOT ECHO_AUTH_TITLE_CONFIG et ECHO_AUTH_PENDING_MARKER.
 # 5.231.24.1: Utilisation des constantes SSOT ECHO_QUOTA_REFRESH_THROTTLE_SEC, ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC et ECHO_QUOTA_RESET_IMMINENT_LABEL.
-# 5.231.13.1: Support de la clé disabled dans get_ui_quota_snapshot et rafraîchissement Cloud réactif (60s / échéance Imminent) dans refresh_quota_if_needed.
 import os
 import time
 from contextlib import closing
@@ -492,58 +492,52 @@ class AuthService:
 
 
         auth_code: Optional[str] = None
-
         error_msg: Optional[str] = None
-
+        final_ssh_msg: str = "Authentification OAuth2 : OK"
         try:
+            try:
+                result = await asyncio.wait_for(
+                    code_queue.get(),
+                    timeout=ECHO_SSH_TUNNEL_TIMEOUT,
+                )
+                if result.startswith("ERROR:"):
+                    error_msg = result[6:]  # strip "ERROR:"
+                    final_ssh_msg = f"Authentification OAuth2 : NOK ({error_msg})"
+                else:
+                    auth_code = result
+            except asyncio.TimeoutError:
+                error_msg = f"Timeout — aucune réponse en {ECHO_SSH_TUNNEL_TIMEOUT}s."
+                final_ssh_msg = "Authentification OAuth2 : Délai dépassé"
+            finally:
+                # Le serveur de callback HTTP local n'est plus nécessaire dès réception du code ou timeout
+                await pkce_srv.stop()
 
-            result = await asyncio.wait_for(
+            if error_msg or not auth_code:
+                if hasattr(self, "_ssh_server"):
+                    await self._ssh_server.stop(message=final_ssh_msg)
+                return False, f"Erreur d'authentification : {error_msg or 'Code manquant'}. Relancez en envoyant un message."
 
-                code_queue.get(),
-
-                timeout=ECHO_SSH_TUNNEL_TIMEOUT,
-
-            )
-
-            if result.startswith("ERROR:"):
-
-                error_msg = result[6:]  # strip "ERROR:"
-
+            # Échange du code PKCE contre les tokens Google OAuth2
+            success, exchange_msg = await self._exchange_pkce_code(auth_code, code_verifier, redirect_uri)
+            if success:
+                final_ssh_msg = "Authentification OAuth2 : OK"
             else:
-
-                auth_code = result
-
-        except asyncio.TimeoutError:
-
-            error_msg = f"Timeout — aucune réponse en {ECHO_SSH_TUNNEL_TIMEOUT}s."
-
-        finally:
-
-            await pkce_srv.stop()
+                final_ssh_msg = f"Authentification OAuth2 : NOK ({exchange_msg})"
 
             if hasattr(self, "_ssh_server"):
+                await self._ssh_server.stop(message=final_ssh_msg)
 
-                await self._ssh_server.stop()
+            return success, exchange_msg
+        finally:
+            # Sécurité absolue : garantir la libération du port SSH et du serveur
+            if hasattr(self, "_ssh_server") and getattr(self._ssh_server, "is_active", False):
+                await self._ssh_server.stop(message=final_ssh_msg)
 
             # Nettoyage SQLite
-
             self.echo_auth.save_api_key("pkce_code_verifier", "")
-
             self.echo_auth.save_api_key("pkce_state",         "")
-
             self.echo_auth.save_api_key("pkce_status",        "" if error_msg else "done")
-
             self.echo_auth.save_api_key("pkce_redirect_uri",  "")
-
-
-
-        if error_msg:
-
-            return False, f"Erreur d'authentification : {error_msg} Relancez en envoyant un message."
-
-
-
-        return await self._exchange_pkce_code(auth_code, code_verifier, redirect_uri)
 
 
 
@@ -713,7 +707,7 @@ class AuthService:
 
             ssh_cmd = (
 
-                f"ssh -N "
+                f"ssh "
 
                 f"-o StrictHostKeyChecking=no "
 

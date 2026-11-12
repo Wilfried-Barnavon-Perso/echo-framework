@@ -2,21 +2,24 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - MAINTENANCE & BACKUP SCHEDULER
-VERSION : 5.239.1.1
+VERSION : 6.5.0.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.0.1: Checkpoint WAL SQLite sur auth.db avant archivage et inclusion de SECRETS_DIR et HOST_ENV_FILE dans la sauvegarde tar.xz.
 # 5.239.1.1: Exécution de la sauvegarde tar.xz à priorité minimale (nice 19, ionice idle c3, XZ_OPT="-T2 -1", IDLE_PRIORITY_CLASS).
 # 5.235.5.1: Intégration des statistiques de purge des branches mortes dans le rapport de maintenance nocturne.
 # 5.235.2.1: Affichage explicite des session.db purgées dans le bilan d'élagage du cycle nocturne.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
+from contextlib import closing
 import datetime
 import glob
 import html
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import time
 from core.config import (
@@ -24,10 +27,12 @@ from core.config import (
     DOCKER_AVAILABLE,
     HAS_PSUTIL,
     HAS_SCHEDULER,
+    HOST_ENV_FILE,
     MAINTENANCE_STATE,
     MCP_CACHE_DIR,
     N8N_DATA_DIR,
     RCLONE_CONF_PATH,
+    SECRETS_DIR,
     TARGET_CONTAINER,
     backup_scheduler,
     docker,
@@ -123,8 +128,25 @@ def perform_backup_task(record_report: bool = False):
         has_ext = ext_mode in ("sftp", "rclone")
         step_total = "3" if has_ext else "2"
 
+        # Checkpoint WAL SQLite sur auth.db pour figer les comptes/sessions SSO sans couper echo-auth-manager
+        auth_db_file = "/app/auth-data/auth.db"
+        if os.path.isfile(auth_db_file):
+            try:
+                with closing(sqlite3.connect(auth_db_file, timeout=5)) as aconn:
+                    aconn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            except Exception:
+                pass
+
         tar_sources = [
-            d for d in ('/app/backend/data', '/qdrant/storage', '/app/auth-data', N8N_DATA_DIR, MCP_CACHE_DIR)
+            d for d in (
+                '/app/backend/data',
+                '/qdrant/storage',
+                '/app/auth-data',
+                N8N_DATA_DIR,
+                MCP_CACHE_DIR,
+                SECRETS_DIR,
+                HOST_ENV_FILE,
+            )
             if os.path.exists(d)
         ]
         total_src_bytes = max(1, sum(_get_tree_size(d) for d in tar_sources))

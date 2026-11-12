@@ -18,8 +18,8 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 - **Provisioning Déclaratif** : Le provisioning d'Open WebUI (modèle, outils, filtres, bannières, settings) est désormais assuré nativement au démarrage du conteneur par son lifespan (`open_webui.echo.bootstrap`), rendant obsolète tout script cURL externe.
 
 ### `echo-sync.sh`
-**Rôle** : Pont de distribution déclaratif (v5.231.39.1) entre le dépôt source et `/opt/ECHO`.
-- **`sync_resource()` & Boucle Déclarative** : Synchronise dynamiquement les répertoires (`00-*` à `30-*`, `_assets`, `docker-python-base`), supprime les fichiers fantômes obsolètes, crée les liens symboliques globaux dans `/usr/local/bin/` (dont `/usr/local/bin/echo-rebuild`), applique un nettoyage conditionnel `sed` des caractères CRLF/BOM (préservant l'horodatage `mtime` et le cache Docker BuildKit), et affiche un encart de versioning Git (Avant/Après).
+**Rôle** : Pont de distribution déclaratif (v6.5.0.1) entre le dépôt source et `/opt/ECHO`.
+- **`sync_resource()` & Boucle Déclarative** : Synchronise dynamiquement les répertoires (`00-*` à `30-*`, `_assets`, `docker-python-base`), garantit l'initialisation du fichier maître `/opt/ECHO/.env` (`chmod 600`) avant montage Docker, supprime les fichiers fantômes obsolètes, crée les liens symboliques globaux dans `/usr/local/bin/` (dont `/usr/local/bin/echo-rebuild`), applique un nettoyage conditionnel `sed` des caractères CRLF/BOM (préservant l'horodatage `mtime` et le cache Docker BuildKit), et affiche un encart de versioning Git (Avant/Après).
 
 ### Sécurité Périmétrique (`enable-bunkerweb.sh` & `disable-bunkerweb.sh`)
 **Rôle** : Bascule de l'infrastructure réseau derrière le WAF BunkerWeb.

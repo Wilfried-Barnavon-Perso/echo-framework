@@ -2,16 +2,16 @@
 r"""
 # ================================================================================
 # MODULE : ECHO ADMIN MANAGER SERVER
-# VERSION : 5.239.2.1
+# VERSION : 6.5.0.1
 # ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.0.1: Définition des constantes SECRETS_DIR, HOST_ENV_FILE et HOST_ECHO_ROOT pour l'archivage et la restauration des secrets hôtes.
 # 5.239.2.1: Ajout de login_retry_delay_sec (5s), unenrolled_max_attempts (5) et unenrolled_lockout_min (10m) dans DEFAULT_AUTH_SETTINGS.
 # 5.236.1.1: Ajout de untrusted_session_timeout (24h par défaut) dans DEFAULT_AUTH_SETTINGS.
 # 5.235.5.1: Chargement dynamique optionnel de /app/echo_libs et ajout de l'option purge_dead_branches dans DEFAULT_MAINT_CONFIG.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 5.137: Feature : Enrichissement du rapport nocturne (`run_nightly_maintenance_cycle`) avec les métadonnées complètes de sauvegarde (`archive_name`, taille, durée, rétention locale), le statut explicite de l'externalisation Cloud Rclone / NAS SFTP (`_build_ext_status_html`) et le bilan complet d'élagage (`Fichiers FS`, `Drop Zones` détaillées, `SQLite`). Fix : Restriction du compteur physique `real_session_count` (`Sessions Actives / Totales`) aux seuls fichiers `/users/<uid>/chats/<chat_id>/session.db` afin d'exclure les bases SQLite tierces créées dans les sous-dossiers `codex/` ou `files/`.
 
 import os
 import sys
@@ -92,6 +92,9 @@ RCLONE_CONF_DIR = os.path.join(OWUI_DATA_ROOT, "rclone")
 
 RCLONE_CONF_PATH = os.path.join(RCLONE_CONF_DIR, "rclone.conf")
 OWUI_ADMIN_SECRET_PATH = "/app/secrets/.owui-admin-secret"
+SECRETS_DIR = "/app/secrets"
+HOST_ENV_FILE = "/app/host_env/.env"
+HOST_ECHO_ROOT = "/opt/ECHO"
 DOWNLOADS_DIR = "/app/downloads"
 N8N_DATA_DIR = "/app/n8n-data"
 N8N_DB_PATH = os.path.join(N8N_DATA_DIR, "database.sqlite")

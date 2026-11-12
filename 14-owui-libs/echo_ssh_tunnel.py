@@ -1,11 +1,12 @@
 """
 title: ECHO SSH Tunnel Server
 author: Wilfried BARNAVON
-version: 5.226.18.0
+version: 6.5.0.1
 description: Serveur SSH ephemere (asyncssh) pour le flow OAuth2 PKCE ECHO.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.0.1: Prise en charge des sessions terminales passives interactives pour l'authentification OAuth2 PKCE sans flag -N, notification temps réel et déconnexion RFC 4253 propre.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.0: Allocation dynamique dans une plage unique (bug : callback expose).
 # 1.1: Separation en deux plages : ssh_range (Docker-expose) et
@@ -113,6 +114,8 @@ class EchoSSHTunnelServer:
         self._callback_port: int              = 0
         self._server:        Optional[object] = None
         self._stop_task:     Optional[asyncio.Task] = None
+        self._active_sessions: set = set()
+        self._active_connections: set = set()
 
     # ------------------------------------------------------------------
     # Interface publique
@@ -178,10 +181,40 @@ class EchoSSHTunnelServer:
         return server_ip, self._ssh_port, self._callback_port, self._temp_password
 
 
-    async def stop(self) -> None:
+    async def stop(self, message: str = "Serveur arrêté") -> None:
         """Arrête proprement le serveur SSH et annule l'auto-stop."""
         if self._stop_task and not self._stop_task.done():
             self._stop_task.cancel()
+
+        status_msg = str(message or "Serveur arrêté")
+
+        # 1. Notification et clôture des canaux terminaux actifs
+        for session in list(self._active_sessions):
+            try:
+                session.close_with_message(status_msg)
+            except Exception as e:
+                logger.debug(f"[ECHO SSH] Erreur notification session : {e}")
+
+        # Bref délai pour vider les tampons TCP vers le client (flush réseau)
+        if self._active_sessions or self._active_connections:
+            await asyncio.sleep(0.15)
+
+        # 2. Déconnexion propre RFC 4253 des connexions actives
+        for conn in list(self._active_connections):
+            try:
+                import asyncssh  # type: ignore
+                disc_code = getattr(asyncssh, "DISC_BY_APPLICATION", 11)
+                conn.disconnect(disc_code, status_msg)
+            except Exception as e:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                logger.debug(f"[ECHO SSH] Erreur déconnexion conn : {e}")
+
+        self._active_sessions.clear()
+        self._active_connections.clear()
+
         if self._server is not None:
             self._server.close()
             try:
@@ -190,7 +223,7 @@ class EchoSSHTunnelServer:
                 pass
             self._server = None
             logger.info(
-                f"[ECHO SSH] Serveur arrêté — ports {self._ssh_port}/{self._callback_port} libérés."
+                f"[ECHO SSH] Serveur arrêté ({status_msg}) — ports {self._ssh_port}/{self._callback_port} libérés."
             )
 
     @property
@@ -214,18 +247,65 @@ class EchoSSHTunnelServer:
         temp_password   = self._temp_password
         tunnel_user     = self._tunnel_user
         callback_port   = self._callback_port
+        server_self     = self
 
         try:
             import asyncssh  # type: ignore
         except ImportError:
             raise RuntimeError("asyncssh requis.")
 
+        class _EchoServerSession(asyncssh.SSHServerSession):
+            def __init__(self):
+                self._chan = None
+
+            def connection_made(self, chan):
+                self._chan = chan
+                server_self._active_sessions.add(self)
+
+            def shell_requested(self) -> bool:
+                return True
+
+            def exec_requested(self, command: str) -> bool:
+                return True
+
+            def session_started(self):
+                if self._chan and not self._chan.is_closing():
+                    self._chan.write(
+                        "\r\n============================================================\r\n"
+                        "  Connexion SSH établie, en attente de l'Authentification OAuth2...\r\n"
+                        "============================================================\r\n"
+                    )
+
+            def data_received(self, data, datatype):
+                pass  # Ignore les saisies clavier
+
+            def close_with_message(self, msg: str):
+                if self._chan and not self._chan.is_closing():
+                    self._chan.write(f"\r\n{msg}\r\n")
+                    try:
+                        self._chan.exit(0)
+                    except Exception:
+                        pass
+                    try:
+                        self._chan.close()
+                    except Exception:
+                        pass
+
+            def connection_lost(self, exc):
+                server_self._active_sessions.discard(self)
+
         class _EchoSSHServer(asyncssh.SSHServer):
+            def __init__(self):
+                self._conn = None
 
             def connection_made(self, conn):
+                self._conn = conn
+                server_self._active_connections.add(conn)
                 logger.debug(f"[ECHO SSH] Connexion entrante : {conn.get_extra_info('peername')}")
 
             def connection_lost(self, exc):
+                if self._conn is not None:
+                    server_self._active_connections.discard(self._conn)
                 if exc:
                     logger.debug(f"[ECHO SSH] Connexion perdue : {exc}")
 
@@ -240,8 +320,8 @@ class EchoSSHTunnelServer:
                 return ok
 
             def session_requested(self):
-                """Refuse toute ouverture de shell ou d'exec."""
-                return False
+                """Accepte l'ouverture d'une session terminale passive."""
+                return _EchoServerSession()
 
             def connection_requested(
                 self, dest_host: str, dest_port: int, orig_host: str, orig_port: int
@@ -266,4 +346,4 @@ class EchoSSHTunnelServer:
         await asyncio.sleep(self._timeout)
         if self.is_active:
             logger.info(f"[ECHO SSH] Timeout {self._timeout}s — arrêt automatique.")
-            await self.stop()
+            await self.stop(message="Authentification OAuth2 : Délai dépassé")
