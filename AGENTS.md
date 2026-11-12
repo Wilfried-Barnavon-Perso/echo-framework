@@ -6,7 +6,7 @@
 - **Terminal :** PowerShell (Admin requis pour Hyper-V).
 - **Infrastructure Cible :** Machine Virtuelle Ubuntu 26.04 sur Hyper-V (Allouée à 8Go RAM au démarrage, dynamique 4Go-10Go, 4 vCPU, disque principal VHDX dynamique de 100Go et disque Seed CIDATA de 64Mo).
 - **Orchestration :** Docker Compose (Standardisé `stack-echo.yml` v6.0.0.2 et `bunkerweb-stack.yml` v5.236.5.1 : Forward Auth SSO `/api/verify` avec `proxy_intercept_errors off`, proxy HTTP/1.1 sur les locations statiques/bypass, Rate Limiting `300r/s`, `LIMIT_CONN_MAX_HTTP2=200`, `USE_ANTIBOT=no`, `USE_MODSECURITY=no` sur Open WebUI, et protection `BAD_BEHAVIOR` ciblée sur les codes `405 444`).
-- **Note Critique :** L'agent opère depuis l'hôte Windows. L'interaction avec la cible se fait via `install-hyperv.ps1` (injection ZIP via disque Seed, pointant par défaut sur la branche `dev`), `echo-sync.sh` (distribution), et `echo-upgrade.sh` (mise à niveau majeure).
+- **Note Critique :** L'agent opère depuis l'hôte Windows. L'interaction avec la cible se fait via `install-hyperv.ps1` (injection ZIP via disque Seed, pointant par défaut sur la branche `dev`), `echo-sync.sh` (distribution), `echo-upgrade.sh` (mise à niveau applicative majeure) et `echo-os-upgrade.sh` (mise à niveau OS hôte APT).
 
 ---
 
