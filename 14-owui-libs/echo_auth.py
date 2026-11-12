@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Auth
 author: Wilfried BARNAVON
-version: 5.239.7.1
+version: 5.239.8.1
 description: Gestion de l'authentification et OAuth2.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.8.1: Mise à jour du modèle de repli HUD par défaut vers gemini-4-hydrogen-high dans get_ui_quota_snapshot.
 # 5.239.7.1: Ajout de tenant_id (ECHO_GLOBAL_TENANT_PROJECT_ID) dans get_ui_quota_snapshot pour le HUD.
 # 5.239.5.1: Retrait du flag -N dans l'instruction SSH et transmission du statut final (OK/NOK/Délai dépassé) au tunnel.
 # 5.236.5.1: Rectification du prompt get_auth_prompt documentant le support simultané et le failover transparent OAuth2 / Clés API.
 # 5.235.5.2: Séparation stricte identity.db via get_echo_identity_db_path, capture EchoDbMissingError et méthode delete_auth_data_by_prefixes.
-# 5.234.0.1: Factorisation de get_auth_prompt via les constantes SSOT ECHO_AUTH_TITLE_CONFIG et ECHO_AUTH_PENDING_MARKER.
 import os
 import time
 from contextlib import closing
@@ -171,7 +171,7 @@ class EchoAuth:
                 except Exception:
                     pass
             if not resolved_ca_model:
-                resolved_ca_model = "gemini-3.8-flash-high"
+                resolved_ca_model = "gemini-4-hydrogen-high"
 
         model_quota = self.get_model_quota(resolved_ca_model) if resolved_ca_model else {}
         q_summary = self.get_quota_summary(resolved_ca_model)
