@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Auth
 author: Wilfried BARNAVON
-version: 6.5.0.1
+version: 6.5.0.2
 description: Gestion de l'authentification et OAuth2.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.0.2: Ajout de tenant_id (ECHO_GLOBAL_TENANT_PROJECT_ID) dans get_ui_quota_snapshot pour le HUD.
 # 6.5.0.1: Commande SSH interactive sans flag -N, propagation du statut final d'authentification au serveur tunnel SSH éphémère et extinction propre.
 # 5.236.5.1: Rectification du prompt get_auth_prompt documentant le support simultané et le failover transparent OAuth2 / Clés API.
 # 5.235.5.2: Séparation stricte identity.db via get_echo_identity_db_path, capture EchoDbMissingError et méthode delete_auth_data_by_prefixes.
 # 5.234.0.1: Factorisation de get_auth_prompt via les constantes SSOT ECHO_AUTH_TITLE_CONFIG et ECHO_AUTH_PENDING_MARKER.
-# 5.231.24.1: Utilisation des constantes SSOT ECHO_QUOTA_REFRESH_THROTTLE_SEC, ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC et ECHO_QUOTA_RESET_IMMINENT_LABEL.
 import os
 import time
 from contextlib import closing
@@ -40,7 +40,8 @@ from echo_constants import (
     AUTH_DATA_USER_TIER, AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_KEY_SECONDARY, AUTH_METHOD_OAUTH2,
     ECHO_USERS_ROOT, GOOGLE_OAUTH_TOKEN_URL, GOOGLE_OAUTH_TOKEN_LIFETIME,
     ECHO_QUOTA_REFRESH_THROTTLE_SEC, ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC,
-    ECHO_QUOTA_RESET_IMMINENT_LABEL, ECHO_AUTH_PENDING_MARKER, ECHO_AUTH_TITLE_CONFIG
+    ECHO_QUOTA_RESET_IMMINENT_LABEL, ECHO_AUTH_PENDING_MARKER, ECHO_AUTH_TITLE_CONFIG,
+    ECHO_GLOBAL_TENANT_PROJECT_ID
 )
 class EchoAuth:
     def __init__(self, user_id: str = "system"):
@@ -202,6 +203,7 @@ class EchoAuth:
             "user_email": self.get_auth_data(AUTH_DATA_USER_EMAIL),
             "user_tier": self.get_auth_data(AUTH_DATA_USER_TIER),
             "project_id": self.get_auth_data(AUTH_DATA_PROJECT_ID),
+            "tenant_id": ECHO_GLOBAL_TENANT_PROJECT_ID,
             "credits_val": str(credits_raw) if (credits_raw is not None and credits_raw != "") else "0",
             "quota_fraction": q_fraction,
             "quota_reset": q_reset,
