@@ -25,8 +25,8 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 - **Synchronisation des Bannières** : Traitement automatisé de `webui-banners.json` avec normalisation `jq` et injection atomique via `POST /api/v1/configs/banners` déclenchant l'évènement temps-réel `CONFIG_BANNERS_UPDATED`.
 
 ### `echo-sync.sh`
-**Rôle** : Pont de distribution déclaratif (v5.231.39.1) entre le dépôt source et `/opt/ECHO`.
-- **`sync_resource()` & Boucle Déclarative** : Synchronise dynamiquement les répertoires (`00-*` à `30-*`, `_assets`, `docker-python-base`), supprime les fichiers fantômes obsolètes, crée les liens symboliques globaux dans `/usr/local/bin/` (dont `/usr/local/bin/echo-rebuild`), applique un nettoyage conditionnel `sed` des caractères CRLF/BOM (préservant l'horodatage `mtime` et le cache Docker BuildKit), et affiche un encart de versioning Git (Avant/Après).
+**Rôle** : Pont de distribution déclaratif (v5.239.6.1) entre le dépôt source et `/opt/ECHO`.
+- **`sync_resource()` & Boucle Déclarative** : Synchronise dynamiquement les répertoires (`00-*` à `30-*`, `_assets`, `docker-python-base`), garantit l'initialisation du fichier maître `/opt/ECHO/.env` (`chmod 600`) avant montage Docker, supprime les fichiers fantômes obsolètes, crée les liens symboliques globaux dans `/usr/local/bin/` (dont `/usr/local/bin/echo-rebuild`), applique un nettoyage conditionnel `sed` des caractères CRLF/BOM (préservant l'horodatage `mtime` et le cache Docker BuildKit), et affiche un encart de versioning Git (Avant/Après).
 
 ### Sécurité Périmétrique (`enable-bunkerweb.sh` & `disable-bunkerweb.sh`)
 **Rôle** : Bascule de l'infrastructure réseau derrière le WAF BunkerWeb.

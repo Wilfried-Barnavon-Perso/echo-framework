@@ -8,12 +8,12 @@
     "timestamp": 1794345834
   },
   {
-    "id": "echo-banner-roadmap-v6-decoupling-20261108",
+    "id": "echo-banner-roadmap-v6-maintenance-20261112",
     "type": "info",
-    "title": "Feuille de route : ECHO v6",
-    "content": "**Feuille de route : Cap sur ECHO v6** : Lancement prochain du cycle de développement majeur d'ECHO v6. L'ingénierie et l'évolution du framework ECHO sont désormais formellement découplées du cycle d'Open WebUI pour une souveraineté et une autonomie architecturales renforcées.",
+    "title": "Feuille de route : ECHO v6 & Maintenance v5",
+    "content": "**Feuille de route : Cap sur ECHO v6** : Lancement du cycle de développement majeur d'ECHO v6. La branche v5 entre en gel fonctionnel : le support curatif reste assuré sur le périmètre ECHO (hors anomalies amont d'Open WebUI), mais aucune évolution fonctionnelle ne sera ajoutée, l'effort d'ingénierie étant intégralement dédié à la v6.",
     "dismissible": true,
-    "timestamp": 1794162325
+    "timestamp": 1794472832
   },
   {
     "id": "echo-banner-user-manager-export-20261108",
