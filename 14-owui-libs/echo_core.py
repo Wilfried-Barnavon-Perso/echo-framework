@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 5.238.1.1
+version: 5.239.11.1
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.11.1: Parsing JSON-first (`std_json.loads`) dans `unbox_tool_output` pour accepter la sérialisation Open WebUI (`null`/`true`/`false`), avec repli `ast.literal_eval` et garde `unstructured_data`.
 # 5.238.1.1: Support orthogonal COGNITIVE_MODE:COGNITIVE_MODEL dans resolve_model_policy et convert_owui_tools (copie profonde sans mutation in-place) et surcharge thinking_override="low" étendue à MODEL_ATHENA en compaction.
 # 5.237.20.2: Ancrage head_last_msg_id dans le checkpoint de compaction pour isoler les branches sœurs antérieures au pivot.
 # 5.237.20.1: Division entière sur CHARS_PER_TOKEN=3.2, exclusion de thoughtSignature, pesée max(shadow, output) et résolution résiliente du pivot (resolve_pivot_turn_index, tail_anchor_ids, break_on_ids).
 # 5.237.11.2: Exclusion des pensées en compaction, pesée des tours via Shadows SQLite, filtrage du placeholder assistant vide et alignement par tours.
-# 5.237.11.1: Surcharge thinking_override="low" pour MODEL_PROMETHEUS dans execute_in_place_compaction.
 import re
 import time
 import inspect
@@ -523,11 +523,15 @@ def unbox_tool_output(name: str, content: Any, model_id: str, model_origin: str 
     import ast
     if isinstance(content, str):
         try:
-            # Utilisation du lecteur Python sécurisé (ast) pour gérer les guillemets simples du stockage SQL
-            content = ast.literal_eval(content)
+            # Priorité JSON standard (null/true/false) issu du stockage Open WebUI
+            content = std_json.loads(content)
         except Exception:
-            # Échec total de lecture : marquage comme donnée non structurée
-            content = {"text": str(content), "status": {"status": "unstructured_data"}}
+            try:
+                # Repli historique Python sécurisé (ast) pour gérer les guillemets simples du stockage SQL
+                content = ast.literal_eval(content)
+            except Exception:
+                # Échec total de lecture : marquage comme donnée non structurée
+                content = {"text": str(content), "status": {"status": "unstructured_data"}}
     
     if not isinstance(content, dict):
         content = {"text": str(content), "status": {"status": "error_format"}}

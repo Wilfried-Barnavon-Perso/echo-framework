@@ -1,16 +1,16 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 5.233.0.2
+version: 5.239.11.1
 description: Composant système interne : ECHO Visual Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.11.1: Ajout dans `context["message"]` de `generate_rich_visualization` de la consigne explicite anti-redondance Markdown après génération dans l'Iframe.
 # 5.233.0.2: Contrainte de sortie JSON via response_schema=VisualCriticOutput dans _run_visual_critic et LeafletSchema dans SYS_VISUAL_REPAIR, décoration @echo_tool et simplification des retours.
 # 5.233.0.1: Support multi-images unifié dans generate_image (paramètre input_images: Optional[List[str]]), factorisation du chargement Base64 via _load_reference_images, plafond IMAGE_GEN_MAX_INPUT_IMAGES=10 et traçabilité PAS.
 # 5.232.5.1: Stockage et versionnement Git par essai/retouche (Option A) dans le workspace CODEX_WORKSPACE_GENERATED ("generated"), nommage court (< 15 caractères via short_name) et indexation sous resource_type="generated".
 # 5.232.3.1: Suppression du paramètre niveau_cognitif (verrouillage MODEL_APOLLO avec clamping), transmission de chat_id à call_cascade, re-validation post-SYS_VISUAL_REPAIR, directive moteur adaptative au retry et résilience par essai dans generate_image.
-# 5.232.0.3: Remplacement strict de GEN_VISUAL_MAX_TRIES par GEN_SCHEMA_MAX_TRIES=2 (thinking="low"), sanctuarisation de l'imagerie (GEN_IMG_MAX_TRIES=3, thinking="medium"), taxonomie des 17 moteurs et garde-fou pragmatique score>=6->APPROVED.
 # MOTEURS INTÉGRÉS ET DATAFLOWS :
 # - mermaid (v11) : Syntaxe Mermaid pure
 # - echarts (v5) : JSON ECharts strict
@@ -437,7 +437,8 @@ class Tools:
           "status": "success",
           "message": (
               f"Visualisation {best_cand['moteur']} générée et vérifiée "
-              f"(essai {best_cand['try_idx']}/{GEN_SCHEMA_MAX_TRIES}, score {best_cand['score']}/10 : {best_cand['analysis']})."
+              f"(essai {best_cand['try_idx']}/{GEN_SCHEMA_MAX_TRIES}, score {best_cand['score']}/10 : {best_cand['analysis']}). "
+              "Le rendu interactif est déjà affiché dans l'Iframe ; NE PAS reproduire ce schéma, diagramme ou code (Mermaid/SVG/ECharts/ASCII) en Markdown dans ta réponse."
           ),
           "moteur": best_cand["moteur"],
           "intention": intention,
