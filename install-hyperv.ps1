@@ -1,8 +1,8 @@
-﻿# ==============================================================================
+# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# VERSION : 6.5.1.1
-# DATE    : 2026-11-12
+# VERSION : 6.5.1.2
+# DATE    : 2026-11-13
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
@@ -32,11 +32,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.1.2: 3 niveaux RAM a 8192 Mo (priorite 50), snapshots auto desactives et hostname majeur + branche normalisee.
 # 6.5.1.1: Pointage ISO vers ubuntu-26.04.1-live-server-amd64-autoinstall.iso.
 # 6.0.0.6: Extension du disque Seed temporaire a 256Mo (marge securite archive ZIP).
 # 6.0.0.5: Exclusion dynamique automatique de l'ensemble des regles du .gitignore pour le ZIP.
 # 6.0.0.4: QoS bridee aux puissances de 2 (2^n) et bridage dynamique.
-# 6.0.0.3: RAM min a 8Go, benchmark I/O hors-cache (WriteThrough 8Ko) et bridage QoS VHD a 66%.
 
 # --- FONCTION UTILITAIRE : PAUSE SUR ERREUR ---
 $SwitchName = "Bridge LAN" # /!\ Vérifiez le nom de votre switch Hyper-V
@@ -102,7 +102,7 @@ function Measure-DiskIOPS {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "6.5.1.1"
+$SCRIPT_VERSION = "6.5.1.2"
 $ScriptDir = $PSScriptRoot
 Set-Location -Path $ScriptDir
 $VersionFile = "$ScriptDir\VERSION"
@@ -135,7 +135,9 @@ Write-Host "🖥️   VM Name         : $VMName" -ForegroundColor Yellow
 
 $AutoUser = "echo"
 $AppPassword = "password"
-$AutoHostname = $VMName.ToLower() -replace '\s', ''
+$MajorVersion = ($ECHO_VERSION -split '\.')[0]
+$NormalizedBranch = ($BRANCHE.ToLower() -replace '[_\.\s]+', '-').Trim('-')
+$AutoHostname = "echo-v$MajorVersion-$NormalizedBranch"
 
 # Hash sha512crypt réel et valide pour le mot de passe "password" (sel: saltsalt)
 $HashPassword = '$6$saltsalt$qFmFH.bQmmtXzyBY0s9v7Oicd2z4XSIecDzlB5KiA2/jctKu9YterLp8wwnSq.qc.eoxqOmSuNp2xS0ktL3nh/.'
@@ -310,9 +312,9 @@ if (-not (Get-VM -Name $VMName -ErrorAction SilentlyContinue)) {
 
   New-VM -Name $VMName -MemoryStartupBytes $RAMStartup -Generation 2 -SwitchName $SwitchName -NoVHD
   
-  # RAM dynamique : 8 Go minimum / 10 Go maximum
-  Set-VM -Name $VMName -DynamicMemory -MemoryMinimumBytes 8192MB -MemoryMaximumBytes 10240MB -ProcessorCount 4
-  Set-VMMemory -VMName $VMName -Priority 15
+  # Les 3 niveaux mémoire fixés à 8192 Mo et snapshots automatiques désactivés
+  Set-VM -Name $VMName -DynamicMemory -MemoryMinimumBytes 8192MB -MemoryMaximumBytes 8192MB -ProcessorCount 4 -AutomaticCheckpointsEnabled $false
+  Set-VMMemory -VMName $VMName -Priority 50
   Get-VMIntegrationService -VMName $VMName | Where-Object { $_.Name -match "Guest|invit" } | Enable-VMIntegrationService
   Set-VMFirmware -VMName $VMName -EnableSecureBoot Off
   
