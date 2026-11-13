@@ -1,8 +1,8 @@
-# ==============================================================================
+﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# VERSION : 5.239.3.2
-# DATE    : 2026-11-11
+# VERSION : 5.239.9.1
+# DATE    : 2026-11-13
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
@@ -32,11 +32,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.9.1: Normalisation du hostname Cloud-Init (version majeure + branche normalisee RFC 1123).
 # 5.239.3.2: Quantification de la Storage QoS sur des puissances de 2 (2^N).
 # 5.239.3.1: Mémoire dynamique 8-10 Go (priorité 35%), Services d'invité et Storage QoS 66% hors cache.
 # 5.231.40.1: Correction encodage UTF-8 BOM pour le parseur PowerShell 5.1 et alignement version.
 # 5.231.39.1: Mise à jour des références cloud-init vers echo-sync.sh.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # --- FONCTION UTILITAIRE : PAUSE SUR ERREUR ---
 $SwitchName = "Bridge LAN" # /!\ Vérifiez le nom de votre switch Hyper-V
@@ -120,7 +120,7 @@ function Measure-DiskPhysicalIOPS {
 }
 
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.239.3.2"
+$SCRIPT_VERSION = "5.239.9.1"
 $ScriptDir = $PSScriptRoot
 Set-Location -Path $ScriptDir
 $VersionFile = "$ScriptDir\VERSION"
@@ -153,7 +153,9 @@ Write-Host "🖥️   VM Name         : $VMName" -ForegroundColor Yellow
 
 $AutoUser = "echo"
 $AppPassword = "password"
-$AutoHostname = $VMName.ToLower() -replace '\s', ''
+$MajorVersion = ($ECHO_VERSION -split '\.')[0]
+$NormalizedBranch = ($BRANCHE.ToLower() -replace '[_\.\s]+', '-').Trim('-')
+$AutoHostname = "echo-v$MajorVersion-$NormalizedBranch"
 
 # Hash sha512crypt réel et valide pour le mot de passe "password" (sel: saltsalt)
 $HashPassword = '$6$saltsalt$qFmFH.bQmmtXzyBY0s9v7Oicd2z4XSIecDzlB5KiA2/jctKu9YterLp8wwnSq.qc.eoxqOmSuNp2xS0ktL3nh/.'
