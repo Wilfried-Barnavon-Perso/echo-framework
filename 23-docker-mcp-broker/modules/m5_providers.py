@@ -1,11 +1,11 @@
-# VERSION : 5.239.11.1
+# VERSION : 5.239.11.2
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.11.2: Alignement Graph sur microsoft-mcp (Prefer conditionnel, omission $skip=0 et retry 5xx/429).
 # 5.239.11.1: Refresh MSAL async/fallback, transport Graph IPv4, URL quote, include_body=False et sync_credentials.
 # 5.239.10.1: Sans fallback Stdio list_emails, fix tenant_id MSAL, body_max_length et batch_get_emails parallèle.
 # 5.231.37.1: Routage atomique des téléchargements M365 et Google Workspace vers le Download Broker (/mcp/).
 # 5.229.1.3: En-tête Prefer text, assainisseur anti-HTML, bodyPreview et traçabilité new_id post-déplacement.
-# 5.229.1.2: Lecteur batch (batch_get_emails) et recherche multi-axes (search_emails KQL/OData/dossiers).
 """
 ECHO MCP Broker - Adaptateurs de cycle de vie spécifiques aux fournisseurs MCP résidents.
 Isole la logique d'authentification et de préparation d'environnement (Microsoft 365 MSAL,
@@ -520,6 +520,75 @@ class Microsoft365Provider(MCPServiceProvider):
             transport=transport,
             follow_redirects=follow_redirects,
         )
+
+    async def _graph_request(
+        self,
+        method: str,
+        url: str,
+        headers: dict,
+        params: Optional[dict] = None,
+        json_data: Optional[dict] = None,
+        timeout_sec: float = 30.0,
+    ) -> httpx.Response:
+        """
+        Exécute une requête Microsoft Graph v1.0 avec la même politique d'en-têtes et de
+        résilience (3 retries sur HTTP >= 500 ou 429) que `microsoft-mcp/graph.py`.
+        """
+        max_retries = 3
+        base_headers = dict(headers)
+        if method.upper() == "GET" and "Prefer" not in base_headers:
+            select_tokens = [
+                f.strip()
+                for f in str((params or {}).get("$select", "")).split(",")
+                if f.strip()
+            ]
+            if "$search" in (params or {}) or "body" in select_tokens:
+                base_headers["Prefer"] = 'outlook.body-content-type="text"'
+
+        async with self._create_graph_client(timeout_sec) as client:
+            for attempt in range(max_retries + 1):
+                req_headers = dict(base_headers)
+                req_params = dict(params) if params is not None else None
+                if attempt >= 1 and method.upper() == "GET":
+                    # Repli sur 5xx Exchange Online / consumer (@live.fr) : retrait de Prefer
+                    # (le nettoyage HTML -> texte est assuré localement par _clean_html_to_text)
+                    # et alignement strict du $select sur la baseline microsoft-mcp.
+                    req_headers.pop("Prefer", None)
+                    if req_params and "$select" in req_params:
+                        cur_tokens = [
+                            f.strip()
+                            for f in str(req_params["$select"]).split(",")
+                            if f.strip()
+                        ]
+                        if "body" in cur_tokens:
+                            req_params["$select"] = (
+                                "id,subject,from,toRecipients,ccRecipients,"
+                                "receivedDateTime,hasAttachments,body,conversationId,isRead"
+                            )
+                        else:
+                            req_params["$select"] = (
+                                "id,subject,from,toRecipients,receivedDateTime,"
+                                "hasAttachments,conversationId,isRead"
+                            )
+                    if req_params and req_params.get("$skip") == "0":
+                        req_params.pop("$skip", None)
+
+                res = await client.request(
+                    method=method,
+                    url=url,
+                    headers=req_headers,
+                    params=req_params,
+                    json=json_data,
+                )
+                if res.status_code == 429 and attempt < max_retries:
+                    retry_after = min(int(res.headers.get("Retry-After", "2") or 2), 10)
+                    await asyncio.sleep(retry_after)
+                    continue
+                if res.status_code >= 500 and attempt < max_retries:
+                    await asyncio.sleep((2 ** attempt) * 0.8)
+                    continue
+                return res
+        return res
 
     @staticmethod
     def _get_email_select_fields(include_body: bool) -> str:
@@ -1576,26 +1645,26 @@ class Microsoft365Provider(MCPServiceProvider):
                 headers = {
                     "Authorization": f"Bearer {token}",
                     "Accept": "application/json",
-                    "Prefer": 'outlook.body-content-type="text"',
                 }
-                async with self._create_graph_client(20.0) as client:
-                    res = await client.get(
-                        f"https://graph.microsoft.com/v1.0/me/messages/{q_eid}",
-                        headers=headers,
-                        params=params,
+                res = await self._graph_request(
+                    "GET",
+                    f"https://graph.microsoft.com/v1.0/me/messages/{q_eid}",
+                    headers=headers,
+                    params=params,
+                    timeout_sec=20.0,
+                )
+                if res.status_code == 200:
+                    msg = self._normalize_email_message(
+                        res.json(), include_body, body_max_length
                     )
-                    if res.status_code == 200:
-                        msg = self._normalize_email_message(
-                            res.json(), include_body, body_max_length
-                        )
-                        return args, self._make_tool_response(msg)
-                    return args, self._make_tool_response(
-                        {
-                            "status": "error",
-                            "message": f"Échec Graph get_email ({res.status_code}): {res.text}",
-                        },
-                        is_error=True,
-                    )
+                    return args, self._make_tool_response(msg)
+                return args, self._make_tool_response(
+                    {
+                        "status": "error",
+                        "message": f"Échec Graph get_email ({res.status_code}): {res.text}",
+                    },
+                    is_error=True,
+                )
             except Exception as e:
                 return args, self._make_tool_response(
                     {
@@ -1644,6 +1713,11 @@ class Microsoft365Provider(MCPServiceProvider):
                     email_ids[i:i + 20] for i in range(0, len(email_ids), 20)
                 ]
                 sem = asyncio.Semaphore(3)
+                sub_headers = (
+                    {"Prefer": 'outlook.body-content-type="text"'}
+                    if include_body
+                    else {}
+                )
                 async with self._create_graph_client(30.0) as client:
                     async def _fetch_chunk(chunk: list[str]):
                         c_emails = []
@@ -1657,7 +1731,7 @@ class Microsoft365Provider(MCPServiceProvider):
                                     f"/me/messages/{self._quote_graph_id(eid)}"
                                     f"?$select={select_fields}{expand_clause}"
                                 ),
-                                "headers": {"Prefer": 'outlook.body-content-type="text"'},
+                                "headers": sub_headers,
                             }
                             for idx, eid in enumerate(chunk)
                         ]
@@ -1776,33 +1850,34 @@ class Microsoft365Provider(MCPServiceProvider):
                 url = f"https://graph.microsoft.com/v1.0/me/mailFolders/{q_fid}/messages"
                 params = {
                     "$top": str(limit),
-                    "$skip": str(skip),
                     "$orderby": order_by,
                     "$select": select_fields,
                 }
-                async with self._create_graph_client(30.0) as client:
-                    res = await client.get(
-                        url,
-                        headers={
-                            "Authorization": f"Bearer {token}",
-                            "Accept": "application/json",
-                            "Prefer": 'outlook.body-content-type="text"',
-                        },
-                        params=params,
-                    )
-                    if res.status_code == 200:
-                        messages = [
-                            self._normalize_email_message(m, include_body, body_max_length)
-                            for m in res.json().get("value", [])
-                        ]
-                        return args, self._make_tool_response(messages)
-                    return args, self._make_tool_response(
-                        {
-                            "status": "error",
-                            "message": f"Échec Graph list_emails ({res.status_code}): {res.text}",
-                        },
-                        is_error=True,
-                    )
+                if skip > 0:
+                    params["$skip"] = str(skip)
+                res = await self._graph_request(
+                    "GET",
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Accept": "application/json",
+                    },
+                    params=params,
+                    timeout_sec=30.0,
+                )
+                if res.status_code == 200:
+                    messages = [
+                        self._normalize_email_message(m, include_body, body_max_length)
+                        for m in res.json().get("value", [])
+                    ]
+                    return args, self._make_tool_response(messages)
+                return args, self._make_tool_response(
+                    {
+                        "status": "error",
+                        "message": f"Échec Graph list_emails ({res.status_code}): {res.text}",
+                    },
+                    is_error=True,
+                )
             except Exception as e:
                 return args, self._make_tool_response(
                     {
@@ -1910,30 +1985,30 @@ class Microsoft365Provider(MCPServiceProvider):
                 headers = {
                     "Authorization": f"Bearer {token}",
                     "Accept": "application/json",
-                    "Prefer": 'outlook.body-content-type="text"',
                     "ConsistencyLevel": "eventual",
                 }
-                async with self._create_graph_client(20.0) as client:
-                    res = await client.get(
-                        base_url,
-                        headers=headers,
-                        params=params,
-                    )
-                    if res.status_code == 200:
-                        messages = [
-                            self._normalize_email_message(
-                                m, include_body, body_max_length=5000
-                            )
-                            for m in res.json().get("value", [])
-                        ]
-                        return args, self._make_tool_response(messages)
-                    return args, self._make_tool_response(
-                        {
-                            "status": "error",
-                            "message": f"Échec Graph search_emails ({res.status_code}): {res.text}",
-                        },
-                        is_error=True,
-                    )
+                res = await self._graph_request(
+                    "GET",
+                    base_url,
+                    headers=headers,
+                    params=params,
+                    timeout_sec=20.0,
+                )
+                if res.status_code == 200:
+                    messages = [
+                        self._normalize_email_message(
+                            m, include_body, body_max_length=5000
+                        )
+                        for m in res.json().get("value", [])
+                    ]
+                    return args, self._make_tool_response(messages)
+                return args, self._make_tool_response(
+                    {
+                        "status": "error",
+                        "message": f"Échec Graph search_emails ({res.status_code}): {res.text}",
+                    },
+                    is_error=True,
+                )
             except Exception as e:
                 return args, self._make_tool_response(
                     {
