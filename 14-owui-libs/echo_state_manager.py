@@ -2,16 +2,16 @@
 """
 title: ECHO Echo State Manager
 author: Wilfried BARNAVON
-version: 5.237.20.1
+version: 5.239.11.1
 description: Gestionnaire d'état SQLite et RAG.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.11.1: Fallback compte par défaut dans get_vault_credential si account_id est un alias externe.
 # 5.237.20.1: Persistance model_id dans message_shadows, lecture get_signature_by_id depuis les Shadows et suppression des méthodes de hachage cumulatif.
 # 5.236.0.1: Auto-matérialisation déclarative idempotente via ensure_db en écriture non-readonly.
 # 5.235.5.3: Alignement sur les 20 colonnes déclaratives de echo_resources (CRUD, allowed fields et _row_to_resource).
 # 5.235.5.2: Décorateur @_session_scope, suppression des DDL et tables mortes, intégration ECHO_TURN_CONTEXT et alignement 14 colonnes echo_resources.
-# 5.232.5.1: Filtrage par workspace dans get_resources et ajout des méthodes delete_codex_resource et clear_codex_workspace_resources.
 import contextlib
 import functools
 import os
@@ -298,15 +298,16 @@ class EchoStateManager:
             print(f"[EchoStateManager] save_vault_credential error: {e}")
 
     def get_vault_credential(self, service: str, account_id: Optional[str] = None) -> str:
-        """Récupère et déchiffre une identité depuis identity_vault (supporte account_id optionnel)."""
+        """Récupère et déchiffre une identité depuis identity_vault (repli sur le compte du service)."""
         try:
             with self._get_identity_connection(readonly=True) as conn:
+                row = None
                 if account_id:
                     row = conn.execute(
                         "SELECT account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ? AND account_id = ? LIMIT 1",
                         (self.user_id, service, account_id),
                     ).fetchone()
-                else:
+                if not row:
                     row = conn.execute(
                         "SELECT account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ? LIMIT 1",
                         (self.user_id, service),

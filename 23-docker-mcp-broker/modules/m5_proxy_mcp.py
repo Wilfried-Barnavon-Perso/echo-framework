@@ -1,11 +1,11 @@
-# VERSION : 5.239.10.1
+# VERSION : 5.239.11.1
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.11.1: before_tool_call/sync_credentials avant _get_or_create_session (Graph Zéro-Stdio) et account_id.
 # 5.239.10.1: Timeout MCP_TOOL_CALL_TIMEOUT (55s) avec éviction, verrous par cache_key et clé indexée sur cred_hash.
 # 5.231.37.1: Propagation de chat_id aux hooks before_tool_call et after_tool_call de MCPServiceProvider.
 # 5.231.20.1: Isolation des sessions MCP actives par compte optionnel (cache_key incluant account_id).
 # 5.228.0.1: Import partagé de AuthRequiredError depuis m5_providers et déduplication du message d'erreur.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 import asyncio
 import json
@@ -134,11 +134,8 @@ def _build_cache_key(user_id: str, service: str, credentials_str: str) -> tuple[
     return f"{user_id}_{service}_{cred_hash[:12]}", cred_hash
 
 
-async def _open_transport(stack: AsyncExitStack, user_id: str, service: str, credentials_str: str):
-    """Ouvre le transport MCP (stdio résident/éphémère, SSE, streamable HTTP) dans `stack`.
-
-    Retourne (read_stream, write_stream). Corps identique à la v1.14 (déplacé, non modifié).
-    """
+def _parse_and_validate_credentials(service: str, credentials_str: str) -> tuple[dict, dict]:
+    """Valide le schéma du service, parse les credentials JSON et vérifie les champs requis."""
     from server import SERVICE_SCHEMAS
     schema_def = SERVICE_SCHEMAS.get(service, {})
     category = schema_def.get("category")
@@ -153,26 +150,37 @@ async def _open_transport(stack: AsyncExitStack, user_id: str, service: str, cre
         except Exception:
             credentials = {"OAUTH2_TOKEN": credentials_str}
 
+    if category == "mcp_resident":
+        required_fields = [
+            f["id"] for f in schema_def.get("fields", [])
+            if f.get("required") is True
+        ]
+        missing_fields = [
+            fid for fid in required_fields
+            if not credentials.get(fid) and not os.environ.get(fid)
+        ]
+        if missing_fields:
+            raise AuthRequiredError(
+                f"Variables obligatoires manquantes dans l'Identity Vault pour '{service}' : "
+                f"{', '.join(missing_fields)}."
+            )
+
+    return schema_def, credentials
+
+
+async def _open_transport(stack: AsyncExitStack, user_id: str, service: str, credentials_str: str):
+    """Ouvre le transport MCP (stdio résident/éphémère, SSE, streamable HTTP) dans `stack`.
+
+    Retourne (read_stream, write_stream). Corps identique à la v1.14 (déplacé, non modifié).
+    """
+    schema_def, credentials = _parse_and_validate_credentials(service, credentials_str)
+    category = schema_def.get("category")
+
     if category in ("mcp_resident", "mcp_ephemeral"):
         if category == "mcp_resident":
             command = schema_def.get("command")
             if not command:
                 raise ValueError(f"Commande manquante dans le schéma pour {service}")
-
-            # Validation préventive des variables obligatoires déclarées dans le schéma
-            required_fields = [
-                f["id"] for f in schema_def.get("fields", [])
-                if f.get("required") is True
-            ]
-            missing_fields = [
-                fid for fid in required_fields
-                if not credentials.get(fid) and not os.environ.get(fid)
-            ]
-            if missing_fields:
-                raise AuthRequiredError(
-                    f"Variables obligatoires manquantes dans l'Identity Vault pour '{service}' : "
-                    f"{', '.join(missing_fields)}."
-                )
 
             args = schema_def.get("args", [])
             env = os.environ.copy()
@@ -293,10 +301,26 @@ async def proxy_mcp_request(payload: dict) -> dict:
     if not service or not method:
         raise ValueError("Paramètres 'service' ou 'rpc_request.method' manquants.")
 
+    _, credentials_dict = _parse_and_validate_credentials(service, credentials)
+    provider = get_service_provider(service)
+    await provider.sync_credentials(user_id, credentials_dict)
+
+    if method == "tools/call":
+        name = params.get("name")
+        args = dict(params.get("arguments") or {})
+        if account_id and not args.get("account_id"):
+            args["account_id"] = account_id
+        args, short_circuit = await provider.before_tool_call(
+            user_id, name, args, chat_id=chat_id, credentials=credentials_dict
+        )
+        if short_circuit is not None:
+            return short_circuit
+    elif method != "tools/list":
+        raise ValueError(f"Méthode non supportée par le proxy : {method}")
+
     session, cache_key = await _get_or_create_session(
         user_id, service, credentials, account_id=account_id
     )
-    provider = get_service_provider(service)
 
     try:
         if method == "tools/list":
@@ -311,29 +335,20 @@ async def proxy_mcp_request(payload: dict) -> dict:
                 ) from te
             dumped_tools = _dump(tools_res)
             return await provider.after_list_tools(user_id, dumped_tools)
-        elif method == "tools/call":
-            name = params.get("name")
-            args = params.get("arguments", {})
-            args, short_circuit = await provider.before_tool_call(
-                user_id, name, args, chat_id=chat_id
+
+        try:
+            call_res = await asyncio.wait_for(
+                session.call_tool(name, args), timeout=MCP_TOOL_CALL_TIMEOUT
             )
-            if short_circuit is not None:
-                return short_circuit
-            try:
-                call_res = await asyncio.wait_for(
-                    session.call_tool(name, args), timeout=MCP_TOOL_CALL_TIMEOUT
-                )
-            except asyncio.TimeoutError as te:
-                raise TimeoutError(
-                    f"Délai dépassé ({MCP_TOOL_CALL_TIMEOUT}s) lors de l'appel '{name}' sur '{service}'. "
-                    "La session MCP est réinitialisée."
-                ) from te
-            dumped = _dump(call_res)
-            return await provider.after_tool_call(
-                user_id, name, dumped, chat_id=chat_id
-            )
-        else:
-            raise ValueError(f"Méthode non supportée par le proxy : {method}")
+        except asyncio.TimeoutError as te:
+            raise TimeoutError(
+                f"Délai dépassé ({MCP_TOOL_CALL_TIMEOUT}s) lors de l'appel '{name}' sur '{service}'. "
+                "La session MCP est réinitialisée."
+            ) from te
+        dumped = _dump(call_res)
+        return await provider.after_tool_call(
+            user_id, name, dumped, chat_id=chat_id
+        )
     except BaseException:
         async with _get_session_lock(cache_key):
             holder = _SESSIONS.get(cache_key)

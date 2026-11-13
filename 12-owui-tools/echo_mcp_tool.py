@@ -1,16 +1,16 @@
 """
 title: ECHO Universal MCP Tool
 author: ECHO
-version: 5.239.10.1
+version: 5.239.11.1
 description: Outil universel d'interrogation et d'exécution sur l'infrastructure MCP via routage dynamique.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.11.1: Retour dict normalisé (status="error", error=...) sur erreur MCP/HTTP pour ❌ Open WebUI et statut LLM.
 # 5.239.10.1: Factorisation RPC/erreurs, timeouts 90s/65s alignés Broker et clôture events.status sur erreur.
 # 5.233.0.1: Décoration @echo_tool sur les 2 méthodes publiques et simplification des retours wrap_tool_output.
 # 5.231.37.1: Propagation de chat_id (en-tête x-openwebui-chat-id et payload proxy_mcp) pour le Download Broker.
 # 5.231.21.1: Délégation de _fetch_credentials au CRUD chiffré AES-256-GCM de EchoStateManager (get_vault_credential).
-# 5.231.20.1: Isolation multi-user des credentials sur mcp_native et support multi-compte optionnel (account_id).
 import sys
 import json
 import base64
@@ -54,12 +54,46 @@ class Tools:
     @staticmethod
     def _format_transport_error(service: str, action_label: str, exc: Exception) -> dict:
         if isinstance(exc, httpx.TimeoutException):
+            msg = f"{type(exc).__name__}: délai dépassé lors de l'appel à '{service}' ({action_label})."
             return {
                 "status": "error",
-                "message": f"{type(exc).__name__}: délai dépassé lors de l'appel à '{service}' ({action_label}).",
+                "error": msg,
+                "message": msg,
             }
         err_msg = str(exc).strip() or type(exc).__name__
-        return {"status": "error", "message": err_msg}
+        return {"status": "error", "error": err_msg, "message": err_msg}
+
+    @staticmethod
+    def _build_error_dict(service: str, action_label: str, data: Any) -> dict:
+        msg = f"Erreur lors de l'appel '{action_label}' sur '{service}'."
+        if isinstance(data, dict):
+            sc = data.get("structuredContent")
+            if isinstance(sc, dict) and (sc.get("message") or sc.get("error")):
+                msg = str(sc.get("message") or sc.get("error"))
+            elif data.get("message") or data.get("error"):
+                raw_err = data.get("message") or data.get("error")
+                msg = json.dumps(raw_err, ensure_ascii=False) if isinstance(raw_err, dict) else str(raw_err)
+            elif isinstance(data.get("content"), list):
+                for item in data["content"]:
+                    if isinstance(item, dict) and item.get("text"):
+                        txt = str(item["text"]).strip()
+                        try:
+                            parsed = json.loads(txt)
+                            if isinstance(parsed, dict) and (parsed.get("message") or parsed.get("error")):
+                                msg = str(parsed.get("message") or parsed.get("error"))
+                            else:
+                                msg = txt[:500]
+                        except Exception:
+                            msg = txt[:500]
+                        break
+        return {
+            "status": "error",
+            "error": msg,
+            "message": msg,
+            "service": service,
+            "action": action_label,
+            "details": data,
+        }
 
     async def _execute_broker_rpc(
         self,
@@ -86,9 +120,19 @@ class Tools:
                     "x-echo-credentials": b64_creds,
                 }
                 resp = await client.post(self.mcp_native_url, json=rpc, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
-                status_val = "success"
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {"status": "error", "message": resp.text or f"HTTP {resp.status_code}"}
+                is_err = (
+                    resp.status_code >= 400
+                    or (isinstance(data, dict) and (
+                        data.get("status") == "error"
+                        or data.get("isError") is True
+                        or "error" in data
+                    ))
+                )
+                status_val = "error" if is_err else "success"
             else:
                 payload = {
                     "user_id": user_id,
@@ -99,11 +143,20 @@ class Tools:
                     "rpc_request": rpc,
                 }
                 resp = await client.post(self.proxy_url, json=payload)
-                data = resp.json()
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {"status": "error", "message": resp.text or f"HTTP {resp.status_code}"}
                 is_err = (
-                    data.get("status") == "error"
-                    or data.get("isError") is True
-                    or resp.status_code >= 400
+                    resp.status_code >= 400
+                    or (isinstance(data, dict) and (
+                        data.get("status") == "error"
+                        or data.get("isError") is True
+                        or (
+                            isinstance(data.get("structuredContent"), dict)
+                            and data["structuredContent"].get("status") == "error"
+                        )
+                    ))
                 )
                 status_val = "error" if is_err else "success"
         return data, status_val
@@ -139,12 +192,11 @@ class Tools:
                 rpc=rpc,
                 timeout_sec=65.0,
             )
-            label = (
-                f"✅ Schémas récupérés pour '{service}'."
-                if status_val == "success"
-                else f"⚠️ Accès à '{service}' : configuration requise."
-            )
-            await events.status(label, done=True)
+            if status_val == "error":
+                err_dict = self._build_error_dict(service, "tools/list", data)
+                await events.status(f"⚠️ Accès à '{service}' : {err_dict['message'][:120]}", done=True)
+                return err_dict
+            await events.status(f"✅ Schémas récupérés pour '{service}'.", done=True)
             return json.dumps(data)
         except Exception as e:
             err = self._format_transport_error(service, "tools/list", e)
@@ -190,12 +242,14 @@ class Tools:
                 rpc=rpc,
                 timeout_sec=90.0,
             )
-            label = (
-                "✅ Exécution terminée."
-                if status_val == "success"
-                else f"⚠️ Erreur lors de l'exécution sur '{service}'."
-            )
-            await events.status(label, done=True)
+            if status_val == "error":
+                err_dict = self._build_error_dict(service, function_name, data)
+                await events.status(
+                    f"⚠️ Erreur sur '{service}' ({function_name}) : {err_dict['message'][:120]}",
+                    done=True,
+                )
+                return err_dict
+            await events.status("✅ Exécution terminée.", done=True)
             return json.dumps(data)
         except Exception as e:
             err = self._format_transport_error(service, function_name, e)
