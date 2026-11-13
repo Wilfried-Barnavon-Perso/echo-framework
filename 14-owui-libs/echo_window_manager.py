@@ -2,16 +2,16 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 5.237.19.1
+version: 5.239.12.1
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.12.1: Exclusion SSOT et auto-guérison des HUDs transitoires (echo-migration-hud, echo-clone-hud) dans handle_rpc, get_chat_snapshot et hydrateChatState.
 # 5.237.19.1: Support du plein écran d'Iframe via EchoWM.toggleIframeFullscreen (echo:iframe:fullscreen, echo:iframe:fullscreen-state et touche Escape).
 # 5.237.4.1: Garde anti-matérialisation session.db dans _save_chat_state et résolution stricte propriétaire (user_id, chat_id) sans fallback multi-comptes.
 # 5.231.60.1: Retrait RPC img_session_action, EchoWM.submitChatPrompt et écouteurs postMessage echo:img_session:* (restauration agnosticisme pur).
 # 5.231.50.1: Pont postMessage echo:iframe:init/theme-update pour synchroniser fond et police des Iframes avec la fenêtre principale Open WebUI.
-# 5.231.48.1: Factorisation SSOT de WM_SCRIPT_VERSION, teardown Hot-Upgrade, réentrance asynchrone (_execStack/_activeExecCount) et garde DOM dans bodyObs.
 
 import asyncio
 from contextlib import closing
@@ -34,14 +34,21 @@ WM_PREFIX = f"{ECHO_AUDIO_PREFIX}/wm"
 wm_router = APIRouter(prefix=WM_PREFIX, tags=["echo_wm"])
 wm_static_router = APIRouter(tags=["echo_wm_static"])
 
-WM_SCRIPT_VERSION = "5.237.19.1"
+WM_SCRIPT_VERSION = "5.239.12.1"
 LOADER_MARKER_START = "/* === ECHO_WM_START === */"
 LOADER_MARKER_END = "/* === ECHO_WM_END === */"
 WM_STATE_KEY = "wm_state"
 MAX_TRACKED_WINDOWS_PER_CHAT = 32
 MAX_KV_ENTRIES_PER_CHAT = 128
+TRANSIENT_HUD_PREFIXES = ("uctp-loader-", "echo-edge-hud", "echo-migration-hud", "echo-clone-hud")
 _OWUI_DB_PATH = os.path.join(ECHO_BASE_DATA_DIR, "webui.db")
 _EMAIL_TO_UID_CACHE: Dict[str, str] = {}
+
+
+def _is_transient_hud_id(wid: str) -> bool:
+    """Indique si l'ID DOM cible un HUD transitoire/global exclu de wm_state."""
+    s_wid = str(wid or "").strip()
+    return not s_wid or s_wid.startswith(TRANSIENT_HUD_PREFIXES)
 
 
 def extract_closure_context(fn: Any) -> Dict[str, str]:
@@ -473,7 +480,7 @@ class EchoWindowManager:
                 wins = state.setdefault("windows", {})
                 now = time.time()
                 for wid in window_ids:
-                    if not wid or str(wid).startswith("uctp-loader-"):
+                    if _is_transient_hud_id(wid):
                         continue
                     w_entry = wins.get(wid) or {
                         "window_id": wid,
@@ -542,9 +549,16 @@ class EchoWindowManager:
     def get_chat_snapshot(self, user_id: str, chat_id: str) -> Dict[str, Any]:
         """Retourne l'état complet (KV, fenêtres ouvertes, appels RPC en attente et stats contexte) pour un chat."""
         state = self._load_chat_state(user_id, chat_id)
+        wins_dict = state.get("windows", {})
+        stale_transient = [wid for wid in list(wins_dict.keys()) if _is_transient_hud_id(wid)]
+        if stale_transient:
+            for wid in stale_transient:
+                wins_dict.pop(wid, None)
+            self._save_chat_state(user_id, chat_id)
+
         open_windows = [
-            w for w in state.get("windows", {}).values()
-            if isinstance(w, dict) and w.get("is_open") and w.get("mount_code")
+            w for wid, w in wins_dict.items()
+            if not _is_transient_hud_id(wid) and isinstance(w, dict) and w.get("is_open") and w.get("mount_code")
         ]
         open_windows.sort(key=lambda x: x.get("updated_at", 0))
 
@@ -662,7 +676,11 @@ def get_client_loader_js() -> str:
         if (tag === 'STYLE' || tag === 'SCRIPT' || tag === 'LINK') return true;
         if (el.getAttribute('data-echo-scope') === 'global') return true;
         const id = el.id || '';
-        if (id.startsWith('uctp-loader-') || id.startsWith('echo-edge-hud') || id === 'echo-hud-container' || id === 'echo-app-drawer-container') return true;
+        if (
+            id.startsWith('uctp-loader-') || id.startsWith('echo-edge-hud')
+            || id === 'echo-migration-hud' || id === 'echo-clone-hud'
+            || id === 'echo-hud-container' || id === 'echo-app-drawer-container'
+        ) return true;
         if (el.classList && el.classList.contains('echo-tooltip-floating')) return true;
         return false;
     }
@@ -1086,9 +1104,15 @@ def get_client_loader_js() -> str:
                         }
                     }
 
+                    const staleMig = document.getElementById('echo-migration-hud');
+                    if (staleMig) staleMig.remove();
                     if (Array.isArray(snapshot.windows)) {
                         for (const win of snapshot.windows) {
-                            if (!win || !win.window_id || !win.is_open) continue;
+                            if (
+                                !win || !win.window_id || !win.is_open
+                                || win.window_id === 'echo-migration-hud'
+                                || win.window_id === 'echo-clone-hud'
+                            ) continue;
                             const existing = document.getElementById(win.window_id);
                             const existingCid = getElementChatId(existing);
                             if (!existing || (existingCid && existingCid !== chatId)) {

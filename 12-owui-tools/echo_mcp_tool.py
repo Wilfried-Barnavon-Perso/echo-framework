@@ -1,16 +1,16 @@
 """
 title: ECHO Universal MCP Tool
 author: ECHO
-version: 5.239.11.1
+version: 5.239.12.1
 description: Outil universel d'interrogation et d'exécution sur l'infrastructure MCP via routage dynamique.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.12.1: Déduplication payloads MCP (_compact_mcp_payload) sans double sérialisation content/structuredContent.
 # 5.239.11.1: Retour dict normalisé (status="error", error=...) sur erreur MCP/HTTP pour ❌ Open WebUI et statut LLM.
 # 5.239.10.1: Factorisation RPC/erreurs, timeouts 90s/65s alignés Broker et clôture events.status sur erreur.
 # 5.233.0.1: Décoration @echo_tool sur les 2 méthodes publiques et simplification des retours wrap_tool_output.
 # 5.231.37.1: Propagation de chat_id (en-tête x-openwebui-chat-id et payload proxy_mcp) pour le Download Broker.
-# 5.231.21.1: Délégation de _fetch_credentials au CRUD chiffré AES-256-GCM de EchoStateManager (get_vault_credential).
 import sys
 import json
 import base64
@@ -64,6 +64,37 @@ class Tools:
         return {"status": "error", "error": err_msg, "message": err_msg}
 
     @staticmethod
+    def _compact_mcp_payload(data: Any, unwrap_result: bool = True) -> Any:
+        if (
+            isinstance(data, dict)
+            and "structuredContent" in data
+            and data["structuredContent"] is not None
+        ):
+            content = data.get("content")
+            has_non_text = isinstance(content, list) and any(
+                isinstance(c, dict) and c.get("type") != "text" for c in content
+            )
+            if not has_non_text:
+                sc = data["structuredContent"]
+                if unwrap_result and not data.get("isError"):
+                    if isinstance(sc, dict) and set(sc.keys()) == {"result"}:
+                        return sc["result"]
+                    if set(data.keys()) <= {
+                        "content",
+                        "structuredContent",
+                        "isError",
+                        "_meta",
+                        "resultType",
+                    }:
+                        return sc
+                compacted = dict(data)
+                compacted.pop("content", None)
+                compacted.pop("_meta", None)
+                compacted.pop("resultType", None)
+                return compacted
+        return data
+
+    @staticmethod
     def _build_error_dict(service: str, action_label: str, data: Any) -> dict:
         msg = f"Erreur lors de l'appel '{action_label}' sur '{service}'."
         if isinstance(data, dict):
@@ -92,7 +123,7 @@ class Tools:
             "message": msg,
             "service": service,
             "action": action_label,
-            "details": data,
+            "details": Tools._compact_mcp_payload(data, unwrap_result=False),
         }
 
     async def _execute_broker_rpc(
@@ -197,7 +228,7 @@ class Tools:
                 await events.status(f"⚠️ Accès à '{service}' : {err_dict['message'][:120]}", done=True)
                 return err_dict
             await events.status(f"✅ Schémas récupérés pour '{service}'.", done=True)
-            return json.dumps(data)
+            return json.dumps(data, ensure_ascii=False)
         except Exception as e:
             err = self._format_transport_error(service, "tools/list", e)
             await events.status(f"❌ Erreur sur '{service}' : {err['message']}", done=True)
@@ -250,7 +281,7 @@ class Tools:
                 )
                 return err_dict
             await events.status("✅ Exécution terminée.", done=True)
-            return json.dumps(data)
+            return json.dumps(self._compact_mcp_payload(data), ensure_ascii=False)
         except Exception as e:
             err = self._format_transport_error(service, function_name, e)
             await events.status(f"❌ Erreur sur '{service}' : {err['message']}", done=True)

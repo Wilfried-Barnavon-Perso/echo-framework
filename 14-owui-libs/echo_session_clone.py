@@ -1,18 +1,19 @@
 """
 title: ECHO Session Clone & Migration Engine
 author: Wilfried BARNAVON
-version: 5.237.20.3
+version: 5.239.12.1
 description: Moteur partagé de duplication atomique des conteneurs de session ECHO (Clone, Fork et Migration).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.12.1: Purge de wm_state dans purge_conversational_state, ré-ancrage des ressources actives (_reanchor_resumed_resources) et des vecteurs conversationnels RAG (anchor_msg_id).
 # 5.237.20.3: Alignement généalogique strict de ancestor_msg_ids sur live_msg_ids dans prune_forked_history.
 # 5.237.20.2: Simplification de prune_forked_history et sync_cloned_session sur message_shadows v2 (support tuple/Row et lecture directe model_id).
 # 5.235.5.2: Purge arborescente exacte via compute_dead_set + purge_dead_set, support live_ids dans sync_cloned_session et duplication RAG filtrée.
 # 5.232.5.1: Alignement Git multi-workspaces (main, plans, generated) au cutoff, réécriture frontmatter dans plans et élagage mtime des workspaces non-versionnés.
-# 5.231.29.1: Alignement sur les constantes SSOT des espaces de travail Codex (CODEX_DIR_NAME, CODEX_WORKSPACE_MAIN, CODEX_WORKSPACE_SANDBOX).
 
 from contextlib import closing
+import json
 import logging
 import os
 import re
@@ -29,6 +30,7 @@ from echo_constants import (
     COLLECTION_SESSION_RAG,
     ECHO_CODEX_WORKSPACES,
     ECHO_QDRANT_URL,
+    SESSION_RAG_CONVERSATION_SOURCE_ID,
     is_codex_workspace_versioned,
 )
 from echo_paths import get_echo_session_path
@@ -179,9 +181,47 @@ def purge_conversational_state(cur: sqlite3.Cursor) -> None:
         cur.execute(
             "DELETE FROM echo_settings WHERE key IN ("
             "'context_stats', 'previous_context_stats', 'last_model_id', "
-            "'last_active_model', 'turn_origin_model', 'compaction_state', 'context_checkpoint') "
+            "'last_active_model', 'turn_origin_model', 'compaction_state', "
+            "'context_checkpoint', 'wm_state') "
             "OR key LIKE 'aec_tier_%' OR key LIKE 'cascade_%'"
         )
+    except Exception:
+        pass
+
+
+def _reanchor_resumed_resources(
+    cur: sqlite3.Cursor,
+    live_msg_ids: Optional[Set[str]],
+    anchor_msg_id: Optional[str],
+) -> None:
+    """Rattache au message d'ancrage de la session migrée les ressources de la branche active."""
+    if not anchor_msg_id:
+        return
+    try:
+        cur.execute(
+            "SELECT id, message_id, metadata FROM echo_resources "
+            "WHERE message_id IS NOT NULL AND message_id != ''"
+        )
+        rows = cur.fetchall()
+        for row in rows:
+            rid = row["id"] if isinstance(row, (sqlite3.Row, dict)) else row[0]
+            mid = row["message_id"] if isinstance(row, (sqlite3.Row, dict)) else row[1]
+            raw_meta = row["metadata"] if isinstance(row, (sqlite3.Row, dict)) else row[2]
+            if live_msg_ids is not None and str(mid) not in live_msg_ids:
+                continue
+            new_meta = raw_meta
+            if isinstance(raw_meta, str) and raw_meta.strip():
+                try:
+                    meta_obj = json.loads(raw_meta)
+                    if isinstance(meta_obj, dict) and "message_id" in meta_obj:
+                        meta_obj["message_id"] = anchor_msg_id
+                        new_meta = json.dumps(meta_obj, ensure_ascii=False)
+                except Exception:
+                    pass
+            cur.execute(
+                "UPDATE echo_resources SET message_id = ?, metadata = ? WHERE id = ?",
+                (anchor_msg_id, new_meta, rid),
+            )
     except Exception:
         pass
 
@@ -755,6 +795,8 @@ def sync_resumed_session(
     orig_cid: str,
     new_cid: str,
     initial_embedded_msg_ids: Optional[List[str]] = None,
+    live_msg_ids: Optional[Set[str]] = None,
+    anchor_msg_id: Optional[str] = None,
 ) -> None:
     """Duplique le conteneur de session pour une migration vers une nouvelle conversation
     (purge l'historique conversationnel et préserve les ressources)."""
@@ -767,6 +809,7 @@ def sync_resumed_session(
             cur = conn.cursor()
             reassign_session_ids(cur, orig_cid, new_cid)
             purge_conversational_state(cur)
+            _reanchor_resumed_resources(cur, live_msg_ids, anchor_msg_id)
             if initial_embedded_msg_ids:
                 now_ts = int(time.time())
                 for mid in initial_embedded_msg_ids:
@@ -783,6 +826,15 @@ def sync_resumed_session(
         )
 
     duplicate_session_domains(user_id, orig_cid, new_cid)
+    try:
+        from echo_window_manager import get_window_manager
+
+        wm = get_window_manager()
+        for cid_target in (orig_cid, new_cid):
+            wm._chat_states.pop((user_id, cid_target), None)
+            wm._chat_states.pop(("system", cid_target), None)
+    except Exception:
+        pass
 
 
 async def duplicate_session_rag(
@@ -791,6 +843,7 @@ async def duplicate_session_rag(
     new_cid: str,
     cutoff_ts: Optional[int] = None,
     live_msg_ids: Optional[Set[str]] = None,
+    anchor_msg_id: Optional[str] = None,
 ) -> int:
     """Duplique par pagination (lots de 256 points) les vecteurs Qdrant de COLLECTION_SESSION_RAG
     de orig_cid vers new_cid. Si cutoff_ts est fourni, filtre uniquement timestamp <= cutoff_ts
@@ -848,6 +901,11 @@ async def duplicate_session_rag(
                     if isinstance(pt_ts, (int, float)) and int(pt_ts) > int(cutoff_ts):
                         continue
                 payload["chat_id"] = new_cid
+                if anchor_msg_id and (
+                    payload.get("source_id") == SESSION_RAG_CONVERSATION_SOURCE_ID
+                    or payload.get("message_id")
+                ):
+                    payload["message_id"] = anchor_msg_id
                 if (
                     isinstance(payload.get("source_id"), str)
                     and orig_marker in payload["source_id"]

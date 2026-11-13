@@ -1,17 +1,17 @@
 """
 title: Résume et Transfert vers un nouveau chat
 author: ECHO Framework
-version: 5.229.2.1
+version: 5.239.12.1
 description: Migre le contexte de travail saturé vers une nouvelle conversation optimisée (clonage Workspace).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxsaW5lIHgxPSI0IiB5MT0iNCIgeDI9IjQiIHkyPSIyMCIvPjxsaW5lIHgxPSI4IiB5MT0iMTIiIHgyPSIxNiIgeTI9IjEyIi8+PHBvbHlsaW5lIHBvaW50cz0iMTIgOCAxNiAxMiAxMiAxNiIvPjxsaW5lIHgxPSIyMCIgeTE9IjQiIHgyPSIyMCIgeTI9IjIwIi8+PC9zdmc+
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.12.1: Isolation globale data-echo-scope="global" sur #echo-migration-hud et transmission de live_msg_ids et anchor_msg_id à sync_resumed_session et duplicate_session_rag.
 # 5.229.2.1: Propagation et héritage direct des tags du chat parent vers la nouvelle conversation migrée.
 # 5.228.4.2: Support asynchrone des routines Chats (_call_owui), purge des blocs <details type="reasoning"> avant troncature, ancrage utilisateur racine pour le Session RAG, synchronisation atomique sous clone_lock et redirection window.location.replace.
 # 5.228.1.1: Suppression de l'en-tête de codage UTF-8 obsolète pour alignement sur extract_frontmatter OWUI (affichage icône).
 # 5.228.0.1: Intégration de l'icône SVG base64 borne à borne (|->|) pour le bouton d'action.
-# 5.227.1.1: Réintroduction et modernisation de l'action de migration de session (extraction complète de branche, backup SQLite atomique via echo_session_clone, pagination Qdrant COLLECTION_SESSION_RAG et timeouts RPC).
 
 import asyncio
 import inspect
@@ -286,6 +286,7 @@ class Action:
           if(div) div.remove();
           div = document.createElement('div');
           div.id = 'echo-migration-hud';
+          div.setAttribute('data-echo-scope', 'global');
           div.style.cssText = 'position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); z-index:99999; background:rgba(15,23,42,0.95); backdrop-filter:blur(10px); padding:20px; border-radius:12px; color:white; border:1px solid rgba(0, 212, 255, 0.4); text-align:center; min-width:320px; box-shadow: 0 10px 30px rgba(0,0,0,0.8); font-family: system-ui, sans-serif;';
           div.innerHTML = `
             <h3 style="margin-top:0; color:#00d4ff; font-weight:600; text-transform:uppercase; font-size:14px;">🚀 Migration de Session ECHO</h3>
@@ -502,6 +503,9 @@ class Action:
 
         # 4. Duplication atomique du conteneur de session ECHO et de la mémoire vectorielle sous verrou
         await update_hud(75, "📁 Duplication de l'Espace Personnel et de la Base SQLite...")
+        live_msg_ids = {
+            str(m["id"]) for m in messages if isinstance(m, dict) and m.get("id")
+        } or None
         clone_lock = get_chat_clone_lock(new_chat_id)
         try:
             async with clone_lock:
@@ -511,10 +515,18 @@ class Action:
                     old_chat_id,
                     new_chat_id,
                     [user_msg_id, assistant_msg_id],
+                    live_msg_ids,
+                    assistant_msg_id,
                 )
                 await update_hud(90, "🧠 Clonage de la Mémoire Vectorielle de Session...")
                 try:
-                    await duplicate_session_rag(user_id, old_chat_id, new_chat_id)
+                    await duplicate_session_rag(
+                        user_id,
+                        old_chat_id,
+                        new_chat_id,
+                        live_msg_ids=live_msg_ids,
+                        anchor_msg_id=assistant_msg_id,
+                    )
                 except Exception as rag_err:
                     logger.warning(
                         f"[ECHO-RESUME-ACTION] Avertissement clonage Qdrant SESSION_RAG : {rag_err}"

@@ -1,6 +1,6 @@
 ---
 domain_id: identity_and_api_mcp
-version: 5.239.10.1
+version: 5.239.12.1
 updated_at: 2026-11-13
 name: Coffre-Fort d'Identités (Identity Vault), Client API HTTP & Protocole MCP
 description: Découverte et gestion des secrets/comptes chiffrés et sécurisés (Identity Vault), requêtes HTTP universelles (call_api), instanciation/exécution sur les serveurs MCP (echo_mcp_tool) et stratégies par service.
@@ -63,10 +63,10 @@ L'outil MCP route dynamiquement les requêtes vers les serveurs (`mcp_native`, `
     - `query` : Mots-clés textuels (optionnel). Si omis, filtre uniquement par dates ou dossier avec tri strict.
     - `folder` : Dossier spécifique ou chemin hiérarchique (ex: `"Boîte de réception/LinkedIn"`, `"inbox"`). Si omis, recherche globale.
     - `received_after` / `received_before` : Bornes temporelles (`"YYYY-MM-DD"` ou ISO).
-    - `sender` : Filtre expéditeur (nom partiel ou adresse email).
+    - `sender` : Filtre expéditeur (nom partiel ou adresse email, supporté nativement en KQL et OData).
     - `unread_only` : `True` pour restreindre aux non-lus.
-    - `has_attachments` : `True` pour exiger la présence de pièces jointes.
-    - `order_by` : `"receivedDateTime desc"` (défaut) ou `"receivedDateTime asc"` (sans `query`).
+    - `has_attachments` : Booléen (`True`/`False`) pour filtrer la présence de pièces jointes (supporté nativement en KQL et OData).
+    - `order_by` : `"receivedDateTime desc"` (défaut) ou `"receivedDateTime asc"` (s'applique aussi bien en mode KQL qu'en mode OData).
     - `limit` : Nombre maximal de résultats (1 à 100, défaut `50`).
     - `include_body` : `False` par défaut (le champ `bodyPreview` de 255 caractères est toujours fourni pour qualification rapide).
 - **Lecture Batch vs Unitaire (`batch_get_emails` vs `get_email`)** :
@@ -87,7 +87,7 @@ L'outil MCP route dynamiquement les requêtes vers les serveurs (`mcp_native`, `
   4. `batch_trash_emails(email_ids=[...])`.
 - **Téléchargement OneDrive & Pièces Jointes (`get_file`, `get_attachment`)** :
   - Les fichiers téléchargés via `get_file(file_id="...")` et `get_attachment(email_id="...", attachment_id="...")` sont automatiquement ingérés dans le Registre Unifié (`query_registry`) et retournent directement leur `file_id` ECHO (8 caractères hexadécimaux). `download_path` et `save_path` sont optionnels (seul un nom de fichier peut être suggéré).
-- **Autres Capacités** : Agenda (`list_events`, `create_event`, `respond_event`) et OneDrive (`list_files`, `create_file`, `update_file`, `delete_file`).
+- **Autres Capacités & Support Universel MSA / Entra ID** : Agenda (`list_events`, `search_events`, `create_event`, `respond_event`), OneDrive (`list_files`, `search_files`, `create_file`, `update_file`, `delete_file`) et recherche transversale (`unified_search`). `unified_search`, `search_files` et `search_events` fonctionnent nativement sur comptes personnels MSA (`@live.fr`/`@outlook.com`) comme Entra ID via Graph v1.0. Le scope délégué optionnel `Contacts.ReadWrite` est requis sur l'application Azure si l'accès à `list_contacts`/`search_contacts` est utilisé.
 
 ### 3.2 Google Workspace (`google_workspace`)
 - **Configuration Vault** : Clés requises : `USER_GOOGLE_EMAIL`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN` (écran de consentement GCP sur *"In production"*).
