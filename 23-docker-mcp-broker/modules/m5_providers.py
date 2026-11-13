@@ -1,17 +1,18 @@
-# VERSION : 5.231.37.1
+# VERSION : 5.239.10.1
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.10.1: Sans fallback Stdio list_emails, fix tenant_id MSAL, body_max_length et batch_get_emails parallèle.
 # 5.231.37.1: Routage atomique des téléchargements M365 et Google Workspace vers le Download Broker (/mcp/).
 # 5.229.1.3: En-tête Prefer text, assainisseur anti-HTML, bodyPreview et traçabilité new_id post-déplacement.
 # 5.229.1.2: Lecteur batch (batch_get_emails) et recherche multi-axes (search_emails KQL/OData/dossiers).
 # 5.229.1.1: Auto-résolution dossiers M365, pagination/tri list_emails, trash_email et batch_trash_emails ($batch).
-# 5.228.0.1: Fail-Closed OAuth2 GoogleWorkspaceProvider (prepare_env + bouclier anti-localhost:8001).
 """
 ECHO MCP Broker - Adaptateurs de cycle de vie spécifiques aux fournisseurs MCP résidents.
 Isole la logique d'authentification et de préparation d'environnement (Microsoft 365 MSAL,
 Google Workspace OAuth2) hors de l'orchestrateur de transport générique m5_proxy_mcp.py.
 """
 import ast
+import asyncio
 import base64
 import hashlib
 import html
@@ -480,6 +481,50 @@ class Microsoft365Provider(MCPServiceProvider):
         return text
 
     @staticmethod
+    def _format_exception(exc: Exception) -> str:
+        detail = str(exc).strip()
+        return f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+
+    @staticmethod
+    def _get_email_select_fields(include_body: bool) -> str:
+        if include_body:
+            return (
+                "id,subject,from,toRecipients,ccRecipients,receivedDateTime,"
+                "hasAttachments,body,bodyPreview,conversationId,isRead"
+            )
+        return (
+            "id,subject,from,toRecipients,receivedDateTime,hasAttachments,"
+            "bodyPreview,conversationId,isRead"
+        )
+
+    def _normalize_email_message(
+        self,
+        msg: dict,
+        include_body: bool,
+        body_max_length: Optional[int] = None,
+    ) -> dict:
+        if not isinstance(msg, dict):
+            return msg
+        if include_body and "body" in msg and isinstance(msg["body"], dict):
+            raw_content = msg["body"].get("content", "")
+            clean_content = self._clean_html_to_text(raw_content)
+            if body_max_length is not None and len(clean_content) > body_max_length:
+                trunc_msg = f"\n\n[Content truncated - {len(clean_content)} total characters]"
+                msg["body"]["content"] = clean_content[:body_max_length] + trunc_msg
+                msg["body"]["truncated"] = True
+                msg["body"]["total_length"] = len(clean_content)
+            else:
+                msg["body"]["content"] = clean_content
+        elif not include_body and "body" in msg:
+            del msg["body"]
+
+        if "attachments" in msg and isinstance(msg["attachments"], list):
+            for att in msg["attachments"]:
+                if isinstance(att, dict) and "contentBytes" in att:
+                    del att["contentBytes"]
+        return msg
+
+    @staticmethod
     def _user_cache_dir(user_id: str) -> str:
         safe_uid = "".join(
             c for c in str(user_id or "anonymous") if c.isalnum() or c in ("-", "_", ".")
@@ -619,7 +664,7 @@ class Microsoft365Provider(MCPServiceProvider):
 
         cache_dir = cls._user_cache_dir(user_id)
         client_id = os.environ.get("MICROSOFT_MCP_CLIENT_ID")
-        tenant_id = os.environ.get("MICROSOFT_MCP_TENANT_ID", "common")
+        tenant_id = os.environ.get("MICROSOFT_MCP_TENANT_ID")
 
         cfg_path = os.path.join(cache_dir, ".cred_config.json")
         if os.path.exists(cfg_path):
@@ -630,6 +675,8 @@ class Microsoft365Provider(MCPServiceProvider):
                 tenant_id = tenant_id or saved_cfg.get("MICROSOFT_MCP_TENANT_ID")
             except Exception:
                 pass
+
+        tenant_id = tenant_id or "common"
 
         if not client_id:
             raise ValueError("MICROSOFT_MCP_CLIENT_ID manquant pour rafraîchir le jeton.")
@@ -844,6 +891,13 @@ class Microsoft365Provider(MCPServiceProvider):
                         "'receivedDateTime asc' (oldest first)."
                     ),
                     "default": "receivedDateTime desc",
+                }
+                props["body_max_length"] = {
+                    "type": "integer",
+                    "description": (
+                        "Maximum characters for body content per email when include_body is true (default: 5000)."
+                    ),
+                    "default": 5000,
                 }
                 t_copy["inputSchema"] = dict(t_copy.get("inputSchema", {}))
                 t_copy["inputSchema"]["properties"] = props
@@ -1362,16 +1416,7 @@ class Microsoft365Provider(MCPServiceProvider):
             body_max_length = max(int(args.get("body_max_length", 50000) or 50000), 100)
             include_attachments = bool(args.get("include_attachments", True))
 
-            if include_body:
-                select_fields = (
-                    "id,subject,from,toRecipients,ccRecipients,receivedDateTime,"
-                    "hasAttachments,body,bodyPreview,conversationId,isRead"
-                )
-            else:
-                select_fields = (
-                    "id,subject,from,toRecipients,receivedDateTime,hasAttachments,"
-                    "bodyPreview,conversationId,isRead"
-                )
+            select_fields = self._get_email_select_fields(include_body)
 
             params = {"$select": select_fields}
             if include_attachments:
@@ -1391,25 +1436,9 @@ class Microsoft365Provider(MCPServiceProvider):
                         params=params,
                     )
                     if res.status_code == 200:
-                        msg = res.json()
-                        if include_body and "body" in msg and isinstance(msg["body"], dict):
-                            raw_content = msg["body"].get("content", "")
-                            clean_content = self._clean_html_to_text(raw_content)
-                            if len(clean_content) > body_max_length:
-                                trunc_msg = f"\n\n[Content truncated - {len(clean_content)} total characters]"
-                                msg["body"]["content"] = clean_content[:body_max_length] + trunc_msg
-                                msg["body"]["truncated"] = True
-                                msg["body"]["total_length"] = len(clean_content)
-                            else:
-                                msg["body"]["content"] = clean_content
-                        elif not include_body and "body" in msg:
-                            del msg["body"]
-
-                        if "attachments" in msg and isinstance(msg["attachments"], list):
-                            for att in msg["attachments"]:
-                                if isinstance(att, dict) and "contentBytes" in att:
-                                    del att["contentBytes"]
-
+                        msg = self._normalize_email_message(
+                            res.json(), include_body, body_max_length
+                        )
                         return args, self._make_tool_response(msg)
                     return args, self._make_tool_response(
                         {
@@ -1420,7 +1449,10 @@ class Microsoft365Provider(MCPServiceProvider):
                     )
             except Exception as e:
                 return args, self._make_tool_response(
-                    {"status": "error", "message": f"Exception lors de get_email: {e}"},
+                    {
+                        "status": "error",
+                        "message": f"Exception lors de get_email: {self._format_exception(e)}",
+                    },
                     is_error=True,
                 )
 
@@ -1441,16 +1473,7 @@ class Microsoft365Provider(MCPServiceProvider):
             body_max_length = max(int(args.get("body_max_length", 5000) or 5000), 100)
             include_attachments = bool(args.get("include_attachments", False))
 
-            if include_body:
-                select_fields = (
-                    "id,subject,from,toRecipients,ccRecipients,receivedDateTime,"
-                    "hasAttachments,body,bodyPreview,conversationId,isRead"
-                )
-            else:
-                select_fields = (
-                    "id,subject,from,toRecipients,receivedDateTime,hasAttachments,"
-                    "bodyPreview,conversationId,isRead"
-                )
+            select_fields = self._get_email_select_fields(include_body)
 
             expand_clause = (
                 "&$expand=attachments($select=id,name,size,contentType)"
@@ -1466,12 +1489,17 @@ class Microsoft365Provider(MCPServiceProvider):
                 }
                 retrieved_emails = []
                 failed_ids = []
+                failed_details: list[dict] = []
 
                 chunks = [
                     email_ids[i:i + 20] for i in range(0, len(email_ids), 20)
                 ]
+                sem = asyncio.Semaphore(3)
                 async with httpx.AsyncClient(timeout=30.0) as client:
-                    for chunk in chunks:
+                    async def _fetch_chunk(chunk: list[str]):
+                        c_emails = []
+                        c_failed_ids = []
+                        c_failed_details: list[dict] = []
                         sub_requests = [
                             {
                                 "id": str(idx),
@@ -1481,43 +1509,60 @@ class Microsoft365Provider(MCPServiceProvider):
                             }
                             for idx, eid in enumerate(chunk)
                         ]
-                        batch_res = await client.post(
-                            "https://graph.microsoft.com/v1.0/$batch",
-                            headers=headers,
-                            json={"requests": sub_requests},
-                        )
+                        async with sem:
+                            batch_res = await client.post(
+                                "https://graph.microsoft.com/v1.0/$batch",
+                                headers=headers,
+                                json={"requests": sub_requests},
+                            )
                         if batch_res.status_code == 200:
                             b_data = batch_res.json()
                             for r in b_data.get("responses", []):
                                 idx_req = int(r.get("id", -1))
                                 if r.get("status") == 200:
-                                    msg = r.get("body", {})
-                                    if include_body and "body" in msg and isinstance(msg["body"], dict):
-                                        raw_content = msg["body"].get("content", "")
-                                        clean_content = self._clean_html_to_text(raw_content)
-                                        if len(clean_content) > body_max_length:
-                                            trunc_msg = (
-                                                f"\n\n[Content truncated - {len(clean_content)} total characters]"
-                                            )
-                                            msg["body"]["content"] = clean_content[:body_max_length] + trunc_msg
-                                            msg["body"]["truncated"] = True
-                                            msg["body"]["total_length"] = len(clean_content)
-                                        else:
-                                            msg["body"]["content"] = clean_content
-                                    elif not include_body and "body" in msg:
-                                        del msg["body"]
-
-                                    if "attachments" in msg and isinstance(msg["attachments"], list):
-                                        for att in msg["attachments"]:
-                                            if isinstance(att, dict) and "contentBytes" in att:
-                                                del att["contentBytes"]
-
-                                    retrieved_emails.append(msg)
+                                    msg = self._normalize_email_message(
+                                        r.get("body", {}), include_body, body_max_length
+                                    )
+                                    c_emails.append(msg)
                                 else:
                                     if 0 <= idx_req < len(chunk):
-                                        failed_ids.append(chunk[idx_req])
+                                        eid = chunk[idx_req]
+                                        c_failed_ids.append(eid)
+                                        err_body = r.get("body")
+                                        err_msg = ""
+                                        if isinstance(err_body, dict):
+                                            err_obj = err_body.get("error")
+                                            if isinstance(err_obj, dict) and err_obj.get("message"):
+                                                err_msg = str(err_obj["message"])
+                                            elif err_body:
+                                                err_msg = str(err_body)[:300]
+                                        elif err_body:
+                                            err_msg = str(err_body)[:300]
+                                        c_failed_details.append(
+                                            {
+                                                "id": eid,
+                                                "status": r.get("status"),
+                                                "error": err_msg,
+                                            }
+                                        )
                         else:
-                            failed_ids.extend(chunk)
+                            err_text = batch_res.text[:300]
+                            c_failed_ids.extend(chunk)
+                            for eid in chunk:
+                                c_failed_details.append(
+                                    {
+                                        "id": eid,
+                                        "status": batch_res.status_code,
+                                        "error": err_text,
+                                    }
+                                )
+                        return c_emails, c_failed_ids, c_failed_details
+
+                    chunk_results = await asyncio.gather(*[_fetch_chunk(c) for c in chunks])
+                    for c_emails, c_failed_ids, c_failed_details in chunk_results:
+                        retrieved_emails.extend(c_emails)
+                        failed_ids.extend(c_failed_ids)
+                        failed_details.extend(c_failed_details)
 
                 return args, self._make_tool_response(
                     {
@@ -1527,13 +1572,14 @@ class Microsoft365Provider(MCPServiceProvider):
                         "failed_count": len(failed_ids),
                         "emails": retrieved_emails,
                         "failed_ids": failed_ids,
+                        "failed_details": failed_details,
                     }
                 )
             except Exception as e:
                 return args, self._make_tool_response(
                     {
                         "status": "error",
-                        "message": f"Exception lors de batch_get_emails: {e}",
+                        "message": f"Exception lors de batch_get_emails: {self._format_exception(e)}",
                     },
                     is_error=True,
                 )
@@ -1545,6 +1591,7 @@ class Microsoft365Provider(MCPServiceProvider):
             skip = max(int(args.get("skip", 0) or 0), 0)
             order_by = str(args.get("order_by") or "receivedDateTime desc").strip()
             include_body = bool(args.get("include_body", True))
+            body_max_length = max(int(args.get("body_max_length", 5000) or 5000), 100)
 
             resolved_fid = await self._resolve_folder_id(
                 user_id, resolved_account, folder_arg
@@ -1569,16 +1616,7 @@ class Microsoft365Provider(MCPServiceProvider):
             folder_endpoint_id = self.WELL_KNOWN_PATHS.get(
                 resolved_fid.casefold(), resolved_fid
             )
-            if include_body:
-                select_fields = (
-                    "id,subject,from,toRecipients,ccRecipients,receivedDateTime,"
-                    "hasAttachments,body,bodyPreview,conversationId,isRead"
-                )
-            else:
-                select_fields = (
-                    "id,subject,from,toRecipients,receivedDateTime,hasAttachments,"
-                    "bodyPreview,conversationId,isRead"
-                )
+            select_fields = self._get_email_select_fields(include_body)
 
             try:
                 token = self._get_access_token(user_id, resolved_account)
@@ -1589,7 +1627,7 @@ class Microsoft365Provider(MCPServiceProvider):
                     "$orderby": order_by,
                     "$select": select_fields,
                 }
-                async with httpx.AsyncClient(timeout=20.0) as client:
+                async with httpx.AsyncClient(timeout=30.0) as client:
                     res = await client.get(
                         url,
                         headers={
@@ -1600,13 +1638,10 @@ class Microsoft365Provider(MCPServiceProvider):
                         params=params,
                     )
                     if res.status_code == 200:
-                        messages = res.json().get("value", [])
-                        if include_body:
-                            for m in messages:
-                                if "body" in m and isinstance(m["body"], dict):
-                                    m["body"]["content"] = self._clean_html_to_text(
-                                        m["body"].get("content", "")
-                                    )
+                        messages = [
+                            self._normalize_email_message(m, include_body, body_max_length)
+                            for m in res.json().get("value", [])
+                        ]
                         return args, self._make_tool_response(messages)
                     return args, self._make_tool_response(
                         {
@@ -1616,8 +1651,13 @@ class Microsoft365Provider(MCPServiceProvider):
                         is_error=True,
                     )
             except Exception as e:
-                logger.warning("Échec Graph list_emails direct: %s", e)
-                args["folder"] = folder_endpoint_id
+                return args, self._make_tool_response(
+                    {
+                        "status": "error",
+                        "message": f"Exception lors de list_emails: {self._format_exception(e)}",
+                    },
+                    is_error=True,
+                )
 
         # Cas 10 : search_emails -> recherche multi-axes (mots-clés, temporalité, expéditeur, dossier, statut)
         if tool_name == "search_emails":
@@ -1658,16 +1698,7 @@ class Microsoft365Provider(MCPServiceProvider):
             else:
                 base_url = "https://graph.microsoft.com/v1.0/me/messages"
 
-            if include_body:
-                select_fields = (
-                    "id,subject,from,toRecipients,ccRecipients,receivedDateTime,"
-                    "hasAttachments,body,bodyPreview,conversationId,isRead"
-                )
-            else:
-                select_fields = (
-                    "id,subject,from,toRecipients,receivedDateTime,hasAttachments,"
-                    "bodyPreview,conversationId,isRead"
-                )
+            select_fields = self._get_email_select_fields(include_body)
 
             iso_after, short_after = self._normalize_iso_date(received_after, is_end_of_day=False)
             iso_before, short_before = self._normalize_iso_date(received_before, is_end_of_day=True)
@@ -1727,13 +1758,12 @@ class Microsoft365Provider(MCPServiceProvider):
                         params=params,
                     )
                     if res.status_code == 200:
-                        messages = res.json().get("value", [])
-                        if include_body:
-                            for m in messages:
-                                if "body" in m and isinstance(m["body"], dict):
-                                    m["body"]["content"] = self._clean_html_to_text(
-                                        m["body"].get("content", "")
-                                    )
+                        messages = [
+                            self._normalize_email_message(
+                                m, include_body, body_max_length=5000
+                            )
+                            for m in res.json().get("value", [])
+                        ]
                         return args, self._make_tool_response(messages)
                     return args, self._make_tool_response(
                         {
@@ -1746,7 +1776,7 @@ class Microsoft365Provider(MCPServiceProvider):
                 return args, self._make_tool_response(
                     {
                         "status": "error",
-                        "message": f"Exception lors de search_emails: {e}",
+                        "message": f"Exception lors de search_emails: {self._format_exception(e)}",
                     },
                     is_error=True,
                 )

@@ -1,11 +1,11 @@
-# VERSION : 5.231.37.1
+# VERSION : 5.239.10.1
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.10.1: Timeout MCP_TOOL_CALL_TIMEOUT (55s) avec éviction, verrous par cache_key et clé indexée sur cred_hash.
 # 5.231.37.1: Propagation de chat_id aux hooks before_tool_call et after_tool_call de MCPServiceProvider.
 # 5.231.20.1: Isolation des sessions MCP actives par compte optionnel (cache_key incluant account_id).
 # 5.228.0.1: Import partagé de AuthRequiredError depuis m5_providers et déduplication du message d'erreur.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.18: Hook générique after_list_tools pour l'adaptation des schémas de fournisseurs résidents
 
 import asyncio
 import json
@@ -42,6 +42,7 @@ class TolerantClientSession(ClientSession):
 # Délais (s) : démarrage d'un serveur stdio (npx/uvx peuvent télécharger) et fermeture propre
 MCP_SESSION_START_TIMEOUT = 60
 MCP_SESSION_CLOSE_TIMEOUT = 15
+MCP_TOOL_CALL_TIMEOUT = 55
 
 
 def _unwrap(exc: BaseException) -> BaseException:
@@ -117,7 +118,20 @@ def _dump(result) -> dict:
 
 # Cache des sessions actives : cache_key -> _SessionHolder
 _SESSIONS = {}
-_SESSIONS_LOCK = asyncio.Lock()
+_SESSION_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _get_session_lock(cache_key: str) -> asyncio.Lock:
+    lock = _SESSION_LOCKS.get(cache_key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _SESSION_LOCKS[cache_key] = lock
+    return lock
+
+
+def _build_cache_key(user_id: str, service: str, credentials_str: str) -> tuple[str, str]:
+    cred_hash = hashlib.md5((credentials_str or "").encode()).hexdigest()
+    return f"{user_id}_{service}_{cred_hash[:12]}", cred_hash
 
 
 async def _open_transport(stack: AsyncExitStack, user_id: str, service: str, credentials_str: str):
@@ -226,18 +240,16 @@ async def _open_transport(stack: AsyncExitStack, user_id: str, service: str, cre
 
 async def _get_or_create_session(
     user_id: str, service: str, credentials_str: str, account_id: str = None
-) -> ClientSession:
+) -> tuple[ClientSession, str]:
     """Récupère une session MCP existante ou en initialise une nouvelle via l'alias."""
-    cache_key = f"{user_id}_{service}_{account_id}" if account_id else f"{user_id}_{service}"
+    del account_id
+    cache_key, cred_hash = _build_cache_key(user_id, service, credentials_str)
 
-    # Récupérer les identifiants et calculer l'empreinte
-    cred_hash = hashlib.md5((credentials_str or "").encode()).hexdigest()
-
-    async with _SESSIONS_LOCK:
+    async with _get_session_lock(cache_key):
         holder = _SESSIONS.get(cache_key)
         if holder is not None:
             if holder.cred_hash == cred_hash and holder.session is not None:
-                return holder.session
+                return holder.session, cache_key
 
             # Identifiants modifiés ou session morte : fermeture par sa tâche propriétaire
             await holder.close()
@@ -248,7 +260,7 @@ async def _get_or_create_session(
         )
         await holder.start()
         _SESSIONS[cache_key] = holder
-        return holder.session
+        return holder.session, cache_key
 
 
 async def proxy_mcp_request(payload: dict) -> dict:
@@ -281,12 +293,23 @@ async def proxy_mcp_request(payload: dict) -> dict:
     if not service or not method:
         raise ValueError("Paramètres 'service' ou 'rpc_request.method' manquants.")
 
-    session = await _get_or_create_session(user_id, service, credentials, account_id=account_id)
+    session, cache_key = await _get_or_create_session(
+        user_id, service, credentials, account_id=account_id
+    )
     provider = get_service_provider(service)
 
     try:
         if method == "tools/list":
-            dumped_tools = _dump(await session.list_tools())
+            try:
+                tools_res = await asyncio.wait_for(
+                    session.list_tools(), timeout=MCP_TOOL_CALL_TIMEOUT
+                )
+            except asyncio.TimeoutError as te:
+                raise TimeoutError(
+                    f"Délai dépassé ({MCP_TOOL_CALL_TIMEOUT}s) lors de tools/list sur '{service}'. "
+                    "La session MCP est réinitialisée."
+                ) from te
+            dumped_tools = _dump(tools_res)
             return await provider.after_list_tools(user_id, dumped_tools)
         elif method == "tools/call":
             name = params.get("name")
@@ -296,15 +319,23 @@ async def proxy_mcp_request(payload: dict) -> dict:
             )
             if short_circuit is not None:
                 return short_circuit
-            dumped = _dump(await session.call_tool(name, args))
+            try:
+                call_res = await asyncio.wait_for(
+                    session.call_tool(name, args), timeout=MCP_TOOL_CALL_TIMEOUT
+                )
+            except asyncio.TimeoutError as te:
+                raise TimeoutError(
+                    f"Délai dépassé ({MCP_TOOL_CALL_TIMEOUT}s) lors de l'appel '{name}' sur '{service}'. "
+                    "La session MCP est réinitialisée."
+                ) from te
+            dumped = _dump(call_res)
             return await provider.after_tool_call(
                 user_id, name, dumped, chat_id=chat_id
             )
         else:
             raise ValueError(f"Méthode non supportée par le proxy : {method}")
     except BaseException:
-        cache_key = f"{user_id}_{service}_{account_id}" if account_id else f"{user_id}_{service}"
-        async with _SESSIONS_LOCK:
+        async with _get_session_lock(cache_key):
             holder = _SESSIONS.get(cache_key)
             if holder is not None and holder.session is session:
                 _SESSIONS.pop(cache_key, None)

@@ -1,16 +1,16 @@
 """
 title: ECHO Universal MCP Tool
 author: ECHO
-version: 5.233.0.1
+version: 5.239.10.1
 description: Outil universel d'interrogation et d'exécution sur l'infrastructure MCP via routage dynamique.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.10.1: Factorisation RPC/erreurs, timeouts 90s/65s alignés Broker et clôture events.status sur erreur.
 # 5.233.0.1: Décoration @echo_tool sur les 2 méthodes publiques et simplification des retours wrap_tool_output.
 # 5.231.37.1: Propagation de chat_id (en-tête x-openwebui-chat-id et payload proxy_mcp) pour le Download Broker.
 # 5.231.21.1: Délégation de _fetch_credentials au CRUD chiffré AES-256-GCM de EchoStateManager (get_vault_credential).
 # 5.231.20.1: Isolation multi-user des credentials sur mcp_native et support multi-compte optionnel (account_id).
-# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 import sys
 import json
 import base64
@@ -51,6 +51,63 @@ class Tools:
         except Exception:
             return ""
 
+    @staticmethod
+    def _format_transport_error(service: str, action_label: str, exc: Exception) -> dict:
+        if isinstance(exc, httpx.TimeoutException):
+            return {
+                "status": "error",
+                "message": f"{type(exc).__name__}: délai dépassé lors de l'appel à '{service}' ({action_label}).",
+            }
+        err_msg = str(exc).strip() or type(exc).__name__
+        return {"status": "error", "message": err_msg}
+
+    async def _execute_broker_rpc(
+        self,
+        service: str,
+        user_id: str,
+        chat_id: str,
+        account_id: Optional[str],
+        credentials: str,
+        rpc: dict,
+        timeout_sec: float,
+    ) -> tuple[dict, str]:
+        category = await self._get_category(service)
+        timeout = httpx.Timeout(timeout_sec, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if category == "mcp_native":
+                b64_creds = (
+                    base64.b64encode(credentials.encode("utf-8")).decode("ascii")
+                    if credentials
+                    else ""
+                )
+                headers = {
+                    "x-openwebui-user-id": str(user_id),
+                    "x-openwebui-chat-id": chat_id,
+                    "x-echo-credentials": b64_creds,
+                }
+                resp = await client.post(self.mcp_native_url, json=rpc, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                status_val = "success"
+            else:
+                payload = {
+                    "user_id": user_id,
+                    "chat_id": chat_id,
+                    "service": service,
+                    "account_id": account_id,
+                    "credentials": credentials,
+                    "rpc_request": rpc,
+                }
+                resp = await client.post(self.proxy_url, json=payload)
+                data = resp.json()
+                is_err = (
+                    data.get("status") == "error"
+                    or data.get("isError") is True
+                    or resp.status_code >= 400
+                )
+                status_val = "error" if is_err else "success"
+        return data, status_val
+
     @echo_tool
     async def list_mcp_functions(
         self,
@@ -69,51 +126,30 @@ class Tools:
         await events.status(f"🌐 Routage dynamique pour l'interrogation de '{service}'...")
 
         chat_id = str((__metadata__ or {}).get("chat_id") or "")
-        category = await self._get_category(service)
         credentials = self._fetch_credentials(__user__["id"], service, account_id)
+        rpc = {"jsonrpc": "2.0", "method": "tools/list", "id": 1}
 
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                if category == "mcp_native":
-                    rpc = {"jsonrpc": "2.0", "method": "tools/list", "id": 1}
-                    b64_creds = base64.b64encode(credentials.encode("utf-8")).decode("ascii") if credentials else ""
-                    headers = {
-                        "x-openwebui-user-id": str(__user__["id"]),
-                        "x-openwebui-chat-id": chat_id,
-                        "x-echo-credentials": b64_creds,
-                    }
-                    resp = await client.post(self.mcp_native_url, json=rpc, headers=headers)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    status_val = "success"
-                else:
-                    payload = {
-                        "user_id": __user__["id"],
-                        "chat_id": chat_id,
-                        "service": service,
-                        "account_id": account_id,
-                        "credentials": credentials,
-                        "rpc_request": {"jsonrpc": "2.0", "method": "tools/list", "id": 1}
-                    }
-                    resp = await client.post(self.proxy_url, json=payload)
-                    data = resp.json()
-                    is_err = (
-                        data.get("status") == "error"
-                        or data.get("isError") is True
-                        or resp.status_code >= 400
-                    )
-                    status_val = "error" if is_err else "success"
-
-                label = (
-                    f"✅ Schémas récupérés pour '{service}'."
-                    if status_val == "success"
-                    else f"⚠️ Accès à '{service}' : configuration requise."
-                )
-                await events.status(label, done=True)
-                return json.dumps(data)
+            data, status_val = await self._execute_broker_rpc(
+                service=service,
+                user_id=__user__["id"],
+                chat_id=chat_id,
+                account_id=account_id,
+                credentials=credentials,
+                rpc=rpc,
+                timeout_sec=65.0,
+            )
+            label = (
+                f"✅ Schémas récupérés pour '{service}'."
+                if status_val == "success"
+                else f"⚠️ Accès à '{service}' : configuration requise."
+            )
+            await events.status(label, done=True)
+            return json.dumps(data)
         except Exception as e:
-            err_msg = str(e).strip() or type(e).__name__
-            return {"status": "error", "message": err_msg}
+            err = self._format_transport_error(service, "tools/list", e)
+            await events.status(f"❌ Erreur sur '{service}' : {err['message']}", done=True)
+            return err
 
     @echo_tool
     async def call_mcp_function(
@@ -136,58 +172,32 @@ class Tools:
 
         arguments = arguments or {}
         chat_id = str((__metadata__ or {}).get("chat_id") or "")
-        category = await self._get_category(service)
         credentials = self._fetch_credentials(__user__["id"], service, account_id)
+        rpc = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {"name": function_name, "arguments": arguments},
+            "id": 1,
+        }
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                if category == "mcp_native":
-                    rpc = {
-                        "jsonrpc": "2.0",
-                        "method": "tools/call",
-                        "params": {"name": function_name, "arguments": arguments},
-                        "id": 1,
-                    }
-                    b64_creds = base64.b64encode(credentials.encode("utf-8")).decode("ascii") if credentials else ""
-                    headers = {
-                        "x-openwebui-user-id": str(__user__["id"]),
-                        "x-openwebui-chat-id": chat_id,
-                        "x-echo-credentials": b64_creds,
-                    }
-                    resp = await client.post(self.mcp_native_url, json=rpc, headers=headers)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    status_val = "success"
-                else:
-                    payload = {
-                        "user_id": __user__["id"],
-                        "chat_id": chat_id,
-                        "service": service,
-                        "account_id": account_id,
-                        "credentials": credentials,
-                        "rpc_request": {
-                            "jsonrpc": "2.0",
-                            "method": "tools/call",
-                            "params": {"name": function_name, "arguments": arguments},
-                            "id": 1,
-                        },
-                    }
-                    resp = await client.post(self.proxy_url, json=payload)
-                    data = resp.json()
-                    is_err = (
-                        data.get("status") == "error"
-                        or data.get("isError") is True
-                        or resp.status_code >= 400
-                    )
-                    status_val = "error" if is_err else "success"
-
-                label = (
-                    "✅ Exécution terminée."
-                    if status_val == "success"
-                    else f"⚠️ Erreur lors de l'exécution sur '{service}'."
-                )
-                await events.status(label, done=True)
-                return json.dumps(data)
+            data, status_val = await self._execute_broker_rpc(
+                service=service,
+                user_id=__user__["id"],
+                chat_id=chat_id,
+                account_id=account_id,
+                credentials=credentials,
+                rpc=rpc,
+                timeout_sec=90.0,
+            )
+            label = (
+                "✅ Exécution terminée."
+                if status_val == "success"
+                else f"⚠️ Erreur lors de l'exécution sur '{service}'."
+            )
+            await events.status(label, done=True)
+            return json.dumps(data)
         except Exception as e:
-            err_msg = str(e).strip() or type(e).__name__
-            return {"status": "error", "message": err_msg}
+            err = self._format_transport_error(service, function_name, e)
+            await events.status(f"❌ Erreur sur '{service}' : {err['message']}", done=True)
+            return err

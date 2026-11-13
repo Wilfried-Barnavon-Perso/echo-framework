@@ -1,7 +1,7 @@
 ---
 domain_id: identity_and_api_mcp
-version: 5.235.5.1
-updated_at: 2026-11-06
+version: 5.239.10.1
+updated_at: 2026-11-13
 name: Coffre-Fort d'Identités (Identity Vault), Client API HTTP & Protocole MCP
 description: Découverte et gestion des secrets/comptes chiffrés et sécurisés (Identity Vault), requêtes HTTP universelles (call_api), instanciation/exécution sur les serveurs MCP (echo_mcp_tool) et stratégies par service.
 tools: [list_identities_services, list_identities, manage_identity, call_api, list_mcp_functions, call_mcp_function]
@@ -70,10 +70,10 @@ L'outil MCP route dynamiquement les requêtes vers les serveurs (`mcp_native`, `
     - `limit` : Nombre maximal de résultats (1 à 100, défaut `50`).
     - `include_body` : `False` par défaut (le champ `bodyPreview` de 255 caractères est toujours fourni pour qualification rapide).
 - **Lecture Batch vs Unitaire (`batch_get_emails` vs `get_email`)** :
-  - **Lecteur Batch (`batch_get_emails`) - À PRIVILÉGIER** : `batch_get_emails(email_ids=["id1", "id2", ...], include_body=True, body_max_length=5000, include_attachments=False)` rapatrie le contenu textuel nettoyé de plusieurs e-mails en un seul appel.
+  - **Lecteur Batch (`batch_get_emails`) - À PRIVILÉGIER** : `batch_get_emails(email_ids=["id1", "id2", ...], include_body=True, body_max_length=5000, include_attachments=False)` rapatrie le contenu textuel nettoyé de plusieurs e-mails en un seul appel et restitue `failed_ids` et `failed_details` (code HTTP et motif Graph) en cas d'échec partiel.
   - **Lecture unitaire (`get_email`)** : Réservée à l'inspection isolée d'un e-mail unique (`email_id="...", include_body=True`).
 - **Lecture et Pagination de Dossier (`list_emails`)** :
-  - Arguments : `folder` (nom, chemin, `"inbox"` ou `FolderId`), `limit` (1 à 100, défaut `10`), `skip` (décalage pagination, défaut `0`), `order_by` (`"receivedDateTime desc"` ou `"receivedDateTime asc"`), `include_body` (`False` par défaut).
+  - Arguments : `folder` (nom, chemin, `"inbox"` ou `FolderId`), `limit` (1 à 100, défaut `10`), `skip` (décalage pagination, défaut `0`), `order_by` (`"receivedDateTime desc"` ou `"receivedDateTime asc"`), `include_body` (`False` par défaut), `body_max_length` (défaut `5000`).
 - **Suppression, Déplacement et Mutation MAPI des Identifiants (`email_id`)** :
   - **RÈGLE CRITIQUE D'ARCHITECTURE MAPI** : Déplacer un message vers un autre dossier (ou la corbeille) modifie obligatoirement son `email_id` (l'ancien ID renvoie HTTP 404).
   - `trash_email` et `move_email` restituent `{"old_id": "...", "new_id": "..."}` ; `batch_trash_emails` restitue `id_mapping: {"old_id": "new_id"}`. Toute action ultérieure sur un message déplacé **DOIT** utiliser `new_id`.
