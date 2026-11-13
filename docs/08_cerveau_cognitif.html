@@ -287,11 +287,11 @@
               flottant ECHO App Drawer (support tactile mobile et desktop, avec fallback REST direct
               <code>/api/chat/actions/&lt;id&gt;</code> et <code>window.echoOpenCodex</code>).
             </li>
-            <li><strong><code>conversation_rag_filter.py</code> (Outlet - Priorité 100, v5.235.5.1) :</strong>
+            <li><strong><code>conversation_rag_filter.py</code> (Outlet - Priorité 100, v5.239.13.1) :</strong>
               Indexation
               asynchrone Zéro-Latence des tours de parole (conditionnée à la présence d'au moins un message assistant)
               dans <code>echo_session_rag</code> avec validation O(1) en amont via la table SQLite dédiée
-              <code>rag_index_state</code>.
+              <code>rag_index_state</code>, marquée uniquement après le succès effectif de l'upsert Qdrant.
             </li>
           </ul>
       </div>
@@ -304,7 +304,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.239.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -170,9 +170,9 @@
             <code>build_branch_rag_filter</code>, avec support <code>global_search</code> inter-sessions et filtrage par
             <code>tag</code> via SSoT <code>webui.db</code>) et <code>delete_session_context_source</code>. En
             complément du Session RAG, le filtre <code>context_compaction_filter.py</code> (v5.231.58.1), l'action
-            <code>resume_in_new_chat_action.py</code> (v5.239.12.1) et les modules <code>echo_session_gc.py</code>
+            <code>resume_in_new_chat_action.py</code> (v5.239.13.1) et les modules <code>echo_session_gc.py</code>
             (v5.235.5.3) et <code>echo_session_clone.py</code>
-            (v5.239.12.1, mutualisé avec <code>echo_chat_cloned_event.py</code> v5.235.5.1) opèrent l'élagage
+            (v5.239.13.1, mutualisé avec <code>echo_chat_cloned_event.py</code> v5.235.5.1) opèrent l'élagage
             transactionnel des branches mortes (<code>compute_dead_set</code> / <code>purge_dead_set</code> tout en
             conservant les productions sous provenance <code>hors_branche</code>), la compaction
             contextuelle in-place (à 60 % de charge) ou la migration/bifurcation de session par distillation en 2 passes
@@ -218,7 +218,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.239.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

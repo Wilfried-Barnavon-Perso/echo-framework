@@ -1,17 +1,17 @@
 """
 title: Résume et Transfert vers un nouveau chat
 author: ECHO Framework
-version: 5.239.12.1
+version: 5.239.13.1
 description: Migre le contexte de travail saturé vers une nouvelle conversation optimisée (clonage Workspace).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxsaW5lIHgxPSI0IiB5MT0iNCIgeDI9IjQiIHkyPSIyMCIvPjxsaW5lIHgxPSI4IiB5MT0iMTIiIHgyPSIxNiIgeTI9IjEyIi8+PHBvbHlsaW5lIHBvaW50cz0iMTIgOCAxNiAxMiAxMiAxNiIvPjxsaW5lIHgxPSIyMCIgeTE9IjQiIHgyPSIyMCIgeTI9IjIwIi8+PC9zdmc+
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.13.1: Capture du bilan RagCloneReport de duplicate_session_rag ; si copie vectorielle incomplète, modale EchoEvents.confirm avant redirection (annulation : maintien sur la conversation d'origine).
 # 5.239.12.1: Isolation globale data-echo-scope="global" sur #echo-migration-hud et transmission de live_msg_ids et anchor_msg_id à sync_resumed_session et duplicate_session_rag.
 # 5.229.2.1: Propagation et héritage direct des tags du chat parent vers la nouvelle conversation migrée.
 # 5.228.4.2: Support asynchrone des routines Chats (_call_owui), purge des blocs <details type="reasoning"> avant troncature, ancrage utilisateur racine pour le Session RAG, synchronisation atomique sous clone_lock et redirection window.location.replace.
 # 5.228.1.1: Suppression de l'en-tête de codage UTF-8 obsolète pour alignement sur extract_frontmatter OWUI (affichage icône).
-# 5.228.0.1: Intégration de l'icône SVG base64 borne à borne (|->|) pour le bouton d'action.
 
 import asyncio
 import inspect
@@ -506,6 +506,7 @@ class Action:
         live_msg_ids = {
             str(m["id"]) for m in messages if isinstance(m, dict) and m.get("id")
         } or None
+        rag_report = None
         clone_lock = get_chat_clone_lock(new_chat_id)
         try:
             async with clone_lock:
@@ -520,7 +521,7 @@ class Action:
                 )
                 await update_hud(90, "🧠 Clonage de la Mémoire Vectorielle de Session...")
                 try:
-                    await duplicate_session_rag(
+                    rag_report = await duplicate_session_rag(
                         user_id,
                         old_chat_id,
                         new_chat_id,
@@ -551,6 +552,34 @@ class Action:
                 "error",
             )
             return None
+
+        # 5. Bilan du transfert de la Mémoire Vectorielle de Session (non bloquant, Utilisateur informé)
+        if rag_report is not None and rag_report.complete:
+            logger.info(
+                f"[ECHO-RESUME-ACTION] SESSION_RAG : {rag_report.cloned} fragments transférés "
+                f"({old_chat_id} -> {new_chat_id})"
+            )
+            await update_hud(95, f"🧠 Mémoire Vectorielle : {rag_report.cloned} fragments transférés")
+        else:
+            if rag_report is not None:
+                detail = f"{rag_report.cloned}/{rag_report.eligible} fragments transférés"
+                cause = rag_report.error or "cause non déterminée"
+            else:
+                detail, cause = "aucun fragment transféré", "exception lors du clonage (voir journaux)"
+            logger.warning(f"[ECHO-RESUME-ACTION] SESSION_RAG incomplet ({detail}) : {cause}")
+            # Le HUD (z-index 99999) masquerait la modale native : retrait préalable
+            await remove_hud()
+            proceed = await events.confirm(
+                "⚠️ Mémoire vectorielle incomplète",
+                f"Le transfert de la mémoire vectorielle de session est incomplet ({detail} ; cause : {cause}). "
+                "La synthèse de la conversation est transférée, mais des détails antérieurs peuvent manquer "
+                "à la recherche de session.\n\nPoursuivre vers la nouvelle conversation ?",
+            )
+            if not proceed:
+                await events.toast(
+                    f"Nouvelle conversation « {new_title} » disponible dans la barre latérale.", "info"
+                )
+                return None
 
         # 6. Téléportation vers la nouvelle conversation
         await update_hud(100, "✅ Téléportation vers la nouvelle session...")
