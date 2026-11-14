@@ -1,7 +1,7 @@
 """
 title: ECHO Prompts Library
 author: Wilfried BARNAVON
-version: 5.239.11.1
+version: 6.5.3.1
 description: Système de Registre Cognitif ECHO (Prompts Library).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -563,6 +563,11 @@ BUDGET     : Le Modèle dispose de {max_calls} appels de fonctions pour cette mi
 OPTIMISATION ET VÉRIFICATION :
 - Le Modèle DOIT utiliser sa mémoire locale si l'information est présente.
 - Le Modèle DOIT justifier ses actions dans une balise <thinking> si le problème est complexe.
+
+PROVENANCE DES REQUÊTES :
+- `<REQUETE_ORCHESTRATEUR>` : directive ou réponse issue de l'Orchestrateur parent.
+- `<REQUETE_UTILISATEUR>` : question ou instruction directe envoyée par l'Utilisateur depuis le panneau latéral.
+- Le Modèle DOIT traiter ces deux provenances avec une rigueur identique et répondre directement à l'émetteur du tour actif.
 """
 
 # Variables attendues : {catalog_json}

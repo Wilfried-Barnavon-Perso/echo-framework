@@ -1,7 +1,7 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 5.238.1.1
+version: 6.5.3.1
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -44,6 +44,17 @@ from echo_constants import (
 )
 from echo_prompts import SYS_ORCHESTRATOR_APPENDIX, ECHO_FOUNDATION_KERNEL
 from echo_skills import get_skill_content, parse_skill_metadata
+from echo_aec import EchoAEC
+from echo_subagent_hub import (
+    get_subagent_lock,
+    get_subagent_meta,
+    mark_subagent_running,
+    pop_next_human_message,
+    save_subagent_meta,
+    update_subagent_status,
+    wrap_human_turn,
+    wrap_orchestrator_turn,
+)
 
 # Identifiant de rôle pour les threads delegate dans cognitive_threads
 _DELEGATE_ROLE_ID = "delegate"
@@ -193,45 +204,19 @@ class Tools:
         #   3. _resolve_sub_tools_from_sys_modules ← dernier recours si specs disponibles
         # -----------------------------------------------------------------------
         import logging as _dlog
-        import sys as _sys
         _log = _dlog.getLogger("echo.delegate")
 
-        # Source 1 : cache module-level du Pipe (contient les callables OWUI originaux)
-        _pipe_mod = _sys.modules.get("function_echo_orchestrator")
-        _tools_cache: dict = (getattr(_pipe_mod, "_TOOLS_CACHE", {}) or {}) if _pipe_mod else {}
-        _tools_dict: dict = _tools_cache.get(chat_id, {})
-
-        # Source 2 : fallback __metadata__ (normalement vide — OWUI ne le partage pas)
-        if not _tools_dict:
-            _tools_dict = (__metadata__ or {}).get("_echo_tools_dict", {})
-
-        # Specs OpenAI (pour le dernier recours sys.modules scan)
-        _body_tools_specs: list = (__metadata__ or {}).get("_echo_body_tools", [])
-
-        sub_tools: dict = {}
-        if _tools_dict:
-            # Filtrage de la blacklist : certains outils ne doivent pas être délégués
-            # (ex: delegate_to_agent lui-même pour éviter les récursions infinies).
-            # DELEGATE_AGENT_SYSTEM_TOOLS traverse le filtre allowed_tools pour rester disponible à tout sous-agent.
-            sub_tools = {
-                k: v for k, v in _tools_dict.items()
-                if k not in DELEGATE_AGENT_BLACKLIST and (
-                    not allowed_tools or k in allowed_tools or k in DELEGATE_AGENT_SYSTEM_TOOLS
-                )
-            }
-        elif _body_tools_specs:
-            # Source 3 : reconstruction depuis sys.modules (valves par défaut)
-            sub_tools = _resolve_sub_tools_from_sys_modules(_body_tools_specs, __user__)
-            if allowed_tools:
-                sub_tools = {
-                    k: v for k, v in sub_tools.items()
-                    if k in allowed_tools or k in DELEGATE_AGENT_SYSTEM_TOOLS
-                }
+        sub_tools, _body_tools_specs, _cache_len, _tools_dict_len = _resolve_delegate_tools(
+            chat_id=chat_id,
+            allowed_tools=allowed_tools,
+            __metadata__=__metadata__,
+            __user__=__user__,
+        )
 
         _callable_count = sum(1 for v in sub_tools.values() if v.get("callable") is not None)
         _log.debug(
             "delegate [%s]: cache_keys=%d, _tools_dict=%d, sub_tools=%d, callables=%d",
-            sid, len(_tools_cache), len(_tools_dict), len(sub_tools), _callable_count,
+            sid, _cache_len, _tools_dict_len, len(sub_tools), _callable_count,
         )
 
         # 4. System prompt final (appendice cadre d'exécution)
@@ -239,9 +224,8 @@ class Tools:
             sub_sid=sid, max_calls=max_calls
         )
 
-        # 5. Chargement de l'historique thread (EchoStateManager sur chat_id)
+        # 5. Chargement de l'instance EchoStateManager sur chat_id
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-        history = state.get_thread_history(sid)
 
         # 6. Distillat de contexte principal (optionnel, non-bloquant)
         if with_context_distillate and not is_resume:
@@ -253,36 +237,63 @@ class Tools:
             except Exception:
                 pass  # Non-bloquant : la tâche continue sans distillat
 
-        # 7. Ajout du message task dans l'historique
-        step_index = len(history)
-        prefix = "RÉPONSE DE L'ORCHESTRATEUR : " if is_resume else ""
-        task_parts = [{"text": f"{prefix}{task}"}]
-        history.append({"role": "user", "parts": task_parts})
-        state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_index, "user", task_parts)
+        # 7 & 8. Verrouillage hybride, persistance et boucle agentique
+        async with get_subagent_lock(chat_id, sid):
+            mark_subagent_running(chat_id, sid, True)
+            completed_normally = False
+            try:
+                history = state.get_thread_history(sid)
+                save_subagent_meta(
+                    state,
+                    sid,
+                    {
+                        "sub_sid": sid,
+                        "engine": "delegate",
+                        "role_name": role_name or sid,
+                        "skill_id": skill_id,
+                        "model_key": current_model_key,
+                        "final_system": final_system,
+                        "allowed_tools": allowed_tools,
+                        "max_calls": max_calls,
+                        "status": "running",
+                    },
+                )
+                step_index = len(history)
+                task_parts = [{"text": wrap_orchestrator_turn(task)}]
+                history.append({"role": "user", "parts": task_parts})
+                state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_index, "user", task_parts)
 
-        label = f"🎓 Expert [{role_name}]" if role_name else f"🤖 Agent [{sid}]"
-        await events.status(f"{label} démarré ({current_model_key})...")
+                label = f"🎓 Expert [{role_name}]" if role_name else f"🤖 Agent [{sid}]"
+                await events.status(f"{label} démarré ({current_model_key})...")
 
-        # 8. Boucle agentique
-        return await _run_agent_loop(
-            sid=sid,
-            chat_id=chat_id,
-            user_id=user_id,
-            history=history,
-            state=state,
-            sub_tools=sub_tools,
-            body_tools_specs=_body_tools_specs,
-            final_system=final_system,
-            current_model_key=current_model_key,
-            max_calls=max_calls,
-            events=events,
-            valves=self.valves,
-            __user__=__user__,
-            __chat_id__=chat_id,
-            __metadata__=__metadata__,
-            __event_emitter__=__event_emitter__,
-            __event_call__=__event_call__,
-        )
+                res = await _run_agent_loop(
+                    sid=sid,
+                    chat_id=chat_id,
+                    user_id=user_id,
+                    history=history,
+                    state=state,
+                    sub_tools=sub_tools,
+                    body_tools_specs=_body_tools_specs,
+                    final_system=final_system,
+                    current_model_key=current_model_key,
+                    max_calls=max_calls,
+                    events=events,
+                    valves=self.valves,
+                    __user__=__user__,
+                    __chat_id__=chat_id,
+                    __metadata__=__metadata__,
+                    __event_emitter__=__event_emitter__,
+                    __event_call__=__event_call__,
+                )
+                completed_normally = True
+                return res
+            finally:
+                if not completed_normally:
+                    try:
+                        update_subagent_status(state, sid, "error")
+                    except Exception:
+                        pass
+                mark_subagent_running(chat_id, sid, False)
 
     # ==========================================================================
     # 2. LISTE DES SESSIONS
@@ -475,6 +486,65 @@ class Tools:
 # HELPERS PRIVÉS (fonctions module-level pour clarté)
 # ==============================================================================
 
+def _resolve_delegate_tools(
+    chat_id: str,
+    allowed_tools: Optional[List[str]],
+    __metadata__: Optional[dict],
+    __user__: Optional[dict],
+) -> tuple[dict, list, int, int]:
+    """Résout les outils disponibles et leurs specs pour un sous-agent."""
+    _pipe_mod = sys.modules.get("function_echo_orchestrator")
+    _tools_cache: dict = (getattr(_pipe_mod, "_TOOLS_CACHE", {}) or {}) if _pipe_mod else {}
+    _tools_dict: dict = _tools_cache.get(chat_id, {})
+
+    if not _tools_dict:
+        _tools_dict = (__metadata__ or {}).get("_echo_tools_dict", {})
+
+    _body_tools_specs: list = (__metadata__ or {}).get("_echo_body_tools", [])
+
+    sub_tools: dict = {}
+    if _tools_dict:
+        sub_tools = {
+            k: v for k, v in _tools_dict.items()
+            if k not in DELEGATE_AGENT_BLACKLIST and (
+                not allowed_tools or k in allowed_tools or k in DELEGATE_AGENT_SYSTEM_TOOLS
+            )
+        }
+    elif _body_tools_specs:
+        sub_tools = _resolve_sub_tools_from_sys_modules(_body_tools_specs, __user__)
+        if allowed_tools:
+            sub_tools = {
+                k: v for k, v in sub_tools.items()
+                if k in allowed_tools or k in DELEGATE_AGENT_SYSTEM_TOOLS
+            }
+
+    return sub_tools, _body_tools_specs, len(_tools_cache), len(_tools_dict)
+
+
+async def _enqueue_next_human_turn_if_any(
+    state: EchoStateManager,
+    sid: str,
+    chat_id: str,
+    history: List[dict],
+    events: EchoEvents,
+    final_status: str,
+) -> bool:
+    """Dépile un éventuel message humain en file ; sinon met à jour final_status."""
+    next_human = pop_next_human_message(state, sid)
+    if next_human and next_human.get("content"):
+        human_parts = [{"text": wrap_human_turn(next_human["content"])}]
+        history.append({"role": "user", "parts": human_parts})
+        state.save_thread_step(
+            sid, chat_id, _DELEGATE_ROLE_ID, len(history) - 1, "user", human_parts
+        )
+        await events.status(
+            f"💬 [{sid}] Message utilisateur en file détecté — traitement du tour..."
+        )
+        return True
+    update_subagent_status(state, sid, final_status)
+    return False
+
+
 async def _run_agent_loop(
     sid: str,
     chat_id: str,
@@ -543,12 +613,14 @@ async def _run_agent_loop(
                 include_thoughts=False,
             )
         except Exception as e:
+            update_subagent_status(state, sid, "error")
             return wrap_tool_output(
                 text=f"❌ Erreur API dans l'agent [{sid}] : {str(e)}",
                 status={"status": "error", "sid": sid, "message": str(e)}
             )
 
         if not data:
+            update_subagent_status(state, sid, "error")
             return wrap_tool_output(
                 text=f"❌ Cascade épuisée pour l'agent [{sid}].",
                 status={"status": "error", "sid": sid, "message": "cascade exhausted"}
@@ -561,6 +633,7 @@ async def _run_agent_loop(
         # systématique sur TOUS les appels suivant une exécution d'outil.
         candidates = data.get("candidates", [])
         if not candidates or not candidates[0].get("content"):
+            update_subagent_status(state, sid, "error")
             return wrap_tool_output(
                 text=f"❌ Réponse vide du modèle pour l'agent [{sid}].",
                 status={"status": "error", "sid": sid}
@@ -597,6 +670,12 @@ async def _run_agent_loop(
                 history.append({"role": "model", "parts": model_raw})
                 state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", model_raw, _sig(model_raw))
 
+                if await _enqueue_next_human_turn_if_any(
+                    state, sid, chat_id, history, events, "pending_question"
+                ):
+                    calls_used = 0
+                    continue
+
                 return wrap_tool_output(
                     text=f"⚠️ Agent [{sid}] en attente de clarification : {question}",
                     status={
@@ -615,6 +694,12 @@ async def _run_agent_loop(
             model_raw = raw_parts if raw_parts else [{"text": "(Réponse vide)"}]
             history.append({"role": "model", "parts": model_raw})
             state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", model_raw, _sig(model_raw))
+
+            if await _enqueue_next_human_turn_if_any(
+                state, sid, chat_id, history, events, "idle"
+            ):
+                calls_used = 0
+                continue
 
             final_text = text or "(Réponse vide)"
             status_dict = {
@@ -705,6 +790,11 @@ async def _run_agent_loop(
                 sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model",
                 clean_model_parts, _sig(clean_model_parts) or _sig(raw_parts)
             )
+            if await _enqueue_next_human_turn_if_any(
+                state, sid, chat_id, history, events, "idle"
+            ):
+                calls_used = 0
+                continue
             await events.status(
                 f"🛑 Agent [{sid}] — budget d'outils atteint ou dépassé "
                 f"({calls_used}/{max_calls} appels). Synthèse terminée.",
@@ -998,3 +1088,103 @@ async def _distill_main_context(
         return result or ""
     except Exception:
         return ""
+
+
+async def run_human_subagent_turn(
+    user_id: str, chat_id: str, sub_sid: str, content: str
+) -> dict:
+    """Exécute à froid une relance humaine directe sur un sous-agent existant."""
+    state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+    events = EchoEvents(None, None)
+
+    async with get_subagent_lock(chat_id, sub_sid):
+        mark_subagent_running(chat_id, sub_sid, True)
+        completed_normally = False
+        try:
+            meta = get_subagent_meta(state, sub_sid) or {}
+            current_model_key = meta.get("model_key") or "MODEL_APOLLO"
+            max_calls = int(meta.get("max_calls") or 10)
+            allowed_tools = meta.get("allowed_tools")
+            role_name = meta.get("role_name") or sub_sid
+            final_system = meta.get("final_system") or (
+                ECHO_FOUNDATION_KERNEL
+                + SYS_ORCHESTRATOR_APPENDIX.format(
+                    sub_sid=sub_sid, max_calls=max_calls
+                )
+            )
+            sub_tools, _body_tools_specs, _, _ = _resolve_delegate_tools(
+                chat_id=chat_id,
+                allowed_tools=allowed_tools,
+                __metadata__=None,
+                __user__={"id": user_id},
+            )
+            save_subagent_meta(
+                state,
+                sub_sid,
+                {
+                    **meta,
+                    "sub_sid": sub_sid,
+                    "engine": meta.get("engine") or "delegate",
+                    "role_name": role_name,
+                    "model_key": current_model_key,
+                    "final_system": final_system,
+                    "allowed_tools": allowed_tools,
+                    "max_calls": max_calls,
+                    "status": "running",
+                },
+            )
+
+            history = state.get_thread_history(sub_sid)
+            human_parts = [{"text": wrap_human_turn(content)}]
+            history.append({"role": "user", "parts": human_parts})
+            state.save_thread_step(
+                sub_sid,
+                chat_id,
+                _DELEGATE_ROLE_ID,
+                len(history) - 1,
+                "user",
+                human_parts,
+            )
+
+            res = await _run_agent_loop(
+                sid=sub_sid,
+                chat_id=chat_id,
+                user_id=user_id,
+                history=history,
+                state=state,
+                sub_tools=sub_tools,
+                body_tools_specs=_body_tools_specs,
+                final_system=final_system,
+                current_model_key=current_model_key,
+                max_calls=max_calls,
+                events=events,
+                valves=Tools.Valves(),
+                __user__={"id": user_id},
+                __chat_id__=chat_id,
+                __metadata__={},
+                __event_emitter__=None,
+                __event_call__=None,
+            )
+            completed_normally = True
+
+            if isinstance(res, dict):
+                reply_text = str(res.get("text") or "")
+            else:
+                reply_text = str(res or "")
+
+            EchoAEC.record_event(
+                state,
+                f"subagent_human_interaction:{sub_sid}",
+                summary=(
+                    f"Intervention directe de l'utilisateur sur le sous-agent [{sub_sid}] ({role_name}). "
+                    f"Question utilisateur : {content[:240]} | Réponse sous-agent : {reply_text[:400]}"
+                ),
+            )
+            return {"status": "ok", "sub_sid": sub_sid, "reply": reply_text}
+        finally:
+            if not completed_normally:
+                try:
+                    update_subagent_status(state, sub_sid, "error")
+                except Exception:
+                    pass
+            mark_subagent_running(chat_id, sub_sid, False)
