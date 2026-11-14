@@ -6,6 +6,7 @@ description: Routeur FastAPI pour coffre chiffré et identités LLM (/echo/v1/va
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.3.1: Ajout du catalogue GET /echo/v1/vault/schemas (connecteurs MCP/Vault) avec filtrage de user_required_instructions.
 # 6.3.0.1: Création du routeur /echo/v1/vault (statut auth_data, quotas masqués, gestion CRUD chiffrée identity_vault).
 
 from __future__ import annotations

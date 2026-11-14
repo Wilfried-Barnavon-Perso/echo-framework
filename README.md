@@ -1,11 +1,11 @@
 <div align="center">
   <img src="docs/logo-echo-full.png" alt="ECHO Framework Logo" width="350">
   
-  # 🧠 ECHO Framework v6.5.3
+  # 🧠 ECHO Framework v6.6.0
   
   **The Sovereign Intelligence Orchestrator**
   
-  [![Version](https://img.shields.io/badge/version-6.5.3-8b5cf6.svg)](#)
+  [![Version](https://img.shields.io/badge/version-6.6.0-8b5cf6.svg)](#)
   [![Open WebUI](https://img.shields.io/badge/Powered%20by-Open%20WebUI-4CAF50.svg)](#)
   [![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-F9AB00.svg)](#)
   [![License](https://img.shields.io/badge/license-Apache%202.0-purple.svg)](#)
@@ -34,7 +34,7 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │
 ┌────────────────────────────────────▼────────────────────────────────────┐
-│                          CORTEX (OPEN WEBUI)                            │
+│                        CORTEX (ECHO-UI / WEBUI)                         │
 │   • Echo Orchestrator : routage cognitif, suture SQLite bit-perfect     │
 │   • SSOT Registry : gouvernance unifiée (PROMETHEUS, APOLLO, ZEPHYR)    │
 │   • Filtres & Contexte : Migration/Fork Session, Smart Context, AEC XML │

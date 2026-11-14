@@ -6,6 +6,7 @@ description: Provisioning déclaratif au démarrage FastAPI remplaçant intégra
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.3.2: Identité ECHO-UI, route avatar modèle echo_orchestrator et montage des routes audio /echo/v1/audio au démarrage.
 # 6.5.2.1: Correction de l'import initialize_runtime_config depuis open_webui.main.
 # 6.0.0.1: Provisioning déclaratif lifespan remplaçant config-owui.sh.
 

@@ -7,6 +7,7 @@ VERSION : 6.5.3.1
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.3.1: Renommage de echo-open-webui vers echo-webui dans la description d'export.
 # 5.237.5.1: Compte à rebours dynamique 1s avant expiration d'archive, attribut download et bascule automatique à échéance.
 # 5.237.2.1: Composant d'export asynchrone avec barre de progression temps réel (0-100%), bouton d'annulation et badge de téléchargement.
 # 5.237.1.1: Correction SyntaxError JS sur apostrophe dans HTML_USER_DASHBOARD (raw string r"""..."""), calcul temps restant sur timestamp expires_at et GeoIP.

@@ -8,7 +8,7 @@
 # 🗺️ DOMAIN-DRIVEN IPAM (PLAN D'ADRESSAGE IP STATIQUE)
 # ==============================================================================
 # 1. Briques Core & Externes (Plage .100 - .199) :
-#    - open-webui       : .100
+#    - echo-webui       : .100
 #    - searxng          : .101
 #    - watchtower       : .102
 #    - qdrant           : .103
@@ -26,11 +26,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.3.1: Renommage du service et de l'image echo-open-webui en echo-webui (ECHO-UI).
 # 6.5.2.1: Ajout explicite de QDRANT_URI=http://echo-qdrant:6333 dans echo-open-webui.
 # 6.5.0.1: Montage en lecture seule de /opt/ECHO/.env vers /app/host_env/.env:ro dans echo-admin-manager pour l'archivage sécurisé des clés maîtresses.
 # 6.0.0.1: Bascule d'Open WebUI vers le build local natif ECHO V6 (16-docker-echo-webui).
 # 5.237.6.2: Verrouillage de l'image Open WebUI sur la version 0.13.2 (ghcr.io/open-webui/open-webui:0.13.2-slim).
-# 5.236.5.1: Référencement IPAM de user-manager (.27 -> bunkerweb-stack.yml).
 
 name: echo
 

@@ -7,11 +7,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.3.1: Alignement du routage reverse-proxy et IPAM (.100) sur echo-webui.
 # 5.236.5.1: Déclaration du service echo-user-manager (my.${ECHO_DOMAIN}, IP .27, Forward Auth /api/verify) et extension CSP form-action.
 # 5.236.3.1: Alignement explicite de USE_ANTIBOT="no" conformément au schéma BunkerWeb v1.6.17.
 # 5.236.2.1: Mise à niveau de BunkerWeb en v1.6.17 (correctifs NGINX 1.30.6 et timeouts MariaDB).
 # 5.231.36.1: Fix du nommage de l'image echo-auth-manager (suppression du double préfixe echo-echo-* via directive image: explicite).
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # ==============================================================================
 # 🗺️ DOMAIN-DRIVEN IPAM (PLAN D'ADRESSAGE IP STATIQUE)

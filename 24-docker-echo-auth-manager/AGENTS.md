@@ -8,8 +8,8 @@ Ce dossier contient l'application **ECHO Auth Manager**, qui agit comme un **IdP
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `auth_server.py` (v5.239.3.1)
-Le cœur du gestionnaire d'identités (FastAPI).
+### `auth_server.py` (v6.5.3.1)
+Le cœur du gestionnaire d'identités (FastAPI), alignant `OWUI_INTERNAL_URL` sur `http://echo-webui:8080`.
 - **Authentification Locale & Hachage Argon2** : Gère les comptes utilisateurs et sessions SSO dans SQLite (`auth.db` en mode WAL, tables `users` et `sessions`) avec hachage de mots de passe et réponses de sécurité via **Argon2** (`passlib.hash.argon2`), gestion de l'expiration des mots de passe temporaires (`temp_pass_expires`), suivi de la date d'enrôlement (`last_enrollment`) et traçabilité de session (`ip_address`, `os`, `browser`, `device`). Dans `stack-echo.yml`, `JWT_EXPIRES_IN` d'Open WebUI est aligné sur `${ECHO_JWT_EXPIRES_IN:-4w}` (4 semaines par défaut) et soutenu par un bounce `/sso-logout` (`Clear-Site-Data: "cache"`).
 - **Garde Anti-Bruteforce & Politique de Verrouillage Dual-Tier** :
   - **Délai inter-essais paramétrable (`login_retry_delay_sec`)** : Constante `LOGIN_RETRY_DELAY_VALID_SEC = (0, 5, 10, 20)`. Imposé sur tous les comptes (enrôlés ou non via `last_attempt_at` SQLite) ainsi que sur les IP inconnues/adresses non reconnues via le cache mémoire LRU `_ip_last_attempt` (purge automatique au-delà de 2048 entrées).
@@ -53,6 +53,6 @@ docker exec -i echo-auth-manager python -c "import sqlite3, time; conn = sqlite3
 ```
 
 ## 3. Dépendances Logiques
-- Ce Worker s'interface avec `echo-admin-manager` (`20-docker-admin-manager`) et `echo-open-webui` via la base SQLite partagée `auth.db` et `auth-settings.json` sur le volume `echo-auth-data`.
+- Ce Worker s'interface avec `echo-admin-manager` (`20-docker-admin-manager`) et `echo-webui` (`16-docker-echo-webui`) via la base SQLite partagée `auth.db` et `auth-settings.json` sur le volume `echo-auth-data`.
 - Il partage le volume `echo-auth-data` où est persistée la base de données SQLite contenant les hachages de mots de passe, les secrets TOTP et les tokens de session en cours.
 - Dépendance totale à l'infrastructure WAF (`bunkerweb-stack.yml`).

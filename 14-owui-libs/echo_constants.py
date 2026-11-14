@@ -6,11 +6,11 @@ description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.3.1: Ajout du plafond d'import fichier ECHO_MAX_FILE_UPLOAD_SIZE_MB = 4096 (4 Go).
 # 6.5.1.1: Migration de MODEL_APOLLO vers Gemini 4 Hydrogen (gemini-4-hydrogen / gemini-4-hydrogen-high).
 # 5.238.1.1: Intégration de MODEL_ATHENA (gemini-4-carbon / gemini-4-carbon-high, hierarchy 3), déduplication de MODEL_ENUM_BY_POLICY et ajout de parse_model_policy / get_allowed_models.
 # 5.237.20.1: Calibration de CHARS_PER_TOKEN à 3.2 pour la tokenisation Gemini FR/JSON/Code.
 # 5.235.5.1: Ajout de ECHO_GC_GRACE_PERIOD_SEC (900s) et de la variable contextuelle ECHO_TURN_CONTEXT.
-# 5.235.1.1: Calibrage de COMPACTION_COMPRESSED_SHARE_PCT à 0.3125 (31.25% HEAD soit 65 535 tokens / 68.75% TAIL soit ~144 179 tokens) pour alignement sur le plafond matériel maxOutputTokens.
 
 
 import os

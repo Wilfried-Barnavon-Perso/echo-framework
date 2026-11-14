@@ -9,11 +9,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.3.1: Renommage du service et conteneur echo-open-webui vers echo-webui.
 # 6.0.0.1: Retrait de l'appel à config-owui.sh au profit du bootstrap déclaratif lifespan.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.5: Prévention du crash getwd() via un `cd $ECHO_ROOT` forcé.
 # 2.4: Ajout de l'option opt-in --purge pour détruire la BDD et le dossier complet. Le comportement par défaut devient conservateur.
-# 2.3: Ajout de la purge du cache physique Let's Encrypt (évite le Split-Brain).
 
 set -euo pipefail
 

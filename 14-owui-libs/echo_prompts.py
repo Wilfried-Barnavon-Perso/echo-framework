@@ -6,11 +6,11 @@ description: Système de Registre Cognitif ECHO (Prompts Library).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.3.1: Distinction explicite des balises XML <REQUETE_ORCHESTRATEUR> et <REQUETE_UTILISATEUR> dans ECHO_FOUNDATION_KERNEL pour les sous-agents hybrides.
 # 5.239.11.1: Renforcement de la règle `mermaid` v11.16.0 dans `SYS_VISUAL_GENERATE` imposant des identifiants `subgraph` strictement ASCII (`subgraph ID["Titre (Info)"]`).
 # 5.235.1.1: Refonte de SYS_COMPACTION_DISTILL (Archiviste Contextuel, pleine exploitation du budget, reproduction in extenso du code et des données).
 # 5.233.0.1: Alignement de SYS_ORCHESTRATOR_CRITIC sur le schéma contraint SupervisorCriticOutput (statut explicite ok / needs_correction).
 # 5.233.0.1: Extension de la règle 3 de SYS_VISUAL_IMAGE_GEN pour encadrer la fusion et composition multi-images (N images de référence).
-# 5.232.5.2: Ajout de la règle de nommage court (short_name <= 10 caractères hors extension en snake_case ASCII) dans SYS_VISUAL_IMAGE_CRITIC.
 
 # ==============================================================================
 # Système de Registre Cognitif ECHO (Prompts Library)

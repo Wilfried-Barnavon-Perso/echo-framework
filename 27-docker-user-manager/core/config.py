@@ -7,6 +7,7 @@ VERSION : 6.5.3.1
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.3.1: Alignement de OWUI_INTERNAL_URL sur http://echo-webui:8080.
 # 5.239.2.1: Alignement de DEFAULT_AUTH_SETTINGS (login_retry_delay_sec, unenrolled_max_attempts, unenrolled_lockout_min).
 # 5.236.5.1: Création initiale de la configuration centrale du User Manager.
 

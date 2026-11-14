@@ -8,11 +8,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.3.1: Renommage du service echo-open-webui vers echo-webui.
 # 6.0.0.1: Retrait des appels à config-owui.sh au profit du bootstrap déclaratif lifespan.
 # 5.236.5.1: Affichage du sous-domaine my.$DOMAIN et vérification préalable de l'image echo-python-base:latest.
 # 5.231.21.2: Délégation de la génération des secrets .env (dont ECHO_VAULT_ENCRYPTION_KEY) à ensure_echo_secrets (y compris en sortie idempotente).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 4.2: Sécurisation de la création IPAM dynamique pour echo-network et echo-sandbox.
 
 set -euo pipefail
 

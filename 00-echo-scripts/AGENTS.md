@@ -9,7 +9,7 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 ## 2. Cartographie des Fichiers et Algorithmes
 
 ### `install-stack.sh`
-**Rôle** : Déploiement central de l'architecture Docker (v6.5.1.2).
+**Rôle** : Déploiement central de l'architecture Docker (v6.5.3.1, image et conteneur `echo-webui`).
 - **`ensure_swap_and_vm_tuning()`** : Garantit un filet de sécurité Swap de 4 Go (`/swapfile` persisté dans `/etc/fstab` si aucun swap actif) et configure `vm.swappiness=25` (`/etc/sysctl.d/99-echo-vm.conf`) pour prévenir les blocages OOM lors des builds Docker.
 - **`ensure_docker_autosafety()`** : Configure de manière globale le démon Docker (`/etc/docker/daemon.json`) pour imposer une limite de taille des logs (max 10Mo, 3 fichiers) et injecte un cron quotidien (`/etc/cron.daily/echo-clean`) appelant `echo-clean.sh`, évitant ainsi la saturation du disque de la VM.
 - **Compilation `echo-python-base:latest` & Throttle Mensuel** : Compile en amont l'image socle mutualisée (`01-config/Dockerfile.python-base`) et applique un verrou de 30 jours (`.last_base_pull`) sur le pull des images `:latest` (`alpine:latest`, `n8nio/n8n:latest`) tout en limitant le parallélisme (`CMAKE_BUILD_PARALLEL_LEVEL=2`).
@@ -19,13 +19,13 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 - **Provisioning Déclaratif** : Le provisioning d'Open WebUI (modèle, outils, filtres, bannières, settings) est désormais assuré nativement au démarrage du conteneur par son lifespan (`open_webui.echo.bootstrap`), rendant obsolète tout script cURL externe.
 
 ### `echo-sync.sh`
-**Rôle** : Pont de distribution déclaratif (v6.5.0.1) entre le dépôt source et `/opt/ECHO`.
+**Rôle** : Pont de distribution déclaratif (v6.5.3.1, références alignées sur `echo-webui`) entre le dépôt source et `/opt/ECHO`.
 - **`sync_resource()` & Boucle Déclarative** : Synchronise dynamiquement les répertoires (`00-*` à `30-*`, `_assets`, `docker-python-base`), garantit l'initialisation du fichier maître `/opt/ECHO/.env` (`chmod 600`) avant montage Docker, supprime les fichiers fantômes obsolètes, crée les liens symboliques globaux dans `/usr/local/bin/` (dont `/usr/local/bin/echo-rebuild`), applique un nettoyage conditionnel `sed` des caractères CRLF/BOM (préservant l'horodatage `mtime` et le cache Docker BuildKit), et affiche un encart de versioning Git (Avant/Après).
 
 ### Sécurité Périmétrique (`enable-bunkerweb.sh` & `disable-bunkerweb.sh`)
 **Rôle** : Bascule de l'infrastructure réseau derrière le WAF BunkerWeb.
-- Le script `enable-bunkerweb.sh` (v6.0.0.1) gère l'injection des secrets SSL, sécurise la création IPAM dynamique (`echo-network`, `echo-sandbox`, `bw-universe`), assure la présence de l'image de base partagée (`echo-python-base`), expose les points d'entrée dont l'interface utilisateur `https://my.$DOMAIN` (`echo-user-manager`), et reconfigure les ports via `update_env()` et `ensure_echo_secrets()` (y compris lors d'une sortie idempotente).
-- Le script `disable-bunkerweb.sh` (v6.0.0.1) révoque la proxyfication et expose directement les ports d'Open WebUI et de l'Admin Manager (Port 3001).
+- Le script `enable-bunkerweb.sh` (v6.5.3.1) gère l'injection des secrets SSL, sécurise la création IPAM dynamique (`echo-network`, `echo-sandbox`, `bw-universe`), assure la présence de l'image de base partagée (`echo-python-base`), expose les points d'entrée dont l'interface utilisateur `https://my.$DOMAIN` (`echo-user-manager`), cible `echo-webui` et reconfigure les ports via `update_env()` et `ensure_echo_secrets()` (y compris lors d'une sortie idempotente).
+- Le script `disable-bunkerweb.sh` (v6.5.3.1) révoque la proxyfication et expose directement les ports d'`echo-webui` (ECHO-UI) et de l'Admin Manager (Port 3001).
 
 ### Utilitaires
 - **`echo-globals.sh` (v6.0.0.2)** : Définition des variables d'environnement globales sourcées par les autres scripts (incluant `ECHO_OWUI_EVENTS="$ECHO_ROOT/owui-events"`, `ECHO_DOCKER_USER="$ECHO_ROOT/docker-user-manager"`, `ECHO_ADMIN_EMAIL`) et factorisation de `generate_secret()` (sans `SIGPIPE` sous `set -euo pipefail`, avec `umask 077` et recouvrement des valeurs vides) et `ensure_echo_secrets()` (`BW_DB_PASSWORD`, `SEARXNG_SECRET`, `ECHO_SSO_SECRET`, `N8N_ENCRYPTION_KEY`, `ECHO_VAULT_ENCRYPTION_KEY`, et synchronisation bidirectionnelle `.owui-admin-secret` <-> `ECHO_ADMIN_PASSWORD`).

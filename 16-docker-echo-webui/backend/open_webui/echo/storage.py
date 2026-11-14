@@ -7,6 +7,7 @@ description: Écriture directe des uploads dans l'arborescence ECHO (/users/{uid
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.3.1: Ajout de upload_file_streamed (streaming zéro-RAM par blocs de 1 MiB jusqu'à 4 Go avec hachage SHA-256 à la volée).
 # 6.1.0.1: Création de EchoStorageProvider unifiant l'écriture dans les Vaults ECHO et echo_resources.
 
 from __future__ import annotations

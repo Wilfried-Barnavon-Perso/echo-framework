@@ -10,11 +10,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.3.1: Renommage des références echo-open-webui vers echo-webui.
 # 6.5.0.1: Garantie d'initialisation préventive du fichier maître /opt/ECHO/.env (chmod 600) avant montage Docker.
 # 5.231.39.1: Renommage en echo-sync.sh et mise à jour du lien symbolique echo-rebuild.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 4.11: Ajout d'un encart visuel de versioning Git interactif (Avant/Après).
-# 4.10: Déploiement déclaratif automatique via boucle regex. Suppression des fantômes.
 
 # --- 0. INITIALISATION CORE ---
 ECHO_ROOT="/opt/ECHO"

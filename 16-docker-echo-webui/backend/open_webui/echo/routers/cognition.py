@@ -6,6 +6,7 @@ description: Routeur FastAPI pour la visualisation cognitive et des sous-agents 
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.3.1: Ajout de POST /{chat_id}/threads/{sub_sid}/message (tours humains directs ou file FIFO) et enrichissement d'état des threads.
 # 6.3.0.1: Création du routeur /echo/v1/cognition (snapshot et streaming SSE des cognitive_threads et call_bridge).
 
 from __future__ import annotations

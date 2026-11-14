@@ -8,11 +8,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.3.1: Renommage de l'image et du conteneur echo-open-webui vers echo-webui.
 # 6.5.1.2: Ajout de ensure_swap_and_vm_tuning (filet swap 4 Go et vm.swappiness=25).
 # 6.0.0.1: Retrait de l'appel à config-owui.sh au profit du bootstrap déclaratif lifespan ECHO V6.
 # 5.231.39.1: Alignement du cron quotidien sur echo-clean (/etc/cron.daily/echo-clean) et de l'aide sur echo-show-admin.
 # 5.231.21.1: Délégation de la génération des secrets .env (dont ECHO_VAULT_ENCRYPTION_KEY) à ensure_echo_secrets (echo-globals.sh).
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 set -e # Arrêt en cas d'erreur critique
 
