@@ -1,7 +1,7 @@
 ---
 domain_id: visual_and_system_metrics
-version: 5.233.0.1
-updated_at: 2026-11-03
+version: 5.239.11.1
+updated_at: 2026-11-13
 name: Moteur de Rendu Visuel Interactif (ECHO Visual), Génération d'Images & Jauge de Contexte
 description: Génération et retouche d'images (generate_image, close_image_session), visualisations et schémas interactifs (generate_rich_visualization : 17 moteurs 2D/3D) et surveillance de la charge du contexte (get_context_load).
 tools: [generate_rich_visualization, generate_image, close_image_session, get_context_load]
@@ -12,6 +12,7 @@ keywords: [image, photo, illustration, dessin, generer_image, generate_image, re
 
 ## 1. VISUALISATIONS ET SCHÉMAS INTERACTIFS (`generate_rich_visualization`)
 - **Contrainte d'environnement** : Réservé au Modèle principal (**interdit depuis un sous-agent headless**). Le rendu interactif est automatiquement déployé dans l'Iframe.
+- **Interdiction de Redondance Markdown** : Lorsque `generate_rich_visualization` réussit (`"status": "success"`), il est STRICTEMENT INTERDIT de reproduire le diagramme, graphique ou schéma en Markdown dans la réponse (aucun bloc ```` ```mermaid ````, ```` ```svg ````, code source ou schéma ASCII redondant). L'Iframe interactive porte déjà le rendu ; se limiter à un bref commentaire ou légende.
 - **Spécifications des Paramètres** :
   - `intention` (`str`, requis) : Objectif précis du rendu visuel attendu (ex: `"Comparer l'évolution trimestrielle du CA et de la marge sous forme de graphique mixte barres/lignes"`).
   - `donnees_contextuelles` (`str`, requis) : **Intégralité des données métier brutes** (chiffres, séries, nœuds, relations, coordonnées, chronologie, code PDB/CID ou SMILES) nécessaires à la construction du visuel. Le générateur interne n'ayant pas accès à l'historique de la conversation, aucune donnée ne doit être sous-entendue. Ne pas y écrire le code technique du moteur (SVG/HTML/JSON) : fournir uniquement les données et relations structurées.

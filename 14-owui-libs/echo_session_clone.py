@@ -1,25 +1,27 @@
 """
 title: ECHO Session Clone & Migration Engine
 author: Wilfried BARNAVON
-version: 5.237.20.3
+version: 5.239.13.1
 description: Moteur partagé de duplication atomique des conteneurs de session ECHO (Clone, Fork et Migration).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.13.1: duplicate_session_rag fiabilisé : retries bornés (_qdrant_call : réseau, 429, 5xx), upsert par lots de 64, comptage de contrôle exact et retour structuré RagCloneReport.
+# 5.239.12.1: Purge de wm_state dans purge_conversational_state, ré-ancrage des ressources actives (_reanchor_resumed_resources) et des vecteurs conversationnels RAG (anchor_msg_id).
 # 5.237.20.3: Alignement généalogique strict de ancestor_msg_ids sur live_msg_ids dans prune_forked_history.
 # 5.237.20.2: Simplification de prune_forked_history et sync_cloned_session sur message_shadows v2 (support tuple/Row et lecture directe model_id).
 # 5.235.5.2: Purge arborescente exacte via compute_dead_set + purge_dead_set, support live_ids dans sync_cloned_session et duplication RAG filtrée.
-# 5.232.5.1: Alignement Git multi-workspaces (main, plans, generated) au cutoff, réécriture frontmatter dans plans et élagage mtime des workspaces non-versionnés.
-# 5.231.29.1: Alignement sur les constantes SSOT des espaces de travail Codex (CODEX_DIR_NAME, CODEX_WORKSPACE_MAIN, CODEX_WORKSPACE_SANDBOX).
 
 from contextlib import closing
+import asyncio
+import json
 import logging
 import os
 import re
 import shutil
 import sqlite3
 import time
-from typing import Callable, List, Optional, Set, Tuple
+from typing import Callable, List, NamedTuple, Optional, Set, Tuple
 import uuid
 
 from echo_constants import (
@@ -29,6 +31,7 @@ from echo_constants import (
     COLLECTION_SESSION_RAG,
     ECHO_CODEX_WORKSPACES,
     ECHO_QDRANT_URL,
+    SESSION_RAG_CONVERSATION_SOURCE_ID,
     is_codex_workspace_versioned,
 )
 from echo_paths import get_echo_session_path
@@ -179,9 +182,47 @@ def purge_conversational_state(cur: sqlite3.Cursor) -> None:
         cur.execute(
             "DELETE FROM echo_settings WHERE key IN ("
             "'context_stats', 'previous_context_stats', 'last_model_id', "
-            "'last_active_model', 'turn_origin_model', 'compaction_state', 'context_checkpoint') "
+            "'last_active_model', 'turn_origin_model', 'compaction_state', "
+            "'context_checkpoint', 'wm_state') "
             "OR key LIKE 'aec_tier_%' OR key LIKE 'cascade_%'"
         )
+    except Exception:
+        pass
+
+
+def _reanchor_resumed_resources(
+    cur: sqlite3.Cursor,
+    live_msg_ids: Optional[Set[str]],
+    anchor_msg_id: Optional[str],
+) -> None:
+    """Rattache au message d'ancrage de la session migrée les ressources de la branche active."""
+    if not anchor_msg_id:
+        return
+    try:
+        cur.execute(
+            "SELECT id, message_id, metadata FROM echo_resources "
+            "WHERE message_id IS NOT NULL AND message_id != ''"
+        )
+        rows = cur.fetchall()
+        for row in rows:
+            rid = row["id"] if isinstance(row, (sqlite3.Row, dict)) else row[0]
+            mid = row["message_id"] if isinstance(row, (sqlite3.Row, dict)) else row[1]
+            raw_meta = row["metadata"] if isinstance(row, (sqlite3.Row, dict)) else row[2]
+            if live_msg_ids is not None and str(mid) not in live_msg_ids:
+                continue
+            new_meta = raw_meta
+            if isinstance(raw_meta, str) and raw_meta.strip():
+                try:
+                    meta_obj = json.loads(raw_meta)
+                    if isinstance(meta_obj, dict) and "message_id" in meta_obj:
+                        meta_obj["message_id"] = anchor_msg_id
+                        new_meta = json.dumps(meta_obj, ensure_ascii=False)
+                except Exception:
+                    pass
+            cur.execute(
+                "UPDATE echo_resources SET message_id = ?, metadata = ? WHERE id = ?",
+                (anchor_msg_id, new_meta, rid),
+            )
     except Exception:
         pass
 
@@ -755,6 +796,8 @@ def sync_resumed_session(
     orig_cid: str,
     new_cid: str,
     initial_embedded_msg_ids: Optional[List[str]] = None,
+    live_msg_ids: Optional[Set[str]] = None,
+    anchor_msg_id: Optional[str] = None,
 ) -> None:
     """Duplique le conteneur de session pour une migration vers une nouvelle conversation
     (purge l'historique conversationnel et préserve les ressources)."""
@@ -767,6 +810,7 @@ def sync_resumed_session(
             cur = conn.cursor()
             reassign_session_ids(cur, orig_cid, new_cid)
             purge_conversational_state(cur)
+            _reanchor_resumed_resources(cur, live_msg_ids, anchor_msg_id)
             if initial_embedded_msg_ids:
                 now_ts = int(time.time())
                 for mid in initial_embedded_msg_ids:
@@ -783,6 +827,58 @@ def sync_resumed_session(
         )
 
     duplicate_session_domains(user_id, orig_cid, new_cid)
+    try:
+        from echo_window_manager import get_window_manager
+
+        wm = get_window_manager()
+        for cid_target in (orig_cid, new_cid):
+            wm._chat_states.pop((user_id, cid_target), None)
+            wm._chat_states.pop(("system", cid_target), None)
+    except Exception:
+        pass
+
+
+# Paramètres de robustesse du clonage SESSION_RAG
+_RAG_CLONE_SCROLL_LIMIT = 256
+_RAG_CLONE_UPSERT_BATCH = 64
+_RAG_CLONE_ATTEMPTS = 3
+
+
+class RagCloneReport(NamedTuple):
+    """Bilan de duplication des vecteurs COLLECTION_SESSION_RAG."""
+    cloned: int      # Points écrits avec succès dans la session cible
+    eligible: int    # Points retenus après filtrage de branche / cutoff
+    scanned: int     # Points lus dans la session source
+    failed: int      # Points éligibles non écrits (échec définitif d'upsert)
+    complete: bool   # Scroll intégral, aucun échec et comptage de contrôle cohérent
+    error: str       # Dernière erreur rencontrée ("" si aucune)
+
+
+def _qdrant_ok(resp: Optional[httpx.Response]) -> bool:
+    """Vrai si la réponse Qdrant est un succès HTTP."""
+    return resp is not None and resp.status_code in (200, 201)
+
+
+async def _qdrant_call(
+    client: httpx.AsyncClient, method: str, url: str, payload: dict
+) -> Tuple[Optional[httpx.Response], str]:
+    """Appel Qdrant avec retries bornés (backoff 1 s puis 2 s) sur erreurs réseau, 429 et 5xx.
+    Les erreurs client non transitoires (400, 404) ne sont pas réessayées.
+    Retourne (dernière réponse ou None, dernière erreur)."""
+    resp, last_err = None, ""
+    for attempt in range(_RAG_CLONE_ATTEMPTS):
+        try:
+            resp = await client.request(method, url, json=payload)
+            if _qdrant_ok(resp):
+                return resp, ""
+            last_err = f"HTTP {resp.status_code} : {resp.text[:200]}"
+            if resp.status_code != 429 and resp.status_code < 500:
+                break
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            resp, last_err = None, f"{type(e).__name__} : {e}"
+        if attempt < _RAG_CLONE_ATTEMPTS - 1:
+            await asyncio.sleep(attempt + 1)
+    return resp, last_err
 
 
 async def duplicate_session_rag(
@@ -791,42 +887,48 @@ async def duplicate_session_rag(
     new_cid: str,
     cutoff_ts: Optional[int] = None,
     live_msg_ids: Optional[Set[str]] = None,
-) -> int:
-    """Duplique par pagination (lots de 256 points) les vecteurs Qdrant de COLLECTION_SESSION_RAG
-    de orig_cid vers new_cid. Si cutoff_ts est fourni, filtre uniquement timestamp <= cutoff_ts
-    et réajuste _C_{orig_cid}_T_ -> _C_{new_cid}_T_. Ne touche jamais à COLLECTION_META_ARTIFACTS."""
-    scroll_url = (
-        f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/scroll"
-    )
-    upsert_url = (
-        f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points?wait=true"
-    )
-
-    total_cloned = 0
-    next_offset = None
+    anchor_msg_id: Optional[str] = None,
+) -> RagCloneReport:
+    """Duplique par pagination les vecteurs Qdrant de COLLECTION_SESSION_RAG de orig_cid vers new_cid
+    (retries bornés, upsert par lots, comptage de contrôle). Si cutoff_ts est fourni, filtre
+    timestamp <= cutoff_ts ; réajuste _C_{orig_cid}_T_ -> _C_{new_cid}_T_.
+    Ne touche jamais à COLLECTION_META_ARTIFACTS."""
+    base_url = f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points"
     orig_marker = f"_C_{orig_cid}_T_"
     new_marker = f"_C_{new_cid}_T_"
+    live_set = set(live_msg_ids) if live_msg_ids else None
 
     must_conditions = [
         {"key": "user_id", "match": {"value": user_id}},
         {"key": "chat_id", "match": {"value": orig_cid}},
     ]
-    if not live_msg_ids and cutoff_ts is not None:
+    if not live_set and cutoff_ts is not None:
         must_conditions.append({"key": "timestamp", "range": {"lte": int(cutoff_ts)}})
+
+    cloned = eligible = scanned = failed = 0
+    scroll_ok, last_err = True, ""
+    verified: Optional[int] = None
+    next_offset = None
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         while True:
             scroll_payload = {
                 "filter": {"must": must_conditions},
-                "limit": 256,
+                "limit": _RAG_CLONE_SCROLL_LIMIT,
                 "with_payload": True,
                 "with_vector": True,
             }
             if next_offset is not None:
                 scroll_payload["offset"] = next_offset
 
-            resp = await client.post(scroll_url, json=scroll_payload)
-            if resp.status_code != 200:
+            resp, err = await _qdrant_call(client, "POST", f"{base_url}/scroll", scroll_payload)
+            if not _qdrant_ok(resp):
+                if resp is not None and resp.status_code == 404 and scanned == 0:
+                    break  # Collection absente : aucune donnée à cloner
+                scroll_ok, last_err = False, err
+                logger.warning(
+                    f"[ECHO-SESSION-CLONE] Scroll SESSION_RAG interrompu ({orig_cid} -> {new_cid}) : {err}"
+                )
                 break
 
             result = resp.json().get("result") or {}
@@ -836,47 +938,86 @@ async def duplicate_session_rag(
 
             new_points = []
             for pt in points:
+                scanned += 1
                 vec = pt.get("vector")
                 if not vec:
                     continue
                 payload = dict(pt.get("payload") or {})
-                if live_msg_ids:
-                    if not is_point_in_branch(payload, set(live_msg_ids), cutoff_ts):
+                if live_set:
+                    if not is_point_in_branch(payload, live_set, cutoff_ts):
                         continue
                 elif cutoff_ts is not None:
                     pt_ts = payload.get("timestamp")
                     if isinstance(pt_ts, (int, float)) and int(pt_ts) > int(cutoff_ts):
                         continue
                 payload["chat_id"] = new_cid
-                if (
-                    isinstance(payload.get("source_id"), str)
-                    and orig_marker in payload["source_id"]
+                if anchor_msg_id and (
+                    payload.get("source_id") == SESSION_RAG_CONVERSATION_SOURCE_ID
+                    or payload.get("message_id")
                 ):
-                    payload["source_id"] = payload["source_id"].replace(
-                        orig_marker, new_marker
-                    )
-                if (
-                    isinstance(payload.get("text"), str)
-                    and orig_marker in payload["text"]
-                ):
+                    payload["message_id"] = anchor_msg_id
+                if isinstance(payload.get("source_id"), str) and orig_marker in payload["source_id"]:
+                    payload["source_id"] = payload["source_id"].replace(orig_marker, new_marker)
+                if isinstance(payload.get("text"), str) and orig_marker in payload["text"]:
                     payload["text"] = payload["text"].replace(orig_marker, new_marker)
-                new_points.append(
-                    {
-                        "id": str(
-                            uuid.uuid5(uuid.NAMESPACE_DNS, f"{new_cid}_{pt.get('id')}")
-                        ),
-                        "vector": vec,
-                        "payload": payload,
-                    }
-                )
+                new_points.append({
+                    "id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{new_cid}_{pt.get('id')}")),
+                    "vector": vec,
+                    "payload": payload,
+                })
 
-            if new_points:
-                up_resp = await client.put(upsert_url, json={"points": new_points})
-                if up_resp.status_code in (200, 201):
-                    total_cloned += len(new_points)
+            eligible += len(new_points)
+            # Upsert par lots réduits : requêtes plus courtes, échec circonscrit au lot
+            for i in range(0, len(new_points), _RAG_CLONE_UPSERT_BATCH):
+                batch = new_points[i:i + _RAG_CLONE_UPSERT_BATCH]
+                up_resp, up_err = await _qdrant_call(
+                    client, "PUT", f"{base_url}?wait=true", {"points": batch}
+                )
+                if _qdrant_ok(up_resp):
+                    cloned += len(batch)
+                else:
+                    failed += len(batch)
+                    last_err = up_err
+                    logger.warning(
+                        f"[ECHO-SESSION-CLONE] Upsert SESSION_RAG en échec ({len(batch)} points, "
+                        f"{orig_cid} -> {new_cid}) : {up_err}"
+                    )
 
             next_offset = result.get("next_page_offset")
             if next_offset is None:
                 break
 
-    return total_cloned
+        # Comptage de contrôle : présence effective des points dans la session cible
+        if eligible:
+            c_resp, c_err = await _qdrant_call(
+                client,
+                "POST",
+                f"{base_url}/count",
+                {
+                    "exact": True,
+                    "filter": {"must": [
+                        {"key": "user_id", "match": {"value": user_id}},
+                        {"key": "chat_id", "match": {"value": new_cid}},
+                    ]},
+                },
+            )
+            if _qdrant_ok(c_resp):
+                verified = int((c_resp.json().get("result") or {}).get("count") or 0)
+            elif not last_err:
+                last_err = f"Comptage de contrôle indisponible : {c_err}"
+
+    complete = scroll_ok and failed == 0 and (
+        eligible == 0 or (verified is not None and verified >= eligible)
+    )
+    if eligible and verified is not None and verified < eligible and not last_err:
+        last_err = f"Comptage de contrôle : {verified}/{eligible} points présents"
+
+    summary = (
+        f"[ECHO-SESSION-CLONE] SESSION_RAG {orig_cid} -> {new_cid} : {cloned}/{eligible} clonés, "
+        f"{scanned} lus, {failed} en échec, contrôle={verified}, complet={complete}"
+    )
+    if complete:
+        logger.info(summary)
+    else:
+        logger.warning(f"{summary} | {last_err}")
+    return RagCloneReport(cloned, eligible, scanned, failed, complete, last_err)
