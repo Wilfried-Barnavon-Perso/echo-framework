@@ -47,6 +47,7 @@
 	import { refreshChatList, refreshFolderChatLists } from '$lib/stores/chatList';
 	import ChatParticipants from '$lib/components/common/ChatParticipants.svelte';
 	import EchoContextGauge from '$lib/components/echo/EchoContextGauge.svelte';
+	import EchoSubagentIndicator from '$lib/components/echo/EchoSubagentIndicator.svelte';
 
 	const i18n: any = getContext('i18n');
 
@@ -401,6 +402,7 @@
 
 					<!-- [ECHO-V6-HOOK] Jauge contextuelle & Quotas intégrés dans la navbar -->
 					<EchoContextGauge chatId={history?.currentId ?? $chatId} />
+					<EchoSubagentIndicator chatId={chat?.id || $chatId || ''} />
 
 					{#if !tabbed}{@render renderChatActions()}{/if}
 

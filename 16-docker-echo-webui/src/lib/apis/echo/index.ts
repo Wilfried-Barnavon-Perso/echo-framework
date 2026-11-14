@@ -299,6 +299,40 @@ export const getEchoCognitionSnapshot = async (token: string, chatId: string): P
 	return res.json();
 };
 
+export interface EchoSubagentMessageResponse {
+	status: 'queued' | 'started';
+	sub_sid: string;
+	queue_length?: number;
+}
+
+export const postEchoSubagentMessage = async (
+	token: string,
+	chatId: string,
+	subSid: string,
+	content: string
+): Promise<EchoSubagentMessageResponse> => {
+	const res = await fetch(
+		`${ECHO_API_BASE_URL}/cognition/${encodeURIComponent(chatId)}/threads/${encodeURIComponent(subSid)}/message`,
+		{
+			method: 'POST',
+			headers: {
+				Accept: 'application/json',
+				'Content-Type': 'application/json',
+				authorization: `Bearer ${token}`
+			},
+			body: JSON.stringify({ content })
+		}
+	);
+
+	if (!res.ok) {
+		const err = await res
+			.json()
+			.catch(() => ({ detail: "Échec d'envoi du message au sous-agent" }));
+		throw new Error(err.detail || "Échec d'envoi du message au sous-agent");
+	}
+	return res.json();
+};
+
 // ============================================================================
 // CODEX GIT & FICHIERS (/echo/v1/codex)
 // ============================================================================

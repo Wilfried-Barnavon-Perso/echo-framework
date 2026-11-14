@@ -86,7 +86,6 @@
 	import { fileIconName } from './FileNav/fileIcon';
 	import UntitledFile from './ChatTabs/UntitledFile.svelte';
 	import QuickOpen from './ChatTabs/QuickOpen.svelte';
-	import VoiceNote from './ChatTabs/VoiceNote.svelte';
 	import Browser from './ChatTabs/Browser.svelte';
 	import Desktop from './ChatTabs/Desktop.svelte';
 	import XTerminal from './XTerminal.svelte';
@@ -101,7 +100,11 @@
 	import EchoCodexTab from '$lib/components/echo/EchoCodexTab.svelte';
 	import EchoVaultTab from '$lib/components/echo/EchoVaultTab.svelte';
 	import EchoCanvasTab from '$lib/components/echo/EchoCanvasTab.svelte';
-	import { echoCanvasOpenRequest } from '$lib/stores/echo';
+	import {
+		echoCanvasOpenRequest,
+		echoCognitionSelectedSubSid,
+		echoSubagentOpenRequest
+	} from '$lib/stores/echo';
 	import FileNav from './FileNav.svelte';
 	import PyodideFileNav from './PyodideFileNav.svelte';
 	import Overview from './Overview.svelte';
@@ -110,6 +113,7 @@
 	let stopTerminalChoice: ((stop: boolean) => void) | null = null;
 	import XMark from '../icons/XMark.svelte';
 	import SplitPanel from '../icons/SplitPanel.svelte';
+	import Tooltip from '../common/Tooltip.svelte';
 	import { isSavedChatId } from '$lib/utils/chatId';
 
 	const i18n = getContext<any>('i18n');
@@ -339,29 +343,6 @@
 	let closing = new Set<string>();
 	let selectedConnection: TerminalConnection | null = null;
 	let showQuickOpen = false;
-	let voiceNote: VoiceNote;
-	let voiceNoteTarget: {
-		connection: TerminalConnection;
-		chatId: string | null;
-		directory?: string;
-	} | null = null;
-	$: canVoiceNote = terminalFilesAvailable && !!$user;
-	$: canTranscribeVoiceNote = $user?.role === 'admin' || ($user?.permissions?.chat?.stt ?? true);
-	const openVoiceNote = () => {
-		if (voiceNoteTarget) {
-			voiceNote?.finishRecording();
-			return;
-		}
-		if (!canVoiceNote || !selectedConnection || !$user) return;
-		voiceNoteTarget = {
-			connection: selectedConnection,
-			chatId,
-			directory:
-				contextTab?.terminalId === selectedConnection.selector
-					? terminalContext?.currentDirectory
-					: undefined
-		};
-	};
 	$: if (!terminalFilesAvailable) showQuickOpen = false;
 	let terminalEnabled = false;
 	let desktopEnabled = false;
@@ -486,13 +467,18 @@
 		changeChatView(viewEntry, { ...viewEntry.state, panels: tabs });
 		showTabs.set(true);
 	};
-	const openFiles = (selector = $selectedTerminalId, directory?: string, newTab = false) => {
-		if (selector ? !terminalAccessible(selector) : !showFilesTab) return;
+	const openFiles = (selector = $selectedTerminalId, directory?: string, _newTab = false) => {
+		if (
+			selector
+				? !terminalAccessible(selector)
+				: !(codeInterpreterEnabled && $config?.code?.interpreter_engine !== 'jupyter')
+		)
+			return;
 		directory ??=
 			terminalContext?.terminalId === selector
 				? terminalContext.currentDirectory || undefined
 				: undefined;
-		const existing = newTab
+		const existing = _newTab
 			? undefined
 			: (tabs.tabs.find(
 					(tab) =>
@@ -535,20 +521,6 @@
 		});
 		if (page != null) fileViews[id]?.revealPage?.(page);
 	};
-	const newFile = () => {
-		if (!terminalFilesAvailable || !selectedConnection) return;
-		let number = 1;
-		while (tabs.tabs.some((tab) => tab.untitled && tab.label === `Untitled-${number}`)) number++;
-		openPanel({
-			id: uuidv4(),
-			kind: 'file',
-			label: `Untitled-${number}`,
-			terminalId: selectedConnection.selector,
-			connection: { ...selectedConnection },
-			untitled: true,
-			context: contextTab?.terminalId === selectedConnection.selector ? terminalContext : undefined
-		});
-	};
 	const openFeature = (
 		kind:
 			| 'artifacts'
@@ -589,6 +561,14 @@
 	$: if ($echoCanvasOpenRequest && $echoCanvasOpenRequest.chatId === chatId) {
 		echoCanvasOpenRequest.set(null);
 		openFeature('echo-canvas', true);
+	}
+	$: if ($echoSubagentOpenRequest && $echoSubagentOpenRequest.chatId === chatId) {
+		const req = $echoSubagentOpenRequest;
+		echoSubagentOpenRequest.set(null);
+		if (req.subSid && chatId) {
+			echoCognitionSelectedSubSid.update((curr) => ({ ...curr, [chatId]: req.subSid! }));
+		}
+		openFeature('echo-cognition', true);
 	}
 
 	type SplitDrop = PanelRect & { groupId: string; edge: SplitEdge | null };
@@ -1018,9 +998,14 @@
 				$config?.features?.enable_direct_integrations &&
 				($user?.role === 'admin' || ($user?.permissions?.features?.direct_tool_servers ?? true))))
 	);
-	$: showFilesTab =
-		terminalFilesAvailable ||
-		(codeInterpreterEnabled && $config?.code?.interpreter_engine !== 'jupyter');
+	$: terminalNeedsSavedChat = !isSavedChatId(chatId);
+	$: terminalMenuVisible = !!(
+		($config?.features?.enable_tool_servers &&
+			selectedSystemTerminal &&
+			chatContextAvailable(selectedSystemTerminal)) ||
+		terminalEnabled
+	);
+	$: terminalMenuClickable = !!(terminalEnabled && selectedConnection && !terminalNeedsSavedChat);
 	$: if (!hasMessages) showOverview.set(false);
 	$: showCommentsTab = !!(
 		$config?.features?.enable_comments &&
@@ -1065,7 +1050,6 @@
 	$: showArtifactsTab = ($artifactContents ?? []).length > 0 && $visibleControls['chat.artifacts'];
 	$: showPreviewTab = !!$embed && $embed.chatId === chatId;
 	$: availableViews = [
-		{ kind: 'files', label: $i18n.t('Files'), available: showFilesTab },
 		{
 			kind: 'side',
 			label: $i18n.t('New Chat'),
@@ -1082,16 +1066,16 @@
 	];
 
 	$: newTabViews = availableViews.filter(
-		(view) => view.kind !== 'files' && view.kind !== 'voice' && view.available
+		(view) => view.kind !== 'voice' && view.available
 	);
-	$: canOpenNewTab = showFilesTab || terminalFilesAvailable || newTabViews.length > 0;
+	$: canOpenNewTab =
+		terminalMenuVisible || browserEnabled || desktopEnabled || newTabViews.length > 0;
 
 	const quickSplit = () => {
 		if (tabs.tabs.length < 2) {
 			const view = availableViews.find((view) => view.available);
 			if (!view) return;
-			if (view.kind === 'files') openFiles();
-			else openFeature(view.kind as any);
+			openFeature(view.kind as any);
 		}
 		tabs = setSplitTabs(tabs, true);
 	};
@@ -1115,17 +1099,11 @@
 		const shortcut = matchKeybinding(event);
 		let action: (() => void) | undefined;
 		switch (shortcut) {
-			case Shortcut.VOICE_NOTE:
-				if (voiceNoteTarget || canVoiceNote) action = openVoiceNote;
-				break;
 			case Shortcut.QUICK_OPEN:
 				if (terminalFilesAvailable && selectedConnection)
 					action = () => {
 						showQuickOpen = true;
 					};
-				break;
-			case Shortcut.OPEN_FILES:
-				if (showFilesTab) action = () => openFiles();
 				break;
 			case Shortcut.OPEN_DESKTOP:
 				if (desktopEnabled && selectedConnection) action = openDesktop;
@@ -1136,11 +1114,8 @@
 			case Shortcut.OPEN_COMMENTS:
 				if (showCommentsTab) action = () => openFeature('comments');
 				break;
-			case Shortcut.NEW_FILE:
-				if (terminalFilesAvailable && selectedConnection) action = newFile;
-				break;
 			case Shortcut.NEW_TERMINAL:
-				if (terminalEnabled && selectedConnection) action = newTerminal;
+				if (terminalMenuClickable) action = newTerminal;
 				break;
 			case Shortcut.NEW_BROWSER:
 				if (browserEnabled && selectedConnection) action = () => openBrowser();
@@ -1251,17 +1226,12 @@
 		const options = [
 			...availableViews
 				.filter((view) => view.available && view.kind !== 'side')
-				.map((view) => () => {
-					if (view.kind === 'files') openFiles();
-					else openFeature(view.kind as any);
-				}),
-			...(terminalFilesAvailable ? [newFile] : []),
-			...(terminalEnabled ? [newTerminal] : []),
+				.map((view) => () => openFeature(view.kind as any)),
+			...(terminalMenuClickable ? [newTerminal] : []),
 			...(browserEnabled ? [openBrowser] : []),
 			...(desktopEnabled ? [openDesktop] : [])
 		];
-		if (terminalFilesAvailable || (!hasOpenedTabs && showFilesTab)) openFiles();
-		else if (options.length === 1) options[0]();
+		if (options.length === 1) options[0]();
 		else if (!options.length && !canSideChat) showTabs.set(false);
 		hasOpenedTabs = true;
 	}
@@ -1445,19 +1415,6 @@
 			<span class="truncate">{$i18n.t('Open in side panel')}</span>
 		</div>
 	</div>
-{/if}
-
-{#if voiceNoteTarget}
-	{@const target = voiceNoteTarget}
-	<VoiceNote
-		bind:this={voiceNote}
-		{...target}
-		canTranscribe={canTranscribeVoiceNote}
-		onclose={() => {
-			voiceNoteTarget = null;
-		}}
-		onsaved={(path) => openFile(path, target.connection.selector)}
-	/>
 {/if}
 
 {#if showQuickOpen && terminalFilesAvailable && selectedConnection}
@@ -1999,23 +1956,35 @@
 					>
 					<div slot="content">
 						<DropdownMenu className="min-w-56">
-							{#if showFilesTab}
-								<button on:click={() => openFiles($selectedTerminalId, undefined, true)}
-									><Icon name="folder" size={14} /><span class="flex-1 text-start"
-										>{$i18n.t('Files')}</span
-									><HotkeyHint name="openFiles" className="ms-auto" /></button
-								>
+							{#if terminalMenuVisible}
+								{#if terminalMenuClickable}
+									<button on:click={newTerminal}
+										><Icon name="terminal" size={14} /><span class="flex-1 text-start"
+											>{$i18n.t('New Terminal')}</span
+										><HotkeyHint name="newTerminal" className="ms-auto" /></button
+									>
+								{:else}
+									<Tooltip
+										content={terminalNeedsSavedChat
+											? "Démarrez d'abord une conversation pour ouvrir un terminal"
+											: $i18n.t('Terminal connection unavailable')}
+										placement="left"
+										className="flex w-full [&>button]:flex [&>button]:w-full [&>button]:h-[1.6875rem] [&>button]:items-center [&>button]:gap-2 [&>button]:rounded-xl! [&>button]:px-2! [&>button]:text-[0.8125rem] [&>button_svg]:size-3.5"
+									>
+										<button
+											type="button"
+											disabled
+											aria-disabled="true"
+											class="opacity-45 cursor-not-allowed text-gray-400 dark:text-gray-500"
+											on:click|preventDefault|stopPropagation
+										>
+											<Icon name="terminal" size={14} />
+											<span class="flex-1 text-start">{$i18n.t('New Terminal')}</span>
+											<HotkeyHint name="newTerminal" className="ms-auto" />
+										</button>
+									</Tooltip>
+								{/if}
 							{/if}
-							{#if terminalFilesAvailable}<button on:click={newFile}
-									><Icon name="page" size={14} /><span class="flex-1 text-start"
-										>{$i18n.t('New File')}</span
-									><HotkeyHint name="newFile" className="ms-auto" /></button
-								>{/if}
-							{#if terminalEnabled}<button on:click={newTerminal}
-									><Icon name="terminal" size={14} /><span class="flex-1 text-start"
-										>{$i18n.t('New Terminal')}</span
-									><HotkeyHint name="newTerminal" className="ms-auto" /></button
-								>{/if}
 							{#if browserEnabled}<button on:click={() => openBrowser()}
 									><Icon name="browser" size={14} /><span class="flex-1 text-start"
 										>{$i18n.t('Browser')}</span
@@ -2026,13 +1995,6 @@
 										>{$i18n.t('Desktop')}</span
 									><HotkeyHint name="openDesktop" className="ms-auto" /></button
 								>{/if}
-							{#if canVoiceNote}
-								<button on:click={openVoiceNote}>
-									<Icon name="microphone" size={14} />
-									<span class="flex-1 text-start">{$i18n.t('Voice Note')}</span>
-									<HotkeyHint name="voiceNote" className="ms-auto" />
-								</button>
-							{/if}
 							{#each newTabViews as view}
 								<button
 									on:click={() =>
