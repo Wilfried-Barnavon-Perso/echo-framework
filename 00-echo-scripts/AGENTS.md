@@ -9,7 +9,8 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 ## 2. Cartographie des Fichiers et Algorithmes
 
 ### `install-stack.sh`
-**Rôle** : Déploiement central de l'architecture Docker (v6.0.0.1).
+**Rôle** : Déploiement central de l'architecture Docker (v6.5.1.2).
+- **`ensure_swap_and_vm_tuning()`** : Garantit un filet de sécurité Swap de 4 Go (`/swapfile` persisté dans `/etc/fstab` si aucun swap actif) et configure `vm.swappiness=25` (`/etc/sysctl.d/99-echo-vm.conf`) pour prévenir les blocages OOM lors des builds Docker.
 - **`ensure_docker_autosafety()`** : Configure de manière globale le démon Docker (`/etc/docker/daemon.json`) pour imposer une limite de taille des logs (max 10Mo, 3 fichiers) et injecte un cron quotidien (`/etc/cron.daily/echo-clean`) appelant `echo-clean.sh`, évitant ainsi la saturation du disque de la VM.
 - **Compilation `echo-python-base:latest` & Throttle Mensuel** : Compile en amont l'image socle mutualisée (`01-config/Dockerfile.python-base`) et applique un verrou de 30 jours (`.last_base_pull`) sur le pull des images `:latest` (`alpine:latest`, `n8nio/n8n:latest`) tout en limitant le parallélisme (`CMAKE_BUILD_PARALLEL_LEVEL=2`).
 - **`ensure_volume()` / `ensure_network()`** : Création idempotente des volumes et des sous-réseaux IPAM dynamiques (`echo-network` via `ECHO_NET_MAIN_PREFIX` en `10.20.40.0/24` et `echo-sandbox` via `ECHO_NET_SANDBOX_PREFIX` en `10.20.50.0/24`).

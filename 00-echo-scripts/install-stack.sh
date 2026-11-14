@@ -1,18 +1,18 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.0.0.1
+# VERSION : 6.5.1.2
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.1.2: Ajout de ensure_swap_and_vm_tuning (filet swap 4 Go et vm.swappiness=25).
 # 6.0.0.1: Retrait de l'appel à config-owui.sh au profit du bootstrap déclaratif lifespan ECHO V6.
 # 5.231.39.1: Alignement du cron quotidien sur echo-clean (/etc/cron.daily/echo-clean) et de l'aide sur echo-show-admin.
 # 5.231.21.1: Délégation de la génération des secrets .env (dont ECHO_VAULT_ENCRYPTION_KEY) à ensure_echo_secrets (echo-globals.sh).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 6.33: Mise à jour du chemin de build pour l'image parente docker-python-base.
 
 set -e # Arrêt en cas d'erreur critique
 
@@ -168,8 +168,27 @@ ensure_docker_autosafety() {
     fi
 }
 
+ensure_swap_and_vm_tuning() {
+    echo "🧠 Vérification du Swap et du tuning mémoire noyau..."
+    if [ -z "$(swapon --show --noheadings 2>/dev/null)" ]; then
+        if [ ! -f /swapfile ]; then
+            echo "   🆕 Aucun swap actif détecté. Création de /swapfile (4 Go)..."
+            fallocate -l 4G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none
+            chmod 600 /swapfile
+            mkswap /swapfile >/dev/null
+        fi
+        swapon /swapfile 2>/dev/null || true
+        grep -q "/swapfile" /etc/fstab || echo "/swapfile none swap sw 0 0" >> /etc/fstab
+    else
+        echo "   ✅ Swap existant actif ($(swapon --show=NAME,SIZE --noheadings | tr '\n' ' '))."
+    fi
+    sysctl -w vm.swappiness=25 >/dev/null 2>&1 || true
+    echo "vm.swappiness=25" > /etc/sysctl.d/99-echo-vm.conf
+}
+
 # --- 1. PRE-FLIGHT CHECKS ---
 wait_for_docker
+ensure_swap_and_vm_tuning
 ensure_docker_autosafety
 chmod +x "$ECHO_SCRIPTS"/*.sh 2>/dev/null || true
 
