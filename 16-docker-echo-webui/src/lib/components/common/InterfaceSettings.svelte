@@ -4,7 +4,6 @@
 		canUseCalls,
 		canUseChannels,
 		canUseTemporaryChats,
-		canUseWebSearch,
 		isSettingsAdmin
 	} from '$lib/utils/settings-access';
 	import { config, settings, terminalServers, user, visibleControls } from '$lib/stores';
@@ -121,8 +120,6 @@
 	let showEmojiInCall = false;
 	let voiceInterruption = false;
 	let hapticFeedback = false;
-
-	let webSearch: string | null = null;
 
 	let iframeSandboxAllowScripts = true;
 	let iframeSandboxAllowSameOrigin = false;
@@ -273,11 +270,6 @@
 		});
 	};
 
-	const toggleWebSearch = async () => {
-		webSearch = webSearch === null ? 'always' : null;
-		saveSettings({ webSearch: webSearch });
-	};
-
 	const setTextScaleHandler = (scale: number) => {
 		textScale = scale;
 
@@ -408,7 +400,6 @@
 		imageCompressionInChannels = currentSettings?.imageCompressionInChannels ?? true;
 
 		backgroundImageUrl = currentSettings?.backgroundImageUrl ?? null;
-		webSearch = currentSettings?.webSearch ?? null;
 
 		textScale = currentSettings?.textScale ?? null;
 		fontFamily = normalizeAppFontFamily(currentSettings?.fontFamily) || null;
@@ -1643,37 +1634,6 @@
 			</div>
 			<p class={settingDescriptionClass}>
 				{$i18n.t('Show the floating quick-action toolbar in chat.')}
-			</p>
-		</div>
-	{/if}
-
-	{#if canUseWebSearch({ user: $user, config: $config })}
-		<div>
-			<div class={settingRowClass}>
-				<label
-					id="web-search-in-chat-label"
-					class={settingLabelClass}
-					for="web-search-in-chat-label-control"
-				>
-					{$i18n.t('settings.personal.interface.webSearchInChat.label')}
-				</label>
-
-				<button
-					id="web-search-in-chat-label-control"
-					aria-labelledby="web-search-in-chat-label web-search-state"
-					class={actionButtonClass}
-					on:click={() => {
-						toggleWebSearch();
-					}}
-					type="button"
-				>
-					<span id="web-search-state"
-						>{webSearch === 'always' ? $i18n.t('Always') : $i18n.t('Default')}</span
-					>
-				</button>
-			</div>
-			<p class={settingDescriptionClass}>
-				{$i18n.t('settings.personal.interface.webSearchInChat.description')}
 			</p>
 		</div>
 	{/if}

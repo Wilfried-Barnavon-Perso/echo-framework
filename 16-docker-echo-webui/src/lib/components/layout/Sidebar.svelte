@@ -279,7 +279,9 @@
 		folderRegistry[folder.id]?.setFolderItems?.();
 	};
 
-	$: pinnedItems = $settings?.pinnedMenuItems ?? DEFAULT_PINNED_ITEMS;
+	$: pinnedItems = ($settings?.pinnedMenuItems ?? DEFAULT_PINNED_ITEMS).filter(
+		(id) => id !== 'notes' && id !== 'playground'
+	);
 
 	$: isMenuItemVisible = (id) => {
 		switch (id) {

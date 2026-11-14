@@ -16,7 +16,26 @@
 	const i18n: Writable<I18n> = getContext('i18n');
 	export let visibility: Visibility = {};
 	let expanded = false;
-	const controls = Object.keys(CONTROL_LABELS) as ControlId[];
+
+	const EXCLUDED_CONTROLS = new Set<ControlId>([
+		'settings.usage',
+		'settings.speech_to_text_engine',
+		'settings.text_to_speech_engine',
+		'chat.attach_notes',
+		'chat.attach_knowledge',
+		'chat.selected_web_search',
+		'chat.selected_image_generation',
+		'chat.selected_code_interpreter',
+		'chat.usage',
+		'chat.model_command'
+	]);
+
+	const filteredGroups = CONTROL_GROUPS.filter(
+		([prefix]) => !prefix.startsWith('model_editor.') && !prefix.startsWith('models.')
+	);
+	const controls = (Object.keys(CONTROL_LABELS) as ControlId[]).filter(
+		(id) => !EXCLUDED_CONTROLS.has(id)
+	);
 
 	const setVisible = (id: ControlId, visible: boolean) => {
 		visibility = { ...visibility };
@@ -44,7 +63,7 @@
 	</AdminSettingRow>
 	<div id="interface-visible-controls" hidden={!expanded}>
 		<div class="space-y-0.5">
-			{#each CONTROL_GROUPS as [prefix, label]}
+			{#each filteredGroups as [prefix, label]}
 				<ModelSettingsSection label={$i18n.t(label)}>
 					<div class="grid grid-cols-1 gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
 						{#each controls.filter((id) => id.startsWith(prefix)) as id}

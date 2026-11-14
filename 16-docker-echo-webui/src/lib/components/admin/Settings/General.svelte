@@ -128,6 +128,13 @@
 						</span>
 					</div>
 
+					<div class="flex items-center justify-between gap-4">
+						<span class="text-gray-600 dark:text-gray-400">Import de fichiers</span>
+						<span class="font-mono text-gray-700 dark:text-gray-200">
+							4 Go max (flux zéro-RAM ECHO)
+						</span>
+					</div>
+
 					<div class="pt-1 text-gray-600 dark:text-gray-400">
 						<div class="font-medium text-gray-700 dark:text-gray-200">Double Licence</div>
 						<div class="mt-0.5 text-gray-500 dark:text-gray-400">
@@ -140,125 +147,11 @@
 
 			<AdminSettingSection title={$i18n.t('settings.admin.general.sections.features.title')}>
 				<AdminSettingRow
-					label={$i18n.t('settings.admin.general.communitySharing.label')}
-					description={$i18n.t('settings.admin.general.communitySharing.description')}
-					let:labelId
-				>
-					<!-- LICENSE covers this Open WebUI Community wordmark.
-					Do not alter, remove, obscure, or replace it except as LICENSE permits:
-					https://docs.openwebui.com/license. -->
-					<Switch bind:state={adminConfig.ENABLE_COMMUNITY_SHARING} ariaLabelledbyId={labelId} />
-				</AdminSettingRow>
-				<AdminSettingRow
-					label={$i18n.t('settings.admin.general.messageRating.label')}
-					description={$i18n.t('settings.admin.general.messageRating.description')}
-					let:labelId
-				>
-					<Switch bind:state={adminConfig.ENABLE_MESSAGE_RATING} ariaLabelledbyId={labelId} />
-				</AdminSettingRow>
-				<AdminSettingRow
 					label={$i18n.t('settings.admin.general.folders.label')}
 					description={$i18n.t('settings.admin.general.folders.description')}
 					let:labelId
 				>
 					<Switch bind:state={adminConfig.ENABLE_FOLDERS} ariaLabelledbyId={labelId} />
-				</AdminSettingRow>
-
-				{#if adminConfig.ENABLE_FOLDERS}
-					<AdminSettingField
-						label={$i18n.t('settings.admin.general.folderMaxFileCount.label')}
-						description={$i18n.t('settings.admin.general.folderMaxFileCount.description')}
-						forId="folder-max-file-count"
-					>
-						<input
-							id="folder-max-file-count"
-							class={inputClass}
-							type="number"
-							min="0"
-							placeholder={$i18n.t('Leave empty for unlimited')}
-							bind:value={adminConfig.FOLDER_MAX_FILE_COUNT}
-						/>
-					</AdminSettingField>
-				{/if}
-
-				<AdminSettingRow
-					label={$i18n.t('settings.admin.general.memories.label')}
-					description={$i18n.t('settings.admin.general.memories.description')}
-					let:labelId
-				>
-					<Switch bind:state={adminConfig.ENABLE_MEMORIES} ariaLabelledbyId={labelId} />
-				</AdminSettingRow>
-				{#if adminConfig.ENABLE_MEMORIES}
-					<AdminSettingRow
-						label={$i18n.t('settings.admin.general.memorySystemContext.label')}
-						description={$i18n.t('settings.admin.general.memorySystemContext.description')}
-						labelClassName="text-gray-500 dark:text-gray-500"
-						let:labelId
-					>
-						<Switch
-							bind:state={adminConfig.ENABLE_MEMORY_SYSTEM_CONTEXT}
-							ariaLabelledbyId={labelId}
-						/>
-					</AdminSettingRow>
-				{/if}
-				<AdminSettingRow
-					label={$i18n.t('settings.admin.general.skillLazyLoading.label')}
-					description={$i18n.t('settings.admin.general.skillLazyLoading.description')}
-					let:labelId
-				>
-					<Switch bind:state={adminConfig.ENABLE_SKILL_LAZY_LOADING} ariaLabelledbyId={labelId} />
-				</AdminSettingRow>
-				<AdminSettingField
-					forId="skill-content-max-chars"
-					label={$i18n.t('settings.admin.general.skillContentMaxChars.label')}
-					description={$i18n.t('settings.admin.general.skillContentMaxChars.description')}
-				>
-					<input
-						id="skill-content-max-chars"
-						class={inputClass}
-						type="number"
-						min="1"
-						step="1"
-						placeholder={$i18n.t('Default')}
-						bind:value={adminConfig.SKILL_CONTENT_MAX_CHARS}
-					/>
-				</AdminSettingField>
-				<AdminSettingField
-					forId="skill-preview-max-chars"
-					label={$i18n.t('settings.admin.general.skillPreviewMaxChars.label')}
-					description={$i18n.t('settings.admin.general.skillPreviewMaxChars.description')}
-				>
-					<input
-						id="skill-preview-max-chars"
-						class={inputClass}
-						type="number"
-						min="1"
-						step="1"
-						placeholder={$i18n.t('Default')}
-						bind:value={adminConfig.SKILL_PREVIEW_MAX_CHARS}
-					/>
-				</AdminSettingField>
-				<AdminSettingField
-					forId="view-chat-max-chars"
-					label={$i18n.t('settings.admin.general.viewChatMaxChars.label')}
-					description={$i18n.t('settings.admin.general.viewChatMaxChars.description')}
-				>
-					<input
-						id="view-chat-max-chars"
-						class={inputClass}
-						type="number"
-						min="1"
-						step="1"
-						placeholder={$i18n.t('No limit')}
-						bind:value={adminConfig.VIEW_CHAT_MAX_CHARS}
-					/>
-				</AdminSettingField>
-				<AdminSettingRow
-					label={$i18n.t('settings.admin.general.notes.label')}
-					description={$i18n.t('settings.admin.general.notes.description')}
-					let:labelId
-				>
-					<Switch bind:state={adminConfig.ENABLE_NOTES} ariaLabelledbyId={labelId} />
 				</AdminSettingRow>
 				<AdminSettingRow
 					label={$i18n.t('settings.admin.general.comments.label')}
@@ -305,13 +198,6 @@
 						</SettingsSelect>
 					</AdminSettingRow>
 				{/if}
-				<AdminSettingRow
-					label={$i18n.t('settings.admin.general.apps.label')}
-					description={$i18n.t('settings.admin.general.apps.description')}
-					let:labelId
-				>
-					<Switch bind:state={adminConfig.ENABLE_APPS} ariaLabelledbyId={labelId} />
-				</AdminSettingRow>
 				<AdminSettingRow
 					label={$i18n.t('settings.admin.general.calendar.label')}
 					description={$i18n.t('settings.admin.general.calendar.description')}

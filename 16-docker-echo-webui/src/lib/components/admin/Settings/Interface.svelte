@@ -1,18 +1,12 @@
 <script lang="ts">
-	import { getModels, getTaskConfig, updateTaskConfig } from '$lib/apis';
+	import { getTaskConfig, updateTaskConfig } from '$lib/apis';
 	import { getChatConfig, updateChatConfig } from '$lib/apis/chats';
 	import { onMount, getContext } from 'svelte';
 	import { toast } from 'svelte-sonner';
 
-	import { getBaseModels } from '$lib/apis/models';
-
 	import Switch from '$lib/components/common/Switch.svelte';
 	import Textarea from '$lib/components/common/Textarea.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
-	import SettingsSelect from '$lib/components/common/SettingsSelect.svelte';
-	import SensitiveInput from '$lib/components/common/SensitiveInput.svelte';
-	import ExperimentalBadge from '$lib/components/common/ExperimentalBadge.svelte';
-	import AdvancedParams from '$lib/components/chat/Settings/Advanced/AdvancedParams.svelte';
 	import AdminSettingField from './AdminSettingField.svelte';
 	import AdminSettingRow from './AdminSettingRow.svelte';
 	import AdminSettingSection from './AdminSettingSection.svelte';
@@ -24,6 +18,8 @@
 	export let saveHandler: () => void;
 
 	const i18n: any = getContext('i18n');
+
+	let loaded = false;
 
 	let taskConfig = {
 		TASK_MODEL: '',
@@ -75,26 +71,19 @@
 		TOOL_SEARCH_DEFER_BUILTIN_TOOLS: true
 	};
 	let toolSearchAlwaysLoaded = '';
-	let defaultDecisionsPrompt = '';
-	let defaultPermissionsPrompt = '';
-	let toolSearchEmbeddingModel = '';
 	const readChatConfigMetadata = () => {
 		const {
-			DEFAULT_TOOL_SEARCH_DECISIONS_PROMPT = '',
-			DEFAULT_TOOL_PERMISSIONS_AUTO_PROMPT = '',
-			TOOL_SEARCH_EMBEDDING_MODEL = '',
+			DEFAULT_TOOL_SEARCH_DECISIONS_PROMPT: _d1 = '',
+			DEFAULT_TOOL_PERMISSIONS_AUTO_PROMPT: _d2 = '',
+			TOOL_SEARCH_EMBEDDING_MODEL: _d3 = '',
 			...settings
 		} = chatConfig as typeof chatConfig & {
 			DEFAULT_TOOL_SEARCH_DECISIONS_PROMPT?: string;
 			DEFAULT_TOOL_PERMISSIONS_AUTO_PROMPT?: string;
 			TOOL_SEARCH_EMBEDDING_MODEL?: string;
 		};
-		defaultDecisionsPrompt = DEFAULT_TOOL_SEARCH_DECISIONS_PROMPT;
-		defaultPermissionsPrompt = DEFAULT_TOOL_PERMISSIONS_AUTO_PROMPT;
-		toolSearchEmbeddingModel = TOOL_SEARCH_EMBEDDING_MODEL;
 		chatConfig = settings;
 	};
-	let showTaskParameters = false;
 	let visibility: Visibility = { ...($appConfig?.ui?.visibility ?? {}) };
 
 	const configuredParams = (params: Record<string, any> = {}) =>
@@ -152,32 +141,6 @@
 		saveHandler();
 	};
 
-	let workspaceModels: any[] = [];
-	let baseModels: any[] = [];
-
-	let models: any[] | null = null;
-	$: modelOptions = models ?? [];
-	const normalizeModelSelection = (modelId: string | null | undefined) => {
-		if (!modelId) {
-			return '';
-		}
-
-		const model = modelOptions.find((m: any) => m.id === modelId);
-		if (!model) {
-			return '';
-		}
-
-		if (
-			model?.access_grants &&
-			!model.access_grants.some(
-				(g: any) => g.principal_type === 'user' && g.principal_id === '*' && g.permission === 'read'
-			)
-		) {
-			toast.error($i18n.t('This model is not publicly available. Please select another model.'));
-		}
-
-		return model.id;
-	};
 	const inputClass =
 		'w-full h-7 rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500';
 	const textareaClass =
@@ -192,35 +155,12 @@
 			taskConfig.TASK_MODEL_PARAMS = taskConfig.TASK_MODEL_PARAMS ?? {};
 			toolSearchAlwaysLoaded = (chatConfig.TOOL_SEARCH_ALWAYS_LOADED ?? []).join(', ');
 			readChatConfigMetadata();
-
-			workspaceModels = await getBaseModels(localStorage.token);
-			baseModels = await getModels(localStorage.token, null, false);
-
-			models = baseModels.map((m: any) => {
-				const workspaceModel = workspaceModels.find((wm: any) => wm.id === m.id);
-
-				if (workspaceModel) {
-					return {
-						...m,
-						...workspaceModel
-					};
-				} else {
-					return {
-						...m,
-						id: m.id,
-						name: m.name,
-
-						is_active: true
-					};
-				}
-			});
-
-			console.debug('models', models);
 		} catch (err) {
 			const error = err as { detail?: string; message?: string };
 			console.error('Failed to initialize Interface settings:', err);
 			toast.error(error?.detail ?? error?.message ?? $i18n.t('Failed to load Interface settings'));
-			models = [];
+		} finally {
+			loaded = true;
 		}
 	};
 
@@ -229,7 +169,7 @@
 	});
 </script>
 
-{#if models !== null && taskConfig && chatConfig}
+{#if loaded && taskConfig && chatConfig}
 	<form
 		class="flex h-full flex-col justify-between text-sm"
 		on:submit|preventDefault={() => {
@@ -242,12 +182,18 @@
 
 		<div class="flex-1 min-h-0 overflow-y-auto scrollbar-hover pr-1.5">
 			<VisibilitySettings bind:visibility />
-			<AdminSettingSection title={$i18n.t('settings.admin.interface.sections.tasks.title')}>
-				<div>
-					<div class="mb-2">
-						<div class="text-xs text-gray-600 dark:text-gray-400">
-							{$i18n.t('settings.admin.interface.taskModel.label')}
-						</div>
+
+			<AdminSettingSection title={$i18n.t('settings.admin.interface.sections.tools.title')}>
+				<AdminSettingRow
+					label={$i18n.t('settings.admin.interface.toolCallLabels.label')}
+					description={$i18n.t('settings.admin.interface.toolCallLabels.description')}
+					let:labelId
+				>
+					<Switch bind:state={chatConfig.ENABLE_TOOL_CALL_LABELS} ariaLabelledbyId={labelId} />
+				</AdminSettingRow>
+			</AdminSettingSection>
+
+			<AdminSettingSection title={$i18n.t('settings.admin.interface.sections.generation.title')}>
 						<div class="mt-1.5 text-[0.6875rem] text-gray-400 dark:text-gray-600">
 							{$i18n.t('settings.admin.interface.taskModel.description')}
 						</div>
@@ -813,41 +759,6 @@
 				{/if}
 
 				<AdminSettingRow
-					label={$i18n.t('settings.admin.interface.retrievalQueryGeneration.label')}
-					description={$i18n.t('settings.admin.interface.retrievalQueryGeneration.description')}
-					let:labelId
-				>
-					<Switch
-						bind:state={taskConfig.ENABLE_RETRIEVAL_QUERY_GENERATION}
-						ariaLabelledbyId={labelId}
-					/>
-				</AdminSettingRow>
-
-				{#if $appConfig?.features?.enable_web_search}
-					<AdminSettingRow
-						label={$i18n.t('settings.admin.interface.webSearchQueryGeneration.label')}
-						description={$i18n.t('settings.admin.interface.webSearchQueryGeneration.description')}
-						let:labelId
-					>
-						<Switch
-							bind:state={taskConfig.ENABLE_SEARCH_QUERY_GENERATION}
-							ariaLabelledbyId={labelId}
-						/>
-					</AdminSettingRow>
-				{/if}
-
-				<AdminSettingField
-					label={$i18n.t('settings.admin.interface.queryGenerationPrompt.label')}
-					description={$i18n.t('settings.admin.interface.queryGenerationPrompt.description')}
-				>
-					<Textarea
-						className={textareaClass}
-						bind:value={taskConfig.QUERY_GENERATION_PROMPT_TEMPLATE}
-						placeholder={$i18n.t('Leave empty to use the default prompt, or enter a custom prompt')}
-					/>
-				</AdminSettingField>
-
-				<AdminSettingRow
 					label={$i18n.t('settings.admin.interface.autocompleteGeneration.label')}
 					description={$i18n.t('settings.admin.interface.autocompleteGeneration.description')}
 					let:labelId
@@ -892,28 +803,6 @@
 						/>
 					</AdminSettingField>
 				{/if}
-
-				<AdminSettingField
-					label={$i18n.t('settings.admin.interface.imagePromptGenerationPrompt.label')}
-					description={$i18n.t('settings.admin.interface.imagePromptGenerationPrompt.description')}
-				>
-					<Textarea
-						className={textareaClass}
-						bind:value={taskConfig.IMAGE_PROMPT_GENERATION_PROMPT_TEMPLATE}
-						placeholder={$i18n.t('Leave empty to use the default prompt, or enter a custom prompt')}
-					/>
-				</AdminSettingField>
-
-				<AdminSettingField
-					label={$i18n.t('settings.admin.interface.toolsFunctionCallingPrompt.label')}
-					description={$i18n.t('settings.admin.interface.toolsFunctionCallingPrompt.description')}
-				>
-					<Textarea
-						className={textareaClass}
-						bind:value={taskConfig.TOOLS_FUNCTION_CALLING_PROMPT_TEMPLATE}
-						placeholder={$i18n.t('Leave empty to use the default prompt, or enter a custom prompt')}
-					/>
-				</AdminSettingField>
 			</AdminSettingSection>
 		</div>
 

@@ -33,6 +33,7 @@
 
 	export let edit = false;
 	export let clone = false;
+	export let readOnly = false;
 
 	export let id = '';
 	export let version_id: string | null = null;
@@ -398,6 +399,7 @@ class Pipe:
 `;
 
 	const saveHandler = async () => {
+		if (readOnly) return;
 		if (!name.trim() || !meta.description?.trim()) {
 			locale = '';
 			toast.error($i18n.t('Name and description are required'));
@@ -427,7 +429,7 @@ class Pipe:
 	};
 
 	const submitHandler = async () => {
-		if (selected || selecting || promoting || loading || (edit && !changed)) return;
+		if (readOnly || selected || selecting || promoting || loading || (edit && !changed)) return;
 		if (codeEditor) {
 			loading = true;
 			content = _content;
@@ -453,7 +455,7 @@ class Pipe:
 		bind:this={formElement}
 		class="flex h-full min-h-0 min-w-0 flex-col"
 		on:submit|preventDefault={() => {
-			if (selected) return;
+			if (readOnly || selected) return;
 			if (edit) {
 				submitHandler();
 			} else {
@@ -511,8 +513,9 @@ class Pipe:
 						/>
 					{:else}
 						<LocalizedField
-							placeholder={$i18n.t('Function Name')}
+							disabled={readOnly}
 							showControls={false}
+							placeholder={$i18n.t('Function Name')}
 							bind:value={name}
 							bind:translations={meta.i18n}
 							{locale}
@@ -539,7 +542,7 @@ class Pipe:
 								aria-label={$i18n.t('Function ID')}
 								bind:value={id}
 								required
-								disabled={edit}
+								disabled={edit || readOnly}
 							/>
 						</Tooltip>
 					{/if}
@@ -562,8 +565,9 @@ class Pipe:
 							/>
 						{:else}
 							<LocalizedField
-								placeholder={$i18n.t('Function Description')}
+								disabled={readOnly}
 								showControls={false}
+								placeholder={$i18n.t('Function Description')}
 								bind:value={meta.description}
 								bind:translations={meta.i18n}
 								{locale}
@@ -606,6 +610,7 @@ class Pipe:
 							id={edit ? id : ''}
 							kind="function"
 							{locale}
+							{readOnly}
 							bind:translations={meta.i18n}
 						/>
 					{/if}
@@ -647,13 +652,13 @@ class Pipe:
 				<CodeEditor
 					bind:this={codeEditor}
 					value={content}
-					readOnly={!!selected || selecting || promoting}
+					readOnly={readOnly || !!selected || selecting || promoting}
 					lang="python"
 					ariaLabel={$i18n.t('Code Editor')}
 					{boilerplate}
 					className="text-[0.6875rem]"
 					onChange={(e: string) => {
-						if (selected) return;
+						if (readOnly || selected) return;
 						content = e;
 						_content = e;
 						if (!edit) {
@@ -668,7 +673,7 @@ class Pipe:
 						}
 					}}
 					onSave={async () => {
-						if (formElement) {
+						if (!readOnly && formElement) {
 							formElement.requestSubmit();
 						}
 					}}
@@ -688,7 +693,23 @@ class Pipe:
 				</Tooltip>
 
 				<div class="ml-auto flex min-w-0 max-w-full shrink-0 items-center gap-3">
-					{#if selected}
+					{#if readOnly}
+						{#if selected && !comparison}
+							<button
+								type="button"
+								class="flex h-7 shrink-0 items-center gap-1.5 text-xs text-gray-500 hover:text-gray-900 dark:hover:text-gray-100"
+								disabled={comparing || promoting || selecting}
+								on:click={compareToCurrent}
+							>
+								{$i18n.t('Compare to current')}{#if comparing}<Spinner className="size-3" />{/if}
+							</button>
+						{/if}
+						<span
+							class="rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-gray-850 dark:text-gray-300"
+						>
+							Lecture seule — Code géré sur disque par ECHO
+						</span>
+					{:else if selected}
 						{#if !comparison}
 							<button
 								type="button"

@@ -34,7 +34,7 @@ export const isSettingsAdmin = ({ user }: SettingsAccessContext) => user?.role =
 /** Search follows the same permissions and visibility as the rendered controls. */
 export function canSearchSetting(
 	key: string,
-	tabId: string,
+	_tabId: string,
 	context: SettingsAccessContext
 ): boolean {
 	const stem = key.replace(/\.(label|description|title)$/, '');
@@ -50,22 +50,14 @@ export function canSearchSetting(
 		);
 		if (control && !isControlVisible(control, context)) return false;
 	}
-	if (stem === 'settings.personal.general.sections.systemPrompt')
-		return canEditSystemPrompt(context);
 	if (
+		stem === 'settings.personal.general.sections.systemPrompt' ||
 		stem === 'settings.personal.general.sections.advancedParameters' ||
 		stem === 'settings.personal.general.modelParameters' ||
-		(key.startsWith('settings.personal.general.parameters.') && tabId === 'general')
+		key.startsWith('settings.personal.general.parameters.')
 	) {
-		if (!canEditParameters(context)) return false;
+		return false;
 	}
-	if (
-		key.startsWith('settings.personal.general.parameters.') &&
-		/\.(streamDeltaChunkSize|contextCompactionThreshold|numThread|numGpu|useMmap|useMlock|keepAlive)\./.test(
-			key
-		)
-	)
-		return isSettingsAdmin(context);
 	if (key.startsWith('settings.personal.dataControls.')) {
 		if (stem.endsWith('.importChats')) return canManageChats(context, 'import');
 		if (stem.endsWith('.exportChats')) return canManageChats(context, 'export');
@@ -77,12 +69,12 @@ export function canSearchSetting(
 	)
 		return !!canUseNotificationTargets(context);
 	if (
-		key.startsWith('settings.personal.account.') &&
-		/\.(apiKeys|secrets|jwtToken|copyToken|apiKey|copyApiKey|createNewSecretKey)\./.test(key)
+		/^settings\.personal\.account\.(bio|gender|birthDate|changePassword|confirmPassword|currentPassword|newPassword|updatePassword|apiKey|jwtToken|secrets|createNewSecretKey|copyToken|copyApiKey)$/.test(
+			stem
+		) ||
+		/^settings\.personal\.account\.sections\.(password|apiKeys)$/.test(stem)
 	) {
-		return (
-			canUseApiKeys(context) && (!/\.(jwtToken|copyToken)\./.test(key) || isSettingsAdmin(context))
-		);
+		return false;
 	}
 	if (stem === 'settings.personal.interface.toastNotificationsForNewUpdates')
 		return isSettingsAdmin(context);
@@ -95,7 +87,35 @@ export function canSearchSetting(
 		/\.(sections\.voice|allowVoiceInterruptionInCall|displayEmojiInCall)\./.test(key)
 	)
 		return canUseCalls(context);
-	if (stem === 'settings.personal.interface.webSearchInChat') return !!canUseWebSearch(context);
+	if (stem === 'settings.personal.interface.webSearchInChat') return false;
+	if (
+		/^settings\.personal\.audio\.(speechToTextEngine|textToSpeechEngine|kokoroJsDtype|kokoroVoice|browserVoice|allowNonLocalVoices)$/.test(
+			stem
+		)
+	) {
+		return false;
+	}
+	if (
+		/^settings\.admin\.general\.(communitySharing|messageRating|folderMaxFileCount|memories|memorySystemContext|skillLazyLoading|skillContentMaxChars|skillPreviewMaxChars|viewChatMaxChars|notes|apps)$/.test(
+			stem
+		)
+	) {
+		return false;
+	}
+	if (
+		/^settings\.admin\.interface\.(sections\.(tasks|chat)|taskModel|localTaskModel|externalTaskModel|taskModelParameters|contextCompaction|contextCompactionModel|tokenThreshold|tokenCap|retainedMessages|contextCompactionPrompt|availableVariables|toolPermissions.*|toolSearch.*|retrievalQueryGeneration|webSearchQueryGeneration|queryGenerationPrompt|imagePromptGenerationPrompt|toolsFunctionCallingPrompt|visibility\.(selectedWebSearch|selectedImageGeneration|selectedCodeInterpreter))$/.test(
+			stem
+		)
+	) {
+		return false;
+	}
+	if (key.startsWith('settings.admin.audio.')) {
+		return (
+			stem === 'settings.admin.audio.title' ||
+			stem === 'settings.admin.audio.sections.speechToText' ||
+			stem === 'settings.admin.audio.sections.textToSpeech'
+		);
+	}
 	if (stem === 'settings.personal.shortcuts.newTemporaryChat')
 		return !!canUseTemporaryChats(context);
 	if (stem === 'settings.personal.shortcuts.deleteChat') return canManageChats(context, 'delete');

@@ -54,4 +54,5 @@ scratch_openwebui/
 node_modules/
 .svelte-kit/
 16-docker-echo-webui/build/
+16-docker-echo-webui/static/pyodide/
 

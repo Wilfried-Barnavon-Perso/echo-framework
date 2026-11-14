@@ -2,22 +2,23 @@
 	import { getContext, onMount } from 'svelte';
 
 	import { goto } from '$app/navigation';
-	import { adminGroupCount, adminUserCount, config, user } from '$lib/stores';
+	import { adminUserCount, config, user } from '$lib/stores';
 	import { page } from '$app/stores';
-	import { getGroups } from '$lib/apis/groups';
 	import { getUsers } from '$lib/apis/users';
 	import { formatNumber } from '$lib/utils';
 
 	import UserList from './Users/UserList.svelte';
-	import Groups from './Users/Groups.svelte';
 
 	const i18n = getContext('i18n');
 
-	let selectedTab;
+	let selectedTab = 'overview';
 	$: {
 		const pathParts = $page.url.pathname.split('/');
 		const tabFromPath = pathParts[pathParts.length - 1];
-		selectedTab = ['overview', 'groups'].includes(tabFromPath) ? tabFromPath : 'overview';
+		if (tabFromPath === 'groups') {
+			goto('/admin/users/overview', { replaceState: true });
+		}
+		selectedTab = 'overview';
 	}
 
 	$: if (selectedTab) {
@@ -45,16 +46,12 @@
 			: usersSeatLimit !== null
 				? `${formatNumber($adminUserCount)} of ${formatNumber(usersSeatLimit)}`
 				: formatNumber($adminUserCount);
-	$: formattedGroupCount = $adminGroupCount === null ? null : formatNumber($adminGroupCount);
-
 	const loadCounts = async () => {
-		const [usersRes, groupsRes] = await Promise.all([
-			getUsers(localStorage.token, undefined, 'created_at', 'asc', 1).catch(() => null),
-			getGroups(localStorage.token).catch(() => null)
-		]);
+		const usersRes = await getUsers(localStorage.token, undefined, 'created_at', 'asc', 1).catch(
+			() => null
+		);
 
 		adminUserCount.set(usersRes?.total ?? null);
-		adminGroupCount.set(Array.isArray(groupsRes) ? groupsRes.length : null);
 	};
 
 	onMount(async () => {
@@ -106,31 +103,10 @@
 					</div>
 				{/if}
 			</a>
-
-			<a
-				id="groups"
-				href="/admin/users/groups"
-				draggable="false"
-				class="px-0.5 py-1 min-w-fit rounded-lg lg:flex-none flex items-center gap-1.5 text-right transition select-none {selectedTab ===
-				'groups'
-					? ''
-					: ' text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'}"
-			>
-				<div class=" self-center">{$i18n.t('Groups')}</div>
-				{#if formattedGroupCount !== null}
-					<div class="self-center text-sm opacity-60">
-						{formattedGroupCount}
-					</div>
-				{/if}
-			</a>
 		</div>
 
 		<div class="flex-1 px-3.5 lg:pr-[1rem] lg:pl-0 overflow-y-scroll">
-			{#if selectedTab === 'overview'}
-				<UserList />
-			{:else if selectedTab === 'groups'}
-				<Groups />
-			{/if}
+			<UserList />
 		</div>
 	</div>
 {/if}

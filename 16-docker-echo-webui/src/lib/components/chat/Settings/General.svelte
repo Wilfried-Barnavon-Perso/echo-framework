@@ -1,130 +1,30 @@
 <script lang="ts">
-	import {
-		canEditSystemPrompt as allowSystemPrompt,
-		canEditParameters
-	} from '$lib/utils/settings-access';
 	import { createEventDispatcher, onMount, getContext } from 'svelte';
 	import { getLanguages, changeLanguage } from '$lib/i18n';
 	const dispatch = createEventDispatcher();
 
-	import { config, models, settings, theme, user } from '$lib/stores';
+	import { config, theme } from '$lib/stores';
 	import { setTheme } from '$lib/utils/theme';
 
 	const i18n: any = getContext('i18n');
 
-	import AdvancedParams from './Advanced/AdvancedParams.svelte';
-	import Textarea from '$lib/components/common/Textarea.svelte';
-	import UserSettingField from './UserSettingField.svelte';
 	import UserSettingRow from './UserSettingRow.svelte';
 	import UserSettingSection from './UserSettingSection.svelte';
 	import SettingsSelect from '$lib/components/common/SettingsSelect.svelte';
+
 	export let saveSettings: Function;
 	export let getModels: Function;
+	void getModels;
 
-	// General
 	let selectedTheme = 'system';
 	$: selectedTheme = $theme;
 
 	let languages: Awaited<ReturnType<typeof getLanguages>> = [];
 	let lang = $i18n.language;
-	let system = '';
-
-	let showAdvanced = false;
-
-	const systemPromptTextareaClass =
-		'w-full resize-y rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 py-1.5 text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500';
-	const actionButtonClass =
-		'text-xs text-gray-500 transition-colors hover:text-gray-900 dark:text-gray-500 dark:hover:text-white';
-
-	let params = {
-		// Advanced
-		stream_response: null,
-		stream_delta_chunk_size: null,
-		compact_token_threshold: null,
-		function_calling: null,
-		reasoning_tags: null,
-		seed: null,
-		temperature: null,
-		reasoning_effort: null,
-		logit_bias: null,
-		frequency_penalty: null,
-		presence_penalty: null,
-		repeat_penalty: null,
-		repeat_last_n: null,
-		mirostat: null,
-		mirostat_eta: null,
-		mirostat_tau: null,
-		top_k: null,
-		top_p: null,
-		min_p: null,
-		stop: null,
-		tfs_z: null,
-		num_ctx: null,
-		num_batch: null,
-		num_keep: null,
-		max_tokens: null,
-		use_mmap: null,
-		use_mlock: null,
-		num_thread: null,
-		num_gpu: null,
-		think: null,
-		format: null,
-		keep_alive: null
-	};
-
-	$: canEditSystemPrompt = allowSystemPrompt({ user: $user, config: $config });
-	$: canEditParams = canEditParameters({ user: $user, config: $config });
 
 	const saveHandler = async () => {
-		const updated: Record<string, any> = {};
-		if (canEditSystemPrompt) {
-			updated.system = system !== '' ? system : null;
-		}
-		if (canEditParams) {
-			updated.params = {
-				...$settings.params,
-				stream_response: params.stream_response !== null ? params.stream_response : undefined,
-				stream_delta_chunk_size:
-					params.stream_delta_chunk_size !== null ? params.stream_delta_chunk_size : undefined,
-				compact_token_threshold:
-					params.compact_token_threshold !== null ? params.compact_token_threshold : undefined,
-				function_calling: params.function_calling !== null ? params.function_calling : undefined,
-				reasoning_tags: params.reasoning_tags !== null ? params.reasoning_tags : undefined,
-				seed: (params.seed !== null ? params.seed : undefined) ?? undefined,
-				stop: params.stop ? params.stop.split(',').filter((e) => e) : undefined,
-				temperature: params.temperature !== null ? params.temperature : undefined,
-				reasoning_effort: params.reasoning_effort !== null ? params.reasoning_effort : undefined,
-				logit_bias: params.logit_bias !== null ? params.logit_bias : undefined,
-				frequency_penalty: params.frequency_penalty !== null ? params.frequency_penalty : undefined,
-				presence_penalty: params.presence_penalty !== null ? params.presence_penalty : undefined,
-				repeat_penalty: params.repeat_penalty !== null ? params.repeat_penalty : undefined,
-				repeat_last_n: params.repeat_last_n !== null ? params.repeat_last_n : undefined,
-				mirostat: params.mirostat !== null ? params.mirostat : undefined,
-				mirostat_eta: params.mirostat_eta !== null ? params.mirostat_eta : undefined,
-				mirostat_tau: params.mirostat_tau !== null ? params.mirostat_tau : undefined,
-				top_k: params.top_k !== null ? params.top_k : undefined,
-				top_p: params.top_p !== null ? params.top_p : undefined,
-				min_p: params.min_p !== null ? params.min_p : undefined,
-				tfs_z: params.tfs_z !== null ? params.tfs_z : undefined,
-				num_ctx: params.num_ctx !== null ? params.num_ctx : undefined,
-				num_batch: params.num_batch !== null ? params.num_batch : undefined,
-				num_keep: params.num_keep !== null ? params.num_keep : undefined,
-				max_tokens: params.max_tokens !== null ? params.max_tokens : undefined,
-				use_mmap: params.use_mmap !== null ? params.use_mmap : undefined,
-				use_mlock: params.use_mlock !== null ? params.use_mlock : undefined,
-				num_thread: params.num_thread !== null ? params.num_thread : undefined,
-				num_gpu: params.num_gpu !== null ? params.num_gpu : undefined,
-				think: params.think !== null ? params.think : undefined,
-				keep_alive: params.keep_alive !== null ? params.keep_alive : undefined,
-				format: params.format !== null ? params.format : undefined,
-				custom_params:
-					params.custom_params && Object.keys(params.custom_params).length > 0
-						? params.custom_params
-						: undefined
-			};
-		}
 		try {
-			await saveSettings(updated);
+			await saveSettings({});
 			dispatch('save');
 		} catch {
 			// The settings modal displays the save error; do not report success.
@@ -137,11 +37,6 @@
 		if (!$config?.features?.enable_easter_eggs) {
 			languages = languages.filter((l) => l.code !== 'dg-DG');
 		}
-
-		system = $settings.system ?? '';
-
-		params = { ...params, ...$settings.params };
-		params.stop = $settings?.params?.stop ? ($settings?.params?.stop ?? []).join(',') : null;
 	});
 </script>
 
@@ -183,7 +78,7 @@
 					bind:value={lang}
 					ariaLabel={$i18n.t('settings.personal.general.language.label')}
 					placeholder={$i18n.t('Select a language')}
-					on:change={(e) => {
+					on:change={() => {
 						changeLanguage(lang);
 					}}
 				>
@@ -192,63 +87,7 @@
 					{/each}
 				</SettingsSelect>
 			</UserSettingRow>
-			{#if $i18n.language === 'en-US' && !($config?.license_metadata ?? false)}
-				<div class="-mt-1 text-[0.6875rem] text-gray-400 dark:text-gray-600">
-					{$i18n.t("Couldn't find your language?")}
-					<a
-						class="font-normal underline text-gray-400 dark:text-gray-600"
-						href="https://github.com/open-webui/open-webui/blob/main/docs/CONTRIBUTING.md#-translations-and-internationalization"
-						target="_blank"
-					>
-						<!-- LICENSE covers this Open WebUI wordmark.
-						Do not alter, remove, obscure, or replace it except as LICENSE permits:
-						https://docs.openwebui.com/license. -->
-						{$i18n.t('Help us translate Open WebUI!')}
-					</a>
-				</div>
-			{/if}
 		</UserSettingSection>
-
-		{#if canEditSystemPrompt}
-			<UserSettingSection title={$i18n.t('settings.personal.general.sections.systemPrompt.title')}>
-				<UserSettingField
-					description={$i18n.t('settings.personal.general.sections.systemPrompt.description')}
-				>
-					<Textarea
-						bind:value={system}
-						className={systemPromptTextareaClass}
-						rows="4"
-						placeholder={$i18n.t('Enter system prompt here')}
-					/>
-				</UserSettingField>
-			</UserSettingSection>
-		{/if}
-
-		{#if canEditParams}
-			<UserSettingSection
-				title={$i18n.t('settings.personal.general.sections.advancedParameters.title')}
-			>
-				<UserSettingRow
-					let:labelId
-					description={$i18n.t('settings.personal.general.modelParameters.description')}
-				>
-					<span slot="label">{$i18n.t('settings.personal.general.modelParameters.label')}</span>
-					<button
-						id={`${labelId}-control`}
-						class={actionButtonClass}
-						type="button"
-						aria-expanded={showAdvanced}
-						on:click={() => {
-							showAdvanced = !showAdvanced;
-						}}>{showAdvanced ? $i18n.t('Hide') : $i18n.t('Show')}</button
-					>
-				</UserSettingRow>
-
-				{#if showAdvanced}
-					<AdvancedParams admin={$user?.role === 'admin'} custom={true} bind:params />
-				{/if}
-			</UserSettingSection>
-		{/if}
 	</div>
 
 	<div class="shrink-0 flex justify-end pt-3 text-sm font-normal">

@@ -2,7 +2,7 @@
 """
 ================================================================================
 MODULE : ECHO USER MANAGER - HTML TEMPLATES (DARK MODE)
-VERSION : 5.237.5.1
+VERSION : 6.5.3.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -322,7 +322,7 @@ HTML_USER_DASHBOARD = r"""
                                     </div>
                                     <div class="card-body">
                                         <p class="text-muted small">
-                                            Téléchargez une archive compressée <code>.tar.xz</code> contenant l'intégralité des données de votre compte issues du domaine utilisateur d'<strong>echo-open-webui</strong> et de la base vectorielle <strong>Qdrant</strong> :
+                                            Téléchargez une archive compressée <code>.tar.xz</code> contenant l'intégralité des données de votre compte issues du domaine utilisateur d'<strong>echo-webui</strong> et de la base vectorielle <strong>Qdrant</strong> :
                                         </p>
                                         <ul class="small text-light mb-4">
                                             <li><code>manifest.json</code> : Métadonnées et statistiques complètes de l'export.</li>

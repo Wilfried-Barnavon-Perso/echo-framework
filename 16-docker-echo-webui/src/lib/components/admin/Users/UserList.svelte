@@ -11,20 +11,14 @@
 
 	import { toast } from 'svelte-sonner';
 
-	import { getUsers, deleteUserById } from '$lib/apis/users';
+	import { getUsers } from '$lib/apis/users';
 
 	import Pagination from '$lib/components/common/Pagination.svelte';
 	import ChatBubbles from '$lib/components/icons/ChatBubbles.svelte';
-	import EditPencil from '$lib/components/icons/EditPencil.svelte';
 	import Eye from '$lib/components/icons/Eye.svelte';
-	import Trash from '$lib/components/icons/Trash.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 
-	import EditUserModal from '$lib/components/admin/Users/UserList/EditUserModal.svelte';
 	import UserChatsModal from '$lib/components/admin/Users/UserList/UserChatsModal.svelte';
-	import AddUserModal from '$lib/components/admin/Users/UserList/AddUserModal.svelte';
-
-	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 
 	import Search from '$lib/components/icons/Search.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
@@ -50,28 +44,8 @@
 
 	let selectedUser = null;
 
-	let showDeleteConfirmDialog = false;
-	let showAddUserModal = false;
-
 	let showUserChatsModal = false;
-	let showEditUserModal = false;
 	let showUserPreviewModal = false;
-
-	const deleteUserHandler = async (id) => {
-		const res = await deleteUserById(localStorage.token, id).catch((error) => {
-			toast.error(`${error}`);
-			return null;
-		});
-
-		// if the user is deleted and the current page has only one user, go back to the previous page
-		if (users.length === 1 && page > 1) {
-			page -= 1;
-		}
-
-		if (res) {
-			getUserList();
-		}
-	};
 
 	const sortState = (key, orderBy, direction) =>
 		orderBy === key ? (direction === 'asc' ? 'ascending' : 'descending') : 'none';
@@ -139,29 +113,6 @@
 	});
 </script>
 
-<ConfirmDialog
-	bind:show={showDeleteConfirmDialog}
-	on:confirm={() => {
-		deleteUserHandler(selectedUser.id);
-	}}
-/>
-
-<AddUserModal
-	bind:show={showAddUserModal}
-	on:save={async () => {
-		getUserList();
-	}}
-/>
-
-<EditUserModal
-	bind:show={showEditUserModal}
-	{selectedUser}
-	sessionUser={$user}
-	on:save={async () => {
-		getUserList();
-	}}
-/>
-
 {#if selectedUser}
 	<UserChatsModal bind:show={showUserChatsModal} user={selectedUser} />
 {/if}
@@ -216,14 +167,11 @@
 				{/if}
 			</div>
 
-			<button
-				class="ml-1 shrink-0 rounded-lg bg-gray-50 px-2.5 py-1 text-xs text-gray-900 transition ring-1 ring-gray-200 hover:bg-gray-100 dark:bg-gray-850 dark:text-gray-100 dark:ring-gray-800 dark:hover:bg-gray-800"
-				on:click={() => {
-					showAddUserModal = !showAddUserModal;
-				}}
+			<span
+				class="ml-1 shrink-0 rounded-lg bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 dark:bg-gray-850 dark:text-gray-300"
 			>
-				{$i18n.t('Add User')}
-			</button>
+				Lecture seule — SSO
+			</span>
 		</div>
 	</div>
 
@@ -407,16 +355,13 @@
 							</div>
 						</td>
 						<td class="px-3 py-1 min-w-[5rem] w-20">
-							<button
-								class="text-xs font-normal leading-4 capitalize transition {roleClass(user.role)}"
-								on:click={() => {
-									selectedUser = user;
-									showEditUserModal = !showEditUserModal;
-								}}
+							<span
+								class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium capitalize bg-gray-100 dark:bg-gray-800 {roleClass(
+									user.role
+								)}"
 							>
-								<span class="sr-only">{$i18n.t('Change User Role')}</span>
 								{$i18n.t(user.role)}
-							</button>
+							</span>
 						</td>
 						<td class=" px-3 py-1 max-w-48 truncate"> {user.email} </td>
 
@@ -471,33 +416,6 @@
 									</Tooltip>
 								{/if}
 
-								<Tooltip content={$i18n.t('Edit User')}>
-									<button
-										class="self-center w-fit p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg"
-										aria-label={$i18n.t('Edit User')}
-										on:click={async () => {
-											showEditUserModal = !showEditUserModal;
-											selectedUser = user;
-										}}
-									>
-										<EditPencil className="size-3.5" />
-									</button>
-								</Tooltip>
-
-								{#if user.role !== 'admin'}
-									<Tooltip content={$i18n.t('Delete User')}>
-										<button
-											class="self-center w-fit p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-lg"
-											aria-label={$i18n.t('Delete User')}
-											on:click={async () => {
-												showDeleteConfirmDialog = true;
-												selectedUser = user;
-											}}
-										>
-											<Trash className="size-3.5" />
-										</button>
-									</Tooltip>
-								{/if}
 							</div>
 						</td>
 					</tr>
@@ -507,7 +425,7 @@
 	</div>
 
 	<div class=" text-gray-500 text-xs mt-1.5 text-right">
-		ⓘ {$i18n.t("Click on the user role button to change a user's role.")}
+		ⓘ Enrôlement et rôles gérés par le portail SSO
 	</div>
 
 	{#if total > 30}
