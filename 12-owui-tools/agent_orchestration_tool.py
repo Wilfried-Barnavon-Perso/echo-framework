@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.238.1.1
+version: 5.239.17.1
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.17.1: Alignement de la Valve COGNITIVE_TIMEOUT par défaut sur ECHO_LLM_CALL_TIMEOUT (600s).
 # 5.238.1.1: Ajout de MODEL_ATHENA dans target_model, synthesis_model et critic_model de consult_council et consult_supervised_workers.
 # 5.233.0.1: Contrainte de sortie JSON via response_schema (SkillRouterOutput et SupervisorCriticOutput), décoration @echo_tool et simplification des retours.
 # 5.231.43.1: Ajout du paramètre multiplier (1..5) dans consult_council, renommage COUNCIL_MAX_SKILLS=7, COUNCIL_ROUNDS_MIN=3, COUNCIL_ROUNDS_MAX=10, COUNCIL_MAX_PR_COMPLEXITY=60, validation arithmétique PAS et droit d'abstention.
 # 5.231.20.1: Parallélisation asyncio.gather des ouvriers dans consult_supervised_workers, correction du parsing de task_id (sup_*) dans list/close_supervised_task, verrou par council_id et sécurisation async des skills.
-# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides) et purge des directives IMPLIQUE.
 
 import sys
 import re
@@ -29,7 +29,7 @@ from echo_events import EchoEvents
 from echo_gemini_client import EchoGeminiClient
 from echo_state_manager import EchoStateManager
 from echo_constants import (
-    ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, get_generation_config
+    ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, ECHO_LLM_CALL_TIMEOUT, get_generation_config
 )
 from echo_skills import get_all_skills, get_skill_content, save_skill, parse_skill_metadata, delete_skill
 from echo_paths import sanitize_echo_id, get_user_skill_lock
@@ -55,7 +55,7 @@ class Tools:
     class Valves(BaseModel):
         KEY_SWITCH_THRESHOLD: int = Field(default=ECHO_API_KEY_RETRIES, description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.")
         MAX_RETRIES: int = Field(default=ECHO_API_MAX_RETRIES, description="Nombre de tentatives maximum.")
-        COGNITIVE_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour la délégation cognitive.")
+        COGNITIVE_TIMEOUT: int = Field(default=ECHO_LLM_CALL_TIMEOUT, description="Délai d'attente maximum (secondes) pour la délégation cognitive.")
         DEBUG_COUNCIL: bool = Field(default=False, description="Si activé, conserve les traces des réflexions internes et affiche plus de détails.")
 
     class UserValves(BaseModel):

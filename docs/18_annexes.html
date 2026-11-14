@@ -645,7 +645,7 @@
           <td><code>ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS</code></td>
           <td>131 Ko</td>
           <td>API / Sandbox</td>
-          <td>Plafond anti-OOM de sortie textuelle pour <code>api_client</code> et <code>worker_api</code>.</td>
+          <td>Plafond de sortie synchrone pour <code>code_executor_tool</code> et <code>worker_api</code> (délestage universel @echo_tool à 32 Ko dans tools_output/).</td>
         </tr>
         <tr>
           <td><code>ECHO_UCTP_CHUNK_SIZE</code></td>
@@ -874,9 +874,9 @@
       reproduisent l'identité de la plateforme Linux Docker émulée :
     </p>
 
-    <div class="code-header">En-têtes - ECHO API Code Assist (Antigravity 2.28.2)</div>
-    <pre><code>User-Agent: antigravity/hub/2.28.2 (os_type=linux; arch=amd64; cl=1006921819; auth_method=personal_consumer; proxy_client=antigravity/2.28.2)
-x-goog-api-client: antigravity/2.28.2
+    <div class="code-header">En-têtes - ECHO API Code Assist (Antigravity 2.32.0)</div>
+    <pre><code>User-Agent: antigravity/hub/2.32.0 (os_type=linux; arch=amd64; cl=1021519450; auth_method=personal_consumer; proxy_client=antigravity/2.32.0)
+x-goog-api-client: antigravity/2.32.0
 Authorization: Bearer {oauth_token}
 Content-Type: application/json</code></pre>
 
@@ -894,7 +894,7 @@ Content-Type: application/json</code></pre>
     </div>
 
     <footer>
-      ECHO Framework - Version 5.239.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.18 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

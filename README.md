@@ -1,11 +1,11 @@
 <div align="center">
   <img src="docs/logo-echo-full.png" alt="ECHO Framework Logo" width="350">
   
-  # 🧠 ECHO Framework v5.239.16
+  # 🧠 ECHO Framework v5.239.18
   
   **The Sovereign Intelligence Orchestrator**
   
-  [![Version](https://img.shields.io/badge/version-5.239.16-blue.svg)](#)
+  [![Version](https://img.shields.io/badge/version-5.239.18-blue.svg)](#)
   [![Open WebUI](https://img.shields.io/badge/Powered%20by-Open%20WebUI-4CAF50.svg)](#)
   [![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-F9AB00.svg)](#)
   [![License](https://img.shields.io/badge/license-Apache%202.0-purple.svg)](#)
@@ -67,7 +67,7 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
   - **Coding Worker Sandbox & Fenêtrage Réactif** : Exécution hermétique de code multi-langages (Python, Node.js) sous Bubblewrap en mode synchrone ou détaché en arrière-plan (`control_sandbox_execution`), avec projection directe d'interfaces web interactives (`echo_monitor`), canal RPC bidirectionnel temps réel UI <-> Sandbox (`postMessage` / UCTP) sans rechargement DOM, et supervision de cycle de vie anti-zombie.
   - **Browser Worker** : Navigation web autonome asynchrone propulsée par Playwright avec architecture Zéro-Trace DOM, curseur incrusté hors-DOM, contournement anti-bot et ciblage visuel de précision.
   - **Studio Visuel, Imagerie Supervisée, ECHO Codex & Delphi** : Génération de visualisations interactives 2D/3D auto-vérifiées en mémoire vive, studio de création, fusion multi-images et retouche itérative d'images supervisées (`generate_image`), éditeur de code intégré (Monaco) multi-workspaces (`main`, `plans`, `generated`, `sandbox`) doublé d'un **Éditeur Hexadécimal virtualisé**, prévisualisation multimédia en direct (Markdown, HTML, SVG, PDF, images avec zoom tactile mobile, copie et export instantanés), consultation inter-conversations en lecture seule, **liens Codex cliquables** directement dans les réponses de l'IA, tables rondes multi-agents parallélisées (`consult_council` avec contradiction intra-spécialité, `consult_supervised_workers`) et gestionnaire de compétences (`Skills`).
-  - **Window Manager (`EchoWM`), HUD & Conseiller d'Outils** : Gestionnaire de fenêtres multi-chats et multi-navigateurs avec isolation stricte par propriétaire, parquant et restaurant vos outils sans perte d'état lors des changements de discussion, **Jauge Contextuelle & Quotas Cloud (5h / Semaine)** avec suivi différentiel dès le premier tour et compteur de compaction, et **Expert-Conseil Opérationnel (`tool_advisor`)** adossé à 10 manuels spécialisés réduisant de 80 % l'empreinte des 98 outils.
+  - **Window Manager (`EchoWM`), HUD & Conseiller d'Outils** : Gestionnaire de fenêtres multi-chats et multi-navigateurs avec isolation stricte par propriétaire, parquant et restaurant vos outils sans perte d'état lors des changements de discussion, **Jauge Contextuelle & Quotas Cloud (5h / Semaine)** avec suivi différentiel dès le premier tour et compteur de compaction, et **Expert-Conseil Opérationnel (`tool_advisor`)** adossé à 10 manuels spécialisés réduisant de 80 % l'empreinte des 100 outils.
 
 ---
 

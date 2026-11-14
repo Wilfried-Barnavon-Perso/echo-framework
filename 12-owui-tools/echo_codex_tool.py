@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 5.235.5.1
+version: 5.239.17.1
 description: Permet au modèle de manipuler un espace virtuel (Codex) avec versioning Git invisible et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.17.1: Pagination bornée unifiée (HEAD et commits) de read_codex à ECHO_CODEX_MAX_READ_LINES (800 lignes) et ECHO_CODEX_MAX_READ_BYTES (46080 octets), indicateurs has_more/next_start_line et skip_truncation=True.
 # 5.235.5.1: Remplacement de l'accès direct SQLite par la méthode abstraite state.has_pending_directive.
 # 5.235.4.1: Sécurisation binaire exhaustive : refus d'édition assistée, propagation des métadonnées dans restore_codex et guard clause dans summarize_codex.
 # 5.235.2.2: Précision de la docstring OpenAPI de read_codex pour l'introspection dynamique tool_advisor.
 # 5.235.2.1: Détection et omission sécurisée des fichiers binaires dans read_codex (HEAD et commits) avec statut warning explicite et directive PAS.
-# 5.233.0.1: Unification du wrapper dans wrap_tool_output, décoration @echo_tool sur les 11 méthodes publiques et simplification des retours.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -36,6 +36,8 @@ from echo_constants import (
     CODEX_WORKSPACE_MAIN,
     CODEX_WORKSPACE_PLANS,
     ECHO_API_MAX_RETRIES,
+    ECHO_CODEX_MAX_READ_BYTES,
+    ECHO_CODEX_MAX_READ_LINES,
     ECHO_CODEX_WORKSPACES,
     ECHO_SYNC_EXCLUDE_LIST,
     ECHO_USERS_ROOT,
@@ -165,7 +167,7 @@ class Tools:
                 "file_info": commit_result,
             }, None
         else:
-            result = await asyncio.to_thread(repo.read_file, safe_file, start_line, end_line)
+            result = await asyncio.to_thread(repo.read_file, safe_file)
             if not result:
                 err = wrap_tool_output(
                     text=f"❌ Fichier `{safe_file}` introuvable.",
@@ -542,59 +544,84 @@ class Tools:
                 }
             )
 
-        if commit_hash:
-            # Lecture historique
-            content = ctx["commit_content"]
-            lines = content.split('\n')
-            total_lines = len(lines)
-            s = max(1, start_line) if start_line else 1
-            e = min(total_lines, end_line) if end_line else total_lines
-            content_subset = "\n".join(lines[s-1:e])
-            range_info = f"lignes {s}-{e} (commit {commit_hash[:7]})"
+        raw_content = ctx["commit_content"] if commit_hash else (ctx["head_result"].get("content") or "")
+        lines = raw_content.splitlines()
+        total_lines = len(lines)
+        s = max(1, int(start_line)) if start_line is not None else 1
 
+        if total_lines > 0 and s > total_lines:
             urn_scope = cid if is_remote else "current"
             urn_ref = f"[{safe_file}](codex:{urn_scope}:{workspace}/{safe_file})"
             return wrap_tool_output(
-                text=f"**{safe_file}**{remote_badge} ({lang}, {total_lines} lignes total, {range_info})\n- URN : {urn_ref}\n\n```{lang}\n{content_subset}\n```",
+                text=f"⚠️ **{safe_file}**{remote_badge} : `start_line={s}` dépasse le nombre total de lignes ({total_lines}).\n- URN : {urn_ref}",
                 status={
-                    "status": "success",
+                    "status": "warning",
                     "filename": safe_file,
                     "workspace": workspace,
                     "language": lang,
                     "total_lines": total_lines,
-                    "lines_returned": e - s + 1,
-                    "start_line": s,
-                    "end_line": e,
+                    "lines_returned": 0,
+                    "has_more": False,
                     "is_remote": is_remote,
                     "target_chat_id": cid if is_remote else None,
-                    "commit_hash": commit_hash[:12]
-                }
+                    "commit_hash": commit_hash[:12] if commit_hash else "HEAD",
+                },
+                skip_truncation=True,
             )
-        else:
-            # Lecture classique (HEAD)
-            result = ctx["head_result"]
-            range_info = f"lignes {result['range'][0]}-{result['range'][1]}" if result["range"] else "complet"
-            s_line = result["range"][0] if result["range"] else 1
-            e_line = result["range"][1] if result["range"] else result['total_lines']
-            lines_returned = len(result['content'].split('\n')) if result.get('content') else 0
-            urn_scope = cid if is_remote else "current"
-            urn_ref = f"[{safe_file}](codex:{urn_scope}:{workspace}/{safe_file})"
-            return wrap_tool_output(
-                text=f"**{safe_file}**{remote_badge} ({lang}, {result['total_lines']} lignes total, {range_info})\n- URN : {urn_ref}\n\n```{lang}\n{result['content']}\n```",
-                status={
-                    "status": "success",
-                    "filename": safe_file,
-                    "workspace": workspace,
-                    "language": lang,
-                    "total_lines": result['total_lines'],
-                    "lines_returned": lines_returned,
-                    "start_line": s_line,
-                    "end_line": e_line,
-                    "is_remote": is_remote,
-                    "target_chat_id": cid if is_remote else None,
-                    "commit_hash": "HEAD"
-                }
-            )
+
+        req_e = int(end_line) if end_line is not None else (s + ECHO_CODEX_MAX_READ_LINES - 1)
+        max_e = min(total_lines, req_e, s + ECHO_CODEX_MAX_READ_LINES - 1) if total_lines > 0 else 0
+
+        selected_lines = []
+        acc_bytes = 0
+        actual_e = s - 1
+        for ln_no in range(s, max_e + 1):
+            line_str = lines[ln_no - 1]
+            line_bytes = len(line_str.encode("utf-8")) + 1
+            if acc_bytes + line_bytes > ECHO_CODEX_MAX_READ_BYTES and selected_lines:
+                break
+            selected_lines.append(line_str)
+            acc_bytes += line_bytes
+            actual_e = ln_no
+
+        content_subset = "\n".join(selected_lines)
+        lines_returned = len(selected_lines)
+        has_more = actual_e < total_lines
+        next_s = actual_e + 1 if has_more else None
+        next_e = min(total_lines, next_s + ECHO_CODEX_MAX_READ_LINES - 1) if next_s else None
+        commit_label = f" (commit {commit_hash[:7]})" if commit_hash else ""
+        range_info = (
+            f"lignes {s}-{actual_e}{commit_label}"
+            if (start_line is not None or end_line is not None or has_more)
+            else f"complet{commit_label}"
+        )
+        pagination_notice = (
+            f"\n\n⚠️ [LECTURE PAGINÉE : lignes {s} à {actual_e} sur {total_lines} affichées (plafond {ECHO_CODEX_MAX_READ_LINES} lignes / {ECHO_CODEX_MAX_READ_BYTES} octets). "
+            f"Pour lire la suite : `read_codex(filename=\"{safe_file}\", workspace=\"{workspace}\", start_line={next_s}, end_line={next_e})`]"
+            if has_more
+            else ""
+        )
+        urn_scope = cid if is_remote else "current"
+        urn_ref = f"[{safe_file}](codex:{urn_scope}:{workspace}/{safe_file})"
+        return wrap_tool_output(
+            text=f"**{safe_file}**{remote_badge} ({lang}, {total_lines} lignes total, {range_info})\n- URN : {urn_ref}\n\n```{lang}\n{content_subset}\n```{pagination_notice}",
+            status={
+                "status": "success",
+                "filename": safe_file,
+                "workspace": workspace,
+                "language": lang,
+                "total_lines": total_lines,
+                "lines_returned": lines_returned,
+                "start_line": s if total_lines > 0 else 0,
+                "end_line": actual_e if total_lines > 0 else 0,
+                "has_more": has_more,
+                "next_start_line": next_s,
+                "is_remote": is_remote,
+                "target_chat_id": cid if is_remote else None,
+                "commit_hash": commit_hash[:12] if commit_hash else "HEAD",
+            },
+            skip_truncation=True,
+        )
 
     @echo_tool
     async def restore_codex(

@@ -139,12 +139,12 @@
               <code>generated</code>,
               et verrou logiciel anti-Race Condition à la sauvegarde.
             </li>
-            <li><strong>L'Outil LLM (<code>echo_codex_tool.py</code> v5.235.5.1) :</strong> Protégé par le verrou
+            <li><strong>L'Outil LLM (<code>echo_codex_tool.py</code> v5.239.17.1) :</strong> Protégé par le verrou
               partagé
               <code>get_codex_lock(uid, cid)</code> et déporté hors de l'Event Loop via <code>asyncio.to_thread</code>,
               il
               expose 11 primitives d'édition, d'exploration inter-conversations et de voyage temporel
-              (<code>create_codex</code>, <code>read_codex</code> avec omission sécurisée des binaires sans déversement
+              (<code>create_codex</code>, <code>read_codex</code> paginé à 800 lignes / 46 080 octets sur HEAD et commit_hash avec omission sécurisée des binaires sans déversement
               brut, <code>edit_codex</code> doté d'un contrôle de
               concurrence optimiste SHA-256 <code>original_sha</code> en Mode 2 <code>assisted_edition</code> prévenant
               tout écrasement concurrent <em>Lost Update</em>, <code>delete_codex</code>, <code>list_codex</code>,
@@ -180,7 +180,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.239.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.18 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -63,8 +63,8 @@
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-          <h3>1. Orchestration Multi-Agents &amp; Skills (<code>agent_orchestration_tool.py</code> v5.233.0.1 &amp;
-            <code>agent_engine_tool.py</code> v5.235.5.1)
+          <h3>1. Orchestration Multi-Agents &amp; Skills (<code>agent_orchestration_tool.py</code> v5.239.17.1 &amp;
+            <code>agent_engine_tool.py</code> v5.239.17.1)
           </h3>
           <ul>
             <li><strong>Table Ronde Delphi &amp; Supervision Parallélisée :</strong> <code>consult_council</code>
@@ -92,7 +92,9 @@
               <code>ECHO_SUBAGENT_CONTEXT</code> (qui propage <code>sub_sid</code>, <code>is_subagent</code> et
               <code>sub_tools_names</code>).
             </li>
-            <li><strong>Agent Engine :</strong> <code>delegate_to_agent</code> (extraction de contexte restreinte à la
+            <li><strong>Agent Engine :</strong> <code>delegate_to_agent</code> (timeout ECHO_LLM_CALL_TIMEOUT = 600s,
+              filet de sécurité idempotent truncate_and_spill_tool_output vers tools_output/ au seuil
+              ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS = 32 768 car., extraction de contexte restreinte à la
               branche active via <code>load_active_branch_ids</code> dans <code>_distill_main_context</code>,
               verrouillage
               explicite <code>functionCallingConfig: {"mode": "NONE"}</code> en fin de budget avec conservation des
@@ -216,18 +218,18 @@
               </li>
             </ul>
 
-              <h3>4. Client HTTP Universel &amp; Protection SSRF (<code>api_client.py</code> v5.233.0.1 &amp;
-                <code>echo_http.py</code> v5.231.59.1)
+              <h3>4. Client HTTP Universel &amp; Protection SSRF (<code>api_client.py</code> v5.239.17.1 &amp;
+                <code>echo_http.py</code> v5.239.16.1)
               </h3>
               <ul>
                 <li><strong><code>call_api</code> :</strong> Exécute les appels REST/GraphQL standards (strictement
                   interdit
                   pour initier des connexions MCP) avec protection SSRF asynchrone non-bloquante factorisée via
-                  <code>is_safe_public_url</code> (<code>echo_http.py</code> v5.231.59.1 : <code>loop.getaddrinfo</code>
+                  <code>is_safe_public_url</code> (<code>echo_http.py</code> v5.239.16.1 : <code>loop.getaddrinfo</code>
                   IPv4/IPv6, blocage anti-SSRF des hôtes internes <code>echo-*</code>, <code>localhost</code>,
                   <code>host.docker.internal</code>, <code>.local</code>, <code>.internal</code> et plages
-                  privées/loopback)
-                  et troncature de sécurité à <strong>131 Ko</strong> (<code>ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS</code>).
+                  privées/loopback),
+                  garde physique anti-OOM à <strong>5 Mo</strong> (<code>5 242 880 car.</code>) et délestage vers tools_output/ au-delà de 32 768 car. délégué à @echo_tool.
                 </li>
               </ul>
       </div>
@@ -240,7 +242,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.239.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.18 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

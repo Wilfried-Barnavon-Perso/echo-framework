@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.239.8.1
+version: 5.239.17.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.17.1: Ajout du domaine tools_output, de read_tool_output/delete_tool_output dans DELEGATE_AGENT_SYSTEM_TOOLS, de build_httpx_timeout (ECHO_LLM_CALL_TIMEOUT=600s, ECHO_LLM_STREAM_TIMEOUT=300s), ECHO_RETRY_SERVER_MAX_WAIT_SEC (60s), ECHO_TOOL_OUTPUT_PREVIEW_CHARS (32768) et des constantes de pagination read_codex (800 lignes / 46080 octets).
+# 5.239.16.2: Alignement Antigravity 2.32.0 (cl=1021519450), passage de ECHO_ENDPOINT_LOCK_TIMEOUT_MIN à 5 min et ajout de ECHO_LLM_CALL_TIMEOUT (240s), ECHO_LLM_STREAM_TIMEOUT (300s) et ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS (48000).
 # 5.239.8.1: Migration de MODEL_APOLLO vers Gemini 4 Hydrogen (gemini-4-hydrogen / gemini-4-hydrogen-high).
 # 5.238.1.1: Intégration de MODEL_ATHENA (gemini-4-carbon / gemini-4-carbon-high, hierarchy 3), déduplication de MODEL_ENUM_BY_POLICY et ajout de parse_model_policy / get_allowed_models.
 # 5.237.20.1: Calibration de CHARS_PER_TOKEN à 3.2 pour la tokenisation Gemini FR/JSON/Code.
-# 5.235.5.1: Ajout de ECHO_GC_GRACE_PERIOD_SEC (900s) et de la variable contextuelle ECHO_TURN_CONTEXT.
-# 5.235.1.1: Calibrage de COMPACTION_COMPRESSED_SHARE_PCT à 0.3125 (31.25% HEAD soit 65 535 tokens / 68.75% TAIL soit ~144 179 tokens) pour alignement sur le plafond matériel maxOutputTokens.
 
 
 import os
@@ -63,14 +63,14 @@ ECHO_UPLOADS_TRANSIT_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
 
 ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 
-ECHO_SESSION_DOMAINS = ["codex", "files", "db", "n8n_workflows", "dependencies"]
+ECHO_SESSION_DOMAINS = ["codex", "files", "db", "n8n_workflows", "dependencies", "tools_output"]
 ECHO_GLOBAL_DOMAINS = ["skills", "files", "chats", "n8n_workflow_templates"]
 
-# Identité Réseau (Antigravity 2.28.2 — aligné sur Antigravity Desktop package.json & language_server --stamp)
+# Identité Réseau (Antigravity 2.32.0 — aligné sur Antigravity Hub agy.exe package.json & language_server --stamp)
 # Format natif AGY Hub : "antigravity/hub/{ideVersion} (os_type=...; arch=...; cl=...; auth_method=personal_consumer; proxy_client=antigravity/{ideVersion})"
 # ECHO tourne sous Docker Linux — on émet l'identité réelle de la plateforme hôte.
-_AGY_IDE_VERSION = "2.28.2"      # Miroir de package.json:version — à synchroniser lors des mises à jour
-_AGY_LS_CL       = "1006921819"  # Changelist language_server (--stamp)
+_AGY_IDE_VERSION = "2.32.0"      # Miroir de package.json:version — à synchroniser lors des mises à jour
+_AGY_LS_CL       = "1021519450"  # Changelist language_server (--stamp)
 ECHO_USER_AGENT             = f"antigravity/{_AGY_IDE_VERSION}"
 ECHO_AGY_USER_AGENT         = (
     f"antigravity/hub/{_AGY_IDE_VERSION} "
@@ -165,7 +165,7 @@ AGY_BASE_URLS = [
     "https://cloudcode-pa.googleapis.com/v1internal",       # Standard (Prod)
     "https://daily-cloudcode-pa.googleapis.com/v1internal"  # Canary (Daily)
 ]
-ECHO_ENDPOINT_LOCK_TIMEOUT_MIN = 2  # Temps de verrouillage agnostique (Surcharge Serveur ou TPM)
+ECHO_ENDPOINT_LOCK_TIMEOUT_MIN = 5  # Temps de verrouillage agnostique (Surcharge Serveur ou TPM)
 # Metadata client envoyée dans loadCodeAssist
 # Alignement sur AGY IDE main.js (clientMetadata getter) :
 #   ideName="antigravity", ideType=TTe.ANTIGRAVITY (enum 9), pluginType=GEMINI (enum 2)
@@ -233,6 +233,29 @@ ECHO_RETRY_BASE_DELAY    = 3.0   # Base backoff exponentiel — réduit de 5.0 �
 ECHO_RETRY_MULTIPLIER    = 1.5
 ECHO_RETRY_JITTER_MIN    = 0.7
 ECHO_RETRY_JITTER_MAX    = 1.3
+ECHO_LLM_CONNECT_TIMEOUT = 15.0  # Timeout d'établissement TCP/TLS (s)
+ECHO_LLM_WRITE_TIMEOUT   = 30.0  # Timeout d'écriture de requête HTTP/2 (s)
+ECHO_LLM_POOL_TIMEOUT    = 15.0  # Timeout d'acquisition de connexion du pool (s)
+ECHO_LLM_CALL_TIMEOUT    = 600   # Timeout de lecture Non-Stream (s) dimensionné pour Argon / Carbon
+ECHO_LLM_STREAM_TIMEOUT  = 300   # Timeout d'inactivité inter-chunks Stream SSE (s)
+ECHO_RETRY_SERVER_MAX_WAIT_SEC = 60.0  # Plafond (s) d'attente sur Retry-After / RetryInfo serveur
+
+# Seuils SSOT de délestage (spillover tools_output) et de lecture paginée (alignés AGY)
+ECHO_TOOL_OUTPUT_PREVIEW_CHARS = 32768  # Seuil d'aperçu inline Head+Tail (~10k tokens) avant délestage dans tools_output/
+ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS = ECHO_TOOL_OUTPUT_PREVIEW_CHARS
+ECHO_CODEX_MAX_READ_LINES = 800    # Nombre maximum de lignes retournées par appel read_codex / read_tool_output
+ECHO_CODEX_MAX_READ_BYTES = 46080  # Volume maximum (45 Ko) retourné par appel read_codex / read_tool_output
+
+
+def build_httpx_timeout(read_timeout: float):
+    """Construit un objet httpx.Timeout granulaire (connect/write/pool courts, read adapté au mode LLM)."""
+    import httpx
+    return httpx.Timeout(
+        connect=ECHO_LLM_CONNECT_TIMEOUT,
+        read=float(read_timeout),
+        write=ECHO_LLM_WRITE_TIMEOUT,
+        pool=ECHO_LLM_POOL_TIMEOUT,
+    )
 
 # ==============================================================================
 # 1.25 GOUVERNANCE DU CONTEXTE ET COMPACTION IN-PLACE (% DE ECHO_MAX_CONTEXT_SIZE)
@@ -686,6 +709,8 @@ DEEP_RESEARCH_MAX_CALLS_DEFAULT = 200
 # mais strictement subordonnés aux interdictions absolues de DELEGATE_AGENT_BLACKLIST).
 DELEGATE_AGENT_SYSTEM_TOOLS: frozenset = frozenset({
     "tool_advisor",
+    "read_tool_output",
+    "delete_tool_output",
 })
 
 #      consult_council appelé par l'agent = 1 unité de budget,

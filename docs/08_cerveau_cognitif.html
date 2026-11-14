@@ -223,7 +223,7 @@
               :
               <code>codex/main</code>, <code>codex/plans</code>, <code>codex/generated</code>,
               <code>codex/sandbox</code>, <code>files</code>, <code>n8n_workflows</code>,
-              <code>dependencies</code>), initialisation des dépôts Git Dulwich pour les espaces versionnés, application
+              <code>dependencies</code>, tools_output), initialisation des dépôts Git Dulwich pour les espaces versionnés, application
               du
               schéma déclaratif SQLite v1 via <code>ensure_db</code> (<code>echo_db_schema.py</code> v5.235.5.3) sur
               <code>identity.db</code> et <code>session.db</code>, et masquage <code>chmod 0o711</code> du dossier
@@ -265,7 +265,7 @@
               contextuelle in-place automatique (activée par défaut via
               <code>UserValves.ENABLE_AUTO_COMPACTION = True</code> et commutable via l'icône UI
               <code>fold-vertical</code>) déclenchée via <code>EchoCompactionEngine.execute_compaction</code>
-              (<code>echo_core.py</code> v5.238.1.1) dès <code>COMPACTION_TRIGGER_THRESHOLD_PCT = 60%</code> de
+              (<code>echo_core.py</code> v5.239.17.1) dès <code>COMPACTION_TRIGGER_THRESHOLD_PCT = 60%</code> de
               <code>ECHO_MAX_CONTEXT_SIZE</code>, ciblant <code>COMPACTION_TARGET_CONTEXT_PCT = 20%</code>
               (<code>31.25%</code> <code>HEAD</code> compressé / <code>68.75%</code> <code>TAIL</code> gardé intact).
             </li>
@@ -304,7 +304,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.239.16 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.18 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
