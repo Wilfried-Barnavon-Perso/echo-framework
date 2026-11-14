@@ -1,16 +1,16 @@
 """
 title: ECHO Memory & RAG Tool
 author: Wilfried BARNAVON
-version: 5.239.14.2
+version: 6.5.2.1
 description: ECHO Toolbox pour gestion RAG (Sessions & Codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.2.1: Abaissement de la limite par défaut max_fragments de 20 à 10 extraits dans search_sessions_context.
 # 5.239.14.2: Refonte de search_sessions_context en 3 modes explicites (inventory, chronological, semantic), seuil COSINE/cosine_threshold strict, retours PAS impersonnels et horodatage ISO 8601 UTC.
 # 5.235.5.1: Filtrage automatique des recherches locales de session sur les messages de la branche active via build_branch_rag_filter.
 # 5.233.0.1: Contrainte de sortie JSON via response_schema=RagDistillOutput dans update_meta_artifact, décoration @echo_tool et simplification des retours.
 # 5.231.20.1: Isolation inter-sous-agents par sub_sid dans search_sessions_context et préservation du score memory_importance maximal dans update_meta_artifact.
-# 5.229.2.2: Ajout du paramètre tag dans search_sessions_context avec résolution SSoT par chat_id.
 
 from typing import Optional, Any, Literal
 from datetime import datetime, timezone
@@ -568,7 +568,7 @@ class Tools:
         tag: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
-        max_fragments: int = 20,
+        max_fragments: int = 10,
         __user__: Optional[dict] = None,
         __metadata__: Optional[dict] = None,
         __event_emitter__: Optional[Any] = None,

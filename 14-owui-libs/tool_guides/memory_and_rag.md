@@ -1,6 +1,6 @@
 ---
 domain_id: memory_and_rag
-version: 5.239.14.2
+version: 6.5.2.1
 updated_at: 2026-11-14
 name: Mémoire Vectorielle Long-Terme (Méta-Artéfacts) & Mémoire Vectorielle de Session
 description: Gouvernance de la mémoire persistante inter-sessions (PACP/PRAC) et de la Mémoire Vectorielle de la session (documents ingérés et historique conversationnel).
@@ -71,7 +71,7 @@ Lorsqu'un document est ingéré, la balise `<artifact id="AEC_smart_context">` f
   - Si `None` : `"cosine_desc"` (score cosinus décroissant) en `semantic`, `"newest_first"` en `chronological`.
 - `source_id` (`Optional[str] = None`) : Filtre sur une source précise obtenue via `mode="inventory"`, `<artifact id="AEC_smart_context" source_id="...">` ou `save_session_context`.
 - `start_date` / `end_date` (`Optional[str] = None`) : Bornes temporelles inclusives au format ISO `"YYYY-MM-DD"`.
-- `max_fragments` (`int = 20`) : Nombre maximal de fragments retournés en `chronological` et `semantic` (ajustable selon le volume annoncé par `inventory`).
+- `max_fragments` (`int = 10`) : Nombre maximal de fragments retournés en `chronological` et `semantic` (ajustable selon le volume annoncé par `inventory`).
 - `tag` :
   - Restreint la recherche aux conversations rattachées à cette étiquette.
   - **Prérequis obligatoire** : Appeler préalablement `list_ui_tags(global_scope=True)` pour identifier la chaîne anglaise exacte (`snake_case` / `kebab-case`).
