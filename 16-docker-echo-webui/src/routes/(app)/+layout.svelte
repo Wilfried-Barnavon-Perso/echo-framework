@@ -7,9 +7,8 @@ import { echoContextGauge, echoCanvasFrames, echoCanvasOpenRequest } from '$lib/
 
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { fade } from 'svelte/transition';
 
-	import { getBackendConfig, getModels, getToolServersData, getVersionUpdates } from '$lib/apis';
+	import { getBackendConfig, getModels, getToolServersData } from '$lib/apis';
 	import { getTools } from '$lib/apis/tools';
 	import { getSkills } from '$lib/apis/skills';
 	import { getSessionUser } from '$lib/apis/auths';
@@ -18,8 +17,7 @@ import { echoContextGauge, echoCanvasFrames, echoCanvasOpenRequest } from '$lib/
 	import { getUserSettings } from '$lib/apis/users';
 	import { setAppFontFamily, setTextScale } from '$lib/utils/text-scale';
 
-	import { WEBUI_VERSION, WEBUI_API_BASE_URL, WEBUI_BUILD_CHANNEL } from '$lib/constants';
-	import { compareVersion } from '$lib/utils';
+	import { WEBUI_API_BASE_URL } from '$lib/constants';
 
 	import {
 		config,
@@ -51,7 +49,6 @@ import { echoContextGauge, echoCanvasFrames, echoCanvasOpenRequest } from '$lib/
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 	import ChangelogModal from '$lib/components/ChangelogModal.svelte';
 	import AccountPending from '$lib/components/layout/Overlay/AccountPending.svelte';
-	import UpdateInfoToast from '$lib/components/layout/UpdateInfoToast.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import { loadKeybindings, matchKeybinding, Shortcut } from '$lib/shortcuts';
 	import { canUseTemporaryChats } from '$lib/utils/settings-access';
@@ -60,7 +57,6 @@ import { echoContextGauge, echoCanvasFrames, echoCanvasOpenRequest } from '$lib/
 
 	let loaded = false;
 
-	let version;
 	let handledSettingsUrl = '';
 
 	const clearChatInputStorage = () => {
@@ -415,24 +411,6 @@ import { echoContextGauge, echoCanvasFrames, echoCanvasOpenRequest } from '$lib/
 			}
 		}
 
-		// Check for version updates
-		if (
-			WEBUI_BUILD_CHANNEL === 'main' &&
-			$user?.role === 'admin' &&
-			$config?.features?.enable_version_update_check
-		) {
-			// Check if the user has dismissed the update toast in the last 24 hours
-			if (localStorage.dismissedUpdateToast) {
-				const dismissedUpdateToast = new Date(Number(localStorage.dismissedUpdateToast));
-				const now = new Date();
-
-				if (now - dismissedUpdateToast > 24 * 60 * 60 * 1000) {
-					checkForVersionUpdates();
-				}
-			} else {
-				checkForVersionUpdates();
-			}
-		}
 		// Persist showTabs: track open/close state separately from saved size
 		// chatControlsSize always retains the last width for openPane()
 		await showTabs.set(!$mobile ? localStorage.showTabs === 'true' : false);
@@ -517,31 +495,10 @@ import { echoContextGauge, echoCanvasFrames, echoCanvasOpenRequest } from '$lib/
 	$: if (loaded && ($user === undefined || $user === null)) {
 		void gotoAuth();
 	}
-
-	const checkForVersionUpdates = async () => {
-		version = await getVersionUpdates(localStorage.token).catch((error) => {
-			return {
-				current: WEBUI_VERSION,
-				latest: null
-			};
-		});
-	};
 </script>
 
 <SettingsModal bind:show={$showSettings} />
 <ChangelogModal bind:show={$showChangelog} />
-
-{#if WEBUI_BUILD_CHANNEL === 'main' && version && compareVersion(version.latest, version.current) && ($settings?.showUpdateToast ?? true)}
-	<div class=" absolute bottom-8 right-8 z-50" in:fade={{ duration: 100 }}>
-		<UpdateInfoToast
-			{version}
-			on:close={() => {
-				localStorage.setItem('dismissedUpdateToast', Date.now().toString());
-				version = null;
-			}}
-		/>
-	</div>
-{/if}
 
 {#if $user}
 	<!-- [ECHO-V6-HOOK] Sonde & Pont WebGPU Edge Embedding -->

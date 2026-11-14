@@ -1,8 +1,7 @@
 <script lang="ts">
-	import DOMPurify from 'dompurify';
 	import { v4 as uuidv4 } from 'uuid';
 
-	import { getBackendConfig, getVersionUpdates } from '$lib/apis';
+	import { getBackendConfig } from '$lib/apis';
 	import { getAdminConfig, updateAdminConfig } from '$lib/apis/auths';
 	import { getBanners, setBanners } from '$lib/apis/configs';
 	import InterfaceSettings from '$lib/components/common/InterfaceSettings.svelte';
@@ -10,10 +9,9 @@
 	import LanguageModeSelect from '$lib/components/common/LanguageModeSelect.svelte';
 	import Switch from '$lib/components/common/Switch.svelte';
 	import BuildVersion from '$lib/components/common/BuildVersion.svelte';
-	import { WEBUI_BUILD_CHANNEL, WEBUI_VERSION } from '$lib/constants';
-	import { banners as _banners, config, showChangelog } from '$lib/stores';
+	import { WEBUI_VERSION } from '$lib/constants';
+	import { banners as _banners, config } from '$lib/stores';
 	import type { Banner } from '$lib/types';
-	import { compareVersion } from '$lib/utils';
 	import { onMount, getContext } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import Textarea from '$lib/components/common/Textarea.svelte';
@@ -31,12 +29,6 @@
 
 	export let saveHandler: Function;
 
-	let updateAvailable: boolean | null = null;
-	let version = {
-		current: WEBUI_VERSION,
-		latest: ''
-	};
-
 	let adminConfig: any = null;
 	let defaultInterfaceSettings: Record<string, any> = {};
 	let showUserUiDefaults = false;
@@ -49,20 +41,6 @@
 		'w-full h-7 rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500';
 	const textareaClass =
 		'w-full rounded-lg border border-gray-100/50 bg-gray-50/40 px-2 py-1.5 text-xs text-gray-700 outline-hidden transition-colors placeholder:text-gray-300 focus:border-blue-400 dark:border-white/[0.04] dark:bg-white/[0.03] dark:text-gray-300 dark:placeholder:text-gray-700 dark:focus:border-blue-500';
-	const checkForVersionUpdates = async () => {
-		updateAvailable = null;
-		version = await getVersionUpdates(localStorage.token).catch((error) => {
-			return {
-				current: WEBUI_VERSION,
-				latest: null
-			};
-		});
-
-		console.info(version);
-
-		updateAvailable = compareVersion(version.latest, version.current);
-		console.info(updateAvailable);
-	};
 
 	const updateBanners = async () => {
 		_banners.set(await setBanners(localStorage.token, banners));
@@ -119,10 +97,6 @@
 		uiI18nEntries = i18nToEntries(adminConfig.I18N ?? {});
 
 		banners = [...$_banners];
-
-		if (WEBUI_BUILD_CHANNEL === 'main' && $config?.features?.enable_version_update_check) {
-			checkForVersionUpdates();
-		}
 	});
 </script>
 
@@ -139,143 +113,28 @@
 	<div class="flex-1 min-h-0 overflow-y-auto scrollbar-hover pr-1.5">
 		{#if adminConfig !== null}
 			<AdminSettingSection first>
-				<div class="flex items-start justify-between gap-4">
-					<div class="min-w-0 text-xs">
-						<div class="text-gray-600 dark:text-gray-400">
-							{$i18n.t('settings.admin.general.version.label')}
-						</div>
-						<div class="mt-1 flex flex-wrap gap-x-1 text-gray-700 dark:text-gray-200">
+				<div class="flex flex-col gap-2 text-xs">
+					<div class="flex items-center justify-between gap-4">
+						<span class="text-gray-600 dark:text-gray-400">ECHO Framework</span>
+						<span class="font-mono text-gray-700 dark:text-gray-200">
+							v{$config?.echo_version ?? WEBUI_VERSION}
+						</span>
+					</div>
+
+					<div class="flex items-center justify-between gap-4">
+						<span class="text-gray-600 dark:text-gray-400">ECHO-UI</span>
+						<span class="font-mono text-gray-700 dark:text-gray-200">
 							<BuildVersion />
+						</span>
+					</div>
 
-							{#if WEBUI_BUILD_CHANNEL === 'main' && $config?.features?.enable_version_update_check}
-								{#if version.latest === null}
-									<span class="text-gray-500 dark:text-gray-500"
-										>{$i18n.t('Could not check for updates')}</span
-									>
-								{:else}
-									<a
-										href="https://github.com/open-webui/open-webui/releases/tag/v{version.latest}"
-										target="_blank"
-										class="text-gray-500 hover:text-gray-700 dark:text-gray-500 dark:hover:text-gray-300"
-									>
-										{updateAvailable === null
-											? $i18n.t('Checking for updates...')
-											: updateAvailable
-												? `(v${version.latest} ${$i18n.t('available!')})`
-												: $i18n.t('(latest)')}
-									</a>
-								{/if}
-							{/if}
+					<div class="pt-1 text-gray-600 dark:text-gray-400">
+						<div class="font-medium text-gray-700 dark:text-gray-200">Double Licence</div>
+						<div class="mt-0.5 text-gray-500 dark:text-gray-400">
+							ECHO Apache 2.0 (Copyright © 2025-2026 Wilfried BARNAVON) + Open WebUI License
+							(Clause 4 : ≤ 50 utilisateurs / 30 jours glissants).
 						</div>
-
-						<button
-							class="mt-0.5 text-xs text-gray-400 transition-colors hover:text-gray-700 dark:text-gray-600 dark:hover:text-gray-300"
-							type="button"
-							on:click={() => {
-								showChangelog.set(true);
-							}}
-						>
-							{$i18n.t('settings.admin.general.seeWhatSNew.label')}
-						</button>
 					</div>
-
-					{#if WEBUI_BUILD_CHANNEL === 'main' && $config?.features?.enable_version_update_check}
-						<button
-							class="shrink-0 text-xs text-gray-500 transition-colors hover:text-gray-900 dark:text-gray-500 dark:hover:text-white"
-							type="button"
-							on:click={() => {
-								checkForVersionUpdates();
-							}}
-						>
-							{$i18n.t('settings.admin.general.checkForUpdates.label')}
-						</button>
-					{/if}
-				</div>
-
-				<div class="text-xs">
-					<div class="flex items-start justify-between gap-4">
-						<div class="min-w-0">
-							<div class="text-gray-600 dark:text-gray-400">
-								{$i18n.t('settings.admin.general.help.label')}
-							</div>
-							<div class="mt-0.5 text-gray-400 dark:text-gray-600">
-								<!-- LICENSE covers this Open WebUI wordmark.
-								Do not alter, remove, obscure, or replace it except as LICENSE permits:
-								https://docs.openwebui.com/license. -->
-								{$i18n.t('settings.admin.general.help.description')}
-							</div>
-						</div>
-
-						<a
-							class="shrink-0 text-gray-500 transition-colors hover:text-gray-900 dark:text-gray-500 dark:hover:text-white"
-							href="https://docs.openwebui.com/"
-							target="_blank"
-						>
-							{$i18n.t('Documentation')}
-						</a>
-					</div>
-
-					<div class="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-gray-400 dark:text-gray-600">
-						<a
-							class="hover:text-gray-700 dark:hover:text-gray-300"
-							href="https://discord.gg/5rJgQTnV4s"
-							target="_blank">Discord</a
-						>
-						<a
-							class="hover:text-gray-700 dark:hover:text-gray-300"
-							href="https://twitter.com/OpenWebUI"
-							target="_blank">X</a
-						>
-						<a
-							class="hover:text-gray-700 dark:hover:text-gray-300"
-							href="https://github.com/open-webui/open-webui"
-							target="_blank">GitHub</a
-						>
-					</div>
-				</div>
-
-				<div class="text-xs">
-					<!-- LICENSE covers this Open WebUI license attribution.
-					Do not alter, remove, obscure, or replace it except as LICENSE permits:
-					https://docs.openwebui.com/license. -->
-					<div class="text-gray-600 dark:text-gray-400">
-						{$i18n.t('settings.admin.general.license.label')}
-					</div>
-
-					{#if $config?.license_metadata}
-						<a
-							href="https://docs.openwebui.com/enterprise"
-							target="_blank"
-							class="mt-0.5 block text-gray-500"
-						>
-							<span class="capitalize text-black dark:text-white"
-								>{$config?.license_metadata?.type} license</span
-							>
-							{$i18n.t('registered to')}
-							<span class="capitalize text-black dark:text-white"
-								>{$config?.license_metadata?.organization_name}</span
-							>
-							for
-							<span class="text-black dark:text-white"
-								>{$config?.license_metadata?.seats ?? 'Unlimited'} users.</span
-							>
-						</a>
-						{#if $config?.license_metadata?.html}
-							<div class="mt-0.5 text-gray-500">
-								{@html DOMPurify.sanitize($config?.license_metadata?.html)}
-							</div>
-						{/if}
-					{:else}
-						<a
-							class="mt-0.5 block text-gray-400 transition-colors hover:text-gray-700 dark:text-gray-600 dark:hover:text-gray-300"
-							href="https://docs.openwebui.com/enterprise"
-							target="_blank"
-						>
-							{$i18n.t(
-								'Upgrade to a licensed plan for enhanced capabilities, including custom theming and branding, and dedicated support.'
-							)}
-						</a>
-					{/if}
 				</div>
 			</AdminSettingSection>
 
