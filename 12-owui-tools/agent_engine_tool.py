@@ -6,11 +6,11 @@ description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.0.1: Persistance de model_used/is_cascaded_fallback, passage du timeout à ECHO_LLM_CALL_TIMEOUT (600s) et filet de sécurité idempotent truncate_and_spill_tool_output vers tools_output/.
 # 6.5.3.1: Support des tours hybrides Orchestrateur/Humain (<REQUETE_ORCHESTRATEUR> / <REQUETE_UTILISATEUR>), verrou par sub_sid et file FIFO SQLite via echo_subagent_hub.
 # 5.238.1.1: Ajout de MODEL_ATHENA dans target_model_key de delegate_to_agent.
 # 5.235.5.1: Restriction de la distillation du contexte aux seuls messages de la branche active via load_active_branch_ids.
 # 5.233.0.1: Passage explicite de is_json=False dans _distill_main_context, décoration @echo_tool sur les 4 méthodes publiques et simplification des retours.
-# 5.231.59.1: Reconnaissance du préfixe de session dlg_img_ (type image_gen, icône 🎨) dans list_agent_sessions.
 
 import sys
 import uuid

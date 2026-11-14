@@ -158,7 +158,9 @@
             (re-verrouillage automatique du modèle), <code>read_ui_automations</code>, <code>list_ui_automations</code>,
             <code>delete_ui_automation</code>, <code>list_ui_tags</code> (interrogation de la table SSoT
             <code>webui.db::tag</code> pour la conversation courante ou l'ensemble des conversations),
-            <code>wait_timer</code> (HUD isolé par <code>chat_id</code>), <code>ask_user</code> et
+            <code>wait_timer</code> (HUD isolé par <code>chat_id</code>), <code>ask_user</code>,
+            <code>read_tool_output</code> / <code>delete_tool_output</code> (lecture paginée bornée à 800 lignes /
+            46 080 octets et purge de <code>tools_output/</code>) et
             <code>tool_advisor</code> (Agent Conseiller Opérationnel Hybride exécuté sur <code>MODEL_APOLLO</code> avec
             <code>override_thinking="medium"</code>, pré-injecté avec la table des matières des 10 manuels
             <code>14-owui-libs/tool_guides/*.md</code> via <code>EchoToolGuidesManager</code>).
@@ -174,7 +176,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 6.6.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 6.6.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

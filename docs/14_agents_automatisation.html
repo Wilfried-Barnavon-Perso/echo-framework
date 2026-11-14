@@ -92,7 +92,10 @@
               <code>ECHO_SUBAGENT_CONTEXT</code> (qui propage <code>sub_sid</code>, <code>is_subagent</code> et
               <code>sub_tools_names</code>).
             </li>
-            <li><strong>Agent Engine :</strong> <code>delegate_to_agent</code> (extraction de contexte restreinte à la
+            <li><strong>Agent Engine :</strong> <code>delegate_to_agent</code> (timeout
+              <code>ECHO_LLM_CALL_TIMEOUT = 600s</code>, filet de sécurité idempotent
+              <code>truncate_and_spill_tool_output</code> vers <code>tools_output/</code> au seuil
+              <code>ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS = 32 768</code> car., extraction de contexte restreinte à la
               branche active via <code>load_active_branch_ids</code> dans <code>_distill_main_context</code>,
               verrouillage
               explicite <code>functionCallingConfig: {"mode": "NONE"}</code> en fin de budget avec conservation des
@@ -223,11 +226,12 @@
                 <li><strong><code>call_api</code> :</strong> Exécute les appels REST/GraphQL standards (strictement
                   interdit
                   pour initier des connexions MCP) avec protection SSRF asynchrone non-bloquante factorisée via
-                  <code>is_safe_public_url</code> (<code>echo_http.py</code> v5.231.59.1 : <code>loop.getaddrinfo</code>
+                  <code>is_safe_public_url</code> (<code>echo_http.py</code> v5.239.16.1 : <code>loop.getaddrinfo</code>
                   IPv4/IPv6, blocage anti-SSRF des hôtes internes <code>echo-*</code>, <code>localhost</code>,
                   <code>host.docker.internal</code>, <code>.local</code>, <code>.internal</code> et plages
-                  privées/loopback)
-                  et troncature de sécurité à <strong>131 Ko</strong> (<code>ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS</code>).
+                  privées/loopback),
+                  garde physique anti-OOM à <strong>5 Mo</strong> (<code>5 242 880 car.</code>) et délestage vers
+                  <code>tools_output/</code> au-delà de 32 768 car. délégué à <code>@echo_tool</code>.
                 </li>
               </ul>
       </div>
@@ -240,7 +244,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 6.6.0 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 6.6.1 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
