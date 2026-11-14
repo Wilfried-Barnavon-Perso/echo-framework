@@ -40,6 +40,13 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+def _raise_groups_disabled() -> None:
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail='Groupes et permissions désactivés dans ECHO.',
+    )
+
 # Get Functions
 
 
@@ -72,6 +79,7 @@ async def create_new_group(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    _raise_groups_disabled()
     try:
         group = await Groups.insert_new_group(user.id, form_data, db=db)
         if group:
@@ -187,6 +195,7 @@ async def update_group_by_id(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    _raise_groups_disabled()
     try:
         changes = {}
         group = await Groups.update_group_by_id(id, form_data, db=db, changes=changes)
@@ -230,6 +239,7 @@ async def add_user_to_group(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    _raise_groups_disabled()
     try:
         if form_data.user_ids:
             form_data.user_ids = await Users.get_valid_user_ids(form_data.user_ids, db=db)
@@ -272,6 +282,7 @@ async def remove_users_from_group(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    _raise_groups_disabled()
     try:
         group = await Groups.remove_users_from_group(id, form_data.user_ids, db=db)
         if group:
@@ -310,6 +321,7 @@ async def remove_users_from_group(
 async def delete_group_by_id(
     request: Request, id: str, user=Depends(get_admin_user), db: AsyncSession = Depends(get_async_session)
 ):
+    _raise_groups_disabled()
     try:
         changes = {}
         result = await Groups.delete_group_by_id(id, db=db, changes=changes)

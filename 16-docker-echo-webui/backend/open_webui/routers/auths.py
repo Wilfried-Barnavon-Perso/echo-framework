@@ -94,6 +94,13 @@ router.include_router(sessions.router, prefix='/sessions')
 
 log = logging.getLogger(__name__)
 
+
+def _raise_auth_managed_by_sso() -> None:
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail='Gestion des identifiants et clés API déléguée au SSO ECHO.',
+    )
+
 # Let patience meet those who stumble at the gate,
 # and let those within rest safely through the night.
 signin_rate_limiter = RateLimiter(limit=5 * 3, window=60 * 3)
@@ -320,6 +327,7 @@ async def update_password(
     session_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    _raise_auth_managed_by_sso()
     # Trusted-header auth mode delegates passwords to the reverse proxy
     if WEBUI_AUTH_TRUSTED_EMAIL_HEADER:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=ERROR_MESSAGES.ACTION_PROHIBITED)
@@ -1519,6 +1527,7 @@ async def _check_api_key_permission(request: Request, user, db: AsyncSession):
 async def generate_api_key(
     request: Request, user=Depends(get_current_user), db: AsyncSession = Depends(get_async_session)
 ):
+    _raise_auth_managed_by_sso()
     await _check_api_key_permission(request, user, db)
 
     api_key = create_api_key()
@@ -1544,6 +1553,7 @@ async def generate_api_key(
 async def delete_api_key(
     request: Request, user=Depends(get_current_user), db: AsyncSession = Depends(get_async_session)
 ):
+    _raise_auth_managed_by_sso()
     await _check_api_key_permission(request, user, db)
     success = await Users.delete_user_api_key_by_id(user.id, db=db)
     if success:

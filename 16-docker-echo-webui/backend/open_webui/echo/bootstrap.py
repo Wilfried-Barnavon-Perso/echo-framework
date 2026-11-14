@@ -1,7 +1,7 @@
 """
 title: ECHO V6 Declarative Lifespan Bootstrap
 author: Wilfried BARNAVON
-version: 6.5.3.1
+version: 6.5.3.2
 description: Provisioning déclaratif au démarrage FastAPI remplaçant intégralement config-owui.sh.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -315,6 +315,15 @@ async def _sync_global_configs(root: Path, app: FastAPI) -> int:
 async def bootstrap_echo_runtime(app: FastAPI) -> dict[str, Any]:
     """Point d'entrée unique exécuté dans le lifespan de FastAPI."""
     ensure_echo_sys_path()
+    try:
+        from echo_audio import register_echo_audio_routes  # type: ignore
+
+        register_echo_audio_routes()
+    except Exception as exc:
+        log.warning(
+            "[ECHO-BOOTSTRAP] Montage routes audio /echo/v1 ignoré: %s",
+            exc,
+        )
     root = get_echo_plugin_root()
     if not root.is_dir():
         log.info("[ECHO-BOOTSTRAP] Racine %s absente (mode test/hors conteneur), bootstrap ignoré.", root)

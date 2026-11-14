@@ -23,6 +23,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, StreamingResponse
 from open_webui.config import BYPASS_ADMIN_ACCESS_CONTROL, STORAGE_LOCAL_CACHE, STORAGE_PROVIDER, UPLOAD_DIR
 from open_webui.constants import ERROR_MESSAGES
+from open_webui.echo.runtime import ensure_echo_sys_path
 from open_webui.events import EVENTS, publish_event
 from open_webui.internal.db import get_async_db_context, get_async_session
 from open_webui.models.access_grants import AccessGrants
@@ -56,6 +57,12 @@ router = APIRouter()
 
 from open_webui.utils.access_control.files import has_access_to_file
 from open_webui.utils.json_codec import JSONCodec
+
+try:
+    ensure_echo_sys_path()
+    from echo_constants import ECHO_MAX_FILE_UPLOAD_SIZE_MB
+except Exception:
+    ECHO_MAX_FILE_UPLOAD_SIZE_MB = 4096
 
 # Upload File
 # What was entrusted here was given in good faith. Let it
@@ -398,46 +405,79 @@ async def upload_file_handler(
             'Echo-Original-Name': name,
             'Echo-Mime-Type': str(file.content_type or 'application/octet-stream'),
         }
-        try:
-            contents, file_path = await asyncio.to_thread(Storage.upload_file, file.file, filename, tags)
-        except OSError as e:
-            if e.errno != errno.ENAMETOOLONG:
-                log.exception(e)
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=ERROR_MESSAGES.DEFAULT(e.strerror or 'Error uploading file'),
-                )
+        config_max_mb = await Config.get('rag.file.max_size')
+        effective_max_mb = (
+            min(int(config_max_mb), ECHO_MAX_FILE_UPLOAD_SIZE_MB)
+            if config_max_mb
+            else ECHO_MAX_FILE_UPLOAD_SIZE_MB
+        )
+        max_bytes = effective_max_mb * 1024 * 1024
 
-            file.file.seek(0)
-            filename = f'{id}.{file_extension}' if file_extension else id
-            try:
-                contents, file_path = await asyncio.to_thread(Storage.upload_file, file.file, filename, tags)
-            except OSError as e:
-                log.exception(e)
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=ERROR_MESSAGES.DEFAULT(e.strerror or 'Error uploading file'),
+        try:
+            if hasattr(Storage, 'upload_file_streamed'):
+                try:
+                    file_size, file_path, streamed_hash = await asyncio.to_thread(
+                        Storage.upload_file_streamed,
+                        file.file,
+                        filename,
+                        tags,
+                        max_bytes,
+                    )
+                except OSError as e:
+                    if e.errno != errno.ENAMETOOLONG:
+                        raise
+                    file.file.seek(0)
+                    filename = f'{id}.{file_extension}' if file_extension else id
+                    file_size, file_path, streamed_hash = await asyncio.to_thread(
+                        Storage.upload_file_streamed,
+                        file.file,
+                        filename,
+                        tags,
+                        max_bytes,
+                    )
+            else:
+                try:
+                    contents, file_path = await asyncio.to_thread(Storage.upload_file, file.file, filename, tags)
+                except OSError as e:
+                    if e.errno != errno.ENAMETOOLONG:
+                        raise
+                    file.file.seek(0)
+                    filename = f'{id}.{file_extension}' if file_extension else id
+                    contents, file_path = await asyncio.to_thread(Storage.upload_file, file.file, filename, tags)
+                file_size = len(contents)
+                if file_size > max_bytes:
+                    await asyncio.to_thread(Storage.delete_file, file_path)
+                    raise ValueError('FILE_TOO_LARGE')
+                streamed_hash = file_metadata.get('file_hash') or await asyncio.to_thread(
+                    lambda: hashlib.sha256(contents).hexdigest()
                 )
-        max_size = await Config.get('rag.file.max_size')
-        if max_size and len(contents) > int(max_size) * 1024 * 1024:
-            await asyncio.to_thread(Storage.delete_file, file_path)
+        except ValueError as ve:
+            if str(ve) == 'FILE_TOO_LARGE':
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=ERROR_MESSAGES.FILE_TOO_LARGE(size=f'{effective_max_mb} MB'),
+                )
             raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=ERROR_MESSAGES.FILE_TOO_LARGE(size=f'{max_size} MB'),
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(ve),
+            )
+        except OSError as e:
+            log.exception(e)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ERROR_MESSAGES.DEFAULT(e.strerror or 'Error uploading file'),
             )
 
         if knowledge_id:
             try:
-                await check_knowledge_upload_limits(knowledge_id, 0, file_size=len(contents), db=db)
+                await check_knowledge_upload_limits(knowledge_id, 0, file_size=file_size, db=db)
             except HTTPException:
                 await asyncio.to_thread(Storage.delete_file, file_path)
                 raise
 
         # SHA-256 of raw uploaded bytes for incremental sync diffing.
         # If the client pre-computed and sent file_hash, use that.
-        file_hash = file_metadata.get('file_hash') or await asyncio.to_thread(
-            lambda: hashlib.sha256(contents).hexdigest()
-        )
+        file_hash = file_metadata.get('file_hash') or streamed_hash
 
         file_item = await Files.insert_new_file(
             user.id,
@@ -452,7 +492,7 @@ async def upload_file_handler(
                     'meta': {
                         'name': name,
                         'content_type': (file.content_type if isinstance(file.content_type, str) else None),
-                        'size': len(contents),
+                        'size': file_size,
                         'file_hash': file_hash,
                         'data': file_metadata,
                     },

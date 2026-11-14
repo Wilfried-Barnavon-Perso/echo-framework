@@ -1,7 +1,7 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.5.1.1
+version: 6.5.3.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -1175,3 +1175,5 @@ ECHO_AUDIO_DEFAULT_TTS_SPEED: float = 1.0
 ECHO_AUDIO_DEFAULT_TTS_PITCH: str = "-2Hz"
 ECHO_AUDIO_DEFAULT_STT_MODEL: str = "MODEL_ZEPHYR"
 ECHO_AUDIO_MAX_UPLOAD_SIZE: int = 14 * 1024 * 1024  # 14 Mo max pour transcriptions
+# Plafond strict 4 Go aligné BunkerWeb
+ECHO_MAX_FILE_UPLOAD_SIZE_MB: int = 4096

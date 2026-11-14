@@ -1,7 +1,7 @@
 """
 title: ECHO V6 Vault & Identity Router
 author: Wilfried BARNAVON
-version: 6.3.0.1
+version: 6.5.3.1
 description: Routeur FastAPI pour coffre chiffré et identités LLM (/echo/v1/vault).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -11,9 +11,11 @@ description: Routeur FastAPI pour coffre chiffré et identités LLM (/echo/v1/va
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -176,3 +178,26 @@ async def delete_vault_secret(
         "service": clean_service,
         "account_id": clean_account,
     })
+
+
+@router.get("/schemas")
+async def get_vault_schemas(user=Depends(get_verified_user)):
+    """Relaye les schémas d'authentification du Broker MCP vers l'UI."""
+    broker_url = os.getenv(
+        "ECHO_MCP_BROKER_URL", "http://echo-mcp-broker:8000"
+    ).rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{broker_url}/schemas")
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, dict):
+                    return JSONResponse(
+                        content={
+                            "broker_available": True,
+                            "schemas": data,
+                        }
+                    )
+    except Exception as exc:
+        log.debug("Broker MCP indisponible pour /schemas: %s", exc)
+    return JSONResponse(content={"broker_available": False, "schemas": {}})

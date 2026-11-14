@@ -40,6 +40,13 @@ log = logging.getLogger(__name__)
 
 router = APIRouter()
 
+
+def _raise_functions_readonly() -> None:
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail='Fonctions ECHO gérées en lecture seule.',
+    )
+
 # Get Functions
 # Let the work begun here be faithful to its promise,
 # and let it serve those who call upon it, quietly and well.
@@ -102,6 +109,7 @@ def github_url_to_raw_url(url: str) -> str:
 
 @router.post('/load/url', response_model=dict | None)
 async def load_function_from_url(request: Request, form_data: LoadUrlForm, user=Depends(get_admin_user)):
+    _raise_functions_readonly()
     # NOTE: This is NOT a SSRF vulnerability:
     # This endpoint is admin-only (see get_admin_user), meant for *trusted* internal use,
     # and does NOT accept untrusted user input. Access is enforced by authentication.
@@ -161,6 +169,7 @@ async def sync_functions(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    _raise_functions_readonly()
     try:
         modules = {}
         source_modules = {}
@@ -201,6 +210,7 @@ async def create_new_function(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    _raise_functions_readonly()
     if not form_data.id.isidentifier():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -283,6 +293,7 @@ async def toggle_function_by_id(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    _raise_functions_readonly()
     function = await Functions.get_function_by_id(id, db=db)
     if function:
         lifecycle_event = build_event(
@@ -334,6 +345,7 @@ async def toggle_global_by_id(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    _raise_functions_readonly()
     function = await Functions.get_function_by_id(id, db=db)
     if function:
         function = await Functions.update_function_by_id(id, {'is_global': not function.is_global}, db=db)
@@ -370,6 +382,7 @@ async def update_function_by_id(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    _raise_functions_readonly()
     return await _update_function(request, id, form_data, user, db)
 
 
@@ -425,6 +438,7 @@ async def delete_function_by_id(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    _raise_functions_readonly()
     result = await Functions.delete_function_by_id(id, db=db)
 
     if result:
@@ -505,6 +519,7 @@ async def update_function_valves_by_id(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    _raise_functions_readonly()
     function = await Functions.get_function_by_id(id, db=db)
     if function:
         function_module, function_type, frontmatter = await get_function_module_from_cache(request, id)
@@ -604,6 +619,7 @@ async def update_function_user_valves_by_id(
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    _raise_functions_readonly()
     function = await Functions.get_function_by_id(id, db=db)
 
     if function:
@@ -693,6 +709,7 @@ async def get_function_history_entry(
 async def delete_function_history_entry(
     id: str, history_id: str, user=Depends(get_admin_user), db: AsyncSession = Depends(get_async_session)
 ):
+    _raise_functions_readonly()
     await require_function_history_access(id, user, db)
     if not await FunctionHistories.delete_history_entry(id, history_id, db=db):
         raise HTTPException(404, 'Version not found')
@@ -711,6 +728,7 @@ async def set_function_production(
     user=Depends(get_admin_user),
     db: AsyncSession = Depends(get_async_session),
 ):
+    _raise_functions_readonly()
     await require_function_history_access(id, user, db)
     entry = await require_function_history_entry(id, form_data.version_id, db)
     try:
