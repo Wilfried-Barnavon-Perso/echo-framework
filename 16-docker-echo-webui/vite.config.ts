@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import { resolveBuildInfo } from './scripts/build-info.js';
@@ -6,6 +8,17 @@ import { viteStaticCopy } from 'vite-plugin-static-copy';
 
 const backendTarget = process.env.WEBUI_BACKEND_URL || 'http://localhost:8080';
 const buildInfo = resolveBuildInfo();
+
+let uiVersion = process.env.npm_package_version;
+try {
+	const uiVersionPath = join(process.cwd(), 'UI_VERSION');
+	if (existsSync(uiVersionPath)) {
+		const raw = readFileSync(uiVersionPath, 'utf8').trim();
+		if (raw) uiVersion = raw;
+	}
+} catch {
+	// fallback to npm_package_version
+}
 
 export default defineConfig({
 	resolve: {
@@ -36,7 +49,7 @@ export default defineConfig({
 		})
 	],
 	define: {
-		APP_VERSION: JSON.stringify(process.env.npm_package_version),
+		APP_VERSION: JSON.stringify(uiVersion),
 		APP_BUILD_HASH: JSON.stringify(buildInfo.hash),
 		APP_BUILD_CHANNEL: JSON.stringify(buildInfo.channel)
 	},
