@@ -6,3 +6,5 @@
 		goto('/', { replaceState: true });
 	});
 </script>
+
+{#if false}<slot />{/if}

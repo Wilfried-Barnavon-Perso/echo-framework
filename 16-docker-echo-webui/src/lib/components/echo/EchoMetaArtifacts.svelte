@@ -428,6 +428,7 @@
 				</h3>
 				<button
 					type="button"
+					aria-label="Fermer"
 					class="p-1 rounded-lg text-gray-400 hover:text-gray-500 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
 					on:click={closeModal}
 				>
