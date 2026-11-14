@@ -102,17 +102,20 @@
               (<code>reset_auth_action.py</code> v5.235.5.1) :</strong> Interface
             scrollable d'inspection et de suppression ciblée dans <code>echo_meta_artifacts</code>, et purge
             transactionnelle atomique des tokens OAuth2 / clés API via <code>EchoAuth.reset_user_auth</code>.</li>
-          <li><strong>Migration &amp; Reprise de Session (<code>resume_in_new_chat_action.py</code> v5.229.2.1)
+          <li><strong>Migration &amp; Reprise de Session (<code>resume_in_new_chat_action.py</code> v5.239.13.1)
               :</strong> Extrait l'intégralité de la branche active via <code>Chats.get_chat_by_id</code> (incluant les
             sorties d'outils <code>m["output"]</code>), construit les transcriptions hors de l'Event Loop
             (<code>_prepare_transcripts</code>), exécute une distillation en 2 passes via
             <code>EchoGeminiClient.call_distillation</code> (<code>USR_ACTION_RESUME_GLOBAL</code> et
-            <code>USR_ACTION_RESUME_RECENT</code>) avec HUD de progression <code>#echo-resume-hud</code>, crée la
+            <code>USR_ACTION_RESUME_RECENT</code>) avec HUD de progression <code>#echo-migration-hud</code>
+            (<code>data-echo-scope="global"</code>), crée la
             nouvelle conversation via <code>Chats.insert_new_chat</code>, propage les étiquettes (tags) du chat source
             via <code>Chats.add_chat_tag_by_id</code>, duplique les domaines et le Codex via
-            <code>echo_session_clone.sync_resumed_session</code> (v5.235.5.2) et clone par pagination les vecteurs
+            <code>echo_session_clone.sync_resumed_session</code> (v5.239.13.1, avec réancrage des ressources actives sur
+            <code>assistant_msg_id</code> et purge de <code>wm_state</code>) et clone par pagination les vecteurs
             Qdrant
-            <code>COLLECTION_SESSION_RAG</code> (<code>duplicate_session_rag</code>).
+            <code>COLLECTION_SESSION_RAG</code> (<code>duplicate_session_rag</code> filtré sur <code>live_msg_ids</code>
+            et réancré sur <code>anchor_msg_id</code>, avec retries bornés, upsert par lots de 64 et comptage de contrôle, bilan RagCloneReport). Si la copie vectorielle est incomplète, le HUD est retiré et une modale de confirmation informe l'Utilisateur avant la redirection ; sur refus ou annulation, la redirection n'a pas lieu.
           </li>
           <li><strong>Agent Monitor (<code>agent_monitor_action.py</code> v5.228.12.1) &amp; Replay
               (<code>web_navigation_replay_action.py</code> v5.231.47.1) :</strong> Supervision arborescente temps réel
