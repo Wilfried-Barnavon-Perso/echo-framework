@@ -2,17 +2,19 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 5.239.11.1
+version: 5.239.17.1
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.17.1: Délestage automatique des sorties d'outils > 32 Ko dans tools_output/{output_id}.txt avec aperçu Head+Tail aligné sur les lignes et métadonnées JSON (truncate_and_spill_tool_output, skip_truncation).
 # 5.239.11.1: Parsing JSON-first (`std_json.loads`) dans `unbox_tool_output` pour accepter la sérialisation Open WebUI (`null`/`true`/`false`), avec repli `ast.literal_eval` et garde `unstructured_data`.
 # 5.238.1.1: Support orthogonal COGNITIVE_MODE:COGNITIVE_MODEL dans resolve_model_policy et convert_owui_tools (copie profonde sans mutation in-place) et surcharge thinking_override="low" étendue à MODEL_ATHENA en compaction.
 # 5.237.20.2: Ancrage head_last_msg_id dans le checkpoint de compaction pour isoler les branches sœurs antérieures au pivot.
 # 5.237.20.1: Division entière sur CHARS_PER_TOKEN=3.2, exclusion de thoughtSignature, pesée max(shadow, output) et résolution résiliente du pivot (resolve_pivot_turn_index, tail_anchor_ids, break_on_ids).
-# 5.237.11.2: Exclusion des pensées en compaction, pesée des tours via Shadows SQLite, filtrage du placeholder assistant vide et alignement par tours.
+import os
 import re
+import uuid
 import time
 import inspect
 import functools
@@ -270,6 +272,119 @@ def _drain_tool_aec_events(user_id: str = None, chat_id: str = None, metadata: d
     return aec_events
 
 
+def truncate_and_spill_tool_output(
+    text: str,
+    uid: Optional[str] = None,
+    cid: Optional[str] = None,
+    tool_name: str = "tool",
+    call_id: Optional[str] = None,
+    max_chars: Optional[int] = None,
+) -> Tuple[str, Optional[dict]]:
+    """
+    Sauvegarde l'intégralité d'une sortie d'outil dépassant `max_chars` dans `tools_output/{output_id}.txt`
+    et retourne un aperçu Head (50%) + Tail (50%) aligné sur les lignes ainsi que les métadonnées JSON de troncature.
+    """
+    from echo_constants import (
+        ECHO_CODEX_MAX_READ_LINES,
+        ECHO_SUBAGENT_CONTEXT,
+        ECHO_TOOL_OUTPUT_PREVIEW_CHARS,
+    )
+    from echo_paths import get_echo_session_path, sanitize_echo_id
+
+    if max_chars is None:
+        max_chars = ECHO_TOOL_OUTPUT_PREVIEW_CHARS
+    if not isinstance(text, str) or len(text) <= max_chars:
+        return text, None
+    stripped = text.lstrip()
+    if stripped.startswith("--- CONTENU BASE64 ---") or stripped.startswith("⚠️ [SORTIE D'OUTIL TRONQUÉE :"):
+        return text, None
+
+    sub_ctx = ECHO_SUBAGENT_CONTEXT.get() or {}
+    sub_sid = sub_ctx.get("sub_sid") if sub_ctx.get("is_subagent") else None
+    safe_tool = sanitize_echo_id(tool_name or "tool", fallback="tool")
+    if call_id:
+        raw_cid = str(call_id).strip()
+        prefix = "" if raw_cid.startswith("to_") else "to_"
+        output_id = f"{prefix}{sanitize_echo_id(raw_cid, fallback=uuid.uuid4().hex[:8])}"
+    elif sub_sid:
+        output_id = f"to_{sanitize_echo_id(sub_sid)}_{safe_tool}_{uuid.uuid4().hex[:8]}"
+    else:
+        output_id = f"to_{safe_tool}_{uuid.uuid4().hex[:8]}"
+
+    saved_on_disk = False
+    if uid and cid:
+        try:
+            out_dir = get_echo_session_path(uid, cid, "tools_output")
+            os.makedirs(out_dir, exist_ok=True)
+            out_path = os.path.join(out_dir, f"{output_id}.txt")
+            with open(out_path, "w", encoding="utf-8", newline="") as f:
+                f.write(text)
+            saved_on_disk = True
+        except Exception as e:
+            logger.warning(f"[truncate_and_spill_tool_output] Échec sauvegarde tools_output/{output_id}.txt: {e}")
+
+    total_chars = len(text)
+    total_lines = text.count("\n") + 1
+    half = max_chars // 2
+
+    # Alignement Head sur une fin de ligne
+    head_cut = text.rfind("\n", 0, half)
+    if head_cut <= half // 2:
+        head_cut = half
+    head_text = text[:head_cut]
+
+    # Alignement Tail sur un début de ligne
+    tail_start_idx = total_chars - half
+    tail_nl = text.find("\n", tail_start_idx)
+    if tail_nl != -1 and tail_nl < total_chars - (half // 2):
+        tail_start_idx = tail_nl + 1
+    tail_text = text[tail_start_idx:]
+
+    head_end_line = head_text.count("\n") + 1
+    tail_start_line = text.count("\n", 0, tail_start_idx) + 1
+    omitted_start_line = head_end_line + 1 if text[head_cut:head_cut + 1] == "\n" else head_end_line
+    omitted_end_line = (tail_start_line - 1) if (tail_start_idx > 0 and text[tail_start_idx - 1] == "\n") else tail_start_line
+    omitted_end_line = max(omitted_start_line, omitted_end_line)
+    omitted_chars = max(0, tail_start_idx - head_cut)
+    omitted_lines = max(0, omitted_end_line - omitted_start_line + 1)
+    suggested_end = min(omitted_end_line, omitted_start_line + (ECHO_CODEX_MAX_READ_LINES // 2) - 1)
+
+    if saved_on_disk:
+        header = (
+            f"⚠️ [SORTIE D'OUTIL TRONQUÉE : {total_chars} caractères ({total_lines} lignes) > plafond inline de {max_chars} caractères]\n"
+            f"L'intégralité de la sortie brute a été sauvegardée dans `tools_output/{output_id}.txt` (output_id: `{output_id}`).\n"
+            f"- DOIT utiliser `read_tool_output(output_id=\"{output_id}\", start_line={omitted_start_line}, end_line={suggested_end})` "
+            f"(ou `search_pattern=\"...\"`) pour inspecter les lignes manquantes si nécessaire.\n"
+            f"- DOIT appeler `delete_tool_output(output_id=\"{output_id}\")` dès que l'exploitation de cette sortie est terminée.\n\n"
+        )
+        mid_marker = (
+            f"\n\n... [TRONQUÉ : {omitted_chars} caractères ({omitted_lines} lignes) omis — "
+            f"Lignes {omitted_start_line} à {omitted_end_line} disponibles via "
+            f"read_tool_output(output_id=\"{output_id}\", start_line={omitted_start_line}, end_line={suggested_end})] ...\n\n"
+        )
+    else:
+        header = f"⚠️ [SORTIE D'OUTIL TRONQUÉE : {total_chars} caractères ({total_lines} lignes) > plafond inline de {max_chars} caractères]\n\n"
+        mid_marker = f"\n\n... [TRONQUÉ : {omitted_chars} caractères ({omitted_lines} lignes) omis au milieu] ...\n\n"
+
+    preview_text = (
+        f"{header}"
+        f"--- DÉBUT DE LA SORTIE (Lignes 1 à {head_end_line}) ---\n"
+        f"{head_text}"
+        f"{mid_marker}"
+        f"--- FIN DE LA SORTIE (Lignes {tail_start_line} à {total_lines}) ---\n"
+        f"{tail_text}"
+    )
+    spill_meta = {
+        "truncated": True,
+        "output_id": output_id if saved_on_disk else None,
+        "total_chars": total_chars,
+        "total_lines": total_lines,
+        "omitted_lines_range": [omitted_start_line, omitted_end_line],
+        "next_tools": {"read": "read_tool_output", "delete": "delete_tool_output"} if saved_on_disk else None,
+    }
+    return preview_text, spill_meta
+
+
 def wrap_tool_output(
     text: str,
     status: dict = None,
@@ -279,7 +394,8 @@ def wrap_tool_output(
     metadata: dict = None,
     model_requested: str = None,
     model_used: str = None,
-    reason: str = None
+    reason: str = None,
+    skip_truncation: bool = False,
 ) -> dict:
     """
     Enveloppe le résultat d'un outil ECHO avec métadonnées de statut, multiparts,
@@ -306,6 +422,8 @@ def wrap_tool_output(
     }
     if user_id and chat_id and metadata is not None:
         out["_aec_drained"] = True
+    if skip_truncation:
+        out["_skip_truncation"] = True
     return out
 
 
@@ -323,12 +441,31 @@ def _infer_string_status(text_str: str) -> str:
     return "success"
 
 
+def _apply_final_spillover(out: dict, uid: Optional[str], cid: Optional[str], is_nested: bool, tool_name: str) -> dict:
+    skip_trunc = out.pop("_skip_truncation", False)
+    if is_nested or skip_trunc or not isinstance(out.get("text"), str):
+        return out
+    st = out.get("status")
+    if isinstance(st, dict) and st.get("status") == "error":
+        return out
+    preview_text, spill_meta = truncate_and_spill_tool_output(
+        out["text"], uid=uid, cid=cid, tool_name=tool_name
+    )
+    if spill_meta:
+        out["text"] = preview_text
+        if not isinstance(out.get("status"), dict):
+            out["status"] = {"status": str(out.get("status") or "success")}
+        out["status"].update(spill_meta)
+    return out
+
+
 def _finalize_tool_result(
     res: Any,
     uid: Optional[str] = None,
     cid: Optional[str] = None,
     meta_dict: Optional[dict] = None,
-    is_nested: bool = False
+    is_nested: bool = False,
+    tool_name: str = "tool",
 ) -> Any:
     """
     Finalise le résultat d'un outil en gérant la sérialisation Pydantic,
@@ -341,7 +478,7 @@ def _finalize_tool_result(
 
     if isinstance(res, tuple):
         return tuple(
-            _finalize_tool_result(item, uid=uid, cid=cid, meta_dict=meta_dict, is_nested=is_nested)
+            _finalize_tool_result(item, uid=uid, cid=cid, meta_dict=meta_dict, is_nested=is_nested, tool_name=tool_name)
             if isinstance(item, (dict, str, list)) or hasattr(item, "model_dump") or hasattr(item, "dict")
             else item
             for item in res
@@ -358,7 +495,7 @@ def _finalize_tool_result(
                 else:
                     res["aec_events"] = aec_events
         res.pop("_aec_drained", False)
-        return res
+        return _apply_final_spillover(res, uid, cid, is_nested, tool_name)
 
     if isinstance(res, str):
         status_val = _infer_string_status(res)
@@ -370,7 +507,7 @@ def _finalize_tool_result(
             metadata=meta_dict if not is_nested else None
         )
         out.pop("_aec_drained", False)
-        return out
+        return _apply_final_spillover(out, uid, cid, is_nested, tool_name)
 
     text_val = "" if res is None else (std_json.dumps(res).decode("utf-8") if isinstance(res, list) else str(res))
     out = wrap_tool_output(
@@ -381,7 +518,7 @@ def _finalize_tool_result(
         metadata=meta_dict if not is_nested else None
     )
     out.pop("_aec_drained", False)
-    return out
+    return _apply_final_spillover(out, uid, cid, is_nested, tool_name)
 
 
 def echo_tool(func):
@@ -459,7 +596,7 @@ def echo_tool(func):
                 res = await func(*args, **call_kwargs)
             finally:
                 _ECHO_IN_TOOL_CALL.reset(token)
-            return _finalize_tool_result(res, uid=uid, cid=cid, meta_dict=meta_dict, is_nested=is_nested)
+            return _finalize_tool_result(res, uid=uid, cid=cid, meta_dict=meta_dict, is_nested=is_nested, tool_name=func.__name__)
     else:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -470,7 +607,7 @@ def echo_tool(func):
                 res = func(*args, **call_kwargs)
             finally:
                 _ECHO_IN_TOOL_CALL.reset(token)
-            return _finalize_tool_result(res, uid=uid, cid=cid, meta_dict=meta_dict, is_nested=is_nested)
+            return _finalize_tool_result(res, uid=uid, cid=cid, meta_dict=meta_dict, is_nested=is_nested, tool_name=func.__name__)
 
     wrapper.__signature__ = exposed_sig
     wrapper.__echo_response_schema__ = response_schema

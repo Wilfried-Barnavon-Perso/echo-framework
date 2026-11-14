@@ -1,7 +1,7 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 6.5.3.1
+version: 6.6.0.1
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -26,6 +26,7 @@ sys.path.append("/app/backend/echo_libs")
 from echo_core import (
     echo_tool,
     wrap_tool_output,
+    truncate_and_spill_tool_output,
     clamp_model,
     estimate_token_size,
     smart_truncate_history,
@@ -39,7 +40,9 @@ from echo_constants import (
     DELEGATE_AGENT_BLACKLIST,
     DELEGATE_AGENT_SYSTEM_TOOLS,
     CONTEXT_TRUNCATE_THRESHOLD,
+    ECHO_LLM_CALL_TIMEOUT,
     ECHO_MAX_CONTEXT_SIZE,
+    ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS,
     get_generation_config
 )
 from echo_prompts import SYS_ORCHESTRATOR_APPENDIX, ECHO_FOUNDATION_KERNEL
@@ -563,6 +566,7 @@ async def _run_agent_loop(
 ) -> str:
     """Boucle agentique principale de l'agent."""
     calls_used = 0
+    is_cascaded_fallback = False
 
     while True:
         # 1. Construction des function_declarations (source A : sub_tools, B : body_tools_specs)
@@ -591,7 +595,7 @@ async def _run_agent_loop(
         payload: dict = {
             "contents": history,
             "systemInstruction": {"parts": [{"text": final_system}]},
-            "generationConfig": get_generation_config(current_model_key)
+            "generationConfig": get_generation_config(current_model_key, is_fallback_cascade=is_cascaded_fallback)
         }
         if fn_decls:
             payload["tools"] = [{"functionDeclarations": fn_decls}]
@@ -609,7 +613,7 @@ async def _run_agent_loop(
                 events=events,
                 threshold=valves.KEY_SWITCH_THRESHOLD,
                 max_retries=valves.MAX_RETRIES,
-                timeout=120,
+                timeout=ECHO_LLM_CALL_TIMEOUT,
                 include_thoughts=False,
             )
         except Exception as e:
@@ -625,6 +629,10 @@ async def _run_agent_loop(
                 text=f"❌ Cascade épuisée pour l'agent [{sid}].",
                 status={"status": "error", "sid": sid, "message": "cascade exhausted"}
             )
+
+        if model_used and model_used != current_model_key:
+            current_model_key = model_used
+            is_cascaded_fallback = True
 
         # 4. Extraction des parts BRUTES de la réponse
         # Conservation des parts BRUTES (thoughtSignature Gemini 3.x) :
@@ -752,7 +760,7 @@ async def _run_agent_loop(
                         {"role": "user", "parts": cancel_parts},
                     ],
                     "systemInstruction": {"parts": [{"text": final_system}]},
-                    "generationConfig": get_generation_config(current_model_key),
+                    "generationConfig": get_generation_config(current_model_key, is_fallback_cascade=is_cascaded_fallback),
                 }
                 if fn_decls:
                     recovery_payload["tools"] = [{"functionDeclarations": fn_decls}]
@@ -766,7 +774,7 @@ async def _run_agent_loop(
                         events=events,
                         threshold=valves.KEY_SWITCH_THRESHOLD,
                         max_retries=valves.MAX_RETRIES,
-                        timeout=120,
+                        timeout=ECHO_LLM_CALL_TIMEOUT,
                         include_thoughts=False,
                     )
                     if rec_data:
@@ -899,17 +907,28 @@ async def _run_agent_loop(
             # ATTENTION : Gemini rejette les payloads trop lourds (HTTP 400).
             # Les outils cognitifs (consult_council) peuvent retourner des milliers
             # de tokens. On tronque et nettoie avant d'insérer dans l'historique.
-            _MAX_TOOL_RESPONSE_CHARS = 6000  # Seuil empirique sûr pour Gemini
             if isinstance(result, dict):
                 _resp = dict(result)
                 # Supprimer les champs volumineux inutiles pour le LLM du sous-agent
                 _resp.pop("echo_tool_multiparts", None)
-                # Tronquer le texte si trop long
+                # Filet de sécurité (no-op si déjà délesté par @echo_tool)
                 _text = _resp.get("text", "")
-                if isinstance(_text, str) and len(_text) > _MAX_TOOL_RESPONSE_CHARS:
-                    _resp["text"] = _text[:_MAX_TOOL_RESPONSE_CHARS] + "\n[…réponse tronquée pour compatibilité API]"
+                if isinstance(_text, str) and len(_text) > ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS:
+                    _preview, _spill = truncate_and_spill_tool_output(
+                        _text, uid=user_id, cid=chat_id, tool_name=fn_name, call_id=fn_id
+                    )
+                    _resp["text"] = _preview
+                    if _spill:
+                        if not isinstance(_resp.get("status"), dict):
+                            _resp["status"] = {"status": "success"}
+                        _resp["status"].update(_spill)
             else:
-                _resp = {"result": str(result)[:_MAX_TOOL_RESPONSE_CHARS]}
+                _preview, _spill = truncate_and_spill_tool_output(
+                    str(result), uid=user_id, cid=chat_id, tool_name=fn_name, call_id=fn_id
+                )
+                _resp = {"result": _preview}
+                if _spill:
+                    _resp.update(_spill)
 
             # Construction du functionResponse avec son ID Gemini.
             # L'ID est obligatoire pour les appels parallèles au même outil

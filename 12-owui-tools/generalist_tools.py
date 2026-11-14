@@ -1,31 +1,40 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 5.233.0.1
+version: 5.239.17.1
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.17.1: Ajout des outils dédiés read_tool_output (lecture paginée par lignes et recherche regex/motif) et delete_tool_output pour l'exploitation du domaine tools_output.
 # 5.233.0.1: Décoration @echo_tool sur les 16 méthodes publiques et simplification de safe_owui_call et des retours wrap_tool_output.
 # 5.231.20.1: Isolation multi-chat du HUD wait_timer (data-chat-id) et suppression des fuites de listeners document.
 # 5.229.2.1: Ajout de l'outil list_ui_tags (consultation locale des tags du chat courant ou globale de toutes les conversations).
 # 5.229.1.2: Précision de la transmission par défaut aux sous-agents dans la docstring de tool_advisor.
-# 5.229.1.1: Bascule cognitive de tool_advisor vers MODEL_APOLLO (medium thinking).
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
 import asyncio
+import os
+import re
 import sys
 import json
 import inspect
 from pydantic import BaseModel, Field
-from typing import Any
+from typing import Any, Optional
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_core import echo_tool, wrap_tool_output
 from echo_events import EchoEvents
-from echo_constants import ECHO_MAX_WAIT_TIMER, get_generation_config, OWUI_ORCHESTRATOR_MODEL
+from echo_constants import (
+    ECHO_CODEX_MAX_READ_BYTES,
+    ECHO_CODEX_MAX_READ_LINES,
+    ECHO_MAX_WAIT_TIMER,
+    get_generation_config,
+    OWUI_ORCHESTRATOR_MODEL,
+)
+from echo_paths import get_echo_session_path, sanitize_echo_id
 from echo_ui import EchoUI
 from echo_gemini_client import EchoGeminiClient
 from echo_prompts import SYS_ORCHESTRATOR_CONSULTANT
@@ -806,3 +815,202 @@ class Tools:
                 text=f"Erreur lors de la délégation au Conseiller Outils : {str(e)}",
                 status={"status": "error", "message": str(e)},
             )
+
+    # ==========================================================================
+    # 5. EXPLOITATION DES SORTIES D'OUTILS DÉLESTÉES (DOMAINE tools_output)
+    # ==========================================================================
+
+    @echo_tool
+    async def read_tool_output(
+        self,
+        output_id: str,
+        start_line: int = 1,
+        end_line: int = 400,
+        search_pattern: Optional[str] = None,
+        __user__: dict = {},
+        __metadata__: dict = {},
+    ) -> dict:
+        """Lit une plage de lignes (jusqu'à 800 lignes / 45 Ko) ou recherche un motif regex (`search_pattern`) dans une sortie d'outil délestée (`output_id`) du domaine `tools_output`."""
+        uid = (__user__ or {}).get("id")
+        cid = (__metadata__ or {}).get("chat_id")
+        if not uid or not cid:
+            return wrap_tool_output(
+                text="❌ Contexte utilisateur ou chat_id manquant.",
+                status={"status": "error", "error_code": "missing_context"},
+            )
+
+        raw_id = (output_id or "").strip()
+        if raw_id.endswith(".txt"):
+            raw_id = raw_id[:-4]
+        clean_id = sanitize_echo_id(raw_id, fallback="")
+        if not clean_id:
+            return wrap_tool_output(
+                text=f"❌ Identifiant `output_id` invalide : `{output_id}`.",
+                status={"status": "error", "error_code": "invalid_output_id"},
+            )
+
+        out_dir = get_echo_session_path(uid, cid, "tools_output")
+        file_path = os.path.join(out_dir, f"{clean_id}.txt")
+        if not os.path.isfile(file_path):
+            return wrap_tool_output(
+                text=f"❌ Fichier `tools_output/{clean_id}.txt` introuvable (déjà supprimé ou identifiant erroné).",
+                status={"status": "error", "error_code": "not_found", "output_id": clean_id},
+            )
+
+        def _read_lines():
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                return f.read().splitlines()
+
+        lines = await asyncio.to_thread(_read_lines)
+        total_lines = len(lines)
+
+        if search_pattern and isinstance(search_pattern, str) and search_pattern.strip():
+            pat_str = search_pattern.strip()
+            try:
+                regex = re.compile(pat_str, re.IGNORECASE)
+            except re.error:
+                regex = re.compile(re.escape(pat_str), re.IGNORECASE)
+
+            matched_indices = [i for i, ln in enumerate(lines) if regex.search(ln)]
+            if not matched_indices:
+                return wrap_tool_output(
+                    text=f"ℹ️ Aucune occurrence de `{pat_str}` trouvée dans `{clean_id}` ({total_lines} lignes).",
+                    status={"status": "success", "output_id": clean_id, "matches": 0, "total_lines": total_lines},
+                    skip_truncation=True,
+                )
+
+            blocks = []
+            acc_bytes = 0
+            shown_matches = 0
+            last_end = -1
+            for idx in matched_indices:
+                ctx_s = max(0, idx - 2)
+                ctx_e = min(total_lines - 1, idx + 2)
+                if ctx_s <= last_end:
+                    ctx_s = last_end + 1
+                if ctx_s > ctx_e:
+                    shown_matches += 1
+                    continue
+                chunk_lines = [f"L{ln_no + 1}: {lines[ln_no]}" for ln_no in range(ctx_s, ctx_e + 1)]
+                block_str = "\n".join(chunk_lines)
+                block_bytes = len(block_str.encode("utf-8"))
+                if acc_bytes + block_bytes > ECHO_CODEX_MAX_READ_BYTES and blocks:
+                    break
+                if last_end != -1 and ctx_s > last_end + 1:
+                    blocks.append("...")
+                blocks.append(block_str)
+                acc_bytes += block_bytes
+                last_end = ctx_e
+                shown_matches += 1
+
+            body = "\n".join(blocks)
+            return wrap_tool_output(
+                text=(
+                    f"🔍 **Recherche dans `{clean_id}`** (`{pat_str}` — {shown_matches}/{len(matched_indices)} occurrences affichées sur {total_lines} lignes) :\n\n"
+                    f"```text\n{body}\n```"
+                ),
+                status={
+                    "status": "success",
+                    "output_id": clean_id,
+                    "matches": len(matched_indices),
+                    "shown_matches": shown_matches,
+                    "total_lines": total_lines,
+                },
+                skip_truncation=True,
+            )
+
+        s = max(1, int(start_line or 1))
+        if s > total_lines:
+            return wrap_tool_output(
+                text=f"⚠️ `start_line={s}` dépasse le nombre total de lignes de `{clean_id}` ({total_lines} lignes).",
+                status={"status": "warning", "output_id": clean_id, "total_lines": total_lines},
+                skip_truncation=True,
+            )
+        req_e = int(end_line) if end_line else (s + ECHO_CODEX_MAX_READ_LINES - 1)
+        max_e = min(total_lines, req_e, s + ECHO_CODEX_MAX_READ_LINES - 1)
+
+        selected = []
+        acc_bytes = 0
+        actual_e = s - 1
+        for ln_no in range(s, max_e + 1):
+            formatted = f"L{ln_no}: {lines[ln_no - 1]}"
+            line_bytes = len(formatted.encode("utf-8")) + 1
+            if acc_bytes + line_bytes > ECHO_CODEX_MAX_READ_BYTES and selected:
+                break
+            selected.append(formatted)
+            acc_bytes += line_bytes
+            actual_e = ln_no
+
+        has_more = actual_e < total_lines
+        next_s = actual_e + 1 if has_more else None
+        next_e = min(total_lines, next_s + ECHO_CODEX_MAX_READ_LINES - 1) if next_s else None
+        footer = (
+            f"\n\nℹ️ Suite disponible : `read_tool_output(output_id=\"{clean_id}\", start_line={next_s}, end_line={next_e})`. "
+            f"En fin d'exploitation : `delete_tool_output(output_id=\"{clean_id}\")`."
+            if has_more
+            else f"\n\n✅ Fin du fichier atteinte ({total_lines} lignes). Penser à appeler `delete_tool_output(output_id=\"{clean_id}\")` une fois l'exploitation terminée."
+        )
+        return wrap_tool_output(
+            text=f"📄 **Sortie `{clean_id}` (Lignes {s} à {actual_e} sur {total_lines})** :\n\n```text\n" + "\n".join(selected) + f"\n```{footer}",
+            status={
+                "status": "success",
+                "output_id": clean_id,
+                "start_line": s,
+                "end_line": actual_e,
+                "total_lines": total_lines,
+                "has_more": has_more,
+                "next_start_line": next_s,
+            },
+            skip_truncation=True,
+        )
+
+    @echo_tool
+    async def delete_tool_output(
+        self,
+        output_id: str,
+        __user__: dict = {},
+        __metadata__: dict = {},
+    ) -> dict:
+        """Supprime un fichier de sortie d'outil délesté (`output_id`) dans `tools_output` (ou tous les fichiers de la session si `output_id='all'`)."""
+        uid = (__user__ or {}).get("id")
+        cid = (__metadata__ or {}).get("chat_id")
+        if not uid or not cid:
+            return wrap_tool_output(
+                text="❌ Contexte utilisateur ou chat_id manquant.",
+                status={"status": "error", "error_code": "missing_context"},
+            )
+
+        out_dir = get_echo_session_path(uid, cid, "tools_output")
+        raw_id = (output_id or "").strip()
+        if raw_id.lower() in ("*", "all"):
+            removed = 0
+            if os.path.isdir(out_dir):
+                for fname in os.listdir(out_dir):
+                    if fname.endswith(".txt"):
+                        try:
+                            os.remove(os.path.join(out_dir, fname))
+                            removed += 1
+                        except Exception:
+                            pass
+            return wrap_tool_output(
+                text=f"🗑️ Purge de `tools_output` effectuée ({removed} fichier(s) supprimé(s)).",
+                status={"status": "success", "deleted_count": removed},
+                skip_truncation=True,
+            )
+
+        if raw_id.endswith(".txt"):
+            raw_id = raw_id[:-4]
+        clean_id = sanitize_echo_id(raw_id, fallback="")
+        file_path = os.path.join(out_dir, f"{clean_id}.txt") if clean_id else ""
+        if not clean_id or not os.path.isfile(file_path):
+            return wrap_tool_output(
+                text=f"ℹ️ Fichier `tools_output/{clean_id or raw_id}.txt` déjà absent.",
+                status={"status": "success", "output_id": clean_id, "deleted": False},
+                skip_truncation=True,
+            )
+        await asyncio.to_thread(os.remove, file_path)
+        return wrap_tool_output(
+            text=f"🗑️ Sortie temporaire `{clean_id}` supprimée de `tools_output`.",
+            status={"status": "success", "output_id": clean_id, "deleted": True},
+            skip_truncation=True,
+        )
