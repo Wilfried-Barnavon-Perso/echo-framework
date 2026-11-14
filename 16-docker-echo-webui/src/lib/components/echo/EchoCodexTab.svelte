@@ -333,7 +333,7 @@
 				{/if}
 			{:else if activeSubView === 'log'}
 				<div class="flex-1 overflow-y-auto p-4 space-y-2">
-					<h3 class="text-xs font-bold text-gray-700 dark:text-gray-300 mb-2">Historique Git Dulwich</h3>
+					<h3 class="text-xs font-bold text-gray-700 dark:text-gray-300 mb-2">Historique des modifications</h3>
 					{#if logEntries.length === 0}
 						<div class="text-gray-400 text-xs">Aucun commit trouvé pour ce chemin.</div>
 					{:else}
@@ -360,7 +360,7 @@
 			{:else if activeSubView === 'diff'}
 				<div class="flex-1 flex flex-col p-4 overflow-hidden">
 					<div class="flex justify-between items-center mb-2">
-						<span class="text-xs font-bold text-gray-700 dark:text-gray-300">Diff Commit {currentCommit}</span>
+						<span class="text-xs font-bold text-gray-700 dark:text-gray-300">Modifications ({currentCommit.slice(0, 8)})</span>
 						<button
 							type="button"
 							class="text-xs text-sky-500 hover:underline"

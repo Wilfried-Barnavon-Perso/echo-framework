@@ -581,3 +581,45 @@ export const deleteEchoVaultSecret = async (
 	}
 	return res.json();
 };
+
+export interface EchoVaultSchemaField {
+	id: string;
+	label: string;
+	type?: string;
+	required?: boolean;
+	help?: string;
+	placeholder?: string;
+	[key: string]: any;
+}
+
+export interface EchoVaultServiceSchema {
+	name: string;
+	category?: string;
+	fields?: EchoVaultSchemaField[];
+	user_required_instructions?: string;
+	[key: string]: any;
+}
+
+export interface EchoVaultSchemasResponse {
+	broker_available: boolean;
+	schemas: Record<string, EchoVaultServiceSchema>;
+}
+
+export const getEchoVaultSchemas = async (token: string): Promise<EchoVaultSchemasResponse> => {
+	const res = await fetch(`${ECHO_API_BASE_URL}/vault/schemas`, {
+		method: 'GET',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			authorization: `Bearer ${token}`
+		}
+	});
+
+	if (!res.ok) {
+		const err = await res
+			.json()
+			.catch(() => ({ detail: 'Échec de lecture des schémas de connecteurs' }));
+		throw new Error(err.detail || 'Échec de lecture des schémas de connecteurs');
+	}
+	return res.json();
+};

@@ -149,7 +149,7 @@
 									: 'text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-200'} transition select-none"
 								href="/workspace/meta-artifacts"
 							>
-								<span>Méta-Artéfacts</span>
+								<span>Mémoire</span>
 								{#if ($workspaceCounts as any)?.metaArtifacts !== null && ($workspaceCounts as any)?.metaArtifacts !== undefined}
 									<span class="text-xs opacity-75 font-mono">
 										{formatCount(($workspaceCounts as any).metaArtifacts)}

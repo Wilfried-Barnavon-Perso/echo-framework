@@ -198,7 +198,7 @@
 		</div>
 		<div class="flex flex-col gap-1">
 			<div class="flex justify-between items-center gap-4">
-				<span class="font-semibold text-slate-200">ECHO WebGPU Harri-OSS</span>
+				<span class="font-semibold text-slate-200">Indexation locale (WebGPU)</span>
 				<span>{downloadPercent}%</span>
 			</div>
 			<div class="w-36 h-1.5 bg-slate-800 rounded-full overflow-hidden">

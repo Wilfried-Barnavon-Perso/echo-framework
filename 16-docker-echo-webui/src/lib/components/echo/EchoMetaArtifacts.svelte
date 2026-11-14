@@ -1,7 +1,5 @@
 <script lang="ts">
-	import { onMount, getContext } from 'svelte';
-	import type { Writable } from 'svelte/store';
-	import type { i18n as i18nType } from 'i18next';
+	import { onMount } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import {
@@ -14,14 +12,13 @@
 		type EchoMetaArtifactsResponse
 	} from '$lib/apis/echo';
 
-	const i18n = getContext<Writable<i18nType>>('i18n');
-
 	let items: EchoMetaArtifactItem[] = [];
 	let loading = true;
 	let counts = { pacp: 0, prac: 0, axioms: 0 };
 
 	// Filtres
-	let activeTab: 'all' | 'pacp' | 'prac' | 'axioms' = 'all';
+	let activeTab: 'all' | 'pacp' | 'prac' = 'all';
+	let onlyLevel5 = false;
 	let selectedImportance: number | null = null;
 	let query = '';
 	let selectedTag = '';
@@ -37,33 +34,46 @@
 	let isSaving = false;
 
 	const IMPORTANCE_LABELS: Record<number, { label: string; color: string; bg: string }> = {
-		1: { label: '1 - Trivial', color: 'text-gray-500', bg: 'bg-gray-100 dark:bg-gray-800' },
-		2: { label: '2 - Mineur', color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/40' },
+		1: { label: '1 - Isolé', color: 'text-gray-500', bg: 'bg-gray-100 dark:bg-gray-800' },
+		2: { label: '2 - Occasionnel', color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-950/40' },
 		3: { label: '3 - Utile', color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-950/40' },
 		4: { label: '4 - Majeur', color: 'text-purple-500', bg: 'bg-purple-50 dark:bg-purple-950/40' },
-		5: { label: '5 - Axiome', color: 'text-amber-500 dark:text-amber-400 font-bold', bg: 'bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700/60' }
+		5: {
+			label: '5 - Règle absolue',
+			color: 'text-amber-500 dark:text-amber-400 font-bold',
+			bg: 'bg-amber-50 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-700/60'
+		}
 	};
+
+	const categoryLabel = (artifactName: string): string =>
+		artifactName === "Profil d'Alignement" ? 'Mes Préférences' : 'Apprentissages';
 
 	const loadArtifacts = async () => {
 		loading = true;
 		try {
-			let artName: string | undefined = undefined;
-			if (activeTab === 'pacp') artName = "Profil d'Alignement";
-			else if (activeTab === 'prac') artName = "Hypothèses d'Apprentissage";
+			const artName =
+				activeTab === 'pacp'
+					? "Profil d'Alignement"
+					: activeTab === 'prac'
+						? "Hypothèses d'Apprentissage"
+						: undefined;
 
-			let impFilter = selectedImportance;
-			if (activeTab === 'axioms') impFilter = 5;
+			const impFilter = onlyLevel5
+				? 5
+				: selectedImportance !== null
+					? selectedImportance
+					: undefined;
 
 			const res: EchoMetaArtifactsResponse = await listEchoMetaArtifacts(localStorage.token || '', {
 				artifact_name: artName,
-				importance: impFilter !== null ? impFilter : undefined,
+				importance: impFilter,
 				tag: selectedTag.trim() || undefined,
 				q: query.trim() || undefined
 			});
 			items = res.items || [];
 			counts = res.counts || { pacp: 0, prac: 0, axioms: 0 };
 		} catch (err: any) {
-			toast.error(err.message || 'Impossible de charger les méta-artéfacts');
+			toast.error(err.message || 'Impossible de charger la mémoire');
 		} finally {
 			loading = false;
 		}
@@ -74,7 +84,7 @@
 		formMemoryId = '';
 		formArtifactName = activeTab === 'prac' ? "Hypothèses d'Apprentissage" : "Profil d'Alignement";
 		formSummary = '';
-		formImportance = 3;
+		formImportance = onlyLevel5 ? 5 : 3;
 		formTagsInput = '';
 		showModal = true;
 	};
@@ -96,7 +106,7 @@
 
 	const handleSave = async () => {
 		if (!formSummary.trim()) {
-			toast.error('Le résumé du méta-artéfact est obligatoire.');
+			toast.error('Le contenu de l’entrée est obligatoire.');
 			return;
 		}
 
@@ -115,7 +125,7 @@
 					memory_importance: formImportance,
 					tags: parsedTags
 				});
-				toast.success('Méta-artéfact créé et vectorisé avec succès.');
+				toast.success('Entrée ajoutée à la mémoire.');
 			} else {
 				await updateEchoMetaArtifact(localStorage.token || '', formMemoryId, {
 					summary: formSummary.trim(),
@@ -123,7 +133,7 @@
 					memory_importance: formImportance,
 					tags: parsedTags
 				});
-				toast.success('Méta-artéfact mis à jour.');
+				toast.success('Entrée mise à jour.');
 			}
 			showModal = false;
 			await loadArtifacts();
@@ -137,30 +147,35 @@
 	const handlePromote = async (item: EchoMetaArtifactItem) => {
 		try {
 			await promoteEchoMetaArtifact(localStorage.token || '', item.memory_id);
-			toast.success(`Méta-artéfact "${item.memory_id}" promu au rang maximal (5 - Axiome).`);
+			toast.success(`Entrée "${item.memory_id}" promue en règle absolue (niveau 5).`);
 			await loadArtifacts();
 		} catch (err: any) {
-			toast.error(err.message || 'Erreur lors de la promotion en axiome');
+			toast.error(err.message || 'Erreur lors de la promotion');
 		}
 	};
 
 	const handleDelete = async (item: EchoMetaArtifactItem) => {
 		const confirmed = window.confirm(
-			`Êtes-vous certain de vouloir supprimer le souvenir "${item.memory_id}" ?\nIl sera définitivement purgé de la collection vectorielle Qdrant.`
+			`Êtes-vous certain de vouloir supprimer l’entrée "${item.memory_id}" ?\nElle sera définitivement supprimée de la mémoire.`
 		);
 		if (!confirmed) return;
 
 		try {
 			await deleteEchoMetaArtifact(localStorage.token || '', item.memory_id);
-			toast.success('Méta-artéfact supprimé de Qdrant.');
+			toast.success('Entrée supprimée de la mémoire.');
 			await loadArtifacts();
 		} catch (err: any) {
 			toast.error(err.message || 'Erreur lors de la suppression');
 		}
 	};
 
-	const setTab = (tab: 'all' | 'pacp' | 'prac' | 'axioms') => {
+	const setTab = (tab: 'all' | 'pacp' | 'prac') => {
 		activeTab = tab;
+		loadArtifacts();
+	};
+
+	const toggleOnlyLevel5 = () => {
+		onlyLevel5 = !onlyLevel5;
 		loadArtifacts();
 	};
 
@@ -186,19 +201,14 @@
 </script>
 
 <div class="flex flex-col w-full h-full p-4 md:p-6 space-y-6">
-	<!-- En-tête Méta-Artéfacts Qdrant -->
+	<!-- En-tête -->
 	<div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
 		<div>
-			<div class="flex items-center gap-2">
-				<h1 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100">
-					Méta-Artéfacts Mémoriels
-				</h1>
-				<span class="px-2 py-0.5 text-xs font-semibold rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
-					Qdrant Vector DB
-				</span>
-			</div>
+			<h1 class="text-2xl font-bold tracking-tight text-gray-900 dark:text-gray-100">
+				Mémoire &amp; Préférences
+			</h1>
 			<p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
-				Alignement PACP (Préférences) et Apprentissage PRAC (Hypothèses) indexés pour l'injection Smart Context.
+				Préférences utilisateur et apprentissages retenus par l'assistant.
 			</p>
 		</div>
 
@@ -211,54 +221,55 @@
 				<svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
 				</svg>
-				Nouveau Souvenir
+				Nouvelle entrée
 			</button>
 		</div>
 	</div>
 
-	<!-- Onglets de Navigation PACP / PRAC / Axiomes / Tous -->
-	<div class="flex flex-wrap items-center gap-2 border-b border-gray-200 dark:border-gray-800 pb-3">
+	<!-- Onglets de catégorie + filtre Règles absolues cumulable -->
+	<div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 dark:border-gray-800 pb-3">
+		<div class="flex flex-wrap items-center gap-2">
+			<button
+				type="button"
+				class="px-3.5 py-1.5 text-sm font-medium rounded-xl transition {activeTab === 'all'
+					? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900'
+					: 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}"
+				on:click={() => setTab('all')}
+			>
+				Tout
+			</button>
+			<button
+				type="button"
+				class="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-xl transition {activeTab === 'pacp'
+					? 'bg-blue-600 text-white'
+					: 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}"
+				on:click={() => setTab('pacp')}
+			>
+				<span>Mes Préférences</span>
+				<span class="px-1.5 py-0.2 text-xs rounded-full bg-white/20 dark:bg-white/10">{counts.pacp}</span>
+			</button>
+			<button
+				type="button"
+				class="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-xl transition {activeTab === 'prac'
+					? 'bg-purple-600 text-white'
+					: 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}"
+				on:click={() => setTab('prac')}
+			>
+				<span>Apprentissages</span>
+				<span class="px-1.5 py-0.2 text-xs rounded-full bg-white/20 dark:bg-white/10">{counts.prac}</span>
+			</button>
+		</div>
+
 		<button
 			type="button"
-			class="px-3.5 py-1.5 text-sm font-medium rounded-xl transition {activeTab === 'all'
-				? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900'
-				: 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}"
-			on:click={() => setTab('all')}
+			aria-pressed={onlyLevel5}
+			class="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-xl border transition {onlyLevel5
+				? 'bg-amber-600 border-amber-600 text-white font-semibold'
+				: 'border-amber-500/30 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30'}"
+			on:click={toggleOnlyLevel5}
 		>
-			Vue Unifiée
-		</button>
-		<button
-			type="button"
-			class="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-xl transition {activeTab === 'pacp'
-				? 'bg-blue-600 text-white'
-				: 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}"
-			on:click={() => setTab('pacp')}
-		>
-			<span>Profil d'Alignement (PACP)</span>
-			<span class="px-1.5 py-0.2 text-xs rounded-full bg-white/20 dark:bg-white/10">{counts.pacp}</span>
-		</button>
-		<button
-			type="button"
-			class="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-xl transition {activeTab === 'prac'
-				? 'bg-purple-600 text-white'
-				: 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}"
-			on:click={() => setTab('prac')}
-		>
-			<span>Hypothèses d'Apprentissage (PRAC)</span>
-			<span class="px-1.5 py-0.2 text-xs rounded-full bg-white/20 dark:bg-white/10">{counts.prac}</span>
-		</button>
-		<button
-			type="button"
-			class="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-sm font-medium rounded-xl transition {activeTab === 'axioms'
-				? 'bg-amber-600 text-white font-bold'
-				: 'text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30'}"
-			on:click={() => setTab('axioms')}
-		>
-			<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-				<path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
-			</svg>
-			<span>Axiomes (Niveau 5)</span>
-			<span class="px-1.5 py-0.2 text-xs rounded-full bg-black/10 dark:bg-white/10">{counts.axioms}</span>
+			<span>★ Règles absolues (Niveau 5)</span>
+			<span class="px-1.5 py-0.2 text-xs rounded-full {onlyLevel5 ? 'bg-white/20' : 'bg-amber-500/15'}">{counts.axioms}</span>
 		</button>
 	</div>
 
@@ -274,7 +285,7 @@
 				type="text"
 				bind:value={query}
 				on:keydown={(e) => e.key === 'Enter' && loadArtifacts()}
-				placeholder="Rechercher dans les souvenirs (mot-clé, tag, identifiant)..."
+				placeholder="Rechercher dans la mémoire (mot-clé, tag, identifiant)..."
 				class="w-full pl-9 pr-4 py-2 text-sm rounded-xl bg-gray-50 dark:bg-gray-850 border border-gray-200 dark:border-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
 			/>
 		</div>
@@ -283,15 +294,15 @@
 		<select
 			bind:value={selectedImportance}
 			on:change={loadArtifacts}
-			disabled={activeTab === 'axioms'}
-			class="px-3 py-2 text-sm rounded-xl bg-gray-50 dark:bg-gray-850 border border-gray-200 dark:border-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+			disabled={onlyLevel5}
+			class="px-3 py-2 text-sm rounded-xl bg-gray-50 dark:bg-gray-850 border border-gray-200 dark:border-gray-800 text-gray-900 dark:text-gray-100 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
 		>
 			<option value={null}>Toutes les importances</option>
-			<option value={1}>1 - Trivial</option>
-			<option value={2}>2 - Mineur</option>
+			<option value={1}>1 - Isolé</option>
+			<option value={2}>2 - Occasionnel</option>
 			<option value={3}>3 - Utile</option>
 			<option value={4}>4 - Majeur</option>
-			<option value={5}>5 - Axiome</option>
+			<option value={5}>5 - Règle absolue</option>
 		</select>
 
 		<button
@@ -307,7 +318,7 @@
 	{#if loading}
 		<div class="flex flex-col items-center justify-center flex-1 py-16">
 			<Spinner className="size-8 text-purple-500" />
-			<p class="text-sm text-gray-500 dark:text-gray-400 mt-3">Interrogation de Qdrant...</p>
+			<p class="text-sm text-gray-500 dark:text-gray-400 mt-3">Chargement de la mémoire...</p>
 		</div>
 	{:else if items.length === 0}
 		<div class="flex flex-col items-center justify-center flex-1 py-16 border-2 border-dashed border-gray-200 dark:border-gray-800 rounded-2xl text-center p-6">
@@ -316,17 +327,19 @@
 					<path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
 				</svg>
 			</div>
-			<h3 class="text-base font-semibold text-gray-900 dark:text-gray-100">Aucun Méta-Artéfact trouvé</h3>
+			<h3 class="text-base font-semibold text-gray-900 dark:text-gray-100">Aucune entrée trouvée</h3>
 			<p class="text-sm text-gray-500 dark:text-gray-400 mt-1 max-w-sm">
-				{query || selectedImportance ? 'Aucun souvenir ne correspond aux critères de filtre.' : 'Aucun fait mémoriel n’est encore enregistré dans cette vue.'}
+				{query || selectedImportance || onlyLevel5
+					? 'Aucune entrée ne correspond aux critères de filtre.'
+					: 'Aucune préférence ni apprentissage enregistré dans cette vue.'}
 			</p>
-			{#if !query}
+			{#if !query && !onlyLevel5}
 				<button
 					type="button"
 					class="mt-4 px-4 py-2 text-sm font-medium rounded-xl text-blue-600 bg-blue-50 hover:bg-blue-100 dark:bg-blue-500/10 dark:hover:bg-blue-500/20 dark:text-blue-400 transition"
 					on:click={openCreateModal}
 				>
-					Créer un Souvenir
+					Nouvelle entrée
 				</button>
 			{/if}
 		</div>
@@ -345,12 +358,12 @@
 							</span>
 						</div>
 
-						<!-- Badge Artéfact Name -->
-						<div class="text-xs font-semibold {item.artifact_name === 'Profil d\'Alignement' ? 'text-blue-500' : 'text-purple-500'}">
-							{item.artifact_name}
+						<!-- Catégorie -->
+						<div class="text-xs font-semibold {item.artifact_name === "Profil d'Alignement" ? 'text-blue-500' : 'text-purple-500'}">
+							{categoryLabel(item.artifact_name)}
 						</div>
 
-						<!-- Résumé du Fait -->
+						<!-- Contenu -->
 						<p class="text-sm text-gray-800 dark:text-gray-200 font-normal leading-relaxed">
 							{item.summary}
 						</p>
@@ -375,11 +388,11 @@
 							{#if item.memory_importance < 5}
 								<button
 									type="button"
-									title="Promouvoir immédiatement au niveau 5 (Axiome)"
+									title="Promouvoir immédiatement au niveau 5 (Règle absolue)"
 									class="px-2 py-1 text-xs font-medium rounded-lg text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 transition"
 									on:click={() => handlePromote(item)}
 								>
-									★ Axiome
+									★ Règle absolue
 								</button>
 							{/if}
 							<button
@@ -411,7 +424,7 @@
 			<!-- Header Modale -->
 			<div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800">
 				<h3 class="text-lg font-bold text-gray-900 dark:text-gray-100">
-					{modalMode === 'create' ? 'Nouveau Méta-Artéfact' : `Édition : ${formMemoryId}`}
+					{modalMode === 'create' ? 'Nouvelle entrée' : `Édition : ${formMemoryId}`}
 				</h3>
 				<button
 					type="button"
@@ -428,7 +441,7 @@
 			<div class="p-6 space-y-4">
 				<div>
 					<label for="meta-id-input" class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-						Identifiant unique (slug)
+						Identifiant unique (optionnel)
 					</label>
 					<input
 						id="meta-id-input"
@@ -442,44 +455,44 @@
 
 				<div>
 					<label for="meta-type-select" class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-						Type de Méta-Artéfact
+						Catégorie
 					</label>
 					<select
 						id="meta-type-select"
 						bind:value={formArtifactName}
 						class="w-full px-3 py-2 text-sm rounded-xl bg-gray-50 dark:bg-gray-850 border border-gray-200 dark:border-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
 					>
-						<option value="Profil d'Alignement">Profil d'Alignement (PACP - Préférences)</option>
-						<option value="Hypothèses d'Apprentissage">Hypothèses d'Apprentissage (PRAC - Axiomes & Déductions)</option>
+						<option value="Profil d'Alignement">Mes Préférences</option>
+						<option value="Hypothèses d'Apprentissage">Apprentissages</option>
 					</select>
 				</div>
 
 				<div>
 					<label for="meta-imp-select" class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-						Niveau d'Importance Cognitive
+						Niveau d'importance
 					</label>
 					<select
 						id="meta-imp-select"
 						bind:value={formImportance}
 						class="w-full px-3 py-2 text-sm rounded-xl bg-gray-50 dark:bg-gray-850 border border-gray-200 dark:border-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
 					>
-						<option value={1}>1 - Trivial (1 occurrence isolée)</option>
-						<option value={2}>2 - Mineur (2 occurrences concordantes)</option>
-						<option value={3}>3 - Utile (3 occurrences ou pertinence avérée)</option>
-						<option value={4}>4 - Majeur (Règle forte)</option>
-						<option value={5}>5 - Axiome (Invariant absolu / Injonction explicite)</option>
+						<option value={1}>1 - Isolé (observation ponctuelle)</option>
+						<option value={2}>2 - Occasionnel (2 occurrences)</option>
+						<option value={3}>3 - Utile (pertinence avérée)</option>
+						<option value={4}>4 - Majeur (règle forte)</option>
+						<option value={5}>5 - Règle absolue (toujours appliquée)</option>
 					</select>
 				</div>
 
 				<div>
 					<label for="meta-summary-input" class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-						Résumé du Fait ou de la Règle (Sera vectorisé)
+						Contenu de la préférence ou de l'apprentissage
 					</label>
 					<textarea
 						id="meta-summary-input"
 						bind:value={formSummary}
 						rows="4"
-						placeholder="Décrivez précisément le fait, la préférence ou l'axiome..."
+						placeholder="Décrivez précisément la préférence, le fait ou la règle à retenir..."
 						class="w-full px-3 py-2 text-sm rounded-xl bg-gray-50 dark:bg-gray-850 border border-gray-200 dark:border-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
 					></textarea>
 				</div>
@@ -516,7 +529,7 @@
 				>
 					{#if isSaving}
 						<Spinner className="size-4 mr-2" />
-						Vectorisation...
+						Enregistrement...
 					{:else}
 						Enregistrer
 					{/if}

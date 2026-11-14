@@ -103,7 +103,7 @@
 		type="button"
 		class="flex items-center gap-2 px-2.5 py-1 text-xs font-mono font-medium rounded-lg border bg-gray-50 dark:bg-gray-850 hover:bg-gray-100 dark:hover:bg-gray-800 transition shadow-sm {badgeBorder}"
 		on:click={() => (showPopover = !showPopover)}
-		title="Jauge Contextuelle ECHO"
+		title="Utilisation du contexte"
 	>
 		<!-- Indicateur couleur & pulsation -->
 		<div class="relative flex items-center justify-center w-2.5 h-2.5">
@@ -142,7 +142,7 @@
 					<span>Jauge Contextuelle & Quotas</span>
 				</div>
 				<span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 font-mono text-gray-500">
-					ECHO V6
+					ECHO-UI
 				</span>
 			</div>
 
@@ -169,7 +169,7 @@
 					<span class="text-blue-500 font-semibold">{cachedTokens.toLocaleString()}</span>
 				</div>
 				<div class="flex justify-between text-gray-600 dark:text-gray-400">
-					<span>Prompt Actif :</span>
+					<span>Contexte envoyé :</span>
 					<span class="text-emerald-500 font-semibold">{promptTokens.toLocaleString()}</span>
 				</div>
 				<div class="flex justify-between text-gray-600 dark:text-gray-400">
@@ -190,10 +190,10 @@
 				{/if}
 			</div>
 
-			<!-- Quotas Gemini -->
+			<!-- Quotas du compte -->
 			{#if stats?.quotas}
 				<div class="mt-3 space-y-1.5">
-					<div class="font-semibold text-gray-700 dark:text-gray-300">Quotas Fournisseur :</div>
+					<div class="font-semibold text-gray-700 dark:text-gray-300">Quotas du compte :</div>
 					{#if stats.quotas.five_hour_pct !== undefined}
 						<div class="flex items-center justify-between text-gray-500">
 							<span>Fenêtre 5h :</span>
