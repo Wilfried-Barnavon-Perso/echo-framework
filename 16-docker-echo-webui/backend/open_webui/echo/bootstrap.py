@@ -1,11 +1,12 @@
 """
 title: ECHO V6 Declarative Lifespan Bootstrap
 author: Wilfried BARNAVON
-version: 6.0.0.1
+version: 6.5.2.1
 description: Provisioning déclaratif au démarrage FastAPI remplaçant intégralement config-owui.sh.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.2.1: Correction de l'import initialize_runtime_config depuis open_webui.main.
 # 6.0.0.1: Provisioning déclaratif lifespan remplaçant config-owui.sh.
 
 from __future__ import annotations
@@ -303,7 +304,7 @@ async def _sync_global_configs(root: Path, app: FastAPI) -> int:
 
     if updates:
         await Config.upsert(updates)
-        from open_webui.config import initialize_runtime_config
+        from open_webui.main import initialize_runtime_config
 
         await initialize_runtime_config(app)
     return len(updates)

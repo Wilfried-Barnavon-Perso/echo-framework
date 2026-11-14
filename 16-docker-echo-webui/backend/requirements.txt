@@ -136,3 +136,4 @@ edge-tts>=7.0.0
 markitdown[all]>=0.1.1
 imageio-ffmpeg>=0.5.1
 filetype>=1.2.0
+typer>=0.15.0

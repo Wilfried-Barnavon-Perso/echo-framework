@@ -65,7 +65,7 @@ Le backend s'interface nativement avec les briques cognitives et fonctionnelles 
 ### 4.1 Modules Natifs
 - **`__init__.py` (v6.0.0.1) :** Compartimentation modulaire souveraine d'ECHO V6 au sein d'Open WebUI.
 - **`runtime.py` (v6.0.0.1) :** Chargeur direct sur disque des Plugins (Pipes, Filters, Tools, Actions, Events) depuis `/opt/ECHO/owui-*` via `importlib.util.spec_from_file_location`. Élimine l'écriture en fichier temporaire éphémère (`NamedTemporaryFile`) et `os.unlink`, garantissant des stacktraces Python natives. Maintient un cache mémoire indexé sur `st_mtime_ns` pour le hot-reload instantané sans redémarrage de conteneur, avec resynchronisation automatique des schémas OpenAPI (`specs`) des Tools en base SQLite.
-- **`bootstrap.py` (v6.0.0.1) :** Moteur de provisioning déclaratif asynchrone exécuté dans le `lifespan` FastAPI. Remplace intégralement le script externe `config-owui.sh` :
+- **`bootstrap.py` (v6.5.2.1) :** Moteur de provisioning déclaratif asynchrone exécuté dans le `lifespan` FastAPI (avec `initialize_runtime_config` importé depuis `open_webui.main`). Remplace intégralement le script externe `config-owui.sh` :
   - Création/résolution de l'administrateur propriétaire (`WEBUI_ADMIN_EMAIL`, `WEBUI_ADMIN_PASSWORD`).
   - Purge automatique des ghosts et synchronisation déclarative des Tools (`owui-tools`) et Functions (`owui-pipes`, `owui-filters`, `owui-actions`, `owui-events`) avec attribution des `AccessGrants`.
   - Enregistrement déclaratif du modèle maître `echo_orchestrator` synchronisé avec `system-prompt.md` et `logo-echo.png` (Data-URI base64).
@@ -81,7 +81,7 @@ Le backend s'interface nativement avec les briques cognitives et fonctionnelles 
 
 ### 4.2 Points d'Ancrage Amont (`# [ECHO-V6-HOOK]`)
 Dix-sept points d'ancrage minimaux et isolés sont insérés dans le code amont d'Open WebUI :
-1. **`backend/open_webui/config.py` :** `VECTOR_DB` par défaut sur `'qdrant'` et protection `ImportError` sur `chromadb`.
+1. **`backend/open_webui/config.py` :** `VECTOR_DB` par défaut sur `'qdrant'`, `QDRANT_URI` par défaut sur `'http://echo-qdrant:6333'` et protection `ImportError` sur `chromadb`.
 2. **`backend/open_webui/utils/plugin.py` :** Routage direct vers `load_echo_tool_from_disk` et `load_echo_function_from_disk` dans `load_tool_module_by_id`, `load_function_module_by_id`, `get_tool_module_from_cache` et `get_function_module_from_cache`.
 3. **`backend/open_webui/main.py` :** Déclenchement de `await bootstrap_echo_runtime(app)` lors de la phase de démarrage `lifespan`, désactivation des routeurs superflus (`ollama`, `channels`, `notes`, `models`, `knowledge`, `memories`, `evaluations`) et montage des routeurs souverains ECHO (`skills`, `meta-artifacts`, `wm`, `cognition`, `codex`, `vault`).
 4. **`backend/open_webui/utils/middleware.py` :** Fusion serveur native de `model.info.meta.toolIds` dans `tool_ids` avant exécution, résolvant définitivement à la racine l'anomalie `[BUG-OWUI-01]`.
@@ -101,9 +101,10 @@ Dix-sept points d'ancrage minimaux et isolés sont insérés dans le code amont 
 18. **`src/routes/(app)/+layout.svelte` & `ChatTabs.svelte` :** Auto-sélection déterministe du terminal serveur souverain `echo-coding-worker` dans `$selectedTerminalId` dès le chargement de `$terminalServers`, activant en un clic le terminal PTY interactif Xterm.js dans `ChatTabs`.
 
 ### 4.3 Dégraissage & Dépendances
+- **Optimisation de compilation Frontend :** Désactivation des sourcemaps Vite en production (`sourcemap: false` dans `vite.config.ts`) et relèvement du plafond mémoire V8 à `--max-old-space-size=6144` dans `package.json` (`scripts.build`) et `Dockerfile` (`ENV NODE_OPTIONS`) afin d'éviter les dépassements mémoire (`JavaScript heap out of memory`) lors du build SvelteKit/Vite.
 - **Maintien de `USE_SLIM=false` :** Préservation obligatoire pour garantir le support des parsers de documents locaux (PDF, DOCX via `pypdf`, `pandoc`), `pydub` et les wheels Pyodide MPSI locaux sans dépendance de CDN externe.
 - **Purge ML/CUDA/VectorDB :** Suppression de 16 bibliothèques lourdes (`chromadb`, `weaviate-client`, `opensearch-py`, `transformers`, `sentence-transformers`, `accelerate`, `einops`, `unstructured`, `preshed`, `opencv-python-headless`, `rapidocr`, `onnxruntime`, `faster-whisper`, `pymilvus`, `playwright`, `elasticsearch`, `pinecone`, `oracledb`, `colbert-ai`).
-- **Dépendances Natives ECHO V6 :** Intégration directe au build des 9 dépendances nécessaires aux opérations système et réseau (`asyncssh`, `pybase64`, `mgzip`, `dulwich`, `h2`, `edge-tts`, `markitdown[all]`, `imageio-ffmpeg`, `filetype`).
+- **Dépendances Natives ECHO V6 :** Intégration directe au build des 10 dépendances nécessaires aux opérations système et réseau (`asyncssh`, `pybase64`, `mgzip`, `dulwich`, `h2`, `edge-tts`, `markitdown[all]`, `imageio-ffmpeg`, `filetype`, `typer`).
 
 ---
 

@@ -597,7 +597,8 @@ ENABLE_MILVUS_MULTITENANCY_MODE = os.getenv('ENABLE_MILVUS_MULTITENANCY_MODE', '
 MILVUS_COLLECTION_PREFIX = os.getenv('MILVUS_COLLECTION_PREFIX', 'open_webui')
 
 # Qdrant
-QDRANT_URI = os.getenv('QDRANT_URI', None)
+# [ECHO-V6-HOOK] Default QDRANT_URI to internal echo-qdrant service
+QDRANT_URI = os.getenv('QDRANT_URI', 'http://echo-qdrant:6333')
 QDRANT_API_KEY = os.getenv('QDRANT_API_KEY', None)
 QDRANT_ON_DISK = os.getenv('QDRANT_ON_DISK', 'false').lower() == 'true'
 QDRANT_PREFER_GRPC = os.getenv('QDRANT_PREFER_GRPC', 'false').lower() == 'true'

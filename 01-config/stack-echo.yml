@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 6.5.0.1
+# VERSION : 6.5.2.1
 # ==============================================================================
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
@@ -26,11 +26,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.5.2.1: Ajout explicite de QDRANT_URI=http://echo-qdrant:6333 dans echo-open-webui.
 # 6.5.0.1: Montage en lecture seule de /opt/ECHO/.env vers /app/host_env/.env:ro dans echo-admin-manager pour l'archivage sécurisé des clés maîtresses.
 # 6.0.0.1: Bascule d'Open WebUI vers le build local natif ECHO V6 (16-docker-echo-webui).
 # 5.237.6.2: Verrouillage de l'image Open WebUI sur la version 0.13.2 (ghcr.io/open-webui/open-webui:0.13.2-slim).
 # 5.236.5.1: Référencement IPAM de user-manager (.27 -> bunkerweb-stack.yml).
-# 5.236.3.1: Alignement du plafond de streams HTTP/2 (LIMIT_CONN_MAX_HTTP2=200) et activation de HTTP/1.1 sur les locations statiques d'Open WebUI pour éviter le 500 PWA lors d'un Ctrl+F5 en mode public.
 
 name: echo
 
@@ -79,6 +79,7 @@ services:
       - DATA_DIR=/app/backend/data
       # Désactivation RAG natif au boot
       - VECTOR_DB=qdrant
+      - QDRANT_URI=http://echo-qdrant:6333
       - RAG_EMBEDDING_ENGINE=openai
       - RAG_EMBEDDING_MODEL=dummy_model
       - ENABLE_RAG_WEB_SEARCH=false
