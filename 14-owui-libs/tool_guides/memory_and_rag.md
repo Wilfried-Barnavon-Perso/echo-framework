@@ -1,11 +1,11 @@
 ---
 domain_id: memory_and_rag
-version: 5.235.5.1
-updated_at: 2026-11-06
+version: 5.239.14.2
+updated_at: 2026-11-14
 name: Mémoire Vectorielle Long-Terme (Méta-Artéfacts) & Mémoire Vectorielle de Session
 description: Gouvernance de la mémoire persistante inter-sessions (PACP/PRAC) et de la Mémoire Vectorielle de la session (documents ingérés et historique conversationnel).
 tools: [update_meta_artifact, search_meta_artifacts, delete_meta_artifact_item, save_session_context, delete_session_context_source, search_sessions_context]
-keywords: [mémoire, rag, meta_artifact, pacp, prac, profil_alignement, hypotheses_apprentissage, smart_context, session, souvenir, importance, certainty_level]
+keywords: [mémoire, rag, meta_artifact, pacp, prac, profil_alignement, hypotheses_apprentissage, smart_context, session, souvenir, importance, certainty_level, cosine_threshold, inventory, chronological]
 ---
 
 # MANUEL OPÉRATIONNEL : MÉMOIRE VECTORIELLE LONG-TERME & DE SESSION (`memory_and_rag`)
@@ -17,7 +17,7 @@ Le système mémoriel d'ECHO est scindé en deux espaces vectoriels isolés :
    - Recherche sémantique ou Lecture globale : `search_meta_artifacts`
    - Suppression chirurgicale : `delete_meta_artifact_item`
 2. **Mémoire Vectorielle de la Session (Intra/Inter-Sessions)** : Stocke les documents ingérés (`AEC_smart_context`), les captures d'outils et les échanges conversationnels vectorisés.
-   - Exploration sémantique ou Cartographie d'index : `search_sessions_context`
+   - Inventaire des sources, Lecture chronologique ou Recherche sémantique : `search_sessions_context`
    - Sauvegarde explicite d'un fait/extrait dans la session : `save_session_context`
    - Purge d'une source de la session : `delete_session_context_source`
 
@@ -60,21 +60,24 @@ Lorsqu'un document est ingéré, la balise `<artifact id="AEC_smart_context">` f
 - Si une précision granulaire est requise, appeler `search_sessions_context` en filtrant sur `source_id`.
 
 ### 3.2 Spécifications de `search_sessions_context`
-- `certainty_level` (**Obligatoire**) : Niveau de certitude sémantique attendu :
-  - `"BROAD"` : Exploration large, concepts vagues ou reformulés.
-  - `"STANDARD"` : Équilibre nominal pertinence/rappel.
-  - `"STRICT"` : Recherche factuelle à haute correspondance sémantique.
-  - `"EXACT"` : Recherche quasi-littérale d'un terme ou identifiant.
-- `query` :
-  - **Défini (`query="..."`)** : Recherche et extrait les fragments textuels complets dédupliqués.
-  - **Omis (`query=None`)** : **Mode Cartographie d'Index** — retourne la liste des `source_id` indexés dans la session avec horodatage, tags et aperçu.
+- `mode` (**Seul paramètre obligatoire** — `Literal["inventory", "chronological", "semantic"]`) :
+  - `"inventory"` : Liste tous les `source_id` indexés (`"conversation_history"`, `file_id` de documents joints, notes enregistrées), leur nombre exact de fragments, la plage temporelle ISO 8601 (`YYYY-MM-DDTHH:MM:SSZ`) et un aperçu des bornes. Le Modèle **DOIT** invoquer ce mode en amont pour identifier les `source_id` disponibles et l'étendue temporelle d'une session. `query`, `sort_order`, `cosine_threshold` et `certainty_level != "STANDARD"` sont **ABSOLUMENT INTERDITS**.
+  - `"chronological"` : Lit les fragments complets dans l'ordre temporel (`sort_order="newest_first"` par défaut, ou `"oldest_first"` pour remonter au début d'une session). **REQUIS** pour toute exploration temporelle ou question ouverte sans terme sémantique discriminant. `query`, `sort_order="cosine_desc"`, `cosine_threshold` et `certainty_level != "STANDARD"` sont **ABSOLUMENT INTERDITS**.
+  - `"semantic"` : Recherche vectorielle par proximité cosinus. `query` est **REQUIS** (horodatage ISO 8601 restitué sur chaque extrait).
+- `certainty_level` & `cosine_threshold` (**Uniquement en `mode="semantic"`**) :
+  - Paliers pré-calibrés (`cosine_threshold` **DOIT** rester `None`) : `"BROAD"` (`0.34`), `"STANDARD"` (`0.52`, défaut), `"STRICT"` (`0.63`), `"EXACT"` (`0.81`).
+  - Seuil cosinus manuel : le Modèle **DOIT** définir simultanément `certainty_level="COSINE"` **ET** `cosine_threshold` dans `[0.0, 1.0]` (**REQUIS** ; toute combinaison partielle est **ABSOLUMENT INTERDITE** et retourne une erreur).
+- `sort_order` (`Optional[Literal["cosine_desc", "newest_first", "oldest_first"]] = None`) :
+  - Si `None` : `"cosine_desc"` (score cosinus décroissant) en `semantic`, `"newest_first"` en `chronological`.
+- `source_id` (`Optional[str] = None`) : Filtre sur une source précise obtenue via `mode="inventory"`, `<artifact id="AEC_smart_context" source_id="...">` ou `save_session_context`.
+- `start_date` / `end_date` (`Optional[str] = None`) : Bornes temporelles inclusives au format ISO `"YYYY-MM-DD"`.
+- `max_fragments` (`int = 20`) : Nombre maximal de fragments retournés en `chronological` et `semantic` (ajustable selon le volume annoncé par `inventory`).
 - `tag` :
   - Restreint la recherche aux conversations rattachées à cette étiquette.
   - **Prérequis obligatoire** : Appeler préalablement `list_ui_tags(global_scope=True)` pour identifier la chaîne anglaise exacte (`snake_case` / `kebab-case`).
 - `global_search` :
   - `False` (Défaut) : Restreint la recherche à la session active avec filtrage automatique sur les messages de la **branche active** (`build_branch_rag_filter`). Les messages de branches mortes ou alternatives sont exclus de la restitution textuelle.
   - `True` : Étend la recherche à **l'intégralité de l'historique inter-sessions** de l'Utilisateur (**DOIT** être activé dès que l'Utilisateur mentionne un échange antérieur).
-- `sort_by_time` : Si `True`, trie les résultats du plus récent au plus ancien.
 
 ### 3.3 Persistance et Purge de Sources de Session
 - `save_session_context(text, source_id)` : Remplace tout vecteur existant sous `source_id` puis vectorise `text` dans la session active.
