@@ -1,7 +1,7 @@
 """
 title: ECHO V6 Declarative Lifespan Bootstrap
 author: Wilfried BARNAVON
-version: 6.5.2.1
+version: 6.5.3.1
 description: Provisioning déclaratif au démarrage FastAPI remplaçant intégralement config-owui.sh.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -248,6 +248,8 @@ async def _sync_master_model(
     img_candidates = [
         root / "echo-images" / img_filename,
         root / "_assets" / "images" / img_filename,
+        Path("/app/backend/open_webui/static/favicon.png"),
+        Path("/app/build/static/favicon.png"),
     ]
     for img_path in img_candidates:
         if img_path.is_file():

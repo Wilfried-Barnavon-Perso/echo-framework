@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO AUTH MANAGER
-VERSION : 5.239.3.1
+VERSION : 6.5.3.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-11-11
 ================================================================================
@@ -548,7 +548,7 @@ async def logout_sso(next: Optional[str] = None, echo_auth_session: Optional[str
         try:
             async with httpx.AsyncClient(timeout=3.0) as client:
                 await client.post(
-                    "http://echo-open-webui:8080/api/v1/auths/signout",
+                    "http://echo-webui:8080/api/v1/auths/signout",
                     headers={"Cookie": f"echo_auth_session={echo_auth_session}"}
                 )
         except Exception:

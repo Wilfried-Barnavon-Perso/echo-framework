@@ -142,7 +142,14 @@ else:
     except Exception:
         PACKAGE_DATA = {'version': '0.0.0'}
 
-VERSION = PACKAGE_DATA['version']
+UPSTREAM_OWUI_VERSION = PACKAGE_DATA['version']
+
+_ui_version_file = BASE_DIR / 'UI_VERSION'
+if _ui_version_file.is_file():
+    _ui_version_text = _ui_version_file.read_text(encoding='utf-8').strip()
+    VERSION = _ui_version_text or UPSTREAM_OWUI_VERSION
+else:
+    VERSION = UPSTREAM_OWUI_VERSION
 
 
 DEPLOYMENT_ID = os.getenv('DEPLOYMENT_ID', '')
@@ -240,6 +247,26 @@ if FROM_INIT_PY:
         shutil.rmtree(DATA_DIR)
 
     DATA_DIR = Path(os.getenv('DATA_DIR', OPEN_WEBUI_DIR / 'data'))
+
+
+def _resolve_echo_stack_version() -> str:
+    candidates = []
+    env_path = os.getenv('ECHO_VERSION_PATH', '').strip()
+    if env_path:
+        candidates.append(Path(env_path))
+    candidates.extend([DATA_DIR / 'ECHO_VERSION', BASE_DIR.parent / 'VERSION'])
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                val = candidate.read_text(encoding='utf-8').strip()
+                if val:
+                    return val
+        except Exception:
+            pass
+    return ''
+
+
+ECHO_STACK_VERSION = _resolve_echo_stack_version()
 
 STATIC_DIR = Path(os.getenv('STATIC_DIR', OPEN_WEBUI_DIR / 'static'))
 
@@ -960,15 +987,13 @@ if LICENSE_PUBLIC_KEY:
 # visual, textual, symbolic identifiers, metadata, and surrounding UI.
 # Do not alter, remove, obscure, or replace it except as LICENSE permits:
 # https://docs.openwebui.com/license.
-WEBUI_NAME = os.getenv('WEBUI_NAME', 'Open WebUI')
-if WEBUI_NAME != 'Open WebUI':
-    WEBUI_NAME += ' (Open WebUI)'
+WEBUI_NAME = os.getenv('WEBUI_NAME', 'ECHO-UI')
 
 # LICENSE covers this Open WebUI branding surface, including this favicon
 # and any visual, textual, or symbolic identifiers it preserves.
 # Do not alter, remove, obscure, or replace it except as LICENSE permits:
 # https://docs.openwebui.com/license.
-WEBUI_FAVICON_URL = 'https://openwebui.com/favicon.png'
+WEBUI_FAVICON_URL = '/static/favicon.png'
 WEBUI_BUILD_HASH = os.getenv('WEBUI_BUILD_HASH', 'dev-build')
 TRUSTED_SIGNATURE_KEY = os.getenv('TRUSTED_SIGNATURE_KEY', '')
 

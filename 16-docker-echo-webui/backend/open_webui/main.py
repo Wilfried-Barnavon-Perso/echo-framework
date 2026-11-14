@@ -81,6 +81,7 @@ from open_webui.env import (
     BYPASS_MODEL_ACCESS_CONTROL,
     CHANGELOG,
     DEPLOYMENT_ID,
+    ECHO_STACK_VERSION,
     ENABLE_AUDIT_GET_REQUESTS,
     ENABLE_COMPRESSION_MIDDLEWARE,
     ENABLE_CUSTOM_MODEL_FALLBACK,
@@ -559,7 +560,7 @@ apply_orjson_http_json()
 # Do not alter, remove, obscure, or replace it except as LICENSE permits:
 # https://docs.openwebui.com/license.
 app = FastAPI(
-    title='Open WebUI',
+    title='ECHO-UI',
     docs_url='/docs' if ENV == 'dev' else None,
     openapi_url='/openapi.json' if ENV == 'dev' else None,
     redoc_url=None,
@@ -853,6 +854,7 @@ app.include_router(search.router, prefix='/api/v1/search', tags=['search'])
 
 
 # app.include_router(models.router, prefix='/api/v1/models', tags=['models'])
+app.add_api_route('/api/v1/models/model/profile/image', models.get_model_profile_image, methods=['GET'], tags=['models'])
 app.include_router(notifications.router, prefix='/api/v1/notifications', tags=['notifications'])
 # app.include_router(knowledge.router, prefix='/api/v1/knowledge', tags=['knowledge'])
 app.include_router(prompts.router, prefix='/api/v1/prompts', tags=['prompts'])
@@ -2482,6 +2484,8 @@ async def get_app_config(request: Request):
         'status': True,
         'name': app.state.WEBUI_NAME,
         'version': VERSION,
+        'ui_version': VERSION,
+        'echo_version': ECHO_STACK_VERSION or VERSION,
         'default_locale': str(DEFAULT_LOCALE),
         'i18n': config.get('ui.i18n') or {},
         'oauth': {
@@ -2791,30 +2795,15 @@ async def delete_event_webhook_api(request: Request, webhook_id: str, user=Depen
 async def get_app_version():
     return {
         'version': VERSION,
+        'ui_version': VERSION,
+        'echo_version': ECHO_STACK_VERSION or VERSION,
         'deployment_id': DEPLOYMENT_ID,
     }
 
 
 @app.get('/api/version/updates')
 async def get_app_latest_release_version(user=Depends(get_verified_user)):
-    if not ENABLE_VERSION_UPDATE_CHECK:
-        log.debug(f'Version update check is disabled, returning current version as latest version')
-        return {'current': VERSION, 'latest': VERSION}
-    try:
-        timeout = aiohttp.ClientTimeout(total=1)
-        async with aiohttp.ClientSession(timeout=timeout, trust_env=True) as session:
-            async with session.get(
-                'https://api.github.com/repos/open-webui/open-webui/releases/latest',
-                ssl=AIOHTTP_CLIENT_SESSION_SSL,
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-                latest_version = data['tag_name']
-
-                return {'current': VERSION, 'latest': latest_version[1:]}
-    except Exception as e:
-        log.warning(f'Version update check failed: {e}')
-        return {'current': VERSION, 'latest': None}
+    return {'current': VERSION, 'latest': VERSION}
 
 
 @app.get('/api/changelog')

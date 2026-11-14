@@ -2,7 +2,7 @@
 r"""
 # ================================================================================
 # MODULE : ECHO ADMIN MANAGER SERVER
-# VERSION : 6.5.0.1
+# VERSION : 6.5.3.1
 # ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -79,7 +79,7 @@ MAINTENANCE_STATE = {
     "start_time": None
 }
 SYSTEM_ADMIN_EMAIL = "admin@echo.local"
-TARGET_CONTAINER = os.environ.get('TARGET_CONTAINER', 'echo-open-webui')
+TARGET_CONTAINER = os.environ.get('TARGET_CONTAINER', 'echo-webui')
 BACKUP_DIR = "/backups"
 HOST_GATEWAY = "host.docker.internal"
 SETTINGS_FILE = os.path.join(BACKUP_DIR, "settings.json")
@@ -100,7 +100,7 @@ N8N_DATA_DIR = "/app/n8n-data"
 N8N_DB_PATH = os.path.join(N8N_DATA_DIR, "database.sqlite")
 MCP_CACHE_DIR = "/app/mcp_cache"
 
-WEBUI_URL = "http://echo-open-webui:8080"
+WEBUI_URL = "http://echo-webui:8080"
 QDRANT_URL = "http://echo-qdrant:6333"
 N8N_WORKER_URL = "http://echo-n8n-worker:5003"
 COLLECTION_META_ARTIFACTS = "echo_meta_artifacts"

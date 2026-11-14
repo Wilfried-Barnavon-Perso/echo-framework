@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : disable-bunkerweb.sh
-# VERSION : 6.0.0.1
+# VERSION : 6.5.3.1
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Désactivation de la couche de sécurité BunkerWeb (Secure Edge)
@@ -69,7 +69,7 @@ if [ -z "$BW_RUNNING" ]; then
     echo "ℹ️  BunkerWeb n'est pas actif. Rien à désactiver."
     echo ""
     # Vérifie si ECHO tourne quand même en mode local
-    OWUI_RUNNING=$(docker ps --filter "name=echo-open-webui" --filter "status=running" --format "{{.Names}}" 2>/dev/null | head -1 || true)
+    OWUI_RUNNING=$(docker ps --filter "name=echo-webui" --filter "status=running" --format "{{.Names}}" 2>/dev/null | head -1 || true)
     if [ -n "$OWUI_RUNNING" ]; then
         echo "✅ ECHO tourne déjà en mode local."
     else
@@ -83,7 +83,7 @@ if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then echo "Annulé."; exit 0; f
 
 # --- 2. DÉTECTION CORS & IP (Maintien de l'accès local) ---
 echo "🌍 Calcul des origines CORS locales..."
-OWUI_PORT=$(grep -A 10 "echo-open-webui:" "$ECHO_STACK_FILE" | grep -m 1 "\- \"[0-9]*:[0-9]*\"" | cut -d'"' -f2 | cut -d: -f1)
+OWUI_PORT=$(grep -A 10 "echo-webui:" "$ECHO_STACK_FILE" | grep -m 1 "\- \"[0-9]*:[0-9]*\"" | cut -d'"' -f2 | cut -d: -f1)
 if [ -z "$OWUI_PORT" ]; then OWUI_PORT="3000"; fi
 HOST_IPS=$(hostname -I 2>/dev/null || ip addr show | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | cut -d/ -f1)
 ECHO_DETECTED_ORIGINS=""

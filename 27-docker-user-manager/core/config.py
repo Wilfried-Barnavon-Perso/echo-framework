@@ -2,7 +2,7 @@
 """
 ================================================================================
 MODULE : ECHO USER MANAGER - CORE CONFIG
-VERSION : 5.239.2.1
+VERSION : 6.5.3.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
@@ -70,7 +70,7 @@ AUTH_DATA_DIR = "/app/auth-data"
 AUTH_DB_PATH = os.path.join(AUTH_DATA_DIR, "auth.db")
 AUTH_SETTINGS_PATH = os.path.join(AUTH_DATA_DIR, "auth-settings.json")
 
-WEBUI_INTERNAL_URL = "http://echo-open-webui:8080"
+WEBUI_INTERNAL_URL = "http://echo-webui:8080"
 QDRANT_URL = "http://echo-qdrant:6333"
 
 DEFAULT_AUTH_SETTINGS = {

@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.5.1.2
+# VERSION : 6.5.3.1
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
@@ -260,9 +260,9 @@ fi
 # --- 2.3 Détection Dynamique des Origines CORS ---
 echo "🌍 Calcul des origines CORS locales..."
 if command -v yq >/dev/null 2>&1; then
-    OWUI_PORT=$(yq '.services["echo-open-webui"].ports[0]' "$COMPOSE_FILE" | cut -d: -f1)
+    OWUI_PORT=$(yq '.services["echo-webui"].ports[0]' "$COMPOSE_FILE" | cut -d: -f1)
 else
-    OWUI_PORT=$(grep -A 10 "echo-open-webui:" "$COMPOSE_FILE" | grep -m 1 "\- \"[0-9]*:[0-9]*\"" | cut -d'"' -f2 | cut -d: -f1)
+    OWUI_PORT=$(grep -A 10 "echo-webui:" "$COMPOSE_FILE" | grep -m 1 "\- \"[0-9]*:[0-9]*\"" | cut -d'"' -f2 | cut -d: -f1)
 fi
 
 if [ -z "$OWUI_PORT" ]; then OWUI_PORT="3000"; fi
@@ -332,7 +332,7 @@ else
     echo "   ⚠️  Aucun service marqué echo.hot-reload=true trouvé."
 fi
 
-echo "🧠 Provisioning déclaratif ECHO V6 assuré nativement par le lifespan de echo-open-webui."
+echo "🧠 Provisioning déclaratif ECHO V6 assuré nativement par le lifespan de echo-webui."
 
 docker image prune -f >/dev/null 2>&1
 

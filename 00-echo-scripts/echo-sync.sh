@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : echo-sync.sh
-# VERSION : 6.5.0.1
+# VERSION : 6.5.3.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -244,7 +244,7 @@ echo "   🧹 Nettoyage intelligent des caractères Windows (Maintien du Cache D
 # Liste des dossiers à nettoyer (tous les dossiers de prod sous ECHO_ROOT + SRC_DIR pour éviter la recopie)
 PROD_DIRS="$SRC_DIR $ECHO_SCRIPTS $ECHO_CONFIG $ECHO_ROOT/owui-* $ECHO_ROOT/docker-*"
 
-find $PROD_DIRS -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "*.md" -o -name "VERSION" -o -name "Dockerfile" -o -name "requirements.txt" \) -exec bash -c '
+find $PROD_DIRS -type f \( -name "*.sh" -o -name "*.py" -o -name "*.yml" -o -name "*.md" -o -name "VERSION" -o -name "UI_VERSION" -o -name "Dockerfile" -o -name "requirements.txt" \) -exec bash -c '
 for f; do
     if grep -q $'\''\r'\'' "$f" 2>/dev/null || head -c 3 "$f" | grep -q $'\''\xEF\xBB\xBF'\'' 2>/dev/null; then
         sed -i '\''1s/^\xEF\xBB\xBF//; s/\r$//'\'' "$f"

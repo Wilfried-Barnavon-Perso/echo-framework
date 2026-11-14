@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 6.5.2.1
+# VERSION : 6.5.3.1
 # ==============================================================================
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
@@ -37,12 +37,12 @@ name: echo
 services:
 
   # 1. Open WebUI (Le Cœur d'ECHO - Fork Natif ECHO V6)
-  echo-open-webui:
-    image: echo-open-webui:latest
+  echo-webui:
+    image: echo-webui:latest
     build:
       context: /opt/ECHO/docker-echo-webui
       dockerfile: Dockerfile
-    container_name: echo-open-webui
+    container_name: echo-webui
     restart: always
     networks:
       echo-network:
@@ -58,7 +58,7 @@ services:
       - WEBUI_AUTH_TRUSTED_EMAIL_HEADER=${ECHO_DOMAIN:+X-Webui-User}
       - WEBUI_AUTH_TRUSTED_NAME_HEADER=${ECHO_DOMAIN:+X-Webui-Name}
       - JWT_EXPIRES_IN=${ECHO_JWT_EXPIRES_IN:-4w}
-      - WEBUI_NAME=ECHO AI
+      - WEBUI_NAME=ECHO-UI
       - PIP_CACHE_DIR=/app/backend/data/.cache/pip
       # - CSRF_TRUSTED_ORIGINS=https://ui.${ECHO_DOMAIN:-localhost}
       - FORWARDED_ALLOW_IPS=*
@@ -91,8 +91,6 @@ services:
       - WEBUI_ADMIN_PASSWORD=${ECHO_ADMIN_PASSWORD:-}
       - ECHO_VERSION_PATH=/app/backend/data/ECHO_VERSION
       - ENABLE_FORWARD_USER_INFO_HEADERS=true
-      # Désactivation de l'expiration du token interne (géré par SSO/WAF)
-      - JWT_EXPIRES_IN=-1
       - ECHO_VAULT_ENCRYPTION_KEY=${ECHO_VAULT_ENCRYPTION_KEY:-}
     volumes:
       - /opt/ECHO/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
@@ -114,7 +112,7 @@ services:
       - "bunkerweb.SERVER_NAME=ui.${ECHO_DOMAIN:-localhost}"
       - "bunkerweb.USE_REVERSE_PROXY=yes"
       - "bunkerweb.REVERSE_PROXY_URL=/"
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_main=set $$upstream_main http://echo-open-webui:8080;"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_main=set $$upstream_main http://echo-webui:8080;"
       - "bunkerweb.REVERSE_PROXY_HOST=$$upstream_main"
       - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
       # 1. OPTIMISATIONS STREAMING & UPLOAD
@@ -153,7 +151,7 @@ services:
       - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name"
 
       # 🔓 EXCLUSION UPLOADS (WORKAROUND FETCH) : Empêche le 401 WAF sur les uploads multimédias tout en conservant la sécurité du Bearer Token applicatif
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_media=location ~ ^/api/v1/(files|audio|images) { auth_request off; set $$upstream_owui http://echo-open-webui:8080; proxy_pass $$upstream_owui; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_media=location ~ ^/api/v1/(files|audio|images) { auth_request off; set $$upstream_owui http://echo-webui:8080; proxy_pass $$upstream_owui; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
 
       # 🛡️ ECHO AUTH BACKEND (Nginx internal proxy_pass sécurisé contre le transfert de Content-Length)
       # On crée manuellement la location Nginx sans passer par la macro REVERSE_PROXY_URL_2
@@ -183,10 +181,10 @@ services:
 
 
       # 🔓 EXCLUSION API PUBLIQUES : Permet au frontend de s'initialiser avant de rediriger proprement
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_bypass=location ~ ^/api/(version|config) { auth_request off; set $$upstream_owui http://echo-open-webui:8080; proxy_pass $$upstream_owui; proxy_http_version 1.1; proxy_set_header Connection \"\"; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_bypass=location ~ ^/api/(version|config) { auth_request off; set $$upstream_owui http://echo-webui:8080; proxy_pass $$upstream_owui; proxy_http_version 1.1; proxy_set_header Connection \"\"; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
 
       # 🔓 EXCLUSION FICHIERS STATIQUES : Requis pour la PWA, les assets et la mise à jour du Service Worker
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_statics=location ~ ^/(assets|static|_app|manifest\\.json|favicon.*\\.png|robots\\.txt) { auth_request off; set $$upstream_owui http://echo-open-webui:8080; proxy_pass $$upstream_owui; proxy_http_version 1.1; proxy_set_header Connection \"\"; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $$scheme; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_statics=location ~ ^/(assets|static|_app|manifest\\.json|favicon.*\\.png|robots\\.txt) { auth_request off; set $$upstream_owui http://echo-webui:8080; proxy_pass $$upstream_owui; proxy_http_version 1.1; proxy_set_header Connection \"\"; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $$scheme; }"
 
 
       # 🚫 ANTI-CACHE DYNAMIQUE (Pour forcer l'interception SSO sur le HTML)
@@ -334,7 +332,7 @@ services:
       retries: 5
       start_period: 30s
     depends_on:
-      echo-open-webui:
+      echo-webui:
         condition: service_healthy
 
   # ============================================================================

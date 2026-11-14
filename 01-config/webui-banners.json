@@ -11,7 +11,7 @@
     "id": "echo-banner-roadmap-v6-decoupling-20261108",
     "type": "info",
     "title": "Feuille de route : ECHO v6",
-    "content": "**Feuille de route : Cap sur ECHO v6** : Lancement prochain du cycle de développement majeur d'ECHO v6. L'ingénierie et l'évolution du framework ECHO sont désormais formellement découplées du cycle d'Open WebUI pour une souveraineté et une autonomie architecturales renforcées.",
+    "content": "**Feuille de route : Cap sur ECHO v6** : Lancement prochain du cycle de développement majeur d'ECHO v6. L'ingénierie et l'évolution du framework ECHO sont désormais formellement découplées du cycle d'ECHO-UI pour une souveraineté et une autonomie architecturales renforcées.",
     "dismissible": true,
     "timestamp": 1794162325
   },
