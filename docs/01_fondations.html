@@ -166,7 +166,9 @@
           </li>
           <li><strong>Session RAG (<code>echo_session_rag</code>) &amp; Mémoire Épisodique Active :</strong> indexé par
             <code>user_id + chat_id + source_id</code> via <code>save_session_context</code>,
-            <code>search_sessions_context</code> (filtrant dynamiquement sur la branche active via
+            <code>search_sessions_context</code> (3 modes explicites <code>inventory</code>,
+            <code>chronological</code> et <code>semantic</code> avec seuil <code>certainty_level</code> /
+            <code>COSINE</code> + <code>cosine_threshold</code>, filtrant dynamiquement sur la branche active via
             <code>build_branch_rag_filter</code>, avec support <code>global_search</code> inter-sessions et filtrage par
             <code>tag</code> via SSoT <code>webui.db</code>) et <code>delete_session_context_source</code>. En
             complément du Session RAG, le filtre <code>context_compaction_filter.py</code> (v5.231.58.1), l'action

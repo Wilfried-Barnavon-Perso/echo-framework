@@ -69,7 +69,7 @@
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Memory &amp; RAG Tool (<code>memory_and_rag_tool.py</code> v5.235.5.1)</h3>
+        <h3>1. Memory &amp; RAG Tool (<code>memory_and_rag_tool.py</code> v5.239.14.2)</h3>
         <p>Offre au LLM une API complète sur les deux collections Qdrant (<code>echo_meta_artifacts</code> et
           <code>echo_session_rag</code>) :
         </p>
@@ -85,10 +85,13 @@
             <code>delete_meta_artifact_item</code>.
           </li>
           <li><strong>Outils Session RAG :</strong> <code>save_session_context</code>,
-            <code>search_sessions_context</code> (fusionnant recherche vectorielle filtrée dynamiquement sur la branche
-            active via <code>build_branch_rag_filter(active_ids)</code>, cartographie globale, isolation
-            <code>sub_sid</code> pour les sous-agents, paramètre <code>global_search</code> inter-sessions et filtrage
-            par étiquette <code>tag</code> résolu en temps réel via la table SSoT <code>webui.db::tag</code>) et
+            <code>search_sessions_context</code> (3 modes explicites <code>inventory</code>,
+            <code>chronological</code> et <code>semantic</code> avec pagination par en-têtes légers, seuils
+            <code>certainty_level</code> / <code>COSINE</code> + <code>cosine_threshold</code>, tri
+            <code>sort_order</code> et horodatage ISO 8601 UTC, filtrée dynamiquement sur la branche active via
+            <code>build_branch_rag_filter(active_ids)</code>, isolation <code>sub_sid</code> pour les sous-agents,
+            paramètre <code>global_search</code> inter-sessions et filtrage par étiquette <code>tag</code> résolu en
+            temps réel via la table SSoT <code>webui.db::tag</code>) et
             <code>delete_session_context_source</code>.
           </li>
         </ul>
