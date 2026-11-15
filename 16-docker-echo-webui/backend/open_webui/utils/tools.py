@@ -1576,12 +1576,13 @@ async def get_terminal_tools(
     else:
         terminal_servers = await get_terminal_servers(request)
         server_data = next((server for server in terminal_servers if server.get('id') == terminal_id), None)
+    # [ECHO-V6-HOOK] Serveur terminal PTY-only (ex: echo-coding-worker avec paths={}) : aucun outil OpenAPI à injecter
     if server_data is None:
-        raise RuntimeError(f"Terminal server '{terminal_id}' is unavailable")
+        return {}, None
 
     specs = server_data.get('specs', [])
     if not specs:
-        raise RuntimeError(f"Terminal server '{terminal_id}' has no available tools")
+        return {}, None
 
     # Build auth headers
     auth_type = connection.get('auth_type', 'bearer')

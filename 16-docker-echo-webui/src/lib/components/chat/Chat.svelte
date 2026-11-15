@@ -1234,7 +1234,10 @@
 			defaults.webSearchEnabled &&= !!featureAvailable('web_search');
 			defaults.imageGenerationEnabled &&= !!featureAvailable('image_generation');
 			defaults.codeInterpreterEnabled &&= !!featureAvailable('code_interpreter');
-			if (!currentModels.some((model) => model.info?.meta?.capabilities?.terminal ?? true)) {
+			if (
+				defaults.terminalId !== 'echo-coding-worker' &&
+				!currentModels.some((model) => model.info?.meta?.capabilities?.terminal ?? true)
+			) {
 				defaults.terminalId = null;
 			}
 			if (defaults.terminalId) defaults.codeInterpreterEnabled = false;
@@ -5617,6 +5620,7 @@
 									class=" pb-2 {dragged ? 'z-0' : 'z-10'}"
 								>
 									<MessageInput
+										terminalSelectionEnabled={false}
 										bind:terminalContext
 										{typingUsers}
 										on:typing={(event) => emitTyping(event.detail)}
@@ -5718,6 +5722,7 @@
 								{/if}
 								<div id={embedded ? messageInputDropzoneId : undefined} class="pb-2 z-10">
 									<MessageInput
+										terminalSelectionEnabled={false}
 										bind:terminalContext
 										{typingUsers}
 										on:typing={(event) => emitTyping(event.detail)}

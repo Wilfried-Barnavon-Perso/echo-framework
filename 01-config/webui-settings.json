@@ -12,7 +12,7 @@
       "auth_type": "none",
       "enabled": true,
       "config": {
-        "working_directory_context": true,
+        "working_directory_context": false,
         "user_shell_tools": "auto",
         "chat_uploads": "default",
         "access_grants": [

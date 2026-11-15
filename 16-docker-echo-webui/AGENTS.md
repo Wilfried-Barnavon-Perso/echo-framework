@@ -35,7 +35,7 @@ La base de code de ce composant est verrouillée sur une version amont d'Open We
 Le conteneur bâti depuis ce composant s'insère au cœur de l'architecture multi-services d'ECHO V6. Les contrats d'interface suivants sont des invariants stricts :
 
 1. **Réseau & Service :**
-   - Nom de service : `echo-webui` (identité UI `ECHO-UI`, version front disjointe `UI_VERSION` `6.5.3.5`).
+   - Nom de service : `echo-webui` (identité UI `ECHO-UI`, version front disjointe `UI_VERSION` `6.6.1.1`).
    - Assignation réseau interne : `172.28.0.100:8080` (réseau `echo-net`).
 2. **Persistance des Données :**
    - Montage du volume persistant : `echo-webui-data:/app/backend/data`.
@@ -80,7 +80,7 @@ Le backend s'interface nativement avec les briques cognitives et fonctionnelles 
 - **`routers/vault.py` (v6.5.3.1) :** Routeur FastAPI souverain pour le coffre de secrets chiffrés et la gestion d'identité (`/echo/v1/vault`), exposant le statut des clés et quotas masqués (`/status`), le catalogue MCP/Vault `GET /schemas` (sans `user_required_instructions`), le registre des comptes chiffrés (`/secrets`), la persistance AES-256-GCM (`PUT /secrets`) et la suppression (`DELETE /secrets/{service}/{account_id}`) sans jamais divulguer de valeur en clair.
 
 ### 4.2 Points d'Ancrage Amont (`# [ECHO-V6-HOOK]`)
-Dix-sept points d'ancrage minimaux et isolés sont insérés dans le code amont d'Open WebUI :
+Dix-neuf points d'ancrage minimaux et isolés sont insérés dans le code amont d'Open WebUI :
 1. **`backend/open_webui/config.py` :** `VECTOR_DB` par défaut sur `'qdrant'`, `QDRANT_URI` par défaut sur `'http://echo-qdrant:6333'` et protection `ImportError` sur `chromadb`.
 2. **`backend/open_webui/utils/plugin.py` :** Routage direct vers `load_echo_tool_from_disk` et `load_echo_function_from_disk` dans `load_tool_module_by_id`, `load_function_module_by_id`, `get_tool_module_from_cache` et `get_function_module_from_cache`.
 3. **`backend/open_webui/main.py` :** Déclenchement de `await bootstrap_echo_runtime(app)` lors de la phase de démarrage `lifespan`, désactivation des routeurs superflus (`ollama`, `channels`, `notes`, `models`, `knowledge`, `memories`, `evaluations`) et montage des routeurs souverains ECHO (`skills`, `meta-artifacts`, `wm`, `cognition`, `codex`, `vault`).
@@ -97,8 +97,9 @@ Dix-sept points d'ancrage minimaux et isolés sont insérés dans le code amont 
 14. **`src/lib/stores/echo/index.ts` :** Stores réactifs souverains pour la jauge contextuelle (`echoContextGauge`), les sous-agents (`echoCognitionActiveCount`), les applications Canvas (`echoCanvasFrames`, `echoCanvasOpenRequest`) et l'inférence WebGPU (`echoEdgeEmbedState`).
 15. **`src/lib/components/echo/` :** Implémentation des HUDs (`EchoContextGauge`, `EchoSubagentIndicator` Variante B dans `Navbar.svelte`, `EchoEdgeEmbedding` dans `(app)/+layout.svelte`) et des 4 onglets de session dé-jargonisés (`EchoCognitionTab` avec sélecteur de sous-agent et saisie humaine hybride, `EchoCodexTab`, `EchoVaultTab` avec catalogue de connecteurs MCP, `EchoCanvasTab`).
 16. **`src/lib/components/chat/ChatTabs/` & `CallPanel.svelte` :** Intégration des 4 onglets dans `tabs.ts` et `ChatTabs.svelte` avec Split View, désactivation stricte de `canSideChat = false`, suppression de `Fichiers`/`Nouveau fichier`/`Voice Note`, désactivation conditionnelle de `Nouveau terminal` tant que la conversation n'est pas sauvegardée, et forçage de `CallOverlay` dans `CallPanel.svelte`.
-17. **`src/lib/components/chat/Chat.svelte` & Réglages/Admin (`SettingsModal`, `admin/`, `playground/`) :** Linearité stricte (`sideChatAllowed = false`), redirection de `/playground/*`, `/admin/evaluations/*` et `/admin/functions/create`, verrouillage lecture seule de `/admin/users` et `/admin/functions`, et élagage des réglages synchronisé via `settings-access.ts` (8 onglets personnels + 3 onglets admin : `admin:general`, `admin:interface`, `admin:audio` 100 % RO).
+17. **`src/lib/components/chat/Chat.svelte` & Réglages/Admin (`SettingsModal`, `admin/`, `playground/`) :** Linearité stricte (`sideChatAllowed = false`), préservation de `defaults.terminalId === 'echo-coding-worker'` et ajout de `terminalSelectionEnabled={false}` sur les deux instances `<MessageInput>`, redirection de `/playground/*`, `/admin/evaluations/*` et `/admin/functions/create`, verrouillage lecture seule de `/admin/users` et `/admin/functions`, et élagage des réglages synchronisé via `settings-access.ts` (8 onglets personnels + 3 onglets admin : `admin:general`, `admin:interface`, `admin:audio` 100 % RO).
 18. **`src/routes/(app)/+layout.svelte` & `ChatTabs.svelte` :** Auto-sélection déterministe du terminal serveur souverain `echo-coding-worker` dans `$selectedTerminalId` dès le chargement de `$terminalServers`, activant en un clic le terminal PTY interactif Xterm.js dans `ChatTabs` après sauvegarde de la conversation.
+19. **`backend/open_webui/utils/tools.py` :** Dans `get_terminal_tools`, retour gracieux `({}, None)` lorsque `server_data is None` ou `not specs` pour les serveurs terminaux PTY-only (ex: `echo-coding-worker` avec `paths={}`) sans lever `RuntimeError`.
 
 ### 4.3 Dégraissage & Dépendances
 - **Optimisation de compilation Frontend :** Désactivation des sourcemaps Vite en production (`sourcemap: false` dans `vite.config.ts`) et relèvement du plafond mémoire V8 à `--max-old-space-size=6144` dans `package.json` (`scripts.build`) et `Dockerfile` (`ENV NODE_OPTIONS`) afin d'éviter les dépassements mémoire (`JavaScript heap out of memory`) lors du build SvelteKit/Vite.

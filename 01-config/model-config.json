@@ -34,6 +34,7 @@
                 "web_search": false,
                 "image_generation": false,
                 "code_interpreter": false,
+                "terminal": false,
                 "citations": true,
                 "status_updates": true,
                 "usage": true,
