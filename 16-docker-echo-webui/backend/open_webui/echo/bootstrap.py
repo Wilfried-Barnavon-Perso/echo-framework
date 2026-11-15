@@ -1,11 +1,13 @@
 """
 title: ECHO V6 Declarative Lifespan Bootstrap
 author: Wilfried BARNAVON
-version: 6.5.3.2
+version: 6.6.3.1
 description: Provisioning déclaratif au démarrage FastAPI remplaçant intégralement config-owui.sh.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.3.1: Alignement des appels avatar par défaut avec le paramètre gender='X'.
+# 6.6.2.1: Alignement du provisioning lifespan avec la suppression des actions legacy (agent_monitor_action, echo_identity_vault_action, echo_codex_action, web_navigation_replay_action).
 # 6.5.3.2: Identité ECHO-UI, route avatar modèle echo_orchestrator et montage des routes audio /echo/v1/audio au démarrage.
 # 6.5.2.1: Correction de l'import initialize_runtime_config depuis open_webui.main.
 # 6.0.0.1: Provisioning déclaratif lifespan remplaçant config-owui.sh.
@@ -23,6 +25,10 @@ from typing import Any
 
 from fastapi import FastAPI
 
+from open_webui.echo.identity_bridge import (
+    ensure_user_default_avatar,
+    get_default_user_avatar_data_uri,
+)
 from open_webui.echo.runtime import (
     FUNCTION_SUBDIRS,
     TOOLS_SUBDIR,
@@ -68,10 +74,12 @@ async def _ensure_owner_admin_user() -> str:
     if user is not None:
         if user.role != "admin":
             await Users.update_user_role_by_id(user.id, "admin")
+        await ensure_user_default_avatar(user, gender="X")
         return user.id
 
     first_admin = await Users.get_super_admin_user()
     if first_admin is not None and not admin_password:
+        await ensure_user_default_avatar(first_admin, gender="X")
         return first_admin.id
 
     pwd = admin_password or uuid.uuid4().hex
@@ -80,6 +88,7 @@ async def _ensure_owner_admin_user() -> str:
         email=admin_email,
         password=hashed,
         name=admin_name,
+        profile_image_url=get_default_user_avatar_data_uri(gender="X") or "/user.png",
         role="admin",
     )
     if created is None:

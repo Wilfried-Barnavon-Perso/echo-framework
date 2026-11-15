@@ -1,18 +1,18 @@
 """
 ================================================================================
 MODULE : ECHO AUTH MANAGER
-VERSION : 6.5.3.1
+VERSION : 6.6.3.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-11-11
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.3.1: Ajout de la colonne users.gender (M/F/X), pré-remplissage enrôlement et émission du header SSO X-Webui-Gender.
 # 6.5.3.1: Alignement de OWUI_INTERNAL_URL sur http://echo-webui:8080.
 # 5.239.3.1: Ergonomie responsive et ascenseur sur les templates (grille 2 colonnes pour enroll.html, conteneur .auth-container-wide, max-height dynamique avec scrollbar stylisée et correction du contraste des options <select>).
 # 5.239.2.1: Politique anti-bruteforce paramétrable (délai inter-essais 0/5/10/20s universel, quota d'essais et verrouillage temporisé ou définitif pour les comptes non-enrôlés) et affichage temps réel sur login.html.
 # 5.237.0.1: Correction de la boucle de redirection 302 (/ <-> /login), résolution SSOT resolve_safe_next vers ui.{ECHO_DOMAIN} alignée sur la CSP form-action de BunkerWeb, et propagation de next dans /enroll et /recovery.
-# 5.236.2.1: Durcissement SELECT * dans resolve_session_state pour garantir la tolérance aux colonnes SQLite dynamiques.
 import os
 import sqlite3
 import httpx
@@ -82,6 +82,12 @@ templates = Jinja2Templates(directory="templates")
 # ==============================================================================
 # DATABASE LOGIC
 # ==============================================================================
+def normalize_gender(value: Optional[str]) -> str:
+    """Normalise un code genre vers 'M', 'F' ou 'X' (défaut 'X')."""
+    val = (value or "").strip().upper()
+    return val if val in ("M", "F", "X") else "X"
+
+
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     with sqlite3.connect(DB_PATH) as conn:
@@ -91,6 +97,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS users (
                 email TEXT PRIMARY KEY,
                 name TEXT,
+                gender TEXT DEFAULT 'X',
                 pass_hash TEXT,
                 totp_secret TEXT,
                 security_question TEXT,
@@ -113,6 +120,7 @@ def init_db():
             )
         """)
         for col_name, col_type in [
+            ("gender", "TEXT DEFAULT 'X'"),
             ("temp_pass_expires", "INTEGER DEFAULT 0"),
             ("last_enrollment", "INTEGER DEFAULT 0"),
             ("failed_attempts", "INTEGER DEFAULT 0"),
@@ -142,15 +150,25 @@ def get_user(email: str):
         cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
         return cursor.fetchone()
 
-def update_user_enrollment(email: str, pass_hash: str, totp_secret: str, security_question: str, security_answer_hash: str, name: str = None):
+def update_user_enrollment(
+    email: str,
+    pass_hash: str,
+    totp_secret: str,
+    security_question: str,
+    security_answer_hash: str,
+    name: str = None,
+    gender: str = "X",
+):
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         current_time = int(time.time())
+        clean_name = (name or "").strip()
+        clean_gender = normalize_gender(gender)
         cursor.execute("""
             UPDATE users 
-            SET pass_hash = ?, totp_secret = ?, security_question = ?, security_answer_hash = ?, must_enroll = 0, last_enrollment = ?, name = ?, failed_attempts = 0, locked_until = 0
+            SET pass_hash = ?, totp_secret = ?, security_question = ?, security_answer_hash = ?, must_enroll = 0, last_enrollment = ?, name = COALESCE(NULLIF(?, ''), name), gender = ?, failed_attempts = 0, locked_until = 0
             WHERE email = ?
-        """, (pass_hash, totp_secret, security_question, security_answer_hash, current_time, name, email))
+        """, (pass_hash, totp_secret, security_question, security_answer_hash, current_time, clean_name, clean_gender, email))
         conn.commit()
 
 def update_user_password(email: str, pass_hash: str):
@@ -588,6 +606,7 @@ def verify_auth(echo_auth_session: Optional[str] = Cookie(None)):
             response.headers["X-Webui-Name"] = user["name"]
         else:
             response.headers["X-Webui-Name"] = email.split('@')[0]
+        response.headers["X-Webui-Gender"] = normalize_gender(user["gender"] if user and "gender" in user.keys() else "X")
         response.headers["X-Echo-Sso-Secret"] = os.environ.get("ECHO_SSO_SECRET", "")
         return response
     
@@ -715,6 +734,8 @@ async def login_post(
         return templates.TemplateResponse(request=request, name="enroll.html", context={
             "request": request, 
             "email": email, 
+            "name": (user["name"] or ""),
+            "gender": normalize_gender(user["gender"] if "gender" in user.keys() else "X"),
             "totp_secret": totp_secret,
             "qr_code_b64": qr_b64,
             "next": safe_next,
@@ -790,6 +811,7 @@ async def enroll_post(
     security_question: str = Form(...),
     security_answer: str = Form(...),
     name: Optional[str] = Form(None),
+    gender: Optional[str] = Form("X"),
     next: Optional[str] = Form(None)
 ):
     safe_next = resolve_safe_next(next)
@@ -798,9 +820,12 @@ async def enroll_post(
         return _render_login(request, next_url=safe_next, error="Requête invalide.")
 
     settings = get_auth_settings()
+    norm_gender = normalize_gender(gender)
     # Revalidation des paramètres de template pour le renvoi d'erreur
     ctx = {
-        "request": request, "email": email, "totp_secret": totp_secret, 
+        "request": request, "email": email, "totp_secret": totp_secret,
+        "name": name if (name is not None and name.strip()) else (user["name"] or ""),
+        "gender": norm_gender,
         "qr_code_b64": generate_qr_base64(totp_secret, email),
         "next": safe_next,
         "pwd_min_length": settings.get("pwd_min_length", 12),
@@ -834,7 +859,7 @@ async def enroll_post(
     # Sauvegarde
     pass_hash = hash_password(new_password)
     ans_hash = hash_password(security_answer.lower().strip())
-    update_user_enrollment(email, pass_hash, totp_secret, security_question, ans_hash, name)
+    update_user_enrollment(email, pass_hash, totp_secret, security_question, ans_hash, name, gender=norm_gender)
     
     return _render_login(request, next_url=safe_next, success="Enrôlement réussi. Vous pouvez vous connecter.")
 

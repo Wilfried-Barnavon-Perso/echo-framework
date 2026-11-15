@@ -2,16 +2,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 6.1.0.1
+version: 6.6.3.1
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.3.1: Lecture de canonical_gender (identity.db) et transmission à AEC_identite lorsque ENABLE_USER_NAME est actif.
 # 6.1.0.1: Prise en charge des fichiers pré-positionnés par EchoStorageProvider (pending_ingestion) et déduplication.
 # 5.235.5.1: Comptage des tours logiques résilient à la fusion user+user, filtrage AEC de branche active et annotation de provenance.
 # 5.234.0.1: Utilisation de ECHO_AUTH_PENDING_MARKER et aiguillage déterministe des parts image_url (anti-doublon chats sauvegardés vs préservation inline en chats temporaires/API).
 # 5.231.55.1: Réétagement de la priorité à 70 (après context_compaction_filter à 60 et avant codex_links_filter à 80).
-# 5.231.11.1: Réétagement de la priorité à 30 (après user_native_context_filter à 20 et avant codex_links_filter à 40).
 
 
 from pydantic import BaseModel, Field
@@ -296,7 +296,16 @@ class Filter:
                 meta_vars = meta.get("variables", {})
 
                 enable_name = meta.get("_echo_user_name_enabled", False)
-                display_name = __user__.get("name", "anonyme") if enable_name else "anonyme"
+                display_name = (__user__ or {}).get("name", "anonyme") if enable_name else "anonyme"
+                user_gender = None
+                if enable_name and __user__ and __user__.get("id"):
+                    try:
+                        user_gender = (
+                            EchoStateManager(user_id=str(__user__["id"]), chat_id=None).get_setting("canonical_gender")
+                            or None
+                        )
+                    except Exception:
+                        user_gender = None
 
                 sys_loc = meta_vars.get("{{USER_LOCATION}}", "Inconnu")
                 u_loc = meta.get("_echo_override_location", "")
@@ -319,18 +328,23 @@ class Filter:
                 model_id = "##MODEL_ID##"
                 model_origin = "##MODEL_ORIGIN##"
 
-                body.setdefault("metadata", {})
-                body["metadata"]["_echo_env_info"] = {
-                    "nom_utilisateur": display_name, "localisation": final_loc,
+                env_info = {
+                    "nom_utilisateur": display_name,
+                    "localisation": final_loc,
                     "date_et_heure": date_heure,
-                    "timezone": timezone
+                    "timezone": timezone,
                 }
+                if user_gender:
+                    env_info["genre"] = user_gender
+
+                body.setdefault("metadata", {})
+                body["metadata"]["_echo_env_info"] = env_info
 
                 from echo_aec import EchoAEC
 
                 rich_parts = []
                 rich_parts.append({"text": EchoAEC.render_model_context(model_id, model_origin, version)})
-                rich_parts.append({"text": EchoAEC.render_identity_context(display_name)})
+                rich_parts.append({"text": EchoAEC.render_identity_context(display_name, gender=user_gender)})
                 rich_parts.append({"text": EchoAEC.render_time_context(date_heure, timezone, tour_conversation)})
                 rich_parts.append({"text": EchoAEC.render_location_context(final_loc)})
 

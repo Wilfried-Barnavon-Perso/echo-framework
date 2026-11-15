@@ -2,11 +2,12 @@
 """
 title: ECHO Subagent Hub
 author: Wilfried BARNAVON
-version: 6.5.3.1
+version: 6.6.2.1
 description: Hub hybride orchestrateur/humain, balisage XML et file FIFO.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.2.1: Ajout du compteur monotone _COGNITION_SEQ (bump_cognition_seq, get_cognition_seq) et de update_subagent_meta_fields.
 # 6.5.3.1: Création du hub sous-agents hybrides (XML, verrous, file FIFO).
 
 from __future__ import annotations
@@ -39,6 +40,38 @@ _REG_LOCK = threading.Lock()
 _QUEUE_LOCK = threading.Lock()
 _SUBAGENT_LOCKS: dict[tuple[int, str, str], asyncio.Lock] = {}
 _RUNNING_SUBAGENTS: set[tuple[str, str]] = set()
+_COGNITION_SEQ: dict[str, int] = {}
+
+
+def _norm_chat_key(chat_id: str) -> str:
+    raw = str(chat_id or "")
+    if not raw:
+        return ""
+    try:
+        from echo_paths import sanitize_echo_id
+        return sanitize_echo_id(raw)
+    except Exception:
+        return raw
+
+
+def bump_cognition_seq(chat_id: str) -> int:
+    """Incrémente le compteur monotone en RAM signalant un changement cognitif pour ce chat."""
+    key = _norm_chat_key(chat_id)
+    if not key:
+        return 0
+    with _REG_LOCK:
+        val = _COGNITION_SEQ.get(key, 0) + 1
+        _COGNITION_SEQ[key] = val
+        return val
+
+
+def get_cognition_seq(chat_id: str) -> int:
+    """Retourne le numéro de séquence cognitif courant en RAM pour ce chat."""
+    key = _norm_chat_key(chat_id)
+    if not key:
+        return 0
+    with _REG_LOCK:
+        return _COGNITION_SEQ.get(key, 0)
 
 
 def _strip_legacy_orch_prefix(text: str) -> str:
@@ -99,6 +132,7 @@ def mark_subagent_running(chat_id: str, sub_sid: str, running: bool) -> None:
             _RUNNING_SUBAGENTS.add(key)
         else:
             _RUNNING_SUBAGENTS.discard(key)
+    bump_cognition_seq(chat_id)
 
 
 def is_subagent_running(chat_id: str, sub_sid: str) -> bool:
@@ -119,7 +153,19 @@ def save_subagent_meta(
         f"{SUBAGENT_META_PREFIX}{sub_sid}",
         json.dumps(payload, ensure_ascii=False),
     )
+    bump_cognition_seq(getattr(state_manager, "chat_id", "") or "")
     return payload
+
+
+def update_subagent_meta_fields(
+    state_manager: Any, sub_sid: str, **fields: Any
+) -> dict:
+    """Fusionne les champs non-None dans les métadonnées du sous-agent et persiste."""
+    meta = get_subagent_meta(state_manager, sub_sid) or {"sub_sid": sub_sid}
+    for k, v in fields.items():
+        if v is not None:
+            meta[k] = v
+    return save_subagent_meta(state_manager, sub_sid, meta)
 
 
 def get_subagent_meta(state_manager: Any, sub_sid: str) -> Optional[dict]:
@@ -181,6 +227,7 @@ def enqueue_human_message(
             f"{SUBAGENT_QUEUE_PREFIX}{sub_sid}",
             json.dumps(queue, ensure_ascii=False),
         )
+        bump_cognition_seq(getattr(state_manager, "chat_id", "") or "")
         return list(queue)
 
 
@@ -197,4 +244,5 @@ def pop_next_human_message(
             f"{SUBAGENT_QUEUE_PREFIX}{sub_sid}",
             json.dumps(queue, ensure_ascii=False),
         )
+        bump_cognition_seq(getattr(state_manager, "chat_id", "") or "")
         return item

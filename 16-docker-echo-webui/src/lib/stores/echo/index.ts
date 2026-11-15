@@ -50,6 +50,11 @@ export interface EchoCognitionStep {
 	updated_at?: number;
 	origin?: 'orchestrator' | 'human' | 'tool';
 	clean_text?: string;
+	model_key?: string | null;
+	escalation_target?: string | null;
+	is_question?: boolean;
+	pending_tool_calls?: boolean | { name: string; args?: any }[];
+	participant_label?: string;
 }
 
 export interface EchoCognitionThreadMeta {
@@ -58,6 +63,12 @@ export interface EchoCognitionThreadMeta {
 	role?: string;
 	status?: string;
 	updated_at?: number;
+	thread_type?: 'web' | 'council' | 'supervisor' | 'expert' | 'agent';
+	icon?: string;
+	color?: string;
+	display_label?: string;
+	model_key?: string | null;
+	is_running?: boolean;
 	[key: string]: any;
 }
 
@@ -69,10 +80,30 @@ export interface EchoCognitionQueuedMsg {
 	[key: string]: any;
 }
 
+export interface EchoCognitionGroup {
+	id?: string;
+	group_id?: string;
+	thread_type?: string;
+	group_type?: string;
+	icon: string;
+	color: string;
+	display_label?: string;
+	label?: string;
+	member_sids?: string[];
+	threads?: string[];
+	participant_labels?: Record<string, string>;
+	model_keys?: string[];
+	is_running: boolean;
+	updated_at: number;
+	steps_count?: number;
+	merged_steps?: EchoCognitionStep[];
+}
+
 export interface EchoCognitionSnapshot {
 	chat_id: string;
 	threads: Record<string, EchoCognitionStep[]>;
 	thread_meta: Record<string, EchoCognitionThreadMeta>;
+	grouped_threads?: EchoCognitionGroup[];
 	queued_messages: Record<string, EchoCognitionQueuedMsg[]>;
 	tool_calls: any[];
 	active_count: number;
@@ -81,14 +112,94 @@ export interface EchoCognitionSnapshot {
 	updated_at: number;
 }
 
+export const ECHO_COGNITIVE_MODELS: Record<
+	string,
+	{ key: string; label: string; icon: string; badgeClass: string }
+> = {
+	MODEL_ZEPHYR: {
+		key: 'MODEL_ZEPHYR',
+		label: 'Zéphyr',
+		icon: '⚡',
+		badgeClass: 'bg-sky-500/15 text-sky-400 border-sky-500/30'
+	},
+	MODEL_APOLLO: {
+		key: 'MODEL_APOLLO',
+		label: 'Apollon',
+		icon: '☀️',
+		badgeClass: 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+	},
+	MODEL_PROMETHEUS: {
+		key: 'MODEL_PROMETHEUS',
+		label: 'Prométhée',
+		icon: '🔥',
+		badgeClass: 'bg-orange-500/15 text-orange-400 border-orange-500/30'
+	},
+	MODEL_ATHENA: {
+		key: 'MODEL_ATHENA',
+		label: 'Athéna',
+		icon: '🦉',
+		badgeClass: 'bg-purple-500/15 text-purple-400 border-purple-500/30'
+	}
+};
+
+export function getEchoModelBadge(modelKey?: string | null) {
+	if (!modelKey) return null;
+	return ECHO_COGNITIVE_MODELS[modelKey] ?? null;
+}
+
+export type EchoTabKind =
+	| 'echo-cognition'
+	| 'echo-codex'
+	| 'echo-browser'
+	| 'echo-canvas'
+	| 'echo-vault';
+
+export interface EchoTabOpenRequest {
+	chatId: string;
+	kind: EchoTabKind;
+	payload?: {
+		subSid?: string;
+		frameId?: string;
+		workspace?: string;
+		file?: string;
+		commitHash?: string;
+		targetChatId?: string;
+		sessionId?: string;
+		frameIndex?: number;
+		[key: string]: any;
+	};
+}
+
 export const echoContextGauge = writable<EchoContextGaugePayload | null>(null);
 export const echoCognitionActiveCount = writable<number>(0);
 export const echoCognitionRunningCount = writable<number>(0);
 export const echoCognitionSnapshot = writable<EchoCognitionSnapshot | null>(null);
 export const echoCognitionSelectedSubSid = writable<Record<string, string>>({});
-export const echoSubagentOpenRequest = writable<{ chatId: string; subSid?: string } | null>(null);
+export const echoTabOpenRequest = writable<EchoTabOpenRequest | null>(null);
+export const echoCodexTarget = writable<{
+	chatId: string;
+	workspace?: string;
+	file?: string;
+	commitHash?: string;
+	targetChatId?: string;
+} | null>(null);
+export const echoBrowserTarget = writable<{
+	chatId: string;
+	sessionId?: string;
+	frameId?: string;
+	frameIndex?: number;
+} | null>(null);
+export const echoBrowserLiveFrames = writable<Record<string, any[]>>({});
 export const echoCanvasFrames = writable<Record<string, EchoCanvasFrame[]>>({});
-export const echoCanvasOpenRequest = writable<{ chatId: string; frameId?: string } | null>(null);
+export const echoCanvasActiveFrame = writable<Record<string, string>>({});
+export const requestEchoTabOpen = (
+	chatId: string,
+	kind: EchoTabKind,
+	payload?: EchoTabOpenRequest['payload']
+) => {
+	if (!chatId) return;
+	echoTabOpenRequest.set({ chatId, kind, payload });
+};
 export const echoEdgeEmbedState = writable<
 	'idle' | 'probing' | 'downloading' | 'ready' | 'active' | 'incompatible'
 >('idle');

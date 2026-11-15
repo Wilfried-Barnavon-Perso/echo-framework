@@ -1,7 +1,7 @@
 ---
 domain_id: codex_management
-version: 5.239.17.1
-updated_at: 2026-11-14
+version: 6.6.2.1
+updated_at: 2026-11-15
 name: Gestionnaire Documentaire & Versionnement Git (ECHO Codex)
 description: Création, édition directe ou assistée, lecture paginée/historique, recherche spatiale ou temporelle, navigation multi-chat et versionnement Git sur les espaces main, plans, generated et sandbox.
 tools: [create_codex, edit_codex, delete_codex, read_codex, restore_codex, search_codex, summarize_codex, list_codex, list_other_chats_ids, history_codex, open_codex_ui]
@@ -36,12 +36,12 @@ Le Codex ECHO gère des fichiers texte, code et médias répartis en 4 espaces d
   2. **Mode Édition Assistée (`instructions="...", new_content=None`)** : Délègue la modification chirurgicale du fichier existant à un sous-agent éditeur (`MODEL_APOLLO`) qui applique les `instructions` sur le document complet et commite le résultat. Idéal pour modifier une section précise d'un long fichier sans réécrire tout le contenu.
 - **Restriction Binaire** : L'édition assistée par instructions est formellement refusée sur les fichiers binaires (`error_code="binary_edit_not_supported"`).
 
-### 2.3 Ouverture du HUD Codex : `open_codex_ui`
-- Déclenche l'ouverture asynchrone du HUD Codex dans l'interface de l'Utilisateur sur le fichier `filename` du workspace local ou distant (`target_chat_id`).
-- Si `target_chat_id` est spécifié (`target_chat_id != current_chat_id`), le HUD bascule sur la conversation distante en lecture seule.
-- Si `commit_hash` est fourni, le HUD charge l'état historique exact du fichier à cette révision Git.
+### 2.3 Ouverture de l'Onglet Codex : `open_codex_ui`
+- Déclenche l'ouverture asynchrone de l'onglet natif `Codex & Fichiers` (`echo-codex`) dans l'interface de l'Utilisateur sur le fichier `filename` du workspace local ou distant (`target_chat_id`).
+- Si `target_chat_id` est spécifié (`target_chat_id != current_chat_id`), l'onglet bascule sur la conversation distante en lecture seule.
+- Si `commit_hash` est fourni, l'onglet charge l'état historique exact du fichier à cette révision Git.
 - **RÈGLE DE PARCIMONIE** : N'appeler `open_codex_ui` **QUE** si l'Utilisateur en a fait la demande expresse, ou si une relecture visuelle immédiate par l'Utilisateur d'un livrable créé ou modifié est indispensable. Il est interdit d'appeler cet outil depuis un sous-agent headless.
-- **NATURE DE L'OUTIL** : `open_codex_ui` assure l'affichage statique dans l'éditeur Monaco ou la prévisualisation documentaire passive (Markdown, HTML statique, images, PDF). Pour déployer et exécuter une interface applicative interactive communicante, utiliser `code_executor` avec `echo_monitor` (voir guide `code_and_files`).
+- **NATURE DE L'OUTIL** : `open_codex_ui` assure l'affichage dans l'onglet natif `Codex & Fichiers` (éditeur de code, visionneuse hexadécimale et prévisualisation documentaire Markdown, HTML statique, SVG, images). Pour déployer et exécuter une interface applicative interactive communicante, utiliser `code_executor` avec `echo_monitor` (voir guide `code_and_files`).
 
 ---
 

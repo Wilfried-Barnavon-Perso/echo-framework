@@ -2,16 +2,16 @@
 """
 title: ECHO AEC Manager
 author: Wilfried BARNAVON
-version: 5.235.5.2
+version: 6.6.3.1
 description: Composant système interne : ECHO AEC Manager.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.3.1: Ajout du champ optionnel <genre> dans EchoAEC.render_identity_context.
 # 5.235.5.2: Délégation purge et drainage transactionnel à EchoStateManager, suffixe de provenance hors_branche et suppression des accès directs identity.db.
 # 5.231.28.1: Réintroduction de EchoAEC.render_context_checkpoint pour l'encapsulation XML déterministe de <artifact id="AEC_context_checkpoint">.
 # 5.231.20.1: Suffixe UUID sur event_id dans EchoAEC.record_event pour éliminer les collisions intra-milliseconde.
 # 5.227.1.1: Suppression de render_context_checkpoint suite à la suppression du compactage in-place.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 import time
 import uuid
@@ -152,9 +152,21 @@ class EchoAEC:
         return f'<artifact id="AEC_directive" source="{source}">\n{message}\n</artifact>\n\n'
 
     @staticmethod
-    def render_identity_context(name: str) -> str:
+    def render_identity_context(name: str, gender: Optional[str] = None) -> str:
         """Génère la balise XML <artifact id="AEC_identite">."""
-        return f'<artifact id="AEC_identite">\n  <utilisateur>{name}</utilisateur>\n</artifact>\n\n'
+        genre_line = ""
+        clean_gender = str(gender).strip() if gender is not None else ""
+        if clean_gender:
+            gender_label = {"M": "Homme", "F": "Femme", "X": "Neutre"}.get(
+                clean_gender.upper(), clean_gender
+            )
+            genre_line = f"  <genre>{gender_label}</genre>\n"
+        return (
+            f'<artifact id="AEC_identite">\n'
+            f'  <utilisateur>{name}</utilisateur>\n'
+            f'{genre_line}'
+            f'</artifact>\n\n'
+        )
 
     @staticmethod
     def render_location_context(location: str) -> str:

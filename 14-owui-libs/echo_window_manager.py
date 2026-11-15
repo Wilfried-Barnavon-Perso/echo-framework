@@ -2,16 +2,16 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 5.239.12.1
+version: 6.6.2.1
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.2.1: Ajout de open_tab et broadcast_browser_frame (diffusion SSE vers les onglets natifs echo-browser et echo-codex).
 # 5.239.12.1: Exclusion SSOT et auto-guérison des HUDs transitoires (echo-migration-hud, echo-clone-hud) dans handle_rpc, get_chat_snapshot et hydrateChatState.
 # 5.237.19.1: Support du plein écran d'Iframe via EchoWM.toggleIframeFullscreen (echo:iframe:fullscreen, echo:iframe:fullscreen-state et touche Escape).
 # 5.237.4.1: Garde anti-matérialisation session.db dans _save_chat_state et résolution stricte propriétaire (user_id, chat_id) sans fallback multi-comptes.
 # 5.231.60.1: Retrait RPC img_session_action, EchoWM.submitChatPrompt et écouteurs postMessage echo:img_session:* (restauration agnosticisme pur).
-# 5.231.50.1: Pont postMessage echo:iframe:init/theme-update pour synchroniser fond et police des Iframes avec la fenêtre principale Open WebUI.
 
 import asyncio
 from contextlib import closing
@@ -238,6 +238,40 @@ class EchoWindowManager:
                 except Exception:
                     pass
         return delivered
+
+    async def open_tab(
+        self,
+        user_id: str,
+        chat_id: str,
+        kind: str,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Demande l'ouverture ou l'activation d'un onglet ECHO côté client via SSE."""
+        await self.broadcast(
+            user_id,
+            {
+                "type": "echo_open_tab",
+                "chat_id": chat_id,
+                "kind": kind,
+                "payload": payload or {},
+            },
+        )
+
+    async def broadcast_browser_frame(
+        self,
+        user_id: str,
+        chat_id: str,
+        frame_data: Dict[str, Any],
+    ) -> None:
+        """Diffuse une capture ou trame live du navigateur Playwright côté client via SSE."""
+        await self.broadcast(
+            user_id,
+            {
+                "type": "echo_browser_frame",
+                "chat_id": chat_id,
+                **frame_data,
+            },
+        )
 
     def _resolve_owner_uid(self, user_id: str, chat_id: str) -> str:
         """Garantit la correspondance exacte (user_id, chat_id) avec la session existante."""

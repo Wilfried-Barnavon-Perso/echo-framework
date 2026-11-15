@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Events
 author: Wilfried BARNAVON
-version: 5.231.48.1
+version: 6.6.2.1
 description: Gestionnaire des événements WebSocket et UI. Intègre le protocole UCTP (Universal Chunked Transfer Protocol).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.2.1: Suppression du fast-path mort echo_codex_action dans trigger_action.
 # 5.231.48.1: Marquage data-echo-scope="global", correction de window._uctp_<id> et watchdog d'auto-nettoyage DOM sur #uctp-loader-<id> dans _build_uctp_frames.
 # 5.231.46.1: Factorisation de _reassemble_uctp_payload post-FIRST_COMPLETED (double transport Socket.IO + SSE/RPC) et wrapping automatique echoWrapUctpPayload en mode call.
 # 5.231.39.1: Fallback SSE/RPC EchoWindowManager dans resolve_live_session lorsque SESSION_POOL Socket.IO ne répond pas et dé-minimisation _echoGeoCtrl.
 # 5.231.5.1: Correction du Fast-Path Codex dans trigger_action (multi-chat switch_chat, target_chat_id, commit et dé-minimisation).
-# 5.231.1.0: Double transport non-destructif (Socket.IO + SSE EchoWindowManager) dédupliqué par exec_id pour préserver WebGPU et les appels RPC multi-chats.
 import asyncio
 from typing import Any, Optional
 import uuid
@@ -473,41 +473,6 @@ class EchoEvents:
             try {{
                 const token = localStorage.token ? localStorage.token.replace(/^"|"$/g, '') : '';
                 const extraPayload = {payload_js};
-
-                // Fast-path ECHO Codex : si le HUD est déjà ouvert dans le DOM pour CE chat_id et que sa boucle RPC est active,
-                // réveiller directement la boucle existante sans recréer l'action ni réinjecter le DOM.
-                const codexEl = document.getElementById('echo-codex-hud');
-                const isSameChat = codexEl && codexEl.getAttribute('data-chat-id') === '{chat_id}';
-                const hasCodexBridge = typeof window.sendCodexAction === 'function' && typeof window.echoCodexResolve === 'function';
-                if ('{action_id}' === 'echo_codex_action' && isSameChat && hasCodexBridge) {{
-                    const target = window._echoCodexTarget || (extraPayload && (extraPayload.target_file || extraPayload.file) ? extraPayload : null);
-                    window._echoCodexTarget = null;
-                    if (target) {{
-                        const targetCid = target.target_chat_id || '{chat_id}';
-                        const reqFile = target.target_file || target.file || '';
-                        const reqWs = target.workspace || 'main';
-                        const reqCommit = target.commit_hash || target.commit || null;
-                        const actionName = (target.target_chat_id && target.target_chat_id !== '{chat_id}') ? 'switch_chat' : 'switch_workspace';
-                        window.sendCodexAction({{
-                            action: actionName,
-                            target_chat_id: targetCid,
-                            chat_id: targetCid,
-                            workspace: reqWs,
-                            target_file: reqFile,
-                            current_file: reqFile,
-                            commit_hash: reqCommit
-                        }});
-                    }} else {{
-                        window.sendCodexAction({{ action: 'ping' }});
-                    }}
-                    if (codexEl) {{
-                        codexEl.classList.remove('is-minimized');
-                        if (codexEl._echoGeoCtrl && codexEl._echoGeoCtrl.isMinimized && typeof codexEl._echoGeoCtrl.toggleMinimize === 'function') {{
-                            codexEl._echoGeoCtrl.toggleMinimize();
-                        }}
-                    }}
-                    return true;
-                }}
 
                 const response = await fetch(`/api/chat/actions/{action_id}`, {{
                     method: 'POST',

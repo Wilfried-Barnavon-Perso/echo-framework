@@ -29,7 +29,7 @@
 </script>
 
 <div class="flex min-w-0 max-w-full flex-col items-start select-none">
-	<Tooltip content="Cortex Cognitif Dynamique (Zéphyr · Apollon · Prométhée)" placement="top">
+	<Tooltip content="Cortex Cognitif Dynamique (Zéphyr · Apollon · Prométhée · Athéna)" placement="top">
 		<div
 			class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-gray-100/80 dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 text-gray-900 dark:text-gray-100 cursor-default shadow-xs transition"
 		>

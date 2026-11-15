@@ -2,16 +2,16 @@
 """
 title: ECHO Echo State Manager
 author: Wilfried BARNAVON
-version: 5.239.11.1
+version: 6.6.2.1
 description: Gestionnaire d'état SQLite et RAG.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.2.1: Câblage de bump_cognition_seq(self.chat_id) dans save_call_bridge et save_thread_step pour la réactivité SSE temps réel.
 # 5.239.11.1: Fallback compte par défaut dans get_vault_credential si account_id est un alias externe.
 # 5.237.20.1: Persistance model_id dans message_shadows, lecture get_signature_by_id depuis les Shadows et suppression des méthodes de hachage cumulatif.
 # 5.236.0.1: Auto-matérialisation déclarative idempotente via ensure_db en écriture non-readonly.
 # 5.235.5.3: Alignement sur les 20 colonnes déclaratives de echo_resources (CRUD, allowed fields et _row_to_resource).
-# 5.235.5.2: Décorateur @_session_scope, suppression des DDL et tables mortes, intégration ECHO_TURN_CONTEXT et alignement 14 colonnes echo_resources.
 import contextlib
 import functools
 import os
@@ -213,6 +213,12 @@ class EchoStateManager:
                     "INSERT OR REPLACE INTO call_bridge (call_id, signature, function_name, args_json, message_id, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
                     (call_id, signature, function_name, json.dumps(args).decode('utf-8') if args is not None else None, message_id, int(time.time())),
                 )
+            if self.chat_id:
+                try:
+                    from echo_subagent_hub import bump_cognition_seq
+                    bump_cognition_seq(self.chat_id)
+                except Exception:
+                    pass
         except EchoDbMissingError:
             pass
         except Exception as e:
@@ -566,6 +572,12 @@ class EchoStateManager:
                     "INSERT OR REPLACE INTO cognitive_threads (sub_sid, step_index, role_id, role, content_json, thought_signature, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (sub_sid, step_index, role_id, role, json.dumps(content).decode('utf-8'), signature, int(time.time())),
                 )
+            if self.chat_id:
+                try:
+                    from echo_subagent_hub import bump_cognition_seq
+                    bump_cognition_seq(self.chat_id)
+                except Exception:
+                    pass
         except EchoDbMissingError:
             pass
         except Exception as e:

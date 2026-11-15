@@ -1,11 +1,13 @@
 """
 title: ECHO V6 Cognition Router
 author: Wilfried BARNAVON
-version: 6.5.3.1
+version: 6.6.2.2
 description: Routeur FastAPI pour la visualisation cognitive et des sous-agents (/echo/v1/cognition).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.2.2: Ajout des endpoints GET /{chat_id}/browser-frames et /{chat_id}/browser-frames/{file_id}/image et alignement niveau_requis/is_question/pending_tool_calls.
+# 6.6.2.1: Sanitization DOM/prompt, regroupement grouped_threads, enrichissement des steps et réactivité SSE via get_cognition_seq.
 # 6.5.3.1: Ajout de POST /{chat_id}/threads/{sub_sid}/message (tours humains directs ou file FIFO) et enrichissement d'état des threads.
 # 6.3.0.1: Création du routeur /echo/v1/cognition (snapshot et streaming SSE des cognitive_threads et call_bridge).
 
@@ -15,6 +17,7 @@ import asyncio
 import importlib.util
 import logging
 import os
+import re
 import sys
 from contextlib import closing
 from pathlib import Path
@@ -22,7 +25,7 @@ from typing import Any, Dict
 
 import orjson as json
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from open_webui.echo.runtime import (
@@ -45,6 +48,7 @@ try:
         SUBAGENT_QUEUE_PREFIX,
         enqueue_human_message,
         extract_turn_origin,
+        get_cognition_seq,
         is_subagent_running,
     )
 except ImportError:
@@ -62,6 +66,7 @@ except ImportError:
         SUBAGENT_QUEUE_PREFIX,
         enqueue_human_message,
         extract_turn_origin,
+        get_cognition_seq,
         is_subagent_running,
     )
 
@@ -99,6 +104,145 @@ async def _load_agent_engine_module():
     return mod
 
 
+_DOM_MAP_PREFIX = "Voici les éléments interactifs actuels (Carte DOM) :"
+_NAV_OBJ_RE = re.compile(r"<objective>(.*?)</objective>", re.DOTALL)
+_COUNCIL_SID_RE = re.compile(r"^thread_council_([^_]+)_(.+)$")
+_SUPERVISOR_SID_RE = re.compile(r"^thread_supervisor_(sup_[a-f0-9]+|[^_]+)_(.+)$")
+_QUESTION_RE = re.compile(r"QUESTION:\s*(.+?)$", re.MULTILINE)
+
+
+def _sanitize_cognition_content(
+    content: Any, role: str, role_id: str, step_index: int
+) -> Any:
+    """Allège les payloads DOM/système volumineux pour l'observabilité UI."""
+    if not isinstance(content, list):
+        return content
+
+    sanitized: list[Any] = []
+    for part in content:
+        if not isinstance(part, dict):
+            sanitized.append(part)
+            continue
+
+        if role == "user" and isinstance(part.get("text"), str):
+            txt = part["text"]
+            if step_index == 0 and (
+                ("<objective>" in txt and "<rules>" in txt)
+                or (role_id == "navigator" and "<objective>" in txt)
+            ):
+                m_obj = _NAV_OBJ_RE.search(txt)
+                obj_txt = m_obj.group(1).strip() if m_obj else txt[:300].strip()
+                new_part = dict(part)
+                new_part["text"] = f"[ Consigne Système Navigateur ]\nObjectif : {obj_txt}"
+                sanitized.append(new_part)
+                continue
+
+            if _DOM_MAP_PREFIX in txt:
+                idx = txt.find(_DOM_MAP_PREFIX)
+                prefix_head = txt[:idx].rstrip()
+                tail = txt[idx + len(_DOM_MAP_PREFIX):]
+                lines = tail.splitlines()
+                vp_lines = [ln for ln in lines[:3] if "Dimensions de l'écran" in ln]
+                json_tail = "\n".join(
+                    ln for ln in lines if "Dimensions de l'écran" not in ln
+                ).strip()
+                count = 0
+                if json_tail:
+                    try:
+                        parsed_dom = json.loads(json_tail)
+                        if isinstance(parsed_dom, list):
+                            count = len(parsed_dom)
+                        else:
+                            count = len(re.findall(r'"id"\s*:', json_tail))
+                    except Exception:
+                        count = len(re.findall(r'"id"\s*:', json_tail))
+                summary_parts = []
+                if prefix_head:
+                    summary_parts.append(prefix_head)
+                if vp_lines:
+                    summary_parts.append(vp_lines[0].strip())
+                summary_parts.append(f"[Carte DOM : {count} éléments interactifs]")
+                new_part = dict(part)
+                new_part["text"] = "\n".join(summary_parts)
+                sanitized.append(new_part)
+                continue
+
+        if "functionResponse" in part and isinstance(part["functionResponse"], dict):
+            fr = dict(part["functionResponse"])
+            resp = fr.get("response")
+            if isinstance(resp, dict) and ("dom_map" in resp or "a11y_tree" in resp):
+                new_resp = dict(resp)
+                for k in ("dom_map", "a11y_tree"):
+                    if isinstance(new_resp.get(k), list):
+                        new_resp[k] = f"[Carte DOM : {len(new_resp[k])} éléments]"
+                fr["response"] = new_resp
+                new_part = dict(part)
+                new_part["functionResponse"] = fr
+                sanitized.append(new_part)
+                continue
+
+        sanitized.append(part)
+    return sanitized
+
+
+def _classify_thread(sid: str, role_id: str, meta: Dict[str, Any]) -> Dict[str, Any]:
+    """Retourne les attributs typés d'affichage d'un thread sous-agent."""
+    is_running = meta.get("status") == "running"
+    model_key = meta.get("model_key")
+    custom_label = meta.get("role_name") or meta.get("role")
+
+    if sid.startswith("thread_web_") or role_id == "navigator":
+        return {
+            "thread_type": "web",
+            "icon": "🌐",
+            "color": "#38bdf8",
+            "display_label": custom_label or "Navigateur Web",
+            "model_key": model_key,
+            "is_running": is_running,
+        }
+    if sid.startswith("thread_council_"):
+        m = _COUNCIL_SID_RE.match(sid)
+        suffix = m.group(2) if m else sid
+        return {
+            "thread_type": "council",
+            "icon": "🏛️",
+            "color": "#a855f7",
+            "display_label": custom_label or f"Expert ({suffix})",
+            "model_key": model_key,
+            "is_running": is_running,
+        }
+    if sid.startswith("thread_supervisor_"):
+        m = _SUPERVISOR_SID_RE.match(sid)
+        suffix = m.group(2) if m else sid
+        return {
+            "thread_type": "supervisor",
+            "icon": "📋",
+            "color": "#f59e0b",
+            "display_label": custom_label or f"Supervision ({suffix})",
+            "model_key": model_key,
+            "is_running": is_running,
+        }
+    if sid.startswith("thread_"):
+        parts = sid.split("_")
+        role_guess = "_".join(parts[1:-1]) if len(parts) >= 3 else sid
+        return {
+            "thread_type": "expert",
+            "icon": "🎓",
+            "color": "#10b981",
+            "display_label": custom_label or f"Expert ({role_guess})",
+            "model_key": model_key,
+            "is_running": is_running,
+        }
+    return {
+        "thread_type": "agent",
+        "icon": "🤖",
+        "color": "#6366f1",
+        "display_label": custom_label or f"Agent ({sid})",
+        "model_key": model_key,
+        "is_running": is_running,
+    }
+
+
 def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
     """Lit threads, métadonnées, file FIFO et call_bridge en lecture seule."""
     if not os.path.isfile(db_path):
@@ -106,6 +250,7 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
             "chat_id": chat_id,
             "threads": {},
             "thread_meta": {},
+            "grouped_threads": [],
             "queued_messages": {},
             "tool_calls": [],
             "active_count": 0,
@@ -136,6 +281,9 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
                         content = json.loads(r[4])
                     except Exception:
                         content = r[4]
+                content = _sanitize_cognition_content(
+                    content, r[3], r[2] or "", r[1]
+                )
                 item: Dict[str, Any] = {
                     "sub_sid": sub_sid,
                     "step_index": r[1],
@@ -220,9 +368,127 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
         log.warning("Erreur lecture cognition snapshot pour chat %s: %s", chat_id, e)
 
     for sid in set(threads.keys()) | set(thread_meta.keys()):
+        entry = thread_meta.setdefault(sid, {"sub_sid": sid})
         if is_subagent_running(chat_id, sid):
-            entry = thread_meta.setdefault(sid, {"sub_sid": sid})
             entry["status"] = "running"
+        steps_for_sid = threads.get(sid, [])
+        role_id_hint = entry.get("role_id") or (
+            steps_for_sid[0].get("role_id", "") if steps_for_sid else ""
+        )
+        entry.update(_classify_thread(sid, role_id_hint, entry))
+
+    for sid, steps_list in threads.items():
+        meta_entry = thread_meta.get(sid, {})
+        model_key = meta_entry.get("model_key")
+        last_idx = len(steps_list) - 1
+        for idx, step in enumerate(steps_list):
+            step["model_key"] = model_key
+            step_content = step.get("content")
+            esc_target = None
+            fn_calls = []
+            text_chunks = []
+            if isinstance(step_content, list):
+                for part in step_content:
+                    if not isinstance(part, dict):
+                        continue
+                    if isinstance(part.get("text"), str):
+                        text_chunks.append(part["text"])
+                    fc = part.get("functionCall")
+                    if isinstance(fc, dict):
+                        fc_name = fc.get("name", "")
+                        fc_args = fc.get("args") if isinstance(fc.get("args"), dict) else {}
+                        fn_calls.append({"name": fc_name, "args": fc_args})
+                        if fc_name == "new_cognitive_level":
+                            esc_target = (
+                                fc_args.get("niveau_requis")
+                                or fc_args.get("target_level")
+                                or fc_args.get("level")
+                                or fc_args.get("cognitive_level")
+                            )
+            step["escalation_target"] = esc_target
+            joined_text = "".join(text_chunks).strip()
+            has_question_fc = any(
+                c["name"] in ("ask_user", "ask_human", "request_clarification")
+                for c in fn_calls
+            )
+            step["is_question"] = bool(
+                step.get("role") == "model"
+                and (
+                    has_question_fc
+                    or bool(
+                        re.search(
+                            r"(?:^|\n)\s*QUESTION\s*:", joined_text, re.IGNORECASE
+                        )
+                    )
+                )
+            )
+            step["pending_tool_calls"] = (
+                fn_calls
+                if (
+                    idx == last_idx
+                    and step.get("role") == "model"
+                    and fn_calls
+                    and bool(meta_entry.get("is_running"))
+                )
+                else []
+            )
+
+    groups_map: Dict[str, Dict[str, Any]] = {}
+    for sid in set(threads.keys()) | set(thread_meta.keys()):
+        meta_entry = thread_meta.get(sid, {})
+        steps_list = threads.get(sid, [])
+        sid_updated = max(
+            [s.get("updated_at") or 0 for s in steps_list]
+            + [meta_entry.get("updated_at") or 0],
+            default=0,
+        )
+        sid_running = bool(meta_entry.get("is_running"))
+
+        m_ccl = _COUNCIL_SID_RE.match(sid)
+        m_sup = _SUPERVISOR_SID_RE.match(sid)
+        if m_ccl:
+            gid = f"ccl_{m_ccl.group(1)}"
+            gtype = "council"
+            glabel = f"Table Ronde ({m_ccl.group(1)[:8]})"
+            gicon = "🏛️"
+            gcolor = "#a855f7"
+        elif m_sup:
+            gid = f"sup_{m_sup.group(1)}"
+            gtype = "supervisor"
+            glabel = f"Supervision ({m_sup.group(1)[:8]})"
+            gicon = "📋"
+            gcolor = "#f59e0b"
+        else:
+            gid = sid
+            gtype = meta_entry.get("thread_type", "agent")
+            glabel = meta_entry.get("display_label") or sid
+            gicon = meta_entry.get("icon", "🤖")
+            gcolor = meta_entry.get("color", "#10b981")
+
+        grp = groups_map.setdefault(
+            gid,
+            {
+                "group_id": gid,
+                "group_type": gtype,
+                "label": glabel,
+                "icon": gicon,
+                "color": gcolor,
+                "is_running": False,
+                "updated_at": 0.0,
+                "threads": [],
+            },
+        )
+        grp["threads"].append(sid)
+        if sid_running:
+            grp["is_running"] = True
+        if sid_updated > grp["updated_at"]:
+            grp["updated_at"] = sid_updated
+
+    grouped_threads = sorted(
+        groups_map.values(),
+        key=lambda g: (1 if g["is_running"] else 0, g["updated_at"]),
+        reverse=True,
+    )
 
     running_count = sum(
         1
@@ -235,6 +501,7 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
         "chat_id": chat_id,
         "threads": threads,
         "thread_meta": thread_meta,
+        "grouped_threads": grouped_threads,
         "queued_messages": queued_messages,
         "tool_calls": tool_calls,
         "active_count": total_count,
@@ -244,10 +511,11 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
     }
 
 
-def _get_cognition_state_sig(db_path: str) -> str:
-    """Signature composite lecture seule (threads, call_bridge, subagent_*)."""
+def _get_cognition_state_sig(db_path: str, chat_id: str) -> str:
+    """Signature composite lecture seule (cognition_seq, threads, call_bridge, subagent_*)."""
+    seq = get_cognition_seq(chat_id)
     if not os.path.isfile(db_path):
-        return ""
+        return f"{seq}|"
     try:
         with closing(open_db(db_path, readonly=True, timeout=2.0)) as conn:
             t_row = conn.execute(
@@ -264,12 +532,13 @@ def _get_cognition_state_sig(db_path: str) -> str:
                 "FROM echo_settings WHERE key LIKE 'subagent_%'"
             ).fetchone()
             return (
+                f"{seq}|"
                 f"{t_row[0]}:{t_row[1]}|"
                 f"{c_row[0]}:{c_row[1]}|"
                 f"{s_row[0]}:{s_row[1]}:{s_row[2]}"
             )
     except Exception:
-        return ""
+        return f"{seq}|"
 
 
 @router.get("/{chat_id}/snapshot")
@@ -298,7 +567,7 @@ async def get_cognition_stream(
 
     async def event_generator():
         current_snapshot = _read_cognition_snapshot(db_path, chat_id)
-        last_seen_sig = _get_cognition_state_sig(db_path)
+        last_seen_sig = _get_cognition_state_sig(db_path, chat_id)
         yield f"data: {json.dumps(current_snapshot).decode('utf-8')}\n\n"
 
         keepalive_counter = 0
@@ -306,16 +575,16 @@ async def get_cognition_stream(
             if await request.is_disconnected():
                 break
 
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(0.25)
             keepalive_counter += 1
 
-            current_sig = _get_cognition_state_sig(db_path)
+            current_sig = _get_cognition_state_sig(db_path, chat_id)
             if current_sig != last_seen_sig:
                 current_snapshot = _read_cognition_snapshot(db_path, chat_id)
                 last_seen_sig = current_sig
                 out_sse = json.dumps(current_snapshot).decode("utf-8")
                 yield f"data: {out_sse}\n\n"
-            elif keepalive_counter >= 10:
+            elif keepalive_counter >= 60:
                 keepalive_counter = 0
                 yield ": keepalive\n\n"
 
@@ -373,3 +642,129 @@ async def post_subagent_human_message(
         content={"status": "started", "sub_sid": sub_sid},
         status_code=200,
     )
+
+
+@router.get("/{chat_id}/browser-frames")
+async def get_browser_frames(chat_id: str, user=Depends(get_verified_user)):
+    """Retourne les captures persistées du navigateur web pour la session."""
+    safe_uid = sanitize_echo_id(user.id)
+    safe_cid = sanitize_echo_id(chat_id)
+    db_path = get_echo_session_path(safe_uid, safe_cid, "db")
+    if not os.path.isfile(db_path):
+        return JSONResponse(content={"frames": []})
+
+    files_dir = os.path.realpath(get_echo_session_path(safe_uid, safe_cid, "files"))
+    frames = []
+    try:
+        with closing(open_db(db_path, readonly=True, timeout=2.0)) as conn:
+            rows = conn.execute(
+                "SELECT id, name, storage_path, metadata, created_at "
+                "FROM echo_resources "
+                "WHERE name LIKE '%_frame.jpg' "
+                "ORDER BY created_at ASC, id ASC"
+            ).fetchall()
+            for r in rows:
+                file_id = r[0]
+                filename = os.path.basename(r[1] or "")
+                storage_path = r[2] or ""
+                meta_raw = r[3]
+                meta: Dict[str, Any] = {}
+                if meta_raw:
+                    try:
+                        parsed = json.loads(meta_raw)
+                        if isinstance(parsed, dict):
+                            meta = parsed
+                    except Exception:
+                        meta = {}
+
+                candidate_names = [
+                    filename,
+                    os.path.basename(storage_path),
+                    f"{sanitize_echo_id(file_id)}_frame.jpg",
+                ]
+                resolved_path = None
+                for cand in candidate_names:
+                    if not cand:
+                        continue
+                    cand_real = os.path.realpath(os.path.join(files_dir, cand))
+                    if (
+                        cand_real.startswith(files_dir + os.sep)
+                        and os.path.isfile(cand_real)
+                    ):
+                        resolved_path = cand_real
+                        if not filename:
+                            filename = os.path.basename(cand_real)
+                        break
+
+                if not resolved_path:
+                    continue
+
+                frames.append(
+                    {
+                        "file_id": file_id,
+                        "filename": filename,
+                        "session_id": meta.get("session_id", ""),
+                        "url": meta.get("url", ""),
+                        "action": meta.get("action", ""),
+                        "timestamp": meta.get("timestamp", r[4]),
+                        "image_url": (
+                            f"/echo/v1/cognition/{safe_cid}"
+                            f"/browser-frames/{file_id}/image"
+                        ),
+                    }
+                )
+    except Exception as e:
+        log.warning(f"[Cognition] Erreur lecture browser-frames: {e}")
+
+    return JSONResponse(content={"frames": frames})
+
+
+@router.get("/{chat_id}/browser-frames/{file_id}/image")
+async def get_browser_frame_image(
+    chat_id: str,
+    file_id: str,
+    user=Depends(get_verified_user),
+):
+    """Sert l'image JPEG d'une capture navigateur persistée."""
+    safe_uid = sanitize_echo_id(user.id)
+    safe_cid = sanitize_echo_id(chat_id)
+    safe_fid = sanitize_echo_id(file_id)
+    files_dir = os.path.realpath(get_echo_session_path(safe_uid, safe_cid, "files"))
+    db_path = get_echo_session_path(safe_uid, safe_cid, "db")
+
+    target_path = None
+    default_cand = os.path.realpath(
+        os.path.join(files_dir, f"{safe_fid}_frame.jpg")
+    )
+    if (
+        default_cand.startswith(files_dir + os.sep)
+        and os.path.isfile(default_cand)
+    ):
+        target_path = default_cand
+
+    if not target_path and os.path.isfile(db_path):
+        try:
+            with closing(open_db(db_path, readonly=True, timeout=2.0)) as conn:
+                row = conn.execute(
+                    "SELECT name, storage_path FROM echo_resources WHERE id = ?",
+                    (file_id,),
+                ).fetchone()
+                if row:
+                    for raw_name in (row[1] or "", row[0] or ""):
+                        base = os.path.basename(raw_name)
+                        if not base:
+                            continue
+                        cand = os.path.realpath(os.path.join(files_dir, base))
+                        if (
+                            cand.startswith(files_dir + os.sep)
+                            and os.path.isfile(cand)
+                        ):
+                            target_path = cand
+                            break
+        except Exception as e:
+            log.warning(f"[Cognition] Erreur lookup image frame {file_id}: {e}")
+
+    if not target_path:
+        raise HTTPException(status_code=404, detail="Capture introuvable.")
+
+    return FileResponse(target_path, media_type="image/jpeg")

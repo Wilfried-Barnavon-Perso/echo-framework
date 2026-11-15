@@ -143,7 +143,16 @@
 					>
 						<div class="self-center shrink-0 size-4.5 flex items-center justify-center">
 							<img
-								src={`${WEBUI_API_BASE_URL}/users/${$user.id}/profile/image`}
+								src={$user?.profile_image_url?.startsWith('data:')
+									? $user.profile_image_url
+									: `${WEBUI_API_BASE_URL}/users/${$user.id}/profile/image`}
+								on:error={(e) => {
+									const img = e.currentTarget as HTMLImageElement;
+									if (!img.dataset.fallback) {
+										img.dataset.fallback = '1';
+										img.src = '/user.png';
+									}
+								}}
 								alt=""
 								class="size-4.5 rounded-full object-cover"
 							/>

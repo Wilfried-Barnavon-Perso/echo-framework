@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 5.239.0.1
+version: 6.6.2.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.2.1: Exposition du modèle actif réel et du mode cognitif dans les payloads d'état orchestrateur et alignement du routage multi-modèles.
 # 5.239.0.1: Concision maximale des descriptions des vannes UserValves (mode, cible, crédits, cascades, relances).
 # 5.238.1.1: Intégration de MODEL_ATHENA et refonte orthogonale des UserValves (COGNITIVE_MODE + COGNITIVE_MODEL) avec routage et menu d'escalade pilotés par get_allowed_models.
 # 5.237.20.2: Synchronisation chirurgicale des éditions in-place Open WebUI (user/assistant) dans message_shadows et préservation intégrale du préfixe multi-étapes en vol.
 # 5.237.20.1: Suture par tour logique, scellement complet des Shadows assistant multi-messages (outils et cascades inclus), retrait du hachage cumulatif et suivi de last_turn_msg_id.
-# 5.235.5.2: Filtrage is_real_user_turn pour exclure les tours synthétiques d'images de la fusion des user consécutifs.
 
 
 # ==============================================================================
@@ -686,7 +686,7 @@ class Pipe:
             description="Mode : AUTO (dynamique) ou MANUAL (fixe)."
         )
         COGNITIVE_MODEL: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = Field(
-            default="MODEL_APOLLO",
+            default="MODEL_ATHENA",
             description="Cible : plafond en AUTO, forcé en MANUAL."
         )
         ENABLE_PAID_CREDITS: bool = Field(default=False, description="Autoriser les crédits Google One AI (OAuth2).")

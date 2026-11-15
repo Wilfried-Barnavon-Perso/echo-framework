@@ -6,7 +6,7 @@
 		acquireCognitionStream,
 		echoCognitionActiveCount,
 		echoCognitionRunningCount,
-		echoSubagentOpenRequest
+		requestEchoTabOpen
 	} from '$lib/stores/echo';
 	import { isSavedChatId } from '$lib/utils/chatId';
 
@@ -62,7 +62,7 @@
 	const openSubagentsPanel = () => {
 		if (!chatId) return;
 		showTabs.set(true);
-		echoSubagentOpenRequest.set({ chatId });
+		requestEchoTabOpen(chatId, 'echo-cognition');
 	};
 </script>
 

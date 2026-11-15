@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 5.239.17.1
+version: 6.6.2.1
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.2.1: Persistance save_subagent_meta et save_thread_step pour la synthèse consult_council et les phases critique/consolidation de consult_supervised_workers.
 # 5.239.17.1: Alignement de la Valve COGNITIVE_TIMEOUT par défaut sur ECHO_LLM_CALL_TIMEOUT (600s).
 # 5.238.1.1: Ajout de MODEL_ATHENA dans target_model, synthesis_model et critic_model de consult_council et consult_supervised_workers.
 # 5.233.0.1: Contrainte de sortie JSON via response_schema (SkillRouterOutput et SupervisorCriticOutput), décoration @echo_tool et simplification des retours.
 # 5.231.43.1: Ajout du paramètre multiplier (1..5) dans consult_council, renommage COUNCIL_MAX_SKILLS=7, COUNCIL_ROUNDS_MIN=3, COUNCIL_ROUNDS_MAX=10, COUNCIL_MAX_PR_COMPLEXITY=60, validation arithmétique PAS et droit d'abstention.
-# 5.231.20.1: Parallélisation asyncio.gather des ouvriers dans consult_supervised_workers, correction du parsing de task_id (sup_*) dans list/close_supervised_task, verrou par council_id et sécurisation async des skills.
 
 import sys
 import re
@@ -28,6 +28,7 @@ from echo_protocol import SkillRouterOutput, SupervisorCriticOutput
 from echo_events import EchoEvents
 from echo_gemini_client import EchoGeminiClient
 from echo_state_manager import EchoStateManager
+from echo_subagent_hub import save_subagent_meta
 from echo_constants import (
     ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, ECHO_LLM_CALL_TIMEOUT, get_generation_config
 )
@@ -550,7 +551,7 @@ class Tools:
                 "generationConfig": {**get_generation_config(synthesis_model, override_thinking="high"), "maxOutputTokens": 16000}
             }
 
-            res, _, _ = await EchoGeminiClient.call_cascade(
+            res, synth_model_used, _ = await EchoGeminiClient.call_cascade(
                 target_model_key=synthesis_model,
                 payload=synthesis_payload,
                 user_id=user_id,
@@ -568,9 +569,38 @@ class Tools:
                     p.get("text", "") for p in candidates[0]["content"]["parts"]
                 ) if candidates else "❌ Erreur : synthèse vide."
 
+            state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+            synth_sid = f"thread_council_{cid}_synthesis"
+            save_subagent_meta(
+                state,
+                synth_sid,
+                {
+                    "sub_sid": synth_sid,
+                    "engine": "council_synthesis",
+                    "role_name": f"Synthèse du Conseil ({cid})",
+                    "model_key": synth_model_used or synthesis_model,
+                    "status": "idle",
+                },
+            )
+            state.save_thread_step(
+                synth_sid,
+                chat_id,
+                "council_synthesis",
+                0,
+                "user",
+                [{"text": f"Synthèse du conseil [{cid}] ({len(roster)} experts, {effective_rounds} tours) — Question : {question[:500]}"}],
+            )
+            state.save_thread_step(
+                synth_sid,
+                chat_id,
+                "council_synthesis",
+                1,
+                "model",
+                [{"text": synthesis_text}],
+            )
+
             # ── Phase 4 : Clôture ──
             if close_on_finish:
-                state = EchoStateManager(user_id=user_id, chat_id=chat_id)
                 for agent_sid in council_sids:
                     state.delete_thread(agent_sid)
 
@@ -692,6 +722,9 @@ class Tools:
                 deliverables[w_id] = text_out
 
         # ── Phase 2+3 : Boucle critique / correction ──
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        critic_sid = f"thread_supervisor_{task_id}_critic"
+        critic_step_idx = 0
         correction_round = 0
         while correction_round < max_rounds:
             correction_round += 1
@@ -711,7 +744,7 @@ class Tools:
                 objective=objective,
                 deliverables_text=deliverables_text
             )
-            critic_res, _, _ = await EchoGeminiClient.call_cascade(
+            critic_res, critic_used, _ = await EchoGeminiClient.call_cascade(
                 target_model_key=critic_model,
                 payload={
                     "contents": [{"role": "user", "parts": [{"text": critic_prompt}]}],
@@ -737,6 +770,35 @@ class Tools:
                     p.get("text", "") for p in candidates[0].get("content", {}).get("parts", [])
                     if "text" in p and not p.get("thought")
                 )
+
+            save_subagent_meta(
+                state,
+                critic_sid,
+                {
+                    "sub_sid": critic_sid,
+                    "engine": "supervisor_critic",
+                    "role_name": f"Critique ({task_id})",
+                    "model_key": critic_used or critic_model,
+                    "status": "idle",
+                },
+            )
+            state.save_thread_step(
+                critic_sid,
+                chat_id,
+                "supervisor_critic",
+                critic_step_idx,
+                "user",
+                [{"text": f"Évaluation critique round {correction_round}/{max_rounds} ({len(deliverables)} livrables) — Objectif : {objective[:400]}"}],
+            )
+            state.save_thread_step(
+                critic_sid,
+                chat_id,
+                "supervisor_critic",
+                critic_step_idx + 1,
+                "model",
+                [{"text": critic_text}],
+            )
+            critic_step_idx += 2
 
             try:
                 critic_parsed = SupervisorCriticOutput.model_validate_json(critic_text.strip())
@@ -815,7 +877,7 @@ class Tools:
             consolidation_text=consolidation_text
         )
 
-        consolidation_res, _, _ = await EchoGeminiClient.call_cascade(
+        consolidation_res, consol_used, _ = await EchoGeminiClient.call_cascade(
             target_model_key="MODEL_APOLLO",
             payload={
                 "contents": [{"role": "user", "parts": [{"text": consolidation_prompt}]}],
@@ -837,9 +899,37 @@ class Tools:
                 if "text" in p
             ) if candidates else "❌ Consolidation vide."
 
+        consol_sid = f"thread_supervisor_{task_id}_consolidator"
+        save_subagent_meta(
+            state,
+            consol_sid,
+            {
+                "sub_sid": consol_sid,
+                "engine": "supervisor_consolidator",
+                "role_name": f"Consolidation ({task_id})",
+                "model_key": consol_used or "MODEL_APOLLO",
+                "status": "idle",
+            },
+        )
+        state.save_thread_step(
+            consol_sid,
+            chat_id,
+            "supervisor_consolidator",
+            0,
+            "user",
+            [{"text": f"Consolidation [{task_id}] ({len(deliverables)} livrables) — Objectif : {objective[:400]}"}],
+        )
+        state.save_thread_step(
+            consol_sid,
+            chat_id,
+            "supervisor_consolidator",
+            1,
+            "model",
+            [{"text": final_text}],
+        )
+
         # Clôture
         if close_on_finish:
-            state = EchoStateManager(user_id=user_id, chat_id=chat_id)
             for agent_sid in worker_sids.values():
                 state.delete_thread(agent_sid)
 

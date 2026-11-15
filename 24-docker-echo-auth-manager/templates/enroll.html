@@ -22,7 +22,16 @@
 
             <div class="form-group">
                 <label for="name">Votre Nom complet (Optionnel)</label>
-                <input type="text" id="name" name="name" placeholder="Prénom Nom" autocomplete="name">
+                <input type="text" id="name" name="name" value="{{ name or '' }}" placeholder="Prénom Nom" autocomplete="name">
+            </div>
+
+            <div class="form-group">
+                <label for="gender">Genre grammatical</label>
+                <select id="gender" name="gender" style="width: 100%; padding: 0.7rem 1rem; background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-main); font-size: 0.9rem; box-sizing: border-box;">
+                    <option value="X" {% if gender == 'X' or not gender %}selected{% endif %}>Neutre / Non précisé</option>
+                    <option value="M" {% if gender == 'M' %}selected{% endif %}>Homme</option>
+                    <option value="F" {% if gender == 'F' %}selected{% endif %}>Femme</option>
+                </select>
             </div>
             
             <div class="form-group">

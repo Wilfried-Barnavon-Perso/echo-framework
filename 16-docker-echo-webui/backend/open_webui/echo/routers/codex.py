@@ -1,11 +1,12 @@
 """
 title: ECHO V6 Codex Router
 author: Wilfried BARNAVON
-version: 6.3.0.1
+version: 6.6.2.1
 description: Routeur FastAPI pour dépôts Codex et conteneurs de session (/echo/v1/codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.2.1: Ajout de _format_hex_preview, mime_type, et des endpoints POST /{chat_id}/mkdir, /rename et /restore.
 # 6.3.0.1: Création du routeur /echo/v1/codex (tree, file, log, diff, download et persistance Git Dulwich).
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ try:
         ECHO_CODEX_WORKSPACES,
         is_codex_workspace_generic_writable,
     )
-    from echo_paths import get_echo_session_path, sanitize_echo_id  # type: ignore
+    from echo_paths import get_codex_lock, get_echo_session_path, sanitize_echo_id  # type: ignore
 except ImportError:
     local_libs = Path(__file__).resolve().parents[5] / "14-owui-libs"
     if local_libs.is_dir() and str(local_libs) not in sys.path:
@@ -41,7 +42,7 @@ except ImportError:
         ECHO_CODEX_WORKSPACES,
         is_codex_workspace_generic_writable,
     )
-    from echo_paths import get_echo_session_path, sanitize_echo_id  # type: ignore
+    from echo_paths import get_codex_lock, get_echo_session_path, sanitize_echo_id  # type: ignore
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +54,39 @@ class FileSavePayload(BaseModel):
     content: str
     workspace: str = "main"
     message: Optional[str] = None
+
+
+class MkdirPayload(BaseModel):
+    workspace: str = "main"
+    path: str
+
+
+class RenamePayload(BaseModel):
+    workspace: str = "main"
+    old_path: str
+    new_path: str
+
+
+class RestorePayload(BaseModel):
+    workspace: str = "main"
+    path: str
+    commit_hash: str
+
+
+def _format_hex_preview(raw_bytes: bytes, limit: int = 4096) -> str:
+    """Formate un aperçu hexadécimal (16 octets par ligne + colonne ASCII)."""
+    chunk = raw_bytes[:limit]
+    lines = []
+    for offset in range(0, len(chunk), 16):
+        row = chunk[offset:offset + 16]
+        hex_left = " ".join(f"{b:02x}" for b in row[:8])
+        hex_right = " ".join(f"{b:02x}" for b in row[8:])
+        hex_part = f"{hex_left:<23}  {hex_right:<23}".rstrip()
+        ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in row)
+        lines.append(f"{offset:08x}  {hex_part:<48}  |{ascii_part}|")
+    if len(raw_bytes) > limit:
+        lines.append(f"... ({len(raw_bytes) - limit} octets supplémentaires tronqués)")
+    return "\n".join(lines)
 
 
 def _validate_safe_path(base_dir: str, rel_path: str) -> str:
@@ -140,22 +174,31 @@ async def get_codex_file(
             raise HTTPException(status_code=404, detail="Fichier introuvable.")
         st = os.stat(target_file)
         mime, _ = mimetypes.guess_type(target_file)
+        mime_type = mime or "application/octet-stream"
         is_binary = False
         content = ""
+        hex_preview = None
         try:
             with open(target_file, "r", encoding="utf-8") as f:
                 content = f.read()
         except UnicodeDecodeError:
             is_binary = True
+            with open(target_file, "rb") as f:
+                raw_bytes = f.read(4096)
+            hex_preview = _format_hex_preview(raw_bytes)
 
-        return JSONResponse(content={
+        payload_res = {
             "path": path,
             "content": content if not is_binary else None,
             "is_binary": is_binary,
-            "mime": mime or "application/octet-stream",
+            "mime": mime_type,
+            "mime_type": mime_type,
             "size_bytes": st.st_size,
             "total_lines": len(content.splitlines()) if not is_binary else 0,
-        })
+        }
+        if hex_preview is not None:
+            payload_res["hex_preview"] = hex_preview
+        return JSONResponse(content=payload_res)
 
     if ws not in ECHO_CODEX_WORKSPACES:
         raise HTTPException(status_code=400, detail=f"Espace de travail invalide : '{ws}'")
@@ -168,6 +211,19 @@ async def get_codex_file(
 
     if res is None:
         raise HTTPException(status_code=404, detail="Fichier introuvable dans le dépôt Codex.")
+
+    mime_guessed, _ = mimetypes.guess_type(path)
+    if res.get("is_binary"):
+        raw_content = res.get("content") or ""
+        if isinstance(raw_content, bytes):
+            raw_bytes = raw_content[:4096]
+        else:
+            raw_bytes = str(raw_content).encode("latin-1", errors="replace")[:4096]
+        res["hex_preview"] = _format_hex_preview(raw_bytes)
+        res["content"] = None
+        res["mime_type"] = mime_guessed or "application/octet-stream"
+    else:
+        res.setdefault("mime_type", mime_guessed or "text/plain")
 
     return JSONResponse(content=res)
 
@@ -329,4 +385,125 @@ async def download_codex_file(
         path=target_path,
         filename=os.path.basename(target_path),
         media_type="application/octet-stream",
+    )
+
+
+@router.post("/{chat_id}/mkdir")
+async def mkdir_codex(
+    chat_id: str,
+    payload: MkdirPayload,
+    user=Depends(get_verified_user),
+):
+    """Crée un dossier dans un espace de travail Codex inscriptible."""
+    safe_uid = sanitize_echo_id(user.id)
+    safe_cid = sanitize_echo_id(chat_id)
+    ws = (payload.workspace or "main").strip()
+
+    if ws not in ECHO_CODEX_WORKSPACES or not is_codex_workspace_generic_writable(ws):
+        raise HTTPException(
+            status_code=403,
+            detail=f"L'espace '{ws}' est en lecture seule.",
+        )
+
+    async with get_codex_lock(safe_uid, safe_cid):
+        repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
+        try:
+            repo.create_directory(payload.path)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except FileExistsError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+
+    return JSONResponse(content={"status": "created", "workspace": ws, "path": payload.path})
+
+
+@router.post("/{chat_id}/rename")
+async def rename_codex(
+    chat_id: str,
+    payload: RenamePayload,
+    user=Depends(get_verified_user),
+):
+    """Renomme ou déplace un fichier/dossier dans un espace Codex inscriptible."""
+    safe_uid = sanitize_echo_id(user.id)
+    safe_cid = sanitize_echo_id(chat_id)
+    ws = (payload.workspace or "main").strip()
+
+    if ws not in ECHO_CODEX_WORKSPACES or not is_codex_workspace_generic_writable(ws):
+        raise HTTPException(
+            status_code=403,
+            detail=f"L'espace '{ws}' est en lecture seule.",
+        )
+
+    async with get_codex_lock(safe_uid, safe_cid):
+        repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
+        try:
+            commit_hash = repo.rename_file(
+                payload.old_path,
+                payload.new_path,
+                message=f"Renommage UI : {payload.old_path} -> {payload.new_path}",
+                author=getattr(user, "name", None) or "Utilisateur",
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if commit_hash is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Impossible de renommer (source introuvable ou cible déjà existante).",
+            )
+
+    return JSONResponse(
+        content={
+            "status": "renamed",
+            "workspace": ws,
+            "old_path": payload.old_path,
+            "new_path": payload.new_path,
+            "commit_hash": commit_hash,
+        }
+    )
+
+
+@router.post("/{chat_id}/restore")
+async def restore_codex_file(
+    chat_id: str,
+    payload: RestorePayload,
+    user=Depends(get_verified_user),
+):
+    """Restaure un fichier à un commit historique dans un espace Codex inscriptible."""
+    safe_uid = sanitize_echo_id(user.id)
+    safe_cid = sanitize_echo_id(chat_id)
+    ws = (payload.workspace or "main").strip()
+
+    if ws not in ECHO_CODEX_WORKSPACES or not is_codex_workspace_generic_writable(ws):
+        raise HTTPException(
+            status_code=403,
+            detail=f"L'espace '{ws}' est en lecture seule.",
+        )
+
+    async with get_codex_lock(safe_uid, safe_cid):
+        repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
+        try:
+            hist = repo.read_file_at_commit(payload.path, payload.commit_hash)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if hist is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Fichier ou commit introuvable pour restauration.",
+            )
+        commit_hash = repo.commit_file(
+            payload.path,
+            hist.get("content", ""),
+            message=f"Restauration UI de {payload.path} au commit {payload.commit_hash[:12]}",
+            author=getattr(user, "name", None) or "Utilisateur",
+            is_binary=hist.get("is_binary"),
+        )
+
+    return JSONResponse(
+        content={
+            "status": "restored",
+            "workspace": ws,
+            "path": payload.path,
+            "restored_from": payload.commit_hash,
+            "commit_hash": commit_hash,
+        }
     )

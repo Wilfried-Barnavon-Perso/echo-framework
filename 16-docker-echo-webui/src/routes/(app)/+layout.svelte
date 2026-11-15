@@ -3,7 +3,13 @@
 	import { onMount, onDestroy, tick, getContext } from 'svelte';
 
 import EchoEdgeEmbedding from '$lib/components/echo/EchoEdgeEmbedding.svelte';
-import { echoContextGauge, echoCanvasFrames, echoCanvasOpenRequest } from '$lib/stores/echo';
+import {
+	echoContextGauge,
+	echoCanvasFrames,
+	echoBrowserLiveFrames,
+	requestEchoTabOpen,
+	type EchoTabKind
+} from '$lib/stores/echo';
 
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
@@ -435,6 +441,16 @@ import { echoContextGauge, echoCanvasFrames, echoCanvasOpenRequest } from '$lib/
 			fetch('/health', { method: 'HEAD', cache: 'no-store', keepalive: true }).catch(() => {});
 		}, 120000);
 
+		const handleEchoOpenTab = (event: Event) => {
+			const detail = (event as CustomEvent<{ chatId?: string; kind?: EchoTabKind; payload?: Record<string, any> }>)?.detail;
+			if (!detail?.kind) return;
+			const cid = detail.chatId || $chatId || '';
+			if (!cid) return;
+			requestEchoTabOpen(cid, detail.kind, detail.payload);
+		};
+		window.addEventListener('echo:open-tab', handleEchoOpenTab);
+		cleanupEchoOpenTab = () => window.removeEventListener('echo:open-tab', handleEchoOpenTab);
+
 		// [ECHO-V6-HOOK] Flux SSE Window Manager pour jauge contextuelle et frames Canvas
 		if (localStorage?.token) {
 			try {
@@ -445,6 +461,28 @@ import { echoContextGauge, echoCanvasFrames, echoCanvasOpenRequest } from '$lib/
 						const data = JSON.parse(event.data);
 						if (data.type === 'echo_context_gauge' && data.payload) {
 							echoContextGauge.set(data.payload);
+						} else if (data.type === 'echo_open_tab') {
+							const cid = data.chat_id || $chatId || '';
+							if (cid && data.kind) {
+								requestEchoTabOpen(cid, data.kind, data.payload);
+							}
+						} else if (data.type === 'echo_browser_frame') {
+							const cid = data.chat_id || $chatId || '';
+							const frame = data.frame || data.payload || data;
+							if (cid && frame) {
+								const frameKey = frame.file_id || frame.frame_id || frame.id;
+								echoBrowserLiveFrames.update((all) => {
+									const list = all[cid] || [];
+									const idx = frameKey
+										? list.findIndex((f) => (f.file_id || f.frame_id || f.id) === frameKey)
+										: -1;
+									const next =
+										idx >= 0
+											? list.map((f, i) => (i === idx ? { ...f, ...frame } : f))
+											: [...list, frame].slice(-50);
+									return { ...all, [cid]: next };
+								});
+							}
 						} else if (data.type === 'wm_uctp_exec' || data.type === 'window_mounted') {
 							const cid = data.chat_id || $chatId || '';
 							const frame = {
@@ -460,7 +498,7 @@ import { echoContextGauge, echoCanvasFrames, echoCanvasOpenRequest } from '$lib/
 									const list = all[cid] || [];
 									return { ...all, [cid]: [...list, frame] };
 								});
-								echoCanvasOpenRequest.set({ chatId: cid, frameId: frame.id });
+								requestEchoTabOpen(cid, 'echo-canvas', { frameId: frame.id });
 							}
 						}
 					} catch (e) {}
@@ -473,8 +511,13 @@ import { echoContextGauge, echoCanvasFrames, echoCanvasOpenRequest } from '$lib/
 
 	let keepAliveInterval: any = null;
 	let wmEventSource: EventSource | null = null;
+	let cleanupEchoOpenTab: (() => void) | null = null;
 
 	onDestroy(() => {
+		if (cleanupEchoOpenTab) {
+			cleanupEchoOpenTab();
+			cleanupEchoOpenTab = null;
+		}
 		if (keepAliveInterval) {
 			clearInterval(keepAliveInterval);
 			keepAliveInterval = null;

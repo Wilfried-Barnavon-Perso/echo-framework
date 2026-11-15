@@ -2,11 +2,12 @@
 """
 ================================================================================
 MODULE : ECHO USER MANAGER - FLASK ROUTES
-VERSION : 5.237.5.1
+VERSION : 6.6.3.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.3.1: Exposition de user_gender et route POST /action/profile/gender.
 # 5.237.5.1: Maintien du job pendant le téléchargement (suppression du pop prématuré) et en-tête Content-Length explicite.
 # 5.237.2.1: Intégration des routes d'export asynchrone (/api/me/export/start, status, cancel, download) avec barre de progression.
 # 5.236.5.1: Routes self-service utilisateur (stats, sessions, renommage, mot de passe, export .tar.xz, suppression Option B et logout).
@@ -44,6 +45,7 @@ from core.config import (
 )
 from core.security import (
     hash_user_password,
+    normalize_gender,
     validate_password_policy,
     verify_user_password,
     verify_user_totp,
@@ -203,6 +205,7 @@ def index():
         user_email=g.user_email,
         user_id=g.user_id or "Non initialisé",
         display_name=g.display_name,
+        user_gender=g.user_gender,
         user_role=g.user_role,
         has_totp=g.has_totp,
         stats=stats,
@@ -303,6 +306,31 @@ def action_profile_rename():
         flash(f"Nom d'affichage mis à jour en « {new_name} » (SSO & Open WebUI synchronisés).", "success")
     except Exception as e:
         flash(f"Erreur lors de la mise à jour du nom : {e}", "danger")
+    return redirect(url_for("index"))
+
+
+@app.route("/action/profile/gender", methods=["POST"])
+def action_profile_gender():
+    data = request.get_json(silent=True) or {}
+    raw_gender = data.get("gender") if "gender" in data else request.form.get("gender")
+    new_gender = normalize_gender(raw_gender)
+
+    try:
+        with closing(sqlite3.connect(AUTH_DB_PATH, timeout=10.0)) as conn:
+            try:
+                conn.execute("ALTER TABLE users ADD COLUMN gender TEXT DEFAULT 'X'")
+            except sqlite3.OperationalError:
+                pass
+            conn.execute(
+                "UPDATE users SET gender = ? WHERE email = ?",
+                (new_gender, g.user_email),
+            )
+            conn.commit()
+
+        labels = {"M": "Homme (M)", "F": "Femme (F)", "X": "Neutre / Non précisé (X)"}
+        flash(f"Genre grammatical mis à jour en « {labels.get(new_gender, new_gender)} ».", "success")
+    except Exception as e:
+        flash(f"Erreur lors de la mise à jour du genre : {e}", "danger")
     return redirect(url_for("index"))
 
 

@@ -1233,7 +1233,16 @@
 										class="self-center relative flex size-[calc(30px*var(--app-text-scale,1))] items-center justify-center rounded-lg transition group-hover:bg-gray-100 dark:group-hover:bg-gray-900"
 									>
 										<img
-											src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
+											src={$user?.profile_image_url?.startsWith('data:')
+												? $user.profile_image_url
+												: `${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
+											on:error={(e) => {
+												const img = e.currentTarget as HTMLImageElement;
+												if (!img.dataset.fallback) {
+													img.dataset.fallback = '1';
+													img.src = '/user.png';
+												}
+											}}
 											class="size-5.5 object-cover rounded-full"
 											alt={$i18n.t('Open User Profile Menu')}
 											aria-label={$i18n.t('Open User Profile Menu')}
@@ -1962,7 +1971,16 @@
 								>
 									<div class=" self-center mr-3 relative flex-shrink-0">
 										<img
-											src={`${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
+											src={$user?.profile_image_url?.startsWith('data:')
+												? $user.profile_image_url
+												: `${WEBUI_API_BASE_URL}/users/${$user?.id}/profile/image`}
+											on:error={(e) => {
+												const img = e.currentTarget as HTMLImageElement;
+												if (!img.dataset.fallback) {
+													img.dataset.fallback = '1';
+													img.src = '/user.png';
+												}
+											}}
 											class="size-5.5 object-cover rounded-full"
 											alt={$i18n.t('Open User Profile Menu')}
 											aria-label={$i18n.t('Open User Profile Menu')}

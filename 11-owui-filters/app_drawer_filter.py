@@ -1,16 +1,16 @@
 """
 title: ECHO App Drawer Filter
 author: Wilfried BARNAVON
-version: 5.231.39.1
+version: 6.6.2.1
 description: Composant système interne : ECHO App Drawer Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.2.1: Suppression du fallback obsolète echo_codex_action (routage unifié vers l'onglet natif echo-codex).
 # 5.231.39.1: Fallback REST direct (/api/chat/actions/<id> et window.echoOpenCodex) lorsque le bouton natif d'action n'est pas monté dans le DOM.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.11: Correction du ciblage DOM pendant la génération du modèle (boucle pipe) pour cibler le message complet.
 # 1.10: Différenciation du seuil tactile (15px) vs souris (3px) pour empêcher l'hyper-sensibilité mobile.
-# 1.9: Implémentation HUD Mobile (Drag tactile, persistance, clamping anti-débordement).
 
 import logging
 from pydantic import BaseModel, Field
@@ -339,8 +339,6 @@ class Filter:
                     if (nativeBtn) {
                         console.log(`ECHO HUD: Déclenchement du bouton natif pour "${action.name}"`);
                         nativeBtn.click();
-                    } else if (action.id === 'echo_codex_action' && typeof window.echoOpenCodex === 'function') {
-                        window.echoOpenCodex(currentChatId, 'main', '');
                     } else if (action.id) {
                         const cleanToken = token.replace(/^"|"$/g, '');
                         const socketId = (window.socket && window.socket.connected && window.socket.id)

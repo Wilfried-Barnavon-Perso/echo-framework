@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 5.239.17.1
+version: 6.6.2.1
 description: Permet au modèle de manipuler un espace virtuel (Codex) avec versioning Git invisible et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.2.1: Migration de open_codex_ui vers l'onglet natif echo-codex (EchoWindowManager.open_tab + CustomEvent('echo:open-tab')) sans echo_codex_action.
 # 5.239.17.1: Pagination bornée unifiée (HEAD et commits) de read_codex à ECHO_CODEX_MAX_READ_LINES (800 lignes) et ECHO_CODEX_MAX_READ_BYTES (46080 octets), indicateurs has_more/next_start_line et skip_truncation=True.
 # 5.235.5.1: Remplacement de l'accès direct SQLite par la méthode abstraite state.has_pending_directive.
 # 5.235.4.1: Sécurisation binaire exhaustive : refus d'édition assistée, propagation des métadonnées dans restore_codex et guard clause dans summarize_codex.
 # 5.235.2.2: Précision de la docstring OpenAPI de read_codex pour l'introspection dynamique tool_advisor.
-# 5.235.2.1: Détection et omission sécurisée des fichiers binaires dans read_codex (HEAD et commits) avec statut warning explicite et directive PAS.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -48,6 +48,7 @@ from echo_constants import (
     is_codex_workspace_indexed,
 )
 from echo_prompts import SYS_CODEX_EDIT, SYS_CODEX_SUMMARIZE
+from echo_window_manager import get_window_manager
 from echo_codex_git import CodexRepo
 from echo_paths import get_codex_lock, format_codex_storage_path
 
@@ -1037,41 +1038,23 @@ class Tools:
         effective_cid = ctx["effective_cid"]
         is_remote = ctx["is_remote"]
         safe_file = ctx["safe_file"]
+        uid = (__user__ or {}).get("id", "anonymous")
 
-        # CRITIQUE (Chat.svelte:1513-1724) : Ancrer l'Action sur le message UTILISATEUR immuable
-        # du tour courant (_echo_user_msg_id / parent_id) et NON sur le message assistant en cours
-        # de streaming (message_id), afin que la réécriture différée de Chat.svelte:1724 après le
-        # long-polling wait_code n'écrase jamais history.messages[assistant_message_id] (done: false).
-        meta = __metadata__ or {}
-        user_msg_id = (
-            meta.get("_echo_user_msg_id")
-            or meta.get("parent_id")
-            or (meta.get("user_message") or {}).get("id")
-            or meta.get("message_id", "")
-        )
-        model_id = (__model__ or {}).get("id", "echo_orchestrator")
-        session_id = meta.get("session_id", "")
-
-        # 1. Injection de la cible client
-        target_payload = (
-            f"window._echoCodexTarget = {{ "
-            f"file: '{safe_file}', "
-            f"workspace: '{eff_ws}', "
-            f"target_chat_id: '{effective_cid}', "
-            f"commit_hash: '{eff_commit or ''}' "
-            f"}};\nreturn true;"
-        )
-        await events.call_execute(target_payload, timeout=5.0)
-
-        # 2. Déclenchement de l'action native avec transmission structurée du payload
-        action_payload = {
-            "target_chat_id": effective_cid,
-            "target_file": safe_file,
+        import orjson as json
+        tab_payload = {
+            "file": safe_file,
             "workspace": eff_ws,
-            "commit_hash": eff_commit,
+            "targetChatId": effective_cid,
+            "commitHash": eff_commit or "",
         }
-        await events.trigger_action(
-            "echo_codex_action", session_cid, user_msg_id, model_id, session_id, payload=action_payload
+        wm = get_window_manager()
+        await wm.open_tab(uid, session_cid, "echo-codex", tab_payload)
+
+        detail_json = json.dumps(
+            {"chatId": session_cid, "kind": "echo-codex", "payload": tab_payload}
+        ).decode("utf-8")
+        await events.emit_execute(
+            f"window.dispatchEvent(new CustomEvent('echo:open-tab', {{ detail: {detail_json} }}));"
         )
 
         remote_badge = f" 🔒 [Lecture Seule - Chat `{effective_cid}`]" if is_remote else ""

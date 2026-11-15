@@ -2,16 +2,16 @@
 """
 ================================================================================
 MODULE : ECHO USER MANAGER - HTML TEMPLATES (DARK MODE)
-VERSION : 6.5.3.1
+VERSION : 6.6.3.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.3.1: Formulaire de modification du genre grammatical (M/F/X) dans le profil utilisateur.
 # 6.5.3.1: Renommage de echo-open-webui vers echo-webui dans la description d'export.
 # 5.237.5.1: Compte à rebours dynamique 1s avant expiration d'archive, attribut download et bascule automatique à échéance.
 # 5.237.2.1: Composant d'export asynchrone avec barre de progression temps réel (0-100%), bouton d'annulation et badge de téléchargement.
 # 5.237.1.1: Correction SyntaxError JS sur apostrophe dans HTML_USER_DASHBOARD (raw string r"""..."""), calcul temps restant sur timestamp expires_at et GeoIP.
-# 5.236.5.1: Interface Dark Mode Bootstrap 5.3 du portail utilisateur (my.{ECHO_DOMAIN}) avec lien direct vers ui.{ECHO_DOMAIN}.
 
 __all__ = ["HTML_USER_DASHBOARD"]
 
@@ -202,6 +202,23 @@ HTML_USER_DASHBOARD = r"""
                                             </div>
                                             <button type="submit" class="btn btn-info w-100 fw-bold">
                                                 <i class="bi bi-check2-circle me-1"></i> Enregistrer le nom
+                                            </button>
+                                        </form>
+                                        <hr class="border-secondary my-3">
+                                        <form action="/action/profile/gender" method="POST">
+                                            <div class="mb-3">
+                                                <label class="form-label text-light small fw-bold">Genre grammatical</label>
+                                                <select name="gender" class="form-select bg-dark text-light border-secondary">
+                                                    <option value="X" {% if user_gender == 'X' or not user_gender %}selected{% endif %}>Neutre / Non précisé</option>
+                                                    <option value="M" {% if user_gender == 'M' %}selected{% endif %}>Homme</option>
+                                                    <option value="F" {% if user_gender == 'F' %}selected{% endif %}>Femme</option>
+                                                </select>
+                                                <div class="form-text text-muted small">
+                                                    Utilisé pour l'accord grammatical des réponses d'ECHO.
+                                                </div>
+                                            </div>
+                                            <button type="submit" class="btn btn-outline-info w-100 fw-bold">
+                                                <i class="bi bi-check2-circle me-1"></i> Enregistrer le genre
                                             </button>
                                         </form>
                                     </div>

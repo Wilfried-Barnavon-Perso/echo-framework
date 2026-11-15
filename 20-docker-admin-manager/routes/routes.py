@@ -2,16 +2,16 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - FLASK ROUTES
-VERSION : 6.5.0.1
+VERSION : 6.6.3.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.3.1: Prise en charge de users.gender (M/F/X) à la création, dans /api/auth/users et via /action/auth/gender.
 # 6.5.0.1: Restauration sécurisée de .secrets et .env via conteneur éphémère one-shot (echo-python-base:latest), détection de divergence des clés maîtresses en RAM et redémarrage des conteneurs hot-reload.
 # 5.239.4.1: Validation obligatoire du champ nom dans /action/auth/create pour prévenir les profils SSO sans nom ou corrompus.
 # 5.239.2.1: Persistance et validation des paramètres anti-bruteforce dans /action/auth/settings, exposition de failed_attempts/locked_until dans /api/auth/users et déblocage dans /action/auth/reset.
 # 5.236.1.1: Validation Dual-Tier untrusted_session_timeout/session_timeout dans auth_settings_save et exposition directe de is_trusted, expires_at, expires_dt et time_remaining_sec dans api_auth_sessions.
-# 5.235.5.1: Prise en charge de purge_dead_branches dans update_maint et reset d'authentification via get_echo_identity_db_path et open_db.
 import configparser
 from contextlib import closing
 import datetime
@@ -873,6 +873,37 @@ def passwd_change():
         flash(f'✅ {msg}' if ok else f'❌ {msg}', 'success' if ok else 'danger')
     return redirect(url_for('index'))
 
+def _normalize_gender(val) -> str:
+    """Normalise un code genre vers 'M', 'F' ou 'X' (défaut 'X')."""
+    v = (str(val) if val is not None else "").strip().upper()
+    return v if v in ("M", "F", "X") else "X"
+
+
+def _ensure_auth_users_schema(conn) -> None:
+    """Garantit la présence de la table users et de ses colonnes de migration."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS users ("
+        "email TEXT PRIMARY KEY, name TEXT, gender TEXT DEFAULT 'X', "
+        "pass_hash TEXT, totp_secret TEXT, security_question TEXT, "
+        "security_answer_hash TEXT, must_enroll INTEGER DEFAULT 1, "
+        "temp_pass_expires INTEGER DEFAULT 0, last_enrollment INTEGER DEFAULT 0, "
+        "failed_attempts INTEGER DEFAULT 0, last_attempt_at INTEGER DEFAULT 0, "
+        "locked_until INTEGER DEFAULT 0)"
+    )
+    for col_name, col_type in (
+        ("gender", "TEXT DEFAULT 'X'"),
+        ("temp_pass_expires", "INTEGER DEFAULT 0"),
+        ("last_enrollment", "INTEGER DEFAULT 0"),
+        ("failed_attempts", "INTEGER DEFAULT 0"),
+        ("last_attempt_at", "INTEGER DEFAULT 0"),
+        ("locked_until", "INTEGER DEFAULT 0"),
+    ):
+        try:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {col_name} {col_type}")
+        except sqlite3.OperationalError:
+            pass
+
+
 @app.route('/api/auth/users')
 def auth_users():
     if not session.get('logged_in'): return jsonify([])
@@ -883,20 +914,12 @@ def auth_users():
                 with sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True) as conn2:
                     for r in conn2.execute("SELECT email, name FROM user").fetchall():
                         owui_names[r[0]] = r[1]
-        except: pass
+        except Exception:
+            pass
         
         with sqlite3.connect("/app/auth-data/auth.db", uri=True) as conn:
-            try: conn.execute("ALTER TABLE users ADD COLUMN temp_pass_expires INTEGER DEFAULT 0")
-            except: pass
-            try: conn.execute("ALTER TABLE users ADD COLUMN last_enrollment INTEGER DEFAULT 0")
-            except: pass
-            try: conn.execute("ALTER TABLE users ADD COLUMN failed_attempts INTEGER DEFAULT 0")
-            except: pass
-            try: conn.execute("ALTER TABLE users ADD COLUMN last_attempt_at INTEGER DEFAULT 0")
-            except: pass
-            try: conn.execute("ALTER TABLE users ADD COLUMN locked_until INTEGER DEFAULT 0")
-            except: pass
-            users = conn.execute("SELECT email, must_enroll, temp_pass_expires, last_enrollment, name, failed_attempts, locked_until FROM users").fetchall()
+            _ensure_auth_users_schema(conn)
+            users = conn.execute("SELECT email, must_enroll, temp_pass_expires, last_enrollment, name, failed_attempts, locked_until, gender FROM users").fetchall()
             
             now_ts = int(time.time())
             result = []
@@ -914,7 +937,8 @@ def auth_users():
                     "last_enrollment": u[3],
                     "name": display_name,
                     "failed_attempts": failed_att,
-                    "locked_until": locked_val
+                    "locked_until": locked_val,
+                    "gender": _normalize_gender(u[7] if len(u) > 7 else "X"),
                 })
             return jsonify(result)
     except Exception: return jsonify([])
@@ -924,6 +948,7 @@ def auth_create_user():
     if not session.get('logged_in'): return redirect(url_for('index'))
     email = request.form.get('email', '').strip()
     name = request.form.get('name', '').strip()
+    gender = _normalize_gender(request.form.get('gender'))
     if not email or not name or (email.endswith('@echo.local') and email != SYSTEM_ADMIN_EMAIL):
         flash("Le nom d'affichage et l'email sont obligatoires (email système réservé).", "danger")
         return redirect(url_for('index'))
@@ -937,12 +962,8 @@ def auth_create_user():
         pass_hash = argon2.hash(temp_pwd)
         os.makedirs("/app/auth-data", exist_ok=True)
         with sqlite3.connect("/app/auth-data/auth.db") as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY, name TEXT, pass_hash TEXT, totp_secret TEXT, security_question TEXT, security_answer_hash TEXT, must_enroll INTEGER DEFAULT 1, temp_pass_expires INTEGER DEFAULT 0, last_enrollment INTEGER DEFAULT 0)")
-            try: conn.execute("ALTER TABLE users ADD COLUMN temp_pass_expires INTEGER DEFAULT 0")
-            except: pass
-            try: conn.execute("ALTER TABLE users ADD COLUMN last_enrollment INTEGER DEFAULT 0")
-            except: pass
-            conn.execute("INSERT INTO users (email, name, pass_hash, must_enroll, temp_pass_expires) VALUES (?, ?, ?, 1, ?)", (email, name, pass_hash, expire_timestamp))
+            _ensure_auth_users_schema(conn)
+            conn.execute("INSERT INTO users (email, name, gender, pass_hash, must_enroll, temp_pass_expires) VALUES (?, ?, ?, ?, 1, ?)", (email, name, gender, pass_hash, expire_timestamp))
             conn.commit()
         expire_str = datetime.datetime.fromtimestamp(expire_timestamp).strftime('%d/%m/%Y à %H:%M')
         flash(f"Utilisateur {email} créé. Mot de passe temporaire (valable {settings.get('temp_pass_hours', 24)} heures, jusqu'au {expire_str}) : <b>{temp_pwd}</b>", "success")
@@ -966,11 +987,7 @@ def auth_import_users():
         settings = get_auth_settings()
         expire_timestamp = int(time.time()) + (int(settings.get("temp_pass_hours", 24)) * 3600)
         with sqlite3.connect("/app/auth-data/auth.db") as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY, name TEXT, pass_hash TEXT, totp_secret TEXT, security_question TEXT, security_answer_hash TEXT, must_enroll INTEGER DEFAULT 1, temp_pass_expires INTEGER DEFAULT 0, last_enrollment INTEGER DEFAULT 0)")
-            try: conn.execute("ALTER TABLE users ADD COLUMN temp_pass_expires INTEGER DEFAULT 0")
-            except: pass
-            try: conn.execute("ALTER TABLE users ADD COLUMN last_enrollment INTEGER DEFAULT 0")
-            except: pass
+            _ensure_auth_users_schema(conn)
             for (email, name) in webui_users:
                 if email.endswith('@echo.local'):
                     continue
@@ -1007,11 +1024,7 @@ def auth_import_admin():
         expire_timestamp = int(time.time()) + (int(settings.get("temp_pass_hours", 24)) * 3600)
         
         with sqlite3.connect("/app/auth-data/auth.db") as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY, name TEXT, pass_hash TEXT, totp_secret TEXT, security_question TEXT, security_answer_hash TEXT, must_enroll INTEGER DEFAULT 1, temp_pass_expires INTEGER DEFAULT 0, last_enrollment INTEGER DEFAULT 0)")
-            try: conn.execute("ALTER TABLE users ADD COLUMN temp_pass_expires INTEGER DEFAULT 0")
-            except: pass
-            try: conn.execute("ALTER TABLE users ADD COLUMN last_enrollment INTEGER DEFAULT 0")
-            except: pass
+            _ensure_auth_users_schema(conn)
             
             if conn.execute("SELECT email FROM users WHERE email=?", (SYSTEM_ADMIN_EMAIL,)).fetchone():
                 flash(f"Le compte {SYSTEM_ADMIN_EMAIL} existe déjà dans le SSO.", "info")
@@ -1048,6 +1061,26 @@ def auth_rename_user():
             pass
             
         flash(f"Nom de l'utilisateur {email} mis à jour dans le SSO et synchronisé.", "success")
+    except Exception as e:
+        flash(f"Erreur DB globale : {str(e)}", "danger")
+    return redirect(url_for('index'))
+
+
+@app.route('/action/auth/gender', methods=['POST'])
+def auth_gender_user():
+    if not session.get('logged_in'): return redirect(url_for('index'))
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or request.form.get('email') or '').strip()
+    raw_gender = data.get('gender') if 'gender' in data else request.form.get('gender')
+    gender = _normalize_gender(raw_gender)
+    if not email:
+        return redirect(url_for('index'))
+    try:
+        with sqlite3.connect("/app/auth-data/auth.db", uri=True) as conn:
+            _ensure_auth_users_schema(conn)
+            conn.execute("UPDATE users SET gender = ? WHERE email = ?", (gender, email))
+            conn.commit()
+        flash(f"Genre de l'utilisateur {email} mis à jour ({gender}).", "success")
     except Exception as e:
         flash(f"Erreur DB globale : {str(e)}", "danger")
     return redirect(url_for('index'))

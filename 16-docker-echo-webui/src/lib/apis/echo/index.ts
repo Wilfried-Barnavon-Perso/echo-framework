@@ -1,4 +1,5 @@
 import { WEBUI_BASE_URL } from '$lib/constants';
+import type { EchoCognitionSnapshot } from '$lib/stores/echo';
 
 export const ECHO_API_BASE_URL = `${WEBUI_BASE_URL}/echo/v1`;
 
@@ -282,7 +283,48 @@ export const postEchoWmRpc = async (token: string, payload: Record<string, any>)
 // COGNITION ECHO (/echo/v1/cognition)
 // ============================================================================
 
-export const getEchoCognitionSnapshot = async (token: string, chatId: string): Promise<any> => {
+export interface EchoBrowserFrame {
+	file_id?: string;
+	live_frame_id?: string;
+	filename?: string;
+	session_id?: string;
+	url?: string;
+	action?: string;
+	timestamp?: number;
+	image_url?: string;
+	b64?: string;
+	live_b64?: string;
+	webp_b64?: string;
+}
+
+export const getEchoBrowserFrames = async (
+	token: string,
+	chatId: string
+): Promise<{ frames: EchoBrowserFrame[] }> => {
+	const res = await fetch(`${ECHO_API_BASE_URL}/cognition/${encodeURIComponent(chatId)}/browser-frames`, {
+		method: 'GET',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			authorization: `Bearer ${token}`
+		}
+	});
+
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: 'Échec de lecture des captures navigateur' }));
+		throw new Error(err.detail || 'Échec de lecture des captures navigateur');
+	}
+	return res.json();
+};
+
+export const getEchoBrowserFrameImageUrl = (chatId: string, fileId: string): string => {
+	return `${ECHO_API_BASE_URL}/cognition/${encodeURIComponent(chatId)}/browser-frames/${encodeURIComponent(fileId)}/image`;
+};
+
+export const getEchoCognitionSnapshot = async (
+	token: string,
+	chatId: string
+): Promise<EchoCognitionSnapshot> => {
 	const res = await fetch(`${ECHO_API_BASE_URL}/cognition/${encodeURIComponent(chatId)}/snapshot`, {
 		method: 'GET',
 		headers: {
@@ -497,6 +539,77 @@ export const getEchoCodexDiff = async (
 export const getEchoCodexDownloadUrl = (chatId: string, workspace: string, path: string): string => {
 	const searchParams = new URLSearchParams({ workspace, path });
 	return `${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/download?${searchParams.toString()}`;
+};
+
+export const mkdirEchoCodex = async (
+	token: string,
+	chatId: string,
+	workspace: string,
+	path: string
+): Promise<any> => {
+	const res = await fetch(`${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/mkdir`, {
+		method: 'POST',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify({ workspace, path })
+	});
+
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: 'Échec de création du dossier Codex' }));
+		throw new Error(err.detail || 'Échec de création du dossier Codex');
+	}
+	return res.json();
+};
+
+export const renameEchoCodex = async (
+	token: string,
+	chatId: string,
+	workspace: string,
+	old_path: string,
+	new_path: string
+): Promise<any> => {
+	const res = await fetch(`${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/rename`, {
+		method: 'POST',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify({ workspace, old_path, new_path })
+	});
+
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: 'Échec de renommage Codex' }));
+		throw new Error(err.detail || 'Échec de renommage Codex');
+	}
+	return res.json();
+};
+
+export const restoreEchoCodexFile = async (
+	token: string,
+	chatId: string,
+	workspace: string,
+	path: string,
+	commit_hash: string
+): Promise<any> => {
+	const res = await fetch(`${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/restore`, {
+		method: 'POST',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify({ workspace, path, commit_hash })
+	});
+
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: 'Échec de restauration Codex' }));
+		throw new Error(err.detail || 'Échec de restauration Codex');
+	}
+	return res.json();
 };
 
 // ============================================================================

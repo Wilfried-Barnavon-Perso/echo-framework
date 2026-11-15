@@ -86,7 +86,6 @@
 	import { fileIconName } from './FileNav/fileIcon';
 	import UntitledFile from './ChatTabs/UntitledFile.svelte';
 	import QuickOpen from './ChatTabs/QuickOpen.svelte';
-	import Browser from './ChatTabs/Browser.svelte';
 	import Desktop from './ChatTabs/Desktop.svelte';
 	import XTerminal from './XTerminal.svelte';
 	import CallPanel from './MessageInput/CallPanel.svelte';
@@ -98,12 +97,15 @@
 	import SideChat from './ChatTabs/SideChat.svelte';
 	import EchoCognitionTab from '$lib/components/echo/EchoCognitionTab.svelte';
 	import EchoCodexTab from '$lib/components/echo/EchoCodexTab.svelte';
+	import EchoBrowserTab from '$lib/components/echo/EchoBrowserTab.svelte';
 	import EchoVaultTab from '$lib/components/echo/EchoVaultTab.svelte';
 	import EchoCanvasTab from '$lib/components/echo/EchoCanvasTab.svelte';
 	import {
-		echoCanvasOpenRequest,
+		echoBrowserTarget,
+		echoCanvasActiveFrame,
+		echoCodexTarget,
 		echoCognitionSelectedSubSid,
-		echoSubagentOpenRequest
+		echoTabOpenRequest
 	} from '$lib/stores/echo';
 	import FileNav from './FileNav.svelte';
 	import PyodideFileNav from './PyodideFileNav.svelte';
@@ -173,7 +175,6 @@
 	};
 	let terminalViews: Record<string, XTerminal> = {};
 	export const hasTerminals = () => tabs.tabs.some((tab) => tab.kind === 'terminal');
-	let browserViews: Record<string, Browser> = {};
 	let gitViews: Record<string, GitBar> = {};
 	let sideViews: Record<string, SideChat> = {};
 	let viewEntry: ReturnType<typeof chatViewEntry> | null = null;
@@ -231,9 +232,6 @@
 					if (tab.kind === 'terminal') {
 						if (!terminalViews[tab.id]) throw new Error('Terminal is not connected');
 						await terminalViews[tab.id].bindChat(id);
-					} else if (tab.kind === 'browser') {
-						if (!browserViews[tab.id]) throw new Error('Browser is not connected');
-						await browserViews[tab.id].bindChat(id);
 					}
 				}
 			},
@@ -346,7 +344,6 @@
 	$: if (!terminalFilesAvailable) showQuickOpen = false;
 	let terminalEnabled = false;
 	let desktopEnabled = false;
-	let browserEnabled = false;
 	let featureVersion = 0;
 	let releasePanel: (target: HTMLElement) => void = () => {};
 	const preservePanel = (target: HTMLElement) => ({ destroy: () => releasePanel(target) });
@@ -395,6 +392,7 @@
 			side: 'chat-lines',
 			'echo-cognition': 'sparkles',
 			'echo-codex': 'code',
+			'echo-browser': 'browser',
 			'echo-vault': 'lock',
 			'echo-canvas': 'browser'
 		})[kind];
@@ -530,6 +528,7 @@
 			| 'side'
 			| 'echo-cognition'
 			| 'echo-codex'
+			| 'echo-browser'
 			| 'echo-vault'
 			| 'echo-canvas',
 		inSidePanel = false
@@ -558,17 +557,33 @@
 		openPanel({ id: kind, kind, label: view.label }, inSidePanel);
 	};
 
-	$: if ($echoCanvasOpenRequest && $echoCanvasOpenRequest.chatId === chatId) {
-		echoCanvasOpenRequest.set(null);
-		openFeature('echo-canvas', true);
-	}
-	$: if ($echoSubagentOpenRequest && $echoSubagentOpenRequest.chatId === chatId) {
-		const req = $echoSubagentOpenRequest;
-		echoSubagentOpenRequest.set(null);
-		if (req.subSid && chatId) {
-			echoCognitionSelectedSubSid.update((curr) => ({ ...curr, [chatId]: req.subSid! }));
+	$: if ($echoTabOpenRequest && $echoTabOpenRequest.chatId === chatId) {
+		const req = $echoTabOpenRequest;
+		echoTabOpenRequest.set(null);
+		if (req.payload?.subSid && chatId) {
+			echoCognitionSelectedSubSid.update((curr) => ({ ...curr, [chatId]: req.payload!.subSid! }));
 		}
-		openFeature('echo-cognition', true);
+		if (req.kind === 'echo-codex' && chatId) {
+			echoCodexTarget.set({
+				chatId,
+				workspace: req.payload?.workspace,
+				file: req.payload?.file,
+				commitHash: req.payload?.commitHash,
+				targetChatId: req.payload?.targetChatId
+			});
+		}
+		if (req.kind === 'echo-browser' && chatId) {
+			echoBrowserTarget.set({
+				chatId,
+				sessionId: req.payload?.sessionId,
+				frameId: req.payload?.frameId,
+				frameIndex: req.payload?.frameIndex
+			});
+		}
+		if (req.kind === 'echo-canvas' && req.payload?.frameId && chatId) {
+			echoCanvasActiveFrame.update((curr) => ({ ...curr, [chatId]: req.payload!.frameId! }));
+		}
+		openFeature(req.kind, true);
 	}
 
 	type SplitDrop = PanelRect & { groupId: string; edge: SplitEdge | null };
@@ -746,51 +761,6 @@
 			connection: { ...selectedConnection }
 		});
 	};
-	const openBrowser = (
-		port?: number,
-		selector = $selectedTerminalId,
-		baseUrl?: string,
-		initialUrl?: string
-	) => {
-		if (!selector || !terminalAccessible(selector)) return;
-		if (selector === $selectedTerminalId && !browserEnabled) return;
-		const url = initialUrl ?? (port ? `http://localhost:${port}/` : undefined);
-		const existing =
-			url &&
-			tabs.tabs.find(
-				(tab) => tab.kind === 'browser' && tab.terminalId === selector && tab.path === url
-			);
-		if (existing) {
-			selectTab(existing.id);
-			return;
-		}
-		const connection = selector
-			? resolveTerminalConnection(
-					selector,
-					$terminalServers ?? [],
-					directTerminals,
-					localStorage.token ?? ''
-				)
-			: null;
-		if (!connection) return;
-		const terminal = ($terminalServers ?? []).find((item) => item.id === selector);
-		const proxyBase =
-			baseUrl ??
-			(connection && chatContextNeedsSavedChat(terminal) && chatId
-				? `${connection.baseUrl}/chats/${encodeURIComponent(chatId)}`
-				: connection?.baseUrl);
-		const id = uuidv4();
-		openPanel({
-			id,
-			kind: 'browser',
-			label: port ? `localhost:${port}` : $i18n.t('Browser'),
-			path: url,
-			terminalId: selector ?? undefined,
-			browserBaseUrl: proxyBase,
-			connection: connection ?? undefined
-		});
-		if (viewEntry && viewReady) startSession(viewEntry, tabs.tabs.find((tab) => tab.id === id)!);
-	};
 	const closeTab = async (id: string) => {
 		if (id === mainChatTabId) return;
 		if (closing.has(id)) return;
@@ -802,7 +772,7 @@
 			const tab = owner.state.panels.tabs.find((item) => item.id === id);
 			if (!tab) return;
 			const connection =
-				tab.sessionId && (tab.kind === 'terminal' || tab.kind === 'browser')
+				tab.sessionId && tab.kind === 'terminal'
 					? tabConnection(tab)
 					: null;
 			if (
@@ -841,7 +811,7 @@
 					await terminalRequest(
 						connection,
 						owner.chatId,
-						`${tab.kind === 'terminal' ? '/api/terminals' : '/browser/sessions'}/${encodeURIComponent(tab.sessionId)}`,
+						`/api/terminals/${encodeURIComponent(tab.sessionId)}`,
 						{ method: 'DELETE' }
 					);
 				} catch (error) {
@@ -1061,6 +1031,7 @@
 		{ kind: 'comments', label: $i18n.t('Comments'), available: showCommentsTab },
 		{ kind: 'echo-cognition', label: 'Sous-Agents & Outils', available: true },
 		{ kind: 'echo-codex', label: 'Codex & Fichiers', available: true },
+		{ kind: 'echo-browser', label: 'Navigateur Web', available: true },
 		{ kind: 'echo-vault', label: 'Coffre & Identité', available: true },
 		{ kind: 'echo-canvas', label: 'Canvas & Applications', available: true }
 	];
@@ -1069,7 +1040,7 @@
 		(view) => view.kind !== 'voice' && view.available
 	);
 	$: canOpenNewTab =
-		terminalMenuVisible || browserEnabled || desktopEnabled || newTabViews.length > 0;
+		terminalMenuVisible || desktopEnabled || newTabViews.length > 0;
 
 	const quickSplit = () => {
 		if (tabs.tabs.length < 2) {
@@ -1116,9 +1087,6 @@
 				break;
 			case Shortcut.NEW_TERMINAL:
 				if (terminalMenuClickable) action = newTerminal;
-				break;
-			case Shortcut.NEW_BROWSER:
-				if (browserEnabled && selectedConnection) action = () => openBrowser();
 				break;
 			case Shortcut.CLOSE_TAB:
 				if (panelVisible && tabs.activeId)
@@ -1186,16 +1154,14 @@
 		const version = ++featureVersion;
 		terminalEnabled = false;
 		desktopEnabled = false;
-		browserEnabled = false;
 		if (!selectedConnection) return;
 		try {
 			const result = await terminalRequest<{
-				features?: { terminal?: boolean; desktop?: boolean; browser?: boolean };
+				features?: { terminal?: boolean; desktop?: boolean };
 			}>(selectedConnection, chatId, '/api/config');
 			if (version === featureVersion) {
 				terminalEnabled = result.features?.terminal !== false;
 				desktopEnabled = result.features?.desktop === true;
-				browserEnabled = result.features?.browser === true;
 			}
 		} catch {
 			/* Files remain available when interactive terminals are disabled. */
@@ -1228,7 +1194,6 @@
 				.filter((view) => view.available && view.kind !== 'side')
 				.map((view) => () => openFeature(view.kind as any)),
 			...(terminalMenuClickable ? [newTerminal] : []),
-			...(browserEnabled ? [openBrowser] : []),
 			...(desktopEnabled ? [openDesktop] : [])
 		];
 		if (options.length === 1) options[0]();
@@ -1622,6 +1587,8 @@
 					<EchoCognitionTab chatId={owner.chatId ?? chatId ?? ''} />
 				{:else if tab.kind === 'echo-codex'}
 					<EchoCodexTab chatId={owner.chatId ?? chatId ?? ''} />
+				{:else if tab.kind === 'echo-browser'}
+					<EchoBrowserTab chatId={owner.chatId ?? chatId ?? ''} />
 				{:else if tab.kind === 'echo-vault'}
 					<EchoVaultTab />
 				{:else if tab.kind === 'echo-canvas'}
@@ -1658,7 +1625,7 @@
 						active={panelVisible && visibleTabIds.has(tab.id)}
 						overlay={dragged}
 					/>
-				{:else if tab.kind === 'browser' || tab.kind === 'terminal'}
+				{:else if tab.kind === 'terminal'}
 					{#if owner.pending.has(tab.id)}
 						<p
 							role="status"
@@ -1692,43 +1659,24 @@
 								>
 							{:else}
 								<button class="underline" on:click={() => startSession(owner, tab)}
-									>{$i18n.t(
-										tab.kind === 'terminal' ? 'Start new terminal' : 'Reopen browser'
-									)}</button
+									>{$i18n.t('Start new terminal')}</button
 								>
 							{/if}
 						</div>
 					{:else}
 						{#key `${tab.sessionId}:${sessionAttempts[tab.id] ?? 0}`}
-							{#if tab.kind === 'terminal'}
-								<XTerminal
-									bind:this={terminalViews[tab.id]}
-									connection={connection!}
-									chatId={owner.chatId}
-									sessionId={tab.sessionId}
-									active={panelVisible && visibleTabIds.has(tab.id)}
-									overlay={dragged}
-									onUnavailable={(message, status) => {
-										if (owner === viewEntry)
-											sessionFailures = { ...sessionFailures, [tab.id]: { message, status } };
-									}}
-								/>
-							{:else}
-								<Browser
-									bind:this={browserViews[tab.id]}
-									{connection}
-									chatId={owner.chatId}
-									sessionId={tab.sessionId}
-									active={panelVisible && visibleTabIds.has(tab.id)}
-									overlay={dragged}
-									onOpenBrowser={(url) => openBrowser(undefined, tab.terminalId, undefined, url)}
-									onNavigate={(path, label) => updateViewTab(owner, tab.id, { path, label })}
-									onUnavailable={(message, status) => {
-										if (owner === viewEntry)
-											sessionFailures = { ...sessionFailures, [tab.id]: { message, status } };
-									}}
-								/>
-							{/if}
+							<XTerminal
+								bind:this={terminalViews[tab.id]}
+								connection={connection!}
+								chatId={owner.chatId}
+								sessionId={tab.sessionId}
+								active={panelVisible && visibleTabIds.has(tab.id)}
+								overlay={dragged}
+								onUnavailable={(message, status) => {
+									if (owner === viewEntry)
+										sessionFailures = { ...sessionFailures, [tab.id]: { message, status } };
+								}}
+							/>
 						{/key}
 					{/if}
 				{:else if tab.untitled && connection}
@@ -1985,11 +1933,6 @@
 									</Tooltip>
 								{/if}
 							{/if}
-							{#if browserEnabled}<button on:click={() => openBrowser()}
-									><Icon name="browser" size={14} /><span class="flex-1 text-start"
-										>{$i18n.t('Browser')}</span
-									><HotkeyHint name="newBrowser" className="ms-auto" /></button
-								>{/if}
 							{#if desktopEnabled}<button on:click={openDesktop}
 									><Icon name="monitor" size={14} /><span class="flex-1 text-start"
 										>{$i18n.t('Desktop')}</span

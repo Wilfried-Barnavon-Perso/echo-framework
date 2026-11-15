@@ -2,11 +2,12 @@
 """
 ================================================================================
 MODULE : ECHO USER MANAGER - CORE SECURITY & SSO
-VERSION : 5.236.5.1
+VERSION : 6.6.3.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.3.1: Lecture et normalisation de g.user_gender (M/F/X) depuis auth.db.
 # 5.236.5.1: Barrière Zero-Trust SSO (HMAC X-Echo-Sso-Secret, X-Webui-User) et validation Argon2id/TOTP.
 
 from contextlib import closing
@@ -21,12 +22,19 @@ from core.config import AUTH_DB_PATH, WEBUI_DB_PATH, app
 from core.utils import get_auth_settings
 
 __all__ = [
+    "normalize_gender",
     "check_user_sso_auth",
     "verify_user_password",
     "hash_user_password",
     "verify_user_totp",
     "validate_password_policy",
 ]
+
+
+def normalize_gender(value: str | None) -> str:
+    """Normalise un code genre vers 'M', 'F' ou 'X' (défaut 'X')."""
+    val = (value or "").strip().upper()
+    return val if val in ("M", "F", "X") else "X"
 
 
 @app.before_request
@@ -69,10 +77,16 @@ def check_user_sso_auth():
     try:
         with closing(sqlite3.connect(f"file:{AUTH_DB_PATH}?mode=ro", uri=True, timeout=5.0)) as conn:
             conn.row_factory = sqlite3.Row
-            auth_user = conn.execute(
-                "SELECT email, name, totp_secret, must_enroll, last_enrollment FROM users WHERE email = ?",
-                (webui_user,),
-            ).fetchone()
+            try:
+                auth_user = conn.execute(
+                    "SELECT email, name, gender, totp_secret, must_enroll, last_enrollment FROM users WHERE email = ?",
+                    (webui_user,),
+                ).fetchone()
+            except sqlite3.OperationalError:
+                auth_user = conn.execute(
+                    "SELECT email, name, totp_secret, must_enroll, last_enrollment FROM users WHERE email = ?",
+                    (webui_user,),
+                ).fetchone()
             if not auth_user:
                 return (
                     "<h1>Session Invalide</h1>"
@@ -81,6 +95,8 @@ def check_user_sso_auth():
                 )
             g.user_email = str(auth_user["email"])
             g.auth_name = str(auth_user["name"] or "")
+            raw_gender = auth_user["gender"] if "gender" in auth_user.keys() else "X"
+            g.user_gender = normalize_gender(raw_gender)
             g.has_totp = bool(auth_user["totp_secret"])
             g.last_enrollment = int(auth_user["last_enrollment"] or 0)
             g.current_session_id = (request.cookies.get("echo_auth_session") or "").strip()

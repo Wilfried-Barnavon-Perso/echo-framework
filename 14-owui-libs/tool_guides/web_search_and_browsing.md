@@ -1,10 +1,10 @@
 ---
 domain_id: web_search_and_browsing
-version: 5.231.52.1
-updated_at: 2026-11-02
+version: 6.6.2.1
+updated_at: 2026-11-15
 name: Recherche Web Souveraine, Navigateur Autonome & Géolocalisation Maps
 description: Escalade de recherche Web (Réponses instantanées, Méta-moteur de recherche, Deep Research), navigation interactive via le Navigateur Autonome et ancrage cartographique Maps.
-tools: [search_instant_answer, search_web, delegate_deep_research, delegate_web_browsing, analyze_web_page, archive_web_page, web_browse_reset, close_web_thread, get_browser_frames_history, search_maps]
+tools: [search_instant_answer, search_web, delegate_deep_research, delegate_web_browsing, analyze_web_page, archive_web_page, web_browse_reset, close_web_thread, get_browser_frames_history, open_browser_ui, search_maps]
 keywords: [web, recherche, search, navigateur, browser, url, page, maps, carte, géolocalisation, deep_research, actualité]
 ---
 
@@ -42,6 +42,7 @@ keywords: [web, recherche, search, navigateur, browser, url, page, maps, carte, 
 - `max_iterations` : Budget d'actions (défaut `30`, max `100` pour les tâches longues). Si le plafond est atteint (`status="too_many_tries"`), analyser la synthèse intermédiaire retournée et relancer `delegate_web_browsing` pour poursuivre.
 - **Administration du Navigateur Autonome** :
   - `get_browser_frames_history(depth=10)` : Consulte l'historique des dernières captures d'écran (`file_id`, `date`, `frame`).
+  - `open_browser_ui(frame_index=None)` : Ouvre l'onglet natif `Navigateur Web` (`echo-browser`) dans l'interface utilisateur en direct ou positionné sur l'index de capture indiqué.
   - `web_browse_reset()` : Réinitialise immédiatement la session active du Navigateur Autonome.
   - `close_web_thread(sub_sid)` : Ferme définitivement une session de navigation, réinitialise le Navigateur Autonome et purge son historique.
 

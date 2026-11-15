@@ -20,7 +20,7 @@ Fichier monolithique exposant l'API de contrôle du navigateur asynchrone (FastA
 - **Sémantique** : Enregistre le flux d'interactions de la page en temps réel via le protocole Chrome DevTools (CDP `Page.startScreencast`).
 - **Optimisation FPS** : L'API asynchrone est bridée à **9 FPS** (Frames Per Second) pour réduire drastiquement la charge CPU et la bande passante du serveur lors du traitement et du renvoi du flux vidéo, sans perdre l'intelligibilité de la session pour l'utilisateur.
 - **Incrustation Active du Curseur Hors-DOM** : Suppression intégrale de l'élément DOM `#echo-cursor` et des écouteurs globaux de souris (`window.__echo_mouse_x/y`). Le pointeur de souris rouge (`#ff0044`, contour blanc `#ffffff` 2px, rayon 8px) est incrusté directement au niveau binaire dans les trames JPEG du screencast via Pillow (`ImageDraw`) lors de chaque micro-mouvement (`update_frame_with_cursor` dans `bezier_mouse_move` et lors de la réception des événements CDP `Page.screencastFrame`). Cette approche neutralise tout déclenchement de `MutationObserver` côté client.
-- Ce flux est ensuite exploitable par le *Cockpit de Rejeu* (HUD `web_navigation_replay_action.py`).
+- Ce flux est ensuite exploitable par l'onglet natif `EchoBrowserTab.svelte` (`echo-browser`).
 
 #### C. Furtivité & Cohérence Persona Renforcée (WAF Bypass)
 - **Sémantique** : Intègre un mécanisme de défense proactif contre les pare-feux applicatifs modernes (Cloudflare Turnstile, DataDome, Akamai).

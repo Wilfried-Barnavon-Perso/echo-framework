@@ -1,16 +1,16 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 5.238.1.1
+version: 6.6.2.2
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.2.2: Migration de _deploy_navigation_monitor et stream_proxy vers get_window_manager() (open_tab/broadcast_browser_frame) et ajout de open_browser_ui.
+# 6.6.2.1: Suivi temps réel du sous-agent navigator (mark_subagent_running, save_subagent_meta, update_subagent_meta_fields, update_subagent_status).
 # 5.238.1.1: Ajout de MODEL_ATHENA dans target_model_key de delegate_web_browsing.
 # 5.233.0.1: Décoration @echo_tool sur les 6 méthodes publiques et simplification des retours wrap_tool_output.
 # 5.231.41.1: Tour de synthèse finale garanti en functionCallingConfig mode NONE à l'épuisement de max_iterations dans delegate_web_browsing, injection d'alerte de budget dans functionResponse et garde-fou de récupération.
-# 5.231.20.1: Isolation des sessions Playwright par sub_sid/sid dans delegate_web_browsing et close_web_thread, sessions éphémères parallélisables dans analyze/archive_web_page et nommage anti-écrasement des archives.
-# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 
 import os
 import time
@@ -32,12 +32,18 @@ from echo_core import (
     smart_truncate_history
 )
 from echo_state_manager import EchoStateManager
-from echo_paths import generate_echo_file_id, get_echo_session_path
+from echo_paths import generate_echo_file_id, get_echo_session_path, sanitize_echo_id
 from echo_gemini_client import EchoGeminiClient
 from echo_prompts import SYS_NAV_BROWSER
-from echo_ui import EchoUI
+from echo_window_manager import get_window_manager
 from echo_browser_lib import EchoBrowserLib, BROWSER_TOOLS_SCHEMA, req_to_browser
 from echo_constants import FILE_INGESTION_STATUS, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE, PRUNE_CONTENT_THRESHOLD, DEFAULT_VISION_GRID_STEP, ECHO_SUBAGENT_CONTEXT
+from echo_subagent_hub import (
+    mark_subagent_running,
+    save_subagent_meta,
+    update_subagent_meta_fields,
+    update_subagent_status,
+)
 
 async def _verify_engine_status(
     timeout: int,
@@ -69,6 +75,9 @@ async def _deploy_navigation_monitor(
 ):
     b64 = res_view.get("screenshot_b64", "")
     eff_session_id = browser_session_id or chat_id
+    file_id = ""
+    filename = ""
+    ts_now = int(time.time())
 
     if b64:
         try:
@@ -89,26 +98,49 @@ async def _deploy_navigation_monitor(
             state_manager.save_resource(
                 id=file_id, name=filename, resource_type='media',
                 status=FILE_INGESTION_STATUS['INDEXED'], mime='image/jpeg',
-                storage_path=filepath
+                storage_path=filepath,
+                metadata={
+                    "kind": "browser_frame",
+                    "session_id": eff_session_id,
+                    "url": res_view.get("url", ""),
+                    "action": res_view.get("action", ""),
+                    "timestamp": ts_now,
+                },
             )
         except Exception as e:
             import logging
             logging.error(f"Echo navigation_engine_tool write error: {e}")
+            file_id = ""
 
-    if not getattr(u_valves, 'SHOW_BROWSER_HUD', True) or not events:
+    if not getattr(u_valves, 'SHOW_BROWSER_HUD', True):
         return
 
-    metadata = res_view.get("metadata", [])
-
-    await EchoUI.safe_deploy(
-        events=events,
-        monitor_func=EchoUI.monitor_ECHO,
-        b64=b64,
-        metadata=metadata,
-        hud_id=f"nav-{eff_session_id[:8]}",
-        state_key=f"nav_state_{eff_session_id}",
-        current_url=res_view.get("url", ""),
-        webp_b64=res_view.get("webp_b64")
+    wm = get_window_manager()
+    if file_id:
+        await wm.open_tab(
+            uid,
+            chat_id,
+            "echo-browser",
+            {"sessionId": eff_session_id, "frameId": file_id},
+        )
+    await wm.broadcast_browser_frame(
+        uid,
+        chat_id,
+        {
+            "session_id": eff_session_id,
+            "file_id": file_id,
+            "filename": filename,
+            "url": res_view.get("url", ""),
+            "action": res_view.get("action", ""),
+            "timestamp": ts_now,
+            "image_url": (
+                f"/echo/v1/cognition/{sanitize_echo_id(chat_id)}"
+                f"/browser-frames/{file_id}/image"
+                if file_id
+                else ""
+            ),
+            "b64": res_view.get("webp_b64") or b64,
+        },
     )
 
 class Tools:
@@ -157,6 +189,21 @@ class Tools:
         registry = browser.get_registry()
         
         state = EchoStateManager(user_id=uid, chat_id=chat_id)
+        nav_success = False
+        current_nav_model = clamp_model(target_model_key, __metadata__, user_id=uid)
+        mark_subagent_running(chat_id, sid, True)
+        save_subagent_meta(
+            state,
+            sid,
+            {
+                "sub_sid": sid,
+                "engine": "navigator",
+                "role_name": "Navigateur Web",
+                "skill_id": "navigator",
+                "model_key": current_nav_model,
+                "status": "running",
+            },
+        )
 
         if start_url:
             await events.status(f"🌐 Navigation vers {start_url}...")
@@ -245,8 +292,7 @@ class Tools:
         stop_streaming = asyncio.Event()
         async def stream_proxy():
             last_id = 0
-            import re
-            clean_hud_id = re.sub(r'[^a-zA-Z0-9]', '_', f"nav-{browser_session_id[:8]}")
+            wm = get_window_manager()
             while not stop_streaming.is_set():
                 try:
                     resp = await req_to_browser(10, "/screencast/latest", {"session_id": browser_session_id, "last_frame_id": last_id}, uid)
@@ -256,10 +302,17 @@ class Tools:
                         if b64 and new_id != last_id:
                             last_id = new_id
                             url = resp.get("url", "")
-                            import json
-                            safe_url = json.dumps(url)
-                            update_code = f"if(window.echoWebPlayerUpdate_{clean_hud_id}) window.echoWebPlayerUpdate_{clean_hud_id}('{b64}', {new_id}, {safe_url});"
-                            await events.emit_execute(update_code)
+                            await wm.broadcast_browser_frame(
+                                uid,
+                                chat_id,
+                                {
+                                    "session_id": browser_session_id,
+                                    "live_frame_id": new_id,
+                                    "url": url,
+                                    "live_b64": b64,
+                                    "timestamp": int(time.time()),
+                                },
+                            )
                 except asyncio.CancelledError:
                     break
                 except Exception:
@@ -332,7 +385,10 @@ class Tools:
                 payload["generationConfig"] = get_generation_config(target_model_key, override_thinking=thinking_mode)
                 
                 model = clamp_model(target_model_key, __metadata__, user_id=uid)
-                data, _, err = await EchoGeminiClient.call_cascade(model, payload, uid, __metadata__, events, timeout=120)
+                data, model_used, err = await EchoGeminiClient.call_cascade(model, payload, uid, __metadata__, events, timeout=120)
+                if model_used and model_used != current_nav_model:
+                    current_nav_model = model_used
+                    update_subagent_meta_fields(state, sid, model_key=model_used)
 
                 if err or not data:
                     return f"❌ Erreur modèle: {err}"
@@ -599,12 +655,14 @@ class Tools:
                         continue  # Relance la boucle while
                 
                     await events.status(f"✅ Mission terminée en {iterations} étapes.", done=True)
+                    nav_success = True
                     return wrap_tool_output(
                         text=f"🤖 Synthèse du Navigateur :\n{text_out}",
                         status={"status": "success", "steps": iterations, "sid": sid}
                     )
 
             fallback_msg = "Aucune synthèse (Interrompu en cours d'action)."
+            nav_success = True
             return wrap_tool_output(
                 text=(
                     f"ÉCHEC : Nombre maximum d'itérations atteint ({max_iterations}). "
@@ -617,6 +675,11 @@ class Tools:
             stop_streaming.set()
             if proxy_task:
                 proxy_task.cancel()
+            try:
+                update_subagent_status(state, sid, "idle" if nav_success else "error")
+            except Exception:
+                pass
+            mark_subagent_running(chat_id, sid, False)
 
     @echo_tool
     async def analyze_web_page(self, url: str, query: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
@@ -795,3 +858,34 @@ class Tools:
             )
         except Exception as e:
             return f"❌ Erreur: {str(e)}"
+
+    @echo_tool
+    async def open_browser_ui(
+        self,
+        frame_index: Optional[int] = None,
+        __user__: Optional[dict] = None,
+        __metadata__: Optional[dict] = None,
+        __event_emitter__: Any = None,
+        __event_call__: Any = None,
+    ) -> dict:
+        """Ouvre l'onglet natif Navigateur Web (et positionne optionnellement sur une capture)."""
+        import orjson as json
+        chat_id = (__metadata__ or {}).get("chat_id") or "default"
+        uid = (__user__ or {}).get("id", "anonymous")
+        payload = {"frameIndex": frame_index} if frame_index is not None else {}
+
+        wm = get_window_manager()
+        await wm.open_tab(uid, chat_id, "echo-browser", payload)
+
+        events = EchoEvents(__event_emitter__, __event_call__)
+        detail_json = json.dumps(
+            {"chatId": chat_id, "kind": "echo-browser", "payload": payload}
+        ).decode("utf-8")
+        await events.emit_execute(
+            f"window.dispatchEvent(new CustomEvent('echo:open-tab', {{ detail: {detail_json} }}));"
+        )
+
+        return wrap_tool_output(
+            text="✅ Onglet Navigateur Web ouvert dans l'interface ECHO.",
+            status={"status": "success", "chat_id": chat_id, "payload": payload},
+        )

@@ -16,6 +16,7 @@ export type PanelTabKind =
 	| 'side'
 	| 'echo-cognition'
 	| 'echo-codex'
+	| 'echo-browser'
 	| 'echo-vault'
 	| 'echo-canvas';
 export type PanelTab = {

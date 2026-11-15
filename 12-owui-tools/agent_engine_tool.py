@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 6.6.0.1
+version: 6.6.2.1
 description: Composant système interne : ECHO Agent Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.2.1: Mise à jour temps réel de subagent_meta.model_key via update_subagent_meta_fields lors des cascades et appels à new_cognitive_level.
 # 6.6.0.1: Persistance de model_used/is_cascaded_fallback, passage du timeout à ECHO_LLM_CALL_TIMEOUT (600s) et filet de sécurité idempotent truncate_and_spill_tool_output vers tools_output/.
 # 6.5.3.1: Support des tours hybrides Orchestrateur/Humain (<REQUETE_ORCHESTRATEUR> / <REQUETE_UTILISATEUR>), verrou par sub_sid et file FIFO SQLite via echo_subagent_hub.
 # 5.238.1.1: Ajout de MODEL_ATHENA dans target_model_key de delegate_to_agent.
 # 5.235.5.1: Restriction de la distillation du contexte aux seuls messages de la branche active via load_active_branch_ids.
-# 5.233.0.1: Passage explicite de is_json=False dans _distill_main_context, décoration @echo_tool sur les 4 méthodes publiques et simplification des retours.
 
 import sys
 import uuid
@@ -54,6 +54,7 @@ from echo_subagent_hub import (
     mark_subagent_running,
     pop_next_human_message,
     save_subagent_meta,
+    update_subagent_meta_fields,
     update_subagent_status,
     wrap_human_turn,
     wrap_orchestrator_turn,
@@ -633,6 +634,7 @@ async def _run_agent_loop(
         if model_used and model_used != current_model_key:
             current_model_key = model_used
             is_cascaded_fallback = True
+            update_subagent_meta_fields(state, sid, model_key=current_model_key)
 
         # 4. Extraction des parts BRUTES de la réponse
         # Conservation des parts BRUTES (thoughtSignature Gemini 3.x) :
@@ -899,6 +901,14 @@ async def _run_agent_loop(
                         ECHO_SUBAGENT_CONTEXT.reset(token)
                 except Exception as e:
                     result = {"status": "error", "message": str(e)}
+
+            if fn_name == "new_cognitive_level" and not (
+                isinstance(result, dict) and result.get("status") == "error"
+            ):
+                new_lvl = (fn_args or {}).get("niveau_requis")
+                if new_lvl:
+                    current_model_key = str(new_lvl)
+                    update_subagent_meta_fields(state, sid, model_key=current_model_key)
 
             calls_used += 1
             await events.status(f"🔧 [{sid}] {fn_name} ({calls_used}/{max_calls})")

@@ -1,27 +1,129 @@
 """
 title: ECHO V6 Canonical Identity Bridge
 author: Wilfried BARNAVON
-version: 6.1.0.1
+version: 6.6.3.1
 description: Pont déterministe Email SSO (X-Webui-User) <-> User UUID (webui.db) <-> identity.db (Schéma v2).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.3.1: Résolution X-Webui-Gender, persistance canonical_gender et bascule dynamique d'avatar M/F/X sans écraser les avatars personnalisés.
+# 6.6.2.1: Stabilisation de la résolution identitaire SSO et synchronisation identity.db.
 # 6.1.0.1: Création du pont d'identité canonique X-Webui-User <-> webui.db UUID <-> identity.db (Schéma v2).
 
 from __future__ import annotations
 
+import base64
 import logging
 import os
-import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from open_webui.echo.runtime import ensure_echo_sys_path
+from open_webui.echo.runtime import ensure_echo_sys_path, get_echo_plugin_root
 
 log = logging.getLogger(__name__)
 
-# Cache mémoire (user_id -> (email, initialized_at)) évitant de réécrire identity.db à chaque requête HTTP
-_IDENTITY_SYNC_CACHE: dict[str, tuple[str, float]] = {}
+# Cache mémoire (user_id -> (email, name, gender)) évitant de réécrire identity.db à chaque requête HTTP
+_IDENTITY_SYNC_CACHE: dict[str, tuple[str, str, str]] = {}
+_DEFAULT_USER_AVATAR_CACHE: dict[str, str] = {}
+_AVATAR_CHECKED_USERS: dict[str, str] = {}
+
+_GENDER_AVATAR_FILES: dict[str, str] = {
+    "M": "user-echo-homme.png",
+    "F": "user-echo-femme.png",
+    "X": "user-echo-neutre.png",
+}
+
+
+def normalize_gender(value: Any) -> str:
+    """Normalise une valeur de genre vers 'M', 'F' ou 'X' ('X' par défaut)."""
+    norm = str(value or "").strip().upper()
+    return norm if norm in ("M", "F", "X") else "X"
+
+
+def get_default_user_avatar_data_uri(gender: str = "X") -> str | None:
+    """Charge et met en cache le Data-URI base64 de l'avatar utilisateur ECHO par défaut selon le genre."""
+    norm_gender = normalize_gender(gender)
+    if norm_gender in _DEFAULT_USER_AVATAR_CACHE:
+        return _DEFAULT_USER_AVATAR_CACHE[norm_gender]
+
+    filename = _GENDER_AVATAR_FILES[norm_gender]
+    root = get_echo_plugin_root()
+    candidates = [
+        root / "echo-images" / filename,
+        root / "_assets" / "images" / filename,
+        Path("/app/backend/open_webui/static/user.png"),
+        Path("/app/build/static/user.png"),
+    ]
+    try:
+        from open_webui.config import STATIC_DIR
+        candidates.append(Path(STATIC_DIR) / "user.png")
+    except Exception:
+        pass
+
+    for img_path in candidates:
+        try:
+            if img_path.is_file():
+                b64 = base64.b64encode(img_path.read_bytes()).decode("ascii")
+                uri = f"data:image/png;base64,{b64}"
+                _DEFAULT_USER_AVATAR_CACHE[norm_gender] = uri
+                return uri
+        except Exception as exc:
+            log.debug("[ECHO-IDENTITY] Lecture avatar par défaut ignorée (%s): %s", img_path, exc)
+    return None
+
+
+def get_all_default_user_avatar_data_uris() -> set[str]:
+    """Retourne l'ensemble des Data-URIs des avatars ECHO par défaut (M, F, X)."""
+    uris: set[str] = set()
+    for g in _GENDER_AVATAR_FILES:
+        uri = get_default_user_avatar_data_uri(g)
+        if uri:
+            uris.add(uri)
+    return uris
+
+
+def is_default_echo_avatar_url(url: str) -> bool:
+    """Indique si l'URL correspond à un avatar générique ou à un avatar ECHO par défaut (M/F/X)."""
+    clean = str(url or "").strip()
+    if not clean or clean == "/user.png" or clean.startswith("/api/v1/users/"):
+        return True
+    return clean in get_all_default_user_avatar_data_uris()
+
+
+async def ensure_user_default_avatar(user: Any, gender: str = "X") -> str | None:
+    """Injecte le Data-URI de l'avatar ECHO genré si l'utilisateur utilise encore un avatar par défaut."""
+    if user is None or not getattr(user, "id", None):
+        return None
+    uid = str(user.id)
+    norm_gender = normalize_gender(gender)
+    if _AVATAR_CHECKED_USERS.get(uid) == norm_gender:
+        return getattr(user, "profile_image_url", None)
+
+    current_url = str(getattr(user, "profile_image_url", None) or "").strip()
+    if not is_default_echo_avatar_url(current_url):
+        _AVATAR_CHECKED_USERS[uid] = norm_gender
+        return current_url
+
+    avatar_uri = get_default_user_avatar_data_uri(norm_gender)
+    if not avatar_uri:
+        return current_url or None
+    if avatar_uri == current_url:
+        _AVATAR_CHECKED_USERS[uid] = norm_gender
+        return current_url
+
+    try:
+        from open_webui.models.users import Users
+        await Users.update_user_profile_image_url_by_id(uid, avatar_uri)
+        try:
+            setattr(user, "profile_image_url", avatar_uri)
+        except Exception:
+            pass
+        _AVATAR_CHECKED_USERS[uid] = norm_gender
+        return avatar_uri
+    except Exception as exc:
+        log.warning("[ECHO-IDENTITY] Échec mise à jour avatar pour %s: %s", uid, exc)
+        return current_url or None
 
 
 @dataclass(frozen=True)
@@ -31,9 +133,10 @@ class EchoIdentityContext:
     name: str
     identity_db_path: str
     trusted_sso: bool
+    gender: str = "X"
 
 
-def ensure_user_identity_db(user_id: str, email: str = "", name: str = "") -> str:
+def ensure_user_identity_db(user_id: str, email: str = "", name: str = "", gender: str = "X") -> str:
     """
     Matérialise de manière idempotente /app/backend/data/users/{user_id}/identity.db (Schéma v2)
     et synchronise les métadonnées canoniques de l'utilisateur dans echo_settings.
@@ -46,9 +149,11 @@ def ensure_user_identity_db(user_id: str, email: str = "", name: str = "") -> st
     safe_uid = sanitize_echo_id(user_id)
     id_db_path = get_echo_identity_db_path(safe_uid)
     norm_email = (email or "").strip().lower()
+    norm_name = str(name or "").strip()
+    norm_gender = normalize_gender(gender)
 
     cached = _IDENTITY_SYNC_CACHE.get(safe_uid)
-    if cached is not None and cached[0] == norm_email and os.path.isfile(id_db_path):
+    if cached == (norm_email, norm_name, norm_gender) and os.path.isfile(id_db_path):
         return id_db_path
 
     os.makedirs(os.path.dirname(id_db_path), exist_ok=True)
@@ -65,13 +170,14 @@ def ensure_user_identity_db(user_id: str, email: str = "", name: str = "") -> st
         sm = EchoStateManager(user_id=safe_uid, chat_id=None)
         if norm_email:
             sm.save_setting("canonical_email", norm_email)
-        if name:
-            sm.save_setting("canonical_name", str(name).strip())
+        if norm_name:
+            sm.save_setting("canonical_name", norm_name)
+        sm.save_setting("canonical_gender", norm_gender)
         sm.save_setting("user_uuid", safe_uid)
     except Exception as exc:
         log.warning("[ECHO-IDENTITY] Échec écriture echo_settings dans identity.db pour %s: %s", safe_uid, exc)
 
-    _IDENTITY_SYNC_CACHE[safe_uid] = (norm_email, time.time())
+    _IDENTITY_SYNC_CACHE[safe_uid] = (norm_email, norm_name, norm_gender)
     return id_db_path
 
 
@@ -87,6 +193,7 @@ async def resolve_canonical_user(request: Any, user: Any) -> EchoIdentityContext
     email = str(getattr(user, "email", "") or "").strip().lower()
     name = str(getattr(user, "name", "") or email)
     trusted_sso = False
+    raw_gender = ""
 
     if request is not None and hasattr(request, "headers"):
         sso_header = (
@@ -97,14 +204,35 @@ async def resolve_canonical_user(request: Any, user: Any) -> EchoIdentityContext
         if sso_header:
             trusted_sso = True
             email = sso_header
+        raw_gender = (
+            request.headers.get("X-Webui-Gender")
+            or request.headers.get("x-webui-gender")
+            or ""
+        ).strip()
 
-    id_db_path = ensure_user_identity_db(uid, email=email, name=name)
+    if not raw_gender:
+        try:
+            ensure_echo_sys_path()
+            from echo_paths import sanitize_echo_id
+            from echo_state_manager import EchoStateManager
+
+            raw_gender = EchoStateManager(
+                user_id=sanitize_echo_id(uid), chat_id=None
+            ).get_setting("canonical_gender") or "X"
+        except Exception as exc:
+            log.debug("[ECHO-IDENTITY] Lecture canonical_gender ignorée pour %s: %s", uid, exc)
+            raw_gender = "X"
+
+    norm_gender = normalize_gender(raw_gender)
+    id_db_path = ensure_user_identity_db(uid, email=email, name=name, gender=norm_gender)
+    await ensure_user_default_avatar(user, gender=norm_gender)
     ctx = EchoIdentityContext(
         user_id=uid,
         email=email,
         name=name,
         identity_db_path=id_db_path,
         trusted_sso=trusted_sso,
+        gender=norm_gender,
     )
     if request is not None and hasattr(request, "state"):
         request.state.echo_identity = ctx
@@ -114,3 +242,4 @@ async def resolve_canonical_user(request: Any, user: Any) -> EchoIdentityContext
 def clear_identity_sync_cache() -> None:
     """Réinitialise le cache mémoire d'identité (tests unitaires)."""
     _IDENTITY_SYNC_CACHE.clear()
+    _AVATAR_CHECKED_USERS.clear()

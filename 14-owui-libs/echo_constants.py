@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.6.0.1
+version: 6.6.2.3
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.2.3: Ajout de open_browser_ui dans DELEGATE_AGENT_BLACKLIST et alignement de MODEL_ENUM_BY_POLICY["AUTO"] sur MODEL_ATHENA.
+# 6.6.2.2: Suppression des constantes mortes CODEX_HUD_ID et CODEX_ACTION_ID.
 # 6.6.0.1: Intégration du domaine tools_output, de read_tool_output/delete_tool_output dans DELEGATE_AGENT_SYSTEM_TOOLS, de build_httpx_timeout (600s/300s), d'Antigravity 2.32.0 (cl=1021519450) et des seuils de pagination read_codex.
 # 6.5.3.1: Ajout du plafond d'import fichier ECHO_MAX_FILE_UPLOAD_SIZE_MB = 4096 (4 Go).
 # 6.5.1.1: Migration de MODEL_APOLLO vers Gemini 4 Hydrogen (gemini-4-hydrogen / gemini-4-hydrogen-high).
-# 5.238.1.1: Intégration de MODEL_ATHENA (gemini-4-carbon / gemini-4-carbon-high, hierarchy 3), déduplication de MODEL_ENUM_BY_POLICY et ajout de parse_model_policy / get_allowed_models.
-# 5.237.20.1: Calibration de CHARS_PER_TOKEN à 3.2 pour la tokenisation Gemini FR/JSON/Code.
 
 
 import os
@@ -618,8 +618,6 @@ CODEX_WORKSPACE_PLANS = "plans"
 CODEX_WORKSPACE_GENERATED = "generated"
 CODEX_WORKSPACE_SANDBOX = "sandbox"
 CODEX_DEFAULT_WORKSPACE = CODEX_WORKSPACE_MAIN
-CODEX_HUD_ID = "echo-codex-hud"
-CODEX_ACTION_ID = "echo_codex_action"
 
 # Protocole URN & Ancres UI Codex (Inlet / Outlet / Bridge JS)
 CODEX_URN_SCHEME = "codex:"
@@ -734,6 +732,7 @@ DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
     "delete_user_skill",            # Modale de confirmation bloquée en mode Headless
     "manage_identity",              # Gestion d'identités bloquée en mode Headless
     "open_codex_ui",                # Déclenchement UI HUD réservé au flux principal
+    "open_browser_ui",              # Déclenchement UI onglet Navigateur Web réservé au flux principal
     # 4. Méta-session (gestion des sessions du tool delegate)
     "list_agent_sessions",
     "close_agent_session",
@@ -791,7 +790,7 @@ MODEL_ENUM_BY_POLICY = {
     "MODEL_APOLLO": ["MODEL_APOLLO"],
     "MODEL_PROMETHEUS":   ["MODEL_PROMETHEUS"],
     "MODEL_ATHENA": ["MODEL_ATHENA"],
-    "AUTO":        ["MODEL_ZEPHYR", "MODEL_APOLLO"],
+    "AUTO":        ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"],
     "AUTO_PROM":    ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"],
     "AUTO_ATHENA":  ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"],
 }
@@ -813,14 +812,14 @@ def parse_model_policy(policy: str) -> tuple[str, str]:
         if mode_part in ("AUTO", "MANUAL") and model_part in MODEL_ENUM_REFERENCE:
             return (mode_part, model_part)
     if raw == "AUTO":
-        return ("AUTO", "MODEL_APOLLO")
+        return ("AUTO", "MODEL_ATHENA")
     if raw == "AUTO_PROM":
         return ("AUTO", "MODEL_PROMETHEUS")
     if raw == "AUTO_ATHENA":
         return ("AUTO", "MODEL_ATHENA")
     if raw in MODEL_ENUM_REFERENCE:
         return ("MANUAL", raw)
-    return ("AUTO", "MODEL_APOLLO")
+    return ("AUTO", "MODEL_ATHENA")
 
 
 def get_allowed_models(policy: str) -> list[str]:

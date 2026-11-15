@@ -6,7 +6,10 @@
 		acquireCognitionStream,
 		echoCognitionSelectedSubSid,
 		echoCognitionSnapshot,
+		getEchoModelBadge,
 		refreshCognitionSnapshot,
+		type EchoCognitionGroup,
+		type EchoCognitionQueuedMsg,
 		type EchoCognitionStep
 	} from '$lib/stores/echo';
 	import { isSavedChatId } from '$lib/utils/chatId';
@@ -25,6 +28,11 @@
 	let feedContainer: HTMLDivElement | null = null;
 	let lastScrolledKey = '';
 
+	let selectedGroupId = '';
+	let participantFilter = 'all';
+	let composerTargetSubSid = '';
+	let autoFollow = true;
+
 	const syncChatStream = async (cid: string) => {
 		const normalized = cid && isSavedChatId(cid) ? cid : '';
 		if (normalized === boundChatId) return;
@@ -34,6 +42,10 @@
 			releaseStream = null;
 		}
 		boundChatId = normalized;
+		selectedGroupId = '';
+		participantFilter = 'all';
+		composerTargetSubSid = '';
+		autoFollow = true;
 
 		if (!normalized) {
 			initialLoading = false;
@@ -95,53 +107,233 @@
 		}
 	);
 
-	$: if (chatId && sortedSubSids.length > 0) {
-		const currentSel = $echoCognitionSelectedSubSid[chatId];
-		if (!currentSel || !sortedSubSids.includes(currentSel)) {
-			echoCognitionSelectedSubSid.update((curr) => ({
-				...curr,
-				[chatId]: sortedSubSids[0]
-			}));
+	const isStepPendingTools = (step?: EchoCognitionStep | null): boolean => {
+		if (!step) return false;
+		if (Array.isArray(step.pending_tool_calls)) return step.pending_tool_calls.length > 0;
+		return Boolean(step.pending_tool_calls);
+	};
+
+	const normalizeGroup = (g: EchoCognitionGroup): Required<Pick<EchoCognitionGroup, 'id' | 'thread_type' | 'icon' | 'color' | 'display_label' | 'member_sids' | 'is_running' | 'updated_at'>> & EchoCognitionGroup => {
+		const id = g.id || g.group_id || '';
+		const member_sids = g.member_sids ?? g.threads ?? [];
+		const model_keys = g.model_keys ?? Array.from(
+			new Set(
+				member_sids
+					.map((sid) => threadMeta[sid]?.model_key)
+					.filter((mk): mk is string => Boolean(mk))
+			)
+		);
+		return {
+			...g,
+			id,
+			thread_type: g.thread_type || g.group_type || 'agent',
+			icon: g.icon || '🤖',
+			color: g.color || 'indigo',
+			display_label: g.display_label || g.label || id,
+			member_sids,
+			model_keys,
+			is_running: Boolean(g.is_running),
+			updated_at: Number(g.updated_at ?? 0) || 0
+		};
+	};
+
+	// Utilise grouped_threads fourni par le backend ou replie sur les threads individuels
+	$: groups = ((): ReturnType<typeof normalizeGroup>[] => {
+		if (snapshot?.grouped_threads && snapshot.grouped_threads.length > 0) {
+			return snapshot.grouped_threads.map(normalizeGroup);
+		}
+		return sortedSubSids.map((sid) => {
+			const meta = threadMeta[sid] ?? {};
+			const steps = threads[sid] ?? [];
+			const role = meta.display_label || meta.role || steps.find((s) => s.role_id)?.role_id || sid;
+			const isRunning = meta.is_running ?? meta.status === 'running';
+			const modelKey = meta.model_key;
+			return normalizeGroup({
+				id: sid,
+				thread_type: meta.thread_type || 'agent',
+				icon: meta.icon || '🤖',
+				color: meta.color || 'indigo',
+				display_label: role,
+				member_sids: [sid],
+				participant_labels: { [sid]: role },
+				model_keys: modelKey ? [modelKey] : [],
+				is_running: isRunning,
+				updated_at: getThreadUpdatedAt(sid),
+				steps_count: steps.length,
+				merged_steps: steps
+			});
+		});
+	})();
+
+	// Résolution automatique du groupe si echoCognitionSelectedSubSid cible un membre
+	$: if (chatId && groups.length > 0) {
+		const externalSid = $echoCognitionSelectedSubSid[chatId];
+		if (externalSid) {
+			const matchingGroup = groups.find(
+				(g) => g.id === externalSid || g.member_sids.includes(externalSid)
+			);
+			if (matchingGroup && matchingGroup.id !== selectedGroupId) {
+				selectedGroupId = matchingGroup.id;
+				participantFilter = 'all';
+				if (matchingGroup.member_sids.includes(externalSid)) {
+					composerTargetSubSid = externalSid;
+				}
+			}
+		}
+		if (!selectedGroupId || !groups.some((g) => g.id === selectedGroupId)) {
+			selectedGroupId = groups[0].id;
+			participantFilter = 'all';
 		}
 	}
 
-	$: selectedSubSid = chatId ? ($echoCognitionSelectedSubSid[chatId] ?? '') : '';
-	$: selectedSteps = selectedSubSid ? (threads[selectedSubSid] ?? []) : [];
-	$: selectedMeta = selectedSubSid ? (threadMeta[selectedSubSid] ?? {}) : {};
-	$: selectedQueue = selectedSubSid ? (queuedMap[selectedSubSid] ?? []) : [];
-	$: selectedRoleLabel =
-		selectedMeta?.role ||
-		selectedSteps.find((s) => s.role_id)?.role_id ||
-		selectedSubSid ||
-		'Sous-agent';
-	$: selectedIsRunning = selectedMeta?.status === 'running';
+	$: selectedGroup = groups.find((g) => g.id === selectedGroupId) ?? groups[0] ?? null;
 
-	const getSubSidLabel = (sid: string): string => {
-		const meta = threadMeta[sid];
-		const steps = threads[sid] ?? [];
-		const role = meta?.role || steps.find((s) => s.role_id)?.role_id || sid;
-		const statusLabel = meta?.status === 'running' ? 'En cours' : 'En attente';
-		const queueLen = (queuedMap[sid] ?? []).length;
+	$: if (selectedGroup) {
+		const members = selectedGroup.member_sids;
+		if (members.length > 0 && (!composerTargetSubSid || !members.includes(composerTargetSubSid))) {
+			composerTargetSubSid = members[0];
+		}
+		if (participantFilter !== 'all' && !members.includes(participantFilter)) {
+			participantFilter = 'all';
+		}
+	}
+
+	$: rawGroupSteps = ((): EchoCognitionStep[] => {
+		if (!selectedGroup) return [];
+		if (selectedGroup.merged_steps && selectedGroup.merged_steps.length > 0) {
+			return selectedGroup.merged_steps;
+		}
+		if (selectedGroup.member_sids.length === 1) {
+			return threads[selectedGroup.member_sids[0]] ?? [];
+		}
+		const merged: EchoCognitionStep[] = [];
+		for (const sid of selectedGroup.member_sids) {
+			for (const st of threads[sid] ?? []) {
+				merged.push(st);
+			}
+		}
+		return merged.sort((a, b) => (Number(a.updated_at ?? 0) - Number(b.updated_at ?? 0)) || (a.step_index - b.step_index));
+	})();
+
+	$: displayedSteps =
+		participantFilter === 'all'
+			? rawGroupSteps
+			: rawGroupSteps.filter((s) => s.sub_sid === participantFilter);
+
+	$: selectedQueue = ((): { sid: string; msg: EchoCognitionQueuedMsg }[] => {
+		if (!selectedGroup) return [];
+		const items: { sid: string; msg: EchoCognitionQueuedMsg }[] = [];
+		for (const sid of selectedGroup.member_sids) {
+			for (const msg of queuedMap[sid] ?? []) {
+				items.push({ sid, msg });
+			}
+		}
+		return items;
+	})();
+
+	$: selectedIsRunning = selectedGroup?.is_running ?? false;
+	$: targetIsRunning = composerTargetSubSid
+		? threadMeta[composerTargetSubSid]?.status === 'running'
+		: selectedIsRunning;
+
+	const getGroupQueueCount = (g: ReturnType<typeof normalizeGroup>): number =>
+		g.member_sids.reduce((acc, sid) => acc + (queuedMap[sid]?.length ?? 0), 0);
+
+	const getGroupOptionLabel = (g: ReturnType<typeof normalizeGroup>): string => {
+		const statusLabel = g.is_running ? '⚡ En cours' : 'En attente';
+		const queueLen = getGroupQueueCount(g);
 		const queueBadge = queueLen > 0 ? ` (+${queueLen} en attente)` : '';
-		return `${role} — ${statusLabel}${queueBadge}`;
+		return `${g.icon} ${g.display_label} — ${statusLabel}${queueBadge}`;
 	};
 
-	const onSelectSubSid = (e: Event) => {
+	const getParticipantLabel = (sid: string, step?: EchoCognitionStep): string => {
+		if (step?.participant_label) return step.participant_label;
+		if (selectedGroup?.participant_labels?.[sid]) return selectedGroup.participant_labels[sid];
+		const meta = threadMeta[sid];
+		return meta?.display_label || meta?.role || step?.role_id || sid;
+	};
+
+	const onSelectGroup = (e: Event) => {
 		const target = e.currentTarget as HTMLSelectElement;
 		if (!chatId || !target.value) return;
+		const group = groups.find((g) => g.id === target.value);
+		if (!group) return;
+		selectedGroupId = group.id;
+		participantFilter = 'all';
+		composerTargetSubSid = group.member_sids[0] ?? '';
+		autoFollow = true;
 		echoCognitionSelectedSubSid.update((curr) => ({
 			...curr,
-			[chatId]: target.value
+			[chatId]: group.member_sids[0] ?? group.id
 		}));
 	};
+
+	const ACCENT_CLASSES: Record<string, string> = {
+		cyan: 'border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300',
+		purple: 'border-purple-500/30 bg-purple-500/10 text-purple-700 dark:text-purple-300',
+		amber: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+		emerald: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+		indigo: 'border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300'
+	};
+
+	const getAccentClass = (color?: string): string =>
+		ACCENT_CLASSES[color ?? 'indigo'] ?? ACCENT_CLASSES.indigo;
 
 	interface ParsedStepView {
 		thoughtTexts: string[];
 		visibleTexts: string[];
 		toolCalls: { name: string; args?: any }[];
 		toolResponses: { name: string; response?: any }[];
+		domMapCounts: number[];
 		fallbackRaw: string;
 	}
+
+	const extractDomMapGuards = (raw: string): { cleanText: string; domCounts: number[] } => {
+		const domCounts: number[] = [];
+		let cleanText = raw;
+
+		// 1. Marqueur explicite de Carte DOM injectée par le navigateur
+		const domHeaderRegex =
+			/Voici les éléments interactifs actuels \(Carte DOM\)\s*:\s*(\[[\s\S]*?\]|\{[\s\S]*?\})/gi;
+		cleanText = cleanText.replace(domHeaderRegex, (_match, jsonPart) => {
+			try {
+				const parsed = JSON.parse(jsonPart);
+				const count = Array.isArray(parsed)
+					? parsed.length
+					: Array.isArray(parsed?.dom_map)
+						? parsed.dom_map.length
+						: 0;
+				domCounts.push(count);
+			} catch {
+				domCounts.push(0);
+			}
+			return '';
+		});
+
+		// 2. Objet JSON brut contenant "dom_map": [...]
+		const rawDomMapRegex = /\{\s*"dom_map"\s*:\s*(\[[\s\S]*?\])[\s\S]*?\}/g;
+		cleanText = cleanText.replace(rawDomMapRegex, (_match, arrPart) => {
+			try {
+				const parsed = JSON.parse(arrPart);
+				domCounts.push(Array.isArray(parsed) ? parsed.length : 0);
+			} catch {
+				domCounts.push(0);
+			}
+			return '';
+		});
+
+		return { cleanText: cleanText.trim(), domCounts };
+	};
+
+	const pushCleanVisibleText = (result: ParsedStepView, text: string) => {
+		const { cleanText, domCounts } = extractDomMapGuards(text);
+		if (domCounts.length > 0) {
+			result.domMapCounts.push(...domCounts);
+		}
+		if (cleanText) {
+			result.visibleTexts.push(cleanText);
+		}
+	};
 
 	const parseStepParts = (step: EchoCognitionStep): ParsedStepView => {
 		const result: ParsedStepView = {
@@ -149,6 +341,7 @@
 			visibleTexts: [],
 			toolCalls: [],
 			toolResponses: [],
+			domMapCounts: [],
 			fallbackRaw: ''
 		};
 
@@ -157,7 +350,7 @@
 			for (const part of content) {
 				if (!part || typeof part !== 'object') {
 					if (typeof part === 'string' && part.trim()) {
-						result.visibleTexts.push(part);
+						pushCleanVisibleText(result, part);
 					}
 					continue;
 				}
@@ -165,7 +358,7 @@
 					if (part.thought) {
 						result.thoughtTexts.push(part.text.trim());
 					} else {
-						result.visibleTexts.push(part.text);
+						pushCleanVisibleText(result, part.text);
 					}
 				}
 				if (part.functionCall && typeof part.functionCall === 'object') {
@@ -182,9 +375,13 @@
 				}
 			}
 		} else if (typeof content === 'string') {
-			result.visibleTexts.push(content);
+			pushCleanVisibleText(result, content);
 		} else if (content && typeof content === 'object') {
-			result.fallbackRaw = JSON.stringify(content, null, 2);
+			if (Array.isArray((content as any).dom_map)) {
+				result.domMapCounts.push((content as any).dom_map.length);
+			} else {
+				result.fallbackRaw = JSON.stringify(content, null, 2);
+			}
 		}
 
 		return result;
@@ -197,24 +394,43 @@
 		return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 	};
 
-	const scrollToBottom = async () => {
+	const scrollToBottom = async (smooth = true) => {
 		await tick();
 		if (feedContainer) {
-			feedContainer.scrollTop = feedContainer.scrollHeight;
+			feedContainer.scrollTo({
+				top: feedContainer.scrollHeight,
+				behavior: smooth ? 'smooth' : 'auto'
+			});
 		}
 	};
 
+	const handleFeedScroll = () => {
+		if (!feedContainer) return;
+		const distanceToBottom =
+			feedContainer.scrollHeight - feedContainer.scrollTop - feedContainer.clientHeight;
+		autoFollow = distanceToBottom <= 80;
+	};
+
+	const resumeAutoFollow = () => {
+		autoFollow = true;
+		void scrollToBottom(true);
+	};
+
 	$: {
-		const scrollKey = `${selectedSubSid}:${selectedSteps.length}:${selectedQueue.length}`;
-		if (activeTab === 'threads' && selectedSubSid && scrollKey !== lastScrolledKey) {
+		const lastStep = displayedSteps[displayedSteps.length - 1];
+		const scrollKey = `${selectedGroupId}:${participantFilter}:${displayedSteps.length}:${isStepPendingTools(lastStep) ? '1' : '0'}:${selectedQueue.length}:${toolCalls.length}`;
+		if (activeTab === 'threads' && selectedGroupId && scrollKey !== lastScrolledKey) {
 			lastScrolledKey = scrollKey;
-			void scrollToBottom();
+			if (autoFollow) {
+				void scrollToBottom(true);
+			}
 		}
 	}
 
 	const sendMessage = async () => {
 		const text = composerText.trim();
-		if (!text || !chatId || !isSavedChatId(chatId) || !selectedSubSid || sending) return;
+		const targetSid = composerTargetSubSid || selectedGroup?.member_sids[0] || '';
+		if (!text || !chatId || !isSavedChatId(chatId) || !targetSid || sending) return;
 		const token = localStorage?.token;
 		if (!token) {
 			toast.error('Session expirée : veuillez vous reconnecter.');
@@ -225,15 +441,16 @@
 		const previousText = composerText;
 		composerText = '';
 		try {
-			const res = await postEchoSubagentMessage(token, chatId, selectedSubSid, text);
+			const res = await postEchoSubagentMessage(token, chatId, targetSid, text);
 			if (res.status === 'queued') {
 				const count = res.queue_length ?? 1;
 				toast.info(`Message mis en file pour le prochain tour (${count} en attente).`);
 			} else {
 				toast.success('Message envoyé au sous-agent.');
 			}
+			autoFollow = true;
 			await refreshCognitionSnapshot(chatId);
-			await scrollToBottom();
+			await scrollToBottom(true);
 		} catch (e: any) {
 			composerText = previousText;
 			toast.error(e?.message || "Impossible d'envoyer le message au sous-agent.");
@@ -264,8 +481,24 @@
 				Sous-agents
 			</span>
 			<span class="text-[11px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-mono font-medium shrink-0">
-				{sortedSubSids.length} • {toolCalls.length} outil(s)
+				{groups.length} • {toolCalls.length} outil(s)
 			</span>
+			{#if activeTab === 'threads' && selectedGroup}
+				{#if autoFollow}
+					<span class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 shrink-0">
+						🔴 LIVE
+					</span>
+				{:else}
+					<button
+						type="button"
+						on:click={resumeAutoFollow}
+						class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition shrink-0"
+						title="Reprendre le suivi temps réel"
+					>
+						⏸️ Pause défilement
+					</button>
+				{/if}
+			{/if}
 		</div>
 
 		<div class="flex items-center gap-1 bg-gray-200/80 dark:bg-gray-800 p-0.5 rounded-lg text-xs font-medium shrink-0">
@@ -316,7 +549,7 @@
 			<div class="flex-1 flex flex-col items-center justify-center p-6 text-center text-gray-400 text-xs">
 				Démarrez une conversation pour consulter et piloter les sous-agents de la session.
 			</div>
-		{:else if sortedSubSids.length === 0}
+		{:else if groups.length === 0}
 			<div class="flex-1 flex flex-col items-center justify-center p-6 text-center text-gray-400 text-xs">
 				<svg class="w-8 h-8 mb-2 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
 					<circle cx="12" cy="12" r="10" />
@@ -325,141 +558,283 @@
 				Aucun sous-agent actif ou enregistré pour cette conversation.
 			</div>
 		{:else}
-			<!-- Sélecteur de sous-agent -->
-			<div class="px-4 py-2.5 border-b border-gray-200 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-850/60 flex items-center gap-2.5 shrink-0">
-				<span class="relative flex items-center justify-center w-2.5 h-2.5 shrink-0">
-					{#if selectedIsRunning}
-						<span class="absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping bg-emerald-500"></span>
-						<span class="relative inline-flex rounded-full w-2 h-2 bg-emerald-500"></span>
-					{:else}
-						<span class="relative inline-flex rounded-full w-2 h-2 bg-indigo-400"></span>
-					{/if}
-				</span>
-
-				<select
-					aria-label="Sélectionner un sous-agent"
-					value={selectedSubSid}
-					on:change={onSelectSubSid}
-					class="flex-1 min-w-0 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2.5 py-1.5 text-xs font-medium text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
-				>
-					{#each sortedSubSids as sid (sid)}
-						<option value={sid}>{getSubSidLabel(sid)}</option>
-					{/each}
-				</select>
-
-				{#if selectedQueue.length > 0}
-					<span class="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 font-medium shrink-0">
-						+{selectedQueue.length} en attente
+			<!-- Sélecteur de groupe / sous-agent + méta live -->
+			<div class="px-4 py-2.5 border-b border-gray-200 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-850/60 space-y-2 shrink-0">
+				<div class="flex items-center gap-2.5">
+					<span class="relative flex items-center justify-center w-2.5 h-2.5 shrink-0">
+						{#if selectedIsRunning}
+							<span class="absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping bg-emerald-500"></span>
+							<span class="relative inline-flex rounded-full w-2 h-2 bg-emerald-500"></span>
+						{:else}
+							<span class="relative inline-flex rounded-full w-2 h-2 bg-indigo-400"></span>
+						{/if}
 					</span>
+
+					<select
+						aria-label="Sélectionner un groupe ou sous-agent"
+						value={selectedGroupId}
+						on:change={onSelectGroup}
+						class="flex-1 min-w-0 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2.5 py-1.5 text-xs font-medium text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+					>
+						{#each groups as g (g.id)}
+							<option value={g.id}>{getGroupOptionLabel(g)}</option>
+						{/each}
+					</select>
+
+					{#if selectedQueue.length > 0}
+						<span class="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 font-medium shrink-0">
+							+{selectedQueue.length} en attente
+						</span>
+					{/if}
+				</div>
+
+				{#if selectedGroup}
+					<div class="flex flex-wrap items-center gap-1.5">
+						<span class="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full border {getAccentClass(selectedGroup.color)}">
+							<span>{selectedGroup.icon}</span>
+							<span class="truncate max-w-[200px]">{selectedGroup.display_label}</span>
+						</span>
+						<span class="text-[11px] px-2 py-0.5 rounded-full font-medium {selectedGroup.is_running
+							? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+							: 'bg-gray-200/70 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}">
+							{selectedGroup.is_running ? '⚡ En cours' : 'En attente'}
+						</span>
+						{#each selectedGroup.model_keys ?? [] as mk}
+							{@const badge = getEchoModelBadge(mk)}
+							{#if badge}
+								<span class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border {badge.badgeClass}">
+									<span>{badge.icon}</span>
+									<span>{badge.label}</span>
+								</span>
+							{/if}
+						{/each}
+					</div>
+
+					<!-- Filtre par participant pour les groupes multi-agents -->
+					{#if selectedGroup.member_sids.length > 1}
+						<div class="flex flex-wrap items-center gap-1 pt-0.5">
+							<button
+								type="button"
+								on:click={() => (participantFilter = 'all')}
+								class="text-[11px] px-2 py-0.5 rounded-full border transition {participantFilter === 'all'
+									? 'bg-indigo-600 text-white border-indigo-600'
+									: 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-indigo-400'}"
+							>
+								Tous ({rawGroupSteps.length})
+							</button>
+							{#each selectedGroup.member_sids as sid (sid)}
+								<button
+									type="button"
+									on:click={() => (participantFilter = sid)}
+									class="text-[11px] px-2 py-0.5 rounded-full border transition truncate max-w-[180px] {participantFilter === sid
+										? 'bg-indigo-600 text-white border-indigo-600'
+										: 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-indigo-400'}"
+								>
+									{getParticipantLabel(sid)}
+								</button>
+							{/each}
+						</div>
+					{/if}
 				{/if}
 			</div>
 
 			<!-- Fil des échanges -->
-			<div bind:this={feedContainer} class="flex-1 overflow-y-auto p-4 space-y-3">
-				{#if selectedSteps.length === 0}
-					<div class="flex items-center justify-center h-32 text-xs text-gray-400">
-						Démarrage du sous-agent en cours…
-					</div>
-				{:else}
-					{#each selectedSteps as step (`${selectedSubSid}:${step.step_index}`)}
-						{@const parsed = parseStepParts(step)}
-						{#if step.role === 'user'}
-							{#if step.origin === 'tool' && !step.clean_text && parsed.toolResponses.length > 0}
-								<!-- Retours d'outils discrets -->
-								<div class="flex flex-wrap items-center gap-1.5 px-1">
-									{#each parsed.toolResponses as tr}
-										<span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border border-gray-200/70 dark:border-gray-700/70">
-											<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-											Retour : {tr.name}
-										</span>
-									{/each}
-								</div>
-							{:else if step.origin === 'human'}
-								<!-- Message humain -->
-								<div class="rounded-xl p-3 bg-emerald-50/70 dark:bg-emerald-950/25 border border-emerald-200/80 dark:border-emerald-800/40 space-y-1.5">
-									<div class="flex items-center justify-between gap-2">
-										<span class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
-											Vous
-										</span>
-										<span class="text-[11px] text-gray-400 font-mono">
-											{formatTimestamp(step.updated_at)}
-										</span>
+			<div class="relative flex-1 min-h-0 flex flex-col">
+				<div
+					bind:this={feedContainer}
+					on:scroll={handleFeedScroll}
+					class="flex-1 overflow-y-auto p-4 space-y-3"
+				>
+					{#if displayedSteps.length === 0}
+						<div class="flex items-center justify-center h-32 text-xs text-gray-400">
+							Démarrage du sous-agent en cours…
+						</div>
+					{:else}
+						{#each displayedSteps as step (`${step.sub_sid}:${step.step_index}`)}
+							{@const parsed = parseStepParts(step)}
+							{@const stepModelBadge = getEchoModelBadge(step.model_key || threadMeta[step.sub_sid]?.model_key)}
+							{@const escalationBadge = getEchoModelBadge(step.escalation_target)}
+							{@const isMultiMember = (selectedGroup?.member_sids.length ?? 0) > 1}
+							{#if step.role === 'user'}
+								{#if step.origin === 'tool' && !step.clean_text && parsed.toolResponses.length > 0 && parsed.domMapCounts.length === 0}
+									<!-- Retours d'outils discrets -->
+									<div class="flex flex-wrap items-center gap-1.5 px-1">
+										{#each parsed.toolResponses as tr}
+											<span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border border-gray-200/70 dark:border-gray-700/70">
+												<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+												Retour : {tr.name}
+											</span>
+										{/each}
 									</div>
-									<div class="text-xs text-gray-800 dark:text-gray-100 whitespace-pre-wrap leading-relaxed">
-										{step.clean_text ?? parsed.visibleTexts.join('\n')}
-									</div>
-								</div>
-							{:else}
-								<!-- Directive orchestrateur -->
-								<div class="rounded-xl p-3 bg-indigo-50/70 dark:bg-indigo-950/25 border border-indigo-200/80 dark:border-indigo-800/40 space-y-1.5">
-									<div class="flex items-center justify-between gap-2">
-										<span class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-700 dark:text-indigo-300">
-											Orchestrateur
-										</span>
-										<span class="text-[11px] text-gray-400 font-mono">
-											{formatTimestamp(step.updated_at)}
-										</span>
-									</div>
-									{#if step.clean_text || parsed.visibleTexts.length > 0}
+								{:else if step.origin === 'human'}
+									<!-- Message humain -->
+									<div class="rounded-xl p-3 bg-emerald-50/70 dark:bg-emerald-950/25 border border-emerald-200/80 dark:border-emerald-800/40 space-y-1.5">
+										<div class="flex items-center justify-between gap-2">
+											<div class="flex items-center gap-1.5">
+												<span class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
+													Vous
+												</span>
+												{#if isMultiMember}
+													<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-200/70 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
+														→ {getParticipantLabel(step.sub_sid, step)}
+													</span>
+												{/if}
+											</div>
+											<span class="text-[11px] text-gray-400 font-mono">
+												{formatTimestamp(step.updated_at)}
+											</span>
+										</div>
 										<div class="text-xs text-gray-800 dark:text-gray-100 whitespace-pre-wrap leading-relaxed">
 											{step.clean_text ?? parsed.visibleTexts.join('\n')}
 										</div>
+									</div>
+								{:else}
+									<!-- Directive orchestrateur -->
+									<div class="rounded-xl p-3 bg-indigo-50/70 dark:bg-indigo-950/25 border border-indigo-200/80 dark:border-indigo-800/40 space-y-1.5">
+										<div class="flex items-center justify-between gap-2">
+											<div class="flex items-center gap-1.5">
+												<span class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-700 dark:text-indigo-300">
+													Orchestrateur
+												</span>
+												{#if isMultiMember}
+													<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-300">
+														→ {getParticipantLabel(step.sub_sid, step)}
+													</span>
+												{/if}
+											</div>
+											<span class="text-[11px] text-gray-400 font-mono">
+												{formatTimestamp(step.updated_at)}
+											</span>
+										</div>
+										{#if step.clean_text || parsed.visibleTexts.length > 0}
+											<div class="text-xs text-gray-800 dark:text-gray-100 whitespace-pre-wrap leading-relaxed">
+												{step.clean_text ?? parsed.visibleTexts.join('\n')}
+											</div>
+										{/if}
+										{#if parsed.domMapCounts.length > 0}
+											<div class="flex flex-wrap gap-1.5">
+												{#each parsed.domMapCounts as domCount}
+													<span class="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 border border-cyan-500/20 font-mono">
+														[Carte DOM : {domCount} éléments]
+													</span>
+												{/each}
+											</div>
+										{/if}
+										{#if parsed.toolResponses.length > 0}
+											<div class="flex flex-wrap gap-1.5 pt-1">
+												{#each parsed.toolResponses as tr}
+													<span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-white/80 dark:bg-gray-900/70 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700">
+														Retour : {tr.name}
+													</span>
+												{/each}
+											</div>
+										{/if}
+									</div>
+								{/if}
+							{:else}
+								<!-- Réponse du sous-agent (model) -->
+								<div
+									class="rounded-xl p-3 space-y-2 border {step.is_question
+										? 'bg-amber-50/60 dark:bg-amber-950/20 border-amber-300 dark:border-amber-700/60'
+										: 'bg-gray-50 dark:bg-gray-850 border-gray-200 dark:border-gray-800'}"
+								>
+									<div class="flex items-center justify-between gap-2 flex-wrap">
+										<div class="flex items-center gap-1.5 flex-wrap">
+											<span class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200">
+												{getParticipantLabel(step.sub_sid, step)}
+											</span>
+											{#if stepModelBadge}
+												<span class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border {stepModelBadge.badgeClass}">
+													<span>{stepModelBadge.icon}</span>
+													<span>{stepModelBadge.label}</span>
+												</span>
+											{/if}
+											{#if step.is_question}
+												<span class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-800 dark:text-amber-300 border border-amber-500/30">
+													❓ Question
+												</span>
+											{/if}
+										</div>
+										<span class="text-[11px] text-gray-400 font-mono">
+											{formatTimestamp(step.updated_at)}
+										</span>
+									</div>
+
+									{#if step.escalation_target}
+										<div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/25 text-[11px] text-purple-700 dark:text-purple-300 font-medium">
+											<span>Transition cognitive →</span>
+											{#if escalationBadge}
+												<span class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border {escalationBadge.badgeClass}">
+													<span>{escalationBadge.icon}</span>
+													<span>{escalationBadge.label}</span>
+												</span>
+											{:else}
+												<span class="font-mono">{step.escalation_target}</span>
+											{/if}
+										</div>
 									{/if}
-									{#if parsed.toolResponses.length > 0}
-										<div class="flex flex-wrap gap-1.5 pt-1">
-											{#each parsed.toolResponses as tr}
-												<span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-white/80 dark:bg-gray-900/70 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700">
-													Retour : {tr.name}
+
+									{#if parsed.thoughtTexts.length > 0}
+										<details class="rounded-lg bg-white/70 dark:bg-gray-900/60 border border-gray-200/70 dark:border-gray-800 text-[11px]">
+											<summary class="cursor-pointer select-none px-2.5 py-1.5 text-gray-500 dark:text-gray-400 font-medium hover:text-gray-700 dark:hover:text-gray-200">
+												Réflexion interne
+											</summary>
+											<div class="px-2.5 pb-2 pt-1 text-gray-600 dark:text-gray-300 whitespace-pre-wrap leading-relaxed border-t border-gray-100 dark:border-gray-800">
+												{parsed.thoughtTexts.join('\n\n')}
+											</div>
+										</details>
+									{/if}
+
+									{#if parsed.visibleTexts.length > 0}
+										<div class="text-xs text-gray-800 dark:text-gray-100 whitespace-pre-wrap leading-relaxed">
+											{parsed.visibleTexts.join('\n')}
+										</div>
+									{:else if parsed.fallbackRaw}
+										<pre class="font-mono text-[11px] overflow-x-auto p-2 bg-white dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-800">{parsed.fallbackRaw}</pre>
+									{/if}
+
+									{#if parsed.domMapCounts.length > 0}
+										<div class="flex flex-wrap gap-1.5">
+											{#each parsed.domMapCounts as domCount}
+												<span class="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 border border-cyan-500/20 font-mono">
+													[Carte DOM : {domCount} éléments]
 												</span>
 											{/each}
 										</div>
 									{/if}
+
+									{#if parsed.toolCalls.length > 0}
+										{@const pendingTools = isStepPendingTools(step)}
+										<div class="flex flex-wrap items-center gap-1.5 pt-0.5">
+											{#each parsed.toolCalls as tc}
+												<span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-700 dark:text-purple-300 border border-purple-500/20 font-mono">
+													<span class="w-1.5 h-1.5 rounded-full bg-purple-500 {pendingTools ? 'animate-ping' : ''}"></span>
+													{tc.name}
+												</span>
+											{/each}
+											{#if pendingTools}
+												<span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 animate-pulse font-medium">
+													⚙️ Exécution en cours...
+												</span>
+											{/if}
+										</div>
+									{/if}
 								</div>
 							{/if}
-						{:else}
-							<!-- Réponse du sous-agent (model) -->
-							<div class="rounded-xl p-3 bg-gray-50 dark:bg-gray-850 border border-gray-200 dark:border-gray-800 space-y-2">
-								<div class="flex items-center justify-between gap-2">
-									<span class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200">
-										{selectedRoleLabel}
-									</span>
-									<span class="text-[11px] text-gray-400 font-mono">
-										{formatTimestamp(step.updated_at)}
-									</span>
-								</div>
+						{/each}
+					{/if}
+				</div>
 
-								{#if parsed.thoughtTexts.length > 0}
-									<details class="rounded-lg bg-white/70 dark:bg-gray-900/60 border border-gray-200/70 dark:border-gray-800 text-[11px]">
-										<summary class="cursor-pointer select-none px-2.5 py-1.5 text-gray-500 dark:text-gray-400 font-medium hover:text-gray-700 dark:hover:text-gray-200">
-											Réflexion interne
-										</summary>
-										<div class="px-2.5 pb-2 pt-1 text-gray-600 dark:text-gray-300 whitespace-pre-wrap leading-relaxed border-t border-gray-100 dark:border-gray-800">
-											{parsed.thoughtTexts.join('\n\n')}
-										</div>
-									</details>
-								{/if}
-
-								{#if parsed.visibleTexts.length > 0}
-									<div class="text-xs text-gray-800 dark:text-gray-100 whitespace-pre-wrap leading-relaxed">
-										{parsed.visibleTexts.join('\n')}
-									</div>
-								{:else if parsed.fallbackRaw}
-									<pre class="font-mono text-[11px] overflow-x-auto p-2 bg-white dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-800">{parsed.fallbackRaw}</pre>
-								{/if}
-
-								{#if parsed.toolCalls.length > 0}
-									<div class="flex flex-wrap gap-1.5 pt-0.5">
-										{#each parsed.toolCalls as tc}
-											<span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-700 dark:text-purple-300 border border-purple-500/20 font-mono">
-												<span class="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
-												{tc.name}
-											</span>
-										{/each}
-									</div>
-								{/if}
-							</div>
-						{/if}
-					{/each}
+				{#if !autoFollow}
+					<div class="pointer-events-none absolute bottom-3 left-0 right-0 flex justify-center">
+						<button
+							type="button"
+							on:click={resumeAutoFollow}
+							class="pointer-events-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-900/90 dark:bg-gray-100/95 text-white dark:text-gray-900 shadow-lg hover:scale-[1.02] transition"
+						>
+							🔴 Reprendre le suivi temps réel
+						</button>
+					</div>
 				{/if}
 			</div>
 
@@ -470,9 +845,12 @@
 						<span>File d'attente ({selectedQueue.length}) — envoi au prochain tour</span>
 					</div>
 					<div class="space-y-1 max-h-24 overflow-y-auto">
-						{#each selectedQueue as qMsg, idx (qMsg.id ?? idx)}
+						{#each selectedQueue as item, idx (item.msg.id ?? `${item.sid}:${idx}`)}
 							<div class="text-xs text-amber-900 dark:text-amber-100 bg-white/70 dark:bg-gray-900/50 rounded-lg px-2 py-1 border border-amber-200/70 dark:border-amber-800/40 whitespace-pre-wrap">
-								{qMsg.content}
+								{#if (selectedGroup?.member_sids.length ?? 0) > 1}
+									<span class="font-semibold text-[10px] mr-1">[{getParticipantLabel(item.sid)}]</span>
+								{/if}
+								{item.msg.content}
 							</div>
 						{/each}
 					</div>
@@ -480,14 +858,29 @@
 			{/if}
 
 			<!-- Compositeur interactif -->
-			<div class="p-3 border-t border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-850/70 shrink-0">
+			<div class="p-3 border-t border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-850/70 shrink-0 space-y-2">
+				{#if selectedGroup && selectedGroup.member_sids.length > 1}
+					<div class="flex items-center gap-2 text-[11px]">
+						<span class="text-gray-500 dark:text-gray-400 shrink-0">Destinataire :</span>
+						<select
+							aria-label="Choisir le membre destinataire"
+							bind:value={composerTargetSubSid}
+							class="flex-1 min-w-0 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 text-[11px] font-medium text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
+						>
+							{#each selectedGroup.member_sids as sid (sid)}
+								<option value={sid}>{getParticipantLabel(sid)}</option>
+							{/each}
+						</select>
+					</div>
+				{/if}
+
 				<div class="flex items-end gap-2">
 					<textarea
 						bind:value={composerText}
 						on:keydown={handleComposerKeydown}
 						rows="2"
 						disabled={sending}
-						placeholder={selectedIsRunning
+						placeholder={targetIsRunning
 							? 'Envoyer une consigne (mise en file pour le prochain tour)...'
 							: 'Envoyer une consigne directe au sous-agent...'}
 						class="flex-1 resize-none rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-800 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 disabled:opacity-50"
@@ -508,7 +901,7 @@
 						Envoyer
 					</button>
 				</div>
-				<div class="mt-1 text-[10px] text-gray-400">
+				<div class="text-[10px] text-gray-400">
 					Entrée pour envoyer · Maj+Entrée pour nouvelle ligne
 				</div>
 			</div>
