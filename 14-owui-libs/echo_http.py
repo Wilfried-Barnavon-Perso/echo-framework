@@ -2,11 +2,12 @@
 """
 title: ECHO Echo Http
 author: Wilfried BARNAVON
-version: 5.231.59.1
+version: 5.239.16.1
 description: Client HTTP bas niveau (H2). Utilisation de l'UA furtif global.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.16.1: Suppression de la fermeture destructive old_client.aclose() sur inactivité dans _get_global_client pour prévenir la clôture de requêtes longues en vol.
 # 5.231.59.1: Factorisation de load_image_as_base64 (encapsulation pybase64 locale/distante avec garde SSRF, sniff_image_mime et option disallow_svg).
 # 5.231.49.1: Factorisation de is_safe_public_url (garde SSRF IPv4/IPv6), sniff_image_mime (magic bytes) et extract_url_filename.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
@@ -54,14 +55,6 @@ async def _get_global_client(
     keepalive_expiry = keepalive_expiry or ECHO_HTTP_KEEPALIVE_EXPIRY
 
     now = time.time()
-
-    if _SHARED_ASYNC_CLIENT and (now - _LAST_CLIENT_ACCESS > timeout):
-        old_client = _SHARED_ASYNC_CLIENT
-        _SHARED_ASYNC_CLIENT = None
-        try:
-            await old_client.aclose()
-        except Exception:
-            pass
 
     if _SHARED_ASYNC_CLIENT is None or _SHARED_ASYNC_CLIENT.is_closed:
         limits = httpx.Limits(

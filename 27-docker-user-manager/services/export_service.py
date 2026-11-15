@@ -2,11 +2,12 @@
 """
 ================================================================================
 MODULE : ECHO USER MANAGER - DATA EXPORT SERVICE (TAR.XZ)
-VERSION : 5.237.5.1
+VERSION : 5.237.20.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.20.1: Décodage JSON natif de full_parts_json (message_shadows) et content_json (cognitive_threads) dans dump_sqlite_db_to_json.
 # 5.237.5.1: Sanctuarisation de l'archive pendant le téléchargement (is_downloading),
 #            purge conditionnée au succès strict à 100% et exposition de expires_at.
 # 5.237.2.2: Priorité système minimale (nice 19, ionice idle c3, XZ_OPT="-T2 -1", IDLE_PRIORITY_CLASS) et régulation I/O.
@@ -442,7 +443,7 @@ def dump_sqlite_db_to_json(db_path: str, redact_tables: set[str] | None = None) 
                                 d[k] = v.hex()
                         _try_parse_json_fields(
                             d,
-                            ("payload", "value", "metadata", "args_json", "result_json"),
+                            ("payload", "value", "metadata", "args_json", "result_json", "full_parts_json", "content_json"),
                         )
                         tbl_rows.append(d)
                     result[tbl] = tbl_rows

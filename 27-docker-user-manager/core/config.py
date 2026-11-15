@@ -2,11 +2,12 @@
 """
 ================================================================================
 MODULE : ECHO USER MANAGER - CORE CONFIG
-VERSION : 5.236.5.1
+VERSION : 5.239.2.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.2.1: Alignement de DEFAULT_AUTH_SETTINGS (login_retry_delay_sec, unenrolled_max_attempts, unenrolled_lockout_min).
 # 5.236.5.1: Création initiale de la configuration centrale du User Manager.
 
 import os
@@ -82,4 +83,7 @@ DEFAULT_AUTH_SETTINGS = {
     "totp_tolerance": 1,
     "untrusted_session_timeout": 24,
     "session_timeout": 2160,
+    "login_retry_delay_sec": 5,
+    "unenrolled_max_attempts": 5,
+    "unenrolled_lockout_min": 10,
 }

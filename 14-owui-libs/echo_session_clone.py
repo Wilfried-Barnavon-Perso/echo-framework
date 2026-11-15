@@ -1,25 +1,27 @@
 """
 title: ECHO Session Clone & Migration Engine
 author: Wilfried BARNAVON
-version: 5.235.5.2
+version: 5.239.13.1
 description: Moteur partagé de duplication atomique des conteneurs de session ECHO (Clone, Fork et Migration).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.13.1: duplicate_session_rag fiabilisé : retries bornés (_qdrant_call : réseau, 429, 5xx), upsert par lots de 64, comptage de contrôle exact et retour structuré RagCloneReport.
+# 5.239.12.1: Purge de wm_state dans purge_conversational_state, ré-ancrage des ressources actives (_reanchor_resumed_resources) et des vecteurs conversationnels RAG (anchor_msg_id).
+# 5.237.20.3: Alignement généalogique strict de ancestor_msg_ids sur live_msg_ids dans prune_forked_history.
+# 5.237.20.2: Simplification de prune_forked_history et sync_cloned_session sur message_shadows v2 (support tuple/Row et lecture directe model_id).
 # 5.235.5.2: Purge arborescente exacte via compute_dead_set + purge_dead_set, support live_ids dans sync_cloned_session et duplication RAG filtrée.
-# 5.232.5.1: Alignement Git multi-workspaces (main, plans, generated) au cutoff, réécriture frontmatter dans plans et élagage mtime des workspaces non-versionnés.
-# 5.231.29.1: Alignement sur les constantes SSOT des espaces de travail Codex (CODEX_DIR_NAME, CODEX_WORKSPACE_MAIN, CODEX_WORKSPACE_SANDBOX).
-# 5.231.28.2: Suppression des requêtes SQLite sur les tables obsolètes plans et codex_docs (unification sur echo_resources).
-# 5.231.27.2: Refonte clonage/fork (résolution causale, copie Espace Utilisateur/RAG <= cutoff_ts, réassignation ID).
 
 from contextlib import closing
+import asyncio
+import json
 import logging
 import os
 import re
 import shutil
 import sqlite3
 import time
-from typing import Callable, List, Optional, Set, Tuple
+from typing import Callable, List, NamedTuple, Optional, Set, Tuple
 import uuid
 
 from echo_constants import (
@@ -29,6 +31,7 @@ from echo_constants import (
     COLLECTION_SESSION_RAG,
     ECHO_CODEX_WORKSPACES,
     ECHO_QDRANT_URL,
+    SESSION_RAG_CONVERSATION_SOURCE_ID,
     is_codex_workspace_versioned,
 )
 from echo_paths import get_echo_session_path
@@ -51,9 +54,7 @@ def _is_session_db_populated(db_path: str) -> bool:
         with closing(sqlite3.connect(db_path, timeout=5.0)) as conn:
             cur = conn.cursor()
             for tbl in (
-                "suture_index",
                 "message_shadows",
-                "cognitive_signatures",
                 "call_bridge",
                 "echo_resources",
             ):
@@ -105,7 +106,7 @@ def reassign_session_ids(cur: sqlite3.Cursor, orig_cid: str, new_cid: str) -> No
         pass
 
     for tbl, col in (
-        ("tool_journal", "io_json"),
+        ("message_shadows", "full_parts_json"),
         ("call_bridge", "args_json"),
         ("cognitive_threads", "content_json"),
     ):
@@ -128,7 +129,7 @@ def reassign_session_ids(cur: sqlite3.Cursor, orig_cid: str, new_cid: str) -> No
         except Exception:
             pass
         for tbl, col in (
-            ("tool_journal", "io_json"),
+            ("message_shadows", "full_parts_json"),
             ("call_bridge", "args_json"),
             ("cognitive_threads", "content_json"),
         ):
@@ -160,10 +161,7 @@ def reassign_session_ids(cur: sqlite3.Cursor, orig_cid: str, new_cid: str) -> No
 def purge_conversational_state(cur: sqlite3.Cursor) -> None:
     """Purge l'état conversationnel d'une session migrée en préservant les ressources (Codex, Plans, Fichiers, N8N)."""
     for tbl in (
-        "suture_index",
         "message_shadows",
-        "cognitive_signatures",
-        "tool_journal",
         "rag_index_state",
         "call_bridge",
         "cognitive_threads",
@@ -184,9 +182,47 @@ def purge_conversational_state(cur: sqlite3.Cursor) -> None:
         cur.execute(
             "DELETE FROM echo_settings WHERE key IN ("
             "'context_stats', 'previous_context_stats', 'last_model_id', "
-            "'last_active_model', 'turn_origin_model', 'compaction_state', 'context_checkpoint') "
+            "'last_active_model', 'turn_origin_model', 'compaction_state', "
+            "'context_checkpoint', 'wm_state') "
             "OR key LIKE 'aec_tier_%' OR key LIKE 'cascade_%'"
         )
+    except Exception:
+        pass
+
+
+def _reanchor_resumed_resources(
+    cur: sqlite3.Cursor,
+    live_msg_ids: Optional[Set[str]],
+    anchor_msg_id: Optional[str],
+) -> None:
+    """Rattache au message d'ancrage de la session migrée les ressources de la branche active."""
+    if not anchor_msg_id:
+        return
+    try:
+        cur.execute(
+            "SELECT id, message_id, metadata FROM echo_resources "
+            "WHERE message_id IS NOT NULL AND message_id != ''"
+        )
+        rows = cur.fetchall()
+        for row in rows:
+            rid = row["id"] if isinstance(row, (sqlite3.Row, dict)) else row[0]
+            mid = row["message_id"] if isinstance(row, (sqlite3.Row, dict)) else row[1]
+            raw_meta = row["metadata"] if isinstance(row, (sqlite3.Row, dict)) else row[2]
+            if live_msg_ids is not None and str(mid) not in live_msg_ids:
+                continue
+            new_meta = raw_meta
+            if isinstance(raw_meta, str) and raw_meta.strip():
+                try:
+                    meta_obj = json.loads(raw_meta)
+                    if isinstance(meta_obj, dict) and "message_id" in meta_obj:
+                        meta_obj["message_id"] = anchor_msg_id
+                        new_meta = json.dumps(meta_obj, ensure_ascii=False)
+                except Exception:
+                    pass
+            cur.execute(
+                "UPDATE echo_resources SET message_id = ?, metadata = ? WHERE id = ?",
+                (anchor_msg_id, new_meta, rid),
+            )
     except Exception:
         pass
 
@@ -199,256 +235,101 @@ def prune_forked_history(
     """Résout la chaîne causale jusqu'à forked_msg_id et élague les tables SQLite si le fork est partiel.
     Retourne (cutoff_ts, is_partial_fork)."""
     cur.execute(
-        "SELECT cumulative_hash, parent_hash, message_id, timestamp FROM suture_index"
-    )
-    suture_rows = cur.fetchall()
-    by_cumul = {r["cumulative_hash"]: r for r in suture_rows}
-
-    cur.execute(
-        "SELECT cumulative_hash, message_id, updated_at FROM cognitive_signatures"
-    )
-    all_sig_rows = cur.fetchall()
-
-    cur.execute(
         "SELECT message_id, role, full_parts_json, updated_at FROM message_shadows"
     )
-    all_shadow_rows = cur.fetchall()
-    shadow_by_id = {r["message_id"]: r for r in all_shadow_rows if r["message_id"]}
+    raw_rows = cur.fetchall()
+    shadow_by_id = {}
+    for r in raw_rows:
+        if isinstance(r, (sqlite3.Row, dict)):
+            mid, role, fpj, uat = r["message_id"], r["role"], r["full_parts_json"], r["updated_at"]
+        else:
+            mid, role, fpj, uat = r[0], r[1], r[2], r[3]
+        if mid:
+            shadow_by_id[str(mid)] = {
+                "message_id": str(mid),
+                "role": role,
+                "full_parts_json": fpj,
+                "updated_at": uat,
+            }
+    all_shadow_rows = list(shadow_by_id.values())
 
-    cur.execute("SELECT cumulative_hash, io_json, updated_at FROM tool_journal")
-    all_journal_rows = cur.fetchall()
-    journal_by_cumul = {
-        r["cumulative_hash"]: r for r in all_journal_rows if r["cumulative_hash"]
-    }
-
-    target_sig_rows = [r for r in all_sig_rows if r["message_id"] == forked_msg_id]
     target_shadow = shadow_by_id.get(forked_msg_id)
-    target_suture_rows = [r for r in suture_rows if r["message_id"] == forked_msg_id]
-
     is_user_only_fork = (
-        not target_sig_rows
-        and target_shadow is not None
-        and target_shadow["role"] == "user"
+        target_shadow is not None and target_shadow["role"] == "user"
     )
 
     cutoff_candidates: List[int] = []
-    target_cumuls: Set[str] = set()
-    target_msg_ids: Set[str] = {forked_msg_id}
+    if target_shadow and target_shadow["updated_at"]:
+        cutoff_candidates.append(int(target_shadow["updated_at"]))
 
-    if is_user_only_fork:
-        cutoff_candidates.append(int(target_shadow["updated_at"] or 0))
-    else:
-        for r in target_sig_rows:
-            if r["cumulative_hash"]:
-                target_cumuls.add(r["cumulative_hash"])
-            if r["updated_at"]:
-                cutoff_candidates.append(int(r["updated_at"]))
-        for r in target_suture_rows:
-            if r["cumulative_hash"]:
-                target_cumuls.add(r["cumulative_hash"])
-            if r["timestamp"]:
-                cutoff_candidates.append(int(r["timestamp"]))
-        if target_shadow and target_shadow["updated_at"]:
-            cutoff_candidates.append(int(target_shadow["updated_at"]))
-
-        for ch in list(target_cumuls):
-            s_node = by_cumul.get(ch)
-            if s_node:
-                if s_node["timestamp"]:
-                    cutoff_candidates.append(int(s_node["timestamp"]))
-                if s_node["message_id"]:
-                    target_msg_ids.add(s_node["message_id"])
-                    for sr in suture_rows:
-                        if (
-                            sr["message_id"] == s_node["message_id"]
-                            and sr["cumulative_hash"]
-                        ):
-                            target_cumuls.add(sr["cumulative_hash"])
-                            if sr["timestamp"]:
-                                cutoff_candidates.append(int(sr["timestamp"]))
-
-        for mid in list(target_msg_ids):
-            sh_row = shadow_by_id.get(mid)
-            if sh_row and sh_row["updated_at"]:
-                cutoff_candidates.append(int(sh_row["updated_at"]))
-
-        target_call_ids: Set[str] = set()
-        for ch in target_cumuls:
-            j_row = journal_by_cumul.get(ch)
-            if j_row:
-                if j_row["updated_at"]:
-                    cutoff_candidates.append(int(j_row["updated_at"]))
-                target_call_ids |= _extract_call_ids_from_json(j_row["io_json"])
-        for mid in target_msg_ids:
-            sh_row = shadow_by_id.get(mid)
-            if sh_row:
-                target_call_ids |= _extract_call_ids_from_json(
-                    sh_row["full_parts_json"]
-                )
-
+    if not is_user_only_fork:
+        target_call_ids: Set[str] = (
+            _extract_call_ids_from_json(target_shadow["full_parts_json"])
+            if (target_shadow and target_shadow["full_parts_json"])
+            else set()
+        )
         if target_call_ids:
             ph_cb = ",".join("?" for _ in target_call_ids)
             cur.execute(
-                f"SELECT MAX(timestamp) as max_cb FROM call_bridge WHERE call_id IN ({ph_cb})",
-                tuple(target_call_ids),
+                f"SELECT MAX(timestamp) as max_cb FROM call_bridge WHERE message_id = ? OR call_id IN ({ph_cb})",
+                (forked_msg_id, *tuple(target_call_ids)),
             )
-            row_cb = cur.fetchone()
-            if row_cb and row_cb["max_cb"]:
-                cutoff_candidates.append(int(row_cb["max_cb"]))
+        else:
+            cur.execute(
+                "SELECT MAX(timestamp) as max_cb FROM call_bridge WHERE message_id = ?",
+                (forked_msg_id,),
+            )
+        row_cb = cur.fetchone()
+        if row_cb:
+            val_cb = row_cb["max_cb"] if (isinstance(row_cb, sqlite3.Row) or isinstance(row_cb, dict)) else row_cb[0]
+            if val_cb is not None:
+                cutoff_candidates.append(int(val_cb))
 
-    if not cutoff_candidates and not target_cumuls:
+    if not cutoff_candidates:
         return None, False
 
-    cutoff_ts = max(cutoff_candidates) if cutoff_candidates else None
+    cutoff_ts = max(cutoff_candidates)
 
-    ancestor_cumuls: Set[str] = set(target_cumuls)
-    ancestor_msg_ids: Set[str] = set(target_msg_ids)
-    excluded_cumuls: Set[str] = {
-        r["cumulative_hash"]
-        for r in suture_rows
-        if is_user_only_fork
-        and r["message_id"] == forked_msg_id
-        and r["cumulative_hash"]
-    }
-    excluded_msg_ids: Set[str] = {
-        r["message_id"]
-        for r in all_sig_rows
-        if is_user_only_fork
-        and r["cumulative_hash"] in excluded_cumuls
-        and r["message_id"]
-    }
-
-    if cutoff_ts is not None:
-        for sr in suture_rows:
-            sr_ts = int(sr["timestamp"] or 0)
-            if sr_ts <= cutoff_ts and sr["cumulative_hash"] not in excluded_cumuls:
-                if sr["cumulative_hash"]:
-                    ancestor_cumuls.add(sr["cumulative_hash"])
-                if sr["message_id"]:
-                    ancestor_msg_ids.add(sr["message_id"])
-
-        for sig_r in all_sig_rows:
-            if (
-                sig_r["cumulative_hash"] in excluded_cumuls
-                or sig_r["message_id"] in excluded_msg_ids
-            ):
-                continue
-            sig_ts = int(sig_r["updated_at"] or 0)
-            if (
-                sig_ts <= cutoff_ts
-                or sig_r["cumulative_hash"] in ancestor_cumuls
-                or (not is_user_only_fork and sig_r["message_id"] in ancestor_msg_ids)
-            ):
-                if (
-                    is_user_only_fork
-                    and sig_r["cumulative_hash"] not in ancestor_cumuls
-                    and sig_r["message_id"] != forked_msg_id
-                ):
-                    continue
-                if sig_r["cumulative_hash"]:
-                    ancestor_cumuls.add(sig_r["cumulative_hash"])
-                if sig_r["message_id"]:
-                    ancestor_msg_ids.add(sig_r["message_id"])
-
-        for sr in suture_rows:
-            if sr["cumulative_hash"] in excluded_cumuls:
-                continue
-            if sr["cumulative_hash"] in ancestor_cumuls and sr["message_id"]:
-                ancestor_msg_ids.add(sr["message_id"])
-            elif (
-                not is_user_only_fork
-                and sr["message_id"] in ancestor_msg_ids
-                and sr["cumulative_hash"]
-            ):
-                ancestor_cumuls.add(sr["cumulative_hash"])
-
-        for sig_r in all_sig_rows:
-            if (
-                sig_r["cumulative_hash"] in excluded_cumuls
-                or sig_r["message_id"] in excluded_msg_ids
-            ):
-                continue
-            if sig_r["cumulative_hash"] in ancestor_cumuls and sig_r["message_id"]:
-                ancestor_msg_ids.add(sig_r["message_id"])
-            elif sig_r["message_id"] in ancestor_msg_ids and sig_r["cumulative_hash"]:
-                ancestor_cumuls.add(sig_r["cumulative_hash"])
-
+    if live_msg_ids is not None:
+        ancestor_msg_ids: Set[str] = {str(m) for m in live_msg_ids if m} | {forked_msg_id}
+    else:
+        ancestor_msg_ids = {forked_msg_id}
         for sh_r in all_shadow_rows:
-            if sh_r["message_id"] in excluded_msg_ids or (
+            sh_mid = sh_r["message_id"]
+            sh_ts = int(sh_r["updated_at"] or 0)
+            if (
                 is_user_only_fork
                 and sh_r["role"] != "user"
-                and sh_r["message_id"] not in ancestor_msg_ids
+                and sh_ts >= cutoff_ts
+                and sh_mid != forked_msg_id
             ):
                 continue
-            sh_ts = int(sh_r["updated_at"] or 0)
-            if sh_ts <= cutoff_ts or sh_r["message_id"] in ancestor_msg_ids:
-                if sh_r["message_id"]:
-                    ancestor_msg_ids.add(sh_r["message_id"])
-                if not is_user_only_fork and sh_ts > cutoff_ts:
-                    cutoff_ts = sh_ts
+            elif sh_ts <= cutoff_ts and sh_mid:
+                ancestor_msg_ids.add(sh_mid)
 
     kept_call_ids: Set[str] = set()
-    for ch in ancestor_cumuls:
-        j_row = journal_by_cumul.get(ch)
-        if j_row:
-            kept_call_ids |= _extract_call_ids_from_json(j_row["io_json"])
     for mid in ancestor_msg_ids:
         sh_row = shadow_by_id.get(mid)
-        if sh_row:
+        if sh_row and sh_row["full_parts_json"]:
             kept_call_ids |= _extract_call_ids_from_json(sh_row["full_parts_json"])
 
-    has_unkept_suture = any(
-        sr["cumulative_hash"] not in ancestor_cumuls for sr in suture_rows
-    )
-    has_unkept_sigs = any(
-        sig_r["cumulative_hash"] not in ancestor_cumuls
-        and sig_r["message_id"] not in ancestor_msg_ids
-        for sig_r in all_sig_rows
-    )
     has_unkept_shadows = any(
         sh_r["message_id"] not in ancestor_msg_ids for sh_r in all_shadow_rows
     )
 
-    if live_msg_ids:
-        effective_live = set(live_msg_ids) - excluded_msg_ids
+    if live_msg_ids is not None:
+        effective_live = set(live_msg_ids)
         dead = compute_dead_set(cur.connection, effective_live, float("inf"))
-        has_user_only_suture = bool(
-            is_user_only_fork
-            and any(r["message_id"] == forked_msg_id for r in suture_rows)
-        )
-        has_temporal_unkept = has_unkept_suture or has_unkept_sigs or has_unkept_shadows
         is_partial_fork = bool(
             dead.message_ids
-            or dead.cumuls
             or dead.call_ids
             or dead.rag_seeds
-            or has_user_only_suture
-            or has_temporal_unkept
+            or has_unkept_shadows
         )
         if not is_partial_fork:
             return cutoff_ts, False
 
         purge_dead_set(cur.connection, dead, dry_run=False)
-
-        if is_user_only_fork and excluded_cumuls:
-            ph_ex = ",".join("?" for _ in excluded_cumuls)
-            cur.execute(
-                f"DELETE FROM suture_index WHERE cumulative_hash IN ({ph_ex})",
-                tuple(excluded_cumuls),
-            )
-            cur.execute(
-                f"DELETE FROM tool_journal WHERE cumulative_hash IN ({ph_ex})",
-                tuple(excluded_cumuls),
-            )
-            cur.execute(
-                f"DELETE FROM cognitive_signatures WHERE cumulative_hash IN ({ph_ex})",
-                tuple(excluded_cumuls),
-            )
-        if is_user_only_fork:
-            cur.execute(
-                "DELETE FROM suture_index WHERE message_id = ?",
-                (forked_msg_id,),
-            )
 
         kept_call_ids -= dead.call_ids
         if cutoff_ts is not None:
@@ -472,27 +353,8 @@ def prune_forked_history(
                 cur.execute("DELETE FROM call_bridge WHERE timestamp > ?", (cutoff_ts,))
         return cutoff_ts, True
 
-    is_partial_fork = has_unkept_suture or has_unkept_sigs or has_unkept_shadows
-
-    if not is_partial_fork:
+    if not has_unkept_shadows:
         return cutoff_ts, False
-
-    if ancestor_cumuls:
-        ph_c = ",".join("?" for _ in ancestor_cumuls)
-        cur.execute(
-            f"DELETE FROM suture_index WHERE cumulative_hash NOT IN ({ph_c})",
-            tuple(ancestor_cumuls),
-        )
-        cur.execute(
-            f"DELETE FROM tool_journal WHERE cumulative_hash NOT IN ({ph_c})",
-            tuple(ancestor_cumuls),
-        )
-    elif is_user_only_fork:
-        cur.execute("DELETE FROM suture_index")
-        cur.execute("DELETE FROM tool_journal")
-    elif cutoff_ts is not None:
-        cur.execute("DELETE FROM suture_index WHERE timestamp > ?", (cutoff_ts,))
-        cur.execute("DELETE FROM tool_journal WHERE updated_at > ?", (cutoff_ts,))
 
     if ancestor_msg_ids:
         ph_m = ",".join("?" for _ in ancestor_msg_ids)
@@ -504,22 +366,9 @@ def prune_forked_history(
             f"DELETE FROM rag_index_state WHERE message_id NOT IN ({ph_m})",
             tuple(ancestor_msg_ids),
         )
-        cur.execute(
-            f"DELETE FROM cognitive_signatures WHERE message_id NOT IN ({ph_m})"
-            + (
-                f" AND cumulative_hash NOT IN ({','.join('?' for _ in ancestor_cumuls)})"
-                if ancestor_cumuls
-                else ""
-            ),
-            tuple(ancestor_msg_ids)
-            + (tuple(ancestor_cumuls) if ancestor_cumuls else ()),
-        )
     elif cutoff_ts is not None:
         cur.execute("DELETE FROM message_shadows WHERE updated_at > ?", (cutoff_ts,))
         cur.execute("DELETE FROM rag_index_state WHERE embedded_at > ?", (cutoff_ts,))
-        cur.execute(
-            "DELETE FROM cognitive_signatures WHERE updated_at > ?", (cutoff_ts,)
-        )
 
     if cutoff_ts is not None:
         cur.execute("DELETE FROM cognitive_threads WHERE updated_at > ?", (cutoff_ts,))
@@ -884,7 +733,7 @@ def sync_cloned_session(
                 (cutoff_ts,),
             )
             cur.execute(
-                "SELECT model_id FROM cognitive_signatures "
+                "SELECT model_id FROM message_shadows "
                 "WHERE model_id IS NOT NULL AND model_id != '' "
                 "ORDER BY updated_at DESC, rowid DESC LIMIT 1"
             )
@@ -947,6 +796,8 @@ def sync_resumed_session(
     orig_cid: str,
     new_cid: str,
     initial_embedded_msg_ids: Optional[List[str]] = None,
+    live_msg_ids: Optional[Set[str]] = None,
+    anchor_msg_id: Optional[str] = None,
 ) -> None:
     """Duplique le conteneur de session pour une migration vers une nouvelle conversation
     (purge l'historique conversationnel et préserve les ressources)."""
@@ -959,6 +810,7 @@ def sync_resumed_session(
             cur = conn.cursor()
             reassign_session_ids(cur, orig_cid, new_cid)
             purge_conversational_state(cur)
+            _reanchor_resumed_resources(cur, live_msg_ids, anchor_msg_id)
             if initial_embedded_msg_ids:
                 now_ts = int(time.time())
                 for mid in initial_embedded_msg_ids:
@@ -975,6 +827,58 @@ def sync_resumed_session(
         )
 
     duplicate_session_domains(user_id, orig_cid, new_cid)
+    try:
+        from echo_window_manager import get_window_manager
+
+        wm = get_window_manager()
+        for cid_target in (orig_cid, new_cid):
+            wm._chat_states.pop((user_id, cid_target), None)
+            wm._chat_states.pop(("system", cid_target), None)
+    except Exception:
+        pass
+
+
+# Paramètres de robustesse du clonage SESSION_RAG
+_RAG_CLONE_SCROLL_LIMIT = 256
+_RAG_CLONE_UPSERT_BATCH = 64
+_RAG_CLONE_ATTEMPTS = 3
+
+
+class RagCloneReport(NamedTuple):
+    """Bilan de duplication des vecteurs COLLECTION_SESSION_RAG."""
+    cloned: int      # Points écrits avec succès dans la session cible
+    eligible: int    # Points retenus après filtrage de branche / cutoff
+    scanned: int     # Points lus dans la session source
+    failed: int      # Points éligibles non écrits (échec définitif d'upsert)
+    complete: bool   # Scroll intégral, aucun échec et comptage de contrôle cohérent
+    error: str       # Dernière erreur rencontrée ("" si aucune)
+
+
+def _qdrant_ok(resp: Optional[httpx.Response]) -> bool:
+    """Vrai si la réponse Qdrant est un succès HTTP."""
+    return resp is not None and resp.status_code in (200, 201)
+
+
+async def _qdrant_call(
+    client: httpx.AsyncClient, method: str, url: str, payload: dict
+) -> Tuple[Optional[httpx.Response], str]:
+    """Appel Qdrant avec retries bornés (backoff 1 s puis 2 s) sur erreurs réseau, 429 et 5xx.
+    Les erreurs client non transitoires (400, 404) ne sont pas réessayées.
+    Retourne (dernière réponse ou None, dernière erreur)."""
+    resp, last_err = None, ""
+    for attempt in range(_RAG_CLONE_ATTEMPTS):
+        try:
+            resp = await client.request(method, url, json=payload)
+            if _qdrant_ok(resp):
+                return resp, ""
+            last_err = f"HTTP {resp.status_code} : {resp.text[:200]}"
+            if resp.status_code != 429 and resp.status_code < 500:
+                break
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            resp, last_err = None, f"{type(e).__name__} : {e}"
+        if attempt < _RAG_CLONE_ATTEMPTS - 1:
+            await asyncio.sleep(attempt + 1)
+    return resp, last_err
 
 
 async def duplicate_session_rag(
@@ -983,42 +887,48 @@ async def duplicate_session_rag(
     new_cid: str,
     cutoff_ts: Optional[int] = None,
     live_msg_ids: Optional[Set[str]] = None,
-) -> int:
-    """Duplique par pagination (lots de 256 points) les vecteurs Qdrant de COLLECTION_SESSION_RAG
-    de orig_cid vers new_cid. Si cutoff_ts est fourni, filtre uniquement timestamp <= cutoff_ts
-    et réajuste _C_{orig_cid}_T_ -> _C_{new_cid}_T_. Ne touche jamais à COLLECTION_META_ARTIFACTS."""
-    scroll_url = (
-        f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/scroll"
-    )
-    upsert_url = (
-        f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points?wait=true"
-    )
-
-    total_cloned = 0
-    next_offset = None
+    anchor_msg_id: Optional[str] = None,
+) -> RagCloneReport:
+    """Duplique par pagination les vecteurs Qdrant de COLLECTION_SESSION_RAG de orig_cid vers new_cid
+    (retries bornés, upsert par lots, comptage de contrôle). Si cutoff_ts est fourni, filtre
+    timestamp <= cutoff_ts ; réajuste _C_{orig_cid}_T_ -> _C_{new_cid}_T_.
+    Ne touche jamais à COLLECTION_META_ARTIFACTS."""
+    base_url = f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points"
     orig_marker = f"_C_{orig_cid}_T_"
     new_marker = f"_C_{new_cid}_T_"
+    live_set = set(live_msg_ids) if live_msg_ids else None
 
     must_conditions = [
         {"key": "user_id", "match": {"value": user_id}},
         {"key": "chat_id", "match": {"value": orig_cid}},
     ]
-    if not live_msg_ids and cutoff_ts is not None:
+    if not live_set and cutoff_ts is not None:
         must_conditions.append({"key": "timestamp", "range": {"lte": int(cutoff_ts)}})
+
+    cloned = eligible = scanned = failed = 0
+    scroll_ok, last_err = True, ""
+    verified: Optional[int] = None
+    next_offset = None
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         while True:
             scroll_payload = {
                 "filter": {"must": must_conditions},
-                "limit": 256,
+                "limit": _RAG_CLONE_SCROLL_LIMIT,
                 "with_payload": True,
                 "with_vector": True,
             }
             if next_offset is not None:
                 scroll_payload["offset"] = next_offset
 
-            resp = await client.post(scroll_url, json=scroll_payload)
-            if resp.status_code != 200:
+            resp, err = await _qdrant_call(client, "POST", f"{base_url}/scroll", scroll_payload)
+            if not _qdrant_ok(resp):
+                if resp is not None and resp.status_code == 404 and scanned == 0:
+                    break  # Collection absente : aucune donnée à cloner
+                scroll_ok, last_err = False, err
+                logger.warning(
+                    f"[ECHO-SESSION-CLONE] Scroll SESSION_RAG interrompu ({orig_cid} -> {new_cid}) : {err}"
+                )
                 break
 
             result = resp.json().get("result") or {}
@@ -1028,47 +938,86 @@ async def duplicate_session_rag(
 
             new_points = []
             for pt in points:
+                scanned += 1
                 vec = pt.get("vector")
                 if not vec:
                     continue
                 payload = dict(pt.get("payload") or {})
-                if live_msg_ids:
-                    if not is_point_in_branch(payload, set(live_msg_ids), cutoff_ts):
+                if live_set:
+                    if not is_point_in_branch(payload, live_set, cutoff_ts):
                         continue
                 elif cutoff_ts is not None:
                     pt_ts = payload.get("timestamp")
                     if isinstance(pt_ts, (int, float)) and int(pt_ts) > int(cutoff_ts):
                         continue
                 payload["chat_id"] = new_cid
-                if (
-                    isinstance(payload.get("source_id"), str)
-                    and orig_marker in payload["source_id"]
+                if anchor_msg_id and (
+                    payload.get("source_id") == SESSION_RAG_CONVERSATION_SOURCE_ID
+                    or payload.get("message_id")
                 ):
-                    payload["source_id"] = payload["source_id"].replace(
-                        orig_marker, new_marker
-                    )
-                if (
-                    isinstance(payload.get("text"), str)
-                    and orig_marker in payload["text"]
-                ):
+                    payload["message_id"] = anchor_msg_id
+                if isinstance(payload.get("source_id"), str) and orig_marker in payload["source_id"]:
+                    payload["source_id"] = payload["source_id"].replace(orig_marker, new_marker)
+                if isinstance(payload.get("text"), str) and orig_marker in payload["text"]:
                     payload["text"] = payload["text"].replace(orig_marker, new_marker)
-                new_points.append(
-                    {
-                        "id": str(
-                            uuid.uuid5(uuid.NAMESPACE_DNS, f"{new_cid}_{pt.get('id')}")
-                        ),
-                        "vector": vec,
-                        "payload": payload,
-                    }
-                )
+                new_points.append({
+                    "id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{new_cid}_{pt.get('id')}")),
+                    "vector": vec,
+                    "payload": payload,
+                })
 
-            if new_points:
-                up_resp = await client.put(upsert_url, json={"points": new_points})
-                if up_resp.status_code in (200, 201):
-                    total_cloned += len(new_points)
+            eligible += len(new_points)
+            # Upsert par lots réduits : requêtes plus courtes, échec circonscrit au lot
+            for i in range(0, len(new_points), _RAG_CLONE_UPSERT_BATCH):
+                batch = new_points[i:i + _RAG_CLONE_UPSERT_BATCH]
+                up_resp, up_err = await _qdrant_call(
+                    client, "PUT", f"{base_url}?wait=true", {"points": batch}
+                )
+                if _qdrant_ok(up_resp):
+                    cloned += len(batch)
+                else:
+                    failed += len(batch)
+                    last_err = up_err
+                    logger.warning(
+                        f"[ECHO-SESSION-CLONE] Upsert SESSION_RAG en échec ({len(batch)} points, "
+                        f"{orig_cid} -> {new_cid}) : {up_err}"
+                    )
 
             next_offset = result.get("next_page_offset")
             if next_offset is None:
                 break
 
-    return total_cloned
+        # Comptage de contrôle : présence effective des points dans la session cible
+        if eligible:
+            c_resp, c_err = await _qdrant_call(
+                client,
+                "POST",
+                f"{base_url}/count",
+                {
+                    "exact": True,
+                    "filter": {"must": [
+                        {"key": "user_id", "match": {"value": user_id}},
+                        {"key": "chat_id", "match": {"value": new_cid}},
+                    ]},
+                },
+            )
+            if _qdrant_ok(c_resp):
+                verified = int((c_resp.json().get("result") or {}).get("count") or 0)
+            elif not last_err:
+                last_err = f"Comptage de contrôle indisponible : {c_err}"
+
+    complete = scroll_ok and failed == 0 and (
+        eligible == 0 or (verified is not None and verified >= eligible)
+    )
+    if eligible and verified is not None and verified < eligible and not last_err:
+        last_err = f"Comptage de contrôle : {verified}/{eligible} points présents"
+
+    summary = (
+        f"[ECHO-SESSION-CLONE] SESSION_RAG {orig_cid} -> {new_cid} : {cloned}/{eligible} clonés, "
+        f"{scanned} lus, {failed} en échec, contrôle={verified}, complet={complete}"
+    )
+    if complete:
+        logger.info(summary)
+    else:
+        logger.warning(f"{summary} | {last_err}")
+    return RagCloneReport(cloned, eligible, scanned, failed, complete, last_err)

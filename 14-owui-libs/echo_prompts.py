@@ -1,16 +1,16 @@
 """
 title: ECHO Prompts Library
 author: Wilfried BARNAVON
-version: 5.235.1.1
+version: 5.239.11.1
 description: Système de Registre Cognitif ECHO (Prompts Library).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.11.1: Renforcement de la règle `mermaid` v11.16.0 dans `SYS_VISUAL_GENERATE` imposant des identifiants `subgraph` strictement ASCII (`subgraph ID["Titre (Info)"]`).
 # 5.235.1.1: Refonte de SYS_COMPACTION_DISTILL (Archiviste Contextuel, pleine exploitation du budget, reproduction in extenso du code et des données).
 # 5.233.0.1: Alignement de SYS_ORCHESTRATOR_CRITIC sur le schéma contraint SupervisorCriticOutput (statut explicite ok / needs_correction).
 # 5.233.0.1: Extension de la règle 3 de SYS_VISUAL_IMAGE_GEN pour encadrer la fusion et composition multi-images (N images de référence).
 # 5.232.5.2: Ajout de la règle de nommage court (short_name <= 10 caractères hors extension en snake_case ASCII) dans SYS_VISUAL_IMAGE_CRITIC.
-# 5.232.0.3: Suppression de la balise <thinking> redondante dans SYS_VISUAL_GENERATE, taxonomie des 17 moteurs (dont echarts-gl 3D et Plotly 3D) et calibrage pragmatique de SYS_VISUAL_SCHEMA_CRITIC.
 
 # ==============================================================================
 # Système de Registre Cognitif ECHO (Prompts Library)
@@ -363,7 +363,7 @@ Le Modèle doit transformer une intention textuelle et un jeu de données en un 
 
 <technical_manual>
 1. 'markmap' : Markdown hiérarchique pur. Aucun bloc de code.
-2. 'mermaid' : Syntaxe stricte compatible Mermaid v11.16.0. Identifiants de nœuds STRICTEMENT ASCII alphanumériques ou underscore (aucun espace/tiret). Texte lisible encapsulé entre guillemets (ex: ID["Texte"]).
+2. 'mermaid' : Syntaxe stricte compatible Mermaid v11.16.0. Identifiants de nœuds et de `subgraph` STRICTEMENT ASCII alphanumériques ou underscore (aucun espace, slash, deux-points, parenthèse ou tiret). Texte lisible encapsulé entre guillemets (ex: ID["Texte"] et `subgraph ID["Titre (Info)"]`). INTERDIT d'écrire `subgraph Mon Titre (Info)` sans ID explicite.
 3. 'echarts' : JSON ECharts 5 + ECharts-GL valide (2D : xAxis, yAxis, series ; ou 3D WebGL : grid3D, xAxis3D, yAxis3D, zAxis3D, series type 'line3D'/'scatter3D'/'surface'/'bar3D'). Éviter tout chevauchement entre title, legend et axes.
 4. 'vega' : JSON Vega-Lite strict (spécifier $schema, data, mark, encoding).
 5. 'timeline' : JSON TimelineJS. Structure imposée: {{"events": [{{"start_date":..., "text":{{"headline":..., "text":...}}}}]}}.

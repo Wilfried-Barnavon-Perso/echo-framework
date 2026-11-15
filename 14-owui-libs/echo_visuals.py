@@ -1,16 +1,16 @@
 """
 title: ECHO Visuals Engine Configuration
 author: Wilfried BARNAVON
-version: 5.232.3.1
+version: 5.237.19.1
 description: Composant système interne : ECHO Visuals Engine Configuration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.237.19.1: Activation de crossOrigin: true sur les tuiles OpenStreetMap et recalcul map.invalidateSize() sur resize dans le moteur leaflet.
 # 5.232.3.1: Initialisation défensive de mdl.modelData.symmetries avant viewer.render() et téléchargement PDB explicite ({ format: 'pdb' }) dans le moteur bio (3Dmol.js).
 # 5.232.0.3: Ajout de l'extension WebGL echarts-gl@2 au moteur echarts (support natif grid3D, line3D, scatter3D, surface) et interception try/catch console.error sur chart.setOption.
 # 5.232.0.2: Blindage du moteur bio (extraction tolérante PDB/CID, validation d'atomes pré-render contre le crash .symmetries, style hybride cartoon+stick) et propagation console.error sur toutes les branches d'erreur DOM.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 6.3: Optimisation du dimensionnement des conteneurs (hauteurs fixes) et correctifs Layout (Cytoscape, Astro).
 
 class VisualEngine:
     @staticmethod
@@ -244,7 +244,8 @@ class VisualEngine:
                             
                             const map = L.map('visual-target').setView(data.center || [46.603354, 1.888334], data.zoom || 5);
                             L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-                                attribution: '&copy; OpenStreetMap contributors'
+                                attribution: '&copy; OpenStreetMap contributors',
+                                crossOrigin: true
                             }}).addTo(map);
                             
                             if (data.markers && Array.isArray(data.markers)) {{
@@ -256,6 +257,7 @@ class VisualEngine:
                                 }});
                             }}
                             setTimeout(() => map.invalidateSize(), 500);
+                            window.addEventListener('resize', () => map.invalidateSize());
                         }} else if (retries < maxRetries) {{
                             retries++; setTimeout(run, 100);
                         }}

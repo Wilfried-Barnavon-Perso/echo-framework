@@ -1,7 +1,7 @@
 ---
 domain_id: agent_orchestration
-version: 5.231.52.1
-updated_at: 2026-11-02
+version: v5.238.1.1
+updated_at: 2026-11-10
 name: Orchestration Multi-Agents, Sous-Agents Autonomes, Data Broker & Skills
 description: Délégation à un sous-agent outillé (delegate_to_agent), Table Ronde Delphi (consult_council), Ouvriers Supervisés (consult_supervised_workers), Data Broker et gestion des Skills.
 tools: [delegate_to_agent, list_agent_sessions, close_agent_session, summarize_agent_session, consult_council, consult_supervised_workers, list_councils, close_council, list_supervised_tasks, close_supervised_task, forge_skill, list_skills, read_skill, search_skill, delete_user_skill, ask_data_broker]
@@ -41,7 +41,7 @@ Les **Skills** définissent l'expertise métier et la méthodologie d'un sous-ag
 - `skill_id` & `system_prompt` : Si les deux sont fournis, ils se combinent (`skill_content + system_prompt`). Si les deux sont omis, le sous-agent hérite du `ECHO_FOUNDATION_KERNEL`.
 - `sub_sid` : Omettre pour créer une nouvelle session ; fournir le `sub_sid` existant pour reprendre et poursuivre le travail du même agent avec son historique complet.
 - `with_context_distillate=True` : Injecte un résumé distillé de la conversation principale dans le prompt initial du sous-agent.
-- `target_model_key` : `"MODEL_ZEPHYR"`, `"MODEL_APOLLO"` (défaut) ou `"MODEL_PROMETHEUS"`.
+- `target_model_key` : `"MODEL_ZEPHYR"`, `"MODEL_APOLLO"` (défaut), `"MODEL_PROMETHEUS"` ou `"MODEL_ATHENA"`.
 - **Administration des sessions d'agents** :
   - `list_agent_sessions()` : Liste les sessions de sous-agents actives (`sub_sid`, type, nombre d'étapes).
   - `summarize_agent_session(sub_sid)` : Génère un résumé structuré de l'historique d'un sous-agent sans le fermer.

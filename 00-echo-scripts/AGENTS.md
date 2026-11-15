@@ -25,8 +25,8 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 - **Synchronisation des Bannières** : Traitement automatisé de `webui-banners.json` avec normalisation `jq` et injection atomique via `POST /api/v1/configs/banners` déclenchant l'évènement temps-réel `CONFIG_BANNERS_UPDATED`.
 
 ### `echo-sync.sh`
-**Rôle** : Pont de distribution déclaratif (v5.231.39.1) entre le dépôt source et `/opt/ECHO`.
-- **`sync_resource()` & Boucle Déclarative** : Synchronise dynamiquement les répertoires (`00-*` à `30-*`, `_assets`, `docker-python-base`), supprime les fichiers fantômes obsolètes, crée les liens symboliques globaux dans `/usr/local/bin/` (dont `/usr/local/bin/echo-rebuild`), applique un nettoyage conditionnel `sed` des caractères CRLF/BOM (préservant l'horodatage `mtime` et le cache Docker BuildKit), et affiche un encart de versioning Git (Avant/Après).
+**Rôle** : Pont de distribution déclaratif (v5.239.6.1) entre le dépôt source et `/opt/ECHO`.
+- **`sync_resource()` & Boucle Déclarative** : Synchronise dynamiquement les répertoires (`00-*` à `30-*`, `_assets`, `docker-python-base`), garantit l'initialisation du fichier maître `/opt/ECHO/.env` (`chmod 600`) avant montage Docker, supprime les fichiers fantômes obsolètes, crée les liens symboliques globaux dans `/usr/local/bin/` (dont `/usr/local/bin/echo-rebuild`), applique un nettoyage conditionnel `sed` des caractères CRLF/BOM (préservant l'horodatage `mtime` et le cache Docker BuildKit), et affiche un encart de versioning Git (Avant/Après).
 
 ### Sécurité Périmétrique (`enable-bunkerweb.sh` & `disable-bunkerweb.sh`)
 **Rôle** : Bascule de l'infrastructure réseau derrière le WAF BunkerWeb.
@@ -35,7 +35,7 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 
 ### Utilitaires
 - **`echo-globals.sh` (v5.236.5.1)** : Définition des variables d'environnement globales sourcées par les autres scripts (incluant `ECHO_OWUI_EVENTS="$ECHO_ROOT/owui-events"`, `ECHO_DOCKER_USER="$ECHO_ROOT/docker-user-manager"`) et factorisation de `generate_secret()` (sans `SIGPIPE` sous `set -euo pipefail`, avec `umask 077` et recouvrement des valeurs vides) et `ensure_echo_secrets()` (`BW_DB_PASSWORD`, `SEARXNG_SECRET`, `ECHO_SSO_SECRET`, `N8N_ENCRYPTION_KEY`, `ECHO_VAULT_ENCRYPTION_KEY`).
-- **`echo-clean.sh` (v5.231.39.1)** : Script automatisé de maintenance système journalisé dans `/var/log/echo-clean.log` (purge APT, `journalctl --vacuum-size=100M`, et `docker system prune` gradué selon les seuils d'occupation disque : routine 168h, urgence $\ge 85\%$, critique $\ge 90\%$).
+- **`echo-clean.sh` (v5.239.1.1)** : Script automatisé de maintenance système journalisé dans `/var/log/echo-clean.log` (purge APT, `journalctl --vacuum-size=100M`, `docker system prune` gradué selon les seuils d'occupation disque — routine 168h, urgence $\ge 85\%$, critique $\ge 90\%$ — et purge quotidienne du Page Cache Linux `sync && echo 1 > /proc/sys/vm/drop_caches`).
 - **`echo-logs.sh` (v5.231.42.1) & `echo-ps.sh` (v5.231.42.1)** : Utilitaires de diagnostic rapide en ligne de commande pour le suivi temps-réel des journaux Docker Compose (`logs -f --tail=100` avec `--env-file "$ECHO_ENV_FILE"`) et l'affichage consolidé de l'état des conteneurs de la stack ECHO.
 - **`echo-show-admin.sh` (v5.231.39.1)** : Affichage sécurisé dans le terminal des identifiants et des URL d'accès de l'instance pour l'utilisateur.
 - **`echo-update.sh` (v5.231.42.1) / `echo-upgrade.sh` (v5.231.39.1)** : Scripts pour le tirage des modifications Git, le redémarrage Hot-Reload des conteneurs labellisés `echo.hot-reload=true` (`echo-update.sh`), ou la mise à niveau majeure (`echo-upgrade.sh`). Lorsqu'il est appelé via `/usr/local/bin/echo-rebuild`, `echo-upgrade.sh` impose une double confirmation stricte (`CONFIRMER` puis `DETRUIRE`) avant de purger les volumes et secrets.

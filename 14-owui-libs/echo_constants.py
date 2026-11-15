@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 5.235.5.1
+version: 5.239.17.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 5.235.5.1: Ajout de ECHO_GC_GRACE_PERIOD_SEC (900s) et de la variable contextuelle ECHO_TURN_CONTEXT.
-# 5.235.1.1: Calibrage de COMPACTION_COMPRESSED_SHARE_PCT à 0.3125 (31.25% HEAD soit 65 535 tokens / 68.75% TAIL soit ~144 179 tokens) pour alignement sur le plafond matériel maxOutputTokens.
-# 5.234.1.1: Ajout des constantes SSOT de concurrence, rétention et écoute de la Sandbox (SANDBOX_MAX_CONCURRENT_JOBS_PER_CHAT, SANDBOX_MAX_CONCURRENT_JOBS_GLOBAL, SANDBOX_FINISHED_JOBS_MAX_PER_CHAT, SANDBOX_FINISHED_JOBS_TTL_SEC, SANDBOX_LISTEN_MAX_WAIT_SEC).
-# 5.234.0.1: Ajout des constantes SSOT d'authentification (ECHO_AUTH_PENDING_MARKER, ECHO_AUTH_TITLE_CONFIG, ECHO_AUTH_TITLE_PENDING, ECHO_AUTH_NOTICE_MARKERS).
-# 5.233.0.1: Ajout de la constante SSOT IMAGE_GEN_MAX_INPUT_IMAGES=10 pour borner la fusion multi-images dans generate_image.
+# 5.239.17.1: Ajout du domaine tools_output, de read_tool_output/delete_tool_output dans DELEGATE_AGENT_SYSTEM_TOOLS, de build_httpx_timeout (ECHO_LLM_CALL_TIMEOUT=600s, ECHO_LLM_STREAM_TIMEOUT=300s), ECHO_RETRY_SERVER_MAX_WAIT_SEC (60s), ECHO_TOOL_OUTPUT_PREVIEW_CHARS (32768) et des constantes de pagination read_codex (800 lignes / 46080 octets).
+# 5.239.16.2: Alignement Antigravity 2.32.0 (cl=1021519450), passage de ECHO_ENDPOINT_LOCK_TIMEOUT_MIN à 5 min et ajout de ECHO_LLM_CALL_TIMEOUT (240s), ECHO_LLM_STREAM_TIMEOUT (300s) et ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS (48000).
+# 5.239.8.1: Migration de MODEL_APOLLO vers Gemini 4 Hydrogen (gemini-4-hydrogen / gemini-4-hydrogen-high).
+# 5.238.1.1: Intégration de MODEL_ATHENA (gemini-4-carbon / gemini-4-carbon-high, hierarchy 3), déduplication de MODEL_ENUM_BY_POLICY et ajout de parse_model_policy / get_allowed_models.
+# 5.237.20.1: Calibration de CHARS_PER_TOKEN à 3.2 pour la tokenisation Gemini FR/JSON/Code.
 
 
 import os
@@ -63,14 +63,14 @@ ECHO_UPLOADS_TRANSIT_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
 
 ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 
-ECHO_SESSION_DOMAINS = ["codex", "files", "db", "n8n_workflows", "dependencies"]
+ECHO_SESSION_DOMAINS = ["codex", "files", "db", "n8n_workflows", "dependencies", "tools_output"]
 ECHO_GLOBAL_DOMAINS = ["skills", "files", "chats", "n8n_workflow_templates"]
 
-# Identité Réseau (Antigravity 2.28.2 — aligné sur Antigravity Desktop package.json & language_server --stamp)
+# Identité Réseau (Antigravity 2.32.0 — aligné sur Antigravity Hub agy.exe package.json & language_server --stamp)
 # Format natif AGY Hub : "antigravity/hub/{ideVersion} (os_type=...; arch=...; cl=...; auth_method=personal_consumer; proxy_client=antigravity/{ideVersion})"
 # ECHO tourne sous Docker Linux — on émet l'identité réelle de la plateforme hôte.
-_AGY_IDE_VERSION = "2.28.2"      # Miroir de package.json:version — à synchroniser lors des mises à jour
-_AGY_LS_CL       = "1006921819"  # Changelist language_server (--stamp)
+_AGY_IDE_VERSION = "2.32.0"      # Miroir de package.json:version — à synchroniser lors des mises à jour
+_AGY_LS_CL       = "1021519450"  # Changelist language_server (--stamp)
 ECHO_USER_AGENT             = f"antigravity/{_AGY_IDE_VERSION}"
 ECHO_AGY_USER_AGENT         = (
     f"antigravity/hub/{_AGY_IDE_VERSION} "
@@ -165,7 +165,7 @@ AGY_BASE_URLS = [
     "https://cloudcode-pa.googleapis.com/v1internal",       # Standard (Prod)
     "https://daily-cloudcode-pa.googleapis.com/v1internal"  # Canary (Daily)
 ]
-ECHO_ENDPOINT_LOCK_TIMEOUT_MIN = 2  # Temps de verrouillage agnostique (Surcharge Serveur ou TPM)
+ECHO_ENDPOINT_LOCK_TIMEOUT_MIN = 5  # Temps de verrouillage agnostique (Surcharge Serveur ou TPM)
 # Metadata client envoyée dans loadCodeAssist
 # Alignement sur AGY IDE main.js (clientMetadata getter) :
 #   ideName="antigravity", ideType=TTe.ANTIGRAVITY (enum 9), pluginType=GEMINI (enum 2)
@@ -233,6 +233,29 @@ ECHO_RETRY_BASE_DELAY    = 3.0   # Base backoff exponentiel — réduit de 5.0 �
 ECHO_RETRY_MULTIPLIER    = 1.5
 ECHO_RETRY_JITTER_MIN    = 0.7
 ECHO_RETRY_JITTER_MAX    = 1.3
+ECHO_LLM_CONNECT_TIMEOUT = 15.0  # Timeout d'établissement TCP/TLS (s)
+ECHO_LLM_WRITE_TIMEOUT   = 30.0  # Timeout d'écriture de requête HTTP/2 (s)
+ECHO_LLM_POOL_TIMEOUT    = 15.0  # Timeout d'acquisition de connexion du pool (s)
+ECHO_LLM_CALL_TIMEOUT    = 600   # Timeout de lecture Non-Stream (s) dimensionné pour Argon / Carbon
+ECHO_LLM_STREAM_TIMEOUT  = 300   # Timeout d'inactivité inter-chunks Stream SSE (s)
+ECHO_RETRY_SERVER_MAX_WAIT_SEC = 60.0  # Plafond (s) d'attente sur Retry-After / RetryInfo serveur
+
+# Seuils SSOT de délestage (spillover tools_output) et de lecture paginée (alignés AGY)
+ECHO_TOOL_OUTPUT_PREVIEW_CHARS = 32768  # Seuil d'aperçu inline Head+Tail (~10k tokens) avant délestage dans tools_output/
+ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS = ECHO_TOOL_OUTPUT_PREVIEW_CHARS
+ECHO_CODEX_MAX_READ_LINES = 800    # Nombre maximum de lignes retournées par appel read_codex / read_tool_output
+ECHO_CODEX_MAX_READ_BYTES = 46080  # Volume maximum (45 Ko) retourné par appel read_codex / read_tool_output
+
+
+def build_httpx_timeout(read_timeout: float):
+    """Construit un objet httpx.Timeout granulaire (connect/write/pool courts, read adapté au mode LLM)."""
+    import httpx
+    return httpx.Timeout(
+        connect=ECHO_LLM_CONNECT_TIMEOUT,
+        read=float(read_timeout),
+        write=ECHO_LLM_WRITE_TIMEOUT,
+        pool=ECHO_LLM_POOL_TIMEOUT,
+    )
 
 # ==============================================================================
 # 1.25 GOUVERNANCE DU CONTEXTE ET COMPACTION IN-PLACE (% DE ECHO_MAX_CONTEXT_SIZE)
@@ -334,6 +357,17 @@ AEC_REMINDERS = [
 # REGISTRE COGNITIF ECHO (SINGLE SOURCE OF TRUTH)
 # ==============================================================================
 ECHO_MODELS_REGISTRY = {
+    "MODEL_ATHENA": {
+        "ai_studio_id": "gemini-4-carbon",
+        "ca_model_id":  "gemini-4-carbon-high",
+        "hierarchy": 3,
+        "generationConfig": {
+            "temperature": 1.0,
+            "topP": 0.9,
+            "maxOutputTokens": 65535,
+            "thinkingConfig": {"thinkingLevel": "medium"}
+        }
+    },
     "MODEL_PROMETHEUS": {
         "ai_studio_id": "gemini-4-argon",
         "ca_model_id":  "gemini-4-argon-high",
@@ -346,8 +380,8 @@ ECHO_MODELS_REGISTRY = {
         }
     },
     "MODEL_APOLLO": {
-        "ai_studio_id": "gemini-3.8-flash",
-        "ca_model_id":  "gemini-3.8-flash-high",
+        "ai_studio_id": "gemini-4-hydrogen",
+        "ca_model_id":  "gemini-4-hydrogen-high",
         "hierarchy": 1,
         "generationConfig": {
             "temperature": 1.0,
@@ -395,6 +429,7 @@ ECHO_MODELS_REGISTRY = {
 }
 
 # L'Abstraction pure
+MODEL_ATHENA       = "MODEL_ATHENA"
 MODEL_PROMETHEUS          = "MODEL_PROMETHEUS"
 MODEL_APOLLO        = "MODEL_APOLLO"
 MODEL_ZEPHYR         = "MODEL_ZEPHYR"
@@ -423,15 +458,6 @@ ECHO_SAFETY_SETTINGS = [
     {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
 ]
-
-# Unique survivant : la politique métier UI (qui reste statique)
-MODEL_ENUM_BY_POLICY = {
-    "MODEL_ZEPHYR":  ["MODEL_ZEPHYR"],
-    "MODEL_APOLLO": ["MODEL_APOLLO"],
-    "MODEL_PROMETHEUS":   ["MODEL_PROMETHEUS"],
-    "AUTO":        ["MODEL_ZEPHYR", "MODEL_APOLLO"],
-    "AUTO_PROM":    ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"],
-}
 
 EMBEDDING_DIM      = 1024               # Dimension Harrier-OSS
 COLLECTION_META_ARTIFACTS = "echo_meta_artifacts"
@@ -683,6 +709,8 @@ DEEP_RESEARCH_MAX_CALLS_DEFAULT = 200
 # mais strictement subordonnés aux interdictions absolues de DELEGATE_AGENT_BLACKLIST).
 DELEGATE_AGENT_SYSTEM_TOOLS: frozenset = frozenset({
     "tool_advisor",
+    "read_tool_output",
+    "delete_tool_output",
 })
 
 #      consult_council appelé par l'agent = 1 unité de budget,
@@ -750,15 +778,67 @@ SÉQUENTIALITÉ OBLIGATOIRE : Le Modèle DOIT appeler les outils STRICTEMENT UN 
 
 # ENUM MODÈLES PAR POLITIQUE — utilisé par convert_owui_tools() pour filtrage dynamique
 MODEL_ENUM_BY_POLICY = {
+    "AUTO:MODEL_ZEPHYR":       ["MODEL_ZEPHYR"],
+    "AUTO:MODEL_APOLLO":       ["MODEL_ZEPHYR", "MODEL_APOLLO"],
+    "AUTO:MODEL_PROMETHEUS":   ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"],
+    "AUTO:MODEL_ATHENA":       ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"],
+    "MANUAL:MODEL_ZEPHYR":     ["MODEL_ZEPHYR"],
+    "MANUAL:MODEL_APOLLO":     ["MODEL_APOLLO"],
+    "MANUAL:MODEL_PROMETHEUS": ["MODEL_PROMETHEUS"],
+    "MANUAL:MODEL_ATHENA":     ["MODEL_ATHENA"],
+    # Rétrocompatibilité legacy (MODEL_SELECTION)
     "MODEL_ZEPHYR":  ["MODEL_ZEPHYR"],
     "MODEL_APOLLO": ["MODEL_APOLLO"],
     "MODEL_PROMETHEUS":   ["MODEL_PROMETHEUS"],
+    "MODEL_ATHENA": ["MODEL_ATHENA"],
     "AUTO":        ["MODEL_ZEPHYR", "MODEL_APOLLO"],
     "AUTO_PROM":    ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"],
+    "AUTO_ATHENA":  ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"],
 }
 
 # Set de référence pour détecter les enum modèle dans les specs d'outils
-MODEL_ENUM_REFERENCE = {"MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"}
+MODEL_ENUM_REFERENCE = {"MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"}
+
+
+def parse_model_policy(policy: str) -> tuple[str, str]:
+    """
+    Normalise toute chaîne de politique cognitive ('MODE:MODEL' ou format legacy)
+    en un tuple canonique (mode, model_key) où mode ∈ {'AUTO', 'MANUAL'}.
+    """
+    raw = (policy or "").strip()
+    if ":" in raw:
+        mode_part, model_part = raw.split(":", 1)
+        mode_part = mode_part.strip().upper()
+        model_part = model_part.strip()
+        if mode_part in ("AUTO", "MANUAL") and model_part in MODEL_ENUM_REFERENCE:
+            return (mode_part, model_part)
+    if raw == "AUTO":
+        return ("AUTO", "MODEL_APOLLO")
+    if raw == "AUTO_PROM":
+        return ("AUTO", "MODEL_PROMETHEUS")
+    if raw == "AUTO_ATHENA":
+        return ("AUTO", "MODEL_ATHENA")
+    if raw in MODEL_ENUM_REFERENCE:
+        return ("MANUAL", raw)
+    return ("AUTO", "MODEL_APOLLO")
+
+
+def get_allowed_models(policy: str) -> list[str]:
+    """
+    Retourne la liste ordonnée par hiérarchie croissante des modèles autorisés
+    pour une politique donnée (mode MANUAL -> [model_key], mode AUTO -> [0 .. plafond]).
+    """
+    mode, model_key = parse_model_policy(policy)
+    if mode == "MANUAL":
+        return [model_key]
+    registry = globals().get("ECHO_MODELS_REGISTRY", {})
+    ceil_h = registry.get(model_key, {}).get("hierarchy")
+    ceil_h = ceil_h if ceil_h is not None else 1
+    allowed = [
+        k for k, v in registry.items()
+        if v.get("hierarchy") is not None and v.get("hierarchy") <= ceil_h
+    ]
+    return sorted(allowed, key=lambda k: registry[k]["hierarchy"])
 
 # ==============================================================================
 # 1.6 INFRASTRUCTURE & RÉSEAU (CENTRALISATION V5)
@@ -903,7 +983,7 @@ CONTEXT_WARNING_THRESHOLD = 0.80  # Alerte jaune
 CONTEXT_TRUNCATE_THRESHOLD = 0.90 # Alerte rouge et Troncature
 PRUNE_CONTENT_THRESHOLD = 60000   # Seuil de tolérance (caractères) pour la troncature des UI brutes (env. 15k tokens)
 DEFAULT_VISION_GRID_STEP = 48     # Pas du maillage (pixels) pour la grille de vision spatiale (Anti-bot/Captcha)
-CHARS_PER_TOKEN = 4               # Heuristique standard
+CHARS_PER_TOKEN = 3.2             # Heuristique calibrée Gemini (FR / JSON / Code)
 
 # Limite maximale (en secondes) pour le Wait Timer Généraliste
 ECHO_MAX_WAIT_TIMER = 180

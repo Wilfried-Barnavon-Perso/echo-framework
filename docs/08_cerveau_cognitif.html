@@ -43,7 +43,7 @@
       réflexion supérieur sans jamais dupliquer ni interrompre le fil de sa réponse. Il va ensuite s'armer des outils
       adéquats (recherche web, lecture de fichiers, exécution de code) et mener son enquête avant de revenir vers vous
       avec une réponse élaborée. De plus, ECHO sélectionne en toute autonomie son niveau de cognition (ZEPHYR, APOLLO,
-      ou PROMETHEUS) en évaluant la difficulté intrinsèque de la tâche, et catégorise automatiquement vos discussions à
+      PROMETHEUS ou ATHENA) en évaluant la difficulté intrinsèque de la tâche, et catégorise automatiquement vos discussions à
       l'aide d'étiquettes cohérentes avec votre classement existant.
     </p>
 
@@ -106,14 +106,14 @@
             </li>
           </ul>
 
-          <h3>2. L'Orchestrateur Cognitif (<code>echo_orchestrator.py</code> v5.236.0.1 &amp; <code>echo_aec.py</code>
+          <h3>2. L'Orchestrateur Cognitif (<code>echo_orchestrator.py</code> v5.239.0.1 &amp; <code>echo_aec.py</code>
             v5.235.5.2)</h3>
           <p>Le Cortex principal gouverne la Suture Bit-Perfect, la Compaction Contextuelle In-Place et le routage
             cognitif :</p>
           <ul>
             <li><strong>Registre Cognitif, Closures &amp; Élasticité :</strong> Interroge
               <code>ECHO_MODELS_REGISTRY</code> (<code>MODEL_ZEPHYR</code> et <code>MODEL_APOLLO</code> en
-              <code>thinkingLevel="high"</code>, et <code>MODEL_PROMETHEUS</code> en
+              <code>thinkingLevel="high"</code>, et <code>MODEL_PROMETHEUS</code> / <code>MODEL_ATHENA</code> en
               <code>thinkingLevel="medium"</code> en nominal avec <code>"high"</code> forcé en cascade 429 via
               <code>get_generation_config(..., is_fallback_cascade=True)</code>). Fusionne déterministement les messages
               <code>user</code> consécutifs (<code>merge_consecutive_user_parts</code>) lorsqu'un message assistant
@@ -173,7 +173,7 @@
           </ul>
 
           <h3>3. Le Kernel Statique (<code>01-config/system-prompt.md</code> &amp; <code>echo_prompts.py</code>
-            v5.235.1.1)</h3>
+            v5.239.11.1)</h3>
           <p>Les méta-principes et protocoles fondamentaux gouvernent l'agent principal et le
             <code>ECHO_FOUNDATION_KERNEL</code> des sous-agents :
           </p>
@@ -190,7 +190,7 @@
             </li>
             <li><strong>PGCU (Gestion du Contexte Unifié) &amp; PCD (Cognition Dynamique) :</strong> Hiérarchie
               d'attention stricte (Kernel &gt; AEC &gt; Mémoires &gt; Outils &gt; Requêtes) et répartition des rôles
-              ZEPHYR / APOLLO / PROMETHEUS.</li>
+              ZEPHYR / APOLLO / PROMETHEUS / ATHENA.</li>
             <li><strong>PRAF (Rigueur Analytique et Factuelle) &amp; PLM (Liens et Médias) :</strong> Pipeline
               séquentiel strict en 4 blocs (<code>&lt;scope&gt;</code>, <code>&lt;verification&gt;</code>,
               <code>&lt;integrity_gate&gt;</code>, <code>&lt;analysis&gt;</code>) présumant incertaine toute hypothèse
@@ -223,9 +223,9 @@
               :
               <code>codex/main</code>, <code>codex/plans</code>, <code>codex/generated</code>,
               <code>codex/sandbox</code>, <code>files</code>, <code>n8n_workflows</code>,
-              <code>dependencies</code>), initialisation des dépôts Git Dulwich pour les espaces versionnés, application
+              <code>dependencies</code>, tools_output), initialisation des dépôts Git Dulwich pour les espaces versionnés, application
               du
-              schéma déclaratif SQLite v1 via <code>ensure_db</code> (<code>echo_db_schema.py</code> v5.235.5.3) sur
+              schéma déclaratif SQLite v2 via <code>ensure_db</code> (<code>echo_db_schema.py</code> v5.237.20.2) sur
               <code>identity.db</code> et <code>session.db</code>, et masquage <code>chmod 0o711</code> du dossier
               <code>files</code>.
             </li>
@@ -260,12 +260,12 @@
               identitaire et géo-temporel de l'utilisateur (<code>ENABLE_USER_NAME</code>,
               <code>OVERRIDE_LOCATION</code>).
             </li>
-            <li><strong><code>context_compaction_filter.py</code> (Inlet - Priorité 60, v5.231.58.1) :</strong>
+            <li><strong><code>context_compaction_filter.py</code> (Inlet - Priorité 60, v5.237.20.1) :</strong>
               Compaction
               contextuelle in-place automatique (activée par défaut via
               <code>UserValves.ENABLE_AUTO_COMPACTION = True</code> et commutable via l'icône UI
               <code>fold-vertical</code>) déclenchée via <code>EchoCompactionEngine.execute_compaction</code>
-              (<code>echo_core.py</code> v5.235.5.3) dès <code>COMPACTION_TRIGGER_THRESHOLD_PCT = 60%</code> de
+              (<code>echo_core.py</code> v5.239.17.1) dès <code>COMPACTION_TRIGGER_THRESHOLD_PCT = 60%</code> de
               <code>ECHO_MAX_CONTEXT_SIZE</code>, ciblant <code>COMPACTION_TARGET_CONTEXT_PCT = 20%</code>
               (<code>31.25%</code> <code>HEAD</code> compressé / <code>68.75%</code> <code>TAIL</code> gardé intact).
             </li>
@@ -279,7 +279,7 @@
               <code>purge_dead_set</code>) et élagage causal (<code>cutoff_ts</code>) de <code>session.db</code>, des
               domaines physiques, des dépôts Git Codex (<code>codex/main</code>, <code>codex/plans</code>,
               <code>codex/generated</code>) et de Qdrant via <code>echo_session_clone.sync_cloned_session</code>
-              (v5.235.5.2) avec HUD de progression <code>#echo-clone-hud</code> lors d'un clonage ou d'un fork de
+              (v5.239.13.1) avec HUD de progression <code>#echo-clone-hud</code> lors d'un clonage ou d'un fork de
               conversation.
             </li>
             <li><strong><code>app_drawer_filter.py</code> (Inlet - Priorité 1000, v5.231.39.1) :</strong> Injection du
@@ -287,11 +287,11 @@
               flottant ECHO App Drawer (support tactile mobile et desktop, avec fallback REST direct
               <code>/api/chat/actions/&lt;id&gt;</code> et <code>window.echoOpenCodex</code>).
             </li>
-            <li><strong><code>conversation_rag_filter.py</code> (Outlet - Priorité 100, v5.235.5.1) :</strong>
+            <li><strong><code>conversation_rag_filter.py</code> (Outlet - Priorité 100, v5.239.13.1) :</strong>
               Indexation
               asynchrone Zéro-Latence des tours de parole (conditionnée à la présence d'au moins un message assistant)
               dans <code>echo_session_rag</code> avec validation O(1) en amont via la table SQLite dédiée
-              <code>rag_index_state</code>.
+              <code>rag_index_state</code>, marquée uniquement après le succès effectif de l'upsert Qdrant.
             </li>
           </ul>
       </div>
@@ -304,7 +304,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.237.15 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.18 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

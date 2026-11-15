@@ -1,11 +1,11 @@
 ---
 domain_id: ui_calendar_and_automations
-version: 5.231.52.1
-updated_at: 2026-11-02
-name: Agenda de l'Interface Utilisateur, Automatisations CRON (RRULE), Dossiers UI, Étiquettes & Saisie Interactive
-description: Gestion complète du calendrier de l'Interface Utilisateur, programmation de tâches de fond CRON (syntaxe RRULE iCalendar), dossiers UI, exploration des étiquettes (tags), ask_user_input et wait_timer.
-tools: [search_ui_calendar_events, list_ui_calendar_events, read_ui_calendar_events, create_ui_calendar_event, update_ui_calendar_event, delete_ui_calendar_event, create_ui_automation, update_ui_automation, delete_ui_automation, read_ui_automations, list_ui_automations, list_ui_folders, list_ui_tags, ask_user_input, wait_timer]
-keywords: [calendrier, agenda, événement, rendez-vous, calendar, automation, cron, rrule, dtstart, ask_user_input, wait_timer, dossier, folder, tag, etiquette]
+version: 5.239.17.1
+updated_at: 2026-11-14
+name: Agenda de l'Interface Utilisateur, Automatisations CRON (RRULE), Dossiers UI, Étiquettes, Saisie Interactive & Lecture des Sorties Délestées
+description: Gestion complète du calendrier de l'Interface Utilisateur, programmation de tâches de fond CRON (syntaxe RRULE iCalendar), dossiers UI, exploration des étiquettes (tags), ask_user_input, wait_timer et exploitation paginée/purge des sorties d'outils délestées (read_tool_output, delete_tool_output).
+tools: [search_ui_calendar_events, list_ui_calendar_events, read_ui_calendar_events, create_ui_calendar_event, update_ui_calendar_event, delete_ui_calendar_event, create_ui_automation, update_ui_automation, delete_ui_automation, read_ui_automations, list_ui_automations, list_ui_folders, list_ui_tags, ask_user_input, wait_timer, read_tool_output, delete_tool_output]
+keywords: [calendrier, agenda, événement, rendez-vous, calendar, automation, cron, rrule, dtstart, ask_user_input, wait_timer, dossier, folder, tag, etiquette, tools_output, output_id, truncated, read_tool_output, delete_tool_output]
 ---
 
 # MANUEL OPÉRATIONNEL : AGENDA UI, AUTOMATISATIONS CRON & INTERACTIONS (`ui_calendar_and_automations`)
@@ -64,3 +64,12 @@ L'argument `rrule` dans `create_ui_automation` et `update_ui_automation` **DOIT 
   - `input_type="confirm"` : Approbation binaire (`Oui` / `Non`).
 - `wait_timer(seconds)` :
   - Met en pause l'exécution de `1` à `300` secondes. **Strictement limité à 1 seul appel par boucle agentique**.
+
+## 4. LECTURE PAGINÉE & PURGE DES SORTIES D'OUTILS DÉLESTÉES (`read_tool_output`, `delete_tool_output`)
+- Tout retour textuel d'outil (hors contenu Base64 protégé) excédant `ECHO_TOOL_OUTPUT_PREVIEW_CHARS` (`32 768` caractères) est automatiquement délesté intégralement dans le domaine de session `tools_output/{output_id}.txt`. La réponse inline retourne alors un aperçu `Head + Tail` (avec marquage exact des lignes omises) accompagné des métadonnées `truncated: true`, `output_id`, `total_chars`, `total_lines`, `omitted_lines_range` et `next_tools: ["read_tool_output", "delete_tool_output"]`.
+- `read_tool_output(output_id, start_line=1, end_line=400, search_pattern=None)` :
+  - Lit une tranche bornée (au plus `800` lignes et `46 080` octets / ~45 Ko par appel) d'une sortie délestée identifiée par `output_id`.
+  - Si `search_pattern` (expression régulière) est fourni, extrait uniquement les lignes correspondantes avec `±2` lignes de contexte et les numéros de lignes exacts avant toute lecture ciblée.
+  - Restitue `has_more` et `next_start_line` pour l'enchaînement paginé.
+- `delete_tool_output(output_id)` :
+  - Supprime un fichier `tools_output/{output_id}.txt` spécifique après exploitation, ou purge l'intégralité du répertoire `tools_output/` de la session courante si `output_id="all"` ou `"*"`.

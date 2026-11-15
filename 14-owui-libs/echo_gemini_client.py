@@ -2,17 +2,18 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 5.237.11.1
+version: 5.239.17.1
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.17.1: Timeouts HTTP/2 granulaires via build_httpx_timeout (600s Non-Stream / 300s Stream) et extraction du délai serveur Retry-After / google.rpc.RetryInfo (_extract_server_retry_delay) sur congestion 429/503.
+# 5.239.16.1: Garde anti-ping-pong tried_urls sur Fast-Failover OAuth2 dans call et stream, résolution de _get_global_client intra-boucle et alignement sur ECHO_LLM_CALL_TIMEOUT (240s).
 # 5.237.11.1: Prise en charge du paramètre override_thinking dans call_distillation.
 # 5.236.0.2: Activation inconditionnelle et fallback SSOT des crédits Google One AI en OAuth2.
 # 5.235.5.1: Indexation Session RAG factorisée via build_session_rag_point_id et injection systématique de message_id pour source conversation.
-# 5.234.0.1: Normalisation symétrique Zéro-Copie de inline_data/mime_type vers inlineData/mimeType pour Code Assist et AI Studio.
-# 5.233.0.1: Support natif de response_schema (Pydantic BaseModel / dict) dans call_distillation et call_cascade, et normalisation camelCase unifiée via normalize_generation_config.
 import copy
+import re
 import time
 import random
 import hashlib
@@ -20,6 +21,7 @@ import uuid
 import orjson as json
 import orjson as std_json
 import asyncio
+from datetime import datetime, timedelta, timezone
 import httpx
 import pybase64 as base64
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Type, Union
@@ -30,12 +32,32 @@ from echo_state_manager import EchoStateManager
 from echo_http import _get_global_client, FatalAPIError
 from echo_core import clamp_model, split_thought_process
 from echo_protocol import get_ca_model_id, build_ca_generation_config, normalize_generation_config, normalize_response_schema
-from echo_constants import AUTH_DATA_PROJECT_ID, AUTH_METHOD_OAUTH2, ECHO_AGY_USER_AGENT, ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, ECHO_GLOBAL_TENANT_PROJECT_ID, ECHO_RETRY_BASE_DELAY, ECHO_RETRY_JITTER_MAX, ECHO_RETRY_JITTER_MIN, ECHO_RETRY_MULTIPLIER, ECHO_SAFETY_SETTINGS, ECHO_USER_AGENT, GOOGLE_API_BASE_URL, GOOGLE_OAUTH_TOKEN_LIFETIME, get_descending_cascade, get_generation_config
+from echo_constants import AUTH_DATA_PROJECT_ID, AUTH_METHOD_OAUTH2, ECHO_AGY_USER_AGENT, ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN, ECHO_GLOBAL_TENANT_PROJECT_ID, ECHO_LLM_CALL_TIMEOUT, ECHO_LLM_STREAM_TIMEOUT, ECHO_RETRY_BASE_DELAY, ECHO_RETRY_JITTER_MAX, ECHO_RETRY_JITTER_MIN, ECHO_RETRY_MULTIPLIER, ECHO_RETRY_SERVER_MAX_WAIT_SEC, ECHO_SAFETY_SETTINGS, ECHO_USER_AGENT, GOOGLE_API_BASE_URL, GOOGLE_OAUTH_TOKEN_LIFETIME, build_httpx_timeout, get_descending_cascade, get_generation_config
 
 class EchoGeminiClient:
     """Moteur factorisé pour les appels API Gemini avec Architecture Symétrique (AI Studio & Code Assist)."""
 
     _MEM_STREAM_BUFFERS: Dict[str, bytes] = {}
+
+    @staticmethod
+    def _extract_server_retry_delay(headers: Any = None, error_text: str = "") -> Optional[float]:
+        """Extrait le délai d'attente demandé par le serveur (Retry-After ou google.rpc.RetryInfo), borné à ECHO_RETRY_SERVER_MAX_WAIT_SEC."""
+        delay_sec: Optional[float] = None
+        if headers:
+            ra = headers.get("retry-after") or headers.get("Retry-After")
+            if ra:
+                try:
+                    delay_sec = float(str(ra).strip())
+                except ValueError:
+                    pass
+        if delay_sec is None and error_text:
+            m = re.search(r'"retryDelay"\s*:\s*"([0-9.]+)(ms|s)"', error_text)
+            if m:
+                val = float(m.group(1))
+                delay_sec = (val / 1000.0) if m.group(2) == "ms" else val
+        if delay_sec is not None and delay_sec > 0:
+            return min(delay_sec, float(ECHO_RETRY_SERVER_MAX_WAIT_SEC))
+        return None
 
     @classmethod
     def register_memory_stream(cls, raw_bytes: bytes) -> str:
@@ -671,7 +693,7 @@ class EchoGeminiClient:
         threshold: int = ECHO_API_KEY_RETRIES,
         max_retries: int = ECHO_API_MAX_RETRIES,
         events: Optional[EchoEvents] = None,
-        timeout: int = 120,
+        timeout: int = ECHO_LLM_CALL_TIMEOUT,
         chat_id: str = None,
         enable_paid_credits: bool = False,
         gen_config_override: Optional[Dict] = None,
@@ -682,15 +704,16 @@ class EchoGeminiClient:
             auth_providers = await auth.get_ordered_auth_providers(user_id=user_id)
 
         if not auth_providers: raise ValueError(f"Aucune identité d'accès aux modèles configurée pour l'utilisateur {user_id}.")
-        client = await _get_global_client()
         active_idx = 0
         current_delay = ECHO_RETRY_BASE_DELAY
 
         state_mgr = EchoStateManager(user_id=user_id)
         current_url_idx, base_url = state_mgr.get_agy_endpoint()
+        tried_urls = {current_url_idx}
 
         attempt = 0
         while attempt <= max_retries:
+            client = await _get_global_client()
             provider = auth_providers[active_idx]
 
             # Préparation symétrique de la requête
@@ -711,6 +734,7 @@ class EchoGeminiClient:
                     if events: await events.status(f"⚠️ Config incomplète pour {provider['type']}. Bascule...", done=False)
                     if active_idx < len(auth_providers) - 1:
                         active_idx += 1
+                        tried_urls = {current_url_idx}
                         attempt = 0
                         continue
                     else: raise Exception(f"Configuration d'authentification {provider['type']} invalide (Project ID manquant).")
@@ -721,11 +745,11 @@ class EchoGeminiClient:
                         req_ctx["headers"]["Content-Length"] = content_length
                     request = client.build_request(
                         "POST", req_ctx["url"], headers=req_ctx["headers"],
-                        content=stream_content
+                        content=stream_content, timeout=build_httpx_timeout(timeout)
                     )
                     resp = await client.send(request)
                 else:
-                    resp = await client.post(req_ctx["url"], json=req_ctx["payload"], headers=req_ctx["headers"], timeout=timeout)
+                    resp = await client.post(req_ctx["url"], json=req_ctx["payload"], headers=req_ctx["headers"], timeout=build_httpx_timeout(timeout))
 
                 if resp.status_code == 200:
                     # Déverrouillage proactif sur succès (Auto-Heal)
@@ -744,6 +768,7 @@ class EchoGeminiClient:
                     if active_idx < len(auth_providers) - 1:
                         print(f"[ECHO-RETRY] (Non-Stream) Modèle indisponible/401 sur {provider['type']}. Bascule provider...", flush=True)      
                         active_idx += 1
+                        tried_urls = {current_url_idx}
                         attempt = 0
                         current_delay = ECHO_RETRY_BASE_DELAY
                         continue
@@ -751,9 +776,6 @@ class EchoGeminiClient:
                 if resp.status_code in [420, 429, 500, 503]:
                     # 1. --- FAST-FAILOVER INTRA-RETRY (OAuth2 uniquement) ---
                     if provider.get("type") == AUTH_METHOD_OAUTH2:
-                        from echo_constants import ECHO_ENDPOINT_LOCK_TIMEOUT_MIN
-                        from datetime import datetime, timedelta, timezone
-                        
                         # Stratégie Agnostique : Verrou court fixe pour toutes les erreurs 429/50x
                         reset_time = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
                         
@@ -761,13 +783,12 @@ class EchoGeminiClient:
                         state_mgr.lock_agy_endpoint(current_url_idx, reset_time)
                         new_idx, new_url = state_mgr.get_agy_endpoint()
                         
-                        # Si on obtient une nouvelle URL, on bascule immédiatement
-                        if new_idx != current_url_idx:
+                        # Si on obtient une nouvelle URL non encore essayée, on bascule immédiatement
+                        if new_idx != current_url_idx and new_idx not in tried_urls:
                             print(f"[ECHO-RETRY] (Non-Stream) Surcharge ({resp.status_code}). Verrouillage endpoint et bascule immédiate...", flush=True)
                             current_url_idx = new_idx
                             base_url = new_url
-                            attempt = 0
-                            current_delay = ECHO_RETRY_BASE_DELAY
+                            tried_urls.add(new_idx)
                             continue
 
                     # Détermination de la limite de tentatives (Backoff max vs Switch rapide)
@@ -780,6 +801,9 @@ class EchoGeminiClient:
                             wait_msg = f"⏳ Limite de débit API ({resp.status_code})."
 
                         wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
+                        server_delay = EchoGeminiClient._extract_server_retry_delay(resp.headers, resp.text)
+                        if server_delay:
+                            wait_time = max(wait_time, server_delay)
                         print(f"[ECHO-RETRY] (Non-Stream) {wait_msg} Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s...", flush=True)
                         await asyncio.sleep(wait_time)
                         current_delay *= ECHO_RETRY_MULTIPLIER
@@ -789,6 +813,7 @@ class EchoGeminiClient:
                     # 3. --- CHANGEMENT DE PROVIDER (Si Backoff épuisé) ---
                     if active_idx < len(auth_providers) - 1:
                         active_idx += 1
+                        tried_urls = {current_url_idx}
                         attempt = 0
                         current_delay = ECHO_RETRY_BASE_DELAY
                         if events: await events.status(f"🔄 Surcharge source {provider['type']}. Bascule sur la suivante...", done=False)
@@ -799,18 +824,14 @@ class EchoGeminiClient:
                 raise fe
             except Exception as e:
                 if isinstance(e, (httpx.TimeoutException, asyncio.TimeoutError)) and provider.get("type") == AUTH_METHOD_OAUTH2:
-                    from echo_constants import ECHO_ENDPOINT_LOCK_TIMEOUT_MIN
-                    from datetime import datetime, timedelta, timezone
-
                     reset_time = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
                     state_mgr.lock_agy_endpoint(current_url_idx, reset_time)
                     new_idx, new_url = state_mgr.get_agy_endpoint()
-                    if new_idx != current_url_idx:
+                    if new_idx != current_url_idx and new_idx not in tried_urls:
                         print(f"[ECHO-RETRY] (Non-Stream) Timeout ({e.__class__.__name__}) sur {target_model}. Verrouillage endpoint et bascule immédiate...", flush=True)
                         current_url_idx = new_idx
                         base_url = new_url
-                        attempt = 0
-                        current_delay = ECHO_RETRY_BASE_DELAY
+                        tried_urls.add(new_idx)
                         continue
 
                 current_limit = max_retries if provider.get("type") == AUTH_METHOD_OAUTH2 else threshold
@@ -826,6 +847,7 @@ class EchoGeminiClient:
                     # 3. --- CHANGEMENT DE PROVIDER AUSSI EN CAS D'ERREUR RÉSEAU FATALE ---
                     if active_idx < len(auth_providers) - 1:
                         active_idx += 1
+                        tried_urls = {current_url_idx}
                         attempt = 0
                         current_delay = ECHO_RETRY_BASE_DELAY
                         if events: await events.status(f"🔄 Erreur fatale sur source {provider['type']}. Bascule sur la suivante...", done=False)
@@ -842,7 +864,7 @@ class EchoGeminiClient:
         events: Optional[EchoEvents] = None,
         threshold: int = ECHO_API_KEY_RETRIES,
         max_retries: int = ECHO_API_MAX_RETRIES,
-        timeout: int = 120,
+        timeout: int = ECHO_LLM_CALL_TIMEOUT,
         chat_id: str = None,
         include_thoughts: bool = False,
         enable_paid_credits: bool = False,
@@ -965,7 +987,7 @@ class EchoGeminiClient:
         max_retries: int = ECHO_API_MAX_RETRIES,
         events: Optional[EchoEvents] = None,
         process_callback: Optional[Any] = None,
-        timeout: int = 300,
+        timeout: int = ECHO_LLM_STREAM_TIMEOUT,
         chat_id: str = None,
         enable_paid_credits: bool = False,
     ) -> AsyncGenerator[Union[str, Dict], None]:
@@ -977,15 +999,16 @@ class EchoGeminiClient:
         if not auth_providers:
             raise ValueError(f"🚫 Aucune identité d'accès aux modèles disponible pour l'utilisateur {user_id}.")
 
-        client = await _get_global_client()
         active_idx = 0
         current_delay = ECHO_RETRY_BASE_DELAY
 
         state_mgr = EchoStateManager(user_id=user_id)
         current_url_idx, base_url = state_mgr.get_agy_endpoint()
+        tried_urls = {current_url_idx}
 
         attempt = 0
         while attempt <= max_retries:
+            client = await _get_global_client()
             provider = auth_providers[active_idx]
 
             try:
@@ -994,11 +1017,12 @@ class EchoGeminiClient:
                     if events: await events.status(f"⚠️ Config incomplète pour {provider['type']}. Bascule...", done=False)
                     if active_idx < len(auth_providers) - 1:
                         active_idx += 1
+                        tried_urls = {current_url_idx}
                         attempt = 0
                         continue
                     else: yield f"🚫 Erreur : Configuration d'authentification {provider['type']} invalide (Project ID manquant)."; return
 
-                async with client.stream("POST", req_ctx["url"], content=json.dumps(req_ctx["payload"]), headers=req_ctx["headers"], timeout=timeout) as r:     
+                async with client.stream("POST", req_ctx["url"], content=json.dumps(req_ctx["payload"]), headers=req_ctx["headers"], timeout=build_httpx_timeout(timeout)) as r:     
                     # --- FAIL-FAST SUR ERREUR SYNTAXE ---
                     if r.status_code == 400:
                         body = await r.aread()
@@ -1009,6 +1033,7 @@ class EchoGeminiClient:
                         if active_idx < len(auth_providers) - 1:
                             print(f"[ECHO-RETRY] (Stream) Modèle indisponible/401 sur {provider['type']}. Bascule provider...", flush=True)  
                             active_idx += 1
+                            tried_urls = {current_url_idx}
                             attempt = 0
                             current_delay = ECHO_RETRY_BASE_DELAY
                             continue
@@ -1016,9 +1041,6 @@ class EchoGeminiClient:
                     if r.status_code in [420, 429, 500, 503]:
                         # 1. --- FAST-FAILOVER INTRA-RETRY (OAuth2 uniquement) ---
                         if provider.get("type") == AUTH_METHOD_OAUTH2:
-                            from echo_constants import ECHO_ENDPOINT_LOCK_TIMEOUT_MIN
-                            from datetime import datetime, timedelta, timezone
-                            
                             # Stratégie Agnostique : Verrou court fixe pour toutes les erreurs 429/50x
                             reset_time = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
                             
@@ -1026,13 +1048,12 @@ class EchoGeminiClient:
                             state_mgr.lock_agy_endpoint(current_url_idx, reset_time)
                             new_idx, new_url = state_mgr.get_agy_endpoint()
                             
-                            # Si on obtient une nouvelle URL, on bascule immédiatement
-                            if new_idx != current_url_idx:
+                            # Si on obtient une nouvelle URL non encore essayée, on bascule immédiatement
+                            if new_idx != current_url_idx and new_idx not in tried_urls:
                                 print(f"[ECHO-RETRY] (Stream) Surcharge ({r.status_code}). Verrouillage endpoint et bascule immédiate...", flush=True)
                                 current_url_idx = new_idx
                                 base_url = new_url
-                                attempt = 0
-                                current_delay = ECHO_RETRY_BASE_DELAY
+                                tried_urls.add(new_idx)
                                 continue
 
                         # Détermination de la limite de tentatives (Backoff max vs Switch rapide)
@@ -1045,6 +1066,15 @@ class EchoGeminiClient:
                                 wait_msg = f"⏳ Limite de débit API ({r.status_code})."
 
                             wait_time = current_delay * random.uniform(ECHO_RETRY_JITTER_MIN, ECHO_RETRY_JITTER_MAX)
+                            err_text = ""
+                            try:
+                                err_bytes = await r.aread()
+                                err_text = err_bytes.decode("utf-8", errors="ignore")
+                            except Exception:
+                                pass
+                            server_delay = EchoGeminiClient._extract_server_retry_delay(r.headers, err_text)
+                            if server_delay:
+                                wait_time = max(wait_time, server_delay)
                             print(f"[ECHO-RETRY] (Stream) {wait_msg} Essai {attempt + 1}/{current_limit} dans {wait_time:.1f}s...", flush=True)
                             await asyncio.sleep(wait_time)
                             current_delay *= ECHO_RETRY_MULTIPLIER
@@ -1054,6 +1084,7 @@ class EchoGeminiClient:
                         # 3. --- CHANGEMENT DE PROVIDER (Si Backoff épuisé) ---
                         if active_idx < len(auth_providers) - 1:
                             active_idx += 1
+                            tried_urls = {current_url_idx}
                             attempt = 0
                             current_delay = ECHO_RETRY_BASE_DELAY
                             if events: await events.status(f"🔄 Surcharge source {provider['type']}. Bascule sur la suivante...", done=False)
@@ -1103,18 +1134,14 @@ class EchoGeminiClient:
                 raise fe
             except Exception as e:
                 if isinstance(e, (httpx.TimeoutException, asyncio.TimeoutError)) and provider.get("type") == AUTH_METHOD_OAUTH2:
-                    from echo_constants import ECHO_ENDPOINT_LOCK_TIMEOUT_MIN
-                    from datetime import datetime, timedelta, timezone
-
                     reset_time = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
                     state_mgr.lock_agy_endpoint(current_url_idx, reset_time)
                     new_idx, new_url = state_mgr.get_agy_endpoint()
-                    if new_idx != current_url_idx:
+                    if new_idx != current_url_idx and new_idx not in tried_urls:
                         print(f"[ECHO-RETRY] (Stream) Timeout ({e.__class__.__name__}) sur {target_model}. Verrouillage endpoint et bascule immédiate...", flush=True)
                         current_url_idx = new_idx
                         base_url = new_url
-                        attempt = 0
-                        current_delay = ECHO_RETRY_BASE_DELAY
+                        tried_urls.add(new_idx)
                         continue
 
                 current_limit = max_retries if provider.get("type") == AUTH_METHOD_OAUTH2 else threshold
@@ -1129,6 +1156,7 @@ class EchoGeminiClient:
                     # 3. --- CHANGEMENT DE PROVIDER AUSSI EN CAS D'ERREUR RÉSEAU FATALE ---
                     if active_idx < len(auth_providers) - 1:
                         active_idx += 1
+                        tried_urls = {current_url_idx}
                         attempt = 0
                         current_delay = ECHO_RETRY_BASE_DELAY
                         if events: await events.status(f"🔄 Erreur fatale sur source {provider['type']}. Bascule sur la suivante...", done=False)

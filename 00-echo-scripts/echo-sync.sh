@@ -1,7 +1,7 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : echo-sync.sh
-# VERSION : 5.231.39.1
+# VERSION : 5.239.6.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -10,11 +10,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.6.1: Garantie d'initialisation du fichier maître /opt/ECHO/.env (chmod 600) avant montage Docker.
 # 5.231.39.1: Renommage en echo-sync.sh et mise à jour du lien symbolique echo-rebuild.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 4.11: Ajout d'un encart visuel de versioning Git interactif (Avant/Après).
 # 4.10: Déploiement déclaratif automatique via boucle regex. Suppression des fantômes.
-# 4.9: Nettoyage conditionnel (sed) des caractères CRLF/BOM pour préserver le cache BuildKit.
 
 # --- 0. INITIALISATION CORE ---
 ECHO_ROOT="/opt/ECHO"
@@ -164,6 +164,7 @@ echo ""
 echo "📂 [SYNC] 2/2 Déploiement des fichiers vers $ECHO_ROOT..."
 
 mkdir -p "$ECHO_SECRETS"
+[ -f "${ECHO_ENV_FILE:-$ECHO_ROOT/.env}" ] || (umask 077 && touch "${ECHO_ENV_FILE:-$ECHO_ROOT/.env}" && chmod 600 "${ECHO_ENV_FILE:-$ECHO_ROOT/.env}")
 
 # Table d'état : chemins déjà purgés dans ce run (évite la double suppression)
 _HEALED_PATHS=""

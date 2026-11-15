@@ -1,18 +1,18 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 5.231.37.1
+VERSION : 5.239.12.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-10-31
+DATE MAJ : 2026-11-13
 ===============================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.12.1: Directives microsoft_365 MAJ (Contacts.ReadWrite optionnel, complete_authentication sans flow_cache).
 # 5.231.37.1: Extraction de x-openwebui-chat-id dans WebUIUserMiddleware (chat_id_var) et compatibilité FastMCP.
 # 5.231.20.1: Extraction et décodage de l'en-tête x-echo-credentials dans WebUIUserMiddleware (credentials_var).
 # 5.228.9.2: Schéma jobs_omnisearch enrichi avec directives APEC (DataDome), LinkedIn (li_at) et WTTJ.
 # 5.228.9.1: Directives France Travail (OAuth2 francetravail.io) et champs WTTJ dans jobs_omnisearch.
-# 5.228.0.1: Directive PAS exhaustive pour google_workspace (anti-localhost:8001, mode In production).
 import base64
 import json
 import logging
@@ -239,7 +239,8 @@ SERVICE_SCHEMAS = {
             "1. Demander à l'Utilisateur de créer une application sur le portail Azure (Entra ID) avec la "
             "plateforme 'Application mobile et de bureau' (Redirect URI natif) et d'ajouter les permissions "
             "Microsoft Graph déléguées requises : "
-            "Mail.ReadWrite, Mail.Send, Calendars.ReadWrite, User.Read, Files.ReadWrite.All, offline_access. "
+            "Mail.ReadWrite, Mail.Send, Calendars.ReadWrite, User.Read, Files.ReadWrite.All, offline_access "
+            "(et optionnellement Contacts.ReadWrite si l'accès au carnet d'adresses Outlook est souhaité). "
             "2. L'Utilisateur doit enregistrer dans l'Identity Vault pour le service 'microsoft_365' "
             "les deux clés exactes suivantes : "
             "'MICROSOFT_MCP_CLIENT_ID' (Client ID / Application ID Azure) et 'MICROSOFT_MCP_TENANT_ID' "
@@ -250,7 +251,9 @@ SERVICE_SCHEMAS = {
             "4. Le Modèle DOIT restituer à l'Utilisateur l'URL de vérification ainsi que le 'User Code' "
             "fournis par le MCP, et inviter l'Utilisateur à valider la connexion. "
             "5. Après confirmation de l'Utilisateur, le Modèle DOIT appeler la fonction "
-            "'complete_authentication' avec le 'flow_cache' pour clore l'authentification MSAL."
+            "'complete_authentication' avec un objet d'arguments vide {} "
+            "(le cache Device Flow étant persisté automatiquement par le Broker) "
+            "pour clore l'authentification MSAL."
         ),
         "fields": [
             {

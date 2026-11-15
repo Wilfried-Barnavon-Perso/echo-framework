@@ -1,16 +1,16 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 5.233.0.1
+version: 5.238.1.1
 description: Composant système interne : ECHO Sovereign Web Search.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.238.1.1: Ajout de MODEL_ATHENA dans target_model_key de delegate_deep_research.
 # 5.233.0.1: Décoration @echo_tool sur les 3 méthodes publiques et simplification des retours wrap_tool_output.
 # 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/web_search_and_browsing.md.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.21: Fermeture explicite de la session navigateur Playwright (reset_session) en fin de delegate_deep_research.
-# 1.20: Résolution robuste de chat_id avec fallback sur __metadata__ dans delegate_deep_research.
 
 import httpx
 import sys
@@ -148,7 +148,7 @@ class Tools:
         self,
         query: str,
         engines: Optional[str] = Field(default=None, description="Moteurs cibles séparés par des virgules (ex: 'scholar,wikipedia')."),
-        target_model_key: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"] = "MODEL_PROMETHEUS",
+        target_model_key: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_PROMETHEUS",
         __user__: dict = {},
         __chat_id__: str = "",
         __metadata__: dict = {},

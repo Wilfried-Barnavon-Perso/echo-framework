@@ -75,9 +75,9 @@
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-          <h3>1. Visual Intelligence &amp; Imagerie Supervisée (<code>universal_visual_generator.py</code> v5.233.0.2
+          <h3>1. Visual Intelligence &amp; Imagerie Supervisée (<code>universal_visual_generator.py</code> v5.239.11.1
             &amp;
-            <code>echo_visuals.py</code> v5.232.3.1)
+            <code>echo_visuals.py</code> v5.237.19.1)
           </h3>
           <p>Le moteur visuel s'appuie sur le pattern <strong>Data Island</strong> pour produire des visualisations
             interactives via 17 moteurs (Mermaid, ECharts 2D/3D-GL, Plotly 2D/3D, 3Dmol.js PDB/CID, Markmap, D3.js,
@@ -119,8 +119,8 @@
               <code>(commit_hash, paths_to_rm)</code> lors d'un <code>delete_file</code> pour purger récursivement
               SQLite.
             </li>
-            <li><strong>L'Interface HUD &amp; Action (<code>echo_codex_ui.py</code> v5.232.5.1 &amp;
-                <code>echo_codex_action.py</code> v5.235.4.1) :</strong> Injection de <strong>Monaco Editor</strong>
+            <li><strong>L'Interface HUD &amp; Action (<code>echo_codex_ui.py</code> v5.238.1.1 &amp;
+                <code>echo_codex_action.py</code> v5.238.1.1) :</strong> Injection de <strong>Monaco Editor</strong>
               (propulsé par le Window Manager UCTP/SSE/RPC), avec sérialisation JSON intégrale des variables JS
               (<code>activeChatTitle</code>), pré-chargement atomique de <code>initial_content</code> à
               <code>t = 0ms</code>, export direct côté client sans aller-retour RPC
@@ -139,12 +139,12 @@
               <code>generated</code>,
               et verrou logiciel anti-Race Condition à la sauvegarde.
             </li>
-            <li><strong>L'Outil LLM (<code>echo_codex_tool.py</code> v5.235.5.1) :</strong> Protégé par le verrou
+            <li><strong>L'Outil LLM (<code>echo_codex_tool.py</code> v5.239.17.1) :</strong> Protégé par le verrou
               partagé
               <code>get_codex_lock(uid, cid)</code> et déporté hors de l'Event Loop via <code>asyncio.to_thread</code>,
               il
               expose 11 primitives d'édition, d'exploration inter-conversations et de voyage temporel
-              (<code>create_codex</code>, <code>read_codex</code> avec omission sécurisée des binaires sans déversement
+              (<code>create_codex</code>, <code>read_codex</code> paginé à 800 lignes / 46 080 octets sur HEAD et commit_hash avec omission sécurisée des binaires sans déversement
               brut, <code>edit_codex</code> doté d'un contrôle de
               concurrence optimiste SHA-256 <code>original_sha</code> en Mode 2 <code>assisted_edition</code> prévenant
               tout écrasement concurrent <em>Lost Update</em>, <code>delete_codex</code>, <code>list_codex</code>,
@@ -180,7 +180,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.237.15 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.18 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -166,13 +166,15 @@
           </li>
           <li><strong>Session RAG (<code>echo_session_rag</code>) &amp; Mémoire Épisodique Active :</strong> indexé par
             <code>user_id + chat_id + source_id</code> via <code>save_session_context</code>,
-            <code>search_sessions_context</code> (filtrant dynamiquement sur la branche active via
+            <code>search_sessions_context</code> (3 modes explicites <code>inventory</code>,
+            <code>chronological</code> et <code>semantic</code> avec seuil <code>certainty_level</code> /
+            <code>COSINE</code> + <code>cosine_threshold</code>, filtrant dynamiquement sur la branche active via
             <code>build_branch_rag_filter</code>, avec support <code>global_search</code> inter-sessions et filtrage par
             <code>tag</code> via SSoT <code>webui.db</code>) et <code>delete_session_context_source</code>. En
-            complément du Session RAG, le filtre <code>context_compaction_filter.py</code> (v5.231.58.1), l'action
-            <code>resume_in_new_chat_action.py</code> (v5.229.2.1) et les modules <code>echo_session_gc.py</code>
-            (v5.235.5.3) et <code>echo_session_clone.py</code>
-            (v5.235.5.2, mutualisé avec <code>echo_chat_cloned_event.py</code> v5.235.5.1) opèrent l'élagage
+            complément du Session RAG, le filtre <code>context_compaction_filter.py</code> (v5.237.20.1), l'action
+            <code>resume_in_new_chat_action.py</code> (v5.239.13.1) et les modules <code>echo_session_gc.py</code>
+            (v5.237.20.2) et <code>echo_session_clone.py</code>
+            (v5.239.13.1, mutualisé avec <code>echo_chat_cloned_event.py</code> v5.235.5.1) opèrent l'élagage
             transactionnel des branches mortes (<code>compute_dead_set</code> / <code>purge_dead_set</code> tout en
             conservant les productions sous provenance <code>hors_branche</code>), la compaction
             contextuelle in-place (à 60 % de charge) ou la migration/bifurcation de session par distillation en 2 passes
@@ -185,7 +187,7 @@
           <li><strong>Corrélation contextuelle :</strong> Au-delà des seuils de charge contextuelle
             (<code>CONTEXT_LOAD_WARNING_THRESHOLD = 40%</code>, <code>CONTEXT_LOAD_CRITICAL_THRESHOLD = 60%</code>),
             l'outil <code>new_cognitive_level</code> permet au modèle actif de déclencher une escalade cognitive vers
-            <code>MODEL_APOLLO</code> ou <code>MODEL_PROMETHEUS</code>.
+            <code>MODEL_APOLLO</code>, <code>MODEL_PROMETHEUS</code> ou <code>MODEL_ATHENA</code>.
           </li>
         </ul>
 
@@ -218,7 +220,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.237.15 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.18 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

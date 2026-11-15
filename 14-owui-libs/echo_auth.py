@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Auth
 author: Wilfried BARNAVON
-version: 5.236.5.1
+version: 5.239.8.1
 description: Gestion de l'authentification et OAuth2.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.8.1: Mise à jour du modèle de repli HUD par défaut vers gemini-4-hydrogen-high dans get_ui_quota_snapshot.
+# 5.239.7.1: Ajout de tenant_id (ECHO_GLOBAL_TENANT_PROJECT_ID) dans get_ui_quota_snapshot pour le HUD.
+# 5.239.5.1: Retrait du flag -N dans l'instruction SSH et transmission du statut final (OK/NOK/Délai dépassé) au tunnel.
 # 5.236.5.1: Rectification du prompt get_auth_prompt documentant le support simultané et le failover transparent OAuth2 / Clés API.
 # 5.235.5.2: Séparation stricte identity.db via get_echo_identity_db_path, capture EchoDbMissingError et méthode delete_auth_data_by_prefixes.
-# 5.234.0.1: Factorisation de get_auth_prompt via les constantes SSOT ECHO_AUTH_TITLE_CONFIG et ECHO_AUTH_PENDING_MARKER.
-# 5.231.24.1: Utilisation des constantes SSOT ECHO_QUOTA_REFRESH_THROTTLE_SEC, ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC et ECHO_QUOTA_RESET_IMMINENT_LABEL.
-# 5.231.13.1: Support de la clé disabled dans get_ui_quota_snapshot et rafraîchissement Cloud réactif (60s / échéance Imminent) dans refresh_quota_if_needed.
 import os
 import time
 from contextlib import closing
@@ -40,7 +40,8 @@ from echo_constants import (
     AUTH_DATA_USER_TIER, AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_KEY_SECONDARY, AUTH_METHOD_OAUTH2,
     ECHO_USERS_ROOT, GOOGLE_OAUTH_TOKEN_URL, GOOGLE_OAUTH_TOKEN_LIFETIME,
     ECHO_QUOTA_REFRESH_THROTTLE_SEC, ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC,
-    ECHO_QUOTA_RESET_IMMINENT_LABEL, ECHO_AUTH_PENDING_MARKER, ECHO_AUTH_TITLE_CONFIG
+    ECHO_QUOTA_RESET_IMMINENT_LABEL, ECHO_AUTH_PENDING_MARKER, ECHO_AUTH_TITLE_CONFIG,
+    ECHO_GLOBAL_TENANT_PROJECT_ID
 )
 class EchoAuth:
     def __init__(self, user_id: str = "system"):
@@ -170,7 +171,7 @@ class EchoAuth:
                 except Exception:
                     pass
             if not resolved_ca_model:
-                resolved_ca_model = "gemini-3.8-flash-high"
+                resolved_ca_model = "gemini-4-hydrogen-high"
 
         model_quota = self.get_model_quota(resolved_ca_model) if resolved_ca_model else {}
         q_summary = self.get_quota_summary(resolved_ca_model)
@@ -202,6 +203,7 @@ class EchoAuth:
             "user_email": self.get_auth_data(AUTH_DATA_USER_EMAIL),
             "user_tier": self.get_auth_data(AUTH_DATA_USER_TIER),
             "project_id": self.get_auth_data(AUTH_DATA_PROJECT_ID),
+            "tenant_id": ECHO_GLOBAL_TENANT_PROJECT_ID,
             "credits_val": str(credits_raw) if (credits_raw is not None and credits_raw != "") else "0",
             "quota_fraction": q_fraction,
             "quota_reset": q_reset,
@@ -492,58 +494,52 @@ class AuthService:
 
 
         auth_code: Optional[str] = None
-
         error_msg: Optional[str] = None
-
+        final_ssh_msg: str = "Authentification OAuth2 : OK"
         try:
+            try:
+                result = await asyncio.wait_for(
+                    code_queue.get(),
+                    timeout=ECHO_SSH_TUNNEL_TIMEOUT,
+                )
+                if result.startswith("ERROR:"):
+                    error_msg = result[6:]  # strip "ERROR:"
+                    final_ssh_msg = f"Authentification OAuth2 : NOK ({error_msg})"
+                else:
+                    auth_code = result
+            except asyncio.TimeoutError:
+                error_msg = f"Timeout — aucune réponse en {ECHO_SSH_TUNNEL_TIMEOUT}s."
+                final_ssh_msg = "Authentification OAuth2 : Délai dépassé"
+            finally:
+                # Le serveur de callback HTTP local n'est plus nécessaire dès réception du code ou timeout
+                await pkce_srv.stop()
 
-            result = await asyncio.wait_for(
+            if error_msg or not auth_code:
+                if hasattr(self, "_ssh_server"):
+                    await self._ssh_server.stop(message=final_ssh_msg)
+                return False, f"Erreur d'authentification : {error_msg or 'Code manquant'}. Relancez en envoyant un message."
 
-                code_queue.get(),
-
-                timeout=ECHO_SSH_TUNNEL_TIMEOUT,
-
-            )
-
-            if result.startswith("ERROR:"):
-
-                error_msg = result[6:]  # strip "ERROR:"
-
+            # Échange du code PKCE contre les tokens Google OAuth2
+            success, exchange_msg = await self._exchange_pkce_code(auth_code, code_verifier, redirect_uri)
+            if success:
+                final_ssh_msg = "Authentification OAuth2 : OK"
             else:
-
-                auth_code = result
-
-        except asyncio.TimeoutError:
-
-            error_msg = f"Timeout — aucune réponse en {ECHO_SSH_TUNNEL_TIMEOUT}s."
-
-        finally:
-
-            await pkce_srv.stop()
+                final_ssh_msg = f"Authentification OAuth2 : NOK ({exchange_msg})"
 
             if hasattr(self, "_ssh_server"):
+                await self._ssh_server.stop(message=final_ssh_msg)
 
-                await self._ssh_server.stop()
+            return success, exchange_msg
+        finally:
+            # Sécurité absolue : garantir la libération du port SSH et du serveur
+            if hasattr(self, "_ssh_server") and getattr(self._ssh_server, "is_active", False):
+                await self._ssh_server.stop(message=final_ssh_msg)
 
             # Nettoyage SQLite
-
             self.echo_auth.save_api_key("pkce_code_verifier", "")
-
             self.echo_auth.save_api_key("pkce_state",         "")
-
             self.echo_auth.save_api_key("pkce_status",        "" if error_msg else "done")
-
             self.echo_auth.save_api_key("pkce_redirect_uri",  "")
-
-
-
-        if error_msg:
-
-            return False, f"Erreur d'authentification : {error_msg} Relancez en envoyant un message."
-
-
-
-        return await self._exchange_pkce_code(auth_code, code_verifier, redirect_uri)
 
 
 
@@ -713,7 +709,7 @@ class AuthService:
 
             ssh_cmd = (
 
-                f"ssh -N "
+                f"ssh "
 
                 f"-o StrictHostKeyChecking=no "
 

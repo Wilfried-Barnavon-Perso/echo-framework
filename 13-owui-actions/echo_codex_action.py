@@ -1,17 +1,17 @@
 """
 title: ECHO Codex
 author: Wilfried BARNAVON
-version: 5.235.4.1
+version: 5.238.1.1
 description: HUD Monaco et Explorateur (Data Island) couplé à une isolation Workspace
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNiA0aDJhMiAyIDAgMCAxIDIgMnYxNGEyIDIgMCAwIDEtMiAySDZhMiAyIDAgMCAxLTItMlY2YTIgMiAwIDAgMSAyLTJoMiIvPjxyZWN0IHg9IjgiIHk9IjIiIHdpZHRoPSI4IiBoZWlnaHQ9IjQiIHJ4PSIxIiByeT0iMSIvPjxwYXRoIGQ9Ik0xMCAxMmw0LTRtLTQgNGw0IDQiLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.238.1.1: Résolution dynamique de get_generation_config(target_model, override_thinking="medium") dans _codex_ai_edit.
 # 5.235.4.1: Délégation factorisée à read_file_at_commit lors du chargement de versions historiques et transmission du vrai statut binaire au HUD.
 # 5.232.5.1: Verrouillage des actions mutatives sur les workspaces non-inscriptibles (plans, generated), résolution dynamique de resource_type et nettoyage ciblé par workspace.
 # 5.231.39.1: Pré-chargement atomique de initial_content à t=0ms, purge atomique de _echoCodexTarget et enregistrement anticipé de loop_id.
 # 5.231.29.1: Alignement sur le prédicat SSOT is_codex_workspace_indexed pour exclure formellement la sandbox de echo_resources.
-# 5.231.28.1: Normalisation de storage_path via format_codex_storage_path (codex/<workspace>/<filename>) et suppression des appels à codex_docs.
 
 import sys
 import uuid
@@ -993,7 +993,7 @@ class Action:
 
         payload = {
             "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-            "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="medium"),
+            "generationConfig": get_generation_config(target_model, override_thinking="medium"),
             "systemInstruction": {
                 "parts": [{"text": SYS_CODEX_EDIT.format(filename=filename, language=lang)}]
             },

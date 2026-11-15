@@ -2,15 +2,16 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - FLASK ROUTES
-VERSION : 5.236.1.1
+VERSION : 5.239.6.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.6.1: Restauration des secrets (.secrets et .env) via conteneur éphémère one-shot (echo-python-base:latest), détection de divergence des clés maîtresses en RAM et redémarrage des services echo.hot-reload=true (hors admin-manager et auth-manager).
+# 5.239.4.1: Validation obligatoire du champ nom dans /action/auth/create pour prévenir les profils SSO sans nom ou corrompus.
+# 5.239.2.1: Persistance et validation des paramètres anti-bruteforce dans /action/auth/settings, exposition de failed_attempts/locked_until dans /api/auth/users et déblocage dans /action/auth/reset.
 # 5.236.1.1: Validation Dual-Tier untrusted_session_timeout/session_timeout dans auth_settings_save et exposition directe de is_trusted, expires_at, expires_dt et time_remaining_sec dans api_auth_sessions.
 # 5.235.5.1: Prise en charge de purge_dead_branches dans update_maint et reset d'authentification via get_echo_identity_db_path et open_db.
-# 5.228.0.1: Ajout du calcul et de l'exposition de la taille du profil utilisateur (profile_size_bytes, profile_size_fmt) dans /api/user_stats.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 import configparser
 from contextlib import closing
 import datetime
@@ -41,6 +42,8 @@ from core.config import (
     ECHO_USERS_ROOT,
     HAS_ECHO_LIBS,
     HAS_PSUTIL,
+    HOST_ECHO_ROOT,
+    HOST_ENV_FILE,
     HOST_GATEWAY,
     MAINTENANCE_STATE,
     MCP_CACHE_DIR,
@@ -49,6 +52,7 @@ from core.config import (
     OWUI_DATA_ROOT,
     RCLONE_CONF_DIR,
     RCLONE_CONF_PATH,
+    SECRETS_DIR,
     SYSTEM_ADMIN_EMAIL,
     TARGET_CONTAINER,
     UPLOADS_DIR,
@@ -318,6 +322,81 @@ def containers():
         print(f"Containers error: {e}")
         return jsonify([])
 
+
+def _restore_host_secrets_and_check_env(client, archive_path: str, has_secrets: bool, has_env: bool) -> bool:
+    """Restaure .secrets et .env sur l'hôte via un conteneur éphémère one-shot et détecte si une clé maître a changé."""
+    if not has_secrets and not has_env:
+        return False
+
+    restore_py_script = (
+        "import os, shutil, subprocess, sys\n"
+        "archive, has_sec, has_env = sys.argv[1], sys.argv[2] == '1', sys.argv[3] == '1'\n"
+        "tmp_dir = '/tmp/echo_sec_restore'\n"
+        "shutil.rmtree(tmp_dir, ignore_errors=True)\n"
+        "os.makedirs(tmp_dir, exist_ok=True)\n"
+        "members = ([] if not has_sec else ['app/secrets']) + ([] if not has_env else ['app/host_env/.env'])\n"
+        "subprocess.run(['tar', '-xf', archive, '-C', tmp_dir, *members], check=True)\n"
+        "if has_sec:\n"
+        "    sec_dst = '/host_echo/.secrets'\n"
+        "    os.makedirs(sec_dst, exist_ok=True)\n"
+        "    for f in os.listdir(sec_dst):\n"
+        "        fp = os.path.join(sec_dst, f)\n"
+        "        if os.path.isfile(fp):\n"
+        "            os.remove(fp)\n"
+        "    sec_src = os.path.join(tmp_dir, 'app/secrets')\n"
+        "    if os.path.isdir(sec_src):\n"
+        "        for f in os.listdir(sec_src):\n"
+        "            sp, dp = os.path.join(sec_src, f), os.path.join(sec_dst, f)\n"
+        "            if os.path.isfile(sp):\n"
+        "                shutil.copy2(sp, dp)\n"
+        "                os.chmod(dp, 0o400)\n"
+        "if has_env:\n"
+        "    env_src = os.path.join(tmp_dir, 'app/host_env/.env')\n"
+        "    env_dst = '/host_echo/.env'\n"
+        "    if os.path.isfile(env_src):\n"
+        "        shutil.copy2(env_src, env_dst)\n"
+        "        os.chmod(env_dst, 0o600)\n"
+        "shutil.rmtree(tmp_dir, ignore_errors=True)\n"
+    )
+    client.containers.run(
+        image="echo-python-base:latest",
+        command=["python3", "-c", restore_py_script, archive_path, "1" if has_secrets else "0", "1" if has_env else "0"],
+        volumes={
+            HOST_ECHO_ROOT: {"bind": "/host_echo", "mode": "rw"},
+            "echo-backups": {"bind": BACKUP_DIR, "mode": "ro"},
+        },
+        remove=True,
+    )
+
+    if not has_env or not os.path.isfile(HOST_ENV_FILE):
+        return False
+
+    try:
+        with open(HOST_ENV_FILE, "r", encoding="utf-8", errors="ignore") as f_env:
+            restored_kv = {}
+            for line in f_env:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    restored_kv[k.strip()] = v.strip()
+
+        def _get_container_env_val(cname: str, key: str) -> str:
+            try:
+                env_list = client.containers.get(cname).attrs.get("Config", {}).get("Env", [])
+                return next((e.split("=", 1)[1] for e in env_list if e.startswith(f"{key}=")), "")
+            except Exception:
+                return ""
+
+        checks = [
+            (restored_kv.get("ECHO_VAULT_ENCRYPTION_KEY", ""), _get_container_env_val(TARGET_CONTAINER, "ECHO_VAULT_ENCRYPTION_KEY")),
+            (restored_kv.get("N8N_ENCRYPTION_KEY", ""), _get_container_env_val("echo-n8n-worker", "N8N_ENCRYPTION_KEY")),
+            (restored_kv.get("ECHO_SSO_SECRET", ""), os.environ.get("ECHO_SSO_SECRET", "")),
+        ]
+        return any(new_val and cur_val and new_val != cur_val for new_val, cur_val in checks)
+    except Exception:
+        return False
+
+
 @app.route('/action/<action>', methods=['POST'])
 def handle_action(action):
     if not session.get('logged_in'): return redirect(url_for('index'))
@@ -445,6 +524,9 @@ def handle_action(action):
                 
                 list_cmd = subprocess.run(['tar', '-tf', p], capture_output=True, text=True, check=True)
                 files_list = list_cmd.stdout.split('\n')
+                has_secrets = any(f.startswith('app/secrets') for f in files_list)
+                has_env = any(f.startswith('app/host_env/.env') for f in files_list)
+                env_recreate_required = False
                 if any(f.startswith('app/backend/data') for f in files_list):
                     shutil.rmtree('/app/backend/data', ignore_errors=True)
                     os.makedirs('/app/backend/data', exist_ok=True)
@@ -458,21 +540,45 @@ def handle_action(action):
                     if any(f.startswith('app/mcp_cache') for f in files_list):
                         shutil.rmtree(MCP_CACHE_DIR, ignore_errors=True)
                         os.makedirs(MCP_CACHE_DIR, exist_ok=True)
-                    subprocess.run(['tar', '-xf', p, '-C', '/'], check=True)
+                    subprocess.run(
+                        ['tar', '-xf', p, '-C', '/', '--exclude=app/secrets', '--exclude=app/host_env'],
+                        check=True,
+                    )
+                    env_recreate_required = _restore_host_secrets_and_check_env(client, p, has_secrets, has_env)
                 else:
                     shutil.rmtree(OWUI_DATA_ROOT, ignore_errors=True)
                     os.makedirs(OWUI_DATA_ROOT, exist_ok=True)
                     subprocess.run(['tar', '-xf', p, '-C', OWUI_DATA_ROOT], check=True)
                 
-                flash('Restauration terminée.', 'success')
+                if env_recreate_required:
+                    flash(
+                        "Restauration terminée. ⚠️ Des clés maîtresses (.env) ont été modifiées : "
+                        "exécutez 'echo-update.sh' ou 'docker compose up -d' sur l'hôte pour recréer les conteneurs.",
+                        'warning',
+                    )
+                else:
+                    flash('Restauration terminée.', 'success')
             except Exception as e:
                 flash(f'Erreur: {e}', 'danger')
             finally:
+                already_restarted = set()
                 for c_obj in stopped_containers:
                     try:
                         c_obj.start()
+                        already_restarted.add(getattr(c_obj, 'name', ''))
                     except Exception:
                         pass
+                try:
+                    client_hr = docker.from_env()
+                    skip_names = already_restarted | {'echo-admin-manager', 'echo-auth-manager'}
+                    for hr_cont in client_hr.containers.list(filters={'label': 'echo.hot-reload=true'}):
+                        if getattr(hr_cont, 'name', '') not in skip_names:
+                            try:
+                                hr_cont.restart(timeout=10)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
     return redirect(url_for('index'))
 
 @app.route('/action/user_role/<user_id>', methods=['POST'])
@@ -784,12 +890,32 @@ def auth_users():
             except: pass
             try: conn.execute("ALTER TABLE users ADD COLUMN last_enrollment INTEGER DEFAULT 0")
             except: pass
-            users = conn.execute("SELECT email, must_enroll, temp_pass_expires, last_enrollment, name FROM users").fetchall()
+            try: conn.execute("ALTER TABLE users ADD COLUMN failed_attempts INTEGER DEFAULT 0")
+            except: pass
+            try: conn.execute("ALTER TABLE users ADD COLUMN last_attempt_at INTEGER DEFAULT 0")
+            except: pass
+            try: conn.execute("ALTER TABLE users ADD COLUMN locked_until INTEGER DEFAULT 0")
+            except: pass
+            users = conn.execute("SELECT email, must_enroll, temp_pass_expires, last_enrollment, name, failed_attempts, locked_until FROM users").fetchall()
             
+            now_ts = int(time.time())
             result = []
             for u in users:
                 display_name = owui_names.get(u[0]) or u[4]
-                result.append({"email": u[0], "status": "Pending" if u[1] else "Active", "expires": u[2], "last_enrollment": u[3], "name": display_name})
+                failed_att = int(u[5] or 0)
+                locked_val = int(u[6] or 0)
+                if locked_val > 0 and locked_val <= now_ts:
+                    locked_val = 0
+                    failed_att = 0
+                result.append({
+                    "email": u[0],
+                    "status": "Pending" if u[1] else "Active",
+                    "expires": u[2],
+                    "last_enrollment": u[3],
+                    "name": display_name,
+                    "failed_attempts": failed_att,
+                    "locked_until": locked_val
+                })
             return jsonify(result)
     except Exception: return jsonify([])
 
@@ -798,8 +924,8 @@ def auth_create_user():
     if not session.get('logged_in'): return redirect(url_for('index'))
     email = request.form.get('email', '').strip()
     name = request.form.get('name', '').strip()
-    if not email or (email.endswith('@echo.local') and email != SYSTEM_ADMIN_EMAIL):
-        flash("Email invalide ou réservé au système.", "danger")
+    if not email or not name or (email.endswith('@echo.local') and email != SYSTEM_ADMIN_EMAIL):
+        flash("Le nom d'affichage et l'email sont obligatoires (email système réservé).", "danger")
         return redirect(url_for('index'))
     
     temp_pwd = generate_complex_temp_password()
@@ -941,7 +1067,13 @@ def auth_reset_mfa():
             except: pass
             try: conn.execute("ALTER TABLE users ADD COLUMN last_enrollment INTEGER DEFAULT 0")
             except: pass
-            conn.execute("UPDATE users SET pass_hash=?, totp_secret=NULL, security_question=NULL, security_answer_hash=NULL, must_enroll=1, temp_pass_expires=?, last_enrollment=0 WHERE email=?", (pass_hash, expire_timestamp, email))
+            try: conn.execute("ALTER TABLE users ADD COLUMN failed_attempts INTEGER DEFAULT 0")
+            except: pass
+            try: conn.execute("ALTER TABLE users ADD COLUMN last_attempt_at INTEGER DEFAULT 0")
+            except: pass
+            try: conn.execute("ALTER TABLE users ADD COLUMN locked_until INTEGER DEFAULT 0")
+            except: pass
+            conn.execute("UPDATE users SET pass_hash=?, totp_secret=NULL, security_question=NULL, security_answer_hash=NULL, must_enroll=1, temp_pass_expires=?, last_enrollment=0, failed_attempts=0, last_attempt_at=0, locked_until=0 WHERE email=?", (pass_hash, expire_timestamp, email))
             conn.execute("DELETE FROM sessions WHERE email=?", (email,))
             conn.commit()
         expire_str = datetime.datetime.fromtimestamp(expire_timestamp).strftime('%d/%m/%Y à %H:%M')
@@ -965,6 +1097,12 @@ def auth_settings_save():
         settings["untrusted_session_timeout"] = untrusted_val if untrusted_val in (1, 2, 4, 8, 12, 24) else 24
         trusted_val = int(request.form.get("session_timeout", 2160))
         settings["session_timeout"] = trusted_val if trusted_val in (168, 720, 2160, 4380, 8760, 0) else 2160
+        retry_delay = int(request.form.get("login_retry_delay_sec", 5))
+        settings["login_retry_delay_sec"] = retry_delay if retry_delay in (0, 5, 10, 20) else 5
+        max_att = int(request.form.get("unenrolled_max_attempts", 5))
+        settings["unenrolled_max_attempts"] = max(1, min(20, max_att))
+        lockout_min = int(request.form.get("unenrolled_lockout_min", 10))
+        settings["unenrolled_lockout_min"] = lockout_min if lockout_min in (-1, 1, 3, 10, 60, 180, 1440) else 10
         
         if save_auth_settings(settings):
             flash("Paramètres de sécurité SSO sauvegardés avec succès.", "success")

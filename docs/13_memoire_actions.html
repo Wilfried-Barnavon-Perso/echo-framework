@@ -69,7 +69,7 @@
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Memory &amp; RAG Tool (<code>memory_and_rag_tool.py</code> v5.235.5.1)</h3>
+        <h3>1. Memory &amp; RAG Tool (<code>memory_and_rag_tool.py</code> v5.239.15.1)</h3>
         <p>Offre au LLM une API complète sur les deux collections Qdrant (<code>echo_meta_artifacts</code> et
           <code>echo_session_rag</code>) :
         </p>
@@ -85,10 +85,13 @@
             <code>delete_meta_artifact_item</code>.
           </li>
           <li><strong>Outils Session RAG :</strong> <code>save_session_context</code>,
-            <code>search_sessions_context</code> (fusionnant recherche vectorielle filtrée dynamiquement sur la branche
-            active via <code>build_branch_rag_filter(active_ids)</code>, cartographie globale, isolation
-            <code>sub_sid</code> pour les sous-agents, paramètre <code>global_search</code> inter-sessions et filtrage
-            par étiquette <code>tag</code> résolu en temps réel via la table SSoT <code>webui.db::tag</code>) et
+            <code>search_sessions_context</code> (3 modes explicites <code>inventory</code>,
+            <code>chronological</code> et <code>semantic</code> avec pagination par en-têtes légers, seuils
+            <code>certainty_level</code> / <code>COSINE</code> + <code>cosine_threshold</code>, tri
+            <code>sort_order</code> et horodatage ISO 8601 UTC, filtrée dynamiquement sur la branche active via
+            <code>build_branch_rag_filter(active_ids)</code>, isolation <code>sub_sid</code> pour les sous-agents,
+            paramètre <code>global_search</code> inter-sessions et filtrage par étiquette <code>tag</code> résolu en
+            temps réel via la table SSoT <code>webui.db::tag</code>) et
             <code>delete_session_context_source</code>.
           </li>
         </ul>
@@ -102,17 +105,20 @@
               (<code>reset_auth_action.py</code> v5.235.5.1) :</strong> Interface
             scrollable d'inspection et de suppression ciblée dans <code>echo_meta_artifacts</code>, et purge
             transactionnelle atomique des tokens OAuth2 / clés API via <code>EchoAuth.reset_user_auth</code>.</li>
-          <li><strong>Migration &amp; Reprise de Session (<code>resume_in_new_chat_action.py</code> v5.229.2.1)
+          <li><strong>Migration &amp; Reprise de Session (<code>resume_in_new_chat_action.py</code> v5.239.13.1)
               :</strong> Extrait l'intégralité de la branche active via <code>Chats.get_chat_by_id</code> (incluant les
             sorties d'outils <code>m["output"]</code>), construit les transcriptions hors de l'Event Loop
             (<code>_prepare_transcripts</code>), exécute une distillation en 2 passes via
             <code>EchoGeminiClient.call_distillation</code> (<code>USR_ACTION_RESUME_GLOBAL</code> et
-            <code>USR_ACTION_RESUME_RECENT</code>) avec HUD de progression <code>#echo-resume-hud</code>, crée la
+            <code>USR_ACTION_RESUME_RECENT</code>) avec HUD de progression <code>#echo-migration-hud</code>
+            (<code>data-echo-scope="global"</code>), crée la
             nouvelle conversation via <code>Chats.insert_new_chat</code>, propage les étiquettes (tags) du chat source
             via <code>Chats.add_chat_tag_by_id</code>, duplique les domaines et le Codex via
-            <code>echo_session_clone.sync_resumed_session</code> (v5.235.5.2) et clone par pagination les vecteurs
+            <code>echo_session_clone.sync_resumed_session</code> (v5.239.13.1, avec réancrage des ressources actives sur
+            <code>assistant_msg_id</code> et purge de <code>wm_state</code>) et clone par pagination les vecteurs
             Qdrant
-            <code>COLLECTION_SESSION_RAG</code> (<code>duplicate_session_rag</code>).
+            <code>COLLECTION_SESSION_RAG</code> (<code>duplicate_session_rag</code> filtré sur <code>live_msg_ids</code>
+            et réancré sur <code>anchor_msg_id</code>, avec retries bornés, upsert par lots de 64 et comptage de contrôle, bilan RagCloneReport). Si la copie vectorielle est incomplète, le HUD est retiré et une modale de confirmation informe l'Utilisateur avant la redirection ; sur refus ou annulation, la redirection n'a pas lieu.
           </li>
           <li><strong>Agent Monitor (<code>agent_monitor_action.py</code> v5.228.12.1) &amp; Replay
               (<code>web_navigation_replay_action.py</code> v5.231.47.1) :</strong> Supervision arborescente temps réel
@@ -128,7 +134,7 @@
             <code>session.db</code> (seuils d'alerte
             <code>40%</code> et critique <code>60%</code>).
           </li>
-          <li><strong>Generalist Tools (<code>generalist_tools.py</code> v5.233.0.1) :</strong> <code>wait_timer</code>
+          <li><strong>Generalist Tools (<code>generalist_tools.py</code> v5.239.17.1) :</strong> <code>wait_timer</code>
             programmable (plafonné à 180 s et isolé par <code>chat_id</code>), <code>ask_user</code> (modale
             non-bloquante <code>window.echoCustomPrompt</code> avec boutons <em>pills</em>),
             <code>list_ui_folders</code>, <code>list_ui_tags</code>, gestion des automatisations UI
@@ -137,7 +143,7 @@
             <code>delete_ui_automation</code>), calendrier Open WebUI (<code>create_ui_calendar_event</code>,
             <code>update_ui_calendar_event</code>, <code>read_ui_calendar_events</code>,
             <code>list_ui_calendar_events</code>, <code>search_ui_calendar_events</code>,
-            <code>delete_ui_calendar_event</code>), et <code>tool_advisor</code> (Agent Conseiller Opérationnel Hybride
+            <code>delete_ui_calendar_event</code>), lecture paginée et purge de tools_output/ (read_tool_output, delete_tool_output), et <code>tool_advisor</code> (Agent Conseiller Opérationnel Hybride
             exécuté sur <code>MODEL_APOLLO</code> avec <code>override_thinking="medium"</code>, adossé aux 10 manuels
             <code>14-owui-libs/tool_guides/*.md</code> via <code>EchoToolGuidesManager</code>).
           </li>
@@ -159,7 +165,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.237.15 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.18 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

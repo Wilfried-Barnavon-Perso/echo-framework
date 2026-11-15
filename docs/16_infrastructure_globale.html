@@ -32,7 +32,8 @@
       personnel de confiance. De plus,
       l'ensemble du système est placé derrière un bouclier de filtrage réseau qui analyse en temps réel toutes les
       requêtes entrantes et bloque instantanément les tentatives d'intrusion ou les comportements anormaux. En mode
-      public, chaque utilisateur dispose en outre d'un portail personnel en libre-service (<code>my.votre-domaine</code>)
+      public, chaque utilisateur dispose en outre d'un portail personnel en libre-service
+      (<code>my.votre-domaine</code>)
       pour contrôler ses sessions actives, mettre à jour son profil ou son mot de passe, télécharger à la demande une
       archive complète et compressée de ses discussions et souvenirs vectoriels (immédiatement effacée du serveur après
       récupération), ou supprimer son compte en toute autonomie.
@@ -65,8 +66,8 @@
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Admin Manager Modulaire (<code>20-docker-admin-manager/</code> v5.236.1.1 / <code>routes.py</code> &amp;
-          <code>templates.py</code> v5.236.1.1)
+        <h3>1. Admin Manager Modulaire (<code>20-docker-admin-manager/</code> v5.239.6.2 / <code>routes.py</code> v5.239.6.1 &amp;
+          <code>templates.py</code> v5.239.4.1)
         </h3>
         <p>Orchestrateur Flask (Port 3001, IP <code>.20</code>) structuré en 4 packages (<code>core/</code>,
           <code>services/</code>, <code>routes/</code>, <code>templates/</code>) autour du point d'entrée
@@ -78,7 +79,7 @@
         </p>
         <ul>
           <li><strong>Gouvernance SSoT Fail-Closed (<code>webui.db::user</code> &amp;
-            <code>services/semantic_pruning.py</code> v5.237.4.1) :</strong> La table <code>user</code> d'Open WebUI
+              <code>services/semantic_pruning.py</code> v5.237.4.1) :</strong> La table <code>user</code> d'Open WebUI
             est l'unique source de vérité. Trois verrous cumulatifs (Wait-for-it post-sauvegarde vérifiant
             <code>user</code> et <code>chat</code>, API Safeguard sur <code>/api/v1/users</code>, et validation SQLite
             <code>PRAGMA quick_check(1) == "ok"</code> + présence de <code>admin@echo.local</code>) avortent toute purge
@@ -86,7 +87,7 @@
             par couple propriétaire strict <code>(user_id, chat_id)</code> via <code>user_valid_chats</code>, purge tout
             répertoire utilisateur hors SSoT sans filtre de longueur (<code>len &gt; 30</code> supprimé) et s'appuie sur
             <code>echo_db_schema.py</code>
-            (v5.235.5.3) et <code>echo_session_gc.py</code> (v5.235.5.3) pour l'élagage transactionnel des branches
+            (v5.237.20.2) et <code>echo_session_gc.py</code> (v5.237.20.2) pour l'élagage transactionnel des branches
             mortes (<code>compute_dead_set</code> / <code>purge_dead_set</code>) et des fichiers orphelins après la
             période de carence (<code>ECHO_GC_GRACE_PERIOD_SEC = 900</code>). Le verrou
             <code>n8n_whitelist_complete</code> suspend
@@ -105,22 +106,33 @@
             Gemini, et promeut le souvenir consolidé au niveau <code>2 - Mineur</code>.
           </li>
           <li><strong>Sauvegardes 5 Volumes, Télémétrie Temps Réel &amp; Cloud Rclone :</strong>
-            <code>perform_backup_task</code> archive en <code>tar.xz</code> les 5 volumes (<code>echo-webui-data</code>,
+            <code>perform_backup_task</code> (<code>maintenance_backup.py</code> v5.239.6.2) exécute un checkpoint WAL
+            sur
+            <code>auth.db</code>, archive en <code>tar.xz</code> les 5 volumes (<code>echo-webui-data</code>,
             <code>echo-qdrant-data</code>, <code>echo-auth-data</code>, <code>echo-n8n-data</code>,
-            <code>echo-mcp-cache</code>). L'état <code>MAINTENANCE_STATE</code> (interrogé par
-            <code>/api/task_status</code> et affiché dans <code>#task-progress-card</code>) suit en temps réel la
-            compression <code>tar -cJf</code> via <code>psutil.Process.io_counters().read_bytes</code>, l'envoi SFTP via
-            callback Paramiko (<code>_sftp_cb</code> et <code>_sftp_mkdir_p</code>) et le transfert Cloud Rclone via
-            <code>/proc/&lt;pid&gt;/fdinfo</code> (<code>_get_proc_file_offset</code>). Le Séquenceur Nocturne
-            (<code>maintenance_backup.py</code> v5.235.5.1) restitue un rapport unifié complet
-            (<code>archive_name</code>, taille, durée, rétention locale, statut d'externalisation Cloud/NAS et bilan
-            d'élagage). L'assistant <code>/action/rclone/create</code> écrit directement les profils INI via
-            <code>configparser</code> dans <code>/app/backend/data/rclone/rclone.conf</code> (nettoyage
+            <code>echo-mcp-cache</code>) ainsi que les secrets hôtes montés en lecture seule (<code>SECRETS_DIR</code>
+            et
+            <code>HOST_ENV_FILE</code>), et la restauration (<code>routes.py</code> v5.239.6.1) déploie un conteneur
+            éphémère one-shot (<code>echo-python-base:latest</code>, <code>remove=True</code>) pour réécrire
+            <code>.secrets/</code> (<code>0400</code>) et <code>.env</code> (<code>0600</code>), détecte toute
+            divergence de
+            clé maître en RAM et relance les services <code>echo.hot-reload=true</code> (hors
+            <code>echo-admin-manager</code> et <code>echo-auth-manager</code>). L'état <code>MAINTENANCE_STATE</code>
+            (interrogé par <code>/api/task_status</code> et affiché dans <code>#task-progress-card</code>) suit en temps
+            réel la compression <code>tar -cJf</code> via <code>psutil.Process.io_counters().read_bytes</code>, l'envoi
+            SFTP via callback Paramiko (<code>_sftp_cb</code> et <code>_sftp_mkdir_p</code>) et le transfert Cloud
+            Rclone
+            via <code>/proc/&lt;pid&gt;/fdinfo</code> (<code>_get_proc_file_offset</code>). Le Séquenceur Nocturne
+            restitue un rapport unifié complet (<code>archive_name</code>, taille, durée, rétention locale, statut
+            d'externalisation Cloud/NAS et bilan d'élagage). L'assistant <code>/action/rclone/create</code> écrit
+            directement
+            les profils INI via <code>configparser</code> dans <code>/app/backend/data/rclone/rclone.conf</code>
+            (nettoyage
             <code>\r\n</code> des tokens JSON OAuth et chiffrement <code>rclone obscure</code>).
           </li>
         </ul>
 
-        <h3>2. ECHO Auth Manager SSO &amp; MFA (<code>auth_server.py</code> v5.237.0.1)</h3>
+        <h3>2. ECHO Auth Manager SSO &amp; MFA (<code>auth_server.py</code> v5.239.3.1)</h3>
         <p>IdP FastAPI autonome (Port 8000, IP <code>.24</code>, exposé sous <code>auth.${ECHO_DOMAIN}</code>) adossé à
           <code>auth.db</code> (SQLite WAL). Il applique une politique de session Dual-Tier (champs SQLite
           <code>is_trusted</code>
@@ -153,9 +165,9 @@
           Smart Proxy Mock sur <code>/api/version</code>, l'Auto-Heal SPA par <code>sub_filter</code> sur
           <code>/auth</code>, <code>USE_MODSECURITY=no</code> et un Rate Limit assoupli (<code>300r/s</code>, burst
           <code>1000</code>). Il orchestre également le portail self-service <code>echo-user-manager</code>
-          (<code>27-docker-user-manager/</code> v5.237.5.1 : <code>server.py</code>, <code>core/config.py</code>,
+          (<code>27-docker-user-manager/</code> v5.239.2.1 : <code>server.py</code>, <code>core/config.py</code> v5.239.2.1,
           <code>core/utils.py</code>, <code>core/security.py</code> v5.236.5.1, <code>routes/routes.py</code>,
-          <code>templates/templates.py</code> &amp; <code>services/export_service.py</code> v5.237.5.1 ; IP
+          <code>templates/templates.py</code> v5.237.5.1 &amp; <code>services/export_service.py</code> v5.237.20.1 ; IP
           <code>.27</code>, port <code>3002</code>, exposé sous <code>my.${ECHO_DOMAIN}</code> sans accès au socket
           Docker : KPIs profil/Qdrant/expiration SSO, révocation des sessions actives avec GeoIP, modification synchrone
           du nom et du mot de passe Argon2id sous contrôle TOTP, export asynchrone <code>.tar.xz</code> en priorité
@@ -207,7 +219,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.237.15 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.18 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

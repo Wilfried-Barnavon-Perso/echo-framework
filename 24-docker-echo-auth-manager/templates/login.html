@@ -8,7 +8,7 @@
 
     <div class="form-group">
         <label for="email">Adresse E-mail</label>
-        <input type="email" id="email" name="email" required autofocus placeholder="votre.adresse@email">
+        <input type="email" id="email" name="email" value="{{ email_prefill | default('') }}" required autofocus placeholder="votre.adresse@email">
     </div>
 
     <div class="form-group">
@@ -48,7 +48,27 @@
         style="padding: 0.65rem 1rem; border-radius: 8px; margin-bottom: 1.5rem; font-size: 0.82rem; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.2); color: #93c5fd; text-align: center; line-height: 1.4;">
     </div>
 
-    <button type="submit" class="btn">Connexion Sécurisée</button>
+    <div id="login-security-policy"
+        style="padding: 0.65rem 0.85rem; border-radius: 8px; margin-bottom: 0.85rem; font-size: 0.8rem; background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); color: var(--text-muted, #94a3b8); line-height: 1.45;">
+        {% if attempts_remaining is not none %}
+        <div style="margin-bottom: 0.25rem;">
+            🎯 Essais restants (Compte non-enrôlé) : <strong id="attempts-remaining-val" style="color: var(--text-main, #f8fafc);">{{ attempts_remaining }} / {{ max_attempts }}</strong>
+        </div>
+        <div>
+            ⚖️ <strong>Sanction après {{ max_attempts }} échecs :</strong> {{ sanction_label }}
+        </div>
+        {% else %}
+        <div>
+            🛡️ <strong>Conditions d'accès :</strong> Délai entre essais : <strong>{{ retry_delay_sec }}s</strong> • Non-enrôlé : <strong>{{ max_attempts }} essai(s) max</strong> avant <em>{{ sanction_label }}</em>.
+        </div>
+        {% endif %}
+    </div>
+
+    <div id="login-countdown-banner"
+        style="display: none; padding: 0.75rem 1rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.85rem; line-height: 1.4; text-align: center;">
+    </div>
+
+    <button type="submit" id="login-submit-btn" class="btn">Connexion Sécurisée</button>
 </form>
 
 <div class="links">
@@ -166,6 +186,102 @@
         populateOptions(false);
         updatePreview();
         setInterval(updatePreview, 1000);
+
+        // Contrôleur de compte à rebours de sécurité (Anti-bruteforce & Lockout)
+        let lockoutSec = parseInt("{{ lockout_sec | default(0) }}", 10) || 0;
+        let cooldownSec = parseInt("{{ cooldown_sec | default(0) }}", 10) || 0;
+        const maxAttempts = parseInt("{{ max_attempts | default(5) }}", 10) || 5;
+        const sanctionLabel = {{ (sanction_label | default('')) | tojson }};
+        const countdownBanner = document.getElementById('login-countdown-banner');
+        const submitBtn = document.getElementById('login-submit-btn');
+        const attemptsRemainingVal = document.getElementById('attempts-remaining-val');
+
+        function formatCountdown(sec) {
+            if (sec <= 0) return "0s";
+            const pad = (n) => String(n).padStart(2, '0');
+            if (sec >= 3600) {
+                const h = Math.floor(sec / 3600);
+                const m = Math.floor((sec % 3600) / 60);
+                const s = sec % 60;
+                return pad(h) + ":" + pad(m) + ":" + pad(s);
+            }
+            if (sec >= 60) {
+                const m = Math.floor(sec / 60);
+                const s = sec % 60;
+                return pad(m) + ":" + pad(s);
+            }
+            return sec + "s";
+        }
+
+        if (countdownBanner && submitBtn) {
+            if (lockoutSec === -1) {
+                countdownBanner.style.display = 'block';
+                countdownBanner.style.background = 'rgba(239, 68, 68, 0.14)';
+                countdownBanner.style.border = '1px solid rgba(239, 68, 68, 0.35)';
+                countdownBanner.style.color = '#fca5a5';
+                countdownBanner.innerHTML = '🔒 <strong>Sanction appliquée (0/' + maxAttempts + ' essai restant) :</strong> Compte verrouillé définitivement en attente de réinitialisation du MFA par l\'Administrateur.';
+                submitBtn.disabled = true;
+                submitBtn.style.opacity = '0.5';
+                submitBtn.style.cursor = 'not-allowed';
+                submitBtn.textContent = '🔒 Compte verrouillé (Attente Admin)';
+            } else if (lockoutSec > 0) {
+                countdownBanner.style.display = 'block';
+                countdownBanner.style.background = 'rgba(239, 68, 68, 0.14)';
+                countdownBanner.style.border = '1px solid rgba(239, 68, 68, 0.35)';
+                countdownBanner.style.color = '#fca5a5';
+                submitBtn.disabled = true;
+                submitBtn.style.opacity = '0.5';
+                submitBtn.style.cursor = 'not-allowed';
+
+                const tickLockout = function () {
+                    if (lockoutSec > 0) {
+                        countdownBanner.innerHTML = '🔒 <strong>Sanction active (0/' + maxAttempts + ' essai restant — ' + sanctionLabel + ') :</strong> Nouvel essai dans <strong>' + formatCountdown(lockoutSec) + '</strong>';
+                        submitBtn.textContent = '⏳ Verrouillé (' + formatCountdown(lockoutSec) + ')';
+                        lockoutSec--;
+                    } else {
+                        clearInterval(lockoutInterval);
+                        countdownBanner.style.background = 'rgba(34, 197, 94, 0.12)';
+                        countdownBanner.style.border = '1px solid rgba(34, 197, 94, 0.3)';
+                        countdownBanner.style.color = '#86efac';
+                        countdownBanner.innerHTML = '✅ Temporisation terminée — Quota réinitialisé (' + maxAttempts + '/' + maxAttempts + ' essais disponibles).';
+                        if (attemptsRemainingVal) {
+                            attemptsRemainingVal.textContent = maxAttempts + ' / ' + maxAttempts;
+                        }
+                        submitBtn.disabled = false;
+                        submitBtn.style.opacity = '1';
+                        submitBtn.style.cursor = 'pointer';
+                        submitBtn.textContent = 'Connexion Sécurisée';
+                    }
+                };
+                tickLockout();
+                const lockoutInterval = setInterval(tickLockout, 1000);
+            } else if (cooldownSec > 0) {
+                countdownBanner.style.display = 'block';
+                countdownBanner.style.background = 'rgba(234, 179, 8, 0.12)';
+                countdownBanner.style.border = '1px solid rgba(234, 179, 8, 0.3)';
+                countdownBanner.style.color = '#fde047';
+                submitBtn.disabled = true;
+                submitBtn.style.opacity = '0.6';
+                submitBtn.style.cursor = 'not-allowed';
+
+                const tickCooldown = function () {
+                    if (cooldownSec > 0) {
+                        countdownBanner.innerHTML = '⏱️ <strong>Délai entre essais :</strong> Prochaine tentative autorisée dans <strong>' + cooldownSec + 's</strong>';
+                        submitBtn.textContent = '⏳ Patientez ' + cooldownSec + 's...';
+                        cooldownSec--;
+                    } else {
+                        clearInterval(cooldownInterval);
+                        countdownBanner.style.display = 'none';
+                        submitBtn.disabled = false;
+                        submitBtn.style.opacity = '1';
+                        submitBtn.style.cursor = 'pointer';
+                        submitBtn.textContent = 'Connexion Sécurisée';
+                    }
+                };
+                tickCooldown();
+                const cooldownInterval = setInterval(tickCooldown, 1000);
+            }
+        }
     })();
 </script>
 {% endblock %}
