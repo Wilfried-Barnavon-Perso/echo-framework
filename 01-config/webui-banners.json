@@ -1,26 +1,10 @@
 [
   {
-    "id": "echo-banner-athena-cognitive-20261110",
-    "type": "warning",
-    "title": "Nouveau Palier Cognitif : ATHENA (Usage Raisonné)",
-    "content": "**Arrivée de MODEL_ATHENA (Gemini 4 Carbon)** : Activation du 4ème niveau cognitif dédié aux analyses formelles de pointe et à l'arbitrage critique. **Attention** : ATHENA et PROMETHEUS génèrent d'importants volumes de tokens de réflexion et saturent rapidement vos quotas glissants (5h/hebdo). Privilégiez le mode `COGNITIVE_MODE: AUTO` pour réserver ces modèles aux tâches complexes.",
-    "dismissible": true,
-    "timestamp": 1794345834
-  },
-  {
-    "id": "echo-banner-roadmap-v6-decoupling-20261108",
+    "id": "echo-banner-welcome-v6-20261116",
     "type": "info",
-    "title": "Feuille de route : ECHO v6",
-    "content": "**Feuille de route : Cap sur ECHO v6** : Lancement prochain du cycle de développement majeur d'ECHO v6. L'ingénierie et l'évolution du framework ECHO sont désormais formellement découplées du cycle d'ECHO-UI pour une souveraineté et une autonomie architecturales renforcées.",
+    "title": "Bienvenue dans ECHO v6",
+    "content": "**Bienvenue dans ECHO v6** : Votre environnement souverain est prêt. Profitez de la nouvelle architecture découplée, des 4 paliers cognitifs et de vos espaces de travail intégrés.",
     "dismissible": true,
-    "timestamp": 1794162325
-  },
-  {
-    "id": "echo-banner-user-manager-export-20261108",
-    "type": "info",
-    "title": "Portail Self-Service & Export RGPD",
-    "content": "**ECHO User Manager disponible** : Accédez à votre portail d'auto-gestion (`https://my.<domaine>`). Consultez vos sessions actives, gérez votre profil et exportez l'intégralité souveraine de vos données et mémoires dans une archive `.tar.xz`.",
-    "dismissible": true,
-    "timestamp": 1794162325
+    "timestamp": 1794854791
   }
 ]
