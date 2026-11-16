@@ -1,17 +1,19 @@
 """
 title: ECHO V6 Codex Router
 author: Wilfried BARNAVON
-version: 6.6.4.1
+version: 6.6.6.1
 description: Routeur FastAPI pour dépôts Codex et conteneurs de session (/echo/v1/codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.6.1: Ajout de POST /{chat_id}/ai-edit (édition LLM one-shot), verrous get_codex_lock sur save/delete et synchro SQLite echo_resources.
 # 6.6.4.1: Normalisation canonique GET /{chat_id}/tree (name, path, filename, type, mime) et POST /{chat_id}/upload.
 # 6.6.2.1: Ajout de _format_hex_preview, mime_type, et des endpoints POST /{chat_id}/mkdir, /rename et /restore.
 # 6.3.0.1: Création du routeur /echo/v1/codex (tree, file, log, diff, download et persistance Git Dulwich).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import mimetypes
 import os
@@ -30,20 +32,54 @@ ensure_echo_sys_path()
 try:
     from echo_codex_git import CodexRepo  # type: ignore
     from echo_constants import (  # type: ignore
+        CODEX_DEFAULT_LANG,
+        CODEX_LANG_MAP,
+        CODEX_QUICK_ACTIONS,
+        ECHO_CODEX_EDIT_TIMEOUT,
         ECHO_CODEX_WORKSPACES,
+        ECHO_MODELS_REGISTRY,
+        FILE_INGESTION_STATUS,
+        get_codex_workspace_resource_type,
+        get_generation_config,
         is_codex_workspace_generic_writable,
+        is_codex_workspace_indexed,
     )
-    from echo_paths import get_codex_lock, get_echo_session_path, sanitize_echo_id  # type: ignore
+    from echo_gemini_client import EchoGeminiClient  # type: ignore
+    from echo_paths import (  # type: ignore
+        format_codex_storage_path,
+        get_codex_lock,
+        get_echo_session_path,
+        sanitize_echo_id,
+    )
+    from echo_prompts import SYS_CODEX_EDIT  # type: ignore
+    from echo_state_manager import EchoStateManager  # type: ignore
 except ImportError:
     local_libs = Path(__file__).resolve().parents[5] / "14-owui-libs"
     if local_libs.is_dir() and str(local_libs) not in sys.path:
         sys.path.insert(0, str(local_libs))
     from echo_codex_git import CodexRepo  # type: ignore
     from echo_constants import (  # type: ignore
+        CODEX_DEFAULT_LANG,
+        CODEX_LANG_MAP,
+        CODEX_QUICK_ACTIONS,
+        ECHO_CODEX_EDIT_TIMEOUT,
         ECHO_CODEX_WORKSPACES,
+        ECHO_MODELS_REGISTRY,
+        FILE_INGESTION_STATUS,
+        get_codex_workspace_resource_type,
+        get_generation_config,
         is_codex_workspace_generic_writable,
+        is_codex_workspace_indexed,
     )
-    from echo_paths import get_codex_lock, get_echo_session_path, sanitize_echo_id  # type: ignore
+    from echo_gemini_client import EchoGeminiClient  # type: ignore
+    from echo_paths import (  # type: ignore
+        format_codex_storage_path,
+        get_codex_lock,
+        get_echo_session_path,
+        sanitize_echo_id,
+    )
+    from echo_prompts import SYS_CODEX_EDIT  # type: ignore
+    from echo_state_manager import EchoStateManager  # type: ignore
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +108,90 @@ class RestorePayload(BaseModel):
     workspace: str = "main"
     path: str
     commit_hash: str
+
+
+class AiEditPayload(BaseModel):
+    workspace: str = "main"
+    path: str
+    instruction: str = ""
+    quick_action: Optional[str] = None
+    content: str
+    selection: Optional[str] = None
+    language: Optional[str] = None
+    model: str = "MODEL_APOLLO"
+
+
+_ALLOWED_AI_EDIT_MODELS = ("MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA", "MODEL_ZEPHYR")
+
+
+def _detect_codex_lang(filename: str) -> str:
+    """Détecte le langage Monaco depuis le nom ou l'extension du fichier."""
+    basename = os.path.basename((filename or "").strip())
+    if basename.lower() == "dockerfile":
+        return "dockerfile"
+    ext = os.path.splitext(basename)[1].lower()
+    return CODEX_LANG_MAP.get(ext, CODEX_DEFAULT_LANG)
+
+
+def _count_text_lines(content_or_bytes: object) -> int:
+    """Calcule le nombre de lignes pour un contenu texte ou UTF-8 (0 si binaire)."""
+    if isinstance(content_or_bytes, (bytes, bytearray)):
+        try:
+            text = content_or_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            return 0
+    else:
+        text = str(content_or_bytes or "")
+    return len(text.splitlines())
+
+
+async def _sync_codex_registry_save(
+    safe_uid: str,
+    safe_cid: str,
+    ws: str,
+    rel_path: str,
+    content_or_bytes: object,
+    commit_hash: str,
+    msg: str,
+) -> None:
+    """Synchronise une ressource Codex dans SQLite echo_resources si l'espace est indexé."""
+    if not is_codex_workspace_indexed(ws):
+        return
+    try:
+        state = EchoStateManager(user_id=safe_uid, chat_id=safe_cid)
+        res_type = get_codex_workspace_resource_type(ws) or "codex"
+        await asyncio.to_thread(
+            state.save_resource,
+            id=rel_path,
+            name=rel_path,
+            resource_type=res_type,
+            status=FILE_INGESTION_STATUS["PUT_IN_CONTEXT"],
+            git_tracked=True,
+            language=_detect_codex_lang(rel_path),
+            lines=_count_text_lines(content_or_bytes),
+            last_commit=(commit_hash or "")[:12],
+            commit_msg=msg,
+            storage_path=format_codex_storage_path(rel_path, ws),
+        )
+    except Exception as exc:
+        log.warning("Codex registry save sync skipped for %s/%s: %s", ws, rel_path, exc)
+
+
+async def _sync_codex_registry_delete(
+    safe_uid: str,
+    safe_cid: str,
+    ws: str,
+    paths_to_rm: list[str],
+) -> None:
+    """Supprime les ressources Codex de SQLite echo_resources si l'espace est indexé."""
+    if not is_codex_workspace_indexed(ws) or not paths_to_rm:
+        return
+    try:
+        state = EchoStateManager(user_id=safe_uid, chat_id=safe_cid)
+        for rel_path in paths_to_rm:
+            await asyncio.to_thread(state.delete_codex_resource, ws, rel_path)
+    except Exception as exc:
+        log.warning("Codex registry delete sync skipped for %s: %s", ws, exc)
 
 
 def _format_hex_preview(raw_bytes: bytes, limit: int = 4096) -> str:
@@ -281,13 +401,20 @@ async def save_codex_file(
     if not clean_path:
         raise HTTPException(status_code=400, detail="Chemin de fichier invalide.")
 
-    repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
     author = getattr(user, "name", None) or getattr(user, "email", None) or "ECHO Codex UI"
     msg = payload.message or f"Update {clean_path} via Codex UI"
 
-    commit_hash = repo.commit_file(clean_path, payload.content, msg, author=author)
+    async with get_codex_lock(safe_uid, safe_cid):
+        repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
+        commit_hash = await asyncio.to_thread(
+            repo.commit_file, clean_path, payload.content, msg, author=author
+        )
     if not commit_hash:
         raise HTTPException(status_code=500, detail="Échec de l'enregistrement ou du commit dans le dépôt Codex.")
+
+    await _sync_codex_registry_save(
+        safe_uid, safe_cid, ws, clean_path, payload.content, commit_hash, msg
+    )
 
     return JSONResponse(content={
         "success": True,
@@ -319,10 +446,15 @@ async def delete_codex_file(
     if not clean_path:
         raise HTTPException(status_code=400, detail="Chemin de fichier invalide.")
 
-    repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
-    res = repo.delete_file(clean_path, f"Delete {clean_path} via Codex UI")
+    async with get_codex_lock(safe_uid, safe_cid):
+        repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
+        res = await asyncio.to_thread(
+            repo.delete_file, clean_path, f"Delete {clean_path} via Codex UI"
+        )
     if res is None:
         raise HTTPException(status_code=404, detail="Fichier introuvable ou erreur de suppression dans le Codex.")
+
+    await _sync_codex_registry_delete(safe_uid, safe_cid, ws, res[1])
 
     return JSONResponse(content={
         "success": True,
@@ -373,6 +505,9 @@ async def get_codex_diff(
     safe_uid = sanitize_echo_id(user.id)
     safe_cid = sanitize_echo_id(chat_id)
     ws = (workspace or "main").strip()
+
+    if ws == "files":
+        return JSONResponse(content={"diff": "", "workspace": "files"})
 
     if ws not in ECHO_CODEX_WORKSPACES:
         raise HTTPException(status_code=400, detail=f"Espace de travail invalide : '{ws}'")
@@ -466,14 +601,20 @@ async def rename_codex(
             detail=f"L'espace '{ws}' est en lecture seule.",
         )
 
+    rename_msg = f"Renommage UI : {payload.old_path} -> {payload.new_path}"
+    author = getattr(user, "name", None) or "Utilisateur"
+    synced_entries: list[tuple[str, object]] = []
+    deleted_old_paths: list[str] = []
+
     async with get_codex_lock(safe_uid, safe_cid):
         repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
         try:
-            commit_hash = repo.rename_file(
+            commit_hash = await asyncio.to_thread(
+                repo.rename_file,
                 payload.old_path,
                 payload.new_path,
-                message=f"Renommage UI : {payload.old_path} -> {payload.new_path}",
-                author=getattr(user, "name", None) or "Utilisateur",
+                message=rename_msg,
+                author=author,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -482,6 +623,32 @@ async def rename_codex(
                 status_code=400,
                 detail="Impossible de renommer (source introuvable ou cible déjà existante).",
             )
+
+        if is_codex_workspace_indexed(ws):
+            clean_old = repo._secure_path(payload.old_path)
+            clean_new = repo._secure_path(payload.new_path)
+            new_abs = _validate_safe_path(repo.repo_path, clean_new)
+            if os.path.isdir(new_abs):
+                for root, _, files_in_dir in os.walk(new_abs):
+                    for fname in files_in_dir:
+                        f_abs = os.path.join(root, fname)
+                        sub_rel = os.path.relpath(f_abs, new_abs).replace("\\", "/")
+                        old_rel = f"{clean_old}/{sub_rel}" if clean_old else sub_rel
+                        new_rel = f"{clean_new}/{sub_rel}" if clean_new else sub_rel
+                        deleted_old_paths.append(old_rel)
+                        read_res = await asyncio.to_thread(repo.read_file, new_rel)
+                        synced_entries.append((new_rel, read_res.get("content", "") if read_res else ""))
+            else:
+                deleted_old_paths.append(clean_old)
+                read_res = await asyncio.to_thread(repo.read_file, clean_new)
+                synced_entries.append((clean_new, read_res.get("content", "") if read_res else ""))
+
+    if deleted_old_paths:
+        await _sync_codex_registry_delete(safe_uid, safe_cid, ws, deleted_old_paths)
+    for new_rel, content_val in synced_entries:
+        await _sync_codex_registry_save(
+            safe_uid, safe_cid, ws, new_rel, content_val, commit_hash, rename_msg
+        )
 
     return JSONResponse(
         content={
@@ -511,10 +678,11 @@ async def restore_codex_file(
             detail=f"L'espace '{ws}' est en lecture seule.",
         )
 
+    restore_msg = f"Restauration UI de {payload.path} au commit {payload.commit_hash[:12]}"
     async with get_codex_lock(safe_uid, safe_cid):
         repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
         try:
-            hist = repo.read_file_at_commit(payload.path, payload.commit_hash)
+            hist = await asyncio.to_thread(repo.read_file_at_commit, payload.path, payload.commit_hash)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         if hist is None:
@@ -522,13 +690,18 @@ async def restore_codex_file(
                 status_code=404,
                 detail="Fichier ou commit introuvable pour restauration.",
             )
-        commit_hash = repo.commit_file(
+        commit_hash = await asyncio.to_thread(
+            repo.commit_file,
             payload.path,
             hist.get("content", ""),
-            message=f"Restauration UI de {payload.path} au commit {payload.commit_hash[:12]}",
+            message=restore_msg,
             author=getattr(user, "name", None) or "Utilisateur",
             is_binary=hist.get("is_binary"),
         )
+
+    await _sync_codex_registry_save(
+        safe_uid, safe_cid, ws, payload.path, hist.get("content", ""), commit_hash or "", restore_msg
+    )
 
     return JSONResponse(
         content={
@@ -573,18 +746,24 @@ async def upload_codex_file(
 
     raw_bytes = await file.read()
     author = getattr(user, "name", None) or getattr(user, "email", None) or "Utilisateur"
+    upload_msg = f"Import UI : {normalized_rel_path}"
 
     async with get_codex_lock(safe_uid, safe_cid):
         repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
         try:
-            commit_hash = repo.commit_file(
+            commit_hash = await asyncio.to_thread(
+                repo.commit_file,
                 normalized_rel_path,
                 raw_bytes,
-                f"Import UI : {normalized_rel_path}",
+                upload_msg,
                 author=author,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+
+    await _sync_codex_registry_save(
+        safe_uid, safe_cid, ws, normalized_rel_path, raw_bytes, commit_hash or "", upload_msg
+    )
 
     return JSONResponse(
         content={
@@ -593,5 +772,100 @@ async def upload_codex_file(
             "path": normalized_rel_path,
             "size_bytes": len(raw_bytes),
             "commit_hash": commit_hash,
+        }
+    )
+
+
+@router.post("/{chat_id}/ai-edit")
+async def ai_edit_codex_file(
+    chat_id: str,
+    payload: AiEditPayload,
+    user=Depends(get_verified_user),
+):
+    """Exécute une édition LLM one-shot sur un fichier Codex (sans commit automatique)."""
+    safe_uid = sanitize_echo_id(user.id)
+    safe_cid = sanitize_echo_id(chat_id)
+    ws = (payload.workspace or "main").strip()
+
+    if ws not in ECHO_CODEX_WORKSPACES or not is_codex_workspace_generic_writable(ws):
+        raise HTTPException(
+            status_code=403,
+            detail=f"L'espace '{ws}' est en lecture seule.",
+        )
+
+    clean_path = payload.path.strip().lstrip("/\\")
+    parts = [p for p in clean_path.replace("\\", "/").split("/") if p]
+    if not clean_path or not parts or any(p in (".", "..") for p in parts):
+        raise HTTPException(status_code=400, detail="Chemin de fichier invalide.")
+
+    raw_instruction = (payload.instruction or "").strip()
+    if payload.quick_action:
+        qa_key = payload.quick_action.strip()
+        if qa_key not in CODEX_QUICK_ACTIONS:
+            raise HTTPException(status_code=400, detail=f"Action rapide Codex inconnue : '{qa_key}'")
+        qa_text = CODEX_QUICK_ACTIONS[qa_key]
+        effective_instruction = f"{qa_text}\n\n{raw_instruction}" if raw_instruction else qa_text
+    else:
+        effective_instruction = raw_instruction
+
+    if not effective_instruction:
+        raise HTTPException(status_code=400, detail="Une instruction ou une action rapide est obligatoire.")
+
+    target_model = (payload.model or "MODEL_APOLLO").strip() or "MODEL_APOLLO"
+    if target_model not in _ALLOWED_AI_EDIT_MODELS or target_model not in ECHO_MODELS_REGISTRY:
+        raise HTTPException(status_code=400, detail=f"Modèle Codex AI non autorisé : '{target_model}'")
+
+    lang = (payload.language or "").strip() or _detect_codex_lang(clean_path)
+
+    user_prompt = f"## Document complet\n```{lang}\n{payload.content}\n```\n"
+    if payload.selection and payload.selection.strip():
+        user_prompt += f"\n## Sélection ciblée\n```{lang}\n{payload.selection}\n```\n"
+    user_prompt += f"\n## Instruction\n{effective_instruction}"
+
+    payload_llm = {
+        "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+        "generationConfig": get_generation_config(target_model, override_thinking="medium"),
+        "systemInstruction": {
+            "parts": [{"text": SYS_CODEX_EDIT.format(filename=clean_path, language=lang)}]
+        },
+    }
+
+    data, model_key, _reason = await EchoGeminiClient.call_cascade(
+        target_model_key=target_model,
+        payload=payload_llm,
+        user_id=safe_uid,
+        metadata=None,
+        events=None,
+        timeout=ECHO_CODEX_EDIT_TIMEOUT,
+        chat_id=safe_cid,
+        include_thoughts=False,
+    )
+
+    if not data:
+        raise HTTPException(status_code=502, detail="L'éditeur Codex AI n'a produit aucun résultat.")
+
+    candidates = data.get("candidates", [])
+    if not candidates or not candidates[0].get("content"):
+        raise HTTPException(status_code=502, detail="Réponse LLM invalide pour l'édition Codex AI.")
+
+    parts_llm = candidates[0]["content"].get("parts", [])
+    text_parts = [p.get("text", "") for p in parts_llm if not p.get("thought")]
+    modified_content = "".join(text_parts).strip()
+
+    if modified_content.startswith("```"):
+        lines = modified_content.split("\n")
+        if len(lines) >= 3 and lines[-1].strip() == "```":
+            modified_content = "\n".join(lines[1:-1])
+
+    if not modified_content:
+        raise HTTPException(status_code=502, detail="L'éditeur Codex AI a retourné un contenu vide.")
+
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "modified_content": modified_content,
+            "model_used": model_key or target_model,
+            "path": clean_path,
+            "workspace": ws,
         }
     )

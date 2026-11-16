@@ -642,6 +642,55 @@ export const uploadEchoCodexFile = async (
 	return res.json();
 };
 
+export interface EchoCodexAiEditPayload {
+	workspace: string;
+	path: string;
+	instruction?: string;
+	quick_action?:
+		| 'shorter'
+		| 'longer'
+		| 'comment'
+		| 'uncomment'
+		| 'refactor'
+		| 'fix'
+		| 'tests'
+		| 'optimize';
+	content: string;
+	selection?: string | null;
+	language?: string;
+	model?: string;
+}
+
+export const aiEditEchoCodexFile = async (
+	token: string,
+	chatId: string,
+	payload: EchoCodexAiEditPayload
+): Promise<{
+	status: string;
+	modified_content: string;
+	model_used: string;
+	path: string;
+	workspace: string;
+}> => {
+	const res = await fetch(`${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/ai-edit`, {
+		method: 'POST',
+		headers: {
+			Accept: 'application/json',
+			'Content-Type': 'application/json',
+			authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify(payload)
+	});
+
+	if (!res.ok) {
+		const err = await res
+			.json()
+			.catch(() => ({ detail: "Échec de l'édition IA du fichier Codex" }));
+		throw new Error(err.detail || "Échec de l'édition IA du fichier Codex");
+	}
+	return res.json();
+};
+
 // ============================================================================
 // COFFRE & IDENTITÉ (/echo/v1/vault)
 // ============================================================================

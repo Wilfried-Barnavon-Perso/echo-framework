@@ -14,7 +14,9 @@
 		mkdirEchoCodex,
 		renameEchoCodex,
 		restoreEchoCodexFile,
-		uploadEchoCodexFile
+		uploadEchoCodexFile,
+		aiEditEchoCodexFile,
+		type EchoCodexAiEditPayload
 	} from '$lib/apis/echo';
 	import { echoCodexTarget } from '$lib/stores/echo';
 
@@ -23,17 +25,18 @@
 	let currentChatId = '';
 	let crossReadChatId = '';
 	let workspaces = [
-		{ id: 'main', label: 'Main', writable: true },
-		{ id: 'sandbox', label: 'Sandbox', writable: true },
-		{ id: 'plans', label: 'Plans', writable: false },
-		{ id: 'generated', label: 'Generated', writable: false },
-		{ id: 'files', label: 'Fichiers', writable: false }
+		{ id: 'main', label: 'Main', writable: true, versioned: true },
+		{ id: 'sandbox', label: 'Sandbox', writable: true, versioned: false },
+		{ id: 'plans', label: 'Plans', writable: false, versioned: true },
+		{ id: 'generated', label: 'Generated', writable: false, versioned: true },
+		{ id: 'files', label: 'Fichiers', writable: false, versioned: false }
 	];
 
 	let selectedWorkspace = 'main';
 	let currentDirPath = '';
 	let selectedPath = '';
 	let fileContent = '';
+	let savedFileContent = '';
 	let fileMeta: {
 		is_binary?: boolean;
 		mime?: string;
@@ -42,6 +45,35 @@
 	} | null = null;
 	let viewMode: 'code' | 'preview' = 'code';
 	let previewBlobUrl = '';
+
+	let codeTextarea: HTMLTextAreaElement | null = null;
+	let editorSelection = '';
+	let aiInstruction = '';
+	let aiModel = 'MODEL_APOLLO';
+	let isAiEditing = false;
+	let aiPendingContent: string | null = null;
+	let aiLastInstruction = '';
+	let aiUsedModel = '';
+	let aiDiffViewMode: 'diff' | 'full' = 'diff';
+
+	const AI_MODELS = [
+		{ id: 'MODEL_APOLLO', label: 'Apollon' },
+		{ id: 'MODEL_PROMETHEUS', label: 'Prométhée' },
+		{ id: 'MODEL_ATHENA', label: 'Athéna' },
+		{ id: 'MODEL_ZEPHYR', label: 'Zéphyr' }
+	];
+
+	type QuickActionId = NonNullable<EchoCodexAiEditPayload['quick_action']>;
+	const QUICK_ACTIONS: Array<{ id: QuickActionId; label: string }> = [
+		{ id: 'shorter', label: '✂️ Raccourcir' },
+		{ id: 'longer', label: '📝 Développer' },
+		{ id: 'comment', label: '💬 Commenter' },
+		{ id: 'uncomment', label: '🧹 Décommenter' },
+		{ id: 'refactor', label: '♻️ Refactoriser' },
+		{ id: 'fix', label: '🐛 Corriger' },
+		{ id: 'tests', label: '🧪 Tests' },
+		{ id: 'optimize', label: '⚡ Optimiser' }
+	];
 
 	let commitMessage = '';
 	let currentCommit = '';
@@ -71,6 +103,17 @@
 	$: isCrossRead = Boolean(crossReadChatId && crossReadChatId !== chatId);
 	$: currentWsObj = workspaces.find((w) => w.id === selectedWorkspace) || workspaces[0];
 	$: isWritable = currentWsObj.writable && !isCrossRead;
+	$: isDirty = Boolean(
+		selectedPath && isWritable && !fileMeta?.is_binary && fileContent !== savedFileContent
+	);
+
+	const resetAiState = () => {
+		editorSelection = '';
+		aiPendingContent = null;
+		aiLastInstruction = '';
+		aiUsedModel = '';
+		aiDiffViewMode = 'diff';
+	};
 
 	const revokePreviewBlob = () => {
 		if (previewBlobUrl) {
@@ -93,8 +136,11 @@
 		currentDirPath = '';
 		selectedPath = '';
 		fileContent = '';
+		savedFileContent = '';
 		fileMeta = null;
 		viewMode = 'code';
+		aiInstruction = '';
+		resetAiState();
 		revokePreviewBlob();
 		if ($echoCodexTarget?.chatId !== chatId) {
 			void loadTree('');
@@ -314,6 +360,8 @@
 		activeSubView = 'editor';
 		viewMode = 'code';
 		fileMeta = null;
+		savedFileContent = '';
+		resetAiState();
 		revokePreviewBlob();
 		const token = localStorage?.token;
 		if (!token || !effectiveChatId) return;
@@ -323,6 +371,7 @@
 			const res = await getEchoCodexFile(token, effectiveChatId, selectedWorkspace, path);
 			if (typeof res === 'string') {
 				fileContent = res;
+				savedFileContent = res;
 				const caps = computePreviewCapabilities(path, null);
 				if (!forceCodeMode && caps.canPreview) {
 					viewMode = 'preview';
@@ -336,6 +385,7 @@
 				};
 				fileMeta = nextMeta;
 				fileContent = res?.content ?? '';
+				savedFileContent = fileContent;
 				const caps = computePreviewCapabilities(path, nextMeta);
 				if (!forceCodeMode && caps.canPreview) {
 					viewMode = 'preview';
@@ -371,7 +421,12 @@
 				content: fileContent,
 				message: commitMessage.trim() || `Update ${selectedPath} via Codex UI`
 			});
-			toast.success('Fichier enregistré et commité avec succès');
+			savedFileContent = fileContent;
+			toast.success(
+				currentWsObj.versioned
+					? 'Fichier enregistré et commité avec succès'
+					: 'Fichier enregistré avec succès'
+			);
 			commitMessage = '';
 			await loadTree();
 		} catch (e: any) {
@@ -393,7 +448,9 @@
 			toast.success('Fichier supprimé');
 			selectedPath = '';
 			fileContent = '';
+			savedFileContent = '';
 			fileMeta = null;
+			resetAiState();
 			revokePreviewBlob();
 			await loadTree();
 		} catch (e: any) {
@@ -609,10 +666,179 @@
 		currentDirPath = '';
 		selectedPath = '';
 		fileContent = '';
+		savedFileContent = '';
 		fileMeta = null;
 		viewMode = 'code';
+		resetAiState();
 		revokePreviewBlob();
 		void loadTree('');
+	};
+
+	const updateSelectionFromTextarea = () => {
+		if (!codeTextarea) return;
+		const start = codeTextarea.selectionStart ?? 0;
+		const end = codeTextarea.selectionEnd ?? 0;
+		if (end > start) {
+			editorSelection = codeTextarea.value.slice(start, end);
+		} else {
+			editorSelection = '';
+		}
+	};
+
+	const handleEditorKeydown = (e: KeyboardEvent) => {
+		if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+			e.preventDefault();
+			void handleSave();
+		}
+	};
+
+	const handleAiEdit = async (quickAction?: QuickActionId, quickLabel?: string) => {
+		if (!isWritable || !selectedPath || fileMeta?.is_binary || isAiEditing) return;
+		const instr = quickAction ? quickLabel || quickAction : aiInstruction.trim();
+		if (!instr && !quickAction) return;
+		const token = localStorage?.token;
+		if (!token || !effectiveChatId) return;
+
+		isAiEditing = true;
+		try {
+			const res = await aiEditEchoCodexFile(token, effectiveChatId, {
+				workspace: selectedWorkspace,
+				path: selectedPath,
+				instruction: quickAction ? undefined : instr,
+				quick_action: quickAction,
+				content: fileContent,
+				selection: editorSelection ? editorSelection : null,
+				model: aiModel
+			});
+			aiLastInstruction = instr;
+			aiUsedModel = res.model_used || aiModel;
+			if (res.model_used && res.model_used !== aiModel && AI_MODELS.some((m) => m.id === res.model_used)) {
+				aiModel = res.model_used;
+				const usedLabel = AI_MODELS.find((m) => m.id === res.model_used)?.label || res.model_used;
+				toast.success(`Proposition générée par ${usedLabel} (cascade)`);
+			}
+			aiPendingContent = res.modified_content;
+			aiDiffViewMode = 'diff';
+			if (!quickAction) {
+				aiInstruction = '';
+			}
+		} catch (e: any) {
+			toast.error('Échec édition IA: ' + (e.message || ''));
+		} finally {
+			isAiEditing = false;
+		}
+	};
+
+	const acceptAiDiffAndSave = async () => {
+		if (aiPendingContent === null) return;
+		fileContent = aiPendingContent;
+		if (currentWsObj.versioned) {
+			commitMessage = `AI: ${aiLastInstruction.slice(0, 60)}`;
+		}
+		resetAiState();
+		await handleSave();
+	};
+
+	const applyAiDiffToEditor = () => {
+		if (aiPendingContent === null) return;
+		fileContent = aiPendingContent;
+		if (currentWsObj.versioned && !commitMessage.trim()) {
+			commitMessage = `AI: ${aiLastInstruction.slice(0, 60)}`;
+		}
+		resetAiState();
+	};
+
+	const rejectAiDiff = () => {
+		resetAiState();
+	};
+
+	interface DiffLine {
+		type: 'same' | 'add' | 'del';
+		text: string;
+	}
+
+	const computeLineDiff = (beforeText: string, afterText: string): DiffLine[] => {
+		const aLines = beforeText.split('\n');
+		const bLines = afterText.split('\n');
+		const n = aLines.length;
+		const m = bLines.length;
+
+		// Fallback simple si > 2500 lignes ou matrice trop grande
+		if (n > 2500 || m > 2500 || n * m > 2_500_000) {
+			const out: DiffLine[] = [];
+			const maxLen = Math.max(n, m);
+			for (let i = 0; i < maxLen; i++) {
+				const a = aLines[i];
+				const b = bLines[i];
+				if (a === b && a !== undefined) {
+					out.push({ type: 'same', text: a });
+				} else {
+					if (a !== undefined) out.push({ type: 'del', text: a });
+					if (b !== undefined) out.push({ type: 'add', text: b });
+				}
+			}
+			return out;
+		}
+
+		// LCS DP compacte (Int32Array par ligne)
+		const dp: Int32Array[] = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+		for (let i = n - 1; i >= 0; i--) {
+			const row = dp[i];
+			const nextRow = dp[i + 1];
+			const aLine = aLines[i];
+			for (let j = m - 1; j >= 0; j--) {
+				if (aLine === bLines[j]) {
+					row[j] = nextRow[j + 1] + 1;
+				} else {
+					row[j] = nextRow[j] >= row[j + 1] ? nextRow[j] : row[j + 1];
+				}
+			}
+		}
+
+		const result: DiffLine[] = [];
+		let i = 0;
+		let j = 0;
+		while (i < n && j < m) {
+			if (aLines[i] === bLines[j]) {
+				result.push({ type: 'same', text: aLines[i] });
+				i++;
+				j++;
+			} else if (dp[i + 1][j] >= dp[i][j + 1]) {
+				result.push({ type: 'del', text: aLines[i] });
+				i++;
+			} else {
+				result.push({ type: 'add', text: bLines[j] });
+				j++;
+			}
+		}
+		while (i < n) {
+			result.push({ type: 'del', text: aLines[i++] });
+		}
+		while (j < m) {
+			result.push({ type: 'add', text: bLines[j++] });
+		}
+		return result;
+	};
+
+	$: aiDiffLines = aiPendingContent !== null ? computeLineDiff(fileContent, aiPendingContent) : [];
+
+	const getDiffLineClass = (line: string): string => {
+		if (line.startsWith('+++') || line.startsWith('---')) {
+			return 'text-gray-300 font-bold';
+		}
+		if (line.startsWith('@@')) {
+			return 'text-cyan-400 bg-cyan-950/30';
+		}
+		if (line.startsWith('diff ') || line.startsWith('index ')) {
+			return 'text-amber-300 font-semibold';
+		}
+		if (line.startsWith('+')) {
+			return 'text-emerald-300 bg-emerald-950/35';
+		}
+		if (line.startsWith('-')) {
+			return 'text-rose-300 bg-rose-950/35';
+		}
+		return 'text-gray-300';
 	};
 
 	// Réaction au routage ciblé ($echoCodexTarget)
@@ -681,8 +907,10 @@
 					currentDirPath = '';
 					selectedPath = '';
 					fileContent = '';
+					savedFileContent = '';
 					fileMeta = null;
 					viewMode = 'code';
+					resetAiState();
 					revokePreviewBlob();
 					void loadTree('');
 				}}
@@ -930,9 +1158,19 @@
 				{:else}
 					<!-- Barre d'actions fichier -->
 					<div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-850/50">
-						<span class="font-mono text-xs font-semibold text-gray-800 dark:text-gray-200 truncate">
-							{selectedPath}
-						</span>
+						<div class="flex items-center gap-2 min-w-0">
+							<span class="font-mono text-xs font-semibold text-gray-800 dark:text-gray-200 truncate">
+								{selectedPath}
+							</span>
+							{#if isDirty}
+								<span
+									class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-300 text-[10px] font-semibold shrink-0"
+									title="Modifications non enregistrées (Ctrl+S pour enregistrer)"
+								>
+									● Modifié
+								</span>
+							{/if}
+						</div>
 
 						<div class="flex flex-wrap items-center gap-1.5">
 							{#if canPreview}
@@ -989,14 +1227,18 @@
 										on:click={handleSave}
 										disabled={isSaving}
 									>
-										{isSaving ? 'Enregistrement...' : 'Enregistrer (Commit)'}
+										{isSaving
+											? 'Enregistrement...'
+											: currentWsObj.versioned
+												? 'Enregistrer (Commit)'
+												: 'Enregistrer'}
 									</button>
 								{/if}
 							{/if}
 						</div>
 					</div>
 
-					{#if isWritable && !fileMeta?.is_binary && viewMode === 'code'}
+					{#if isWritable && currentWsObj.versioned && !fileMeta?.is_binary && viewMode === 'code'}
 						<div class="px-4 py-1.5 border-b border-gray-100 dark:border-gray-800 bg-gray-50/20">
 							<input
 								type="text"
@@ -1110,19 +1352,188 @@
 									</div>
 								{/if}
 							</div>
+						{:else if aiPendingContent !== null}
+							<div class="flex-1 flex flex-col overflow-hidden rounded-lg border border-sky-500/40 bg-gray-950">
+								<div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-gray-900 border-b border-gray-800 text-xs shrink-0">
+									<div class="flex items-center gap-2 min-w-0">
+										<span class="font-semibold text-sky-400">✨ Proposition IA</span>
+										{#if aiUsedModel}
+											<span class="px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 font-mono text-[10px]">
+												{AI_MODELS.find((m) => m.id === aiUsedModel)?.label || aiUsedModel}
+											</span>
+										{/if}
+										{#if aiLastInstruction}
+											<span class="text-gray-400 truncate max-w-[260px]" title={aiLastInstruction}>
+												« {aiLastInstruction} »
+											</span>
+										{/if}
+									</div>
+									<div class="flex flex-wrap items-center gap-1.5">
+										<div class="flex items-center bg-gray-800 p-0.5 rounded text-[11px] mr-1">
+											<button
+												type="button"
+												on:click={() => (aiDiffViewMode = 'diff')}
+												class="px-2 py-0.5 rounded transition {aiDiffViewMode === 'diff'
+													? 'bg-gray-700 text-white'
+													: 'text-gray-400 hover:text-gray-200'}"
+											>
+												Diff IA
+											</button>
+											<button
+												type="button"
+												on:click={() => (aiDiffViewMode = 'full')}
+												class="px-2 py-0.5 rounded transition {aiDiffViewMode === 'full'
+													? 'bg-gray-700 text-white'
+													: 'text-gray-400 hover:text-gray-200'}"
+											>
+												Texte complet
+											</button>
+										</div>
+										<button
+											type="button"
+											on:click={() => void acceptAiDiffAndSave()}
+											disabled={isSaving}
+											class="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition"
+										>
+											✅ Accepter & {currentWsObj.versioned ? 'Commiter' : 'Enregistrer'}
+										</button>
+										<button
+											type="button"
+											on:click={applyAiDiffToEditor}
+											disabled={isSaving}
+											class="px-2.5 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition"
+										>
+											✏️ Appliquer dans l'éditeur
+										</button>
+										<button
+											type="button"
+											on:click={rejectAiDiff}
+											disabled={isSaving}
+											class="px-2.5 py-1 rounded bg-rose-600/80 hover:bg-rose-600 text-white text-xs font-medium transition"
+										>
+											❌ Rejeter
+										</button>
+									</div>
+								</div>
+
+								{#if aiDiffViewMode === 'diff'}
+									<div class="flex-1 overflow-auto p-2 font-mono text-xs leading-relaxed">
+										{#each aiDiffLines as line}
+											<div
+												class="px-2 whitespace-pre-wrap break-all {line.type === 'add'
+													? 'bg-emerald-950/45 text-emerald-300'
+													: line.type === 'del'
+														? 'bg-rose-950/45 text-rose-300'
+														: 'text-gray-400'}"
+											>
+												<span class="inline-block w-4 select-none opacity-70">{line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' '}</span>{line.text}
+											</div>
+										{/each}
+									</div>
+								{:else}
+									<pre class="flex-1 overflow-auto p-3 font-mono text-xs text-gray-200 whitespace-pre-wrap break-all">{aiPendingContent}</pre>
+								{/if}
+							</div>
 						{:else}
 							<textarea
+								bind:this={codeTextarea}
 								class="w-full h-full p-3 font-mono text-xs bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-500 resize-none"
 								bind:value={fileContent}
 								readonly={!isWritable}
+								on:select={updateSelectionFromTextarea}
+								on:keyup={updateSelectionFromTextarea}
+								on:mouseup={updateSelectionFromTextarea}
+								on:keydown={handleEditorKeydown}
 							></textarea>
 						{/if}
 					</div>
+
+					{#if isWritable && !fileMeta?.is_binary && viewMode === 'code' && selectedPath && aiPendingContent === null}
+						<div class="px-3 py-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50/80 dark:bg-gray-900/90 space-y-1.5 shrink-0">
+							<!-- Quick Actions -->
+							<div class="flex flex-wrap items-center gap-1">
+								{#each QUICK_ACTIONS as qa}
+									<button
+										type="button"
+										disabled={isAiEditing}
+										on:click={() => void handleAiEdit(qa.id, qa.label)}
+										class="px-2 py-0.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 hover:bg-sky-500/10 hover:border-sky-500/40 text-[11px] text-gray-700 dark:text-gray-300 disabled:opacity-50 transition"
+									>
+										{qa.label}
+									</button>
+								{/each}
+							</div>
+
+							<!-- Barre d'instruction IA one-shot -->
+							<div class="flex flex-wrap items-center gap-1.5">
+								<select
+									bind:value={aiModel}
+									disabled={isAiEditing}
+									title="Modèle IA"
+									class="text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md px-2 py-1 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-500"
+								>
+									{#each AI_MODELS as m}
+										<option value={m.id}>{m.label}</option>
+									{/each}
+								</select>
+
+								{#if editorSelection}
+									<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-500/15 text-sky-600 dark:text-sky-300 text-[11px] font-medium shrink-0">
+										Sélection ({editorSelection.length} car.)
+										<button
+											type="button"
+											on:click={() => (editorSelection = '')}
+											class="hover:text-sky-800 dark:hover:text-white font-bold leading-none"
+											title="Repasser au fichier entier"
+										>
+											×
+										</button>
+									</span>
+								{:else}
+									<span class="px-2 py-0.5 rounded bg-gray-200/70 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-[11px] shrink-0">
+										Fichier entier
+									</span>
+								{/if}
+
+								<input
+									type="text"
+									bind:value={aiInstruction}
+									disabled={isAiEditing}
+									placeholder="Instruction IA one-shot (ex: Ajoute la gestion d'erreurs)..."
+									class="flex-1 min-w-[180px] text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md px-2.5 py-1 text-gray-800 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
+									on:keydown={(e) => {
+										if (e.key === 'Enter' && !e.shiftKey) {
+											e.preventDefault();
+											void handleAiEdit();
+										}
+									}}
+								/>
+
+								<button
+									type="button"
+									disabled={isAiEditing || !aiInstruction.trim()}
+									on:click={() => void handleAiEdit()}
+									class="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-sky-500 hover:bg-sky-600 disabled:opacity-50 text-white text-xs font-semibold transition shrink-0"
+								>
+									{#if isAiEditing}
+										<Spinner className="w-3.5 h-3.5" />
+										<span>Édition...</span>
+									{:else}
+										<span>✨ Éditer</span>
+									{/if}
+								</button>
+							</div>
+						</div>
+					{/if}
 				{/if}
 			{:else if activeSubView === 'log'}
 				<div class="flex-1 overflow-y-auto p-4 space-y-2">
 					<h3 class="text-xs font-bold text-gray-700 dark:text-gray-300 mb-2">Historique des modifications</h3>
-					{#if logEntries.length === 0}
+					{#if !currentWsObj.versioned}
+						<div class="p-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 text-xs text-gray-500 dark:text-gray-400">
+							L'espace « {currentWsObj.label} » n'est pas versionné par Git (aucun historique de commits).
+						</div>
+					{:else if logEntries.length === 0}
 						<div class="text-gray-400 text-xs">Aucun commit trouvé pour ce chemin.</div>
 					{:else}
 						{#each logEntries as c}
@@ -1182,7 +1593,15 @@
 							</button>
 						</div>
 					</div>
-					<pre class="flex-1 overflow-auto p-3 font-mono text-xs bg-gray-950 text-emerald-400 rounded-xl border border-gray-800">{diffText || 'Aucune différence ou diff vide.'}</pre>
+					<div class="flex-1 overflow-auto p-3 font-mono text-xs bg-gray-950 rounded-xl border border-gray-800 leading-relaxed">
+						{#if !diffText}
+							<div class="text-gray-400">Aucune différence ou diff vide.</div>
+						{:else}
+							{#each diffText.split('\n') as line}
+								<div class="px-1.5 whitespace-pre-wrap break-all {getDiffLineClass(line)}">{line}</div>
+							{/each}
+						{/if}
+					</div>
 				</div>
 			{/if}
 		</div>
