@@ -244,8 +244,14 @@ export const deleteEchoMetaArtifact = async (
 // WINDOW MANAGER ECHO (/echo/v1/wm)
 // ============================================================================
 
-export const getEchoWmChatSnapshot = async (token: string, chatId: string): Promise<any> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/wm/chat/${encodeURIComponent(chatId)}`, {
+export const getEchoWmChatSnapshot = async (
+	token: string,
+	chatId: string,
+	refresh: boolean = false
+): Promise<any> => {
+	const targetCid = chatId && chatId.trim() ? chatId.trim() : '_new';
+	const query = refresh ? '?refresh=1' : '';
+	const res = await fetch(`${ECHO_API_BASE_URL}/wm/chat/${encodeURIComponent(targetCid)}${query}`, {
 		method: 'GET',
 		headers: {
 			Accept: 'application/json',

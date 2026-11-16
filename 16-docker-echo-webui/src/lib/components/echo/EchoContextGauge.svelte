@@ -7,27 +7,43 @@
 
 	let showPopover = false;
 	let containerRef: HTMLDivElement | null = null;
-	let currentChatId = '';
+	let mounted = false;
+	let currentChatId = '__init__';
+	let isRefreshing = false;
+	let clickTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const DEFAULT_MAX_TOKENS = 1048576;
+	const RING_RADIUS = 7;
+	const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
-	$: if (chatId && chatId !== currentChatId) {
-		currentChatId = chatId;
-		refreshStats(chatId);
-	}
-
-	const refreshStats = async (cid: string) => {
+	const refreshStats = async (cid: string, forceRefresh: boolean = false) => {
+		if (typeof localStorage === 'undefined') return;
 		const token = localStorage?.token;
-		if (!token || !cid) return;
+		if (!token) return;
+		if (forceRefresh) {
+			isRefreshing = true;
+		}
 		try {
-			const res = await getEchoWmChatSnapshot(token, cid);
+			const res = await getEchoWmChatSnapshot(token, cid || '_new', forceRefresh);
 			if (res && res.context_stats) {
 				echoContextGauge.set(res.context_stats);
+			} else if (!cid || cid === '_new') {
+				echoContextGauge.set({});
 			}
 		} catch (e) {
 			// Silencieux si pas encore de session
+		} finally {
+			if (forceRefresh) {
+				isRefreshing = false;
+			}
 		}
 	};
+
+	$: normalizedChatId = chatId && chatId.trim() ? chatId.trim() : '_new';
+	$: if (mounted && normalizedChatId !== currentChatId) {
+		currentChatId = normalizedChatId;
+		void refreshStats(normalizedChatId, false);
+	}
 
 	const handleCustomEvent = (e: Event) => {
 		const custom = e as CustomEvent<EchoContextGaugePayload>;
@@ -42,15 +58,38 @@
 		}
 	};
 
+	const handleClick = () => {
+		if (clickTimer) {
+			clearTimeout(clickTimer);
+			clickTimer = null;
+		}
+		clickTimer = setTimeout(() => {
+			clickTimer = null;
+			showPopover = !showPopover;
+		}, 200);
+	};
+
+	const handleDoubleClick = () => {
+		if (clickTimer) {
+			clearTimeout(clickTimer);
+			clickTimer = null;
+		}
+		void refreshStats(normalizedChatId, true);
+	};
+
 	onMount(() => {
+		mounted = true;
 		window.addEventListener('echo:context_gauge', handleCustomEvent);
 		window.addEventListener('click', handleClickOutside);
-		if (chatId) {
-			refreshStats(chatId);
-		}
+		currentChatId = normalizedChatId;
+		void refreshStats(normalizedChatId, false);
 	});
 
 	onDestroy(() => {
+		if (clickTimer) {
+			clearTimeout(clickTimer);
+			clickTimer = null;
+		}
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('echo:context_gauge', handleCustomEvent);
 			window.removeEventListener('click', handleClickOutside);
@@ -59,164 +98,393 @@
 
 	$: stats = $echoContextGauge;
 	$: maxTokens = stats?.max_tokens || DEFAULT_MAX_TOKENS;
+	$: cachedTokens = stats?.cached_tokens ?? stats?.cachedContentTokenCount ?? 0;
+	$: rawPromptTokens = stats?.prompt_tokens ?? stats?.promptTokenCount ?? 0;
+	$: activePromptTokens = Math.max(0, rawPromptTokens - cachedTokens);
+	$: genTokens = stats?.generation_tokens ?? stats?.candidatesTokenCount ?? 0;
 	$: totalTokens =
 		stats?.total_tokens ??
-		((stats?.prompt_tokens ?? stats?.promptTokenCount ?? 0) +
-			(stats?.generation_tokens ?? stats?.candidatesTokenCount ?? 0));
-	$: cachedTokens = stats?.cached_tokens ?? stats?.cachedContentTokenCount ?? 0;
-	$: promptTokens = stats?.prompt_tokens ?? stats?.promptTokenCount ?? 0;
-	$: genTokens = stats?.generation_tokens ?? stats?.candidatesTokenCount ?? 0;
-	$: deltaTokens = stats?.delta_tokens ?? stats?.delta_capacity ?? 0;
+		stats?.totalTokenCount ??
+		(cachedTokens + activePromptTokens + genTokens);
+
+	$: cachePct = Math.min(100, Math.max(0, (cachedTokens / maxTokens) * 100));
+	$: promptPct = Math.min(100 - cachePct, Math.max(0, (activePromptTokens / maxTokens) * 100));
+	$: genPct = Math.min(100 - cachePct - promptPct, Math.max(0, (genTokens / maxTokens) * 100));
+
+	$: pct =
+		stats?.percentage !== undefined
+			? Math.min(100, Math.max(0, stats.percentage))
+			: Math.min(100, Math.max(0, (totalTokens / maxTokens) * 100));
+	$: pctFormatted = pct.toFixed(1);
+
 	$: compactions = stats?.compaction_count ?? 0;
 	$: compactedTurns = stats?.compacted_turns ?? 0;
 	$: isPending = stats?.is_pending ?? false;
 
-	$: pct = stats?.percentage !== undefined
-		? Math.min(100, Math.max(0, stats.percentage))
-		: Math.min(100, Math.max(0, (totalTokens / maxTokens) * 100));
+	$: deltaObj = stats?.delta ?? null;
+	$: deltaTotal = deltaObj?.delta_total ?? stats?.delta_tokens ?? stats?.delta_capacity ?? 0;
+	$: capacityLostPct = typeof deltaObj?.capacity_lost_pct === 'number' ? deltaObj.capacity_lost_pct : 0;
+	$: growthPct = typeof deltaObj?.growth_pct === 'number' ? deltaObj.growth_pct : 0;
 
-	$: pctFormatted = pct.toFixed(1);
+	// Identité Google & Quotas
+	$: userEmail = stats?.user_email || '';
+	$: userTier = stats?.user_tier || '';
+	$: authSources = Array.isArray(stats?.auth_sources) ? stats.auth_sources : [];
+	$: projectId = stats?.project_id || '';
+	$: tenantId = stats?.tenant_id || 'aicode-consumers';
+	$: creditsVal = stats?.credits_val ?? 'N/A';
+	$: quotaModel = stats?.quota_model || '—';
+	$: quotaType = stats?.quota_type || 'UNKNOWN';
 
-	$: colorClass =
-		pct > 80
-			? 'bg-red-500 text-red-500'
-			: pct > 50
-				? 'bg-amber-500 text-amber-500'
-				: 'bg-emerald-500 text-emerald-500';
+	$: quotaFrac =
+		typeof stats?.quota_fraction === 'number'
+			? Math.min(1, Math.max(0, stats.quota_fraction))
+			: 1.0;
+	$: quotaRingColor =
+		quotaFrac < 0.2 ? '#ef4444' : quotaFrac < 0.5 ? '#f59e0b' : '#10b981';
+	$: ringDashOffset = RING_CIRCUMFERENCE * (1 - quotaFrac);
+
+	$: quota5hPct =
+		typeof stats?.quota_5h_fraction === 'number'
+			? Math.round(stats.quota_5h_fraction * 100)
+			: stats?.quotas?.five_hour_pct;
+	$: quota5hReset = stats?.quota_5h_reset || 'N/A';
+	$: quota5hDisabled = Boolean(stats?.quota_5h_disabled);
+	$: deltaQuota5h = typeof deltaObj?.delta_quota_5h === 'number' ? deltaObj.delta_quota_5h : null;
+
+	$: quotaWeeklyPct =
+		typeof stats?.quota_weekly_fraction === 'number'
+			? Math.round(stats.quota_weekly_fraction * 100)
+			: stats?.quotas?.weekly_pct;
+	$: quotaWeeklyReset = stats?.quota_weekly_reset || 'N/A';
+	$: deltaQuotaWeekly =
+		typeof deltaObj?.delta_quota_weekly === 'number' ? deltaObj.delta_quota_weekly : null;
+
+	$: rpdRem = stats?.quota_rpd_rem ?? stats?.quotas?.rpd_usage;
+	$: rpdLim = stats?.quota_rpd_lim ?? stats?.quotas?.rpd_limit;
+	$: rpmRem = stats?.quota_rpm_rem;
+	$: rpmLim = stats?.quota_rpm_lim;
+
+	$: shortIdentityLabel = userEmail
+		? userEmail.split('@')[0]
+		: userTier || '';
 
 	$: badgeBorder =
 		pct > 80
-			? 'border-red-500/40 hover:border-red-500'
+			? 'border-red-500/40 hover:border-red-500/70'
 			: pct > 50
-				? 'border-amber-500/40 hover:border-amber-500'
-				: 'border-emerald-500/30 hover:border-emerald-500/60';
+				? 'border-amber-500/40 hover:border-amber-500/70'
+				: 'border-gray-200/80 dark:border-gray-700/80 hover:border-emerald-500/50';
 
 	const formatNumber = (num: number): string => {
 		if (num >= 1_000_000) return (num / 1_000_000).toFixed(2) + 'M';
 		if (num >= 1_000) return (num / 1_000).toFixed(1) + 'k';
 		return num.toLocaleString();
 	};
+
+	const formatQuotaColor = (pctVal: number): string => {
+		if (pctVal < 20) return 'text-red-500';
+		if (pctVal < 50) return 'text-amber-500';
+		return 'text-emerald-500';
+	};
 </script>
 
-<div class="relative inline-flex items-center" bind:this={containerRef}>
+<div class="relative flex flex-1 items-center min-w-[72px] sm:min-w-[110px] max-w-full" bind:this={containerRef}>
 	<button
 		type="button"
-		class="flex items-center gap-2 px-2.5 py-1 text-xs font-mono font-medium rounded-lg border bg-gray-50 dark:bg-gray-850 hover:bg-gray-100 dark:hover:bg-gray-800 transition shadow-sm {badgeBorder}"
-		on:click={() => (showPopover = !showPopover)}
-		title="Utilisation du contexte"
+		class="w-full flex items-center gap-2 px-2.5 py-1 text-xs font-mono font-medium rounded-xl border bg-gray-100/80 dark:bg-gray-800/80 hover:bg-gray-200/70 dark:hover:bg-gray-700/80 transition shadow-xs select-none {badgeBorder}"
+		on:click={handleClick}
+		on:dblclick|preventDefault|stopPropagation={handleDoubleClick}
+		title="Contexte, session & identité Google (clic : détails · double-clic : rafraîchir)"
+		aria-label="Jauge contextuelle et identité Google"
 	>
-		<!-- Indicateur couleur & pulsation -->
-		<div class="relative flex items-center justify-center w-2.5 h-2.5">
-			{#if isPending}
-				<span
-					class="absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping {colorClass}"
-				></span>
+		<!-- 1. Identité Google & Quota Ring (gauche) -->
+		<div class="shrink-0 flex items-center gap-1.5 min-w-0">
+			<svg
+				width="18"
+				height="18"
+				viewBox="0 0 18 18"
+				class="shrink-0 {isRefreshing ? 'animate-spin' : isPending ? 'animate-pulse' : ''}"
+			>
+				<circle
+					cx="9"
+					cy="9"
+					r={RING_RADIUS}
+					fill="none"
+					stroke="currentColor"
+					class="text-gray-300 dark:text-gray-600/60"
+					stroke-width="2"
+				/>
+				<circle
+					cx="9"
+					cy="9"
+					r={RING_RADIUS}
+					fill="none"
+					stroke={quotaRingColor}
+					stroke-width="2"
+					stroke-dasharray={RING_CIRCUMFERENCE}
+					stroke-dashoffset={ringDashOffset}
+					transform="rotate(-90 9 9)"
+					stroke-linecap="round"
+				/>
+				<path
+					d="M9 5.5a2 2 0 0 0-2 2V9h4V7.5a2 2 0 0 0-2-2Zm2.75 3.5h-5.5a.75.75 0 0 0-.75.75v3a.75.75 0 0 0 .75.75h5.5a.75.75 0 0 0 .75-.75v-3a.75.75 0 0 0-.75-.75Z"
+					fill="currentColor"
+					class="text-gray-700 dark:text-gray-200"
+					opacity="0.85"
+				/>
+			</svg>
+			{#if shortIdentityLabel}
+				<span class="hidden xl:inline truncate max-w-[110px] text-[11px] text-gray-600 dark:text-gray-300">
+					{shortIdentityLabel}
+				</span>
 			{/if}
-			<span class="relative inline-flex rounded-full w-2 h-2 {colorClass}"></span>
 		</div>
 
-		<!-- Mini barre de progression -->
-		<div class="w-12 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-			<div
-				class="h-full transition-all duration-500 {colorClass.split(' ')[0]}"
-				style="width: {pct}%"
-			></div>
+		<!-- 2. Barre de Contexte 3 segments redimensionnable (centre) -->
+		<div class="flex flex-1 min-w-[36px] h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+			{#if cachePct > 0}
+				<div
+					class="h-full bg-violet-500 transition-all duration-300"
+					style="width: {cachePct}%"
+				></div>
+			{/if}
+			{#if promptPct > 0}
+				<div
+					class="h-full bg-emerald-500 transition-all duration-300"
+					style="width: {promptPct}%"
+				></div>
+			{/if}
+			{#if genPct > 0}
+				<div
+					class="h-full bg-amber-500 transition-all duration-300"
+					style="width: {genPct}%"
+				></div>
+			{/if}
 		</div>
 
-		<span class="text-gray-700 dark:text-gray-200 font-semibold">{pctFormatted}%</span>
-		<span class="text-gray-400 dark:text-gray-500 hidden sm:inline"
-			>({formatNumber(totalTokens)})</span
-		>
+		<!-- 3. Session & Différentiel (droite) -->
+		<div class="shrink-0 flex items-center gap-1.5">
+			<span class="text-gray-800 dark:text-gray-200 font-semibold">{pctFormatted}%</span>
+			<span class="hidden md:inline text-gray-400 dark:text-gray-500">
+				({formatNumber(totalTokens)})
+			</span>
+			{#if capacityLostPct !== 0}
+				<span
+					class="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium border {capacityLostPct > 0
+						? 'bg-red-500/10 text-red-500 border-red-500/25'
+						: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/25'}"
+				>
+					{capacityLostPct > 0 ? '-' : '+'}{Math.abs(capacityLostPct).toFixed(2)}%
+				</span>
+			{/if}
+		</div>
 	</button>
 
-	<!-- Popover détaillé -->
+	<!-- Popover détaillé vers le haut -->
 	{#if showPopover}
 		<div
-			class="absolute right-0 top-full mt-2 w-80 p-4 rounded-xl shadow-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-xs z-50 animate-in fade-in zoom-in-95 duration-150"
+			class="bottom-full left-0 sm:left-auto sm:right-0 mb-2 absolute w-80 sm:w-96 p-4 rounded-xl shadow-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-xs z-50 animate-in fade-in zoom-in-95 duration-150"
 		>
+			<!-- En-tête -->
 			<div class="flex items-center justify-between pb-2 mb-3 border-b border-gray-100 dark:border-gray-800">
-				<div class="flex items-center gap-1.5 font-semibold text-gray-900 dark:text-white">
-					<svg class="w-4 h-4 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-					</svg>
-					<span>Jauge Contextuelle & Quotas</span>
+				<div class="flex flex-col">
+					<span class="font-semibold text-gray-900 dark:text-white">
+						Contexte, Session &amp; Identité
+					</span>
+					<span class="text-[10px] text-gray-400 dark:text-gray-500">
+						Double-clic sur la barre pour rafraîchir
+					</span>
 				</div>
-				<span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 font-mono text-gray-500">
-					ECHO-UI
-				</span>
+				<button
+					type="button"
+					class="p-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition"
+					on:click|stopPropagation={() => refreshStats(normalizedChatId, true)}
+					title="Rafraîchir maintenant"
+					aria-label="Rafraîchir les métriques"
+					disabled={isRefreshing}
+				>
+					<svg
+						class="w-3.5 h-3.5 {isRefreshing ? 'animate-spin text-emerald-500' : ''}"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+						<path d="M21 3v5h-5" />
+					</svg>
+				</button>
 			</div>
 
-			<!-- Jauge Principale -->
-			<div class="space-y-1 mb-4">
+			<!-- Section 1 : Contexte & Session -->
+			<div class="space-y-2 mb-3">
 				<div class="flex justify-between font-mono text-gray-600 dark:text-gray-400">
 					<span>Total Tokens :</span>
 					<span class="font-bold text-gray-900 dark:text-white">
-						{totalTokens.toLocaleString()} / {formatNumber(maxTokens)}
+						{totalTokens.toLocaleString()} / {formatNumber(maxTokens)} ({pctFormatted}%)
 					</span>
 				</div>
-				<div class="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-					<div
-						class="h-full transition-all duration-300 {colorClass.split(' ')[0]}"
-						style="width: {pct}%"
-					></div>
+				<div class="flex w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+					{#if cachePct > 0}
+						<div class="h-full bg-violet-500" style="width: {cachePct}%"></div>
+					{/if}
+					{#if promptPct > 0}
+						<div class="h-full bg-emerald-500" style="width: {promptPct}%"></div>
+					{/if}
+					{#if genPct > 0}
+						<div class="h-full bg-amber-500" style="width: {genPct}%"></div>
+					{/if}
+				</div>
+
+				<div class="space-y-1 pt-1 font-mono text-[11px]">
+					<div class="flex justify-between text-gray-600 dark:text-gray-400">
+						<span class="flex items-center gap-1.5">
+							<span class="w-2 h-2 rounded-full bg-violet-500"></span>
+							Cache :
+						</span>
+						<span class="text-violet-500 font-semibold">{cachedTokens.toLocaleString()}</span>
+					</div>
+					<div class="flex justify-between text-gray-600 dark:text-gray-400">
+						<span class="flex items-center gap-1.5">
+							<span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+							Prompt actif :
+						</span>
+						<span class="text-emerald-500 font-semibold">{activePromptTokens.toLocaleString()}</span>
+					</div>
+					<div class="flex justify-between text-gray-600 dark:text-gray-400">
+						<span class="flex items-center gap-1.5">
+							<span class="w-2 h-2 rounded-full bg-amber-500"></span>
+							Génération :
+						</span>
+						<span class="text-amber-500 font-semibold">{genTokens.toLocaleString()}</span>
+					</div>
+					{#if compactions > 0}
+						<div class="flex justify-between text-cyan-500">
+							<span>Compactions :</span>
+							<span class="font-semibold">#{compactions} ({compactedTurns} tours)</span>
+						</div>
+					{/if}
+					{#if deltaTotal !== 0 || capacityLostPct !== 0 || growthPct !== 0}
+						<div class="flex justify-between text-gray-500 pt-1 border-t border-gray-100 dark:border-gray-800/70">
+							<span>Différentiel tour :</span>
+							<span class="font-semibold text-gray-800 dark:text-gray-200">
+								{deltaTotal > 0 ? '+' : ''}{deltaTotal.toLocaleString()} tok
+								{#if capacityLostPct !== 0}
+									({capacityLostPct > 0 ? '-' : '+'}{Math.abs(capacityLostPct).toFixed(2)}%)
+								{/if}
+								{#if growthPct !== 0}
+									· {growthPct > 0 ? '+' : ''}{growthPct}%
+								{/if}
+							</span>
+						</div>
+					{/if}
 				</div>
 			</div>
 
-			<!-- Décomposition Tokens -->
-			<div class="space-y-1.5 py-2 border-t border-b border-gray-100 dark:border-gray-800 font-mono">
-				<div class="flex justify-between text-gray-600 dark:text-gray-400">
-					<span>Tokens en Cache :</span>
-					<span class="text-blue-500 font-semibold">{cachedTokens.toLocaleString()}</span>
+			<!-- Section 2 : Identité Google & Authentification -->
+			<div class="py-2.5 border-t border-gray-100 dark:border-gray-800 space-y-1 font-mono text-[11px]">
+				<div class="font-sans font-semibold text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">
+					Identité Google &amp; Authentification
 				</div>
-				<div class="flex justify-between text-gray-600 dark:text-gray-400">
-					<span>Contexte envoyé :</span>
-					<span class="text-emerald-500 font-semibold">{promptTokens.toLocaleString()}</span>
+				<div class="flex justify-between gap-2 text-gray-600 dark:text-gray-400">
+					<span>Source :</span>
+					<span class="font-semibold text-gray-900 dark:text-gray-100 truncate">
+						{authSources.length > 0 ? authSources.join(', ') : 'N/A'}
+					</span>
 				</div>
-				<div class="flex justify-between text-gray-600 dark:text-gray-400">
-					<span>Génération :</span>
-					<span class="text-purple-500 font-semibold">{genTokens.toLocaleString()}</span>
+				<div class="flex justify-between gap-2 text-gray-600 dark:text-gray-400">
+					<span>Compte :</span>
+					<span class="font-semibold text-gray-900 dark:text-gray-100 truncate" title={userEmail}>
+						{userEmail || 'N/A'}
+					</span>
 				</div>
-				{#if deltaTokens !== 0}
-					<div class="flex justify-between text-gray-600 dark:text-gray-400">
-						<span>Δ Capacité :</span>
-						<span class="text-amber-500 font-semibold">{deltaTokens > 0 ? '+' : ''}{deltaTokens.toLocaleString()}</span>
+				{#if userTier}
+					<div class="flex justify-between gap-2 text-gray-600 dark:text-gray-400">
+						<span>Tier :</span>
+						<span class="font-semibold text-sky-500">{userTier}</span>
 					</div>
 				{/if}
-				{#if compactions > 0}
-					<div class="flex justify-between text-gray-600 dark:text-gray-400">
-						<span>Compactions :</span>
-						<span class="text-cyan-500 font-semibold">{compactions} ({compactedTurns} tours)</span>
+				{#if projectId && projectId !== tenantId}
+					<div class="flex justify-between gap-2 text-gray-600 dark:text-gray-400">
+						<span>Projet Perso :</span>
+						<span class="truncate text-gray-800 dark:text-gray-200">{projectId}</span>
 					</div>
 				{/if}
+				<div class="flex justify-between gap-2 text-gray-600 dark:text-gray-400">
+					<span>Tenant :</span>
+					<span class="text-emerald-500 font-semibold truncate">{tenantId}</span>
+				</div>
 			</div>
 
-			<!-- Quotas du compte -->
-			{#if stats?.quotas}
-				<div class="mt-3 space-y-1.5">
-					<div class="font-semibold text-gray-700 dark:text-gray-300">Quotas du compte :</div>
-					{#if stats.quotas.five_hour_pct !== undefined}
-						<div class="flex items-center justify-between text-gray-500">
-							<span>Fenêtre 5h :</span>
-							<span class="font-mono font-semibold">{stats.quotas.five_hour_pct}%</span>
-						</div>
-					{/if}
-					{#if stats.quotas.weekly_pct !== undefined}
-						<div class="flex items-center justify-between text-gray-500">
-							<span>Hebdomadaire :</span>
-							<span class="font-mono font-semibold">{stats.quotas.weekly_pct}%</span>
-						</div>
-					{/if}
-					{#if stats.quotas.rpd_usage !== undefined}
-						<div class="flex items-center justify-between text-gray-500">
-							<span>RPD :</span>
-							<span class="font-mono font-semibold">{stats.quotas.rpd_usage} / {stats.quotas.rpd_limit ?? '∞'}</span>
-						</div>
-					{/if}
+			<!-- Section 3 : Quotas Cloud -->
+			<div class="pt-2.5 border-t border-gray-100 dark:border-gray-800 space-y-1 font-mono text-[11px]">
+				<div class="font-sans font-semibold text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-1">
+					Quotas Cloud
 				</div>
-			{/if}
-
-			<div class="mt-3 pt-2 text-[10px] text-center text-gray-400 dark:text-gray-500 border-t border-gray-100 dark:border-gray-800">
-				Fenêtre maximale standard : 1 048 576 tokens
+				<div class="flex justify-between text-gray-600 dark:text-gray-400">
+					<span>Crédits IA :</span>
+					<span class="font-semibold text-emerald-500">{creditsVal}</span>
+				</div>
+				<div class="flex justify-between gap-2 text-gray-600 dark:text-gray-400">
+					<span>Modèle CA :</span>
+					<span class="text-gray-800 dark:text-gray-200 truncate">{quotaModel}</span>
+				</div>
+				{#if quota5hDisabled}
+					<div class="flex justify-between text-gray-500">
+						<span>Fenêtre 5h :</span>
+						<span>Désactivée</span>
+					</div>
+				{:else if quota5hPct !== undefined}
+					<div class="flex justify-between text-gray-600 dark:text-gray-400">
+						<span>Fenêtre 5h :</span>
+						<span>
+							<b class={formatQuotaColor(quota5hPct)}>{quota5hPct}%</b>
+							{#if deltaQuota5h !== null}
+								<span class="ml-1 text-[10px] {deltaQuota5h < 0 ? 'text-red-500' : deltaQuota5h > 0 ? 'text-emerald-500' : 'text-gray-400'}">
+									({deltaQuota5h > 0 ? '+' : ''}{deltaQuota5h}%)
+								</span>
+							{/if}
+							{#if quota5hReset && quota5hReset !== 'N/A'}
+								<span class="text-[10px] text-gray-400 ml-1">· {quota5hReset}</span>
+							{/if}
+						</span>
+					</div>
+				{/if}
+				{#if quotaWeeklyPct !== undefined}
+					<div class="flex justify-between text-gray-600 dark:text-gray-400">
+						<span>Hebdomadaire :</span>
+						<span>
+							<b class={formatQuotaColor(quotaWeeklyPct)}>{quotaWeeklyPct}%</b>
+							{#if deltaQuotaWeekly !== null}
+								<span class="ml-1 text-[10px] {deltaQuotaWeekly < 0 ? 'text-red-500' : deltaQuotaWeekly > 0 ? 'text-emerald-500' : 'text-gray-400'}">
+									({deltaQuotaWeekly > 0 ? '+' : ''}{deltaQuotaWeekly}%)
+								</span>
+							{/if}
+							{#if quotaWeeklyReset && quotaWeeklyReset !== 'N/A'}
+								<span class="text-[10px] text-gray-400 ml-1">· {quotaWeeklyReset}</span>
+							{/if}
+						</span>
+					</div>
+				{/if}
+				{#if rpdRem !== undefined && rpdRem !== 'N/A'}
+					<div class="flex justify-between text-gray-600 dark:text-gray-400">
+						<span>RPD :</span>
+						<span class="font-semibold">{rpdRem} / {rpdLim ?? '∞'}</span>
+					</div>
+				{/if}
+				{#if rpmRem !== undefined && rpmRem !== 'N/A'}
+					<div class="flex justify-between text-gray-600 dark:text-gray-400">
+						<span>RPM :</span>
+						<span class="font-semibold">{rpmRem} / {rpmLim ?? '∞'}</span>
+					</div>
+				{/if}
+				<div class="flex justify-between text-gray-500">
+					<span>Type :</span>
+					<span>{quotaType}</span>
+				</div>
 			</div>
 		</div>
 	{/if}

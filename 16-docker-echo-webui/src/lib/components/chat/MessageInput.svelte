@@ -92,6 +92,8 @@
 	import VoiceRecording from './MessageInput/VoiceRecording.svelte';
 	import ModelSelector from './ModelSelector.svelte';
 	import ModelControls from './MessageInput/ModelControls.svelte';
+	import EchoContextGauge from '$lib/components/echo/EchoContextGauge.svelte';
+	import EchoEdgeEmbedding from '$lib/components/echo/EchoEdgeEmbedding.svelte';
 
 	import ToolServersModal from './ToolServersModal.svelte';
 	import SkillsModal from './SkillsModal.svelte';
@@ -2711,7 +2713,7 @@
 
 								<div
 									use:fitControlLabels
-									class="flex flex-1 items-center min-w-0 overflow-x-auto scrollbar-none"
+									class="flex shrink items-center min-w-0 overflow-x-auto scrollbar-none"
 								>
 									{#if selectedModelIds.length === 1 && $models.find((m) => m.id === selectedModelIds[0])?.has_user_valves && ($_user?.role === 'admin' || ($_user?.permissions?.chat?.valves ?? true))}
 										<div class="ml-1 flex gap-1.5 shrink-0">
@@ -2936,6 +2938,12 @@
 											</Tooltip>
 										{/each}
 									</div>
+								</div>
+
+								<!-- [ECHO-V6-HOOK] Barre Contexte/Session/Identité Google redimensionnable + WebGPU entre les filtres et Écho v6 -->
+								<div class="flex flex-1 items-center justify-end gap-1.5 min-w-0 sm:min-w-[140px] mx-1.5 self-center">
+									<EchoContextGauge chatId={chatId || history?.currentId || ''} />
+									<EchoEdgeEmbedding mode="badge" />
 								</div>
 
 								<div class="self-end flex space-x-1 mr-1 min-w-0 gap-[0.03125rem]">

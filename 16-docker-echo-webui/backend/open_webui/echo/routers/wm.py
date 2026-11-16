@@ -1,11 +1,12 @@
 """
 title: ECHO V6 Window Manager Router
 author: Wilfried BARNAVON
-version: 6.3.0.1
+version: 6.6.8.1
 description: Routeur souverain FastAPI pour le gestionnaire de fenêtres et événements temps réel (/echo/v1/wm).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.8.1: Support du paramètre refresh sur /chat/{chat_id} via AuthService.refresh_quota_if_needed et préservation de context_stats enrichi par EchoWindowManager.
 # 6.3.0.1: Création du routeur natif FastAPI /echo/v1/wm (SSE, snapshot enrichi context_stats, RPC).
 
 from __future__ import annotations
@@ -13,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import sys
 import uuid
 from pathlib import Path
@@ -25,16 +25,14 @@ from open_webui.echo.runtime import ensure_echo_sys_path
 
 ensure_echo_sys_path()
 try:
+    from echo_auth import AuthService  # type: ignore
     from echo_window_manager import get_window_manager, resolve_wm_user_id  # type: ignore
-    from echo_state_manager import EchoStateManager  # type: ignore
-    from echo_paths import get_echo_session_path, sanitize_echo_id  # type: ignore
 except ImportError:
     local_libs = Path(__file__).resolve().parents[5] / "14-owui-libs"
     if local_libs.is_dir() and str(local_libs) not in sys.path:
         sys.path.insert(0, str(local_libs))
+    from echo_auth import AuthService  # type: ignore
     from echo_window_manager import get_window_manager, resolve_wm_user_id  # type: ignore
-    from echo_state_manager import EchoStateManager  # type: ignore
-    from echo_paths import get_echo_session_path, sanitize_echo_id  # type: ignore
 
 log = logging.getLogger(__name__)
 
@@ -77,25 +75,18 @@ async def wm_sse_stream(request: Request, client_id: str = ""):
 
 
 @router.get("/chat/{chat_id}")
-async def wm_get_chat_snapshot(chat_id: str, request: Request):
-    """Retourne l'état complet du chat enrichi des métriques de contexte si session.db existe."""
+async def wm_get_chat_snapshot(chat_id: str, request: Request, refresh: bool = False):
+    """Retourne l'état complet du chat enrichi des métriques de contexte et quotas."""
     user_id = resolve_wm_user_id(request, chat_id=chat_id)
     wm = get_window_manager()
-    snapshot = dict(wm.get_chat_snapshot(user_id, chat_id))
+    if refresh:
+        try:
+            uid = wm._resolve_owner_uid(user_id, chat_id)
+            await AuthService(user_id=uid).refresh_quota_if_needed(force=True)
+        except Exception as e:
+            log.debug("Erreur refresh_quota_if_needed pour snapshot WM: %s", e)
 
-    # Enrichir avec context_stats de session.db uniquement si la base existe déjà sur disque
-    safe_uid = sanitize_echo_id(user_id)
-    safe_cid = sanitize_echo_id(chat_id)
-    try:
-        db_path = get_echo_session_path(safe_uid, safe_cid, "db")
-        if os.path.isfile(db_path):
-            sm = EchoStateManager(user_id=safe_uid, chat_id=safe_cid)
-            stats = sm.get_last_context_stats()
-            if stats:
-                snapshot["context_stats"] = stats
-    except Exception as e:
-        log.debug("Erreur lecture context_stats pour snapshot WM: %s", e)
-
+    snapshot = await asyncio.to_thread(wm.get_chat_snapshot, user_id, chat_id)
     return JSONResponse(content=snapshot)
 
 

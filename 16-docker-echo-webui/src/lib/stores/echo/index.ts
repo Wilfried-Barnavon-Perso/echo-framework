@@ -12,8 +12,42 @@ export interface EchoContextGaugePayload {
 	prompt_tokens?: number;
 	generation_tokens?: number;
 	delta_tokens?: number;
+	delta_capacity?: number;
 	compaction_count?: number;
 	compacted_turns?: number;
+	tenant_id?: string;
+	plan_name?: string;
+	credits_val?: string;
+	quota_str?: string;
+	totalTokenCount?: number;
+	cachedContentTokenCount?: number;
+	promptTokenCount?: number;
+	candidatesTokenCount?: number;
+	user_email?: string;
+	user_tier?: string;
+	project_id?: string;
+	auth_sources?: string[];
+	quota_fraction?: number;
+	quota_reset?: string;
+	quota_type?: string;
+	quota_model?: string;
+	quota_rpd_rem?: string | number;
+	quota_rpd_lim?: string | number;
+	quota_rpm_rem?: string | number;
+	quota_rpm_lim?: string | number;
+	quota_5h_fraction?: number | null;
+	quota_5h_reset?: string;
+	quota_5h_disabled?: boolean;
+	quota_weekly_fraction?: number | null;
+	quota_weekly_reset?: string;
+	delta?: {
+		delta_total?: number;
+		capacity_lost_pct?: number;
+		growth_pct?: number;
+		delta_quota_5h?: number | null;
+		delta_quota_weekly?: number | null;
+		[key: string]: any;
+	};
 	quotas?: {
 		five_hour_usage?: number;
 		five_hour_limit?: number;
@@ -204,6 +238,8 @@ export const requestEchoTabOpen = (
 export const echoEdgeEmbedState = writable<
 	'idle' | 'probing' | 'downloading' | 'ready' | 'active' | 'incompatible'
 >('idle');
+export const echoEdgeEmbedProgress = writable<number>(0);
+export const echoEdgeEmbedReason = writable<string>('');
 
 // Gestionnaire SSE refcounté unique pour /echo/v1/cognition/{chatId}/stream
 let activeStreamChatId = '';

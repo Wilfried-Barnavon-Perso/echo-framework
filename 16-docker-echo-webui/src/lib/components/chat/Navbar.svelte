@@ -46,7 +46,6 @@
 	import { getOutputText } from './Messages/structuredOutput';
 	import { refreshChatList, refreshFolderChatLists } from '$lib/stores/chatList';
 	import ChatParticipants from '$lib/components/common/ChatParticipants.svelte';
-	import EchoContextGauge from '$lib/components/echo/EchoContextGauge.svelte';
 	import EchoSubagentIndicator from '$lib/components/echo/EchoSubagentIndicator.svelte';
 
 	const i18n: any = getContext('i18n');
@@ -400,8 +399,7 @@
 				<div class="lg:mr-1 flex flex-none items-center gap-2 self-center">
 					<!-- <div class="md:hidden flex self-center w-[0.0625rem] h-5 mx-2 bg-gray-300 dark:bg-stone-700" /> -->
 
-					<!-- [ECHO-V6-HOOK] Jauge contextuelle & Quotas intégrés dans la navbar -->
-					<EchoContextGauge chatId={history?.currentId ?? $chatId} />
+					<!-- [ECHO-V6-HOOK] Indicateur de sous-agents intégré dans la navbar -->
 					<EchoSubagentIndicator chatId={chat?.id || $chatId || ''} />
 
 					{#if !tabbed}{@render renderChatActions()}{/if}

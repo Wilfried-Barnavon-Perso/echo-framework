@@ -2,16 +2,16 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 6.6.2.1
+version: 6.6.8.1
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.8.1: Chargement systématique de l'identité Google et des quotas dans get_chat_snapshot même hors session.db active et support du paramètre refresh sur wm_get_chat_state.
 # 6.6.2.1: Ajout de open_tab et broadcast_browser_frame (diffusion SSE vers les onglets natifs echo-browser et echo-codex).
 # 5.239.12.1: Exclusion SSOT et auto-guérison des HUDs transitoires (echo-migration-hud, echo-clone-hud) dans handle_rpc, get_chat_snapshot et hydrateChatState.
 # 5.237.19.1: Support du plein écran d'Iframe via EchoWM.toggleIframeFullscreen (echo:iframe:fullscreen, echo:iframe:fullscreen-state et touche Escape).
 # 5.237.4.1: Garde anti-matérialisation session.db dans _save_chat_state et résolution stricte propriétaire (user_id, chat_id) sans fallback multi-comptes.
-# 5.231.60.1: Retrait RPC img_session_action, EchoWM.submitChatPrompt et écouteurs postMessage echo:img_session:* (restauration agnosticisme pur).
 
 import asyncio
 from contextlib import closing
@@ -609,20 +609,26 @@ class EchoWindowManager:
 
         context_stats = {}
         try:
+            from echo_auth import EchoAuth
+            from echo_protocol import get_ca_model_id
+            from echo_ui import EchoUI
+
             uid = self._resolve_owner_uid(user_id, chat_id)
             sm = EchoStateManager(uid, chat_id)
+            last_model = None
+            prev_stats = None
             if os.path.isfile(sm.db_path):
                 context_stats = sm.get_last_context_stats() or {}
                 prev_stats = sm.get_previous_context_stats()
-                from echo_auth import EchoAuth
-                from echo_protocol import get_ca_model_id
-                from echo_ui import EchoUI
                 last_model = sm.get_last_active_model()
+
+            if os.path.isfile(sm.identity_db_path):
                 ca_model_id = get_ca_model_id(last_model) if last_model else None
-                if os.path.isfile(sm.identity_db_path):
-                    quota_snap = EchoAuth(uid).get_ui_quota_snapshot(ca_model_id)
-                    if quota_snap:
-                        context_stats.update(quota_snap)
+                quota_snap = EchoAuth(uid).get_ui_quota_snapshot(ca_model_id or "")
+                if quota_snap:
+                    context_stats.update(quota_snap)
+
+            if prev_stats is not None or context_stats:
                 context_stats["delta"] = EchoUI.calculate_context_delta(context_stats, prev_stats)
         except Exception:
             pass
@@ -1526,9 +1532,16 @@ async def wm_sse_stream(request: Request, client_id: str = ""):
 
 
 @wm_router.get("/chat/{chat_id}")
-async def wm_get_chat_state(chat_id: str, request: Request):
+async def wm_get_chat_state(chat_id: str, request: Request, refresh: bool = False):
     user_id = resolve_wm_user_id(request, chat_id=chat_id)
     wm = get_window_manager()
+    if refresh:
+        try:
+            from echo_auth import AuthService
+            uid = wm._resolve_owner_uid(user_id, chat_id)
+            await AuthService(user_id=uid).refresh_quota_if_needed(force=True)
+        except Exception:
+            pass
     snapshot = wm.get_chat_snapshot(user_id, chat_id)
     return JSONResponse(content=snapshot)
 
