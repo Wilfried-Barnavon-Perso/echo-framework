@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Auth
 author: Wilfried BARNAVON
-version: 6.5.1.1
+version: 6.6.10.1
 description: Gestion de l'authentification et OAuth2.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.10.1: Filtrage strict des modèles Code Assist sur ECHO_MODELS_REGISTRY et unification de la jauge Gemini.
 # 6.5.1.1: Mise à jour du modèle de repli HUD par défaut vers gemini-4-hydrogen-high dans get_ui_quota_snapshot.
 # 6.5.0.2: Ajout de tenant_id (ECHO_GLOBAL_TENANT_PROJECT_ID) dans get_ui_quota_snapshot pour le HUD.
 # 6.5.0.1: Commande SSH interactive sans flag -N, propagation du statut final d'authentification au serveur tunnel SSH éphémère et extinction propre.
 # 5.236.5.1: Rectification du prompt get_auth_prompt documentant le support simultané et le failover transparent OAuth2 / Clés API.
-# 5.235.5.2: Séparation stricte identity.db via get_echo_identity_db_path, capture EchoDbMissingError et méthode delete_auth_data_by_prefixes.
 import os
 import time
 from contextlib import closing
@@ -94,19 +94,14 @@ class EchoAuth:
         return _j.loads(raw).get(ca_model_id, {})
 
     def get_quota_summary(self, ca_model_id: str = "") -> dict:
-        """
-        Retourne {"5h": {...}, "weekly": {...}} pour la famille du modèle CA courant ("gemini" ou "3p").
-        Source : google_quota_summary (JSON) persisté par AuthService.fetch_user_quota.
-        """
+        """Récupère le résumé de quota unifié (5h et hebdomadaire) commun aux modèles Gemini d'ECHO."""
         import json as _j
         raw = self.get_auth_data("google_quota_summary")
         if not raw:
             return {}
         try:
             summary = _j.loads(raw)
-            mid_lower = (ca_model_id or "").lower()
-            group_key = "3p" if (mid_lower.startswith("claude") or mid_lower.startswith("gpt")) else "gemini"
-            return summary.get(group_key) or summary.get("gemini") or {}
+            return (summary.get("gemini") or {}) if isinstance(summary, dict) else {}
         except Exception:
             return {}
 
@@ -158,8 +153,15 @@ class EchoAuth:
 
     def get_ui_quota_snapshot(self, ca_model_id: str = "", auth_providers: Optional[List[Dict]] = None) -> dict:
         """Fournit le snapshot consolidé et prêt à l'emploi des quotas et de l'identité pour le HUD."""
+        from echo_constants import ECHO_MODELS_REGISTRY
+
         providers = auth_providers if auth_providers is not None else self.get_active_auth_providers()
-        resolved_ca_model = ca_model_id
+        allowed_ca_models = {
+            cfg.get("ca_model_id")
+            for cfg in ECHO_MODELS_REGISTRY.values()
+            if cfg.get("ca_model_id")
+        }
+        resolved_ca_model = ca_model_id if ca_model_id in allowed_ca_models else ""
         if not resolved_ca_model:
             raw_models = self.get_auth_data("google_quota_by_model")
             if raw_models:
@@ -167,11 +169,11 @@ class EchoAuth:
                     import json as _j
                     models_dict = _j.loads(raw_models)
                     if isinstance(models_dict, dict) and models_dict:
-                        resolved_ca_model = next(iter(models_dict.keys()))
+                        resolved_ca_model = next((k for k in models_dict.keys() if k in allowed_ca_models), "")
                 except Exception:
                     pass
             if not resolved_ca_model:
-                resolved_ca_model = "gemini-4-hydrogen-high"
+                resolved_ca_model = ECHO_MODELS_REGISTRY.get("MODEL_ATHENA", {}).get("ca_model_id", "gemini-4-carbon-high")
 
         model_quota = self.get_model_quota(resolved_ca_model) if resolved_ca_model else {}
         q_summary = self.get_quota_summary(resolved_ca_model)
@@ -976,8 +978,9 @@ class AuthService:
                         for g in groups:
 
                             g_name = str(g.get("displayName") or "").lower()
-
-                            g_key  = "3p" if ("claude" in g_name or "gpt" in g_name) else "gemini"
+                            if "claude" in g_name or "gpt" in g_name:
+                                continue
+                            g_key = "gemini"
 
                             buckets = g.get("buckets") or []
 
@@ -1162,21 +1165,27 @@ class AuthService:
 
 
 
+                    from echo_constants import ECHO_MODELS_REGISTRY
+
+                    allowed_ca_models = {
+                        cfg.get("ca_model_id")
+                        for cfg in ECHO_MODELS_REGISTRY.values()
+                        if cfg.get("ca_model_id")
+                    }
+
                     # L'API retourne {"models": {ca_model_id: {...}}} (dict, pas liste)
 
                     models_raw = raw.get("models") or raw.get("availableModels") or {}
 
-
-
                     if isinstance(models_raw, dict):
 
-                        model_ids = list(models_raw.keys())
+                        model_ids = [mid for mid in models_raw.keys() if mid in allowed_ca_models]
 
                         # Capture quotaInfo par modèle CA (en Protobuf v3, remainingFraction=0.0 est omis lorsque resetTime est présent)
 
                         quota_map = {}
                         for mid, mdata in models_raw.items():
-                            if isinstance(mdata, dict) and mdata.get("quotaInfo"):
+                            if mid in allowed_ca_models and isinstance(mdata, dict) and mdata.get("quotaInfo"):
                                 qi = mdata["quotaInfo"]
                                 if "remainingFraction" in qi:
                                     q_frac = float(qi["remainingFraction"])
@@ -1194,13 +1203,11 @@ class AuthService:
                         # Format liste (compaté future)
 
                         model_ids = [
-
-                            m.get("id") or m.get("name") or m.get("model")
-
+                            mid
                             for m in models_raw
-
-                            if isinstance(m, dict) and (m.get("id") or m.get("name") or m.get("model"))
-
+                            if isinstance(m, dict)
+                            for mid in [m.get("id") or m.get("name") or m.get("model")]
+                            if mid and mid in allowed_ca_models
                         ]
 
                         quota_map = {}

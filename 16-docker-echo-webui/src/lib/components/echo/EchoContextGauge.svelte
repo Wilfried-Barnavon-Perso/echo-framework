@@ -126,7 +126,6 @@
 	$: projectId = stats?.project_id || '';
 	$: tenantId = stats?.tenant_id || 'aicode-consumers';
 	$: creditsVal = stats?.credits_val ?? 'N/A';
-	$: quotaModel = stats?.quota_model || '—';
 	$: quotaType = stats?.quota_type || 'UNKNOWN';
 
 	$: quotaFrac =
@@ -420,10 +419,6 @@
 				<div class="flex justify-between text-gray-600 dark:text-gray-400">
 					<span>Crédits IA :</span>
 					<span class="font-semibold text-emerald-500">{creditsVal}</span>
-				</div>
-				<div class="flex justify-between gap-2 text-gray-600 dark:text-gray-400">
-					<span>Modèle CA :</span>
-					<span class="text-gray-800 dark:text-gray-200 truncate">{quotaModel}</span>
 				</div>
 				{#if quota5hDisabled}
 					<div class="flex justify-between text-gray-500">
