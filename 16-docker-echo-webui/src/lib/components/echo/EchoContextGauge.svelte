@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { echoContextGauge, type EchoContextGaugePayload } from '$lib/stores/echo';
-	import { getEchoWmChatSnapshot } from '$lib/apis/echo';
+	import { echoContextGauge } from '$lib/stores/echo';
+	import { getEchoToken, getEchoWmChatSnapshot } from '$lib/apis/echo';
 
 	export let chatId: string = '';
 
@@ -10,6 +10,7 @@
 	let mounted = false;
 	let currentChatId = '__init__';
 	let isRefreshing = false;
+	let refreshSeq = 0;
 	let clickTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const DEFAULT_MAX_TOKENS = 1048576;
@@ -17,14 +18,15 @@
 	const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
 	const refreshStats = async (cid: string, forceRefresh: boolean = false) => {
-		if (typeof localStorage === 'undefined') return;
-		const token = localStorage?.token;
+		const token = getEchoToken();
 		if (!token) return;
+		const seq = ++refreshSeq;
 		if (forceRefresh) {
 			isRefreshing = true;
 		}
 		try {
 			const res = await getEchoWmChatSnapshot(token, cid || '_new', forceRefresh);
+			if (seq !== refreshSeq || cid !== currentChatId) return;
 			if (res && res.context_stats) {
 				echoContextGauge.set(res.context_stats);
 			} else if (!cid || cid === '_new') {
@@ -33,7 +35,7 @@
 		} catch (e) {
 			// Silencieux si pas encore de session
 		} finally {
-			if (forceRefresh) {
+			if (forceRefresh && seq === refreshSeq) {
 				isRefreshing = false;
 			}
 		}
@@ -44,13 +46,6 @@
 		currentChatId = normalizedChatId;
 		void refreshStats(normalizedChatId, false);
 	}
-
-	const handleCustomEvent = (e: Event) => {
-		const custom = e as CustomEvent<EchoContextGaugePayload>;
-		if (custom && custom.detail) {
-			echoContextGauge.set(custom.detail);
-		}
-	};
 
 	const handleClickOutside = (e: MouseEvent) => {
 		if (showPopover && containerRef && !containerRef.contains(e.target as Node)) {
@@ -79,7 +74,6 @@
 
 	onMount(() => {
 		mounted = true;
-		window.addEventListener('echo:context_gauge', handleCustomEvent);
 		window.addEventListener('click', handleClickOutside);
 		currentChatId = normalizedChatId;
 		void refreshStats(normalizedChatId, false);
@@ -91,7 +85,6 @@
 			clickTimer = null;
 		}
 		if (typeof window !== 'undefined') {
-			window.removeEventListener('echo:context_gauge', handleCustomEvent);
 			window.removeEventListener('click', handleClickOutside);
 		}
 	});

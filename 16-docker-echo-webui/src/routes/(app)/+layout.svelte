@@ -4,10 +4,9 @@
 
 import EchoEdgeEmbedding from '$lib/components/echo/EchoEdgeEmbedding.svelte';
 import {
-	echoContextGauge,
-	echoCanvasFrames,
-	echoBrowserLiveFrames,
 	requestEchoTabOpen,
+	startEchoWmStream,
+	stopEchoWmStream,
 	type EchoTabKind
 } from '$lib/stores/echo';
 
@@ -296,7 +295,7 @@ import {
 		});
 
 		const setupKeyboardShortcuts = () => {
-			document.addEventListener('keydown', async (event) => {
+			const handleKeydown = async (event: KeyboardEvent) => {
 				if ($settings?.keyboardShortcuts === false) {
 					return;
 				}
@@ -399,7 +398,9 @@ import {
 					event.preventDefault();
 					[...document.getElementsByClassName('regenerate-response-button')]?.at(-1)?.click();
 				}
-			});
+			};
+			document.addEventListener('keydown', handleKeydown);
+			cleanupKeydown = () => document.removeEventListener('keydown', handleKeydown);
 		};
 		setupKeyboardShortcuts();
 
@@ -451,69 +452,88 @@ import {
 		window.addEventListener('echo:open-tab', handleEchoOpenTab);
 		cleanupEchoOpenTab = () => window.removeEventListener('echo:open-tab', handleEchoOpenTab);
 
-		// [ECHO-V6-HOOK] Flux SSE Window Manager pour jauge contextuelle et frames Canvas
-		if (localStorage?.token) {
-			try {
-				const wmUrl = `/echo/v1/wm/stream?token=${encodeURIComponent(localStorage.token)}`;
-				wmEventSource = new EventSource(wmUrl);
-				wmEventSource.onmessage = (event) => {
-					try {
-						const data = JSON.parse(event.data);
-						if (data.type === 'echo_context_gauge' && data.payload) {
-							echoContextGauge.set(data.payload);
-						} else if (data.type === 'echo_open_tab') {
-							const cid = data.chat_id || $chatId || '';
-							if (cid && data.kind) {
-								requestEchoTabOpen(cid, data.kind, data.payload);
-							}
-						} else if (data.type === 'echo_browser_frame') {
-							const cid = data.chat_id || $chatId || '';
-							const frame = data.frame || data.payload || data;
-							if (cid && frame) {
-								const frameKey = frame.file_id || frame.frame_id || frame.id;
-								echoBrowserLiveFrames.update((all) => {
-									const list = all[cid] || [];
-									const idx = frameKey
-										? list.findIndex((f) => (f.file_id || f.frame_id || f.id) === frameKey)
-										: -1;
-									const next =
-										idx >= 0
-											? list.map((f, i) => (i === idx ? { ...f, ...frame } : f))
-											: [...list, frame].slice(-50);
-									return { ...all, [cid]: next };
-								});
-							}
-						} else if (data.type === 'wm_uctp_exec' || data.type === 'window_mounted') {
-							const cid = data.chat_id || $chatId || '';
-							const frame = {
-								id: data.id || data.frame_id || crypto.randomUUID(),
-								title: data.title || data.name || 'Application',
-								html: data.html || data.code || '',
-								src: data.src || '',
-								created_at: Date.now(),
-								options: data.options || {}
-							};
-							if (cid) {
-								echoCanvasFrames.update((all) => {
-									const list = all[cid] || [];
-									return { ...all, [cid]: [...list, frame] };
-								});
-								requestEchoTabOpen(cid, 'echo-canvas', { frameId: frame.id });
-							}
+		// [ECHO-V6-HOOK] Pont natif ancres #codex: -> onglet echo-codex
+		const CODEX_ANCHOR_PREFIX = '#codex:';
+		const CODEX_DEFAULT_WORKSPACE = 'main';
+		(window as any).echoOpenCodex = (
+			targetChatId?: string,
+			targetWorkspace?: string,
+			targetFile?: string
+		) => {
+			const urlMatch = window.location.pathname.match(/\/c\/([a-zA-Z0-9_-]+)/);
+			const currentChatId = (urlMatch ? urlMatch[1] : '') || $chatId || '';
+			const ws = targetWorkspace || CODEX_DEFAULT_WORKSPACE;
+			const effectiveCid = targetChatId || currentChatId;
+			const hostChatId = currentChatId || effectiveCid;
+			if (!hostChatId) return;
+
+			window.dispatchEvent(
+				new CustomEvent('echo:open-tab', {
+					detail: {
+						chatId: hostChatId,
+						kind: 'echo-codex',
+						payload: {
+							targetChatId: effectiveCid,
+							workspace: ws,
+							file: targetFile || ''
 						}
-					} catch (e) {}
-				};
-			} catch (e) {}
-		}
+					}
+				})
+			);
+		};
+
+		const handleCodexAnchorClick = (e: MouseEvent) => {
+			const targetEl = e.target as Element | null;
+			const link = targetEl?.closest ? (targetEl.closest(`a[href*="${CODEX_ANCHOR_PREFIX}"]`) as HTMLAnchorElement | null) : null;
+			if (!link) return;
+
+			link.removeAttribute('target');
+			link.setAttribute('target', '_self');
+			e.preventDefault();
+			e.stopPropagation();
+
+			const href = link.getAttribute('href') || link.href || '';
+			const codexIdx = href.indexOf(CODEX_ANCHOR_PREFIX);
+			if (codexIdx === -1) return;
+
+			const raw = href.substring(codexIdx + CODEX_ANCHOR_PREFIX.length);
+			const parts = raw.split(':');
+			if (parts.length < 3) return;
+
+			const targetChatId = parts[0];
+			const targetWorkspace = parts[1];
+			let targetFile = parts.slice(2).join(':');
+			try {
+				targetFile = decodeURIComponent(targetFile);
+			} catch {
+				// Conserver la chaîne brute si mal encodée
+			}
+
+			(window as any).echoOpenCodex(targetChatId, targetWorkspace, targetFile);
+		};
+		document.addEventListener('click', handleCodexAnchorClick, true);
+		cleanupCodexAnchor = () => document.removeEventListener('click', handleCodexAnchorClick, true);
+
+		// [ECHO-V6-HOOK] Flux SSE Window Manager centralisé (jauge contextuelle, onglets, navigateur, Canvas)
+		startEchoWmStream(() => $chatId);
 
 		loaded = true;
 	});
 
 	let keepAliveInterval: any = null;
-	let wmEventSource: EventSource | null = null;
 	let cleanupEchoOpenTab: (() => void) | null = null;
+	let cleanupCodexAnchor: (() => void) | null = null;
+	let cleanupKeydown: (() => void) | null = null;
 
 	onDestroy(() => {
+		if (cleanupKeydown) {
+			cleanupKeydown();
+			cleanupKeydown = null;
+		}
+		if (cleanupCodexAnchor) {
+			cleanupCodexAnchor();
+			cleanupCodexAnchor = null;
+		}
 		if (cleanupEchoOpenTab) {
 			cleanupEchoOpenTab();
 			cleanupEchoOpenTab = null;
@@ -522,10 +542,7 @@ import {
 			clearInterval(keepAliveInterval);
 			keepAliveInterval = null;
 		}
-		if (wmEventSource) {
-			wmEventSource.close();
-			wmEventSource = null;
-		}
+		stopEchoWmStream();
 	});
 
 	// `$page.url` must be referenced here: `$:` only tracks variables used in
@@ -616,5 +633,10 @@ import {
 	pre[class*='language-'] button:hover {
 		cursor: pointer;
 		background-color: #bcbabb;
+	}
+
+	:global(a[href*='#codex:']) {
+		text-decoration-skip-ink: none !important;
+		cursor: pointer;
 	}
 </style>

@@ -33,4 +33,4 @@ Caractéristiques architecturales :
 
 ## 3. Dépendances Logiques
 - S'appuie sur `echo_session_clone.py` (`sync_cloned_session`, `duplicate_session_rag`), `echo_events.py` (`EchoEvents`), `echo_paths.py` (`get_echo_session_path`, `get_chat_clone_lock`) et `echo_codex_git.py` (`CodexRepo.restore_repo_to_timestamp`) dans `14-owui-libs`.
-- Déployé et activé automatiquement par `00-echo-scripts/config-owui.sh` via la boucle `functions:functions:Event`.
+- Déployé et activé automatiquement par `echo/bootstrap.py` (`16-docker-echo-webui`) lors du `lifespan` FastAPI via la synchronisation des fonctions `type: event`.

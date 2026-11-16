@@ -4507,13 +4507,8 @@
 			params?.stream_response ??
 			$settings?.params?.stream_response ??
 			true;
-		// Always include system prompt — backend extracts it and prepends to DB messages.
-		// Only temp chats need conversation messages (persisted chats load from DB).
-		let messages: any[] = [
-			params?.system || $settings.system
-				? { role: 'system', content: `${params?.system || $settings?.system || ''}` }
-				: undefined
-		].filter(Boolean);
+		// [ECHO-V6-HOOK] Le Kernel Statique (system-prompt.md) est injecté côté serveur ; ne pas injecter de prompt système client.
+		let messages: any[] = [];
 
 		if ($temporaryChatEnabled) {
 			messages = [
@@ -4609,10 +4604,11 @@
 				stream: stream,
 				model: model.id,
 				...(messages.length > 0 ? { messages } : {}),
+				// [ECHO-V6-HOOK] Paramètres avancés et model_controls neutralisés ; seul tool_approval_mode est transmis
 				params: {
-					...$settings?.params,
-					...Object.fromEntries(Object.entries(params).filter(([, value]) => value !== null)),
-					model_controls: $settings?.params?.model_controls ?? {},
+					...((params as Record<string, any>)?.tool_approval_mode
+						? { tool_approval_mode: (params as Record<string, any>).tool_approval_mode }
+						: {}),
 					stop: getStopTokens()
 				},
 

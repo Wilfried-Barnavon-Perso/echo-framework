@@ -91,7 +91,7 @@
 	import InputMenu from './MessageInput/InputMenu.svelte';
 	import VoiceRecording from './MessageInput/VoiceRecording.svelte';
 	import ModelSelector from './ModelSelector.svelte';
-	import ModelControls from './MessageInput/ModelControls.svelte';
+	// [ECHO-V6-HOOK] Suppression du popover ModelControls/Contrôles à droite d'Écho v6
 	import EchoContextGauge from '$lib/components/echo/EchoContextGauge.svelte';
 	import EchoEdgeEmbedding from '$lib/components/echo/EchoEdgeEmbedding.svelte';
 
@@ -185,6 +185,9 @@
 	export let chatFiles: any[] = [];
 	export let params: Record<string, any> = {};
 	export let onParamChange: (key: string, value: unknown) => void = () => {};
+	void chatFiles;
+	void params;
+	void onParamChange;
 
 	let selectedModelIds = [];
 	$: selectedModelIds = atSelectedModel !== undefined ? [atSelectedModel.id] : selectedModels;
@@ -2959,12 +2962,7 @@
 											triggerClassName="items-center gap-1.5 rounded-lg pl-2 pr-1.5 py-1 text-[0.8125rem] font-normal text-gray-600 transition-colors duration-100 hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-300 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
 										/>
 									</div>
-									<ModelControls
-										selectedModels={selectedModelIds}
-										bind:chatFiles
-										bind:params
-										{onParamChange}
-									/>
+									<!-- [ECHO-V6-HOOK] Bouton ModelControls supprimé (UserValves accessibles via #model-valves-button & IntegrationsMenu) -->
 
 									{#if isActive && (history.messages[history.currentId]?.user_id ?? $_user?.id) === $_user?.id && prompt === '' && files.length === 0}
 										<div class=" flex items-center">

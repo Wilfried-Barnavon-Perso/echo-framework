@@ -1,20 +1,23 @@
 """
 title: ECHO V6 Vault & Identity Router
 author: Wilfried BARNAVON
-version: 6.5.3.1
+version: 6.6.9.1
 description: Routeur FastAPI pour coffre chiffré et identités LLM (/echo/v1/vault).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.9.1: Déportation asyncio.to_thread sur les accès SQLite et chiffrement du coffre (_get_vault_status_sync, _list_vault_secrets_sync, _save_vault_secret_sync, _delete_vault_secret_sync).
 # 6.5.3.1: Ajout du catalogue GET /echo/v1/vault/schemas (connecteurs MCP/Vault) avec filtrage de user_required_instructions.
 # 6.3.0.1: Création du routeur /echo/v1/vault (statut auth_data, quotas masqués, gestion CRUD chiffrée identity_vault).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -59,16 +62,10 @@ def _mask_key(key: str) -> str:
     return f"{k[:4]}...{k[-4:]}"
 
 
-@router.get("/status")
-async def get_vault_status(
-    user=Depends(get_verified_user),
-):
-    """Retourne l'état des identités et quotas sans jamais exposer de jeton ni de secret en clair."""
-    user_email = getattr(user, "email", "")
-    user_name = getattr(user, "name", "")
-    ensure_user_identity_db(user.id, user_email, user_name)
+def _get_vault_status_sync(user_id: str, user_email: str, user_name: str) -> dict[str, Any]:
+    ensure_user_identity_db(user_id, user_email, user_name)
 
-    safe_uid = sanitize_echo_id(user.id)
+    safe_uid = sanitize_echo_id(user_id)
     sm = EchoStateManager(user_id=safe_uid)
     auth = EchoAuth(user_id=safe_uid)
 
@@ -81,7 +78,7 @@ async def get_vault_status(
     has_oauth = bool(sm.get_setting("google_tokens") or auth.get_auth_data("google_tokens"))
     quotas = auth.get_quota_summary()
 
-    return JSONResponse(content={
+    return {
         "user_id": safe_uid,
         "auth_mode": auth_mode,
         "api_keys_count": len(raw_keys),
@@ -90,19 +87,13 @@ async def get_vault_status(
         "tier": tier,
         "project_id": project_id,
         "quotas": quotas,
-    })
+    }
 
 
-@router.get("/secrets")
-async def list_vault_secrets(
-    user=Depends(get_verified_user),
-):
-    """Liste les identifiants de compte stockés dans le coffre chiffré sans jamais retourner les secrets."""
-    user_email = getattr(user, "email", "")
-    user_name = getattr(user, "name", "")
-    ensure_user_identity_db(user.id, user_email, user_name)
+def _list_vault_secrets_sync(user_id: str, user_email: str, user_name: str) -> dict[str, Any]:
+    ensure_user_identity_db(user_id, user_email, user_name)
 
-    safe_uid = sanitize_echo_id(user.id)
+    safe_uid = sanitize_echo_id(user_id)
     sm = EchoStateManager(user_id=safe_uid)
     accounts = sm.list_vault_accounts()
 
@@ -114,7 +105,56 @@ async def list_vault_secrets(
         }
         for r in accounts
     ]
-    return JSONResponse(content={"items": items, "count": len(items)})
+    return {"items": items, "count": len(items)}
+
+
+def _save_vault_secret_sync(
+    user_id: str,
+    user_email: str,
+    user_name: str,
+    service: str,
+    account_id: str,
+    secret: str,
+) -> None:
+    ensure_user_identity_db(user_id, user_email, user_name)
+    safe_uid = sanitize_echo_id(user_id)
+    sm = EchoStateManager(user_id=safe_uid)
+    sm.save_vault_credential(service, account_id, secret)
+
+
+def _delete_vault_secret_sync(
+    user_id: str,
+    user_email: str,
+    user_name: str,
+    clean_service: str,
+    clean_account: str,
+) -> None:
+    ensure_user_identity_db(user_id, user_email, user_name)
+    safe_uid = sanitize_echo_id(user_id)
+    sm = EchoStateManager(user_id=safe_uid)
+    sm.delete_vault_credential(clean_service, clean_account)
+
+
+@router.get("/status")
+async def get_vault_status(
+    user=Depends(get_verified_user),
+):
+    """Retourne l'état des identités et quotas sans jamais exposer de jeton ni de secret en clair."""
+    user_email = getattr(user, "email", "")
+    user_name = getattr(user, "name", "")
+    content = await asyncio.to_thread(_get_vault_status_sync, user.id, user_email, user_name)
+    return JSONResponse(content=content)
+
+
+@router.get("/secrets")
+async def list_vault_secrets(
+    user=Depends(get_verified_user),
+):
+    """Liste les identifiants de compte stockés dans le coffre chiffré sans jamais retourner les secrets."""
+    user_email = getattr(user, "email", "")
+    user_name = getattr(user, "name", "")
+    content = await asyncio.to_thread(_list_vault_secrets_sync, user.id, user_email, user_name)
+    return JSONResponse(content=content)
 
 
 @router.put("/secrets")
@@ -132,15 +172,19 @@ async def save_vault_secret(
 
     user_email = getattr(user, "email", "")
     user_name = getattr(user, "name", "")
-    ensure_user_identity_db(user.id, user_email, user_name)
-
-    safe_uid = sanitize_echo_id(user.id)
-    sm = EchoStateManager(user_id=safe_uid)
 
     try:
-        sm.save_vault_credential(service, account_id, secret)
-    except RuntimeError as re:
-        log.error("Clé de chiffrement coffre manquante ou invalide: %s", re)
+        await asyncio.to_thread(
+            _save_vault_secret_sync,
+            user.id,
+            user_email,
+            user_name,
+            service,
+            account_id,
+            secret,
+        )
+    except RuntimeError as re_err:
+        log.error("Clé de chiffrement coffre manquante ou invalide: %s", re_err)
         raise HTTPException(
             status_code=503,
             detail="Chiffrement indisponible (clé ECHO_VAULT_ENCRYPTION_KEY non configurée).",
@@ -168,11 +212,14 @@ async def delete_vault_secret(
 
     user_email = getattr(user, "email", "")
     user_name = getattr(user, "name", "")
-    ensure_user_identity_db(user.id, user_email, user_name)
-
-    safe_uid = sanitize_echo_id(user.id)
-    sm = EchoStateManager(user_id=safe_uid)
-    sm.delete_vault_credential(clean_service, clean_account)
+    await asyncio.to_thread(
+        _delete_vault_secret_sync,
+        user.id,
+        user_email,
+        user_name,
+        clean_service,
+        clean_account,
+    )
 
     return JSONResponse(content={
         "success": True,

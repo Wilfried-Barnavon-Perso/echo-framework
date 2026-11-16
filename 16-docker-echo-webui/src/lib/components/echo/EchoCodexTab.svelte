@@ -4,13 +4,14 @@
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Markdown from '$lib/components/chat/Messages/Markdown.svelte';
 	import {
+		getEchoToken,
 		getEchoCodexTree,
 		getEchoCodexFile,
 		saveEchoCodexFile,
 		deleteEchoCodexFile,
 		getEchoCodexLog,
 		getEchoCodexDiff,
-		getEchoCodexDownloadUrl,
+		downloadEchoCodexFileBlob,
 		mkdirEchoCodex,
 		renameEchoCodex,
 		restoreEchoCodexFile,
@@ -18,7 +19,7 @@
 		aiEditEchoCodexFile,
 		type EchoCodexAiEditPayload
 	} from '$lib/apis/echo';
-	import { echoCodexTarget } from '$lib/stores/echo';
+	import { ECHO_COGNITIVE_MODELS, echoCodexTarget } from '$lib/stores/echo';
 
 	export let chatId: string = '';
 
@@ -57,11 +58,11 @@
 	let aiDiffViewMode: 'diff' | 'full' = 'diff';
 
 	const AI_MODELS = [
-		{ id: 'MODEL_APOLLO', label: 'Apollon' },
-		{ id: 'MODEL_PROMETHEUS', label: 'Prométhée' },
-		{ id: 'MODEL_ATHENA', label: 'Athéna' },
-		{ id: 'MODEL_ZEPHYR', label: 'Zéphyr' }
-	];
+		ECHO_COGNITIVE_MODELS.MODEL_APOLLO,
+		ECHO_COGNITIVE_MODELS.MODEL_PROMETHEUS,
+		ECHO_COGNITIVE_MODELS.MODEL_ATHENA,
+		ECHO_COGNITIVE_MODELS.MODEL_ZEPHYR
+	].map((m) => ({ id: m.key, label: m.label }));
 
 	type QuickActionId = NonNullable<EchoCodexAiEditPayload['quick_action']>;
 	const QUICK_ACTIONS: Array<{ id: QuickActionId; label: string }> = [
@@ -313,14 +314,10 @@
 	const loadPreviewBlob = async (cid: string, ws: string, path: string) => {
 		const seq = ++previewLoadSeq;
 		revokePreviewBlob();
-		const token = localStorage?.token;
+		const token = getEchoToken();
 		if (!token || !cid || !path) return;
 		try {
-			const res = await fetch(getEchoCodexDownloadUrl(cid, ws, path), {
-				headers: { Authorization: `Bearer ${token}` }
-			});
-			if (!res.ok || seq !== previewLoadSeq) return;
-			const blob = await res.blob();
+			const blob = await downloadEchoCodexFileBlob(token, cid, ws, path);
 			if (seq !== previewLoadSeq) return;
 			previewBlobUrl = URL.createObjectURL(blob);
 		} catch {
@@ -329,6 +326,7 @@
 	};
 
 	let treeLoadSeq = 0;
+	let fileLoadSeq = 0;
 
 	const loadTree = async (dirPath: string = currentDirPath) => {
 		const token = localStorage?.token;
@@ -356,6 +354,7 @@
 
 	const selectFile = async (path: string, forceCodeMode = false) => {
 		if (!path) return;
+		const seq = ++fileLoadSeq;
 		selectedPath = path;
 		activeSubView = 'editor';
 		viewMode = 'code';
@@ -363,12 +362,13 @@
 		savedFileContent = '';
 		resetAiState();
 		revokePreviewBlob();
-		const token = localStorage?.token;
+		const token = getEchoToken();
 		if (!token || !effectiveChatId) return;
 
 		loadingFile = true;
 		try {
 			const res = await getEchoCodexFile(token, effectiveChatId, selectedWorkspace, path);
+			if (seq !== fileLoadSeq) return;
 			if (typeof res === 'string') {
 				fileContent = res;
 				savedFileContent = res;
@@ -395,9 +395,12 @@
 				}
 			}
 		} catch (e: any) {
+			if (seq !== fileLoadSeq) return;
 			toast.error('Erreur lecture fichier: ' + (e.message || ''));
 		} finally {
-			loadingFile = false;
+			if (seq === fileLoadSeq) {
+				loadingFile = false;
+			}
 		}
 	};
 
@@ -615,14 +618,10 @@
 
 	const handleDownload = async () => {
 		if (!selectedPath || !effectiveChatId) return;
-		const token = localStorage?.token;
+		const token = getEchoToken();
 		if (!token) return;
 		try {
-			const res = await fetch(getEchoCodexDownloadUrl(effectiveChatId, selectedWorkspace, selectedPath), {
-				headers: { Authorization: `Bearer ${token}` }
-			});
-			if (!res.ok) throw new Error('HTTP ' + res.status);
-			const blob = await res.blob();
+			const blob = await downloadEchoCodexFileBlob(token, effectiveChatId, selectedWorkspace, selectedPath);
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;

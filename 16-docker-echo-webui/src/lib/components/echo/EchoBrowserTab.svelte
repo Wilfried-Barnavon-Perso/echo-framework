@@ -3,8 +3,10 @@
   import { toast } from "svelte-sonner";
   import Spinner from "$lib/components/common/Spinner.svelte";
   import {
+    fetchEchoBrowserFrameBlob,
     getEchoBrowserFrameImageUrl,
     getEchoBrowserFrames,
+    getEchoToken,
     type EchoBrowserFrame,
   } from "$lib/apis/echo";
   import { echoBrowserLiveFrames, echoBrowserTarget } from "$lib/stores/echo";
@@ -242,16 +244,18 @@
 
   const fetchAuthenticatedBlob = async (url: string) => {
     if (!url || blobUrlCache[url] || pendingFetches.has(url)) return;
-    const token = localStorage?.token;
-    if (!token) return;
+    const token = getEchoToken();
+    const targetCid = boundChatId;
+    if (!token || !targetCid) return;
     pendingFetches.add(url);
     try {
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return;
-      const blob = await res.blob();
+      const blob = await fetchEchoBrowserFrameBlob(token, targetCid, url);
+      if (targetCid !== boundChatId) return;
       const objUrl = URL.createObjectURL(blob);
+      if (targetCid !== boundChatId) {
+        URL.revokeObjectURL(objUrl);
+        return;
+      }
       blobUrlCache = { ...blobUrlCache, [url]: objUrl };
     } catch {
       // Ignorer les erreurs réseau transitoires

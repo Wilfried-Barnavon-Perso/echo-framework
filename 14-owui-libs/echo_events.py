@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Events
 author: Wilfried BARNAVON
-version: 6.6.2.1
+version: 6.6.9.1
 description: Gestionnaire des événements WebSocket et UI. Intègre le protocole UCTP (Universal Chunked Transfer Protocol).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.9.1: Suppression de l'import et de l'appel obsolète register_echo_wm_routes() dans EchoEvents.__init__.
 # 6.6.2.1: Suppression du fast-path mort echo_codex_action dans trigger_action.
 # 5.231.48.1: Marquage data-echo-scope="global", correction de window._uctp_<id> et watchdog d'auto-nettoyage DOM sur #uctp-loader-<id> dans _build_uctp_frames.
 # 5.231.46.1: Factorisation de _reassemble_uctp_payload post-FIRST_COMPLETED (double transport Socket.IO + SSE/RPC) et wrapping automatique echoWrapUctpPayload en mode call.
 # 5.231.39.1: Fallback SSE/RPC EchoWindowManager dans resolve_live_session lorsque SESSION_POOL Socket.IO ne répond pas et dé-minimisation _echoGeoCtrl.
-# 5.231.5.1: Correction du Fast-Path Codex dans trigger_action (multi-chat switch_chat, target_chat_id, commit et dé-minimisation).
 import asyncio
 from typing import Any, Optional
 import uuid
@@ -21,12 +21,10 @@ try:
     from echo_window_manager import (
         get_window_manager,
         extract_closure_context,
-        register_echo_wm_routes,
     )
 except ImportError:
     get_window_manager = None
     extract_closure_context = None
-    register_echo_wm_routes = None
 
 
 class EchoEvents:
@@ -41,8 +39,6 @@ class EchoEvents:
     ):
         self.emitter = emitter
         self.caller = caller
-        if register_echo_wm_routes is not None:
-            register_echo_wm_routes()
         ctx = {}
         if extract_closure_context is not None:
             ctx = extract_closure_context(caller) or extract_closure_context(emitter) or {}

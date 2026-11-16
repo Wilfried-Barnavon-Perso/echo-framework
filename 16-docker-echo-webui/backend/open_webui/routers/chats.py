@@ -1551,7 +1551,13 @@ async def update_chat_params(
             detail=ERROR_MESSAGES.ACCESS_PROHIBITED,
         )
 
-    chat = await Chats.update_chat_params_by_id(id, form_data)
+    # [ECHO-V6-HOOK] Filtrer params pour ne conserver que les clés ECHO actives
+    allowed_chat_param_keys = {'tool_approval_mode'}
+    filtered_params = {
+        k: v for k, v in (form_data or {}).items() if k in allowed_chat_param_keys
+    }
+
+    chat = await Chats.update_chat_params_by_id(id, filtered_params)
     if chat is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
 

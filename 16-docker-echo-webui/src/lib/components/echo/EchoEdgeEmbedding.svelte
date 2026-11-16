@@ -17,6 +17,7 @@
 	let clientId = '';
 	let showPopover = false;
 	let containerRef: HTMLDivElement | null = null;
+	let destroyed = false;
 
 	const probeWebGPU = async (): Promise<{ compatible: boolean; reason?: string }> => {
 		if (typeof navigator === 'undefined' || !(navigator as any).gpu) {
@@ -87,6 +88,7 @@
 		clientId = crypto.randomUUID();
 
 		const probe = await probeWebGPU();
+		if (destroyed) return;
 		if (!probe.compatible) {
 			echoEdgeEmbedState.set('incompatible');
 			echoEdgeEmbedReason.set(probe.reason || 'WebGPU incompatible');
@@ -100,6 +102,13 @@
 					quickWs.send(JSON.stringify({ type: 'incompatible', reason: probe.reason }));
 					setTimeout(() => quickWs.close(), 100);
 				};
+				quickWs.onerror = () => {
+					try {
+						quickWs.close();
+					} catch {
+						// ignore
+					}
+				};
 			} catch (e) {}
 			return;
 		}
@@ -111,19 +120,23 @@
 			const tfUrl =
 				'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3/dist/transformers.min.js';
 			const transformers = await import(/* @vite-ignore */ tfUrl);
+			if (destroyed) return;
 			transformers.env.allowLocalModels = false;
 
 			const tokenizer = await transformers.AutoTokenizer.from_pretrained(TARGET_REPO);
+			if (destroyed) return;
 			const model = await transformers.AutoModel.from_pretrained(TARGET_REPO, {
 				device: 'webgpu',
 				dtype: TARGET_DTYPE,
 				progress_callback: (x: any) => {
+					if (destroyed) return;
 					if (x.status === 'downloading' || x.status === 'progress') {
 						const pct = x.total ? Math.round((x.loaded / x.total) * 100) : 0;
 						echoEdgeEmbedProgress.set(pct);
 					}
 				}
 			});
+			if (destroyed) return;
 
 			echoEdgeEmbedProgress.set(100);
 			echoEdgeEmbedReason.set('');
@@ -134,6 +147,12 @@
 			ws = new WebSocket(wsUrl);
 
 			ws.onopen = () => {
+				if (destroyed) {
+					try {
+						ws?.close();
+					} catch {}
+					return;
+				}
 				ws?.send(JSON.stringify({ type: 'ready' }));
 				if (!document.hidden) {
 					ws?.send(JSON.stringify({ type: 'visibility', state: 'active' }));
@@ -150,6 +169,7 @@
 						const texts = Array.isArray(payload.texts) ? payload.texts : [payload.texts];
 						const inputs = tokenizer(texts, { padding: true, truncation: true });
 						const outputs = await model(inputs);
+						if (destroyed) return;
 
 						const tensor =
 							outputs.sentence_embedding || outputs.last_hidden_state || Object.values(outputs)[0];
@@ -195,7 +215,12 @@
 			ws.onerror = (e) => {
 				console.warn('Erreur WebSocket Edge Embed:', e);
 			};
+
+			ws.onclose = () => {
+				ws = null;
+			};
 		} catch (err: any) {
+			if (destroyed) return;
 			console.warn('Échec initialisation Edge Embedding WebGPU:', err);
 			echoEdgeEmbedReason.set(err?.message || 'Échec initialisation WebGPU');
 			echoEdgeEmbedState.set('incompatible');
@@ -203,6 +228,7 @@
 	});
 
 	onDestroy(() => {
+		destroyed = true;
 		if (typeof window !== 'undefined' && mode === 'badge') {
 			window.removeEventListener('click', handleClickOutside);
 		}

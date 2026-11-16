@@ -1,11 +1,12 @@
 """
 title: ECHO V6 Codex Router
 author: Wilfried BARNAVON
-version: 6.6.6.1
+version: 6.6.9.1
 description: Routeur FastAPI pour dépôts Codex et conteneurs de session (/echo/v1/codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.9.1: Déportation asyncio.to_thread sur les opérations FS et Git Dulwich synchrones (tree, file, log, diff, download, mkdir, rename).
 # 6.6.6.1: Ajout de POST /{chat_id}/ai-edit (édition LLM one-shot), verrous get_codex_lock sur save/delete et synchro SQLite echo_resources.
 # 6.6.4.1: Normalisation canonique GET /{chat_id}/tree (name, path, filename, type, mime) et POST /{chat_id}/upload.
 # 6.6.2.1: Ajout de _format_hex_preview, mime_type, et des endpoints POST /{chat_id}/mkdir, /rename et /restore.
@@ -219,6 +220,72 @@ def _validate_safe_path(base_dir: str, rel_path: str) -> str:
     return target
 
 
+def _list_files_entries_sync(files_dir: str, target_dir: str) -> list[dict]:
+    """Liste de manière synchrone les entrées du conteneur 'files' pour asyncio.to_thread."""
+    entries: list[dict] = []
+    if os.path.isdir(target_dir):
+        for item in sorted(os.scandir(target_dir), key=lambda e: (not e.is_dir(), e.name.lower())):
+            rel_item_path = os.path.relpath(item.path, files_dir).replace("\\", "/")
+            is_dir = item.is_dir()
+            st = item.stat()
+            mime, _ = mimetypes.guess_type(item.name)
+            entries.append({
+                "name": item.name,
+                "path": rel_item_path,
+                "filename": rel_item_path,
+                "type": "directory" if is_dir else "file",
+                "size": st.st_size if not is_dir else 0,
+                "mime": mime or "application/octet-stream",
+                "updated_at": int(st.st_mtime),
+            })
+    return entries
+
+
+def _read_files_entry_sync(target_file: str, path: str) -> dict:
+    """Lit un fichier du conteneur 'files' avec fallback aperçu hexadécimal."""
+    st = os.stat(target_file)
+    mime, _ = mimetypes.guess_type(target_file)
+    mime_type = mime or "application/octet-stream"
+    is_binary = False
+    content = ""
+    hex_preview = None
+    try:
+        with open(target_file, "r", encoding="utf-8") as f:
+            content = f.read()
+    except UnicodeDecodeError:
+        is_binary = True
+        with open(target_file, "rb") as f:
+            raw_bytes = f.read(4096)
+        hex_preview = _format_hex_preview(raw_bytes)
+
+    payload_res = {
+        "path": path,
+        "content": content if not is_binary else None,
+        "is_binary": is_binary,
+        "mime": mime_type,
+        "mime_type": mime_type,
+        "size_bytes": st.st_size,
+        "total_lines": len(content.splitlines()) if not is_binary else 0,
+    }
+    if hex_preview is not None:
+        payload_res["hex_preview"] = hex_preview
+    return payload_res
+
+
+def _list_repo_dir_sync(safe_uid: str, safe_cid: str, ws: str, path: str) -> list:
+    repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
+    return repo.list_directory(path)
+
+
+def _read_repo_file_sync(
+    safe_uid: str, safe_cid: str, ws: str, path: str, commit: Optional[str]
+) -> Optional[dict]:
+    repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
+    if commit:
+        return repo.read_file_at_commit(path, commit)
+    return repo.read_file(path)
+
+
 @router.get("/{chat_id}/tree")
 async def get_codex_tree(
     chat_id: str,
@@ -237,22 +304,7 @@ async def get_codex_tree(
     if ws == "files":
         files_dir = get_echo_session_path(safe_uid, safe_cid, "files")
         target_dir = _validate_safe_path(files_dir, path) if path else files_dir
-        entries = []
-        if os.path.isdir(target_dir):
-            for item in sorted(os.scandir(target_dir), key=lambda e: (not e.is_dir(), e.name.lower())):
-                rel_item_path = os.path.relpath(item.path, files_dir).replace("\\", "/")
-                is_dir = item.is_dir()
-                st = item.stat()
-                mime, _ = mimetypes.guess_type(item.name)
-                entries.append({
-                    "name": item.name,
-                    "path": rel_item_path,
-                    "filename": rel_item_path,
-                    "type": "directory" if is_dir else "file",
-                    "size": st.st_size if not is_dir else 0,
-                    "mime": mime or "application/octet-stream",
-                    "updated_at": int(st.st_mtime),
-                })
+        entries = await asyncio.to_thread(_list_files_entries_sync, files_dir, target_dir)
         return JSONResponse(content={
             "workspace": "files",
             "writable": False,
@@ -261,8 +313,7 @@ async def get_codex_tree(
             "path": path,
         })
 
-    repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
-    raw_entries = repo.list_directory(path)
+    raw_entries = await asyncio.to_thread(_list_repo_dir_sync, safe_uid, safe_cid, ws, path)
     entries = []
     for item in raw_entries:
         if isinstance(item, dict):
@@ -324,42 +375,13 @@ async def get_codex_file(
         target_file = _validate_safe_path(files_dir, path)
         if not os.path.isfile(target_file):
             raise HTTPException(status_code=404, detail="Fichier introuvable.")
-        st = os.stat(target_file)
-        mime, _ = mimetypes.guess_type(target_file)
-        mime_type = mime or "application/octet-stream"
-        is_binary = False
-        content = ""
-        hex_preview = None
-        try:
-            with open(target_file, "r", encoding="utf-8") as f:
-                content = f.read()
-        except UnicodeDecodeError:
-            is_binary = True
-            with open(target_file, "rb") as f:
-                raw_bytes = f.read(4096)
-            hex_preview = _format_hex_preview(raw_bytes)
-
-        payload_res = {
-            "path": path,
-            "content": content if not is_binary else None,
-            "is_binary": is_binary,
-            "mime": mime_type,
-            "mime_type": mime_type,
-            "size_bytes": st.st_size,
-            "total_lines": len(content.splitlines()) if not is_binary else 0,
-        }
-        if hex_preview is not None:
-            payload_res["hex_preview"] = hex_preview
+        payload_res = await asyncio.to_thread(_read_files_entry_sync, target_file, path)
         return JSONResponse(content=payload_res)
 
     if ws not in ECHO_CODEX_WORKSPACES:
         raise HTTPException(status_code=400, detail=f"Espace de travail invalide : '{ws}'")
 
-    repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
-    if commit:
-        res = repo.read_file_at_commit(path, commit)
-    else:
-        res = repo.read_file(path)
+    res = await asyncio.to_thread(_read_repo_file_sync, safe_uid, safe_cid, ws, path, commit)
 
     if res is None:
         raise HTTPException(status_code=404, detail="Fichier introuvable dans le dépôt Codex.")
@@ -484,8 +506,11 @@ async def get_codex_log(
     if ws not in ECHO_CODEX_WORKSPACES:
         raise HTTPException(status_code=400, detail=f"Espace de travail invalide : '{ws}'")
 
-    repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
-    logs = repo.get_log(filename=path if path else None, limit=limit)
+    def _get_log_sync() -> list:
+        repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
+        return repo.get_log(filename=path if path else None, limit=limit)
+
+    logs = await asyncio.to_thread(_get_log_sync)
     return JSONResponse(content={
         "workspace": ws,
         "path": path,
@@ -512,8 +537,11 @@ async def get_codex_diff(
     if ws not in ECHO_CODEX_WORKSPACES:
         raise HTTPException(status_code=400, detail=f"Espace de travail invalide : '{ws}'")
 
-    repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
-    diff_text = repo.get_diff(commit_a, commit_b if commit_b else None)
+    def _get_diff_sync() -> str:
+        repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
+        return repo.get_diff(commit_a, commit_b if commit_b else None)
+
+    diff_text = await asyncio.to_thread(_get_diff_sync)
     return JSONResponse(content={"diff": diff_text, "workspace": ws})
 
 
@@ -536,12 +564,15 @@ async def download_codex_file(
         files_dir = get_echo_session_path(safe_uid, safe_cid, "files")
         target_path = _validate_safe_path(files_dir, path)
     elif ws in ECHO_CODEX_WORKSPACES:
-        repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
-        try:
+        def _resolve_repo_download_path() -> str:
+            repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
             safe_rel = repo._secure_path(path)
+            return _validate_safe_path(repo.repo_path, safe_rel)
+
+        try:
+            target_path = await asyncio.to_thread(_resolve_repo_download_path)
         except ValueError:
             raise HTTPException(status_code=400, detail="Tentative de traversée de chemin non autorisée.")
-        target_path = _validate_safe_path(repo.repo_path, safe_rel)
     else:
         raise HTTPException(status_code=400, detail=f"Espace de travail invalide : '{ws}'")
 
@@ -572,10 +603,13 @@ async def mkdir_codex(
             detail=f"L'espace '{ws}' est en lecture seule.",
         )
 
-    async with get_codex_lock(safe_uid, safe_cid):
+    def _mkdir_sync() -> None:
         repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
+        repo.create_directory(payload.path)
+
+    async with get_codex_lock(safe_uid, safe_cid):
         try:
-            repo.create_directory(payload.path)
+            await asyncio.to_thread(_mkdir_sync)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except FileExistsError as e:
@@ -625,23 +659,29 @@ async def rename_codex(
             )
 
         if is_codex_workspace_indexed(ws):
-            clean_old = repo._secure_path(payload.old_path)
-            clean_new = repo._secure_path(payload.new_path)
-            new_abs = _validate_safe_path(repo.repo_path, clean_new)
-            if os.path.isdir(new_abs):
-                for root, _, files_in_dir in os.walk(new_abs):
-                    for fname in files_in_dir:
-                        f_abs = os.path.join(root, fname)
-                        sub_rel = os.path.relpath(f_abs, new_abs).replace("\\", "/")
-                        old_rel = f"{clean_old}/{sub_rel}" if clean_old else sub_rel
-                        new_rel = f"{clean_new}/{sub_rel}" if clean_new else sub_rel
-                        deleted_old_paths.append(old_rel)
-                        read_res = await asyncio.to_thread(repo.read_file, new_rel)
-                        synced_entries.append((new_rel, read_res.get("content", "") if read_res else ""))
-            else:
-                deleted_old_paths.append(clean_old)
-                read_res = await asyncio.to_thread(repo.read_file, clean_new)
-                synced_entries.append((clean_new, read_res.get("content", "") if read_res else ""))
+            def _scan_renamed_sync() -> tuple[list[str], list[tuple[str, object]]]:
+                del_paths: list[str] = []
+                sync_items: list[tuple[str, object]] = []
+                clean_old = repo._secure_path(payload.old_path)
+                clean_new = repo._secure_path(payload.new_path)
+                new_abs = _validate_safe_path(repo.repo_path, clean_new)
+                if os.path.isdir(new_abs):
+                    for root, _, files_in_dir in os.walk(new_abs):
+                        for fname in files_in_dir:
+                            f_abs = os.path.join(root, fname)
+                            sub_rel = os.path.relpath(f_abs, new_abs).replace("\\", "/")
+                            old_rel = f"{clean_old}/{sub_rel}" if clean_old else sub_rel
+                            new_rel = f"{clean_new}/{sub_rel}" if clean_new else sub_rel
+                            del_paths.append(old_rel)
+                            read_res = repo.read_file(new_rel)
+                            sync_items.append((new_rel, read_res.get("content", "") if read_res else ""))
+                else:
+                    del_paths.append(clean_old)
+                    read_res = repo.read_file(clean_new)
+                    sync_items.append((clean_new, read_res.get("content", "") if read_res else ""))
+                return del_paths, sync_items
+
+            deleted_old_paths, synced_entries = await asyncio.to_thread(_scan_renamed_sync)
 
     if deleted_old_paths:
         await _sync_codex_registry_delete(safe_uid, safe_cid, ws, deleted_old_paths)

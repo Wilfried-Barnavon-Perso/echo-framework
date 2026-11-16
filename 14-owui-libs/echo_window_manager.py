@@ -2,41 +2,32 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 6.6.8.1
+version: 6.6.9.1
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.9.1: Suppression du loader JS/FastAPI legacy (get_full_loader_bundle_js, inject_client_loader, wm_router, wm_static_router, register_echo_wm_routes, resolve_wm_user_id).
 # 6.6.8.1: Chargement systématique de l'identité Google et des quotas dans get_chat_snapshot même hors session.db active et support du paramètre refresh sur wm_get_chat_state.
 # 6.6.2.1: Ajout de open_tab et broadcast_browser_frame (diffusion SSE vers les onglets natifs echo-browser et echo-codex).
 # 5.239.12.1: Exclusion SSOT et auto-guérison des HUDs transitoires (echo-migration-hud, echo-clone-hud) dans handle_rpc, get_chat_snapshot et hydrateChatState.
 # 5.237.19.1: Support du plein écran d'Iframe via EchoWM.toggleIframeFullscreen (echo:iframe:fullscreen, echo:iframe:fullscreen-state et touche Escape).
-# 5.237.4.1: Garde anti-matérialisation session.db dans _save_chat_state et résolution stricte propriétaire (user_id, chat_id) sans fallback multi-comptes.
 
 import asyncio
 from contextlib import closing
 import os
 import sqlite3
-import sys
 import time
 import uuid
 from typing import Any, Dict, Optional, Tuple
 
 import orjson as json
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from echo_constants import ECHO_AUDIO_PREFIX, ECHO_BASE_DATA_DIR, ECHO_UCTP_CHUNK_SIZE, ECHO_USERS_ROOT
+from echo_constants import ECHO_BASE_DATA_DIR, ECHO_UCTP_CHUNK_SIZE, ECHO_USERS_ROOT
 from echo_paths import sanitize_echo_id
 from echo_state_manager import EchoStateManager
 
-WM_PREFIX = f"{ECHO_AUDIO_PREFIX}/wm"
-wm_router = APIRouter(prefix=WM_PREFIX, tags=["echo_wm"])
-wm_static_router = APIRouter(tags=["echo_wm_static"])
-
 WM_SCRIPT_VERSION = "5.239.12.1"
-LOADER_MARKER_START = "/* === ECHO_WM_START === */"
-LOADER_MARKER_END = "/* === ECHO_WM_END === */"
 WM_STATE_KEY = "wm_state"
 MAX_TRACKED_WINDOWS_PER_CHAT = 32
 MAX_KV_ENTRIES_PER_CHAT = 128
@@ -121,60 +112,6 @@ def _find_existing_chat_owner(chat_id: str) -> Optional[str]:
         except Exception:
             pass
     return None
-
-
-def resolve_wm_user_id(request: Optional[Request] = None, chat_id: str = "") -> str:
-    """Résout l'identifiant utilisateur depuis le JWT Bearer, le cookie token, le query param ou le disque."""
-    if request is not None:
-        token = ""
-        auth_header = request.headers.get("authorization") or ""
-        if auth_header.lower().startswith("bearer "):
-            token = auth_header[7:].strip().strip('"')
-        if not token:
-            token = (request.cookies.get("token") or "").strip().strip('"')
-        if not token:
-            token = (request.query_params.get("token") or "").strip().strip('"')
-
-        if token:
-            try:
-                from open_webui.utils.auth import decode_token
-                decoded = decode_token(token)
-                if isinstance(decoded, dict) and decoded.get("id"):
-                    return str(decoded["id"])
-            except Exception:
-                pass
-
-        for hdr in ("x-openwebui-user-id", "x-webui-user", "x-user-id", "user-id"):
-            val = request.headers.get(hdr)
-            if val and val.strip():
-                clean_val = val.strip()
-                if "@" in clean_val:
-                    resolved_uid = _resolve_user_id_by_email(clean_val)
-                    if resolved_uid:
-                        return resolved_uid
-                    continue
-                return clean_val
-
-    if chat_id:
-        owner = _find_existing_chat_owner(chat_id)
-        if owner:
-            return owner
-
-    try:
-        if os.path.exists(ECHO_USERS_ROOT):
-            candidates = [
-                d for d in os.listdir(ECHO_USERS_ROOT)
-                if os.path.isdir(os.path.join(ECHO_USERS_ROOT, d)) and not d.startswith(".") and d != "system"
-            ]
-            identity_candidates = [
-                c for c in candidates
-                if os.path.isfile(os.path.join(ECHO_USERS_ROOT, c, "identity.db"))
-            ]
-            if len(identity_candidates) == 1:
-                return identity_candidates[0]
-    except Exception:
-        pass
-    return "system"
 
 
 class EchoWindowManager:
@@ -1400,203 +1337,3 @@ def get_client_loader_js() -> str:
 })();
 """
     return js_template.replace("__WM_SCRIPT_VERSION__", WM_SCRIPT_VERSION)
-
-
-def get_full_loader_bundle_js() -> str:
-    """Assemble le bundle complet (ESM Loader + primitives EchoUI + pont Codex + runtime window.EchoWM) isolé de crossorigin='use-credentials'."""
-    parts = []
-    try:
-        from echo_ui import EchoUI
-        parts.append(EchoUI.get_uctp_engine_js().strip())
-        parts.append(EchoUI.get_esm_loader_js().strip())
-        parts.append(EchoUI.get_hud_geometry_js().strip())
-        parts.append(EchoUI.get_hud_rpc_bridge_js().strip())
-        parts.append(EchoUI.get_context_gauge_renderer_js().strip())
-        parts.append(EchoUI.get_media_export_js().strip())
-    except Exception:
-        pass
-    try:
-        from echo_codex_ui import EchoCodexUI
-        parts.append(EchoCodexUI.get_codex_bridge_js().strip())
-    except Exception:
-        pass
-    parts.append(get_client_loader_js().strip())
-    raw_bundle = "\n".join(parts)
-    encoded = json.dumps(raw_bundle).decode("utf-8")
-    return (
-        "(function(){\n"
-        f"    const code = {encoded};\n"
-        "    if (typeof document !== 'undefined' && (document.head || document.documentElement)) {\n"
-        "        const s = document.createElement('script');\n"
-        "        s.textContent = code;\n"
-        "        (document.head || document.documentElement).appendChild(s);\n"
-        "        s.remove();\n"
-        "    } else {\n"
-        "        (0, eval)(code);\n"
-        "    }\n"
-        "})();"
-    )
-
-
-def inject_client_loader() -> bool:
-    """Injecte de manière idempotente le runtime window.EchoWM dans tous les fichiers static/loader.js candidats."""
-    candidate_paths = []
-    try:
-        from open_webui.env import STATIC_DIR, FRONTEND_BUILD_DIR
-        if STATIC_DIR:
-            candidate_paths.append(os.path.join(str(STATIC_DIR), "loader.js"))
-        if FRONTEND_BUILD_DIR:
-            candidate_paths.append(os.path.join(str(FRONTEND_BUILD_DIR), "static", "loader.js"))
-    except Exception:
-        pass
-    for fallback_path in ("/app/backend/open_webui/static/loader.js", "/app/build/static/loader.js"):
-        if fallback_path not in candidate_paths:
-            candidate_paths.append(fallback_path)
-
-    bundle_js = get_full_loader_bundle_js()
-    block = f"\n{LOADER_MARKER_START}\n{bundle_js}\n{LOADER_MARKER_END}\n"
-
-    injected_any = False
-    for path in candidate_paths:
-        try:
-            parent = os.path.dirname(path)
-            if not os.path.isdir(parent):
-                continue
-            existing = ""
-            if os.path.exists(path):
-                with open(path, "r", encoding="utf-8") as f:
-                    existing = f.read()
-
-            if LOADER_MARKER_START in existing and LOADER_MARKER_END in existing:
-                s_idx = existing.index(LOADER_MARKER_START)
-                e_idx = existing.index(LOADER_MARKER_END) + len(LOADER_MARKER_END)
-                updated = existing[:s_idx].rstrip() + block + existing[e_idx:].lstrip()
-            else:
-                updated = existing.rstrip() + block
-
-            if updated != existing:
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(updated)
-            injected_any = True
-        except Exception as e:
-            print(f"[EchoWindowManager] Loader injection warning ({path}): {e}")
-    return injected_any
-
-
-@wm_static_router.get("/static/loader.js")
-async def wm_serve_loader_js():
-    """Sert dynamiquement /static/loader.js sans cache navigateur pour garantir la présence de window.EchoWM dès le chargement initial."""
-    content = get_full_loader_bundle_js()
-    return Response(
-        content=content,
-        media_type="text/javascript; charset=utf-8",
-        headers={
-            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-            "Pragma": "no-cache",
-        },
-    )
-
-
-@wm_router.get("/stream")
-async def wm_sse_stream(request: Request, client_id: str = ""):
-    user_id = resolve_wm_user_id(request)
-    cid = client_id or uuid.uuid4().hex
-    wm = get_window_manager()
-    queue = wm.subscribe(user_id, cid)
-
-    async def event_generator():
-        try:
-            init_payload = json.dumps({"type": "wm_connected", "client_id": cid, "user_id": user_id}).decode("utf-8")
-            yield f"data: {init_payload}\n\n"
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    msg = await asyncio.wait_for(queue.get(), timeout=20.0)
-                    payload = json.dumps(msg).decode("utf-8")
-                    yield f"data: {payload}\n\n"
-                except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"
-        finally:
-            wm.unsubscribe(user_id, cid)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-@wm_router.get("/chat/{chat_id}")
-async def wm_get_chat_state(chat_id: str, request: Request, refresh: bool = False):
-    user_id = resolve_wm_user_id(request, chat_id=chat_id)
-    wm = get_window_manager()
-    if refresh:
-        try:
-            from echo_auth import AuthService
-            uid = wm._resolve_owner_uid(user_id, chat_id)
-            await AuthService(user_id=uid).refresh_quota_if_needed(force=True)
-        except Exception:
-            pass
-    snapshot = wm.get_chat_snapshot(user_id, chat_id)
-    return JSONResponse(content=snapshot)
-
-
-@wm_router.post("/rpc")
-async def wm_post_rpc(request: Request):
-    try:
-        raw = await request.body()
-        payload = json.loads(raw) if raw else {}
-    except Exception:
-        payload = {}
-    chat_id = str(payload.get("chat_id") or "") if isinstance(payload, dict) else ""
-    user_id = resolve_wm_user_id(request, chat_id=chat_id)
-    wm = get_window_manager()
-    res = await wm.handle_rpc(user_id, payload)
-    return JSONResponse(content=res)
-
-
-_ROUTES_REGISTERED = False
-
-
-def register_echo_wm_routes(force: bool = False) -> bool:
-    """Enregistre de manière idempotente les routes FastAPI /echo/v1/wm/* et /static/loader.js."""
-    global _ROUTES_REGISTERED
-    if _ROUTES_REGISTERED and not force:
-        return True
-    try:
-        inject_client_loader()
-        if "open_webui.main" not in sys.modules:
-            try:
-                import open_webui.main as owui_main
-            except ImportError:
-                return False
-        else:
-            import open_webui.main as owui_main
-
-        app = getattr(owui_main, "app", None)
-        if not app or not hasattr(app, "router"):
-            return False
-
-        filtered_routes = [
-            r for r in app.router.routes
-            if not getattr(r, "path", "").startswith(WM_PREFIX)
-            and getattr(r, "path", "") != "/static/loader.js"
-        ]
-        app.router.routes = filtered_routes
-
-        for route in reversed(wm_static_router.routes):
-            app.router.routes.insert(0, route)
-        for route in reversed(wm_router.routes):
-            app.router.routes.insert(0, route)
-
-        _ROUTES_REGISTERED = True
-        print("[ECHO Window Manager] Pont multi-chats et multi-navigateurs (/echo/v1/wm + /static/loader.js) enregistré.")
-        return True
-    except Exception as e:
-        print(f"[ECHO Window Manager] Avertissement enregistrement routes : {e}")
-        return False

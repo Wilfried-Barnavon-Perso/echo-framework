@@ -3,6 +3,72 @@ import type { EchoCognitionSnapshot } from '$lib/stores/echo';
 
 export const ECHO_API_BASE_URL = `${WEBUI_BASE_URL}/echo/v1`;
 
+export const getEchoToken = (): string =>
+	typeof localStorage !== 'undefined' ? (localStorage.token ?? '') : '';
+
+const buildEchoHeaders = (token: string, body?: BodyInit | null, extra?: HeadersInit): Headers => {
+	const headers = new Headers(extra);
+	if (!headers.has('Accept')) {
+		headers.set('Accept', 'application/json');
+	}
+	if (!(body instanceof FormData) && !headers.has('Content-Type')) {
+		headers.set('Content-Type', 'application/json');
+	}
+	if (token && !headers.has('authorization')) {
+		headers.set('authorization', `Bearer ${token}`);
+	}
+	return headers;
+};
+
+const extractEchoErrorMessage = async (res: Response, defaultError: string): Promise<string> => {
+	try {
+		const err = await res.json();
+		if (err && typeof err === 'object') {
+			return err.detail || err.error || err.message || defaultError;
+		}
+	} catch {
+		// Ignorer les réponses non-JSON
+	}
+	return defaultError;
+};
+
+export async function echoRequestJson<T>(
+	path: string,
+	token: string,
+	init: RequestInit = {},
+	defaultError = 'Echo API error'
+): Promise<T> {
+	const res = await fetch(`${ECHO_API_BASE_URL}${path}`, {
+		...init,
+		headers: buildEchoHeaders(token, init.body, init.headers)
+	});
+
+	if (!res.ok) {
+		throw new Error(await extractEchoErrorMessage(res, defaultError));
+	}
+	return res.json();
+}
+
+export const echoFetchBlob = async (
+	path: string,
+	token: string,
+	signal?: AbortSignal
+): Promise<Blob> => {
+	const url = path.startsWith('http://') || path.startsWith('https://') || path.startsWith(ECHO_API_BASE_URL)
+		? path
+		: `${ECHO_API_BASE_URL}${path}`;
+	const res = await fetch(url, {
+		method: 'GET',
+		headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+		signal
+	});
+
+	if (!res.ok) {
+		throw new Error(await extractEchoErrorMessage(res, `HTTP ${res.status}`));
+	}
+	return res.blob();
+};
+
 export interface EchoSkillItem {
 	id: string;
 	name: string;
@@ -40,78 +106,39 @@ export interface EchoMetaArtifactsResponse {
 // SKILLS ECHO (/echo/v1/skills)
 // ============================================================================
 
-export const listEchoSkills = async (token: string): Promise<EchoSkillItem[]> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/skills/`, {
-		method: 'GET',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	});
+export const listEchoSkills = async (token: string): Promise<EchoSkillItem[]> =>
+	echoRequestJson<EchoSkillItem[]>('/skills/', token, { method: 'GET' }, 'Échec de chargement des skills');
 
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de chargement des skills' }));
-		throw new Error(err.detail || 'Échec de chargement des skills');
-	}
-	return res.json();
-};
-
-export const getEchoSkill = async (token: string, skillId: string): Promise<EchoSkillItem> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/skills/${encodeURIComponent(skillId)}`, {
-		method: 'GET',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Skill introuvable' }));
-		throw new Error(err.detail || 'Skill introuvable');
-	}
-	return res.json();
-};
+export const getEchoSkill = async (token: string, skillId: string): Promise<EchoSkillItem> =>
+	echoRequestJson<EchoSkillItem>(
+		`/skills/${encodeURIComponent(skillId)}`,
+		token,
+		{ method: 'GET' },
+		'Skill introuvable'
+	);
 
 export const saveEchoSkill = async (
 	token: string,
 	skillId: string,
 	payload: { name: string; description: string; instructions: string }
-): Promise<EchoSkillItem> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/skills/${encodeURIComponent(skillId)}`, {
-		method: 'PUT',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify(payload)
-	});
+): Promise<EchoSkillItem> =>
+	echoRequestJson<EchoSkillItem>(
+		`/skills/${encodeURIComponent(skillId)}`,
+		token,
+		{ method: 'PUT', body: JSON.stringify(payload) },
+		'Échec de sauvegarde du skill'
+	);
 
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de sauvegarde du skill' }));
-		throw new Error(err.detail || 'Échec de sauvegarde du skill');
-	}
-	return res.json();
-};
-
-export const deleteEchoSkill = async (token: string, skillId: string): Promise<{ deleted: boolean; id: string }> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/skills/${encodeURIComponent(skillId)}`, {
-		method: 'DELETE',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de suppression du skill' }));
-		throw new Error(err.detail || 'Échec de suppression du skill');
-	}
-	return res.json();
-};
+export const deleteEchoSkill = async (
+	token: string,
+	skillId: string
+): Promise<{ deleted: boolean; id: string }> =>
+	echoRequestJson<{ deleted: boolean; id: string }>(
+		`/skills/${encodeURIComponent(skillId)}`,
+		token,
+		{ method: 'DELETE' },
+		'Échec de suppression du skill'
+	);
 
 // ============================================================================
 // MÉTA-ARTÉFACTS QDRANT (/echo/v1/meta-artifacts)
@@ -129,21 +156,12 @@ export const listEchoMetaArtifacts = async (
 	if (params?.tag) searchParams.append('tag', params.tag);
 	if (params?.q) searchParams.append('q', params.q);
 
-	const url = `${ECHO_API_BASE_URL}/meta-artifacts/?${searchParams.toString()}`;
-	const res = await fetch(url, {
-		method: 'GET',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de chargement des méta-artéfacts' }));
-		throw new Error(err.detail || 'Échec de chargement des méta-artéfacts');
-	}
-	return res.json();
+	return echoRequestJson<EchoMetaArtifactsResponse>(
+		`/meta-artifacts/?${searchParams.toString()}`,
+		token,
+		{ method: 'GET' },
+		'Échec de chargement des méta-artéfacts'
+	);
 };
 
 export const createEchoMetaArtifact = async (
@@ -155,23 +173,13 @@ export const createEchoMetaArtifact = async (
 		memory_importance: number;
 		tags: string[];
 	}
-): Promise<EchoMetaArtifactItem> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/meta-artifacts/`, {
-		method: 'POST',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify(payload)
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de création du méta-artéfact' }));
-		throw new Error(err.detail || 'Échec de création du méta-artéfact');
-	}
-	return res.json();
-};
+): Promise<EchoMetaArtifactItem> =>
+	echoRequestJson<EchoMetaArtifactItem>(
+		'/meta-artifacts/',
+		token,
+		{ method: 'POST', body: JSON.stringify(payload) },
+		'Échec de création du méta-artéfact'
+	);
 
 export const updateEchoMetaArtifact = async (
 	token: string,
@@ -182,63 +190,35 @@ export const updateEchoMetaArtifact = async (
 		memory_importance?: number;
 		tags?: string[];
 	}
-): Promise<EchoMetaArtifactItem> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/meta-artifacts/${encodeURIComponent(memoryId)}`, {
-		method: 'PATCH',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify(payload)
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de mise à jour du méta-artéfact' }));
-		throw new Error(err.detail || 'Échec de mise à jour du méta-artéfact');
-	}
-	return res.json();
-};
+): Promise<EchoMetaArtifactItem> =>
+	echoRequestJson<EchoMetaArtifactItem>(
+		`/meta-artifacts/${encodeURIComponent(memoryId)}`,
+		token,
+		{ method: 'PATCH', body: JSON.stringify(payload) },
+		'Échec de mise à jour du méta-artéfact'
+	);
 
 export const promoteEchoMetaArtifact = async (
 	token: string,
 	memoryId: string
-): Promise<{ id: string; memory_id: string; memory_importance: number; importance_label: string }> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/meta-artifacts/${encodeURIComponent(memoryId)}/promote`, {
-		method: 'POST',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de promotion du méta-artéfact' }));
-		throw new Error(err.detail || 'Échec de promotion du méta-artéfact');
-	}
-	return res.json();
-};
+): Promise<{ id: string; memory_id: string; memory_importance: number; importance_label: string }> =>
+	echoRequestJson<{ id: string; memory_id: string; memory_importance: number; importance_label: string }>(
+		`/meta-artifacts/${encodeURIComponent(memoryId)}/promote`,
+		token,
+		{ method: 'POST' },
+		'Échec de promotion du méta-artéfact'
+	);
 
 export const deleteEchoMetaArtifact = async (
 	token: string,
 	memoryId: string
-): Promise<{ deleted: boolean; memory_id: string; id: string }> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/meta-artifacts/${encodeURIComponent(memoryId)}`, {
-		method: 'DELETE',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de suppression du méta-artéfact' }));
-		throw new Error(err.detail || 'Échec de suppression du méta-artéfact');
-	}
-	return res.json();
-};
+): Promise<{ deleted: boolean; memory_id: string; id: string }> =>
+	echoRequestJson<{ deleted: boolean; memory_id: string; id: string }>(
+		`/meta-artifacts/${encodeURIComponent(memoryId)}`,
+		token,
+		{ method: 'DELETE' },
+		'Échec de suppression du méta-artéfact'
+	);
 
 // ============================================================================
 // WINDOW MANAGER ECHO (/echo/v1/wm)
@@ -251,39 +231,21 @@ export const getEchoWmChatSnapshot = async (
 ): Promise<any> => {
 	const targetCid = chatId && chatId.trim() ? chatId.trim() : '_new';
 	const query = refresh ? '?refresh=1' : '';
-	const res = await fetch(`${ECHO_API_BASE_URL}/wm/chat/${encodeURIComponent(targetCid)}${query}`, {
-		method: 'GET',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec du snapshot Window Manager' }));
-		throw new Error(err.detail || 'Échec du snapshot Window Manager');
-	}
-	return res.json();
+	return echoRequestJson<any>(
+		`/wm/chat/${encodeURIComponent(targetCid)}${query}`,
+		token,
+		{ method: 'GET' },
+		'Échec du snapshot Window Manager'
+	);
 };
 
-export const postEchoWmRpc = async (token: string, payload: Record<string, any>): Promise<any> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/wm/rpc`, {
-		method: 'POST',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify(payload)
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec appel RPC Window Manager' }));
-		throw new Error(err.detail || 'Échec appel RPC Window Manager');
-	}
-	return res.json();
-};
+export const postEchoWmRpc = async (token: string, payload: Record<string, any>): Promise<any> =>
+	echoRequestJson<any>(
+		'/wm/rpc',
+		token,
+		{ method: 'POST', body: JSON.stringify(payload) },
+		'Échec appel RPC Window Manager'
+	);
 
 // ============================================================================
 // COGNITION ECHO (/echo/v1/cognition)
@@ -308,46 +270,41 @@ export interface EchoBrowserFrame {
 export const getEchoBrowserFrames = async (
 	token: string,
 	chatId: string
-): Promise<{ frames: EchoBrowserFrame[] }> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/cognition/${encodeURIComponent(chatId)}/browser-frames`, {
-		method: 'GET',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	});
+): Promise<{ frames: EchoBrowserFrame[] }> =>
+	echoRequestJson<{ frames: EchoBrowserFrame[] }>(
+		`/cognition/${encodeURIComponent(chatId)}/browser-frames`,
+		token,
+		{ method: 'GET' },
+		'Échec de lecture des captures navigateur'
+	);
 
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de lecture des captures navigateur' }));
-		throw new Error(err.detail || 'Échec de lecture des captures navigateur');
-	}
-	return res.json();
-};
+export const getEchoBrowserFrameImageUrl = (chatId: string, fileId: string): string =>
+	`${ECHO_API_BASE_URL}/cognition/${encodeURIComponent(chatId)}/browser-frames/${encodeURIComponent(fileId)}/image`;
 
-export const getEchoBrowserFrameImageUrl = (chatId: string, fileId: string): string => {
-	return `${ECHO_API_BASE_URL}/cognition/${encodeURIComponent(chatId)}/browser-frames/${encodeURIComponent(fileId)}/image`;
+export const fetchEchoBrowserFrameBlob = async (
+	token: string,
+	chatId: string,
+	fileIdOrUrl: string,
+	signal?: AbortSignal
+): Promise<Blob> => {
+	const target = fileIdOrUrl.startsWith(ECHO_API_BASE_URL)
+		? fileIdOrUrl.slice(ECHO_API_BASE_URL.length)
+		: fileIdOrUrl.startsWith('/') || fileIdOrUrl.startsWith('http://') || fileIdOrUrl.startsWith('https://')
+			? fileIdOrUrl
+			: `/cognition/${encodeURIComponent(chatId)}/browser-frames/${encodeURIComponent(fileIdOrUrl)}/image`;
+	return echoFetchBlob(target, token, signal);
 };
 
 export const getEchoCognitionSnapshot = async (
 	token: string,
 	chatId: string
-): Promise<EchoCognitionSnapshot> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/cognition/${encodeURIComponent(chatId)}/snapshot`, {
-		method: 'GET',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec du snapshot cognition' }));
-		throw new Error(err.detail || 'Échec du snapshot cognition');
-	}
-	return res.json();
-};
+): Promise<EchoCognitionSnapshot> =>
+	echoRequestJson<EchoCognitionSnapshot>(
+		`/cognition/${encodeURIComponent(chatId)}/snapshot`,
+		token,
+		{ method: 'GET' },
+		'Échec du snapshot cognition'
+	);
 
 export interface EchoSubagentMessageResponse {
 	status: 'queued' | 'started';
@@ -360,28 +317,13 @@ export const postEchoSubagentMessage = async (
 	chatId: string,
 	subSid: string,
 	content: string
-): Promise<EchoSubagentMessageResponse> => {
-	const res = await fetch(
-		`${ECHO_API_BASE_URL}/cognition/${encodeURIComponent(chatId)}/threads/${encodeURIComponent(subSid)}/message`,
-		{
-			method: 'POST',
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json',
-				authorization: `Bearer ${token}`
-			},
-			body: JSON.stringify({ content })
-		}
+): Promise<EchoSubagentMessageResponse> =>
+	echoRequestJson<EchoSubagentMessageResponse>(
+		`/cognition/${encodeURIComponent(chatId)}/threads/${encodeURIComponent(subSid)}/message`,
+		token,
+		{ method: 'POST', body: JSON.stringify({ content }) },
+		"Échec d'envoi du message au sous-agent"
 	);
-
-	if (!res.ok) {
-		const err = await res
-			.json()
-			.catch(() => ({ detail: "Échec d'envoi du message au sous-agent" }));
-		throw new Error(err.detail || "Échec d'envoi du message au sous-agent");
-	}
-	return res.json();
-};
 
 // ============================================================================
 // CODEX GIT & FICHIERS (/echo/v1/codex)
@@ -394,23 +336,12 @@ export const getEchoCodexTree = async (
 	path = ''
 ): Promise<any> => {
 	const searchParams = new URLSearchParams({ workspace, path });
-	const res = await fetch(
-		`${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/tree?${searchParams.toString()}`,
-		{
-			method: 'GET',
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json',
-				authorization: `Bearer ${token}`
-			}
-		}
+	return echoRequestJson<any>(
+		`/codex/${encodeURIComponent(chatId)}/tree?${searchParams.toString()}`,
+		token,
+		{ method: 'GET' },
+		'Échec de lecture de l’arborescence Codex'
 	);
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de lecture de l’arborescence Codex' }));
-		throw new Error(err.detail || 'Échec de lecture de l’arborescence Codex');
-	}
-	return res.json();
 };
 
 export const getEchoCodexFile = async (
@@ -422,46 +353,25 @@ export const getEchoCodexFile = async (
 ): Promise<any> => {
 	const searchParams = new URLSearchParams({ workspace, path });
 	if (commit) searchParams.append('commit', commit);
-	const res = await fetch(
-		`${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/file?${searchParams.toString()}`,
-		{
-			method: 'GET',
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json',
-				authorization: `Bearer ${token}`
-			}
-		}
+	return echoRequestJson<any>(
+		`/codex/${encodeURIComponent(chatId)}/file?${searchParams.toString()}`,
+		token,
+		{ method: 'GET' },
+		'Échec de lecture du fichier Codex'
 	);
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de lecture du fichier Codex' }));
-		throw new Error(err.detail || 'Échec de lecture du fichier Codex');
-	}
-	return res.json();
 };
 
 export const saveEchoCodexFile = async (
 	token: string,
 	chatId: string,
 	payload: { workspace: string; path: string; content: string; message?: string }
-): Promise<any> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/file`, {
-		method: 'PUT',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify(payload)
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec d’enregistrement du fichier Codex' }));
-		throw new Error(err.detail || 'Échec d’enregistrement du fichier Codex');
-	}
-	return res.json();
-};
+): Promise<any> =>
+	echoRequestJson<any>(
+		`/codex/${encodeURIComponent(chatId)}/file`,
+		token,
+		{ method: 'PUT', body: JSON.stringify(payload) },
+		'Échec d’enregistrement du fichier Codex'
+	);
 
 export const deleteEchoCodexFile = async (
 	token: string,
@@ -470,23 +380,12 @@ export const deleteEchoCodexFile = async (
 	path: string
 ): Promise<any> => {
 	const searchParams = new URLSearchParams({ workspace, path });
-	const res = await fetch(
-		`${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/file?${searchParams.toString()}`,
-		{
-			method: 'DELETE',
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json',
-				authorization: `Bearer ${token}`
-			}
-		}
+	return echoRequestJson<any>(
+		`/codex/${encodeURIComponent(chatId)}/file?${searchParams.toString()}`,
+		token,
+		{ method: 'DELETE' },
+		'Échec de suppression du fichier Codex'
 	);
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de suppression du fichier Codex' }));
-		throw new Error(err.detail || 'Échec de suppression du fichier Codex');
-	}
-	return res.json();
 };
 
 export const getEchoCodexLog = async (
@@ -497,23 +396,12 @@ export const getEchoCodexLog = async (
 	limit = 30
 ): Promise<any> => {
 	const searchParams = new URLSearchParams({ workspace, path, limit: limit.toString() });
-	const res = await fetch(
-		`${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/log?${searchParams.toString()}`,
-		{
-			method: 'GET',
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json',
-				authorization: `Bearer ${token}`
-			}
-		}
+	return echoRequestJson<any>(
+		`/codex/${encodeURIComponent(chatId)}/log?${searchParams.toString()}`,
+		token,
+		{ method: 'GET' },
+		'Échec de lecture de l’historique Codex'
 	);
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de lecture de l’historique Codex' }));
-		throw new Error(err.detail || 'Échec de lecture de l’historique Codex');
-	}
-	return res.json();
 };
 
 export const getEchoCodexDiff = async (
@@ -525,23 +413,12 @@ export const getEchoCodexDiff = async (
 ): Promise<any> => {
 	const searchParams = new URLSearchParams({ workspace, commit_a: commitA });
 	if (commitB) searchParams.append('commit_b', commitB);
-	const res = await fetch(
-		`${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/diff?${searchParams.toString()}`,
-		{
-			method: 'GET',
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json',
-				authorization: `Bearer ${token}`
-			}
-		}
+	return echoRequestJson<any>(
+		`/codex/${encodeURIComponent(chatId)}/diff?${searchParams.toString()}`,
+		token,
+		{ method: 'GET' },
+		'Échec de calcul du diff Codex'
 	);
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de calcul du diff Codex' }));
-		throw new Error(err.detail || 'Échec de calcul du diff Codex');
-	}
-	return res.json();
 };
 
 export const getEchoCodexDownloadUrl = (chatId: string, workspace: string, path: string): string => {
@@ -549,28 +426,33 @@ export const getEchoCodexDownloadUrl = (chatId: string, workspace: string, path:
 	return `${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/download?${searchParams.toString()}`;
 };
 
+export const downloadEchoCodexFileBlob = async (
+	token: string,
+	chatId: string,
+	workspace: string,
+	path: string,
+	signal?: AbortSignal
+): Promise<Blob> => {
+	const searchParams = new URLSearchParams({ workspace, path });
+	return echoFetchBlob(
+		`/codex/${encodeURIComponent(chatId)}/download?${searchParams.toString()}`,
+		token,
+		signal
+	);
+};
+
 export const mkdirEchoCodex = async (
 	token: string,
 	chatId: string,
 	workspace: string,
 	path: string
-): Promise<any> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/mkdir`, {
-		method: 'POST',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify({ workspace, path })
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de création du dossier Codex' }));
-		throw new Error(err.detail || 'Échec de création du dossier Codex');
-	}
-	return res.json();
-};
+): Promise<any> =>
+	echoRequestJson<any>(
+		`/codex/${encodeURIComponent(chatId)}/mkdir`,
+		token,
+		{ method: 'POST', body: JSON.stringify({ workspace, path }) },
+		'Échec de création du dossier Codex'
+	);
 
 export const renameEchoCodex = async (
 	token: string,
@@ -578,23 +460,13 @@ export const renameEchoCodex = async (
 	workspace: string,
 	old_path: string,
 	new_path: string
-): Promise<any> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/rename`, {
-		method: 'POST',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify({ workspace, old_path, new_path })
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de renommage Codex' }));
-		throw new Error(err.detail || 'Échec de renommage Codex');
-	}
-	return res.json();
-};
+): Promise<any> =>
+	echoRequestJson<any>(
+		`/codex/${encodeURIComponent(chatId)}/rename`,
+		token,
+		{ method: 'POST', body: JSON.stringify({ workspace, old_path, new_path }) },
+		'Échec de renommage Codex'
+	);
 
 export const restoreEchoCodexFile = async (
 	token: string,
@@ -602,23 +474,13 @@ export const restoreEchoCodexFile = async (
 	workspace: string,
 	path: string,
 	commit_hash: string
-): Promise<any> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/restore`, {
-		method: 'POST',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify({ workspace, path, commit_hash })
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de restauration Codex' }));
-		throw new Error(err.detail || 'Échec de restauration Codex');
-	}
-	return res.json();
-};
+): Promise<any> =>
+	echoRequestJson<any>(
+		`/codex/${encodeURIComponent(chatId)}/restore`,
+		token,
+		{ method: 'POST', body: JSON.stringify({ workspace, path, commit_hash }) },
+		'Échec de restauration Codex'
+	);
 
 export const uploadEchoCodexFile = async (
 	token: string,
@@ -632,20 +494,12 @@ export const uploadEchoCodexFile = async (
 	formData.append('workspace', workspace);
 	formData.append('path', path);
 
-	const res = await fetch(`${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/upload`, {
-		method: 'POST',
-		headers: {
-			Accept: 'application/json',
-			authorization: `Bearer ${token}`
-		},
-		body: formData
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: "Échec de l'importation du fichier Codex" }));
-		throw new Error(err.detail || "Échec de l'importation du fichier Codex");
-	}
-	return res.json();
+	return echoRequestJson<any>(
+		`/codex/${encodeURIComponent(chatId)}/upload`,
+		token,
+		{ method: 'POST', body: formData },
+		"Échec de l'importation du fichier Codex"
+	);
 };
 
 export interface EchoCodexAiEditPayload {
@@ -677,108 +531,62 @@ export const aiEditEchoCodexFile = async (
 	model_used: string;
 	path: string;
 	workspace: string;
-}> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/ai-edit`, {
-		method: 'POST',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify(payload)
-	});
-
-	if (!res.ok) {
-		const err = await res
-			.json()
-			.catch(() => ({ detail: "Échec de l'édition IA du fichier Codex" }));
-		throw new Error(err.detail || "Échec de l'édition IA du fichier Codex");
-	}
-	return res.json();
-};
+}> =>
+	echoRequestJson<{
+		status: string;
+		modified_content: string;
+		model_used: string;
+		path: string;
+		workspace: string;
+	}>(
+		`/codex/${encodeURIComponent(chatId)}/ai-edit`,
+		token,
+		{ method: 'POST', body: JSON.stringify(payload) },
+		"Échec de l'édition IA du fichier Codex"
+	);
 
 // ============================================================================
 // COFFRE & IDENTITÉ (/echo/v1/vault)
 // ============================================================================
 
-export const getEchoVaultStatus = async (token: string): Promise<any> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/vault/status`, {
-		method: 'GET',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	});
+export const getEchoVaultStatus = async (token: string): Promise<any> =>
+	echoRequestJson<any>(
+		'/vault/status',
+		token,
+		{ method: 'GET' },
+		'Échec de lecture du statut Vault'
+	);
 
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de lecture du statut Vault' }));
-		throw new Error(err.detail || 'Échec de lecture du statut Vault');
-	}
-	return res.json();
-};
-
-export const listEchoVaultSecrets = async (token: string): Promise<any> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/vault/secrets`, {
-		method: 'GET',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de lecture des secrets Vault' }));
-		throw new Error(err.detail || 'Échec de lecture des secrets Vault');
-	}
-	return res.json();
-};
+export const listEchoVaultSecrets = async (token: string): Promise<any> =>
+	echoRequestJson<any>(
+		'/vault/secrets',
+		token,
+		{ method: 'GET' },
+		'Échec de lecture des secrets Vault'
+	);
 
 export const saveEchoVaultSecret = async (
 	token: string,
 	payload: { service: string; account_id: string; secret: string }
-): Promise<any> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/vault/secrets`, {
-		method: 'PUT',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		},
-		body: JSON.stringify(payload)
-	});
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec d’enregistrement du secret Vault' }));
-		throw new Error(err.detail || 'Échec d’enregistrement du secret Vault');
-	}
-	return res.json();
-};
+): Promise<any> =>
+	echoRequestJson<any>(
+		'/vault/secrets',
+		token,
+		{ method: 'PUT', body: JSON.stringify(payload) },
+		'Échec d’enregistrement du secret Vault'
+	);
 
 export const deleteEchoVaultSecret = async (
 	token: string,
 	service: string,
 	accountId: string
-): Promise<any> => {
-	const res = await fetch(
-		`${ECHO_API_BASE_URL}/vault/secrets/${encodeURIComponent(service)}/${encodeURIComponent(accountId)}`,
-		{
-			method: 'DELETE',
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json',
-				authorization: `Bearer ${token}`
-			}
-		}
+): Promise<any> =>
+	echoRequestJson<any>(
+		`/vault/secrets/${encodeURIComponent(service)}/${encodeURIComponent(accountId)}`,
+		token,
+		{ method: 'DELETE' },
+		'Échec de suppression du secret Vault'
 	);
-
-	if (!res.ok) {
-		const err = await res.json().catch(() => ({ detail: 'Échec de suppression du secret Vault' }));
-		throw new Error(err.detail || 'Échec de suppression du secret Vault');
-	}
-	return res.json();
-};
 
 export interface EchoVaultSchemaField {
 	id: string;
@@ -803,21 +611,10 @@ export interface EchoVaultSchemasResponse {
 	schemas: Record<string, EchoVaultServiceSchema>;
 }
 
-export const getEchoVaultSchemas = async (token: string): Promise<EchoVaultSchemasResponse> => {
-	const res = await fetch(`${ECHO_API_BASE_URL}/vault/schemas`, {
-		method: 'GET',
-		headers: {
-			Accept: 'application/json',
-			'Content-Type': 'application/json',
-			authorization: `Bearer ${token}`
-		}
-	});
-
-	if (!res.ok) {
-		const err = await res
-			.json()
-			.catch(() => ({ detail: 'Échec de lecture des schémas de connecteurs' }));
-		throw new Error(err.detail || 'Échec de lecture des schémas de connecteurs');
-	}
-	return res.json();
-};
+export const getEchoVaultSchemas = async (token: string): Promise<EchoVaultSchemasResponse> =>
+	echoRequestJson<EchoVaultSchemasResponse>(
+		'/vault/schemas',
+		token,
+		{ method: 'GET' },
+		'Échec de lecture des schémas de connecteurs'
+	);

@@ -1,16 +1,16 @@
 """
 title: ECHO V6 Cognition Router
 author: Wilfried BARNAVON
-version: 6.6.5.1
+version: 6.6.9.1
 description: Routeur FastAPI pour la visualisation cognitive et des sous-agents (/echo/v1/cognition).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.9.1: Passage sur get_echo_sse_user/create_echo_sse_response, déportation asyncio.to_thread sur lectures SQLite/FS et correction fallback ImportError browserviews.
 # 6.6.5.1: Résolution prioritaire des captures navigateur dans browserviews/ avec GC éphémère à l'entrée et exposition de status/retained.
 # 6.6.2.2: Ajout des endpoints GET /{chat_id}/browser-frames et /{chat_id}/browser-frames/{file_id}/image et alignement niveau_requis/is_question/pending_tool_calls.
 # 6.6.2.1: Sanitization DOM/prompt, regroupement grouped_threads, enrichissement des steps et réactivité SSE via get_cognition_seq.
 # 6.5.3.1: Ajout de POST /{chat_id}/threads/{sub_sid}/message (tours humains directs ou file FIFO) et enrichissement d'état des threads.
-# 6.3.0.1: Création du routeur /echo/v1/cognition (snapshot et streaming SSE des cognitive_threads et call_bridge).
 
 from __future__ import annotations
 
@@ -26,15 +26,19 @@ from typing import Any, Dict
 
 import orjson as json
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
+from open_webui.echo.http_utils import (
+    create_echo_sse_response,
+    get_echo_sse_user,
+    get_echo_verified_user,
+)
 from open_webui.echo.runtime import (
     ensure_echo_sys_path,
     load_echo_tool_from_disk,
 )
 from open_webui.models.chats import Chats
-from open_webui.utils.auth import get_verified_user
 
 ensure_echo_sys_path()
 try:
@@ -58,6 +62,15 @@ except ImportError:
     local_libs = Path(__file__).resolve().parents[5] / "14-owui-libs"
     if local_libs.is_dir() and str(local_libs) not in sys.path:
         sys.path.insert(0, str(local_libs))
+    try:
+        from echo_browser_lib import cleanup_expired_browserviews  # type: ignore
+    except ImportError:
+        def cleanup_expired_browserviews(*args: Any, **kwargs: Any) -> int:
+            return 0
+    try:
+        from echo_constants import BROWSER_VIEWS_DIR_NAME  # type: ignore
+    except ImportError:
+        BROWSER_VIEWS_DIR_NAME = "browserviews"
     from echo_db_schema import open_db  # type: ignore
     from echo_paths import (  # type: ignore
         get_echo_session_path,
@@ -547,13 +560,13 @@ def _get_cognition_state_sig(db_path: str, chat_id: str) -> str:
 @router.get("/{chat_id}/snapshot")
 async def get_cognition_snapshot(
     chat_id: str,
-    user=Depends(get_verified_user),
+    user=Depends(get_echo_verified_user),
 ):
     """Retourne l'instantané complet de l'activité cognitive et des outils pour le chat demandé."""
     safe_uid = sanitize_echo_id(user.id)
     safe_cid = sanitize_echo_id(chat_id)
     db_path = get_echo_session_path(safe_uid, safe_cid, "db")
-    snapshot = _read_cognition_snapshot(db_path, chat_id)
+    snapshot = await asyncio.to_thread(_read_cognition_snapshot, db_path, chat_id)
     return JSONResponse(content=snapshot)
 
 
@@ -561,7 +574,7 @@ async def get_cognition_snapshot(
 async def get_cognition_stream(
     chat_id: str,
     request: Request,
-    user=Depends(get_verified_user),
+    user=Depends(get_echo_sse_user),
 ):
     """Diffuse les mises à jour cognitives en SSE via signature composite."""
     safe_uid = sanitize_echo_id(user.id)
@@ -569,8 +582,8 @@ async def get_cognition_stream(
     db_path = get_echo_session_path(safe_uid, safe_cid, "db")
 
     async def event_generator():
-        current_snapshot = _read_cognition_snapshot(db_path, chat_id)
-        last_seen_sig = _get_cognition_state_sig(db_path, chat_id)
+        current_snapshot = await asyncio.to_thread(_read_cognition_snapshot, db_path, chat_id)
+        last_seen_sig = await asyncio.to_thread(_get_cognition_state_sig, db_path, chat_id)
         yield f"data: {json.dumps(current_snapshot).decode('utf-8')}\n\n"
 
         keepalive_counter = 0
@@ -581,9 +594,9 @@ async def get_cognition_stream(
             await asyncio.sleep(0.25)
             keepalive_counter += 1
 
-            current_sig = _get_cognition_state_sig(db_path, chat_id)
+            current_sig = await asyncio.to_thread(_get_cognition_state_sig, db_path, chat_id)
             if current_sig != last_seen_sig:
-                current_snapshot = _read_cognition_snapshot(db_path, chat_id)
+                current_snapshot = await asyncio.to_thread(_read_cognition_snapshot, db_path, chat_id)
                 last_seen_sig = current_sig
                 out_sse = json.dumps(current_snapshot).decode("utf-8")
                 yield f"data: {out_sse}\n\n"
@@ -591,15 +604,7 @@ async def get_cognition_stream(
                 keepalive_counter = 0
                 yield ": keepalive\n\n"
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return create_echo_sse_response(event_generator())
 
 
 @router.post("/{chat_id}/threads/{sub_sid}/message")
@@ -607,7 +612,7 @@ async def post_subagent_human_message(
     chat_id: str,
     sub_sid: str,
     payload: SubagentMessagePayload,
-    user=Depends(get_verified_user),
+    user=Depends(get_echo_verified_user),
 ):
     """Envoie ou met en file une requête humaine directe vers un sous-agent."""
     content = (payload.content or "").strip()
@@ -625,7 +630,7 @@ async def post_subagent_human_message(
 
     if is_subagent_running(chat_id, sub_sid):
         sm = EchoStateManager(user_id=safe_uid, chat_id=safe_cid)
-        queue = enqueue_human_message(sm, sub_sid, content, user.id)
+        queue = await asyncio.to_thread(enqueue_human_message, sm, sub_sid, content, user.id)
         return JSONResponse(
             content={
                 "status": "queued",
@@ -647,25 +652,11 @@ async def post_subagent_human_message(
     )
 
 
-@router.get("/{chat_id}/browser-frames")
-async def get_browser_frames(chat_id: str, user=Depends(get_verified_user)):
-    """Retourne les captures persistées du navigateur web pour la session."""
-    safe_uid = sanitize_echo_id(user.id)
-    safe_cid = sanitize_echo_id(chat_id)
-    db_path = get_echo_session_path(safe_uid, safe_cid, "db")
-    if not os.path.isfile(db_path):
-        return JSONResponse(content={"frames": []})
-
-    try:
-        await cleanup_expired_browserviews(safe_uid, safe_cid)
-    except Exception:
-        pass
-
-    browserviews_dir = os.path.realpath(
-        get_echo_session_path(safe_uid, safe_cid, BROWSER_VIEWS_DIR_NAME)
-    )
-    files_dir = os.path.realpath(get_echo_session_path(safe_uid, safe_cid, "files"))
-    frames = []
+def _read_browser_frames_sync(
+    db_path: str, safe_cid: str, browserviews_dir: str, files_dir: str
+) -> list[Dict[str, Any]]:
+    """Lit les captures navigateur persistées en lecture seule depuis SQLite et le disque."""
+    frames: list[Dict[str, Any]] = []
     try:
         with closing(open_db(db_path, readonly=True, timeout=2.0)) as conn:
             rows = conn.execute(
@@ -732,27 +723,13 @@ async def get_browser_frames(chat_id: str, user=Depends(get_verified_user)):
                 )
     except Exception as e:
         log.warning(f"[Cognition] Erreur lecture browser-frames: {e}")
+    return frames
 
-    return JSONResponse(content={"frames": frames})
 
-
-@router.get("/{chat_id}/browser-frames/{file_id}/image")
-async def get_browser_frame_image(
-    chat_id: str,
-    file_id: str,
-    user=Depends(get_verified_user),
-):
-    """Sert l'image JPEG d'une capture navigateur persistée."""
-    safe_uid = sanitize_echo_id(user.id)
-    safe_cid = sanitize_echo_id(chat_id)
-    safe_fid = sanitize_echo_id(file_id)
-    browserviews_dir = os.path.realpath(
-        get_echo_session_path(safe_uid, safe_cid, BROWSER_VIEWS_DIR_NAME)
-    )
-    files_dir = os.path.realpath(get_echo_session_path(safe_uid, safe_cid, "files"))
-    db_path = get_echo_session_path(safe_uid, safe_cid, "db")
-
-    target_path = None
+def _resolve_browser_frame_image_sync(
+    db_path: str, file_id: str, safe_fid: str, browserviews_dir: str, files_dir: str
+) -> str | None:
+    """Résout le chemin disque d'une capture navigateur avec repli SQLite lecture seule."""
     for base_dir in (browserviews_dir, files_dir):
         default_cand = os.path.realpath(
             os.path.join(base_dir, f"{safe_fid}_frame.jpg")
@@ -761,10 +738,9 @@ async def get_browser_frame_image(
             default_cand.startswith(base_dir + os.sep)
             and os.path.isfile(default_cand)
         ):
-            target_path = default_cand
-            break
+            return default_cand
 
-    if not target_path and os.path.isfile(db_path):
+    if os.path.isfile(db_path):
         try:
             with closing(open_db(db_path, readonly=True, timeout=2.0)) as conn:
                 row = conn.execute(
@@ -782,13 +758,60 @@ async def get_browser_frame_image(
                                 cand.startswith(base_dir + os.sep)
                                 and os.path.isfile(cand)
                             ):
-                                target_path = cand
-                                break
-                        if target_path:
-                            break
+                                return cand
         except Exception as e:
             log.warning(f"[Cognition] Erreur lookup image frame {file_id}: {e}")
+    return None
 
+
+@router.get("/{chat_id}/browser-frames")
+async def get_browser_frames(chat_id: str, user=Depends(get_echo_verified_user)):
+    """Retourne les captures persistées du navigateur web pour la session."""
+    safe_uid = sanitize_echo_id(user.id)
+    safe_cid = sanitize_echo_id(chat_id)
+    db_path = get_echo_session_path(safe_uid, safe_cid, "db")
+    if not os.path.isfile(db_path):
+        return JSONResponse(content={"frames": []})
+
+    try:
+        await cleanup_expired_browserviews(safe_uid, safe_cid)
+    except Exception:
+        pass
+
+    browserviews_dir = os.path.realpath(
+        get_echo_session_path(safe_uid, safe_cid, BROWSER_VIEWS_DIR_NAME)
+    )
+    files_dir = os.path.realpath(get_echo_session_path(safe_uid, safe_cid, "files"))
+    frames = await asyncio.to_thread(
+        _read_browser_frames_sync, db_path, safe_cid, browserviews_dir, files_dir
+    )
+    return JSONResponse(content={"frames": frames})
+
+
+@router.get("/{chat_id}/browser-frames/{file_id}/image")
+async def get_browser_frame_image(
+    chat_id: str,
+    file_id: str,
+    user=Depends(get_echo_verified_user),
+):
+    """Sert l'image JPEG d'une capture navigateur persistée."""
+    safe_uid = sanitize_echo_id(user.id)
+    safe_cid = sanitize_echo_id(chat_id)
+    safe_fid = sanitize_echo_id(file_id)
+    browserviews_dir = os.path.realpath(
+        get_echo_session_path(safe_uid, safe_cid, BROWSER_VIEWS_DIR_NAME)
+    )
+    files_dir = os.path.realpath(get_echo_session_path(safe_uid, safe_cid, "files"))
+    db_path = get_echo_session_path(safe_uid, safe_cid, "db")
+
+    target_path = await asyncio.to_thread(
+        _resolve_browser_frame_image_sync,
+        db_path,
+        file_id,
+        safe_fid,
+        browserviews_dir,
+        files_dir,
+    )
     if not target_path:
         raise HTTPException(status_code=404, detail="Capture introuvable.")
 

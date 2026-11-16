@@ -1,11 +1,12 @@
 """
 title: ECHO V6 Native Skills Router
 author: Wilfried BARNAVON
-version: 6.2.0.1
+version: 6.6.9.1
 description: Routeur souverain FastAPI pour la gestion CRUD des Skills ECHO (/echo/v1/skills et /api/v1/skills).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.9.1: Remplacement de asyncio.get_event_loop().time() par asyncio.get_running_loop().time().
 # 6.2.0.1: Routeur souverain /echo/v1/skills interfacé avec echo_skills.py sous verrou get_user_skill_lock.
 
 from __future__ import annotations
@@ -118,7 +119,7 @@ async def create_skill(payload: SkillPayload, user: Any = Depends(get_verified_u
     raw_id = (payload.id or payload.name or "").strip().lower()
     slug = re.sub(r"[^a-z0-9_-]+", "_", raw_id).strip("_")
     if not slug or not _SKILL_ID_RE.match(slug):
-        slug = f"skill_{int(asyncio.get_event_loop().time() * 1000)}"
+        slug = f"skill_{int(asyncio.get_running_loop().time() * 1000)}"
 
     name = payload.name.strip() or slug
     desc = payload.description.strip()

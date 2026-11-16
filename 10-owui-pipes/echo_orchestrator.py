@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 6.6.2.1
+version: 6.6.9.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.9.1: Retrait de register_echo_wm_routes, de l'appel redondant register_echo_audio_routes dans Pipe.__init__ et de UserValves.SHOW_CONTEXT_METRICS.
 # 6.6.2.1: Exposition du modèle actif réel et du mode cognitif dans les payloads d'état orchestrateur et alignement du routage multi-modèles.
 # 5.239.0.1: Concision maximale des descriptions des vannes UserValves (mode, cible, crédits, cascades, relances).
 # 5.238.1.1: Intégration de MODEL_ATHENA et refonte orthogonale des UserValves (COGNITIVE_MODE + COGNITIVE_MODEL) avec routage et menu d'escalade pilotés par get_allowed_models.
 # 5.237.20.2: Synchronisation chirurgicale des éditions in-place Open WebUI (user/assistant) dans message_shadows et préservation intégrale du préfixe multi-étapes en vol.
-# 5.237.20.1: Suture par tour logique, scellement complet des Shadows assistant multi-messages (outils et cascades inclus), retrait du hachage cumulatif et suivi de last_turn_msg_id.
 
 
 # ==============================================================================
@@ -49,14 +49,6 @@ from echo_core import (
 from echo_gemini_client import EchoGeminiClient
 from echo_http import FatalAPIError
 from echo_logger import DebugLogger
-try:
-    from echo_audio import register_echo_audio_routes
-except ImportError:
-    register_echo_audio_routes = None
-try:
-    from echo_window_manager import register_echo_wm_routes
-except ImportError:
-    register_echo_wm_routes = None
 from echo_constants import (
     MODEL_ZEPHYR,
     get_allowed_models, parse_model_policy,
@@ -680,7 +672,6 @@ class Pipe:
         MAX_CONTEXT_SIZE: int = Field(default=1048576, description="Taille maximale du contexte absorbable en tokens.")
 
     class UserValves(BaseModel):
-        SHOW_CONTEXT_METRICS: bool = Field(default=True)
         COGNITIVE_MODE: Literal["AUTO", "MANUAL"] = Field(
             default="AUTO",
             description="Mode : AUTO (dynamique) ou MANUAL (fixe)."
@@ -707,16 +698,6 @@ class Pipe:
 
     def __init__(self):
         self.valves, self.data_dir = self.Valves(), "/app/backend/data"
-        if register_echo_audio_routes is not None:
-            try:
-                register_echo_audio_routes()
-            except Exception as e:
-                print(f"[Écho] ⚠️ Échec enregistrement routes audio : {e}")
-        if register_echo_wm_routes is not None:
-            try:
-                register_echo_wm_routes()
-            except Exception as e:
-                print(f"[Écho] ⚠️ Échec enregistrement routes Window Manager : {e}")
 
     async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, __event_call__: Optional[Any] = None, __request__: Optional[Any] = None, __tools__: list = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
 

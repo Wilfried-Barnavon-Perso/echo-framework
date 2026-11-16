@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import { ECHO_API_BASE_URL, getEchoCognitionSnapshot } from '$lib/apis/echo';
+import { ECHO_API_BASE_URL, getEchoCognitionSnapshot, getEchoToken } from '$lib/apis/echo';
 import { isSavedChatId } from '$lib/utils/chatId';
 
 export interface EchoContextGaugePayload {
@@ -357,7 +357,7 @@ export const refreshCognitionSnapshot = async (
 	chatId: string
 ): Promise<EchoCognitionSnapshot | null> => {
 	if (typeof window === 'undefined') return null;
-	const token = localStorage?.token;
+	const token = getEchoToken();
 	if (!token || !chatId || !isSavedChatId(chatId)) return null;
 
 	try {
@@ -369,4 +369,133 @@ export const refreshCognitionSnapshot = async (
 	} catch {
 		return null;
 	}
+};
+
+// ============================================================================
+// Gestionnaire SSE global unique pour /echo/v1/wm/stream
+// ============================================================================
+let wmEventSource: EventSource | null = null;
+let wmReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let wmActive = false;
+let wmGetActiveChatId: () => string = () => '';
+
+const clearWmReconnectTimer = () => {
+	if (wmReconnectTimer !== null) {
+		clearTimeout(wmReconnectTimer);
+		wmReconnectTimer = null;
+	}
+};
+
+const closeWmEventSource = () => {
+	clearWmReconnectTimer();
+	if (wmEventSource) {
+		wmEventSource.close();
+		wmEventSource = null;
+	}
+};
+
+const openWmEventSource = () => {
+	if (typeof window === 'undefined' || !wmActive) return;
+	const token = getEchoToken();
+	if (!token) return;
+
+	closeWmEventSource();
+	const wmUrl = `${ECHO_API_BASE_URL}/wm/stream?token=${encodeURIComponent(token)}`;
+	const source = new EventSource(wmUrl);
+	wmEventSource = source;
+
+	source.onmessage = (event) => {
+		try {
+			const data = JSON.parse(event.data);
+			if (!data || typeof data !== 'object') return;
+
+			if (data.type === 'echo_context_gauge' && data.payload) {
+				const activeCid = wmGetActiveChatId();
+				if (!data.payload.chat_id || data.payload.chat_id === activeCid) {
+					echoContextGauge.set(data.payload);
+				}
+			} else if (data.type === 'echo_open_tab') {
+				const cid = data.chat_id || wmGetActiveChatId() || '';
+				if (cid && data.kind) {
+					requestEchoTabOpen(cid, data.kind, data.payload);
+				}
+			} else if (data.type === 'echo_browser_frame') {
+				const cid = data.chat_id || wmGetActiveChatId() || '';
+				const frame = data.frame || data.payload || data;
+				if (cid && frame) {
+					const frameKey = frame.file_id || frame.frame_id || frame.id;
+					echoBrowserLiveFrames.update((all) => {
+						const list = all[cid] || [];
+						const idx = frameKey
+							? list.findIndex((f) => (f.file_id || f.frame_id || f.id) === frameKey)
+							: -1;
+						const next =
+							idx >= 0
+								? list.map((f, i) => (i === idx ? { ...f, ...frame } : f))
+								: [...list, frame].slice(-50);
+						return { ...all, [cid]: next };
+					});
+				}
+			} else if (data.type === 'window_mounted') {
+				const cid = data.chat_id || wmGetActiveChatId() || '';
+				const frame = {
+					id: data.id || data.frame_id || crypto.randomUUID(),
+					title: data.title || data.name || 'Application',
+					html: data.html || data.code || '',
+					src: data.src || '',
+					created_at: Date.now(),
+					options: data.options || {}
+				};
+				if (cid) {
+					echoCanvasFrames.update((all) => {
+						const list = all[cid] || [];
+						return { ...all, [cid]: [...list, frame] };
+					});
+					requestEchoTabOpen(cid, 'echo-canvas', { frameId: frame.id });
+				}
+			}
+		} catch {
+			// Ignorer les trames JSON malformées
+		}
+	};
+
+	source.onerror = () => {
+		if (wmEventSource === source) {
+			source.close();
+			wmEventSource = null;
+		}
+		if (wmActive) {
+			clearWmReconnectTimer();
+			wmReconnectTimer = setTimeout(() => {
+				wmReconnectTimer = null;
+				if (wmActive) {
+					openWmEventSource();
+				}
+			}, 3000);
+		}
+	};
+};
+
+export const stopEchoWmStream = (): void => {
+	wmActive = false;
+	closeWmEventSource();
+};
+
+export const startEchoWmStream = (getActiveChatId: () => string): (() => void) => {
+	if (typeof window === 'undefined') return () => {};
+	wmGetActiveChatId = getActiveChatId;
+	const token = getEchoToken();
+	if (!token) {
+		stopEchoWmStream();
+		return () => {};
+	}
+
+	wmActive = true;
+	if (!wmEventSource) {
+		openWmEventSource();
+	}
+
+	return () => {
+		stopEchoWmStream();
+	};
 };

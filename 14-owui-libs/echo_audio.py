@@ -2,16 +2,16 @@
 """
 title: ECHO In-Process Audio Bridge
 author: ECHO Framework
-version: 5.226.18.0
+version: 6.6.9.1
 description: Pont audio in-process (STT Gemini MODEL_ZEPHYR & TTS Edge Vivienne).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.9.1: Durcissement de resolve_user_id (JWT valide ou loopback strict, sinon HTTP 401) sur /transcriptions, /speech, /models et /voices.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.4: Intégration du paramètre pitch (-2Hz) et rétablissement de la vitesse nominale 1.0.
 # 1.3: Ajustement de la vitesse d'élocution TTS par défaut à 1.06 (106%).
 # 1.2: Ajustement de la vitesse d'élocution TTS par défaut à 1.1 (110%).
-# 1.1: Restauration température STT par défaut, maxOutputTokens=8192, thinkingLevel=minimal et vitesse 1.25.
 
 import os
 import sys
@@ -81,9 +81,43 @@ def sniff_audio_mime_type(data: bytes) -> str:
     return "audio/webm"
 
 
-def resolve_user_id(request: Optional[Request] = None) -> str:
-    """Résout de manière sécurisée l'identifiant utilisateur actif."""
-    if request:
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+
+
+def _is_loopback_request(request: Optional[Request]) -> bool:
+    """Vérifie si la requête provient explicitement de l'hôte loopback local."""
+    if request is None or request.client is None:
+        return False
+    host = (request.client.host or "").strip().lower()
+    return host in _LOOPBACK_HOSTS
+
+
+async def resolve_user_id(request: Optional[Request] = None) -> str:
+    """Résout et authentifie l'identifiant utilisateur via JWT ou loopback interne OWUI."""
+    if request is not None:
+        token = ""
+        auth_header = request.headers.get("authorization") or ""
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header[7:].strip().strip('"')
+        if not token:
+            token = (request.cookies.get("token") or "").strip().strip('"')
+
+        if token and not token.startswith("sk-"):
+            try:
+                from open_webui.utils.auth import decode_token, is_valid_token
+                decoded = decode_token(token)
+                redis_client = getattr(getattr(request.app, "state", None), "redis", None)
+                if isinstance(decoded, dict) and decoded.get("id") and await is_valid_token(decoded, redis_client):
+                    return str(decoded["id"])
+            except ImportError:
+                pass
+            except Exception:
+                pass
+
+    if not _is_loopback_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    if request is not None:
         for header_name in ["x-openwebui-user-id", "x-webui-user", "x-user-id", "user-id"]:
             val = request.headers.get(header_name)
             if val and val.strip():
@@ -151,7 +185,7 @@ async def transcribe_audio(
 
     mime_type = sniff_audio_mime_type(audio_bytes)
     b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
-    user_id = resolve_user_id(request)
+    user_id = await resolve_user_id(request)
     target_model = model or ECHO_AUDIO_DEFAULT_STT_MODEL
 
     payload = {
@@ -197,6 +231,7 @@ async def transcribe_audio(
 @audio_router.post("/speech")
 async def text_to_speech(request: Request) -> Response:
     """Endpoint TTS compatible OpenAI relayé vers Microsoft Edge Read-Aloud."""
+    await resolve_user_id(request)
     try:
         body = await request.json()
     except Exception:
@@ -230,8 +265,9 @@ async def text_to_speech(request: Request) -> Response:
 
 
 @audio_router.get("/models")
-async def list_audio_models() -> JSONResponse:
+async def list_audio_models(request: Request) -> JSONResponse:
     """Liste les modèles STT et TTS disponibles."""
+    await resolve_user_id(request)
     return JSONResponse(
         content={
             "models": [
@@ -243,8 +279,9 @@ async def list_audio_models() -> JSONResponse:
 
 
 @audio_router.get("/voices")
-async def list_audio_voices() -> JSONResponse:
+async def list_audio_voices(request: Request) -> JSONResponse:
     """Liste les voix Edge TTS recommandées pour Open WebUI."""
+    await resolve_user_id(request)
     return JSONResponse(
         content={
             "voices": [

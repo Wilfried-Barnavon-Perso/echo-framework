@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Links & URN Filter
 author: Wilfried BARNAVON
-version: 5.231.55.1
+version: 6.6.9.1
 description: Filtre bidirectionnel (Inlet/Outlet: Pont DOM JS & window.echoOpenCodex / Outlet: Validation physique FS Fail-Closed et mutation d'ancres Codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.9.1: Suppression des injections JS (EchoCodexUI, EchoEvents, _get_js_bridge, emit_execute) ; conservation de la validation FS et transformation URN/ancres Codex.
 # 5.231.55.1: Réétagement de la priorité à 80 (après new_context_filter à 70 et avant conversation_rag_filter à 100).
 # 5.231.39.1: Synchronisation sur EchoCodexUI.get_codex_bridge_js v5.231.39.1 (isolation multi-chat des HUDs parqués et Cold Start sans faux session_id).
 # 5.231.11.1: Réétagement de la priorité à 40 (après new_context_filter à 30 et avant conversation_rag_filter à 100).
 # 5.231.6.1: Factorisation SSOT de _get_js_bridge via EchoCodexUI.get_codex_bridge_js et neutralisation target=_blank.
-# 5.230.0.6: Hot-Update echoOpenCodex sans blocage _echoCodexBridgeAttached, CSS text-decoration-skip-ink et factorisation.
 
 import re
 import sys
@@ -34,8 +34,6 @@ from echo_constants import (
     ECHO_CODEX_WORKSPACES,
 )
 from echo_paths import check_codex_file_exists, normalize_codex_rel_path
-from echo_events import EchoEvents
-from echo_codex_ui import EchoCodexUI
 
 _URN_REGEX = re.compile(CODEX_URN_PATTERN)
 _ANCHOR_REGEX = re.compile(CODEX_ANCHOR_PATTERN)
@@ -110,9 +108,6 @@ class Filter:
     def __init__(self):
         self.valves = self.Valves()
 
-    def _get_js_bridge(self) -> str:
-        return EchoCodexUI.get_codex_bridge_js()
-
     def _resolve_urns_in_text(self, text: str, user_id: str, current_chat_id: str) -> str:
         """Valide physiquement les URNs Codex et les mute en ancres DOM (#codex:...) encodées CommonMark ou les neutralise."""
         def _resolve_urn(match: re.Match) -> str:
@@ -156,13 +151,9 @@ class Filter:
         __metadata__: Optional[Dict] = None,
         __event_emitter__: Optional[Any] = None
     ) -> dict:
-        """Injecte l'écouteur DOM JS client et restaure les ancres #codex: en URNs codex: dans l'historique."""
+        """Restaure les ancres #codex: en URNs codex: dans l'historique."""
         if not self.valves.ENABLE_CODEX_LINKS:
             return body
-
-        if __event_emitter__:
-            events = EchoEvents(__event_emitter__)
-            await events.emit_execute(self._get_js_bridge())
 
         messages = body.get("messages") or []
         if not messages:
@@ -190,10 +181,6 @@ class Filter:
         """Valide physiquement l'existence (FS) et mute les URNs en ancres locales DOM sur content et output."""
         if not self.valves.ENABLE_CODEX_LINKS:
             return body
-
-        if __event_emitter__:
-            events = EchoEvents(__event_emitter__)
-            await events.emit_execute(self._get_js_bridge())
 
         messages = body.get("messages") or []
         if not messages:
