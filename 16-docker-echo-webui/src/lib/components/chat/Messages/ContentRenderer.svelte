@@ -8,15 +8,9 @@
 	import {
 		config,
 		user,
-		artifactCode,
-		chatId as currentChatId,
-		mobile,
-		settings,
-		showArtifacts,
-		showTabs,
-		showEmbeds
+		settings
 	} from '$lib/stores';
-	import { onDestroy, onMount, tick, getContext } from 'svelte';
+	import { onDestroy, onMount, getContext } from 'svelte';
 	const i18n = getContext('i18n');
 
 	import Markdown from './Markdown.svelte';
@@ -153,50 +147,8 @@
 				)
 			: messageContent;
 
-	let autoOpenedArtifactIds = new Set();
 	/** @type {ReturnType<typeof selectedComment>} */
 	let commentSelection = null;
-
-	const hasClosingCodeFence = (raw = '') => /(?:^|\n)```[ \t]*$/.test(raw.trimEnd());
-
-	const markdownUpdateHandler = /** @type {any} */ (
-		async (
-			/** @type {{ lang?: string; raw?: string; text?: string }} */ token,
-			codeBlockId = ''
-		) => {
-			const { lang = '', raw = '', text: code = '' } = token;
-			const normalizedLang = lang.toLowerCase();
-			const isArtifact =
-				['html', 'svg'].includes(normalizedLang) ||
-				(normalizedLang === 'xml' && code.toLowerCase().includes('<svg'));
-			const artifactId = codeBlockId || `${normalizedLang}:${raw}`;
-
-			if (
-				($settings?.detectArtifacts ?? true) &&
-				!compactPreview &&
-				isArtifact &&
-				hasClosingCodeFence(raw) &&
-				!autoOpenedArtifactIds.has(artifactId) &&
-				!$mobile &&
-				$currentChatId
-			) {
-				autoOpenedArtifactIds.add(artifactId);
-				await tick();
-				showArtifacts.set(true);
-				showTabs.set(true);
-			}
-		}
-	);
-
-	const previewHandler = /** @type {any} */ (
-		async (/** @type {string} */ value) => {
-			console.log('Preview', value);
-			await artifactCode.set(/** @type {any} */ (value));
-			await showTabs.set(true);
-			await showArtifacts.set(true);
-			await showEmbeds.set(false);
-		}
-	);
 
 	const updateSelection = () => {
 		if (usingFloatingButtons) return;
@@ -309,8 +261,6 @@
 			{onTaskClick}
 			{onToolCallResolved}
 			{onSave}
-			onUpdate={markdownUpdateHandler}
-			onPreview={previewHandler}
 		/>
 	{:else if $settings?.renderMarkdownInAssistantMessages ?? true}
 		<div
@@ -344,8 +294,6 @@
 				{onTaskClick}
 				{onToolCallResolved}
 				{onSave}
-				onUpdate={markdownUpdateHandler}
-				onPreview={previewHandler}
 			/>
 		</div>
 	{:else}

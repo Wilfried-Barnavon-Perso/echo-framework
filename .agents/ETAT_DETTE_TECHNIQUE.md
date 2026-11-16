@@ -15,7 +15,7 @@ Ce document recense les 5 chantiers architecturaux différés à l'issue de l'au
   - `12-owui-tools/agent_orchestration_tool.py` L251, L267 (`forge_skill`) ;
   - `12-owui-tools/identity_vault_tool.py` L184, L189, L212, L217 (`manage_identity`) ;
   - `12-owui-tools/strategic_planner.py` L566, L576 (`process_plan`).
-- **Sandbox interactive `echo_monitor`** : `12-owui-tools/code_executor_tool.py` L59, L78, L258, L279, L406 (`emit_execute` / `call_execute` pour `echoCreateFloatingMonitor` et `echoPushMonitorEvent` vers l'`<iframe>`).
+- **Sandbox interactive `echo_monitor`** : *(Migré en 6.6.17)* `12-owui-tools/code_executor_tool.py` (`v6.6.16.1`) et `14-owui-libs/echo_ui.py` (`v6.6.16.1`, suppression de `get_floating_monitor_js()`) ont été raccordés nativement à `EchoCanvasTab.svelte` via le bus SSE/RPC `/echo/v1/wm` et `EchoWindowManager` (`v6.6.16.2`).
 - **HUDs transitoires & Actions** :
   - `#echo-migration-hud` : `13-owui-actions/resume_in_new_chat_action.py` L285-321, L589-593 (`call_execute`) ;
   - `#echo-clone-hud` : `15-owui-events/echo_chat_cloned_event.py` L83-114, L159, L173, L213 (`emit_execute`) ;
@@ -29,7 +29,7 @@ Ce document recense les 5 chantiers architecturaux différés à l'issue de l'au
 ### Architecture cible
 - Remplacer `emit_execute` / `call_execute` et la fragmentation UCTP par des événements typés déclaratifs sur le bus SSE `/echo/v1/wm/stream` avec retour RPC JSON structuré sur `POST /echo/v1/wm/rpc` :
   - `ui_modal_request` / `ui_modal_response` (Svelte natif) pour `ask_user`, `forge_skill`, `manage_identity`, `process_plan` et `purge_memory_action.py` ;
-  - `monitor_frame_open` / `monitor_frame_event` pour `echo_monitor` dans `code_executor_tool.py` ;
+  - ~~`monitor_frame_open` / `monitor_frame_event` pour `echo_monitor` dans `code_executor_tool.py`~~ *(Réalisé en 6.6.17 via `window_mounted` / `echo_canvas_event` et `canvas_ui_event`)* ;
   - `hud_progress` (`migration` / `clone`) rendu par un composant Svelte global dans `(app)/+layout.svelte` ;
   - Action d'export PDF portée par un handler client natif déclenché sur événement typé.
 - Supprimer `new Function` dans `Chat.svelte:1808`, `EchoUI.get_custom_modals_js()`, `_build_uctp_frames` et `_broadcast_execute`.

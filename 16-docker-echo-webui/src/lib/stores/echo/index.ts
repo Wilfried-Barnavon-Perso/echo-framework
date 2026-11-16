@@ -68,10 +68,20 @@ export interface EchoCanvasFrame {
 	title?: string;
 	html?: string;
 	src?: string;
+	width?: string;
+	height?: string;
 	created_at?: number;
 	chat_id?: string;
 	options?: Record<string, any>;
 	[key: string]: any;
+}
+
+export interface EchoCanvasEventPayload {
+	chatId: string;
+	windowId: string;
+	data: any;
+	reqId?: string | null;
+	seq: number;
 }
 
 export interface EchoCognitionStep {
@@ -227,6 +237,8 @@ export const echoBrowserTarget = writable<{
 export const echoBrowserLiveFrames = writable<Record<string, any[]>>({});
 export const echoCanvasFrames = writable<Record<string, EchoCanvasFrame[]>>({});
 export const echoCanvasActiveFrame = writable<Record<string, string>>({});
+export const echoCanvasLastEvent = writable<EchoCanvasEventPayload | null>(null);
+let canvasEventSeq = 0;
 export const requestEchoTabOpen = (
 	chatId: string,
 	kind: EchoTabKind,
@@ -440,20 +452,37 @@ const openWmEventSource = () => {
 				}
 			} else if (data.type === 'window_mounted') {
 				const cid = data.chat_id || wmGetActiveChatId() || '';
-				const frame = {
-					id: data.id || data.frame_id || crypto.randomUUID(),
+				const frame: EchoCanvasFrame = {
+					id: String(data.id || data.frame_id || data.window_id || crypto.randomUUID()),
 					title: data.title || data.name || 'Application',
 					html: data.html || data.code || '',
 					src: data.src || '',
+					width: data.width || '100%',
+					height: data.height || '100%',
 					created_at: Date.now(),
 					options: data.options || {}
 				};
 				if (cid) {
 					echoCanvasFrames.update((all) => {
 						const list = all[cid] || [];
-						return { ...all, [cid]: [...list, frame] };
+						const idx = list.findIndex((f) => f.id === frame.id);
+						const next = idx >= 0 ? list.map((f, i) => (i === idx ? { ...f, ...frame } : f)) : [...list, frame];
+						return { ...all, [cid]: next };
 					});
-					requestEchoTabOpen(cid, 'echo-canvas', { frameId: frame.id });
+					echoCanvasActiveFrame.update((curr) => ({ ...curr, [cid]: frame.id }));
+					requestEchoTabOpen(cid, 'echo-canvas', { frameId: frame.id, auto: data.auto ?? true });
+				}
+			} else if (data.type === 'echo_canvas_event') {
+				const cid = data.chat_id || wmGetActiveChatId() || '';
+				if (cid) {
+					canvasEventSeq += 1;
+					echoCanvasLastEvent.set({
+						chatId: cid,
+						windowId: String(data.window_id || 'default'),
+						data: data.data,
+						reqId: data.req_id ?? null,
+						seq: canvasEventSeq
+					});
 				}
 			}
 		} catch {

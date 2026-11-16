@@ -9,7 +9,6 @@ export type PanelTabKind =
 	| 'terminal'
 	| 'browser'
 	| 'desktop'
-	| 'artifacts'
 	| 'preview'
 	| 'voice'
 	| 'comments'

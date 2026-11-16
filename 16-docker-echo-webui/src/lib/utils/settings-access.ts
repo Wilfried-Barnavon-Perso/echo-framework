@@ -95,27 +95,7 @@ export function canSearchSetting(
 	) {
 		return false;
 	}
-	if (
-		/^settings\.admin\.general\.(communitySharing|messageRating|folderMaxFileCount|memories|memorySystemContext|skillLazyLoading|skillContentMaxChars|skillPreviewMaxChars|viewChatMaxChars|notes|apps)$/.test(
-			stem
-		)
-	) {
-		return false;
-	}
-	if (
-		/^settings\.admin\.interface\.(sections\.(tasks|chat)|taskModel|localTaskModel|externalTaskModel|taskModelParameters|contextCompaction|contextCompactionModel|tokenThreshold|tokenCap|retainedMessages|contextCompactionPrompt|availableVariables|toolPermissions.*|toolSearch.*|retrievalQueryGeneration|webSearchQueryGeneration|queryGenerationPrompt|imagePromptGenerationPrompt|toolsFunctionCallingPrompt|visibility\.(selectedWebSearch|selectedImageGeneration|selectedCodeInterpreter))$/.test(
-			stem
-		)
-	) {
-		return false;
-	}
-	if (key.startsWith('settings.admin.audio.')) {
-		return (
-			stem === 'settings.admin.audio.title' ||
-			stem === 'settings.admin.audio.sections.speechToText' ||
-			stem === 'settings.admin.audio.sections.textToSpeech'
-		);
-	}
+	if (key.startsWith('settings.admin.')) return false;
 	if (stem === 'settings.personal.shortcuts.newTemporaryChat')
 		return !!canUseTemporaryChats(context);
 	if (stem === 'settings.personal.shortcuts.deleteChat') return canManageChats(context, 'delete');

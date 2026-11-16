@@ -17,7 +17,7 @@ class PanelTab(ViewModel):
     id: str
     kind: Literal[
         'chat', 'comments', 'files', 'file', 'terminal', 'browser', 'desktop', 'side',
-        'artifacts', 'preview', 'voice',
+        'preview', 'voice',
         'echo-cognition', 'echo-codex', 'echo-vault', 'echo-canvas', 'echo-browser'
     ]
     label: str

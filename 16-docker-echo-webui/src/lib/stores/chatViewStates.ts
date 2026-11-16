@@ -52,7 +52,7 @@ export function serializeChatView(state: ChatViewState): ChatViewState {
 	for (const tab of panels.tabs) {
 		if (
 			tab.untitled ||
-			['voice', 'artifacts', 'preview'].includes(tab.kind) ||
+			['voice', 'preview'].includes(tab.kind) ||
 			(tab.kind === 'side' && !isSavedChatId(tab.chatId))
 		)
 			panels = removeTab(panels, tab.id);

@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 6.6.9.2
+version: 6.6.16.1
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.16.1: Suppression de get_floating_monitor_js suite à la migration de echo_monitor vers EchoCanvasTab.svelte.
 # 6.6.9.2: Purge du reliquat mort get_esm_loader_js.
 # 6.6.9.1: Purge des ponts JS obsolètes (get_webgpu_probe_js, get_edge_embedding_bridge_js, get_event_dispatcher_js, get_mobile_guard_js, safe_deploy, get_context_gauge_renderer_js) et du doublon CustomEvent dans deploy_context_gauge.
 # 6.6.2.2: Purge de monitor_ECHO et _generate_webplayer_js (remplacés par l'onglet natif EchoBrowserTab).
 # 6.6.2.1: Purge de _generate_agent_monitor_js et _generate_identity_vault_js (remplacés par les onglets natifs Cognition et Vault).
-# 6.3.0.2: Rectification du fallback du tenant dans le HUD (aicode-consumers au lieu de ECHO).  # noqa: E501
 
 
 import sys
@@ -2661,160 +2661,3 @@ return new Promise(function(resolve) {{
           inputField.focus();
       };
       """
-
-    @staticmethod
-    def get_floating_monitor_js() -> str:
-        """Fournit le code JS autonome de la fenêtre flottante ECHO Monitor (multiplexée par window_id).
-        Hérite désormais nativement de EchoFloatingWindow pour bénéficier des fenêtres interactives.
-        L'iframe est construite via le DOM (propriété srcdoc) : aucun échappement HTML manuel requis.
-        allow-same-origin est volontairement exclu : une iframe srcdoc hériterait sinon de l'origine
-        d'Open WebUI (accès localStorage/token de session depuis le code de la Sandbox)."""
-        return EchoUI.get_floating_window_class_js() + """
-      window._echoUIPayloads = window._echoUIPayloads || {};
-      window._echoUIPayloadsByChat = window._echoUIPayloadsByChat || {};
-      window._echoUIInboxByChat = window._echoUIInboxByChat || {};
-      window._echoWindowChatMap = window._echoWindowChatMap || {};
-      if (!window._echoUIAggregatorBound) {
-          window._echoUIAggregatorBound = true;
-          window.addEventListener('message', (event) => {
-              if (event.data && event.data.echoUIPayload) {
-                  const { window_id, payload } = event.data.echoUIPayload;
-                  window._echoUIPayloads[window_id] = payload;
-                  const cid = window._echoWindowChatMap[window_id] || '_global';
-                  if (!window._echoUIPayloadsByChat[cid]) window._echoUIPayloadsByChat[cid] = {};
-                  window._echoUIPayloadsByChat[cid][window_id] = payload;
-              }
-              if (event.data && event.data.echoUIRequest) {
-                  const req = event.data.echoUIRequest;
-                  const wid = req.window_id || 'default';
-                  const cid = window._echoWindowChatMap[wid] || '_global';
-                  if (!window._echoUIInboxByChat[cid]) window._echoUIInboxByChat[cid] = [];
-                  window._echoUIInboxByChat[cid].push(req);
-              }
-              if (event.data && event.data.echoSignal === 'abort') {
-                  window._echoUIPayloads['_echo_signal'] = 'abort';
-                  const cid = (event.data.chat_id) || (window.EchoWM && typeof window.EchoWM.getActiveChatId === 'function' ? window.EchoWM.getActiveChatId() : '_global');
-                  if (!window._echoUIPayloadsByChat[cid]) window._echoUIPayloadsByChat[cid] = {};
-                  window._echoUIPayloadsByChat[cid]['_echo_signal'] = 'abort';
-              }
-              if (event.data && event.data.echoPing) {
-                  const wid = event.data.echoPing;
-                  if (!window._echoUIPayloads['_pings']) window._echoUIPayloads['_pings'] = {};
-                  window._echoUIPayloads['_pings'][wid] = Date.now();
-                  const cid = window._echoWindowChatMap[wid] || '_global';
-                  if (!window._echoUIPayloadsByChat[cid]) window._echoUIPayloadsByChat[cid] = {};
-                  if (!window._echoUIPayloadsByChat[cid]['_pings']) window._echoUIPayloadsByChat[cid]['_pings'] = {};
-                  window._echoUIPayloadsByChat[cid]['_pings'][wid] = Date.now();
-              }
-          });
-      }
-      window._echoGetAggregatedPayload = (chatId) => {
-          if (chatId) {
-              window._echoUIPayloadsByChat = window._echoUIPayloadsByChat || {};
-              if (!window._echoUIPayloadsByChat[chatId]) {
-                  window._echoUIPayloadsByChat[chatId] = {};
-              }
-              const out = Object.assign({}, window._echoUIPayloadsByChat[chatId]);
-              if (window._echoUIInboxByChat && Array.isArray(window._echoUIInboxByChat[chatId]) && window._echoUIInboxByChat[chatId].length > 0) {
-                  out._inbox_events = window._echoUIInboxByChat[chatId].splice(0);
-              }
-              return out;
-          }
-          return window._echoUIPayloads;
-      };
-
-      window.echoPushMonitorEvent = (window_id, eventData, reqId, chatId) => {
-          const hudId = 'echo-sandbox-monitor-hud-' + window_id;
-          const body = document.getElementById(hudId + '-body');
-          if (!body) return false;
-          const iframe = body.querySelector('iframe');
-          if (iframe && iframe.contentWindow) {
-              iframe.contentWindow.postMessage({ echoSandboxEvent: eventData, req_id: reqId || null, window_id: window_id }, '*');
-              return true;
-          }
-          return false;
-      };
-
-      window.echoCreateFloatingMonitor = (window_id, title, htmlContent, width, height, chatId) => {
-          const hudId = 'echo-sandbox-monitor-hud-' + window_id;
-          const effectiveCid = chatId || (window.EchoWM && typeof window.EchoWM.getActiveChatId === 'function' ? window.EchoWM.getActiveChatId() : '');
-          if (effectiveCid) {
-              window._echoWindowChatMap[window_id] = effectiveCid;
-          }
-
-          let monitor = window['echo_monitor_obj_' + window_id];
-          if (!document.getElementById(hudId) || !monitor) {
-              monitor = new window.EchoFloatingWindow({
-                  id: hudId,
-                  title: title,
-                  icon: '🚀',
-                  width: width || '500px',
-                  height: height || '400px'
-              });
-              window['echo_monitor_obj_' + window_id] = monitor;
-
-              monitor.onClose = () => {
-                  delete window['echo_monitor_obj_' + window_id];
-              };
-
-              monitor.render();
-              monitor.attachBaseEvents();
-          } else {
-              const titleEl = document.querySelector(`#${hudId}-header div`);
-              if (titleEl) titleEl.textContent = title;
-          }
-          const hudEl = document.getElementById(hudId);
-          if (hudEl && effectiveCid) {
-              hudEl.setAttribute('data-chat-id', effectiveCid);
-              hudEl.setAttribute('data-echo-chat-id', effectiveCid);
-          }
-
-          const body = document.getElementById(hudId + '-body');
-          if (body) {
-              const existingResizer = document.getElementById(hudId + '-resizer');
-              body.innerHTML = '';
-              const iframe = document.createElement('iframe');
-              iframe.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-popups');
-              iframe.style.cssText = 'width:100%; height:100%; border:none; display:block; flex:1;';
-              const heartbeat = `<script>
-                  setInterval(function(){
-                      window.parent.postMessage({ echoPing: '${window_id}' }, '*');
-                  }, 1000);
-                  try { window.parent.postMessage({ type: 'echo:iframe:init' }, '*'); } catch (e) {}
-                  window._echoPendingReqs = {};
-                  window._echoEventListeners = [];
-                  window.addEventListener('message', function(ev) {
-                      if (ev.data && ev.data.type === 'theme-update') {
-                          if (ev.data.bgColor) document.documentElement.style.setProperty('--echo-bg', ev.data.bgColor);
-                          if (ev.data.textColor) document.documentElement.style.setProperty('--echo-text', ev.data.textColor);
-                      }
-                      if (ev.data && ev.data.echoSandboxEvent !== undefined) {
-                          const rid = ev.data.req_id;
-                          if (rid && window._echoPendingReqs[rid]) {
-                              window._echoPendingReqs[rid](ev.data.echoSandboxEvent);
-                              delete window._echoPendingReqs[rid];
-                          }
-                          for (const fn of window._echoEventListeners) {
-                              try { fn(ev.data.echoSandboxEvent, rid); } catch (e) {}
-                          }
-                      }
-                  });
-                  window.echoRequest = function(action, payload) {
-                      const reqId = 'req_' + Math.random().toString(36).slice(2) + '_' + Date.now();
-                      return new Promise(function(resolve) {
-                          window._echoPendingReqs[reqId] = resolve;
-                          window.parent.postMessage({ echoUIRequest: { window_id: '${window_id}', action: action, payload: payload, req_id: reqId } }, '*');
-                      });
-                  };
-                  window.onEchoEvent = function(cb) {
-                      if (typeof cb === 'function') window._echoEventListeners.push(cb);
-                  };
-              </script>`;
-              iframe.srcdoc = heartbeat + htmlContent;
-              body.appendChild(iframe);
-              if (existingResizer) body.appendChild(existingResizer);
-          }
-          return true;
-      };
-      """
-

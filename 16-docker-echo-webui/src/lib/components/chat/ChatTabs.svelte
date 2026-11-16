@@ -23,7 +23,6 @@
 	import Sortable from 'sortablejs';
 	import { beforeNavigate } from '$app/navigation';
 	import {
-		artifactContents,
 		config,
 		embed,
 		temporaryChatEnabled,
@@ -34,7 +33,6 @@
 		showSidebar,
 		mobile,
 		showCallOverlay,
-		showArtifacts,
 		showEmbeds,
 		settings,
 		showFileNavPath,
@@ -93,7 +91,6 @@
 	import Drawer from '../common/Drawer.svelte';
 	import MobileSwipePanel from '../common/MobileSwipePanel.svelte';
 	import GitBar from './ChatTabs/GitBar.svelte';
-	import Artifacts from './Artifacts.svelte';
 	import Embeds from './ChatTabs/Embeds.svelte';
 	import SideChat from './ChatTabs/SideChat.svelte';
 	import EchoCognitionTab from '$lib/components/echo/EchoCognitionTab.svelte';
@@ -386,16 +383,15 @@
 			terminal: 'terminal',
 			browser: 'browser',
 			desktop: 'monitor',
-			artifacts: 'code',
 			preview: 'browser',
 			voice: 'microphone',
 			comments: 'chat-bubble',
 			side: 'chat-lines',
-			'echo-cognition': 'sparkles',
+			'echo-cognition': 'spark',
 			'echo-codex': 'code',
 			'echo-browser': 'browser',
 			'echo-vault': 'lock',
-			'echo-canvas': 'browser'
+			'echo-canvas': 'monitor'
 		})[kind];
 	const domId = (id: string) => `chat-panel-${encodeURIComponent(id)}`;
 	$: activeTabId = tabs.activeId;
@@ -533,7 +529,6 @@
 
 	const openFeature = (
 		kind:
-			| 'artifacts'
 			| 'preview'
 			| 'voice'
 			| 'comments'
@@ -815,7 +810,6 @@
 				bridge?.end();
 				showCallOverlay.set(false);
 			}
-			if (tab.kind === 'artifacts') showArtifacts.set(false);
 			if (tab.kind === 'preview') showEmbeds.set(false);
 			if (tab.kind?.startsWith('echo-')) {
 				dismissedAutoTabs.add(tab.kind);
@@ -1044,7 +1038,6 @@
 					...commentTarget
 				}
 			: null;
-	$: showArtifactsTab = ($artifactContents ?? []).length > 0 && $visibleControls['chat.artifacts'];
 	$: showPreviewTab = !!$embed && $embed.chatId === chatId;
 	$: availableViews = [
 		{
@@ -1052,7 +1045,6 @@
 			label: $i18n.t('New Chat'),
 			available: canSideChat
 		},
-		{ kind: 'artifacts', label: $i18n.t('Artifacts'), available: showArtifactsTab },
 		{ kind: 'preview', label: $i18n.t('Preview'), available: showPreviewTab },
 		{ kind: 'voice', label: $i18n.t('Voice'), available: $showCallOverlay },
 		{ kind: 'comments', label: $i18n.t('Comments'), available: showCommentsTab },
@@ -1060,7 +1052,7 @@
 		{ kind: 'echo-codex', label: 'Codex & Fichiers', available: true },
 		{ kind: 'echo-browser', label: 'Navigateur Web', available: true },
 		{ kind: 'echo-vault', label: 'Coffre & Identité', available: true },
-		{ kind: 'echo-canvas', label: 'Canvas & Applications', available: true }
+		{ kind: 'echo-canvas', label: 'Applications', available: true }
 	];
 
 	$: newTabViews = availableViews.filter(
@@ -1247,10 +1239,6 @@
 	) {
 		commentTarget = typeof $showTabs === 'object' ? $showTabs : {};
 		openFeature('comments');
-	}
-	$: if (viewReady && $showArtifacts && showArtifactsTab) {
-		openFeature('artifacts', true);
-		showArtifacts.set(false);
 	}
 	$: if (viewReady && $showEmbeds && showPreviewTab) {
 		openFeature('preview');
@@ -1608,8 +1596,6 @@
 					/>
 				{:else if tab.kind === 'preview'}
 					<Embeds overlay={dragged} />
-				{:else if tab.kind === 'artifacts'}
-					<Artifacts overlay={dragged} />
 				{:else if tab.kind === 'echo-cognition'}
 					<EchoCognitionTab chatId={owner.chatId ?? chatId ?? ''} />
 				{:else if tab.kind === 'echo-codex'}

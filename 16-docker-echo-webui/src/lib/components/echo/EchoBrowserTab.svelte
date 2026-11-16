@@ -45,6 +45,7 @@
     rect: { x: 0.1, y: 0.1, w: 0.8, h: 0.8 },
   };
   let imgElement: HTMLImageElement | null = null;
+  let copyFallbackUrl: string | null = null;
   let viewportWidth = 0;
   let viewportHeight = 0;
   let imgNaturalWidth = 0;
@@ -130,6 +131,7 @@
   const syncChat = (cid: string) => {
     if (cid === boundChatId) return;
     boundChatId = cid;
+    closeCopyFallback();
     pendingTarget = null;
     stopPlayback();
     revokeAllBlobs();
@@ -152,6 +154,7 @@
   $: syncChat(chatId);
 
   onDestroy(() => {
+    closeCopyFallback();
     stopPlayback();
     revokeAllBlobs();
   });
@@ -443,23 +446,92 @@
     );
   };
 
-  const copyImage = async (useCrop = false) => {
-    const blob = await renderToPngBlob(useCrop);
+  const closeCopyFallback = () => {
+    if (copyFallbackUrl) {
+      URL.revokeObjectURL(copyFallbackUrl);
+      copyFallbackUrl = null;
+    }
+  };
+
+  const openCopyFallback = async (
+    useCrop: boolean,
+    message: string,
+    preRenderedBlob?: Blob | null,
+  ) => {
+    const blob = preRenderedBlob ?? (await renderToPngBlob(useCrop));
     if (!blob) {
       toast.error("Image indisponible pour la copie.");
       return;
     }
-    try {
-      await navigator.clipboard.write([
-        new ClipboardItem({ "image/png": blob }),
-      ]);
-      toast.success(
-        useCrop
-          ? "Zone recadrée copiée dans le presse-papiers."
-          : "Capture copiée dans le presse-papiers.",
+    closeCopyFallback();
+    copyFallbackUrl = URL.createObjectURL(blob);
+    toast.error(message);
+  };
+
+  const copyImage = async (useCrop = false) => {
+    if (!imgElement || !imgElement.complete || imgElement.naturalWidth === 0) {
+      toast.error("Image indisponible pour la copie.");
+      return;
+    }
+    const hasAsyncClipboard =
+      typeof window !== "undefined" &&
+      window.isSecureContext &&
+      Boolean(navigator.clipboard?.write) &&
+      typeof window.ClipboardItem !== "undefined";
+
+    if (!hasAsyncClipboard) {
+      await openCopyFallback(
+        useCrop,
+        !window?.isSecureContext
+          ? "Copie directe bloquée en HTTP non sécurisé : faites un clic droit → Copier l'image."
+          : "Presse-papiers direct indisponible : faites un clic droit → Copier l'image.",
       );
-    } catch {
-      toast.error("Impossible de copier dans le presse-papiers.");
+      return;
+    }
+
+    const blobPromise = renderToPngBlob(useCrop).then((b) => {
+      if (!b) throw new Error("PNG_RENDER_FAILED");
+      return b;
+    });
+    const successMsg = useCrop
+      ? "Zone recadrée copiée dans le presse-papiers."
+      : "Capture copiée dans le presse-papiers.";
+
+    try {
+      // Appel synchrone dans le geste utilisateur pour préserver la transient activation (Safari/WebKit)
+      await navigator.clipboard.write([
+        new ClipboardItem({ "image/png": blobPromise }),
+      ]);
+      toast.success(successMsg);
+    } catch (err) {
+      let renderedBlob: Blob | null = null;
+      try {
+        renderedBlob = await blobPromise;
+      } catch {
+        toast.error("Image indisponible pour la copie.");
+        return;
+      }
+      if (err instanceof TypeError) {
+        try {
+          await navigator.clipboard.write([
+            new ClipboardItem({ "image/png": renderedBlob }),
+          ]);
+          toast.success(successMsg);
+          return;
+        } catch (retryErr) {
+          console.warn(
+            "[EchoBrowserTab] Échec copie presse-papiers (fallback Blob) :",
+            retryErr,
+          );
+        }
+      } else {
+        console.warn("[EchoBrowserTab] Échec copie presse-papiers :", err);
+      }
+      await openCopyFallback(
+        useCrop,
+        "Copie directe refusée par le navigateur : faites un clic droit → Copier l'image.",
+        renderedBlob,
+      );
     }
   };
 
@@ -503,6 +575,11 @@
 <svelte:window
   on:mousemove={handleWindowMouseMove}
   on:mouseup={handleWindowMouseUp}
+  on:keydown={(e) => {
+    if (e.key === "Escape" && copyFallbackUrl) {
+      closeCopyFallback();
+    }
+  }}
 />
 
 <div
@@ -808,4 +885,32 @@
       {frames.length > 0 ? `${currentIndex + 1} / ${frames.length}` : "0 / 0"}
     </span>
   </div>
+
+  {#if copyFallbackUrl}
+    <!-- Modale de repli quand l'API Clipboard est bloquée (HTTP non sécurisé / permission refusée) -->
+    <div
+      class="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex flex-col items-center justify-center p-4 gap-3"
+      role="presentation"
+      on:click|self={closeCopyFallback}
+    >
+      <div
+        class="flex items-center gap-3 px-4 py-2 rounded-full bg-emerald-500 text-gray-950 text-xs font-semibold shadow-lg"
+      >
+        <span>Mode repli : faites Clic droit → « Copier l'image »</span>
+        <button
+          type="button"
+          on:click={closeCopyFallback}
+          class="px-2 py-0.5 rounded-full bg-black/15 hover:bg-black/25 text-gray-950 font-bold"
+          aria-label="Fermer"
+        >
+          ✕
+        </button>
+      </div>
+      <img
+        src={copyFallbackUrl}
+        alt="Capture prête pour copie manuelle"
+        class="max-w-[90vw] max-h-[75vh] object-contain rounded-lg border border-gray-700 shadow-2xl select-auto"
+      />
+    </div>
+  {/if}
 </div>

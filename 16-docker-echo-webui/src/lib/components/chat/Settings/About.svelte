@@ -80,6 +80,12 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.`;
 					<BuildVersion />
 				</div>
 			</UserSettingRow>
+
+			<UserSettingRow label="Import de fichiers">
+				<span class="text-xs text-gray-700 dark:text-gray-200 font-mono">
+					4 Go max (flux zéro-RAM ECHO)
+				</span>
+			</UserSettingRow>
 		</UserSettingSection>
 
 		<UserSettingSection title="Licences & Attributions">

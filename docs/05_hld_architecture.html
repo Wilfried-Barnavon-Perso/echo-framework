@@ -907,14 +907,15 @@
             </p>
           </div>
 
-          <h3>5. Pont Audio In-Process (<code>echo_audio.py</code> v5.226.18.0)</h3>
+          <h3>5. Pont Audio In-Process (<code>echo_audio.py</code> v6.6.14.1)</h3>
           <p>Injecté de manière idempotente en position <code>0</code> du routeur FastAPI d'Open WebUI via
             <code>register_echo_audio_routes()</code> (pour devancer le catch-all <code>SPAStaticFiles</code>), ce
             module
             expose les endpoints compatibles OpenAI sous <code>/echo/v1/audio</code> : transcription STT
             (<code>/transcriptions</code>) relayée vers Gemini <code>MODEL_ZEPHYR</code>
             (<code>maxOutputTokens=8192</code>, <code>thinkingLevel="minimal"</code>, plafond <code>14 Mo</code>,
-            détection binaire des conteneurs WebM/WAV/OGG/FLAC/MP3/MP4 par <code>sniff_audio_mime_type</code>) et
+            détection binaire des conteneurs WebM/WAV/OGG/FLAC/MP3/MP4 par <code>sniff_audio_mime_type</code>, avec
+            prise en compte optionnelle du code langue <code>language</code> ISO-639-1 dans la consigne STT) et
             synthèse
             vocale TTS en streaming <code>audio/mpeg</code> (<code>/speech</code>) via Microsoft Edge Read-Aloud
             (<code>edge-tts</code>, voix <code>fr-FR-VivienneMultilingualNeural</code>, vitesse nominale
@@ -931,7 +932,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 6.6.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 6.6.18 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -1,21 +1,21 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 5.234.1.2
+version: 6.6.16.1
 description: Composant système interne : ECHO Code Executor (Python & Node.js).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.16.1: Raccordement natif de echo_monitor à l'onglet echo-canvas via EchoWindowManager (broadcast_canvas_frame, broadcast_canvas_event, consume_canvas_ui_payload) et suppression des appels emit_execute/call_execute legacy.
 # 5.234.1.2: Support du mode background=False/True (_BACKGROUND_POLLERS), ajout de control_sandbox_execution (status, listen, kill), routage d'événements echoPushMonitorEvent et alignement PAS.
 # 5.233.0.1: Décoration @echo_tool sur les 2 méthodes publiques et simplification des retours wrap_tool_output.
 # 5.232.5.1: Mise à jour de la docstring code_executor mentionnant les montages RO /main, /plans, /generated et /files.
 # 5.232.1.1: Clarification de la docstring code_executor (runtimes interactifs echo_monitor, flux bidirectionnel UI/Sandbox, Supervisor et readme sandbox).
-# 5.231.20.1: Multiplexage des exécutions concurrentes par run_id et isolation des payloads/HUDs de monitoring par chat_id.
 
 # ECHO CONFIG NAME : ECHO Code Sandbox
 
 import asyncio
-import json
+import base64
 import sys
 import uuid
 from typing import Any, List, Literal, Optional
@@ -31,7 +31,7 @@ from echo_constants import (  # noqa: E402
 from echo_core import echo_tool, wrap_tool_output  # noqa: E402
 from echo_events import EchoEvents  # noqa: E402
 from echo_paths import sanitize_echo_id  # noqa: E402
-from echo_ui import EchoUI  # noqa: E402
+from echo_window_manager import get_window_manager  # noqa: E402
 
 _BACKGROUND_POLLERS: dict[str, dict[str, Any]] = {}
 
@@ -42,40 +42,38 @@ def _resolve_sandbox_identity(__user__: Optional[dict], __metadata__: Optional[d
     return uid, cid
 
 
-async def _emit_monitor_payload(events: EchoEvents, meta: dict, cid_js: str, monitor_lib_js: str) -> None:
+async def _emit_monitor_payload(uid: str, cid: str, meta: dict) -> None:
+    wm = get_window_manager()
     msg_type = meta.get("type", "display")
-    wid_js = json.dumps(str(meta.get("window_id", "default")))
+    wid = str(meta.get("window_id", "default"))
     if msg_type == "event":
-        data_js = json.dumps(meta.get("data"))
-        req_js = json.dumps(meta.get("req_id"))
-        js_code = f"""
-            (async () => {{
-                if (typeof window.echoPushMonitorEvent !== 'function') {{
-                    {monitor_lib_js}
-                }}
-                window.echoPushMonitorEvent({wid_js}, {data_js}, {req_js}, {cid_js});
-            }})();
-        """
-        await events.emit_execute(js_code)
+        await wm.broadcast_canvas_event(
+            user_id=uid,
+            chat_id=cid,
+            window_id=wid,
+            data=meta.get("data"),
+            req_id=meta.get("req_id"),
+        )
         return
 
-    args = ", ".join(
-        json.dumps(str(meta.get(k, d)))
-        for k, d in (("window_id", "default"), ("title", "Monitor"), ("width", "100%"), ("height", "400px"))
+    b64_html = meta.get("html") or ""
+    try:
+        html_content = base64.b64decode(b64_html).decode("utf-8", errors="replace") if b64_html else ""
+    except Exception:
+        html_content = str(b64_html)
+
+    await wm.broadcast_canvas_frame(
+        user_id=uid,
+        chat_id=cid,
+        frame_data={
+            "id": wid,
+            "title": str(meta.get("title") or "Monitor"),
+            "width": str(meta.get("width") or "100%"),
+            "height": str(meta.get("height") or "400px"),
+            "html": html_content,
+        },
+        auto_open=True,
     )
-    b64 = json.dumps(meta.get("html", ""))
-    js_code = f"""
-        (async () => {{
-            if (typeof window.echoCreateFloatingMonitor !== 'function') {{
-                {monitor_lib_js}
-            }}
-            const bin = atob({b64});
-            const htmlContent = new TextDecoder('utf-8').decode(Uint8Array.from(bin, c => c.charCodeAt(0)));
-            const [wid, title, width, height] = [{args}];
-            window.echoCreateFloatingMonitor(wid, title, htmlContent, width, height, {cid_js});
-        }})();
-    """
-    await events.emit_execute(js_code)
 
 
 def _stop_background_poller(uid: str, cid: str, run_id: Optional[str] = None) -> None:
@@ -251,16 +249,9 @@ class Tools:
 
         try:
             import httpx
-            cid_js = json.dumps(cid)
-            ui_payload_data = None
-            if fetch_ui_payload:
-                try:
-                    raw = await events.call_execute(
-                        f"return typeof window._echoGetAggregatedPayload === 'function' ? window._echoGetAggregatedPayload({cid_js}) : null;"
-                    )
-                    ui_payload_data = raw if isinstance(raw, dict) else (json.loads(raw) if raw else None)
-                except Exception:
-                    pass
+            wm = get_window_manager()
+            wm.clear_canvas_signal(uid, cid)
+            ui_payload_data = wm.consume_canvas_ui_payload(uid, cid) if fetch_ui_payload else None
 
             task_audit = {"status": "running", "run_id": run_id, "polls": 0, "payloads_pushed": 0, "payloads_pulled": 0}
             sandbox_base = ECHO_CODING_WORKER_URL.replace("/execute", "")
@@ -270,16 +261,12 @@ class Tools:
             async def bidi_polling():
                 offset = 0
                 start_t = asyncio.get_event_loop().time()
-                monitor_lib_js = EchoUI.get_floating_monitor_js()
                 try:
                     async with httpx.AsyncClient() as pclient:
                         while asyncio.get_event_loop().time() - start_t < actual_timeout:
                             task_audit["polls"] += 1
                             try:
-                                raw = await events.call_execute(
-                                    f"return typeof window._echoGetAggregatedPayload === 'function' ? window._echoGetAggregatedPayload({cid_js}) : null;"
-                                )
-                                ui_data = raw if isinstance(raw, dict) else (json.loads(raw) if raw else None)
+                                ui_data = wm.consume_canvas_ui_payload(uid, cid)
                                 if ui_data:
                                     if ui_data.get("_echo_signal") == "abort":
                                         task_audit["status"] = "aborted_by_ui"
@@ -335,7 +322,7 @@ class Tools:
                                         wid = str(meta.get("window_id", "default"))
                                         if meta.get("type", "display") == "display" and wid not in supervisor["first_seen"]:
                                             supervisor["first_seen"][wid] = asyncio.get_event_loop().time()
-                                        await _emit_monitor_payload(events, meta, cid_js, monitor_lib_js)
+                                        await _emit_monitor_payload(uid, cid, meta)
                                         task_audit["payloads_pulled"] += 1
                             except Exception:
                                 pass
@@ -403,9 +390,7 @@ class Tools:
                     await events.status(err_msg, done=True)
                     return wrap_tool_output(text="", status={"status": "critical_error", "code": response.status_code, "error": err_msg})
             except asyncio.CancelledError:
-                await events.emit_execute(
-                    f"if(window._echoGetAggregatedPayload){{ const p = window._echoGetAggregatedPayload({cid_js}); if(p) p._echo_signal = null; }}"
-                )
+                wm.clear_canvas_signal(uid, cid)
                 async with httpx.AsyncClient() as client:
                     await client.post(f"{sandbox_base}/kill", json={"user_id": uid, "chat_id": cid, "run_id": run_id})
                 task_audit["status"] = "killed"
@@ -423,11 +408,10 @@ class Tools:
             if worker_res.get("monitor_payloads"):
                 pulled_count = task_audit.get("payloads_pulled", 0)
                 remaining_payloads = worker_res["monitor_payloads"][pulled_count:]
-                monitor_lib_js = EchoUI.get_floating_monitor_js()
                 success_count = 0
                 for meta in remaining_payloads:
                     try:
-                        await _emit_monitor_payload(events, meta, cid_js, monitor_lib_js)
+                        await _emit_monitor_payload(uid, cid, meta)
                         success_count += 1
                     except Exception as e:
                         text_out += f"\n[Erreur Système Monitor: {str(e)}]"

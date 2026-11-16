@@ -63,7 +63,6 @@
 
 	let highContrastMode = false;
 
-	let detectArtifacts = true;
 	let displayMultiModelResponsesInTabs = false;
 
 	let richTextInput = true;
@@ -332,7 +331,6 @@
 
 		highContrastMode = currentSettings?.highContrastMode ?? false;
 
-		detectArtifacts = currentSettings?.detectArtifacts ?? true;
 		responseAutoCopy = currentSettings?.responseAutoCopy ?? false;
 
 		showUsername = currentSettings?.showUsername ?? false;
@@ -1835,38 +1833,9 @@
 		</div>
 	{/if}
 
-	{#if ['settings.detect_artifacts', 'settings.iframe_sandbox_allow_scripts', 'settings.iframe_sandbox_allow_same_origin', 'settings.iframe_sandbox_allow_forms', 'settings.iframe_sandbox_allow_downloads'].some((id) => $visibleControls[id])}
+	{#if ['settings.iframe_sandbox_allow_scripts', 'settings.iframe_sandbox_allow_same_origin', 'settings.iframe_sandbox_allow_forms', 'settings.iframe_sandbox_allow_downloads'].some((id) => $visibleControls[id])}
 		<div class={sectionHeadingClass}>
 			{$i18n.t('settings.personal.interface.sections.artifacts.title')}
-		</div>
-	{/if}
-
-	{#if $visibleControls['settings.detect_artifacts']}
-		<div>
-			<div class={settingRowClass}>
-				<label
-					id="detect-artifacts-label"
-					class={settingLabelClass}
-					for="detect-artifacts-label-control"
-				>
-					{$i18n.t('settings.personal.interface.detectArtifactsAutomatically.label')}
-				</label>
-
-				<div class={settingControlClass}>
-					<Switch
-						ariaLabelledbyId="detect-artifacts-label"
-						tooltip={true}
-						bind:state={detectArtifacts}
-						inherited={isDefaultSetting('detectArtifacts')}
-						on:change={() => {
-							saveSettings({ detectArtifacts });
-						}}
-					/>
-				</div>
-			</div>
-			<p class={settingDescriptionClass}>
-				{$i18n.t('settings.personal.interface.detectArtifactsAutomatically.description')}
-			</p>
 		</div>
 	{/if}
 

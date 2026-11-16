@@ -12,7 +12,7 @@
 	import { config, mobile, models, settings, user } from '$lib/stores';
 	import type { SettingsModalRequest } from '$lib/stores';
 	import { getUserSettings, updateUserSettings } from '$lib/apis/users';
-	import { getBackendConfig, getModels as _getModels } from '$lib/apis';
+	import { getModels as _getModels } from '$lib/apis';
 
 	import Modal from '../common/Modal.svelte';
 	import Account from './Settings/Account.svelte';
@@ -35,10 +35,6 @@
 	import ArchiveBox from '../icons/ArchiveBox.svelte';
 	import ChevronLeft from '../icons/ChevronLeft.svelte';
 	import Keyboard from '../icons/Keyboard.svelte';
-	import AdminTabIcon from '$lib/components/admin/Settings/AdminTabIcon.svelte';
-	import AdminGeneral from '$lib/components/admin/Settings/General.svelte';
-	import AdminInterface from '$lib/components/admin/Settings/Interface.svelte';
-	import AdminAudio from '$lib/components/admin/Settings/Audio.svelte';
 
 	const i18n: Writable<any> = getContext('i18n');
 
@@ -81,14 +77,14 @@
 		search = '';
 		showSearch = false;
 		if (show && typeof show === 'object') {
-			selectedTab = show.tab;
+			selectedTab = show.tab.replace(/^admin:/, '');
 			tabState = show.state ?? null;
 			show = true;
 			lastShow = true;
 			modalShow = true;
 			loadPersonalUiSettings();
 		} else if (typeof show === 'string') {
-			selectedTab = show;
+			selectedTab = show.replace(/^admin:/, '');
 			show = true;
 			lastShow = true;
 			modalShow = true;
@@ -114,11 +110,7 @@
 		tabState = null;
 	}
 
-	const isAdminTab = (tabId: string) => tabId.startsWith('admin:');
-	const adminTabSegment = (tabId: string) => tabId.replace('admin:', '');
-	const adminTabPanelId = (tabId: string) => `tab-${tabId.replace(':', '-')}`;
 	let personalSettingGroups: Record<string, string> = {};
-	let adminSettingGroups: Record<string, string> = {};
 
 	$: personalSettingGroups = {
 		general: $i18n.t('Basics'),
@@ -132,14 +124,8 @@
 		about: $i18n.t('Profile')
 	};
 	// $i18n.t('Experience');
-	$: adminSettingGroups = {
-		'admin:general': $i18n.t('System'),
-		'admin:interface': $i18n.t('System'),
-		'admin:audio': $i18n.t('Tools')
-	};
 	const settingGroupTitle = (tabId: string) =>
-		(isAdminTab(tabId) ? adminSettingGroups[tabId] : personalSettingGroups[tabId]) ??
-		$i18n.t('General');
+		personalSettingGroups[tabId] ?? $i18n.t('General');
 	const shouldShowSettingGroup = (tabIds: string[], index: number) =>
 		index === 0 || settingGroupTitle(tabIds[index]) !== settingGroupTitle(tabIds[index - 1]);
 	const settingGroupHeadingClass = (first: boolean) =>
@@ -204,31 +190,8 @@
 			searchPrefixes: ['settings.personal.about.']
 		}
 	];
-	let adminSettings: SettingsTab[];
-	$: adminSettings = [
-		{
-			id: 'admin:general',
-			titleKey: 'settings.admin.general.title',
-			title: $i18n.t('settings.admin.general.title'),
-			searchPrefixes: ['settings.admin.general.', 'settings.personal.interface.']
-		},
-		{
-			id: 'admin:interface',
-			titleKey: 'settings.admin.interface.title',
-			title: $i18n.t('settings.admin.interface.title'),
-			searchPrefixes: ['settings.admin.interface.']
-		},
-		{
-			id: 'admin:audio',
-			titleKey: 'settings.admin.audio.title',
-			title: $i18n.t('settings.admin.audio.title'),
-			searchPrefixes: ['settings.admin.audio.']
-		}
-	];
 	let availableSettings: SettingsTab[] = [];
 	let filteredSettings: string[] = [];
-	let filteredPersonalSettings: string[] = [];
-	let filteredAdminSettings: string[] = [];
 
 	let search = '';
 	let showSearch = false;
@@ -242,8 +205,8 @@
 		});
 	}
 
-	const getAvailableSettings = (personalTabs: SettingsTab[], administratorTabs: SettingsTab[]) => {
-		const personalSettings = personalTabs.filter((tab) => {
+	const getAvailableSettings = (personalTabs: SettingsTab[]) => {
+		return personalTabs.filter((tab) => {
 			if (tab.id === 'interface') {
 				return $user?.role === 'admin' || ($user?.permissions?.settings?.interface ?? true);
 			}
@@ -259,8 +222,6 @@
 
 			return true;
 		});
-
-		return $user?.role === 'admin' ? [...personalSettings, ...administratorTabs] : personalSettings;
 	};
 
 	$: searchIndex = buildSettingsSearchIndex(availableSettings, english, $i18n, {
@@ -268,8 +229,6 @@
 		config: $config
 	});
 	$: filteredSettings = searchSettingsTabs(searchIndex, search);
-	$: filteredPersonalSettings = filteredSettings.filter((id) => !isAdminTab(id));
-	$: filteredAdminSettings = filteredSettings.filter(isAdminTab);
 
 	const selectTab = (id: string) => {
 		if (!availableSettings.some((tab) => tab.id === id)) return;
@@ -317,12 +276,6 @@
 		);
 	};
 
-	const adminConfigSaveHandler = async () => {
-		toast.success($i18n.t('Settings saved successfully!'));
-		await tick();
-		await config.set(await getBackendConfig());
-	};
-
 	const tabButtonClass = (active: boolean) =>
 		`flex items-center gap-1.5 h-7 px-2 md:w-full shrink-0 rounded-lg text-xs text-left transition-colors duration-75 ${
 			active
@@ -343,17 +296,13 @@
 		tabElement?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
 	};
 
-	$: if ($user?.role !== 'admin' && isAdminTab(selectedTab)) {
-		selectedTab = 'general';
-	}
-
 	$: if (
 		$config &&
 		$user &&
 		availableSettings.length &&
 		!availableSettings.some((tab) => tab.id === selectedTab)
 	) {
-		selectedTab = $user?.role === 'admin' && isAdminTab(selectedTab) ? 'admin:general' : 'general';
+		selectedTab = 'general';
 	}
 
 	$: if (modalShow && selectedTab) {
@@ -361,7 +310,7 @@
 	}
 
 	$: if ($config && $user) {
-		availableSettings = getAvailableSettings(allSettings, adminSettings);
+		availableSettings = getAvailableSettings(allSettings);
 	}
 </script>
 
@@ -431,16 +380,10 @@
 		<div
 			class="tabs scrollbar-none max-h-32 md:max-h-none flex min-w-0 flex-1 min-h-0 overflow-x-auto md:overflow-x-hidden md:overflow-y-auto md:flex-col p-1 pl-0 md:pl-1 gap-px"
 		>
-			<span
-				class="hidden md:block text-[0.625rem] text-gray-600 dark:text-gray-500 px-2 mt-1.5 mb-0.5"
-			>
-				{$i18n.t('Personal')}
-			</span>
-
-			{#if filteredPersonalSettings.length > 0}
-				<div role="tablist" aria-label={$i18n.t('Personal')} class="contents">
-					{#each filteredPersonalSettings as tabId, index (tabId)}
-						{#if shouldShowSettingGroup(filteredPersonalSettings, index)}
+			{#if filteredSettings.length > 0}
+				<div role="tablist" aria-label={$i18n.t('Settings')} class="contents">
+					{#each filteredSettings as tabId, index (tabId)}
+						{#if shouldShowSettingGroup(filteredSettings, index)}
 							<span class={settingGroupHeadingClass(index === 0)}>
 								{settingGroupTitle(tabId)}
 							</span>
@@ -568,41 +511,6 @@
 				</div>
 			{/if}
 
-			{#if $user?.role === 'admin' && filteredAdminSettings.length > 0}
-				<div
-					class="hidden md:block shrink-0 self-stretch h-px mx-1 my-2 bg-gray-100/40 dark:bg-white/[0.025]"
-				></div>
-				<span class="hidden md:block text-[0.625rem] text-gray-600 dark:text-gray-500 px-2 mb-0.5">
-					{$i18n.t('Admin')}
-				</span>
-
-				<div role="tablist" aria-label={$i18n.t('Admin')} class="contents">
-					{#each filteredAdminSettings as tabId, index (tabId)}
-						{#if shouldShowSettingGroup(filteredAdminSettings, index)}
-							<span class={settingGroupHeadingClass(index === 0)}>
-								{settingGroupTitle(tabId)}
-							</span>
-						{/if}
-
-						{@const tab = adminSettings.find((setting) => setting.id === tabId)}
-						{#if tab}
-							<button
-								role="tab"
-								aria-controls={adminTabPanelId(tab.id)}
-								aria-selected={selectedTab === tab.id}
-								class={tabButtonClass(selectedTab === tab.id)}
-								on:click={() => {
-									selectTab(tab.id);
-								}}
-							>
-								<AdminTabIcon id={adminTabSegment(tab.id)} className="size-3.5" strokeWidth="2" />
-								<span>{tab.title}</span>
-							</button>
-						{/if}
-					{/each}
-				</div>
-			{/if}
-
 			{#if filteredSettings.length === 0}
 				<div class="px-2 py-1 text-xs text-gray-600 dark:text-gray-500">
 					{$i18n.t('No matches')}
@@ -612,10 +520,7 @@
 	</nav>
 
 	<div class="flex-1 min-w-0 min-h-0 p-4 md:px-5 flex flex-col">
-		<div
-			class="flex-1 min-h-0 overflow-hidden"
-			id={isAdminTab(selectedTab) ? adminTabPanelId(selectedTab) : undefined}
-		>
+		<div class="flex-1 min-h-0 overflow-hidden">
 			{#if selectedTab === 'general'}
 				<General
 					{getModels}
@@ -655,20 +560,6 @@
 				/>
 			{:else if selectedTab === 'about'}
 				<About />
-			{:else if selectedTab === 'admin:general'}
-				<AdminGeneral saveHandler={adminConfigSaveHandler} />
-			{:else if selectedTab === 'admin:interface'}
-				<AdminInterface
-					saveHandler={() => {
-						toast.success($i18n.t('Settings saved successfully!'));
-					}}
-				/>
-			{:else if selectedTab === 'admin:audio'}
-				<AdminAudio
-					saveHandler={() => {
-						toast.success($i18n.t('Settings saved successfully!'));
-					}}
-				/>
 			{/if}
 		</div>
 	</div>

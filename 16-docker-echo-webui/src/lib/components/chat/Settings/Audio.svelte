@@ -65,6 +65,10 @@
 
 		await getVoices();
 	});
+
+	$: audioConfig = ($config as any)?.audio ?? {};
+	$: sttModel = audioConfig?.stt?.model || 'MODEL_ZEPHYR';
+	$: ttsModel = audioConfig?.tts?.model || 'edge-tts';
 </script>
 
 <form
@@ -185,6 +189,27 @@
 					{/each}
 				</datalist>
 			</UserSettingField>
+		</UserSettingSection>
+
+		<UserSettingSection title="Moteur Audio ECHO">
+			<UserSettingRow
+				label="Mode d'appel vocal"
+				description="Pipeline conversationnel unifié sans fournisseur tiers"
+			>
+				<span class="font-mono text-xs text-gray-700 dark:text-gray-200">
+					Standard — /echo/v1/audio
+				</span>
+			</UserSettingRow>
+			<UserSettingRow label="Moteur STT">
+				<span class="font-mono text-xs text-gray-700 dark:text-gray-200">
+					ECHO Audio ({sttModel})
+				</span>
+			</UserSettingRow>
+			<UserSettingRow label="Moteur TTS">
+				<span class="font-mono text-xs text-gray-700 dark:text-gray-200">
+					ECHO Edge-TTS ({ttsModel})
+				</span>
+			</UserSettingRow>
 		</UserSettingSection>
 	</div>
 

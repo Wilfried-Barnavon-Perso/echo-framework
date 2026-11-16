@@ -85,18 +85,6 @@
 								href="/admin/functions">{$i18n.t('Functions')}</a
 							>
 						{/if}
-
-						<a
-							draggable="false"
-							class="min-w-fit px-1 text-sm {$page.url.pathname.includes('/admin/settings')
-								? ''
-								: 'text-gray-300 dark:text-gray-600 hover:text-gray-700 dark:hover:text-white'} transition select-none"
-							href="/admin/settings"
-							on:click={(event) => {
-								event.preventDefault();
-								showSettings.set('admin:general');
-							}}>{$i18n.t('Settings')}</a
-						>
 					</div>
 				</div>
 			</div>

@@ -176,13 +176,14 @@
           et suppression autonome du compte dans <code>auth.db</code> + <code>webui.db::user</code>).
         </p>
 
-        <h3>4. Pont Audio In-Process (<code>echo_audio.py</code> v5.226.18.0) &amp; Logs Unifiés</h3>
+        <h3>4. Pont Audio In-Process (<code>echo_audio.py</code> v6.6.14.1) &amp; Logs Unifiés</h3>
         <ul>
           <li><strong>STT Multimodal (<code>POST /echo/v1/audio/transcriptions</code>) :</strong> Inspecte les magic
             bytes du flux binaire (<code>sniff_audio_mime_type</code> : WebM/Matroska, WAV/RIFF, OGG, FLAC, MP3,
             MP4/M4A, plafond <code>ECHO_AUDIO_MAX_UPLOAD_SIZE = 14 Mo</code>) et invoque
             <code>EchoGeminiClient.call</code> sur <code>MODEL_ZEPHYR</code> (<code>maxOutputTokens=8192</code>,
-            <code>thinkingLevel="minimal"</code>, prompt <code>USR_AUDIO_TRANSCRIBE</code>).
+            <code>thinkingLevel="minimal"</code>, prompt <code>USR_AUDIO_TRANSCRIBE</code> avec prise en compte
+            optionnelle du code langue <code>language</code> ISO-639-1).
           </li>
           <li><strong>TTS Streaming (<code>POST /echo/v1/audio/speech</code>) :</strong> Génère un flux
             <code>audio/mpeg</code> asynchrone via Microsoft Edge Read-Aloud (<code>edge-tts</code>), configuré par
@@ -218,7 +219,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 6.6.14 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 6.6.18 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

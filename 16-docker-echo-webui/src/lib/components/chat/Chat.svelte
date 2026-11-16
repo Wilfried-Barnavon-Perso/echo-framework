@@ -42,8 +42,6 @@
 		temporaryChatEnabled,
 		mobile,
 		chatTitle,
-		showArtifacts,
-		artifactContents,
 		tools,
 		skills,
 		terminalSkills,
@@ -73,7 +71,6 @@
 		getPromptVariables,
 		processDetails,
 		removeAllDetails,
-		getCodeBlockContents,
 		displayFileHandler,
 		getUsageTokenCount,
 		isRasterImageContentType
@@ -2011,11 +2008,6 @@
 			tick().then(initNewChat);
 		}
 
-		// the artifacts pane reads this list when it opens, which can be before the debounced rebuild
-		const showArtifactsSubscribe = showArtifacts.subscribe((value) => {
-			if (value) getContents();
-		});
-
 		const selectedFolderSubscribe = selectedFolder.subscribe(async (folder) => {
 			await tick();
 			// Folder defaults apply to new chats only.
@@ -2069,7 +2061,6 @@
 				if (chatIdProp && !$temporaryChatEnabled) {
 					updateLastReadAt(chatIdProp);
 				}
-				showArtifactsSubscribe();
 				selectedFolderSubscribe();
 
 				// Clear the selected chat when leaving the chat surface (e.g. navigating
@@ -2336,13 +2327,6 @@
 	const onHistoryChange = (history) => {
 		if (history) {
 			bridge?.update();
-			clearTimeout(contentsRAF);
-			contentsRAF = setTimeout(() => {
-				getContents();
-				contentsRAF = null;
-			}, 0);
-		} else {
-			artifactContents.set([]);
 		}
 	};
 
@@ -2607,61 +2591,6 @@
 		message.ttsSentContentPartCount = sentContentPartCount + dispatchContentParts.length;
 	};
 
-	const getContents = () => {
-		const messages = history ? createMessagesList(history, history.currentId) : [];
-		let contents = [];
-		messages.forEach((message) => {
-			if (message?.role !== 'user') {
-				const messageContent =
-					getOutputText(message?.output) || removeAllDetails(message?.content ?? '');
-				if (!messageContent.trim()) {
-					return;
-				}
-
-				const { codeBlocks: codeBlocks, htmlGroups: htmlGroups } =
-					getCodeBlockContents(messageContent);
-
-				if (htmlGroups && htmlGroups.length > 0) {
-					htmlGroups.forEach((group) => {
-						const renderedContent = `
-                        <!DOCTYPE html>
-                        <html lang="en">
-                        <head>
-                            <meta charset="UTF-8">
-                            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-							<${''}style>
-								body {
-									background-color: white; /* Ensure the iframe has a white background */
-								}
-
-								${group.css}
-							</${''}style>
-                        </head>
-                        <body>
-                            ${group.html}
-
-							<${''}script>
-                            	${group.js}
-							</${''}script>
-                        </body>
-                        </html>
-                    `;
-						contents = [...contents, { type: 'iframe', content: renderedContent }];
-					});
-				} else {
-					// Check for SVG content
-					for (const block of codeBlocks) {
-						if (block.lang === 'svg' || (block.lang === 'xml' && block.code.includes('<svg'))) {
-							contents = [...contents, { type: 'svg', content: block.code }];
-						}
-					}
-				}
-			}
-		});
-
-		artifactContents.set(contents);
-	};
-
 	// Web functions
 
 	const openCallOverlay = () => {
@@ -2846,7 +2775,6 @@
 			await showTabs.set(false);
 		}
 		await showCallOverlay.set(false);
-		await showArtifacts.set(false);
 
 		if (!embedded && $page.url.pathname.includes('/c/')) {
 			window.history.replaceState(window.history.state, '', `/`);
@@ -3252,7 +3180,6 @@
 		autoScroll && ($settings?.scrollOnResponseGeneration ?? true);
 
 	let scrollRAF = null;
-	let contentsRAF = null;
 	const autoScrollToBottom = () => {
 		if (!shouldAutoScrollResponse()) return;
 

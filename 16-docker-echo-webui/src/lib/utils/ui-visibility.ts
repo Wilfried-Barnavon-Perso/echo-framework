@@ -66,9 +66,7 @@ export const CONTROL_LABELS = {
 	'chat.settings_command': '/settings',
 	'chat.usage': 'settings.admin.models.capabilities.usage.label',
 	'chat.merge': 'Merge Responses',
-	'chat.code_preview': 'Preview',
 	'chat.fork': 'Fork chat',
-	'chat.artifacts': 'Artifacts',
 	'chat.archive': 'Archive',
 	'chat.tags': 'Tags',
 	'models.set_default': 'Set as default',
@@ -82,7 +80,6 @@ export const CONTROL_LABELS = {
 	'settings.floating_action_buttons': 'settings.personal.interface.floatingQuickActions.label',
 	'settings.rich_text_input': 'settings.personal.interface.richTextInputForChat.label',
 	'settings.large_text_as_file': 'settings.personal.interface.pasteLargeTextAsFile.label',
-	'settings.detect_artifacts': 'settings.personal.interface.detectArtifactsAutomatically.label',
 	'settings.iframe_sandbox_allow_scripts':
 		'settings.personal.interface.iframeSandboxAllowScripts.label',
 	'settings.iframe_sandbox_allow_same_origin':

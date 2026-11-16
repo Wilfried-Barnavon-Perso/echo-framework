@@ -12,7 +12,6 @@
 	import {
 		showTabs,
 		showOverview,
-		showArtifacts,
 		mobile,
 		temporaryChatEnabled,
 		theme,
@@ -20,7 +19,6 @@
 		settings,
 		folders,
 		showEmbeds,
-		artifactContents,
 		visibleControls
 	} from '$lib/stores';
 
@@ -32,7 +30,6 @@
 	import Tags from '$lib/components/chat/Tags.svelte';
 	import Clipboard from '$lib/components/icons/Clipboard.svelte';
 	import AdjustmentsHorizontal from '$lib/components/icons/AdjustmentsHorizontal.svelte';
-	import Cube from '$lib/components/icons/Cube.svelte';
 	import Map from '$lib/components/icons/Map.svelte';
 	import Folder from '$lib/components/icons/Folder.svelte';
 	import Share from '$lib/components/icons/Share.svelte';
@@ -408,24 +405,6 @@
 			{/if}
 
 			{#if scrollToTop}
-				<hr class="border-gray-50/30 dark:border-gray-800/30 mx-1 my-0.5" />
-			{/if}
-
-			{#if ($artifactContents ?? []).length > 0 && $visibleControls['chat.artifacts']}
-				<button
-					draggable="false"
-					class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
-					id="chat-artifacts-button"
-					on:click={async () => {
-						await showTabs.set(true);
-						await showArtifacts.set(true);
-						await showEmbeds.set(false);
-					}}
-				>
-					<Cube className="size-3.5" strokeWidth="1.5" />
-					<div class="flex items-center">{$i18n.t('Artifacts')}</div>
-				</button>
-
 				<hr class="border-gray-50/30 dark:border-gray-800/30 mx-1 my-0.5" />
 			{/if}
 

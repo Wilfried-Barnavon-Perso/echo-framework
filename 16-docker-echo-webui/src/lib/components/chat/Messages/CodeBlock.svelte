@@ -5,7 +5,9 @@
 	import { getContext, onMount, tick, onDestroy } from 'svelte';
 	import type { Writable } from 'svelte/store';
 	import type { i18n as i18nType } from 'i18next';
-	import { config, pyodideWorker as pyodideWorkerStore, visibleControls } from '$lib/stores';
+	import { chatId, config, pyodideWorker as pyodideWorkerStore } from '$lib/stores';
+	import { getEchoToken, getEchoCodexTree, saveEchoCodexFile } from '$lib/apis/echo';
+	import { requestEchoTabOpen } from '$lib/stores/echo';
 
 	import { createPyodideWorker } from '$lib/pyodide/createPyodideWorker';
 	import { executeCode } from '$lib/apis/utils';
@@ -27,7 +29,6 @@
 	import ChevronUp from '$lib/components/icons/ChevronUp.svelte';
 	import ChevronUpDown from '$lib/components/icons/ChevronUpDown.svelte';
 	import CommandLine from '$lib/components/icons/CommandLine.svelte';
-	import Cube from '$lib/components/icons/Cube.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 
 	const i18n = getContext<Writable<i18nType>>('i18n');
@@ -90,20 +91,212 @@
 
 	let copied = false;
 	let saved = false;
+	let sendingToCodex = false;
+	let codexTargetFile = '';
+	let lastCodexBlockId = id;
+
+	$: if (id !== lastCodexBlockId) {
+		lastCodexBlockId = id;
+		codexTargetFile = '';
+	}
+
+	const CODEX_LANG_DEFAULT_FILE: Record<string, string> = {
+		html: 'index.html',
+		htm: 'index.html',
+		css: 'style.css',
+		scss: 'style.scss',
+		sass: 'style.sass',
+		less: 'style.less',
+		javascript: 'script.js',
+		js: 'script.js',
+		jsx: 'Component.jsx',
+		typescript: 'script.ts',
+		ts: 'script.ts',
+		tsx: 'Component.tsx',
+		svelte: 'Component.svelte',
+		vue: 'Component.vue',
+		python: 'main.py',
+		py: 'main.py',
+		json: 'data.json',
+		yaml: 'config.yaml',
+		yml: 'config.yaml',
+		toml: 'config.toml',
+		ini: 'config.ini',
+		xml: 'document.xml',
+		svg: 'graphic.svg',
+		markdown: 'document.md',
+		md: 'document.md',
+		sql: 'query.sql',
+		sh: 'script.sh',
+		bash: 'script.sh',
+		shell: 'script.sh',
+		zsh: 'script.sh',
+		powershell: 'script.ps1',
+		ps1: 'script.ps1',
+		bat: 'script.bat',
+		cmd: 'script.bat',
+		dockerfile: 'Dockerfile',
+		docker: 'Dockerfile',
+		go: 'main.go',
+		rust: 'main.rs',
+		rs: 'main.rs',
+		java: 'Main.java',
+		c: 'main.c',
+		cpp: 'main.cpp',
+		'c++': 'main.cpp',
+		csharp: 'Program.cs',
+		cs: 'Program.cs',
+		php: 'index.php',
+		ruby: 'main.rb',
+		rb: 'main.rb',
+		lua: 'main.lua',
+		r: 'script.R',
+		csv: 'data.csv',
+		tsv: 'data.tsv',
+		txt: 'snippet.txt',
+		plaintext: 'snippet.txt',
+		text: 'snippet.txt'
+	};
+
+	const sanitizeCodexFilename = (candidate: string): string => {
+		const cleaned = candidate.trim().replace(/^["'`]+|["'`]+$/g, '').replace(/^\/+/, '');
+		if (!cleaned || cleaned.includes('..') || cleaned.includes('\\') || /[\x00-\x1f<>:"|?*]/.test(cleaned)) {
+			return '';
+		}
+		if (!/^[a-zA-Z0-9._\-/]+$/.test(cleaned)) {
+			return '';
+		}
+		return cleaned;
+	};
+
+	const extractCodexFilenameFromCode = (codeContent: string): string => {
+		const firstNonEmpty = codeContent
+			.split(/\r?\n/)
+			.map((line) => line.trim())
+			.find((line) => line.length > 0);
+		if (!firstNonEmpty) return '';
+
+		const commentMatch =
+			firstNonEmpty.match(/^\/\/\s*(?:file(?:name)?\s*:\s*)?([^\s]+)$/i) ||
+			firstNonEmpty.match(/^#\s*(?:file(?:name)?\s*:\s*)?([^\s]+)$/i) ||
+			firstNonEmpty.match(/^\/\*\s*(?:file(?:name)?\s*:\s*)?([^\s*]+)\s*\*\/$/i) ||
+			firstNonEmpty.match(/^<!--\s*(?:file(?:name)?\s*:\s*)?([^\s-]+)\s*-->$/i) ||
+			firstNonEmpty.match(/^--\s*(?:file(?:name)?\s*:\s*)?([^\s]+)$/i);
+
+		if (!commentMatch?.[1]) return '';
+		const candidate = commentMatch[1];
+		if (!candidate.includes('.') && candidate.toLowerCase() !== 'dockerfile') {
+			return '';
+		}
+		return sanitizeCodexFilename(candidate);
+	};
+
+	const resolveCodexFilePath = async (
+		codeContent: string,
+		language: string,
+		activeChatId: string,
+		echoToken: string
+	): Promise<string> => {
+		if (codexTargetFile && id === lastCodexBlockId) {
+			return codexTargetFile;
+		}
+
+		const attrCandidate =
+			typeof (attributes as any)?.filename === 'string'
+				? sanitizeCodexFilename((attributes as any).filename)
+				: typeof (attributes as any)?.title === 'string'
+					? sanitizeCodexFilename((attributes as any).title)
+					: '';
+		if (attrCandidate) {
+			codexTargetFile = attrCandidate;
+			return codexTargetFile;
+		}
+
+		const commentCandidate = extractCodexFilenameFromCode(codeContent);
+		if (commentCandidate) {
+			codexTargetFile = commentCandidate;
+			return codexTargetFile;
+		}
+
+		const normLang = language.trim().toLowerCase();
+		const baseName =
+			CODEX_LANG_DEFAULT_FILE[normLang] ??
+			(/^[a-z0-9]{1,8}$/.test(normLang) ? `snippet.${normLang}` : 'snippet.txt');
+
+		const existingNames = new Set<string>();
+		try {
+			const treeRes = await getEchoCodexTree(echoToken, activeChatId, 'main', '');
+			const entries = Array.isArray(treeRes?.entries)
+				? treeRes.entries
+				: Array.isArray(treeRes)
+					? treeRes
+					: [];
+			for (const entry of entries) {
+				const name =
+					typeof entry === 'string'
+						? entry
+						: String(entry?.path || entry?.name || entry?.filename || '');
+				if (name) {
+					existingNames.add(name.replace(/^\/+/, ''));
+				}
+			}
+		} catch {
+			// Si le workspace est vide ou inaccessible, on utilise baseName tel quel
+		}
+
+		if (!existingNames.has(baseName)) {
+			codexTargetFile = baseName;
+			return codexTargetFile;
+		}
+
+		const dotIdx = baseName.lastIndexOf('.');
+		const stem = dotIdx > 0 ? baseName.slice(0, dotIdx) : baseName;
+		const ext = dotIdx > 0 ? baseName.slice(dotIdx) : '';
+		let suffix = 2;
+		while (existingNames.has(`${stem}_${suffix}${ext}`)) {
+			suffix += 1;
+		}
+		codexTargetFile = `${stem}_${suffix}${ext}`;
+		return codexTargetFile;
+	};
 
 	const collapseCodeBlock = () => {
 		collapsed = !collapsed;
 	};
 
-	const saveCode = () => {
-		saved = true;
+	const sendToCodex = async () => {
+		if (sendingToCodex) return;
 
-		code = _code;
-		onSave(code);
+		const activeChatId = $chatId;
+		const echoToken = getEchoToken();
+		if (!activeChatId || activeChatId.startsWith('local:') || !echoToken) {
+			toast.error($i18n.t('Please save or start a conversation first'));
+			return;
+		}
 
-		setTimeout(() => {
-			saved = false;
-		}, 1000);
+		sendingToCodex = true;
+		try {
+			code = _code;
+			const targetPath = await resolveCodexFilePath(_code, lang, activeChatId, echoToken);
+			await saveEchoCodexFile(echoToken, activeChatId, {
+				workspace: 'main',
+				path: targetPath,
+				content: _code,
+				message: `Send ${targetPath} from chat to Codex`
+			});
+			requestEchoTabOpen(activeChatId, 'echo-codex', {
+				workspace: 'main',
+				file: targetPath
+			});
+			saved = true;
+			setTimeout(() => {
+				saved = false;
+			}, 1500);
+		} catch (err: any) {
+			toast.error(err?.message || 'Échec de l’envoi vers le Codex');
+		} finally {
+			sendingToCodex = false;
+		}
 	};
 
 	const copyCode = async () => {
@@ -113,10 +306,6 @@
 		setTimeout(() => {
 			copied = false;
 		}, 1000);
-	};
-
-	const previewCode = () => {
-		onPreview(code);
 	};
 
 	const checkPythonCode = (str) => {
@@ -547,9 +736,10 @@
 					{#if save}
 						<button
 							class="save-code-button flex h-6 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-normal text-gray-600 transition-colors duration-100 hover:bg-gray-100/40 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-white/5"
-							on:click={saveCode}
+							disabled={sendingToCodex}
+							on:click={sendToCodex}
 						>
-							{saved ? $i18n.t('Saved') : $i18n.t('Save')}
+							{saved ? $i18n.t('Sent to Codex') : $i18n.t('Send to Codex')}
 						</button>
 					{/if}
 
@@ -557,17 +747,6 @@
 						class="copy-code-button flex h-6 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-normal text-gray-600 transition-colors duration-100 hover:bg-gray-100/40 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-white/5"
 						on:click={copyCode}>{copied ? $i18n.t('Copied') : $i18n.t('Copy')}</button
 					>
-
-					{#if preview && ['html', 'svg'].includes(lang) && $visibleControls['chat.code_preview']}
-						<button
-							class="run-code-button flex h-6 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-normal text-gray-600 transition-colors duration-100 hover:bg-gray-100/40 disabled:opacity-60 dark:text-gray-400 dark:hover:bg-white/5"
-							on:click={previewCode}
-						>
-							<div>
-								{$i18n.t('Preview')}
-							</div>
-						</button>
-					{/if}
 				</div>
 			</div>
 
@@ -591,7 +770,7 @@
 							ariaLabel={$i18n.t('Code Editor')}
 							{lang}
 							onSave={() => {
-								saveCode();
+								if (save) void sendToCodex();
 							}}
 							onChange={(value) => {
 								_code = value;

@@ -2,16 +2,16 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 6.6.9.1
+version: 6.6.16.2
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.16.2: Ajout du bus Canvas bidirectionnel (broadcast_canvas_frame, broadcast_canvas_event, consume_canvas_ui_payload, clear_canvas_signal et RPC canvas_ui_event).
 # 6.6.9.1: Suppression du loader JS/FastAPI legacy (get_full_loader_bundle_js, inject_client_loader, wm_router, wm_static_router, register_echo_wm_routes, resolve_wm_user_id).
 # 6.6.8.1: Chargement systématique de l'identité Google et des quotas dans get_chat_snapshot même hors session.db active et support du paramètre refresh sur wm_get_chat_state.
 # 6.6.2.1: Ajout de open_tab et broadcast_browser_frame (diffusion SSE vers les onglets natifs echo-browser et echo-codex).
 # 5.239.12.1: Exclusion SSOT et auto-guérison des HUDs transitoires (echo-migration-hud, echo-clone-hud) dans handle_rpc, get_chat_snapshot et hydrateChatState.
-# 5.237.19.1: Support du plein écran d'Iframe via EchoWM.toggleIframeFullscreen (echo:iframe:fullscreen, echo:iframe:fullscreen-state et touche Escape).
 
 import asyncio
 from contextlib import closing
@@ -126,6 +126,18 @@ class EchoWindowManager:
         self._recent_execs: Dict[str, Dict[str, Any]] = {}
         # Cache mémoire de l'état par (user_id, chat_id)
         self._chat_states: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        # Etat Canvas bidirectionnel par (user_id, chat_id)
+        self._canvas_ui_state: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+    def _get_canvas_state(self, user_id: str, chat_id: str) -> Dict[str, Any]:
+        """Retourne ou initialise le registre d'état Canvas bidirectionnel pour (user_id, chat_id)."""
+        uid = self._resolve_owner_uid(user_id, chat_id) if chat_id else (user_id or "system")
+        key = (uid, chat_id or "")
+        state = self._canvas_ui_state.get(key)
+        if state is None:
+            state = {"frames": {}, "payloads": {}, "inbox": [], "pings": {}, "signal": None}
+            self._canvas_ui_state[key] = state
+        return state
 
     def has_active_clients(self, user_id: str = "") -> bool:
         """Indique si au moins un navigateur SSE est connecté pour l'utilisateur (ou globalement)."""
@@ -209,6 +221,75 @@ class EchoWindowManager:
                 **frame_data,
             },
         )
+
+    async def broadcast_canvas_frame(
+        self,
+        user_id: str,
+        chat_id: str,
+        frame_data: Dict[str, Any],
+        auto_open: bool = True,
+    ) -> None:
+        """Enregistre une frame Canvas et la diffuse via SSE vers l'onglet natif echo-canvas."""
+        cstate = self._get_canvas_state(user_id, chat_id)
+        wid = str(frame_data.get("id") or frame_data.get("window_id") or "default")
+        frame_entry = {
+            "id": wid,
+            "title": str(frame_data.get("title") or "Monitor"),
+            "html": str(frame_data.get("html") or ""),
+            "src": str(frame_data.get("src") or ""),
+            "width": str(frame_data.get("width") or "100%"),
+            "height": str(frame_data.get("height") or "400px"),
+            "updated_at": time.time(),
+        }
+        cstate["frames"][wid] = frame_entry
+        cstate["pings"][wid] = time.time() * 1000.0
+        await self.broadcast(
+            user_id,
+            {
+                "type": "window_mounted",
+                "chat_id": chat_id,
+                "auto": auto_open,
+                **frame_entry,
+            },
+        )
+
+    async def broadcast_canvas_event(
+        self,
+        user_id: str,
+        chat_id: str,
+        window_id: str,
+        data: Any,
+        req_id: Optional[str] = None,
+    ) -> None:
+        """Diffuse un événement temps réel vers une frame Canvas côté client via SSE."""
+        await self.broadcast(
+            user_id,
+            {
+                "type": "echo_canvas_event",
+                "chat_id": chat_id,
+                "window_id": str(window_id or "default"),
+                "data": data,
+                "req_id": req_id,
+            },
+        )
+
+    def consume_canvas_ui_payload(self, user_id: str, chat_id: str) -> Dict[str, Any]:
+        """Retourne les payloads UI Canvas courants et vide atomiquement la file inbox."""
+        cstate = self._get_canvas_state(user_id, chat_id)
+        out: Dict[str, Any] = dict(cstate["payloads"])
+        if cstate["pings"]:
+            out["_pings"] = dict(cstate["pings"])
+        if cstate["signal"] is not None:
+            out["_echo_signal"] = cstate["signal"]
+        if cstate["inbox"]:
+            out["_inbox_events"] = list(cstate["inbox"])
+            cstate["inbox"].clear()
+        return out
+
+    def clear_canvas_signal(self, user_id: str, chat_id: str) -> None:
+        """Réinitialise le signal Canvas (ex: abort) après prise en compte."""
+        cstate = self._get_canvas_state(user_id, chat_id)
+        cstate["signal"] = None
 
     def _resolve_owner_uid(self, user_id: str, chat_id: str) -> str:
         """Garantit la correspondance exacte (user_id, chat_id) avec la session existante."""
@@ -513,6 +594,29 @@ class EchoWindowManager:
                     {"type": "wm_kv_sync", "chat_id": chat_id, "entries": entries},
                     exclude_client_id=client_id,
                 )
+            return {"status": "ok"}
+
+        if action == "canvas_ui_event":
+            if chat_id:
+                cstate = self._get_canvas_state(user_id, chat_id)
+                now_ms = time.time() * 1000.0
+                ui_payload = payload.get("echoUIPayload")
+                if isinstance(ui_payload, dict):
+                    wid = str(ui_payload.get("window_id") or payload.get("frame_id") or "default")
+                    cstate["payloads"][wid] = ui_payload.get("payload")
+                    cstate["pings"][wid] = now_ms
+                ui_request = payload.get("echoUIRequest")
+                if isinstance(ui_request, dict):
+                    req = dict(ui_request)
+                    wid = str(req.get("window_id") or payload.get("frame_id") or "default")
+                    req["window_id"] = wid
+                    cstate["inbox"].append(req)
+                    cstate["pings"][wid] = now_ms
+                if payload.get("echoSignal") == "abort":
+                    cstate["signal"] = "abort"
+                ping_wid = payload.get("echoPing")
+                if ping_wid:
+                    cstate["pings"][str(ping_wid)] = now_ms
             return {"status": "ok"}
 
         return {"status": "ignored"}

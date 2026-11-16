@@ -2,16 +2,16 @@
 """
 title: ECHO In-Process Audio Bridge
 author: ECHO Framework
-version: 6.6.9.1
+version: 6.6.14.1
 description: Pont audio in-process (STT Gemini MODEL_ZEPHYR & TTS Edge Vivienne).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.14.1: Prise en compte du paramètre optionnel language (ISO-639-1) dans la consigne STT de /transcriptions.
 # 6.6.9.1: Durcissement de resolve_user_id (JWT valide ou loopback strict, sinon HTTP 401) sur /transcriptions, /speech, /models et /voices.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.4: Intégration du paramètre pitch (-2Hz) et rétablissement de la vitesse nominale 1.0.
 # 1.3: Ajustement de la vitesse d'élocution TTS par défaut à 1.06 (106%).
-# 1.2: Ajustement de la vitesse d'élocution TTS par défaut à 1.1 (110%).
 
 import os
 import sys
@@ -187,6 +187,11 @@ async def transcribe_audio(
     b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
     user_id = await resolve_user_id(request)
     target_model = model or ECHO_AUDIO_DEFAULT_STT_MODEL
+    lang_hint = (language or "").strip()
+    stt_prompt = (
+        f"{USR_AUDIO_TRANSCRIBE}\nLangue attendue de l'audio (code ISO) : {lang_hint}."
+        if lang_hint else USR_AUDIO_TRANSCRIBE
+    )
 
     payload = {
         "contents": [
@@ -200,7 +205,7 @@ async def transcribe_audio(
                         }
                     },
                     {
-                        "text": USR_AUDIO_TRANSCRIBE
+                        "text": stt_prompt
                     }
                 ]
             }
