@@ -28,7 +28,6 @@
 		models,
 		settings,
 		temporaryChatEnabled,
-		TTSWorker,
 		user,
 		visibleControls
 	} from '$lib/stores';
@@ -64,7 +63,6 @@
 	import CodeExecutions from './CodeExecutions.svelte';
 	import ContentRenderer from './ContentRenderer.svelte';
 	import ContextCompactionLabel from './ContextCompactionLabel.svelte';
-	import { KokoroWorker } from '$lib/workers/KokoroWorker';
 	import FileItem from '$lib/components/common/FileItem.svelte';
 	import FollowUps from './ResponseMessage/FollowUps.svelte';
 	import { fade } from 'svelte/transition';
@@ -280,7 +278,7 @@
 
 		speaking = true;
 
-		if ($config.audio.tts.engine === '' && $settings.audio?.tts?.engine !== 'browser-kokoro') {
+		if ($config.audio.tts.engine === '') {
 			let voices = [];
 			const getVoicesLoop = setInterval(() => {
 				voices = speechSynthesis.getVoices();
@@ -337,59 +335,26 @@
 			const voiceId = getVoiceId();
 			console.debug('Prepared message content for TTS', messageContentParts, 'voice:', voiceId);
 
-			if ($settings.audio?.tts?.engine === 'browser-kokoro') {
-				if (!$TTSWorker) {
-					await TTSWorker.set(
-						new KokoroWorker({
-							dtype: $settings.audio?.tts?.engineConfig?.dtype ?? 'fp32'
-						})
-					);
+			for (const [, sentence] of messageContentParts.entries()) {
+				if (signal.aborted) return;
+				if (!speaking) break;
 
-					await $TTSWorker.init();
-				}
-
-				for (const [, sentence] of messageContentParts.entries()) {
-					if (signal.aborted) return;
-					if (!speaking) break;
-
-					const url = await $TTSWorker
-						.generate({ text: sentence, voice: voiceId })
-						.catch((error) => {
-							console.error(error);
-							toast.error(`${error}`);
-							speaking = false;
-							loadingSpeech = false;
-						});
-
-					if (signal.aborted) return;
-
-					if (url && speaking) {
-						$audioQueue.enqueue(url);
+				const res = await synthesizeOpenAISpeech(localStorage.token, voiceId, sentence).catch(
+					(error) => {
+						console.error(error);
+						toast.error(`${error}`);
+						speaking = false;
 						loadingSpeech = false;
 					}
-				}
-			} else {
-				for (const [, sentence] of messageContentParts.entries()) {
-					if (signal.aborted) return;
-					if (!speaking) break;
+				);
 
-					const res = await synthesizeOpenAISpeech(localStorage.token, voiceId, sentence).catch(
-						(error) => {
-							console.error(error);
-							toast.error(`${error}`);
-							speaking = false;
-							loadingSpeech = false;
-						}
-					);
+				if (signal.aborted) return;
 
-					if (signal.aborted) return;
-
-					if (res && speaking) {
-						const blob = await res.blob();
-						const url = URL.createObjectURL(blob);
-						$audioQueue.enqueue(url);
-						loadingSpeech = false;
-					}
+				if (res && speaking) {
+					const blob = await res.blob();
+					const url = URL.createObjectURL(blob);
+					$audioQueue.enqueue(url);
+					loadingSpeech = false;
 				}
 			}
 

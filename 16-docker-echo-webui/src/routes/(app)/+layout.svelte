@@ -2,11 +2,12 @@
 	import { toast } from 'svelte-sonner';
 	import { onMount, onDestroy, tick, getContext } from 'svelte';
 
-import EchoEdgeEmbedding from '$lib/components/echo/EchoEdgeEmbedding.svelte';
 import {
 	requestEchoTabOpen,
 	startEchoWmStream,
 	stopEchoWmStream,
+	startEchoEdgeEmbedding,
+	stopEchoEdgeEmbedding,
 	type EchoTabKind
 } from '$lib/stores/echo';
 
@@ -516,6 +517,7 @@ import {
 
 		// [ECHO-V6-HOOK] Flux SSE Window Manager centralisé (jauge contextuelle, onglets, navigateur, Canvas)
 		startEchoWmStream(() => $chatId);
+		startEchoEdgeEmbedding(() => $mobile);
 
 		loaded = true;
 	});
@@ -543,6 +545,7 @@ import {
 			keepAliveInterval = null;
 		}
 		stopEchoWmStream();
+		stopEchoEdgeEmbedding();
 	});
 
 	// `$page.url` must be referenced here: `$:` only tracks variables used in
@@ -561,9 +564,6 @@ import {
 <ChangelogModal bind:show={$showChangelog} />
 
 {#if $user}
-	<!-- [ECHO-V6-HOOK] Sonde & Pont WebGPU Edge Embedding -->
-	<EchoEdgeEmbedding />
-
 	<div class="app relative">
 		<div
 			class=" text-gray-700 dark:text-gray-100 bg-white dark:bg-gray-900 h-screen max-h-[100dvh] overflow-auto flex flex-row justify-end"

@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 6.6.9.1
+version: 6.6.9.2
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.9.2: Purge du reliquat mort get_esm_loader_js.
 # 6.6.9.1: Purge des ponts JS obsolètes (get_webgpu_probe_js, get_edge_embedding_bridge_js, get_event_dispatcher_js, get_mobile_guard_js, safe_deploy, get_context_gauge_renderer_js) et du doublon CustomEvent dans deploy_context_gauge.
 # 6.6.2.2: Purge de monitor_ECHO et _generate_webplayer_js (remplacés par l'onglet natif EchoBrowserTab).
 # 6.6.2.1: Purge de _generate_agent_monitor_js et _generate_identity_vault_js (remplacés par les onglets natifs Cognition et Vault).
 # 6.3.0.2: Rectification du fallback du tenant dans le HUD (aicode-consumers au lieu de ECHO).  # noqa: E501
-# 6.3.0.1: Allègement de deploy_context_gauge vers diffusion SSE native et événement CustomEvent pour composant Svelte.  # noqa: E501
 
 
 import sys
@@ -65,37 +65,6 @@ class EchoRichUI:
         path = EchoRichUI.ECHO_ICONS.get(name, "")
         cls = f" class='{css_class}'" if css_class else ""
         return f"<svg width='{size}' height='{size}' viewBox='0 0 24 24' fill='none' stroke='{color}' stroke-width='{stroke_width}' stroke-linecap='round' stroke-linejoin='round'{cls}>{path}</svg>"
-
-    @staticmethod
-    def get_esm_loader_js() -> str:
-        """Génère le chargeur ESM universel isolé en <script type='module' crossorigin='anonymous'> (immunisé contre crossorigin='use-credentials')."""
-        return """
-        if (!window.echoImportModule) {
-            window.echoImportModule = function(url) {
-                return new Promise((resolve, reject) => {
-                    const cbId = '_echoModCb_' + Math.random().toString(36).slice(2) + '_' + Date.now();
-                    const s = document.createElement('script');
-                    s.type = 'module';
-                    s.crossOrigin = 'anonymous';
-                    window[cbId] = function(mod, err) {
-                        delete window[cbId];
-                        try { s.remove(); } catch (e) {}
-                        if (err) reject(err);
-                        else resolve(mod);
-                    };
-                    s.textContent = (
-                        'import(' + JSON.stringify(String(url)) + ').then('
-                        + 'm => window.' + cbId + ' && window.' + cbId + '(m, null), '
-                        + 'e => window.' + cbId + ' && window.' + cbId + '(null, e));'
-                    );
-                    s.onerror = function() {
-                        if (window[cbId]) window[cbId](null, new Error('Failed to load module script: ' + url));
-                    };
-                    (document.head || document.documentElement).appendChild(s);
-                });
-            };
-        }
-        """
 
     @staticmethod
     def get_hud_geometry_js() -> str:

@@ -55,18 +55,14 @@ Ce document recense les 5 chantiers architecturaux différés à l'issue de l'au
 
 ---
 
-## 3. Souveraineté MPSI Offline WebGPU (`EchoEdgeEmbedding.svelte`)
+## 3. Souveraineté MPSI Offline WebGPU (`src/lib/stores/echo/index.ts`) — [PARTIELLEMENT RÉSOLU — v6.6.12]
 
-### Ancrages vérifiés
-- **Chargement CDN externe** : `16-docker-echo-webui/src/lib/components/echo/EchoEdgeEmbedding.svelte` L121 (`'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3/dist/transformers.min.js'`).
-- **Dépendance npm déjà présente côté build** : `16-docker-echo-webui/src/lib/workers/kokoro.worker.ts` L1 (`import { env } from '@huggingface/transformers';`).
+### État actuel
+- **Internalisé** : L'import JS de `@huggingface/transformers` et les binaires `.wasm`/`.jsep.*` (`/wasm/`) sont désormais 100 % internalisés dans `16-docker-echo-webui/src/lib/stores/echo/index.ts` (`startEchoEdgeEmbedding`, sans CDN jsDelivr, et `kokoro.worker.ts` supprimé).
+- **Reliquat distant** : Seul `allowLocalModels = false` subsiste pour le téléchargement initial du modèle ONNX `onnx-community/harrier-oss-v1-0.6b-ONNX` depuis Hugging Face Hub (mis en cache navigateur ensuite).
 
-### Cause racine & Risques
-- L'import dynamique depuis `cdn.jsdelivr.net` viole le principe de souveraineté locale MPSI (dépendance réseau externe au runtime, fuite de métadonnées d'IP/User-Agent, rupture totale en environnement air-gapped / sans accès Internet).
-
-### Architecture cible
-- Internaliser le bundle `@huggingface/transformers@3` depuis les dépendances locales du build Vite/SvelteKit (ou via assets statiques servis sous `/static/vendor/transformers/`) et héberger localement les binaires ONNX Runtime WebAssembly (`.wasm`) et le modèle d'embedding quantifié dans `/static/`.
-- Configurer `env.allowRemoteModels = false` et `env.localModelPath` / `env.wasm.wasmPaths` vers les routes locales servies par `echo-webui`.
+### Architecture cible (reliquat)
+- Héberger localement le modèle d'embedding quantifié dans `/static/` et basculer `allowRemoteModels = false` / `localModelPath` vers les routes locales servies par `echo-webui` pour un fonctionnement 100 % air-gapped.
 
 ---
 

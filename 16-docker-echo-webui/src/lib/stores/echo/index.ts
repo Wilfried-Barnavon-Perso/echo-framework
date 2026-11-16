@@ -240,6 +240,8 @@ export const echoEdgeEmbedState = writable<
 >('idle');
 export const echoEdgeEmbedProgress = writable<number>(0);
 export const echoEdgeEmbedReason = writable<string>('');
+export const echoEdgeEmbedDtype = writable<'fp16' | 'fp32'>('fp16');
+export const ECHO_EDGE_TARGET_REPO = 'onnx-community/harrier-oss-v1-0.6b-ONNX';
 
 // Gestionnaire SSE refcounté unique pour /echo/v1/cognition/{chatId}/stream
 let activeStreamChatId = '';
@@ -497,5 +499,428 @@ export const startEchoWmStream = (getActiveChatId: () => string): (() => void) =
 
 	return () => {
 		stopEchoWmStream();
+	};
+};
+
+// Gestionnaire singleton WebGPU Edge Embedding (/ws/edge-embed)
+const EDGE_MIN_BUFFER_BYTES = 134217728; // 128 Mo
+const EDGE_PROBE_TIMEOUT_MS = 3500;
+const EDGE_WS_RECONNECT_MS = 5000;
+
+let edgeActive = false;
+let edgeWs: WebSocket | null = null;
+let edgeReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let edgeClientId = '';
+let edgeTokenizer: any = null;
+let edgeModel: any = null;
+let edgeInitPromise: Promise<void> | null = null;
+let edgeVisibilityBound = false;
+
+const makeEdgeClientId = (): string => {
+	try {
+		if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+			return crypto.randomUUID();
+		}
+	} catch {
+		// fallback
+	}
+	return 'edge-' + Math.random().toString(36).slice(2) + '-' + Date.now().toString(36);
+};
+
+const withEdgeTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
+	return new Promise<T>((resolve, reject) => {
+		const timer = setTimeout(() => {
+			reject(new Error(`Timeout WebGPU (${label}, ${ms} ms)`));
+		}, ms);
+		promise.then(
+			(val) => {
+				clearTimeout(timer);
+				resolve(val);
+			},
+			(err) => {
+				clearTimeout(timer);
+				reject(err);
+			}
+		);
+	});
+};
+
+const buildEdgeWsUrl = (): string => {
+	const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+	const token = getEchoToken();
+	const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
+	return `${protocol}//${location.host}/ws/edge-embed?client_id=${encodeURIComponent(edgeClientId)}${tokenParam}`;
+};
+
+const notifyEdgeBackendIncompatible = (reason: string): void => {
+	if (typeof window === 'undefined') return;
+	try {
+		const quickWs = new WebSocket(buildEdgeWsUrl());
+		quickWs.onopen = () => {
+			try {
+				quickWs.send(JSON.stringify({ type: 'incompatible', reason }));
+			} catch {
+				// ignore
+			}
+			setTimeout(() => {
+				try {
+					quickWs.close();
+				} catch {
+					// ignore
+				}
+			}, 150);
+		};
+		quickWs.onerror = () => {
+			try {
+				quickWs.close();
+			} catch {
+				// ignore
+			}
+		};
+	} catch {
+		// ignore
+	}
+};
+
+const probeEchoWebGPU = async (): Promise<{
+	compatible: boolean;
+	dtype?: 'fp16' | 'fp32';
+	reason?: string;
+}> => {
+	if (typeof window === 'undefined' || !window.isSecureContext) {
+		return {
+			compatible: false,
+			reason: 'Contexte non sécurisé (HTTPS ou localhost requis pour WebGPU)'
+		};
+	}
+	if (typeof navigator === 'undefined' || !(navigator as any).gpu) {
+		return { compatible: false, reason: 'WebGPU non exposé par le navigateur' };
+	}
+
+	const gpu = (navigator as any).gpu;
+	let adapter: any = null;
+	let lastErr: string | undefined;
+
+	try {
+		adapter = await withEdgeTimeout(
+			gpu.requestAdapter({ powerPreference: 'high-performance' }),
+			EDGE_PROBE_TIMEOUT_MS,
+			'requestAdapter(high-performance)'
+		);
+	} catch (e: any) {
+		lastErr = e?.message;
+		adapter = null;
+	}
+
+	if (!adapter) {
+		try {
+			adapter = await withEdgeTimeout(
+				gpu.requestAdapter(),
+				EDGE_PROBE_TIMEOUT_MS,
+				'requestAdapter()'
+			);
+		} catch (e: any) {
+			return {
+				compatible: false,
+				reason: e?.message || lastErr || 'Erreur lors de requestAdapter'
+			};
+		}
+	}
+
+	if (!adapter) {
+		return { compatible: false, reason: lastErr || 'Adaptateur WebGPU refusé' };
+	}
+
+	if (adapter.isFallbackAdapter || (adapter.info && adapter.info.isFallbackAdapter)) {
+		return { compatible: false, reason: 'Adaptateur WebGPU logiciel (fallback) rejeté' };
+	}
+
+	const hasFp16 = Boolean(adapter.features && adapter.features.has('shader-f16'));
+	const dtype: 'fp16' | 'fp32' = hasFp16 ? 'fp16' : 'fp32';
+
+	const limits = adapter.limits || {};
+	if (
+		(limits.maxBufferSize && limits.maxBufferSize < EDGE_MIN_BUFFER_BYTES) ||
+		(limits.maxStorageBufferBindingSize &&
+			limits.maxStorageBufferBindingSize < EDGE_MIN_BUFFER_BYTES)
+	) {
+		return { compatible: false, reason: 'Limites de buffer VRAM insuffisantes (< 128 Mo)' };
+	}
+
+	try {
+		const device: any = await withEdgeTimeout(
+			adapter.requestDevice({ requiredFeatures: hasFp16 ? ['shader-f16'] : [] }),
+			EDGE_PROBE_TIMEOUT_MS,
+			'requestDevice'
+		);
+		if (!device) {
+			return { compatible: false, reason: 'Allocation GPUDevice refusée' };
+		}
+		device.destroy();
+	} catch (e: any) {
+		return {
+			compatible: false,
+			reason: `Allocation GPUDevice (${dtype}) échouée: ${e?.message || 'erreur inconnue'}`
+		};
+	}
+
+	return { compatible: true, dtype };
+};
+
+const clearEdgeReconnectTimer = (): void => {
+	if (edgeReconnectTimer !== null) {
+		clearTimeout(edgeReconnectTimer);
+		edgeReconnectTimer = null;
+	}
+};
+
+const closeEdgeWebSocket = (): void => {
+	clearEdgeReconnectTimer();
+	if (edgeWs) {
+		const sock = edgeWs;
+		edgeWs = null;
+		try {
+			sock.onopen = null;
+			sock.onmessage = null;
+			sock.onerror = null;
+			sock.onclose = null;
+			sock.close();
+		} catch {
+			// ignore
+		}
+	}
+};
+
+const openEdgeWebSocket = (): void => {
+	if (!edgeActive || typeof window === 'undefined') return;
+	closeEdgeWebSocket();
+
+	const sock = new WebSocket(buildEdgeWsUrl());
+	edgeWs = sock;
+
+	sock.onopen = () => {
+		if (!edgeActive || edgeWs !== sock) {
+			try {
+				sock.close();
+			} catch {
+				// ignore
+			}
+			return;
+		}
+		try {
+			sock.send(JSON.stringify({ type: 'ready' }));
+			if (typeof document !== 'undefined' && !document.hidden) {
+				sock.send(JSON.stringify({ type: 'visibility', state: 'active' }));
+			}
+		} catch {
+			// ignore
+		}
+		echoEdgeEmbedState.set('ready');
+	};
+
+	sock.onmessage = async (event) => {
+		if (!edgeActive || edgeWs !== sock) return;
+		try {
+			const payload = JSON.parse(event.data);
+			if (payload.type === 'embed' && payload.texts && payload.request_id) {
+				if (!edgeTokenizer || !edgeModel) return;
+				echoEdgeEmbedState.set('active');
+				const texts = Array.isArray(payload.texts) ? payload.texts : [payload.texts];
+				const inputs = edgeTokenizer(texts, { padding: true, truncation: true });
+				const outputs = await edgeModel(inputs);
+				if (!edgeActive || edgeWs !== sock) return;
+
+				const tensor =
+					outputs.sentence_embedding || outputs.last_hidden_state || Object.values(outputs)[0];
+				const dims = tensor.dims;
+				const batchSize = dims[0];
+				const is3D = dims.length >= 3;
+				const seqLen = is3D ? dims[1] : 1;
+				const embedDim = is3D ? dims[2] : dims[1];
+
+				const embeddings: number[][] = [];
+				for (let i = 0; i < batchSize; i++) {
+					const vecStart = is3D ? i * seqLen * embedDim : i * embedDim;
+					const vecEnd = vecStart + embedDim;
+					const vector = tensor.data.slice(vecStart, vecEnd);
+
+					let sumSq = 0;
+					for (let j = 0; j < embedDim; j++) sumSq += vector[j] * vector[j];
+					const norm = Math.sqrt(sumSq) || 1;
+
+					const normVec = new Array(embedDim);
+					for (let j = 0; j < embedDim; j++) {
+						const val = Number(vector[j]);
+						normVec[j] = (isNaN(val) ? 0 : val) / norm;
+					}
+					embeddings.push(normVec);
+				}
+
+				if (sock.readyState === WebSocket.OPEN) {
+					sock.send(
+						JSON.stringify({
+							type: 'result',
+							request_id: payload.request_id,
+							embedding: embeddings
+						})
+					);
+				}
+				echoEdgeEmbedState.set('ready');
+			}
+		} catch (e: any) {
+			console.error('Erreur traitement embedding WebGPU:', e);
+			if (edgeActive) {
+				echoEdgeEmbedState.set('ready');
+			}
+		}
+	};
+
+	sock.onerror = (e) => {
+		console.warn('Erreur WebSocket Edge Embed:', e);
+	};
+
+	sock.onclose = () => {
+		if (edgeWs === sock) {
+			edgeWs = null;
+		}
+		if (edgeActive && edgeModel && edgeTokenizer && edgeReconnectTimer === null) {
+			edgeReconnectTimer = setTimeout(() => {
+				edgeReconnectTimer = null;
+				if (edgeActive && edgeModel && edgeTokenizer) {
+					openEdgeWebSocket();
+				}
+			}, EDGE_WS_RECONNECT_MS);
+		}
+	};
+};
+
+const handleEdgeVisibilityChange = (): void => {
+	if (!edgeActive) return;
+	if (edgeWs && edgeWs.readyState === WebSocket.OPEN) {
+		try {
+			const state = document.hidden ? 'idle' : 'active';
+			edgeWs.send(JSON.stringify({ type: 'visibility', state }));
+		} catch {
+			// ignore
+		}
+		return;
+	}
+	if (typeof document !== 'undefined' && !document.hidden && !edgeWs && edgeModel && edgeTokenizer) {
+		openEdgeWebSocket();
+	}
+};
+
+export const stopEchoEdgeEmbedding = (): void => {
+	edgeActive = false;
+	if (typeof document !== 'undefined' && edgeVisibilityBound) {
+		document.removeEventListener('visibilitychange', handleEdgeVisibilityChange);
+		edgeVisibilityBound = false;
+	}
+	closeEdgeWebSocket();
+};
+
+export const startEchoEdgeEmbedding = (isMobile: () => boolean = () => false): (() => void) => {
+	if (typeof window === 'undefined') return () => {};
+	if (edgeActive || edgeInitPromise) {
+		return () => stopEchoEdgeEmbedding();
+	}
+
+	if (isMobile()) {
+		echoEdgeEmbedState.set('incompatible');
+		echoEdgeEmbedReason.set('Appareil mobile détecté');
+		return () => {};
+	}
+
+	edgeActive = true;
+	if (!edgeClientId) {
+		edgeClientId = makeEdgeClientId();
+	}
+
+	if (typeof document !== 'undefined' && !edgeVisibilityBound) {
+		document.addEventListener('visibilitychange', handleEdgeVisibilityChange);
+		edgeVisibilityBound = true;
+	}
+
+	echoEdgeEmbedState.set('probing');
+	echoEdgeEmbedProgress.set(0);
+	echoEdgeEmbedReason.set('');
+
+	edgeInitPromise = (async () => {
+		let currentState: 'probing' | 'downloading' | 'ready' | 'incompatible' = 'probing';
+		try {
+			const probe = await probeEchoWebGPU();
+			if (!edgeActive) return;
+
+			if (!probe.compatible) {
+				const reason = probe.reason || 'WebGPU incompatible';
+				currentState = 'incompatible';
+				echoEdgeEmbedReason.set(reason);
+				echoEdgeEmbedState.set('incompatible');
+				notifyEdgeBackendIncompatible(reason);
+				return;
+			}
+
+			const chosenDtype = probe.dtype || 'fp16';
+			echoEdgeEmbedDtype.set(chosenDtype);
+			currentState = 'downloading';
+			echoEdgeEmbedState.set('downloading');
+			echoEdgeEmbedProgress.set(0);
+
+			if (!edgeTokenizer || !edgeModel) {
+				const transformers: any = await import('@huggingface/transformers');
+				if (!edgeActive) return;
+
+				if (transformers?.env) {
+					transformers.env.allowLocalModels = false;
+					if (transformers.env.backends?.onnx?.wasm) {
+						transformers.env.backends.onnx.wasm.wasmPaths = '/wasm/';
+					}
+				}
+
+				if (!edgeTokenizer) {
+					edgeTokenizer = await transformers.AutoTokenizer.from_pretrained(ECHO_EDGE_TARGET_REPO);
+					if (!edgeActive) return;
+				}
+
+				if (!edgeModel) {
+					edgeModel = await transformers.AutoModel.from_pretrained(ECHO_EDGE_TARGET_REPO, {
+						device: 'webgpu',
+						dtype: chosenDtype,
+						progress_callback: (x: any) => {
+							if (!edgeActive) return;
+							if (x.status === 'downloading' || x.status === 'progress') {
+								const pct = x.total ? Math.round((x.loaded / x.total) * 100) : 0;
+								echoEdgeEmbedProgress.set(pct);
+							}
+						}
+					});
+					if (!edgeActive) return;
+				}
+			}
+
+			echoEdgeEmbedProgress.set(100);
+			echoEdgeEmbedReason.set('');
+			currentState = 'ready';
+			echoEdgeEmbedState.set('ready');
+
+			openEdgeWebSocket();
+		} catch (err: any) {
+			if (!edgeActive) return;
+			console.warn('Échec initialisation Edge Embedding WebGPU:', err);
+			const reason = err?.message || 'Échec initialisation WebGPU';
+			currentState = 'incompatible';
+			echoEdgeEmbedReason.set(reason);
+			echoEdgeEmbedState.set('incompatible');
+			notifyEdgeBackendIncompatible(reason);
+		} finally {
+			edgeInitPromise = null;
+			if (!edgeActive && currentState === 'probing') {
+				echoEdgeEmbedState.set('idle');
+			}
+		}
+	})();
+
+	return () => {
+		stopEchoEdgeEmbedding();
 	};
 };

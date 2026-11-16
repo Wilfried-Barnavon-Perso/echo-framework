@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { config, models, settings, showCallOverlay, TTSWorker } from '$lib/stores';
+	import { config, models, settings, showCallOverlay } from '$lib/stores';
 	import { onMount, tick, getContext, onDestroy, createEventDispatcher } from 'svelte';
 
 	const dispatch = createEventDispatcher();
@@ -13,7 +13,6 @@
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import VideoInputMenu from './CallOverlay/VideoInputMenu.svelte';
-	import { KokoroWorker } from '$lib/workers/KokoroWorker';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 	import type { RealtimeCall } from '$lib/utils/realtime';
 	import VoiceAvatar from './CallOverlay/VoiceAvatar.svelte';
@@ -629,21 +628,7 @@
 					}
 				}
 
-				if ($settings.audio?.tts?.engine === 'browser-kokoro') {
-					const url = await $TTSWorker
-						.generate({
-							text: content,
-							voice: getVoiceId()
-						})
-						.catch((error) => {
-							console.error(error);
-							toast.error(`${error}`);
-						});
-
-					if (url) {
-						audioCache.set(content, new Audio(url));
-					}
-				} else if ($config.audio.tts.engine !== '') {
+				if ($config.audio.tts.engine !== '') {
 					const res = await synthesizeOpenAISpeech(localStorage.token, getVoiceId(), content).catch(
 						(error) => {
 							console.error(error);
@@ -693,7 +678,7 @@
 						emoji = null;
 					}
 
-					if ($settings.audio?.tts?.engine === 'browser-kokoro' || !!$config?.audio?.tts?.engine) {
+					if (!!$config?.audio?.tts?.engine) {
 						try {
 							console.log(
 								'%c%s',
@@ -836,21 +821,6 @@
 			return;
 		}
 		model = $models.find((m) => m.id === modelId);
-
-		if ($settings.audio?.tts?.engine === 'browser-kokoro' && !$TTSWorker) {
-			try {
-				await TTSWorker.set(
-					new KokoroWorker({
-						dtype: $settings.audio?.tts?.engineConfig?.dtype ?? 'fp32'
-					})
-				);
-
-				await $TTSWorker.init();
-			} catch (error) {
-				console.error(error);
-				toast.error(`${error}`);
-			}
-		}
 
 		startRecording();
 

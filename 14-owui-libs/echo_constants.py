@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.6.5.1
+version: 6.6.5.2
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.5.2: Purge des constantes WebGPU v5 obsolètes (ECHO_EDGE_*, ECHO_MOBILE_UA_PATTERN) suite à la factorisation dans le store Svelte.
 # 6.6.5.1: Ajout de BROWSER_VIEWS_DIR_NAME ('browserviews') dans ECHO_SESSION_DOMAINS et BROWSER_VIEW_STATUS ('browserview') dans RESOURCE_STATUS_MAP.
 # 6.6.2.3: Ajout de open_browser_ui dans DELEGATE_AGENT_BLACKLIST et alignement de MODEL_ENUM_BY_POLICY["AUTO"] sur MODEL_ATHENA.
 # 6.6.2.2: Suppression des constantes mortes CODEX_HUD_ID et CODEX_ACTION_ID.
 # 6.6.0.1: Intégration du domaine tools_output, de read_tool_output/delete_tool_output dans DELEGATE_AGENT_SYSTEM_TOOLS, de build_httpx_timeout (600s/300s), d'Antigravity 2.32.0 (cl=1021519450) et des seuils de pagination read_codex.
-# 6.5.3.1: Ajout du plafond d'import fichier ECHO_MAX_FILE_UPLOAD_SIZE_MB = 4096 (4 Go).
 
 
 import os
@@ -84,12 +84,6 @@ ECHO_EMBEDDING_BASE_URL = "http://echo-embedding:7997"
 ECHO_EMBEDDING_URL = f"{ECHO_EMBEDDING_BASE_URL}/v1"
 ECHO_N8N_WORKER_URL = "http://echo-n8n-worker:5003"
 MODEL_EMBEDDING = "microsoft/Harrier-OSS-v1-0.6B"
-ECHO_EDGE_ONNX_REPO = "onnx-community/harrier-oss-v1-0.6b-ONNX"
-ECHO_EDGE_HUD_TITLE = "Harrier 0.6B"
-ECHO_EDGE_MODEL_CACHE_VERSION = "2.1"
-ECHO_EDGE_DTYPE = "fp16"
-ECHO_EDGE_MIN_BUFFER_BYTES = 134217728  # 128 Mo min pour maxBufferSize / maxStorageBufferBindingSize
-ECHO_MOBILE_UA_PATTERN = r"mobi|android|iphone|ipad|ipod"
 
 # ==============================================================================
 # 1. PROTOCOLE ANTIGRAVITY 2.1 — AUTH UNIFIÉE

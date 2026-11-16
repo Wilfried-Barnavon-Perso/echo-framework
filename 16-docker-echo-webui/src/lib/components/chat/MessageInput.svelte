@@ -25,7 +25,6 @@
 
 	import { createPicker, getAuthToken } from '$lib/utils/google-drive-picker';
 	import { pickAndDownloadFile } from '$lib/utils/onedrive-file-picker';
-	import { KokoroWorker } from '$lib/workers/KokoroWorker';
 
 	const dispatch = createEventDispatcher();
 
@@ -46,7 +45,6 @@
 		showSettings,
 		showFileNavDir,
 		selectedTerminalId,
-		TTSWorker,
 		temporaryChatEnabled,
 		sideChatRequest,
 		visibleControls
@@ -2946,7 +2944,7 @@
 								<!-- [ECHO-V6-HOOK] Barre Contexte/Session/Identité Google redimensionnable + WebGPU entre les filtres et Écho v6 -->
 								<div class="flex flex-1 items-center justify-end gap-1.5 min-w-0 sm:min-w-[140px] mx-1.5 self-center">
 									<EchoContextGauge chatId={chatId || history?.currentId || ''} />
-									<EchoEdgeEmbedding mode="badge" />
+									<EchoEdgeEmbedding />
 								</div>
 
 								<div class="self-end flex space-x-1 mr-1 min-w-0 gap-[0.03125rem]">
@@ -3075,19 +3073,6 @@
 																}
 
 																stream = null;
-
-																if ($settings.audio?.tts?.engine === 'browser-kokoro') {
-																	// If the user has not initialized the TTS worker, initialize it
-																	if (!$TTSWorker) {
-																		await TTSWorker.set(
-																			new KokoroWorker({
-																				dtype: $settings.audio?.tts?.engineConfig?.dtype ?? 'fp32'
-																			})
-																		);
-
-																		await $TTSWorker.init();
-																	}
-																}
 
 																showCallOverlay.set(true);
 																showTabs.set(true);

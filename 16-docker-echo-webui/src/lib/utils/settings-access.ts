@@ -89,7 +89,7 @@ export function canSearchSetting(
 		return canUseCalls(context);
 	if (stem === 'settings.personal.interface.webSearchInChat') return false;
 	if (
-		/^settings\.personal\.audio\.(speechToTextEngine|textToSpeechEngine|kokoroJsDtype|kokoroVoice|browserVoice|allowNonLocalVoices)$/.test(
+		/^settings\.personal\.audio\.(speechToTextEngine|textToSpeechEngine|browserVoice|allowNonLocalVoices)$/.test(
 			stem
 		)
 	) {
