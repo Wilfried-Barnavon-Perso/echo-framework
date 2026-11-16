@@ -329,6 +329,27 @@ export const postEchoSubagentMessage = async (
 // CODEX GIT & FICHIERS (/echo/v1/codex)
 // ============================================================================
 
+export interface EchoCodexChatEntry {
+	id: string;
+	title: string;
+}
+
+export interface EchoCodexChatsResponse {
+	current: EchoCodexChatEntry;
+	others: EchoCodexChatEntry[];
+}
+
+export const getEchoCodexChats = async (
+	token: string,
+	chatId: string
+): Promise<EchoCodexChatsResponse> =>
+	echoRequestJson<EchoCodexChatsResponse>(
+		`/codex/${encodeURIComponent(chatId)}/chats`,
+		token,
+		{ method: 'GET' },
+		'Échec de lecture des conversations Codex'
+	);
+
 export const getEchoCodexTree = async (
 	token: string,
 	chatId: string,

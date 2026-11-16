@@ -1,16 +1,16 @@
 """
 title: ECHO V6 Codex Router
 author: Wilfried BARNAVON
-version: 6.6.9.1
+version: 6.6.13.1
 description: Routeur FastAPI pour dépôts Codex et conteneurs de session (/echo/v1/codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.13.1: Ajout de l'endpoint GET /{chat_id}/chats (get_codex_chats) exposant CodexRepo.get_user_codex_chats(..., include_files=True).
 # 6.6.9.1: Déportation asyncio.to_thread sur les opérations FS et Git Dulwich synchrones (tree, file, log, diff, download, mkdir, rename).
 # 6.6.6.1: Ajout de POST /{chat_id}/ai-edit (édition LLM one-shot), verrous get_codex_lock sur save/delete et synchro SQLite echo_resources.
 # 6.6.4.1: Normalisation canonique GET /{chat_id}/tree (name, path, filename, type, mime) et POST /{chat_id}/upload.
 # 6.6.2.1: Ajout de _format_hex_preview, mime_type, et des endpoints POST /{chat_id}/mkdir, /rename et /restore.
-# 6.3.0.1: Création du routeur /echo/v1/codex (tree, file, log, diff, download et persistance Git Dulwich).
 
 from __future__ import annotations
 
@@ -284,6 +284,20 @@ def _read_repo_file_sync(
     if commit:
         return repo.read_file_at_commit(path, commit)
     return repo.read_file(path)
+
+
+@router.get("/{chat_id}/chats")
+async def get_codex_chats(
+    chat_id: str,
+    user=Depends(get_verified_user),
+):
+    """Retourne la conversation courante et les autres conversations de l'utilisateur disposant d'un Codex ou de fichiers."""
+    safe_uid = sanitize_echo_id(user.id)
+    safe_cid = sanitize_echo_id(chat_id)
+    chats_data = await asyncio.to_thread(
+        CodexRepo.get_user_codex_chats, safe_uid, safe_cid, True
+    )
+    return JSONResponse(content=chats_data)
 
 
 @router.get("/{chat_id}/tree")

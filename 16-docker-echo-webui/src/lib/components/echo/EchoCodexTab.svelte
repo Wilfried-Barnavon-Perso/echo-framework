@@ -5,6 +5,7 @@
 	import Markdown from '$lib/components/chat/Messages/Markdown.svelte';
 	import {
 		getEchoToken,
+		getEchoCodexChats,
 		getEchoCodexTree,
 		getEchoCodexFile,
 		saveEchoCodexFile,
@@ -17,6 +18,7 @@
 		restoreEchoCodexFile,
 		uploadEchoCodexFile,
 		aiEditEchoCodexFile,
+		type EchoCodexChatEntry,
 		type EchoCodexAiEditPayload
 	} from '$lib/apis/echo';
 	import { ECHO_COGNITIVE_MODELS, echoCodexTarget } from '$lib/stores/echo';
@@ -25,6 +27,8 @@
 
 	let currentChatId = '';
 	let crossReadChatId = '';
+	let currentChatTitle = 'Conversation actuelle';
+	let otherChats: EchoCodexChatEntry[] = [];
 	let workspaces = [
 		{ id: 'main', label: 'Main', writable: true, versioned: true },
 		{ id: 'sandbox', label: 'Sandbox', writable: true, versioned: false },
@@ -100,8 +104,12 @@
 	let fileUploadInput: HTMLInputElement | null = null;
 	let previewLoadSeq = 0;
 
+	const getEffectiveChatId = () => crossReadChatId || chatId;
 	$: effectiveChatId = crossReadChatId || chatId;
 	$: isCrossRead = Boolean(crossReadChatId && crossReadChatId !== chatId);
+	$: crossReadChatTitle = isCrossRead
+		? otherChats.find((c) => c.id === crossReadChatId)?.title || `Chat ${crossReadChatId.slice(0, 8)}`
+		: '';
 	$: currentWsObj = workspaces.find((w) => w.id === selectedWorkspace) || workspaces[0];
 	$: isWritable = currentWsObj.writable && !isCrossRead;
 	$: isDirty = Boolean(
@@ -134,15 +142,21 @@
 	$: if (chatId && chatId !== currentChatId) {
 		currentChatId = chatId;
 		crossReadChatId = '';
+		currentChatTitle = 'Conversation actuelle';
+		otherChats = [];
 		currentDirPath = '';
 		selectedPath = '';
 		fileContent = '';
 		savedFileContent = '';
 		fileMeta = null;
 		viewMode = 'code';
+		logEntries = [];
+		diffText = '';
+		currentCommit = '';
 		aiInstruction = '';
 		resetAiState();
 		revokePreviewBlob();
+		void loadChats();
 		if ($echoCodexTarget?.chatId !== chatId) {
 			void loadTree('');
 		}
@@ -327,16 +341,49 @@
 
 	let treeLoadSeq = 0;
 	let fileLoadSeq = 0;
+	let chatsLoadSeq = 0;
 
-	const loadTree = async (dirPath: string = currentDirPath) => {
-		const token = localStorage?.token;
-		if (!token || !effectiveChatId) return;
+	const loadChats = async () => {
+		const token = getEchoToken();
+		if (!token || !chatId) return;
+		const seq = ++chatsLoadSeq;
+		try {
+			const res = await getEchoCodexChats(token, chatId);
+			if (seq !== chatsLoadSeq) return;
+			currentChatTitle = res?.current?.title || 'Conversation actuelle';
+			otherChats = Array.isArray(res?.others) ? res.others : [];
+		} catch {
+			// Non bloquant
+		}
+	};
+
+	const loadTree = async (
+		dirPath: string = currentDirPath,
+		autoFallbackWorkspace: boolean = false
+	) => {
+		const token = getEchoToken();
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
 		const seq = ++treeLoadSeq;
 		loadingTree = true;
 		try {
-			const res = await getEchoCodexTree(token, effectiveChatId, selectedWorkspace, dirPath);
+			const res = await getEchoCodexTree(token, targetCid, selectedWorkspace, dirPath);
 			if (seq !== treeLoadSeq) return;
-			treeEntries = res?.entries || res || [];
+			let entries = res?.entries || res || [];
+			if (autoFallbackWorkspace && !dirPath && entries.length === 0) {
+				for (const candidate of workspaces) {
+					if (candidate.id === selectedWorkspace) continue;
+					const candRes = await getEchoCodexTree(token, targetCid, candidate.id, '');
+					if (seq !== treeLoadSeq) return;
+					const candEntries = candRes?.entries || candRes || [];
+					if (Array.isArray(candEntries) && candEntries.length > 0) {
+						selectedWorkspace = candidate.id;
+						entries = candEntries;
+						break;
+					}
+				}
+			}
+			treeEntries = entries;
 		} catch (e: any) {
 			if (seq !== treeLoadSeq) return;
 			toast.error('Erreur de chargement Codex: ' + (e.message || ''));
@@ -363,11 +410,12 @@
 		resetAiState();
 		revokePreviewBlob();
 		const token = getEchoToken();
-		if (!token || !effectiveChatId) return;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
 
 		loadingFile = true;
 		try {
-			const res = await getEchoCodexFile(token, effectiveChatId, selectedWorkspace, path);
+			const res = await getEchoCodexFile(token, targetCid, selectedWorkspace, path);
 			if (seq !== fileLoadSeq) return;
 			if (typeof res === 'string') {
 				fileContent = res;
@@ -390,7 +438,7 @@
 				if (!forceCodeMode && caps.canPreview) {
 					viewMode = 'preview';
 					if (caps.needsBlob) {
-						void loadPreviewBlob(effectiveChatId, selectedWorkspace, path);
+						void loadPreviewBlob(targetCid, selectedWorkspace, path);
 					}
 				}
 			}
@@ -406,19 +454,21 @@
 
 	const handleToggleViewMode = (mode: 'code' | 'preview') => {
 		viewMode = mode;
-		if (mode === 'preview' && previewCaps.needsBlob && !previewBlobUrl && selectedPath) {
-			void loadPreviewBlob(effectiveChatId, selectedWorkspace, selectedPath);
+		const targetCid = getEffectiveChatId();
+		if (mode === 'preview' && previewCaps.needsBlob && !previewBlobUrl && selectedPath && targetCid) {
+			void loadPreviewBlob(targetCid, selectedWorkspace, selectedPath);
 		}
 	};
 
 	const handleSave = async () => {
 		if (!isWritable || !selectedPath) return;
 		const token = localStorage?.token;
-		if (!token || !effectiveChatId) return;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
 
 		isSaving = true;
 		try {
-			await saveEchoCodexFile(token, effectiveChatId, {
+			await saveEchoCodexFile(token, targetCid, {
 				workspace: selectedWorkspace,
 				path: selectedPath,
 				content: fileContent,
@@ -443,11 +493,12 @@
 		if (!isWritable || !selectedPath) return;
 		if (!confirm(`Confirmer la suppression de ${selectedPath} ?`)) return;
 		const token = localStorage?.token;
-		if (!token || !effectiveChatId) return;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
 
 		isDeleting = true;
 		try {
-			await deleteEchoCodexFile(token, effectiveChatId, selectedWorkspace, selectedPath);
+			await deleteEchoCodexFile(token, targetCid, selectedWorkspace, selectedPath);
 			toast.success('Fichier supprimé');
 			selectedPath = '';
 			fileContent = '';
@@ -471,11 +522,12 @@
 		const cleanFolder = folderPath.trim().replace(/^\/+|\/+$/g, '');
 		if (!cleanFolder) return;
 		const token = localStorage?.token;
-		if (!token || !effectiveChatId) return;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
 
 		isMutating = true;
 		try {
-			await mkdirEchoCodex(token, effectiveChatId, selectedWorkspace, cleanFolder);
+			await mkdirEchoCodex(token, targetCid, selectedWorkspace, cleanFolder);
 			toast.success(`Dossier créé : ${cleanFolder}`);
 			await loadTree(currentDirPath);
 		} catch (e: any) {
@@ -496,11 +548,12 @@
 			return;
 		}
 		const token = localStorage?.token;
-		if (!token || !effectiveChatId) return;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
 
 		isMutating = true;
 		try {
-			await saveEchoCodexFile(token, effectiveChatId, {
+			await saveEchoCodexFile(token, targetCid, {
 				workspace: selectedWorkspace,
 				path: trimmed,
 				content: '',
@@ -519,7 +572,8 @@
 	const uploadFilesList = async (files: FileList | File[]) => {
 		if (!isWritable || !files || files.length === 0) return;
 		const token = localStorage?.token;
-		if (!token || !effectiveChatId) return;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
 
 		isUploading = true;
 		let uploadedCount = 0;
@@ -528,7 +582,7 @@
 			for (const file of Array.from(files)) {
 				const res = await uploadEchoCodexFile(
 					token,
-					effectiveChatId,
+					targetCid,
 					selectedWorkspace,
 					file,
 					currentDirPath
@@ -577,12 +631,13 @@
 		const newPath = prompt('Nouveau chemin du fichier :', selectedPath);
 		if (!newPath || !newPath.trim() || newPath.trim() === selectedPath) return;
 		const token = localStorage?.token;
-		if (!token || !effectiveChatId) return;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
 
 		isMutating = true;
 		try {
 			const cleanNew = newPath.trim();
-			await renameEchoCodex(token, effectiveChatId, selectedWorkspace, selectedPath, cleanNew);
+			await renameEchoCodex(token, targetCid, selectedWorkspace, selectedPath, cleanNew);
 			toast.success(`Renommé en ${cleanNew}`);
 			selectedPath = cleanNew;
 			await loadTree();
@@ -601,11 +656,12 @@
 			return;
 		}
 		const token = localStorage?.token;
-		if (!token || !effectiveChatId) return;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
 
 		isMutating = true;
 		try {
-			await restoreEchoCodexFile(token, effectiveChatId, selectedWorkspace, targetFile.trim(), commitHash);
+			await restoreEchoCodexFile(token, targetCid, selectedWorkspace, targetFile.trim(), commitHash);
 			toast.success(`Fichier restauré depuis ${commitHash.slice(0, 8)}`);
 			await loadTree();
 			await selectFile(targetFile.trim());
@@ -617,11 +673,12 @@
 	};
 
 	const handleDownload = async () => {
-		if (!selectedPath || !effectiveChatId) return;
+		const targetCid = getEffectiveChatId();
+		if (!selectedPath || !targetCid) return;
 		const token = getEchoToken();
 		if (!token) return;
 		try {
-			const blob = await downloadEchoCodexFileBlob(token, effectiveChatId, selectedWorkspace, selectedPath);
+			const blob = await downloadEchoCodexFileBlob(token, targetCid, selectedWorkspace, selectedPath);
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
@@ -638,9 +695,10 @@
 	const loadLog = async () => {
 		activeSubView = 'log';
 		const token = localStorage?.token;
-		if (!token || !effectiveChatId) return;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
 		try {
-			const res = await getEchoCodexLog(token, effectiveChatId, selectedWorkspace, selectedPath, 30);
+			const res = await getEchoCodexLog(token, targetCid, selectedWorkspace, selectedPath, 30);
 			logEntries = res?.logs || res?.commits || (Array.isArray(res) ? res : []);
 		} catch (e: any) {
 			toast.error('Erreur historique: ' + (e.message || ''));
@@ -651,26 +709,37 @@
 		activeSubView = 'diff';
 		currentCommit = commitHash;
 		const token = localStorage?.token;
-		if (!token || !effectiveChatId) return;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
 		try {
-			const res = await getEchoCodexDiff(token, effectiveChatId, selectedWorkspace, commitHash);
+			const res = await getEchoCodexDiff(token, targetCid, selectedWorkspace, commitHash);
 			diffText = typeof res === 'string' ? res : res?.diff || '';
 		} catch (e: any) {
 			toast.error('Erreur diff: ' + (e.message || ''));
 		}
 	};
 
-	const exitCrossRead = () => {
-		crossReadChatId = '';
+	const handleChatSwitch = (targetCid: string) => {
+		const nextCross = targetCid && targetCid !== chatId ? targetCid : '';
+		if (nextCross === crossReadChatId) return;
+		crossReadChatId = nextCross;
 		currentDirPath = '';
 		selectedPath = '';
 		fileContent = '';
 		savedFileContent = '';
 		fileMeta = null;
+		activeSubView = 'editor';
 		viewMode = 'code';
+		logEntries = [];
+		diffText = '';
+		currentCommit = '';
 		resetAiState();
 		revokePreviewBlob();
-		void loadTree('');
+		void loadTree('', Boolean(nextCross));
+	};
+
+	const exitCrossRead = () => {
+		handleChatSwitch('');
 	};
 
 	const updateSelectionFromTextarea = () => {
@@ -696,11 +765,12 @@
 		const instr = quickAction ? quickLabel || quickAction : aiInstruction.trim();
 		if (!instr && !quickAction) return;
 		const token = localStorage?.token;
-		if (!token || !effectiveChatId) return;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
 
 		isAiEditing = true;
 		try {
-			const res = await aiEditEchoCodexFile(token, effectiveChatId, {
+			const res = await aiEditEchoCodexFile(token, targetCid, {
 				workspace: selectedWorkspace,
 				path: selectedPath,
 				instruction: quickAction ? undefined : instr,
@@ -856,7 +926,11 @@
 		const lastSlash = targetFile.lastIndexOf('/');
 		currentDirPath = lastSlash > 0 ? targetFile.slice(0, lastSlash) : '';
 		void (async () => {
-			await loadTree(currentDirPath);
+			await loadChats();
+			await loadTree(
+				currentDirPath,
+				!target.workspace && !targetFile && Boolean(crossReadChatId)
+			);
 			if (targetFile) {
 				await selectFile(targetFile);
 			}
@@ -867,7 +941,10 @@
 	}
 
 	onMount(() => {
-		if (effectiveChatId && $echoCodexTarget?.chatId !== chatId) void loadTree(currentDirPath);
+		if (getEffectiveChatId() && $echoCodexTarget?.chatId !== chatId) {
+			void loadChats();
+			void loadTree(currentDirPath);
+		}
 	});
 </script>
 
@@ -876,7 +953,7 @@
 	{#if isCrossRead}
 		<div class="flex items-center justify-between gap-2 px-4 py-1.5 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200 shrink-0">
 			<span class="font-medium truncate">
-				Lecture croisée (lecture seule) — Dépôt de la session <code class="font-mono">{crossReadChatId}</code>
+				Lecture croisée (lecture seule) — Session « <span class="font-semibold">{crossReadChatTitle}</span> » (<code class="font-mono">{crossReadChatId.slice(0, 8)}</code>)
 			</span>
 			<button
 				type="button"
@@ -890,13 +967,36 @@
 
 	<!-- Barre de contrôle supérieure -->
 	<div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-850 shrink-0">
-		<div class="flex items-center gap-2">
+		<div class="flex flex-wrap items-center gap-2 min-w-0">
 			<span class="font-bold text-sm text-gray-900 dark:text-white flex items-center gap-1.5">
 				<svg class="w-4 h-4 text-sky-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 					<path d="M16.5 9.4 7.55 4.24a1.78 1.78 0 0 0-2.5 1.55v12.42a1.78 1.78 0 0 0 2.5 1.55L16.5 14.6a1.78 1.78 0 0 0 0-3.2z" />
 				</svg>
 				Codex Git
 			</span>
+
+			<!-- Sélecteur de Conversation (Multi-Chat) -->
+			<select
+				aria-label="Sélecteur de conversation Codex"
+				title="Naviguer entre le dépôt de la session active et ceux des autres conversations (lecture seule)"
+				class="text-xs bg-white dark:bg-gray-800 border rounded-lg px-2 py-1 font-semibold max-w-[240px] truncate focus:outline-none focus:ring-1 focus:ring-sky-500 {isCrossRead
+					? 'border-amber-500/60 text-amber-600 dark:text-amber-400'
+					: 'border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200'}"
+				value={crossReadChatId}
+				on:change={(e) => handleChatSwitch(e.currentTarget.value)}
+			>
+				<option value="">💬 {currentChatTitle} (actuelle)</option>
+				{#if isCrossRead && !otherChats.some((c) => c.id === crossReadChatId)}
+					<option value={crossReadChatId}>📂 {crossReadChatTitle} [RO]</option>
+				{/if}
+				{#if otherChats.length > 0}
+					<optgroup label="Autres conversations (Lecture seule)">
+						{#each otherChats as c (c.id)}
+							<option value={c.id}>📂 {c.title} [RO]</option>
+						{/each}
+					</optgroup>
+				{/if}
+			</select>
 
 			<!-- Sélecteur de Workspace -->
 			<select
@@ -1015,7 +1115,10 @@
 					<button
 						type="button"
 						class="p-1 hover:text-sky-500"
-						on:click={() => void loadTree(currentDirPath)}
+						on:click={() => {
+							void loadChats();
+							void loadTree(currentDirPath);
+						}}
 						title="Rafraîchir l'arbre"
 					>
 						<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

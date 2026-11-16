@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 5.235.4.1
+version: 6.6.13.1
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.13.1: Ajout du paramètre include_files: bool = False à get_user_codex_chats pour détecter également les sessions possédant des fichiers dans files/.
 # 5.235.4.1: Exclusion systématique des flux binaires dans search_in_file et trace_history pour éliminer les faux positifs et ralentissements.
 # 5.235.2.1: Implémentation de read_file_at_commit retournant les métadonnées complètes et factorisation de get_file_at_commit.
 # 5.232.5.2: Pilotage déclaratif de CodexRepo via is_codex_workspace_versioned(workspace), désactivation de core.autocrlf, parcours déterministe first-parent dans get_log et résolution de HEAD dans resolve_commit.
 # 5.231.29.1: Alignement sur les constantes SSOT des espaces de travail Codex (CODEX_DEFAULT_WORKSPACE, CODEX_WORKSPACE_SANDBOX, ECHO_CODEX_WORKSPACES).
-# 5.231.2.1: Filtrage SSoT strict dans get_user_codex_chats excluant les conversations orphelines supprimées de webui.db.
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
 # desc.
 
@@ -852,8 +852,14 @@ class CodexRepo:
         return os.path.exists(chat_dir)
 
     @classmethod
-    def get_user_codex_chats(cls, user_id: str, current_chat_id: Optional[str] = None) -> dict:
-        """Découvre et résout les conversations de l'utilisateur ayant un Codex.
+    def get_user_codex_chats(
+        cls,
+        user_id: str,
+        current_chat_id: Optional[str] = None,
+        include_files: bool = False,
+    ) -> dict:
+        """Découvre et résout les conversations de l'utilisateur ayant un Codex
+        (ou des fichiers dans files/ si include_files=True).
         Exclut strictement current_chat_id de la liste others.
         Retourne:
         {
@@ -874,9 +880,9 @@ class CodexRepo:
             with os.scandir(user_chats_dir) as entries:
                 for entry in entries:
                     if entry.is_dir() and not entry.name.startswith("."):
+                        has_content = False
                         codex_path = os.path.join(entry.path, CODEX_DIR_NAME)
                         if os.path.exists(codex_path):
-                            has_content = False
                             try:
                                 for ws in ECHO_CODEX_WORKSPACES:
                                     ws_dir = os.path.join(codex_path, ws)
@@ -887,8 +893,17 @@ class CodexRepo:
                                                 break
                             except Exception:
                                 has_content = True
-                            if has_content:
-                                candidate_cids.add(entry.name)
+                        if not has_content and include_files:
+                            files_path = os.path.join(entry.path, "files")
+                            if os.path.exists(files_path):
+                                try:
+                                    with os.scandir(files_path) as f_entries:
+                                        if any(not e.name.startswith(".") for e in f_entries):
+                                            has_content = True
+                                except Exception:
+                                    has_content = True
+                        if has_content:
+                            candidate_cids.add(entry.name)
 
         if cur_cid:
             candidate_cids.add(cur_cid)
