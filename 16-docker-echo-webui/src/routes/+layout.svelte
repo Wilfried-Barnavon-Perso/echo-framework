@@ -1421,6 +1421,52 @@
 
 		await tick();
 
+		const dismissSplashScreen = async () => {
+			const splash = document.getElementById('splash-screen');
+			if (!splash) {
+				loaded = true;
+				return;
+			}
+
+			const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+			if (reducedMotion || document.documentElement.classList.contains('her')) {
+				loaded = true;
+				splash.remove();
+				return;
+			}
+
+			const parsedStart = Number(splash.dataset.echoSplashStart);
+			const startedAt =
+				Number.isFinite(parsedStart) && parsedStart > 0 ? parsedStart : performance.now();
+			const remainingStandMs = Math.max(0, 1500 - (performance.now() - startedAt));
+			if (remainingStandMs > 0) {
+				await new Promise((resolve) => setTimeout(resolve, remainingStandMs));
+			}
+
+			loaded = true;
+			await tick();
+
+			let removed = false;
+			const onTransitionEnd = (e) => {
+				if (e.target === splash && e.propertyName === 'opacity') {
+					finalize();
+				}
+			};
+			const finalize = () => {
+				if (removed) return;
+				removed = true;
+				splash.removeEventListener('transitionend', onTransitionEnd);
+				splash.remove();
+			};
+
+			splash.style.pointerEvents = 'none';
+			splash.addEventListener('transitionend', onTransitionEnd);
+			setTimeout(finalize, 550);
+			requestAnimationFrame(() => {
+				splash.style.opacity = '0';
+			});
+		};
+
 		if (
 			document.documentElement.classList.contains('her') &&
 			document.getElementById('progress-bar')
@@ -1435,7 +1481,7 @@
 
 			await loadingProgress.set(100);
 
-			document.getElementById('splash-screen')?.remove();
+			await dismissSplashScreen();
 
 			const audio = new Audio(`/audio/greeting.mp3`);
 			const playAudio = () => {
@@ -1444,11 +1490,8 @@
 			};
 
 			document.addEventListener('click', playAudio);
-
-			loaded = true;
 		} else {
-			document.getElementById('splash-screen')?.remove();
-			loaded = true;
+			await dismissSplashScreen();
 		}
 
 		// Auto-show SyncStatsModal when opened with ?sync=true (from community)

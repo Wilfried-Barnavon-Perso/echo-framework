@@ -399,6 +399,7 @@ type Config = {
 	status: boolean;
 	name: string;
 	version: string;
+	echo_version?: string;
 	default_locale: string;
 	i18n?: I18nOverrides;
 	default_models: string;

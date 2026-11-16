@@ -109,7 +109,7 @@
 				const logo = document.createElement('img');
 				logo.id = 'logo';
 				logo.style =
-					'position: absolute; inset: 0; width: 100%; height: 100%; max-width: 100%; max-height: 100%; object-fit: contain; object-position: center; display: block;';
+					'position: absolute; inset: 0; width: 100%; height: 100%; max-width: 100%; max-height: 100%; object-fit: contain; object-position: center; display: block; opacity: 0; transition: opacity 0.5s ease-in;';
 				logo.loading = 'eager';
 				logo.fetchPriority = 'high';
 				// LICENSE covers this Open WebUI splash logo.
@@ -124,7 +124,23 @@
 						return;
 					}
 
-					if (splash) splash.prepend(logo);
+					if (splash) {
+						splash.prepend(logo);
+						const revealLogo = () => {
+							splash.dataset.echoSplashStart = String(performance.now());
+							// Force style commit at opacity:0 before triggering CSS transition
+							void logo.offsetWidth;
+							requestAnimationFrame(() => {
+								logo.style.opacity = '1';
+							});
+						};
+						if (logo.complete) {
+							revealLogo();
+						} else {
+							logo.addEventListener('load', revealLogo, { once: true });
+							logo.addEventListener('error', revealLogo, { once: true });
+						}
+					}
 				});
 			})();
 		</script>
@@ -215,6 +231,14 @@
 
 		#splash-screen {
 			background: #fff;
+			transition: opacity 0.5s ease-out;
+		}
+
+		@media (prefers-reduced-motion: reduce) {
+			#splash-screen,
+			#logo {
+				transition: none !important;
+			}
 		}
 
 		html.dark #splash-screen {
