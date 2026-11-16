@@ -38,17 +38,23 @@ COPY package.json package-lock.json ./
 # the frontend build never uses onnxruntime-node's CUDA binaries
 RUN ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci --force
 
-COPY . .
+COPY scripts/prepare-pyodide.js ./scripts/prepare-pyodide.js
+RUN mkdir -p static/pyodide && \
+    USE_SLIM="${USE_SLIM}" npm run pyodide:fetch && \
+    mv static/pyodide /tmp/pyodide-bundle
+
+COPY crypto ./crypto
+COPY scripts ./scripts
+COPY src ./src
+COPY static ./static
+COPY postcss.config.js svelte.config.js tailwind.config.js tsconfig.json vite.config.ts UI_VERSION CHANGELOG.md LICENSE ./
 ENV APP_BUILD_HASH=${BUILD_HASH}
 ENV APP_BUILD_CHANNEL=${BUILD_CHANNEL}
-RUN npm run build && \
+RUN rm -rf static/pyodide && \
+    mv /tmp/pyodide-bundle static/pyodide && \
+    npm run crypto:verify && \
+    node --max-old-space-size=6144 node_modules/vite/bin/vite.js build && \
     if [ "$USE_SLIM" = "true" ]; then find build -type f -name '*.map' -delete; fi
-
-# Prepare backend ownership before the final copy so static assets occupy one layer.
-# Group 0 write access lets arbitrary OpenShift UIDs update these assets at startup.
-RUN chown -R $UID:$GID /app/backend && \
-    chgrp -R 0 /app/backend/open_webui/static && \
-    chmod -R g=u /app/backend/open_webui/static
 
 ######## WebUI backend ########
 FROM python:3.12-slim-trixie AS base
@@ -162,12 +168,14 @@ RUN --mount=from=ghcr.io/astral-sh/uv:0.12.10,source=/uv,target=/bin/uv \
 
 # copy built frontend files
 COPY --chown=$UID:$GID --from=build /app/build /app/build
-COPY --chown=$UID:$GID --from=build /app/CHANGELOG.md /app/CHANGELOG.md
-COPY --chown=$UID:$GID --from=build /app/package.json /app/package.json
-COPY --chown=$UID:$GID --from=build /app/UI_VERSION /app/UI_VERSION
+COPY --chown=$UID:$GID CHANGELOG.md /app/CHANGELOG.md
+COPY --chown=$UID:$GID package.json /app/package.json
+COPY --chown=$UID:$GID UI_VERSION /app/UI_VERSION
 
-# copy backend files with the ownership and static permissions prepared above
-COPY --from=build /app/backend .
+# copy backend files directly from build context (decoupled from frontend stage)
+COPY --chown=$UID:$GID ./backend .
+RUN chgrp -R 0 /app/backend/open_webui/static && \
+    chmod -R g=u /app/backend/open_webui/static
 
 EXPOSE 8080
 

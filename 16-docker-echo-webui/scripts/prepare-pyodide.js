@@ -12,7 +12,8 @@ const packages = [
 	'sympy',
 	'tiktoken',
 	'pytz',
-	'black',
+	'click',
+	'platformdirs',
 	'openai',
 	'lxml'
 ];
@@ -77,18 +78,46 @@ function initNetworkProxyFromEnv() {
 	console.log(`Initialized network proxy "${preferedProxy}" from env`);
 }
 
+async function withRetry(label, fn, retries = 4, baseDelayMs = 1500) {
+	for (let attempt = 1; attempt <= retries; attempt++) {
+		try {
+			return await fn();
+		} catch (err) {
+			if (attempt >= retries) {
+				console.error(`[pyodide:fetch] ${label} failed after ${retries} attempts:`, err);
+				throw err;
+			}
+			const delayMs = baseDelayMs * 2 ** (attempt - 1);
+			console.warn(
+				`[pyodide:fetch] ${label} failed (attempt ${attempt}/${retries}), retrying in ${delayMs}ms:`,
+				err?.message || err
+			);
+			await new Promise((resolve) => setTimeout(resolve, delayMs));
+		}
+	}
+}
+
+async function fetchWithRetry(url, { asJson = false, timeoutMs = 30000 } = {}) {
+	return withRetry(`fetch ${url}`, async () => {
+		const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+		if (!res.ok) {
+			throw new Error(`HTTP ${res.status} for ${url}`);
+		}
+		if (asJson) {
+			return await res.json();
+		}
+		return Buffer.from(await res.arrayBuffer());
+	});
+}
+
 async function downloadPackages() {
 	console.log('Setting up pyodide + micropip');
 
-	let pyodide;
-	try {
-		pyodide = await loadPyodide({
+	const pyodide = await withRetry('loadPyodide', () =>
+		loadPyodide({
 			packageCacheDir: 'static/pyodide'
-		});
-	} catch (err) {
-		console.error('Failed to load Pyodide:', err);
-		return;
-	}
+		})
+	);
 
 	const packageJson = JSON.parse(await readFile('package.json'));
 	const pyodideVersion = packageJson.dependencies.pyodide.replace('^', '');
@@ -99,40 +128,27 @@ async function downloadPackages() {
 
 		if (pyodideVersion !== pyodidePackageVersion) {
 			console.log('Pyodide version mismatch, removing static/pyodide directory');
-			await rmdir('static/pyodide', { recursive: true });
+			await rm('static/pyodide', { recursive: true, force: true });
 		}
 	} catch (err) {
 		console.log('Pyodide package not found, proceeding with download.', err);
 	}
 
-	try {
-		console.log('Loading micropip package');
-		await pyodide.loadPackage('micropip');
+	console.log('Loading micropip package');
+	await withRetry('loadPackage(micropip)', () => pyodide.loadPackage('micropip'));
 
-		const micropip = pyodide.pyimport('micropip');
-		console.log('Downloading Pyodide packages:', packages);
+	const micropip = pyodide.pyimport('micropip');
+	console.log('Downloading Pyodide packages:', packages);
 
-		try {
-			for (const pkg of packages) {
-				console.log(`Installing package: ${pkg}`);
-				await micropip.install(pkg);
-			}
-		} catch (err) {
-			console.error('Package installation failed:', err);
-			return;
-		}
-
-		console.log('Pyodide packages downloaded, freezing into lock file');
-
-		try {
-			const lockFile = await micropip.freeze();
-			await writeFile('static/pyodide/pyodide-lock.json', lockFile);
-		} catch (err) {
-			console.error('Failed to write lock file:', err);
-		}
-	} catch (err) {
-		console.error('Failed to load or install micropip:', err);
+	for (const pkg of packages) {
+		console.log(`Installing package: ${pkg}`);
+		await withRetry(`micropip.install(${pkg})`, () => micropip.install(pkg));
 	}
+
+	console.log('Pyodide packages downloaded, freezing into lock file');
+
+	const lockFile = await micropip.freeze();
+	await writeFile('static/pyodide/pyodide-lock.json', lockFile);
 }
 
 async function copyPyodide() {
@@ -153,19 +169,16 @@ async function downloadPyPIWheels() {
 	let lockData;
 	try {
 		lockData = JSON.parse(await readFile(lockPath, 'utf-8'));
-	} catch {
-		console.warn('Could not read pyodide-lock.json, skipping PyPI wheel download');
-		return;
+	} catch (err) {
+		throw new Error(`Could not read ${lockPath}: ${err?.message || err}`);
 	}
 
 	for (const pkg of pypiPackages) {
 		console.log(`Fetching PyPI metadata for: ${pkg}`);
-		const res = await fetch(`https://pypi.org/pypi/${pkg}/json`);
-		if (!res.ok) {
-			console.error(`Failed to fetch PyPI metadata for ${pkg}: ${res.status}`);
-			continue;
-		}
-		const meta = await res.json();
+		const meta = await fetchWithRetry(`https://pypi.org/pypi/${pkg}/json`, {
+			asJson: true,
+			timeoutMs: 30000
+		});
 		const version = meta.info.version;
 		const files = meta.urls || [];
 		// Find the pure-Python wheel (py3-none-any)
@@ -173,8 +186,7 @@ async function downloadPyPIWheels() {
 			(f) => f.filename.endsWith('.whl') && f.filename.includes('py3-none-any')
 		);
 		if (!wheel) {
-			console.warn(`No pure-Python wheel found for ${pkg}==${version}, skipping`);
-			continue;
+			throw new Error(`No pure-Python wheel found for ${pkg}==${version}`);
 		}
 		const dest = `static/pyodide/${wheel.filename}`;
 		// Download wheel if not already present
@@ -183,12 +195,7 @@ async function downloadPyPIWheels() {
 			console.log(`  Already exists: ${wheel.filename}`);
 		} catch {
 			console.log(`  Downloading: ${wheel.filename}`);
-			const wheelRes = await fetch(wheel.url);
-			if (!wheelRes.ok) {
-				console.error(`  Failed to download ${wheel.filename}: ${wheelRes.status}`);
-				continue;
-			}
-			const buffer = Buffer.from(await wheelRes.arrayBuffer());
+			const buffer = await fetchWithRetry(wheel.url, { timeoutMs: 60000 });
 			await writeFile(dest, buffer);
 			console.log(`  Saved: ${dest} (${buffer.length} bytes)`);
 		}

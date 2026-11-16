@@ -1,18 +1,18 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.5.3.1
+# VERSION : 6.6.12.1
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.12.1: Factorisation COMPOSE_ARGS et pré-construction isolée de echo-webui (protection RAM V8 6 Go).
 # 6.5.3.1: Renommage de l'image et du conteneur echo-open-webui vers echo-webui.
 # 6.5.1.2: Ajout de ensure_swap_and_vm_tuning (filet swap 4 Go et vm.swappiness=25).
 # 6.0.0.1: Retrait de l'appel à config-owui.sh au profit du bootstrap déclaratif lifespan ECHO V6.
 # 5.231.39.1: Alignement du cron quotidien sur echo-clean (/etc/cron.daily/echo-clean) et de l'aide sur echo-show-admin.
-# 5.231.21.1: Délégation de la génération des secrets .env (dont ECHO_VAULT_ENCRYPTION_KEY) à ensure_echo_secrets (echo-globals.sh).
 
 set -e # Arrêt en cas d'erreur critique
 
@@ -300,15 +300,19 @@ export DOCKER_BUILDKIT=1
 
 export COMPOSE_PARALLEL_LIMIT=2
 
+COMPOSE_ARGS=(--env-file "$ENV_FILE")
 if [ -f "$BW_STACK_FILE" ] && [ -f "$ENV_FILE" ] && grep -qE "^ECHO_DOMAIN=.+" "$ENV_FILE"; then
     echo "🔒 Mode SECURE EDGE détecté. Lancement de l'infrastructure complète (ECHO + BunkerWeb)..."
-    $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$BW_STACK_FILE" -f "$COMPOSE_FILE" build $PULL_FLAG
-    $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$BW_STACK_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans
+    COMPOSE_ARGS+=(-f "$BW_STACK_FILE" -f "$COMPOSE_FILE")
 else
     echo "🔓 Mode STANDARD (Local) détecté."
-    $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" build $PULL_FLAG
-    $DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --remove-orphans
+    COMPOSE_ARGS+=(-f "$COMPOSE_FILE")
 fi
+
+echo "🎨 Pré-construction isolée de echo-webui (protection mémoire V8 6 Go)..."
+$DOCKER_COMPOSE_CMD "${COMPOSE_ARGS[@]}" build $PULL_FLAG echo-webui
+$DOCKER_COMPOSE_CMD "${COMPOSE_ARGS[@]}" build $PULL_FLAG
+$DOCKER_COMPOSE_CMD "${COMPOSE_ARGS[@]}" up -d --remove-orphans
 
 if [ $? -eq 0 ]; then
     echo "✅ Stack Docker Compose active."

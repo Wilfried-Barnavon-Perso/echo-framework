@@ -35,7 +35,7 @@ La base de code de ce composant est verrouillée sur une version amont d'Open We
 Le conteneur bâti depuis ce composant s'insère au cœur de l'architecture multi-services d'ECHO V6. Les contrats d'interface suivants sont des invariants stricts :
 
 1. **Réseau & Service :**
-   - Nom de service : `echo-webui` (identité UI `ECHO-UI`, version front disjointe `UI_VERSION` `6.6.9.1`).
+   - Nom de service : `echo-webui` (identité UI `ECHO-UI`, version front disjointe `UI_VERSION` `6.6.12.1`).
    - Assignation réseau interne : `172.28.0.100:8080` (réseau `echo-net`).
 2. **Persistance des Données :**
    - Montage du volume persistant : `echo-webui-data:/app/backend/data`.
@@ -103,7 +103,7 @@ Dix-neuf points d'ancrage minimaux et isolés sont insérés dans le code amont 
 19. **`backend/open_webui/utils/tools.py` :** Dans `get_terminal_tools`, retour gracieux `({}, None)` lorsque `server_data is None` ou `not specs` pour les serveurs terminaux PTY-only (ex: `echo-coding-worker` avec `paths={}`) sans lever `RuntimeError`.
 
 ### 4.3 Dégraissage & Dépendances
-- **Optimisation de compilation Frontend :** Désactivation des sourcemaps Vite en production (`sourcemap: false` dans `vite.config.ts`) et relèvement du plafond mémoire V8 à `--max-old-space-size=6144` dans `package.json` (`scripts.build`) et `Dockerfile` (`ENV NODE_OPTIONS`) afin d'éviter les dépassements mémoire (`JavaScript heap out of memory`) lors du build SvelteKit/Vite.
+- **Optimisation de compilation Frontend & Isolation BuildKit 3-Paliers :** Désactivation des sourcemaps Vite en production (`sourcemap: false` dans `vite.config.ts`) et relèvement du plafond mémoire V8 à `--max-old-space-size=6144` dans `package.json` (`scripts.build`) et `Dockerfile` (`ENV NODE_OPTIONS`) afin d'éviter les dépassements mémoire (`JavaScript heap out of memory`) lors du build SvelteKit/Vite. Le `Dockerfile` isole les couches en 3 paliers (`pyodide:fetch` via `scripts/prepare-pyodide.js` $\rightarrow$ build frontend `crypto:verify` + `vite build` $\rightarrow$ copie directe de `./backend` dans le stage `base`) appuyé par `.dockerignore` (`node_modules`, `.svelte-kit`, `build`, `.pytest_cache`, `__pycache__`), empêchant qu'une retouche Python backend n'invalide le bundle Pyodide et la compilation Vite. `prepare-pyodide.js` résout `'click'` et `'platformdirs'` depuis le CDN Pyodide (sans passer par PyPI via `micropip` pour `'black'`) et encapsule `loadPyodide`, `micropip.install`, les métadonnées PyPI et les téléchargements de wheels dans `withRetry` / `fetchWithRetry` (4 tentatives, backoff exponentiel, échec strict sans avalement d'erreur).
 - **Maintien de `USE_SLIM=false` :** Préservation obligatoire pour garantir le support des parsers de documents locaux (PDF, DOCX via `pypdf`, `pandoc`), `pydub` et les wheels Pyodide MPSI locaux sans dépendance de CDN externe.
 - **Purge ML/CUDA/VectorDB :** Suppression de 16 bibliothèques lourdes (`chromadb`, `weaviate-client`, `opensearch-py`, `transformers`, `sentence-transformers`, `accelerate`, `einops`, `unstructured`, `preshed`, `opencv-python-headless`, `rapidocr`, `onnxruntime`, `faster-whisper`, `pymilvus`, `playwright`, `elasticsearch`, `pinecone`, `oracledb`, `colbert-ai`).
 - **Dépendances Natives ECHO V6 :** Intégration directe au build des 10 dépendances nécessaires aux opérations système et réseau (`asyncssh`, `pybase64`, `mgzip`, `dulwich`, `h2`, `edge-tts`, `markitdown[all]`, `imageio-ffmpeg`, `filetype`, `typer`).
