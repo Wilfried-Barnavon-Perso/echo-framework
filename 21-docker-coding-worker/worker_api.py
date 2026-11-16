@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 6.6.18.1
+VERSION : 6.6.21.1
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-11-16
 
@@ -9,11 +9,11 @@ DATE MAJ : 2026-11-16
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.21.1: Support des scripts .sh, /etc/passwd et /etc/group dans bwrap, PS1/PATH terminal et route POST /ssh.
 # 6.6.18.1: Tolérance aux requêtes POST sans Content-Type JSON dans create_terminal() (fix HTTP 415).
 # 6.6.5.1: Montage bwrap en lecture seule (--ro-bind-try) du domaine /browserviews.
 # 6.4.0.1: Serveur PTY WebSocket (/api/terminals), endpoints config/openapi et factorisation bwrap.
 # 5.234.1.3: Bind-mount --ro-bind /proc /proc (retrait --proc et --unshare-pid) pour Docker imbriqué.
-# 5.232.5.1: Montage bwrap en lecture seule (--ro-bind-try) des workspaces Codex (/main, /plans, /generated).
 
 import asyncio
 import json
@@ -22,6 +22,7 @@ import logging.config
 import orjson
 import os
 import queue
+import re
 import shutil
 import signal
 import subprocess
@@ -281,6 +282,22 @@ def _build_job_response(job):
     return res
 
 
+_BWRAP_PASSWD_PATH = os.path.join(tempfile.gettempdir(), "echo_bwrap_passwd")
+_BWRAP_GROUP_PATH = os.path.join(tempfile.gettempdir(), "echo_bwrap_group")
+
+
+def _ensure_bwrap_identity_files() -> None:
+    """Crée les fichiers passwd/group minimaux pour résoudre uid=65534 (nobody) dans bwrap."""
+    if not os.path.exists(_BWRAP_PASSWD_PATH):
+        with open(_BWRAP_PASSWD_PATH, "w", encoding="utf-8") as f:
+            f.write("root:x:0:0:root:/root:/bin/bash\n")
+            f.write("nobody:x:65534:65534:ECHO Sandbox:/sandbox:/bin/bash\n")
+    if not os.path.exists(_BWRAP_GROUP_PATH):
+        with open(_BWRAP_GROUP_PATH, "w", encoding="utf-8") as f:
+            f.write("root:x:0:\n")
+            f.write("nogroup:x:65534:\n")
+
+
 def _build_base_bwrap_cmd(
     safe_uid: str,
     safe_cid: str,
@@ -292,6 +309,7 @@ def _build_base_bwrap_cmd(
     browserviews_dir: str | None = None,
 ) -> list[str]:
     """Construit la base immuable des arguments bubblewrap partagée entre batch et PTY."""
+    _ensure_bwrap_identity_files()
     cmd = [
         "bwrap",
         "--ro-bind", "/usr", "/usr",
@@ -300,6 +318,8 @@ def _build_base_bwrap_cmd(
         "--dev", "/dev",
         "--ro-bind", "/proc", "/proc",
         "--ro-bind-try", "/lib64", "/lib64",
+        "--ro-bind-try", _BWRAP_PASSWD_PATH, "/etc/passwd",
+        "--ro-bind-try", _BWRAP_GROUP_PATH, "/etc/group",
         "--ro-bind-try", "/etc/resolv.conf", "/etc/resolv.conf",
         "--ro-bind-try", "/etc/ssl/certs", "/etc/ssl/certs",
         "--bind", sandbox_tmp, "/tmp",
@@ -357,10 +377,14 @@ def _build_interactive_bwrap_cmd(
 
     python_paths = ["/echo_libs_sandbox"] + (["/.deps/python"] if deps_dir else [])
     node_paths = (["/.deps/node/node_modules"] if deps_dir else []) + ["/echo_libs_sandbox", "/usr/lib/node_modules"]
+    default_path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+    extra_bins = "/.deps/python/bin:/.deps/node/.bin"
 
     cmd.extend([
         "--setenv", "HOME", "/sandbox",
         "--setenv", "TERM", "xterm-256color",
+        "--setenv", "PS1", "sandbox:\\w\\$ ",
+        "--setenv", "PATH", f"{extra_bins}:{default_path}",
         "--setenv", "PYTHONPATH", ":".join(python_paths),
         "--setenv", "NODE_PATH", ":".join(node_paths),
         "--setenv", "ECHO_SESSION_USER", safe_uid,
@@ -398,10 +422,16 @@ def _start_sandbox_job(
 
     is_python = file_path.endswith(".py")
     is_node = file_path.endswith(".js")
-    if not (is_python or is_node):
-        return None, {"status": "error", "error": "Extension non supportée. Seuls .py et .js sont acceptés."}
+    is_shell = file_path.endswith(".sh")
+    if not (is_python or is_node or is_shell):
+        return None, {"status": "error", "error": "Extension non supportée. Seuls .py, .js et .sh sont acceptés."}
 
-    lint_cmd = ["python", "-m", "py_compile", abs_file_path] if is_python else ["node", "-c", abs_file_path]
+    if is_python:
+        lint_cmd = ["python", "-m", "py_compile", abs_file_path]
+    elif is_node:
+        lint_cmd = ["node", "-c", abs_file_path]
+    else:
+        lint_cmd = ["/bin/bash", "-n", abs_file_path]
     try:
         lint_proc = subprocess.run(lint_cmd, capture_output=True, text=True, timeout=10)
         if lint_proc.returncode != 0:
@@ -463,11 +493,13 @@ def _start_sandbox_job(
     if is_python:
         python_paths = ["/echo_libs_sandbox"] + (["/.deps/python"] if deps_dir else [])
         bwrap_cmd.extend(["--setenv", "PYTHONPATH", ":".join(python_paths), "python", f"/sandbox/{file_path}"])
-    else:
+    elif is_node:
         node_paths = (
             (["/.deps/node/node_modules"] if deps_dir else []) + ["/echo_libs_sandbox", "/usr/lib/node_modules"]
         )
         bwrap_cmd.extend(["--setenv", "NODE_PATH", ":".join(node_paths), "node", f"/sandbox/{file_path}"])
+    else:
+        bwrap_cmd.extend(["/bin/bash", f"/sandbox/{file_path}"])
 
     with _JOBS_LOCK:
         _prune_finished_jobs_unlocked(safe_uid, safe_cid)
@@ -1042,6 +1074,147 @@ def delete_terminal(session_id):
     """Termine une session terminal."""
     TERMINAL_MANAGER.terminate_session(session_id)
     return jsonify({"status": "terminated", "id": session_id})
+
+
+def _normalize_ssh_private_key(raw_key: str) -> str:
+    """Normalise une clé privée PEM/OpenSSH (CRLF, \\n littéraux et découpage 64 car./ligne)."""
+    cleaned = raw_key.replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n").strip()
+    match = re.match(
+        r"^(-----BEGIN [A-Z0-9 ]+-----)\s*(.*?)\s*(-----END [A-Z0-9 ]+-----)$",
+        cleaned,
+        re.DOTALL,
+    )
+    if not match:
+        return cleaned + "\n"
+    header, body, footer = match.groups()
+    body_compact = re.sub(r"\s+", "", body)
+    wrapped = "\n".join(body_compact[i:i + 64] for i in range(0, len(body_compact), 64))
+    return f"{header}\n{wrapped}\n{footer}\n"
+
+
+@app.route('/ssh', methods=['POST'])
+def execute_ssh():
+    """Exécute une commande SSH isolée dans la sandbox bwrap."""
+    data = request.get_json(silent=True) or {}
+    host = str(data.get("host") or "").strip()
+    user = str(data.get("user") or "").strip()
+    command = str(data.get("command") or "").strip()
+    private_key = str(data.get("private_key") or "")
+    password = str(data.get("password") or "")
+
+    if not host or not user or not command:
+        return jsonify({"status": "error", "error": "Champs requis : host, user, command."}), 400
+
+    safe_ident_re = re.compile(r"^[A-Za-z0-9._:@-]+$")
+    if (
+        host.startswith("-") or user.startswith("-")
+        or not safe_ident_re.match(host) or not safe_ident_re.match(user)
+    ):
+        return jsonify({"status": "error", "error": "Paramètre host ou user invalide."}), 400
+
+    try:
+        port = int(data.get("port", 22))
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "error": "Port SSH invalide."}), 400
+    if not (1 <= port <= 65535):
+        return jsonify({"status": "error", "error": "Port SSH hors plage (1-65535)."}), 400
+
+    try:
+        timeout = max(5, min(int(data.get("timeout", 60)), 900))
+    except (TypeError, ValueError):
+        timeout = 60
+
+    try:
+        max_out = max(1000, int(data.get("max_output_length", 131072)))
+    except (TypeError, ValueError):
+        max_out = 131072
+
+    safe_uid = _sanitize_id(data.get("user_id", "system"))
+    safe_cid = _sanitize_id(data.get("chat_id"), default="")
+    sandbox_dir = _get_sandbox_dir(safe_uid, safe_cid)
+    files_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/files" if safe_cid else None
+    global_files_dir = f"/app/backend/data/users/{safe_uid}/files" if safe_cid else None
+    browserviews_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/browserviews" if safe_cid else None
+
+    ssh_tmp_dir = tempfile.mkdtemp(prefix="echo_ssh_")
+    try:
+        os.chmod(ssh_tmp_dir, 0o755)
+        if not sandbox_dir:
+            sandbox_dir = os.path.join(ssh_tmp_dir, "sandbox")
+        os.makedirs(sandbox_dir, exist_ok=True)
+        sandbox_tmp = os.path.join(sandbox_dir, ".tmp")
+        os.makedirs(sandbox_tmp, exist_ok=True)
+
+        bwrap_cmd = _build_base_bwrap_cmd(
+            safe_uid=safe_uid,
+            safe_cid=safe_cid,
+            sandbox_dir=sandbox_dir,
+            sandbox_tmp=sandbox_tmp,
+            files_dir=files_dir,
+            global_files_dir=global_files_dir,
+            browserviews_dir=browserviews_dir,
+        )
+        bwrap_cmd.extend(["--setenv", "HOME", "/sandbox"])
+
+        ssh_args = [
+            "ssh",
+            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "UserKnownHostsFile=/sandbox/.ssh_known_hosts",
+            "-o", "ConnectTimeout=10",
+            "-o", "ServerAliveInterval=15",
+            "-p", str(port),
+        ]
+
+        if private_key.strip():
+            key_file = os.path.join(ssh_tmp_dir, "id_key")
+            with open(key_file, "w", encoding="utf-8") as kf:
+                kf.write(_normalize_ssh_private_key(private_key))
+            os.chmod(key_file, 0o600)
+            bwrap_cmd.extend(["--ro-bind-try", ssh_tmp_dir, "/ssh_auth"])
+            ssh_args.extend(["-i", "/ssh_auth/id_key", "-o", "IdentitiesOnly=yes"])
+            if password:
+                bwrap_cmd.extend(["--setenv", "SSHPASS", password])
+                ssh_args = ["sshpass", "-e", "-P", "assphrase"] + ssh_args
+            else:
+                ssh_args.extend(["-o", "BatchMode=yes"])
+        elif password:
+            bwrap_cmd.extend(["--setenv", "SSHPASS", password])
+            ssh_args.extend([
+                "-o", "PreferredAuthentications=password,keyboard-interactive",
+                "-o", "PubkeyAuthentication=no",
+            ])
+            ssh_args = ["sshpass", "-e"] + ssh_args
+        else:
+            ssh_args.extend(["-o", "BatchMode=yes"])
+
+        ssh_args.extend([f"{user}@{host}", command])
+        bwrap_cmd.extend(ssh_args)
+
+        proc = subprocess.run(bwrap_cmd, capture_output=True, text=True, timeout=timeout)
+        stdout_str = (proc.stdout or "")[:max_out]
+        stderr_str = (proc.stderr or "")[:max_out]
+        return jsonify({
+            "status": "success" if proc.returncode == 0 else "error",
+            "exit_code": proc.returncode,
+            "output": stdout_str,
+            "error": stderr_str,
+        })
+    except subprocess.TimeoutExpired as te:
+        out_partial = (
+            te.stdout.decode("utf-8", errors="replace")
+            if isinstance(te.stdout, bytes)
+            else (te.stdout or "")
+        )
+        return jsonify({
+            "status": "timeout",
+            "exit_code": -1,
+            "output": out_partial[:max_out],
+            "error": f"Timeout SSH dépassé ({timeout}s).",
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "error": f"Erreur exécution SSH : {str(e)}"}), 500
+    finally:
+        shutil.rmtree(ssh_tmp_dir, ignore_errors=True)
 
 
 # ================================================================================

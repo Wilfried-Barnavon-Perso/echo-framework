@@ -8,9 +8,9 @@ Ce dossier contient le **MCP Broker** (Model Context Protocol). Il s'agit d'un s
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `server.py` (v5.239.12.1) & `core/cache_manager.py` (v5.231.20.1)
+### `server.py` (v6.6.21.1) & `core/cache_manager.py` (v5.231.20.1)
 Fichier d'entrée du Broker instanciant le serveur `FastMCP` propulsé par `Uvicorn`.
-- **Sémantique ASGI & Proxy** : Le serveur expose ses outils via le protocole natif MCP (`streamable-http` sur `/mcp`) ainsi que les routes REST `/schemas`, `/proxy_mcp` et `/health`. Il agit comme un **Proxy HTTP complet** sans accès direct aux bases de données d'Open WebUI.
+- **Sémantique ASGI & Proxy** : Le serveur expose ses outils via le protocole natif MCP (`streamable-http` sur `/mcp`) ainsi que les routes REST `/schemas` (incluant le schéma `"ssh"` dans `SERVICE_SCHEMAS` sous `category: "orchestration"` pour le coffre `Identity Vault` via `EchoVaultTab.svelte` & `ssh_executor`), `/proxy_mcp` et `/health`. Il agit comme un **Proxy HTTP complet** sans accès direct aux bases de données d'Open WebUI.
 - **WebUI User Middleware (`WebUIUserMiddleware`)** : Middleware pur ASGI interceptant les en-têtes HTTP `x-openwebui-user-id` (fallback `x-echo-user-id`), `x-openwebui-chat-id` (fallback `x-echo-chat-id`) et `x-echo-credentials` (Base64 JSON) afin d'injecter l'identifiant utilisateur, l'identifiant de conversation et les secrets dans les `ContextVar` `user_id_var`, `chat_id_var` et `credentials_var` (`core/security.py` v5.231.37.1).
 - **Cache Manager** : `core/cache_manager.py` met en cache les résultats d'exécution des outils par empreinte MD5 préfixée par `user_id` (`{uid}_{tool_name}_{arg_str}`) dans la base SQLite locale `/app/data/mcp_cache.db` (table `cache_entries`).
 

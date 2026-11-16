@@ -1,6 +1,6 @@
 # 🌌 Spécifications Opérationnelles ECHO Sandbox (Protocole PAS)
 
-Le Système exécute chaque script dans un conteneur isolé Bubblewrap (`bwrap`, `--ro-bind /proc`, `--die-with-parent`) disposant d'un environnement bi-langage (Python 3.14 / Node.js 22) et scopé par `(user_id, chat_id, run_id)`.
+Le Système exécute chaque script dans un conteneur isolé Bubblewrap (`bwrap`, `--ro-bind /proc`, `--die-with-parent`) disposant d'un environnement tri-langage (Python 3.14 / Node.js 22 / Bash `.sh`) et scopé par `(user_id, chat_id, run_id)`.
 
 ---
 
@@ -19,10 +19,12 @@ Le Système exécute chaque script dans un conteneur isolé Bubblewrap (`bwrap`,
 
 ---
 
-## 2. Librairies Pré-Installées
+## 2. Librairies & Outils Pré-Installés
 - **Python 3.14** : `requests`, `httpx`, `pandas`, `numpy`, `scipy`, `matplotlib`, `seaborn`, `beautifulsoup4`, `lxml`, `Pillow`, `pydantic`, `sqlalchemy`, `openpyxl`, `PyPDF2`, `reportlab`, `python-docx`, `scikit-learn`, `sympy`, `networkx`, `orjson`, `pyyaml`, `tqdm`, `tabulate`.
 - **Node.js 22** : `axios`, `cheerio`, `js-yaml`, `lodash`, `papaparse`, `mathjs`, `zod`, `dotenv`, `moment`.
+- **Shell & Utilitaires CLI (`/bin/bash`)** : `curl`, `git`, `jq`, `less`, `nano`, `ping`, `dig`/`nslookup`, `tar`, `gzip`, `ssh`, `scp`, `sshpass`.
 - Pour tout paquet tiers non listé, Le Modèle DOIT renseigner l'argument `dependencies` lors de l'appel à `code_executor`.
+- Pour l'administration SSH sur des hôtes distants via l'Identity Vault, Le Modèle DOIT utiliser l'outil dédié `ssh_executor(account_id, command, timeout_sec)`.
 
 ---
 
@@ -40,7 +42,7 @@ Le Système exécute chaque script dans un conteneur isolé Bubblewrap (`bwrap`,
 
 ## 4. Librairie Native `echo_monitor` & Routeur Bidi Temps Réel
 
-L'interface visuelle est projetée dans une véritable `<iframe>` HTML5 (`sandbox="allow-scripts allow-forms allow-modals allow-popups"`) encapsulée dans une fenêtre flottante `EchoFloatingWindow` du DOM Open WebUI.
+L'interface visuelle est projetée dans une véritable `<iframe>` HTML5 (`sandbox="allow-scripts allow-forms allow-modals allow-popups"`) intégrée dans l'onglet natif **Applications** (`EchoCanvasTab` / `echo-canvas`) d'Open WebUI.
 
 ### 4.1 Primitives `echo_monitor` (Python & Node.js)
 - `display(html_content, title="ECHO Sandbox Monitor", width="100%", height="400px", window_id="default")` : Crée ou remplace intégralement l'`<iframe>` de la fenêtre `window_id`.
@@ -86,4 +88,4 @@ router.serve_forever()
 
 ## 5. Supervision Automatique (Pacemaker Anti-Zombie)
 - Chaque `<iframe>` émet un battement de cœur (`echoPing`) toutes les `1000ms`.
-- Si L'Utilisateur ferme la fenêtre flottante, Le Système détecte l'arrêt du battement de cœur et exécute automatiquement la destruction du groupe de processus (`POST /kill`) associé au `run_id`.
+- Si L'Utilisateur ferme la vue de l'application, Le Système détecte l'arrêt du battement de cœur et exécute automatiquement la destruction du groupe de processus (`POST /kill`) associé au `run_id`.

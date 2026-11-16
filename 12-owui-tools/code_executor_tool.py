@@ -1,21 +1,22 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 6.6.16.1
-description: Composant système interne : ECHO Code Executor (Python & Node.js).
+version: 6.6.21.1
+description: Composant système interne : ECHO Code Executor (Python, Node.js, Bash & SSH).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.21.1: Support Bash (.sh) dans code_executor et ajout de ssh_executor branché sur l'Identity Vault.
 # 6.6.16.1: Raccordement natif de echo_monitor à l'onglet echo-canvas via EchoWindowManager (broadcast_canvas_frame, broadcast_canvas_event, consume_canvas_ui_payload) et suppression des appels emit_execute/call_execute legacy.
 # 5.234.1.2: Support du mode background=False/True (_BACKGROUND_POLLERS), ajout de control_sandbox_execution (status, listen, kill), routage d'événements echoPushMonitorEvent et alignement PAS.
 # 5.233.0.1: Décoration @echo_tool sur les 2 méthodes publiques et simplification des retours wrap_tool_output.
 # 5.232.5.1: Mise à jour de la docstring code_executor mentionnant les montages RO /main, /plans, /generated et /files.
-# 5.232.1.1: Clarification de la docstring code_executor (runtimes interactifs echo_monitor, flux bidirectionnel UI/Sandbox, Supervisor et readme sandbox).
 
 # ECHO CONFIG NAME : ECHO Code Sandbox
 
 import asyncio
 import base64
+import json
 import sys
 import uuid
 from typing import Any, List, Literal, Optional
@@ -31,6 +32,7 @@ from echo_constants import (  # noqa: E402
 from echo_core import echo_tool, wrap_tool_output  # noqa: E402
 from echo_events import EchoEvents  # noqa: E402
 from echo_paths import sanitize_echo_id  # noqa: E402
+from echo_state_manager import EchoStateManager  # noqa: E402
 from echo_window_manager import get_window_manager  # noqa: E402
 
 _BACKGROUND_POLLERS: dict[str, dict[str, Any]] = {}
@@ -227,7 +229,7 @@ class Tools:
         __event_call__: Any = None,
         __metadata__: Optional[dict] = None,
     ) -> dict | str:
-        """Exécute un script Python (.py) ou Node.js (.js) isolé dans le workspace `sandbox` du Codex en mode synchrone (`background=False`) ou serveur détaché (`background=True`)."""
+        """Exécute un script Python (.py), Node.js (.js) ou Bash (.sh) isolé dans le workspace `sandbox` du Codex en mode synchrone (`background=False`) ou serveur détaché (`background=True`)."""
         dependencies = dependencies or []
         uid, cid = _resolve_sandbox_identity(__user__, __metadata__)
         if not cid:
@@ -243,7 +245,7 @@ class Tools:
         actual_timeout = timeout_sec
         run_id = f"run_{uuid.uuid4().hex[:8]}"
         ext = file_path.split(".")[-1]
-        runtime_icon = "🐍" if ext == "py" else "📦" if ext == "js" else "⚙️"
+        runtime_icon = "🐍" if ext == "py" else "📦" if ext == "js" else "🐚" if ext == "sh" else "⚙️"
         mode_label = "arrière-plan" if background else "synchrone"
         await events.status(f"{runtime_icon} Exécution {mode_label} de {file_path} ({run_id}, Timeout: {actual_timeout}s)")
 
@@ -435,3 +437,115 @@ class Tools:
             return wrap_tool_output(text=text_out, status=echo_status)
         except Exception as e:
             return f"❌ Erreur Client: {str(e)}"
+
+    @echo_tool
+    async def ssh_executor(
+        self,
+        account_id: str,
+        command: str,
+        timeout_sec: int = 60,
+        __user__: Optional[dict] = None,
+        __event_emitter__: Any = None,
+        __event_call__: Any = None,
+        __metadata__: Optional[dict] = None,
+    ) -> dict | str:
+        """Exécute une commande sur un serveur SSH configuré dans l'Identity Vault sans exposer ses secrets."""
+        uid, cid = _resolve_sandbox_identity(__user__, __metadata__)
+        if not cid:
+            return "❌ Contexte de session manquant (chat_id)."
+
+        clean_acc = (account_id or "").strip()
+        clean_cmd = (command or "").strip()
+        if not clean_acc or not clean_cmd:
+            return "❌ Les paramètres 'account_id' et 'command' sont obligatoires."
+
+        if not (1 <= timeout_sec <= ECHO_MAX_CODE_EXECUTION_TIMEOUT):
+            return (
+                f"❌ timeout_sec ({timeout_sec}s) doit être compris "
+                f"entre 1 et {ECHO_MAX_CODE_EXECUTION_TIMEOUT}s."
+            )
+
+        events = EchoEvents(__event_emitter__, __event_call__, user_id=uid, chat_id=cid)
+
+        def _load_ssh_creds() -> str:
+            return EchoStateManager(user_id=uid).get_vault_credential("ssh", clean_acc)
+
+        raw_creds = await asyncio.to_thread(_load_ssh_creds)
+        if not raw_creds:
+            return (
+                f"❌ Identifiants SSH introuvables pour '{clean_acc}'. "
+                "Vérifier les comptes disponibles avec list_identities(service=\"ssh\")."
+            )
+
+        try:
+            creds = json.loads(raw_creds)
+        except Exception:
+            return f"❌ Configuration SSH invalide (JSON corrompu) pour '{clean_acc}'."
+
+        host = str(creds.get("host") or "").strip()
+        user = str(creds.get("user") or "").strip()
+        if not host or not user:
+            return f"❌ Configuration SSH incomplète pour '{clean_acc}' ('host' et 'user' requis)."
+
+        try:
+            port = int(creds.get("port") or 22)
+        except (TypeError, ValueError):
+            port = 22
+
+        password = str(creds.get("password") or "")
+        private_key = str(creds.get("private_key") or "")
+
+        await events.status(f"🔐 Exécution SSH sur '{clean_acc}' ({user}@{host}:{port})...")
+        sandbox_base = ECHO_CODING_WORKER_URL.replace("/execute", "")
+
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=float(timeout_sec) + 10.0) as client:
+                response = await client.post(
+                    f"{sandbox_base}/ssh",
+                    json={
+                        "user_id": uid,
+                        "chat_id": cid,
+                        "host": host,
+                        "port": port,
+                        "user": user,
+                        "password": password,
+                        "private_key": private_key,
+                        "command": clean_cmd,
+                        "timeout": timeout_sec,
+                    },
+                )
+
+            if response.status_code != 200:
+                err_msg = f"Erreur Worker SSH (HTTP {response.status_code}) : {response.text[:300]}"
+                await events.status(err_msg, done=True)
+                return wrap_tool_output(
+                    text="",
+                    status={"status": "error", "account_id": clean_acc, "exit_code": -1, "error": err_msg},
+                )
+
+            res_data = response.json()
+            status_val = res_data.get("status", "error")
+            exit_code = res_data.get("exit_code", -1)
+            text_out = res_data.get("output") or ""
+            err_out = res_data.get("error") or ""
+            if err_out:
+                text_out = f"{text_out}\n\n⚠️ Erreur SSH :\n{err_out}".strip()
+
+            await events.status(f"Exécution SSH terminée (code {exit_code}).", done=True)
+            return wrap_tool_output(
+                text=text_out,
+                status={
+                    "status": "success" if status_val == "success" else "error",
+                    "account_id": clean_acc,
+                    "exit_code": exit_code,
+                },
+            )
+        except httpx.RequestError as e:
+            err_msg = f"Service Coding Worker injoignable : {str(e)}"
+            await events.status(err_msg, done=True)
+            return f"❌ {err_msg}"
+        except Exception as e:
+            err_msg = f"Erreur Client SSH : {str(e)}"
+            await events.status(err_msg, done=True)
+            return f"❌ {err_msg}"

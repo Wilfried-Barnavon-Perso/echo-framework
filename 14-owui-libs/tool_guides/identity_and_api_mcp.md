@@ -1,11 +1,11 @@
 ---
 domain_id: identity_and_api_mcp
-version: 5.239.12.1
-updated_at: 2026-11-13
+version: 6.6.21.1
+updated_at: 2026-11-16
 name: Coffre-Fort d'Identités (Identity Vault), Client API HTTP & Protocole MCP
 description: Découverte et gestion des secrets/comptes chiffrés et sécurisés (Identity Vault), requêtes HTTP universelles (call_api), instanciation/exécution sur les serveurs MCP (echo_mcp_tool) et stratégies par service.
 tools: [list_identities_services, list_identities, manage_identity, call_api, list_mcp_functions, call_mcp_function]
-keywords: [vault, secret, clé_api, token, identité, credentials, api, http, rest, mcp, serveur_mcp, broker, m365, workspace, contacts, google_contacts, carnet_adresses, jobs, academic, uvx, npx, sse]
+keywords: [vault, secret, clé_api, token, identité, credentials, api, http, rest, mcp, serveur_mcp, broker, m365, workspace, contacts, google_contacts, carnet_adresses, jobs, academic, uvx, npx, sse, ssh, serveur_ssh]
 ---
 
 # MANUEL OPÉRATIONNEL : IDENTITY VAULT, CLIENT API & MCP (`identity_and_api_mcp`)
@@ -19,7 +19,7 @@ L'Identity Vault centralise les identifiants d'API, secrets d'orchestration N8N 
    - `category_filter` : `"all"`, `"mcp_native"`, `"mcp_resident"`, `"mcp_ephemeral"`, `"mcp_remote"`, `"orchestration"`, `"uncategorized"`.
    - **Retour** : Restitue les `services_disponibles_via_mcp_broker` (incluant `n8n_workflows` sous `"orchestration"` et les éventuelles `user_required_instructions`) ainsi que la liste des `services_avec_identites_configurees`.
 2. **Étape 2 — Lister les Comptes d'un Service (`list_identities`)** :
-   - `list_identities(service="...")` : Le paramètre `service` est **strictement obligatoire** (ex: `"n8n_workflows"`, `"microsoft_365"`, `"google_workspace"`, `"remote_mcp"`, `"stdio_mcp"`). Retourne les `account_id` associés à ce service ainsi que leur `"description"`.
+   - `list_identities(service="...")` : Le paramètre `service` est **strictement obligatoire** (ex: `"n8n_workflows"`, `"ssh"`, `"microsoft_365"`, `"google_workspace"`, `"remote_mcp"`, `"stdio_mcp"`). Retourne les `account_id` associés à ce service ainsi que leur `"description"`.
 
 ### 1.2 Ajout, Mise à Jour et Suppression (`manage_identity`)
 - **Contrainte d'environnement** : Interdit depuis un sous-agent headless (doit être appelé par l'Orchestrateur principal car une modale de confirmation interactive est présentée à l'Utilisateur).
@@ -33,6 +33,9 @@ L'Identity Vault centralise les identifiants d'API, secrets d'orchestration N8N 
     - Clé optionnelle : `"headers"` (chaîne JSON d'en-têtes HTTP, ex: `'{"Authorization": "Bearer XXX"}'`).
   - **Serveurs Locaux Éphémères Stdio (`mcp_ephemeral`, service `"stdio_mcp"`)** :
     - Clés requises : `"command"` (`"uvx"` ou `"npx"`), `"args"` (tableau JSON de paramètres, ex: `'["-y", "@modelcontextprotocol/server-postgres"]'`), `"description"`.
+  - **Serveurs SSH Distants (`orchestration`, service `"ssh"`)** :
+    - Clés : `"host"`, `"user"`, `"description"` (et `"port"` optionnel, défaut `"22"`).
+    - Conformément au MPSI, `"password"` ou `"private_key"` DOIT être saisi par L'Utilisateur dans l'onglet **Coffre** (`EchoVaultTab`), puis utilisé par Le Modèle via `ssh_executor(account_id, command)`.
   - **Instructions Spécifiques** : Si `list_identities_services` retourne des `user_required_instructions` pour le service visé, le Modèle **DOIT** suivre scrupuleusement ces instructions et demander les valeurs requises via `ask_user_input`.
 
 ---

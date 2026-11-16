@@ -1,11 +1,11 @@
 ---
 domain_id: code_and_files
-version: 6.6.5.1
+version: 6.6.21.2
 updated_at: 2026-11-16
 name: Registre Unifié, Explorateur de l'Espace Personnel & Sandbox d'Exécution de Code
-description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash) et exécution isolée de scripts Codex sandbox (.py / .js).
-tools: [query_registry, read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes, code_executor, control_sandbox_execution, kill_sandbox_execution]
-keywords: [registre, query_registry, fichier, file, code, python, node, javascript, sandbox, code_executor, control_sandbox_execution, kill_sandbox_execution, bidi, echo_monitor, image, pdf, audio, video, multimedia, semantic_probe, read_multimedia_file, hash, sha256, plans, generated]
+description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash), exécution isolée de scripts Codex sandbox (.py / .js / .sh) et exécution SSH distante (ssh_executor).
+tools: [query_registry, read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes, code_executor, control_sandbox_execution, kill_sandbox_execution, ssh_executor]
+keywords: [registre, query_registry, fichier, file, code, python, node, javascript, bash, sh, shell, sandbox, code_executor, control_sandbox_execution, kill_sandbox_execution, ssh, ssh_executor, bidi, echo_monitor, image, pdf, audio, video, multimedia, semantic_probe, read_multimedia_file, hash, sha256, plans, generated]
 ---
 
 # MANUEL OPÉRATIONNEL : REGISTRE UNIFIÉ, FICHIERS & SANDBOX DE CODE (`code_and_files`)
@@ -51,7 +51,7 @@ Il est ABSOLUMENT INTERDIT de passer du code brut à `code_executor`. Toute mani
    - Modifier : `edit_codex(filename="script.py", ..., workspace="sandbox")`.
    - Supprimer : `delete_codex(filename="script.py", workspace="sandbox")`.
 2. **Étape 2 — Exécuter le script** :
-   - Appeler `code_executor(file_path="script.py", dependencies=None, timeout_sec=900, fetch_ui_payload=False, background=False)`.
+   - Appeler `code_executor(file_path="script.py", dependencies=None, timeout_sec=900, fetch_ui_payload=False, background=False)` (extensions supportées dans `workspace="sandbox"` : `.py`, `.js` et `.sh`).
 
 ### 3.2 Environnement Système, Quotas & Pilotage des Processus (`run_id`)
 - **Montages Bubblewrap (`--ro-bind /proc, --die-with-parent`)** :
@@ -68,7 +68,7 @@ Il est ABSOLUMENT INTERDIT de passer du code brut à `code_executor`. Toute mani
   - `action="kill"` (ou `kill_sandbox_execution(run_id=None)`) : Détruit immédiatement le groupe de processus (`SIGKILL`) du `run_id` cible (ou tous les processus actifs de la session si `run_id` est omis).
 
 ### 3.3 Interfaces Interactives & Routeur Bidi Temps Réel (`echo_monitor`)
-Pour déployer une application web interactive ou un serveur réactif dans l'`<iframe>` flottante (`EchoFloatingWindow`), Le Modèle DOIT utiliser `echo_monitor`.
+Pour déployer une application web interactive ou un serveur réactif dans l'onglet natif **Applications** (`EchoCanvasTab` / `echo-canvas`), Le Modèle DOIT utiliser `echo_monitor`.
 
 > [!IMPORTANT]
 > **INTERDICTION DE DÉLÉGATION MANUELLE À L'UTILISATEUR** :
@@ -89,10 +89,15 @@ Pour déployer une application web interactive ou un serveur réactif dans l'`<i
 
   router.serve_forever()
   ```
-- **Lancement** : Le Modèle PEUT lancer ce serveur en mode synchrone (`background=False`, bloquant jusqu'à fermeture de la fenêtre) ou en arrière-plan (`background=True`, permettant au Modèle de continuer à interagir et d'appeler `control_sandbox_execution(action="listen", run_id=...)`).
+- **Lancement** : Le Modèle PEUT lancer ce serveur en mode synchrone (`background=False`, bloquant jusqu'à fermeture de la vue d'application) ou en arrière-plan (`background=True`, permettant au Modèle de continuer à interagir et d'appeler `control_sandbox_execution(action="listen", run_id=...)`).
 
 #### Pattern B — Soumission One-Shot par Snapshot (`get_ui_payload`) :
 - L'`<iframe>` émet `window.parent.postMessage({ echoUIPayload: { window_id: "app_id", payload: {...} } }, "*");` et le script Sandbox lit `echo_monitor.get_ui_payload("app_id")` dans une boucle `while not echo_monitor.is_window_closed("app_id"):`.
 
 #### Supervision Automatique (Pacemaker Anti-Zombie) :
-- L'`<iframe>` émet automatiquement `echoPing` toutes les `1000ms`. Dès que L'Utilisateur ferme la fenêtre flottante, Le Système détruit automatiquement le processus Sandbox (`POST /kill`) associé au `run_id`.
+- L'`<iframe>` émet automatiquement `echoPing` toutes les `1000ms`. Dès que L'Utilisateur ferme la vue de l'application, Le Système détruit automatiquement le processus Sandbox (`POST /kill`) associé au `run_id`.
+
+### 3.4 Exécution SSH Distante (`ssh_executor`)
+1. **Découverte préalable** : Appeler `list_identities(service="ssh")` pour lister les alias (`account_id`) configurés et leur `description` fonctionnelle.
+2. **Exécution sécurisée sans exposition de secret (MPSI)** : Appeler `ssh_executor(account_id="...", command="...", timeout_sec=60)`. Les identifiants sont injectés côté serveur dans un conteneur `bwrap` éphémère depuis `identity.db` (répertoire courant `/sandbox` en lecture/écriture, `/main`, `/plans`, `/generated` et `/files` en lecture seule).
+3. **Interdiction absolue (MPSI)** : Il est ABSOLUMENT INTERDIT de demander à L'Utilisateur un mot de passe ou une clé privée SSH en clair dans le chat. Si aucun compte n'est configuré, inviter L'Utilisateur à le saisir dans l'onglet **Coffre** (`Identity Vault`).

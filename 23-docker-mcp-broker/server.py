@@ -1,18 +1,18 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 5.239.12.1
+VERSION : 6.6.21.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-11-13
+DATE MAJ : 2026-11-16
 ===============================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.21.1: Ajout du schéma 'ssh' dans SERVICE_SCHEMAS pour l'Identity Vault et ssh_executor.
 # 5.239.12.1: Directives microsoft_365 MAJ (Contacts.ReadWrite optionnel, complete_authentication sans flow_cache).
 # 5.231.37.1: Extraction de x-openwebui-chat-id dans WebUIUserMiddleware (chat_id_var) et compatibilité FastMCP.
 # 5.231.20.1: Extraction et décodage de l'en-tête x-echo-credentials dans WebUIUserMiddleware (credentials_var).
 # 5.228.9.2: Schéma jobs_omnisearch enrichi avec directives APEC (DataDome), LinkedIn (li_at) et WTTJ.
-# 5.228.9.1: Directives France Travail (OAuth2 francetravail.io) et champs WTTJ dans jobs_omnisearch.
 import base64
 import json
 import logging
@@ -325,7 +325,61 @@ SERVICE_SCHEMAS = {
                 "help": "Sert au LLM pour savoir quand l'utiliser.",
             },
         ]
-    }
+    },
+    "ssh": {
+        "category": "orchestration",
+        "name": "Serveurs SSH Distants",
+        "user_required_instructions": (
+            "Pour autoriser l'Agent à administrer un serveur via SSH (ssh_executor), "
+            "L'Utilisateur DOIT saisir ses identifiants de manière sécurisée dans l'onglet "
+            "'Coffre' (Identity Vault) sous le service 'Serveurs SSH Distants' ('ssh'), "
+            "avec un alias de compte explicite (ex: 'vps-prod', 'nas-local'). "
+            "Renseigner 'host', 'user', 'description', ainsi que 'password' (ou passphrase) "
+            "et/ou 'private_key'. Ne jamais transmettre de secrets en clair dans le chat (MPSI)."
+        ),
+        "fields": [
+            {
+                "id": "host",
+                "label": "Hôte (IP ou Domaine)",
+                "type": "text",
+                "required": True,
+                "help": "ex: 192.168.1.50 ou srv.exemple.fr",
+            },
+            {
+                "id": "port",
+                "label": "Port SSH",
+                "type": "text",
+                "placeholder": "22",
+                "help": "Port TCP du serveur SSH (22 par défaut).",
+            },
+            {
+                "id": "user",
+                "label": "Utilisateur SSH",
+                "type": "text",
+                "required": True,
+                "help": "ex: ubuntu, root, debian",
+            },
+            {
+                "id": "password",
+                "label": "Mot de passe (ou passphrase)",
+                "type": "password",
+                "help": "Mot de passe du compte SSH ou passphrase de la clé privée.",
+            },
+            {
+                "id": "private_key",
+                "label": "Clé privée SSH (PEM / OpenSSH)",
+                "type": "password",
+                "help": "Optionnel : coller la clé privée complète (-----BEGIN ... PRIVATE KEY-----).",
+            },
+            {
+                "id": "description",
+                "label": "Rôle du serveur",
+                "type": "text",
+                "required": True,
+                "help": "Description visible par l'agent via list_identities('ssh').",
+            },
+        ],
+    },
 }
 
 

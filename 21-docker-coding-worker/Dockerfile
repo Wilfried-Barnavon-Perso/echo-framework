@@ -10,7 +10,7 @@ WORKDIR /app
 # L'image de base comprend déjà les build-essentials (gcc, python3-dev, etc.)
 
 # Installation des packages système et Node.js (22.x LTS - patch sécurité CVE-2026-111497 Brotli)
-RUN apt-get update && apt-get install -y curl bubblewrap && \
+RUN apt-get update && apt-get install -y curl bubblewrap openssh-client sshpass jq less nano iputils-ping dnsutils && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
     npm install -g axios cheerio js-yaml lodash papaparse mathjs zod dotenv moment && \
