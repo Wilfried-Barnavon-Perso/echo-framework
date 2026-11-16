@@ -10,7 +10,7 @@ Ce dossier contient le code source de l'**API d'Exécution Multi-Langages Sécur
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `worker_api.py` (v6.6.21.1)
+### `worker_api.py` (v6.6.22.1)
 Fichier hybride combinant une API WSGI Flask et un serveur ASGI Starlette propulsé par `uvicorn` sur le port **5000**.
 - **Architecture Hybride ASGI/WSGI (`asgi_app`)** : Enveloppe l'application Flask via `WSGIMiddleware` pour servir sans friction l'ensemble des routes HTTP existantes, tout en exposant une route native WebSocket asynchrone (`WebSocketRoute("/api/terminals/{session_id}")`).
 - **Endpoints HTTP Terminal & Découverte** :
@@ -20,10 +20,10 @@ Fichier hybride combinant une API WSGI Flask et un serveur ASGI Starlette propul
   - `GET /api/terminals/<session_id>` : Vérifie la vivacité et la liaison de session (`{"id": session.id, "chat_id": session.chat_id, "alive": bool}`).
   - `DELETE /api/terminals/<session_id>` : Termine la session terminale et libère les ressources.
 - **PTY WebSocket Bidirectionnel (`ws_terminal_endpoint`)** :
-  - Handshake initial : Réception de la trame JSON `auth`, confirmation `chat` (`{"type": "chat", "chat_id": session.chat_id}`) et retransmission immédiate du buffer existant avec curseur.
+  - Handshake initial : Réception de la trame JSON `auth`, confirmation `chat` (`{"type": "chat", "chat_id": session.chat_id}`), vidage atomique d'`out_queue` et retransmission différentielle du buffer existant selon `resume`/`cursor` (sans doublon), puis fermeture WebSocket `code=1000` en fin de shell.
   - Protocole `XTerminal.svelte` : Émission de trames de contrôle `output` avec curseur de flux, streaming binaire des sorties du shell, support du redimensionnement de fenêtre (`resize` $\rightarrow$ `TIOCSWINSZ`), du heartbeat `ping`/`pong` et du re-binding dynamique `chat`.
 - **Gestionnaire `TerminalSessionManager` & Fallback Multi-Plateforme** :
-  - Sous Linux (`bwrap` + `pty`) : Ouvre un PTY maître/esclave via `pty.openpty()`, applique la taille initiale (80x24), configure le descripteur maître en non-bloquant et exécute le shell interactif `bwrap`.
+  - Sous Linux (`bwrap` + `pty`) : Ouvre un PTY maître/esclave via `pty.openpty()`, applique la taille initiale (80x24), configure le descripteur maître en non-bloquant, rattache `slave_fd` comme terminal de contrôle (`os.setsid()` + `TIOCSCTTY`) via `preexec_fn` et exécute le shell interactif `bwrap`.
   - Fallback portable : En l'absence de PTY ou bwrap (ex: exécution de test en `.venv` Windows), lance un sous-processus interactif (`cmd.exe` ou `/bin/sh`) avec pipes standards et lecteur en thread dédié, assurant une testabilité fonctionnelle intégrale en environnement local.
   - Maintient un buffer circulaire de 64 Ko (`max_buffer = 65536`) et un curseur incrémental pour la reprise après déconnexion.
 - **Factorisation Bubblewrap (`_build_base_bwrap_cmd` & `_build_interactive_bwrap_cmd`)** :

@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 6.6.21.1
+VERSION : 6.6.22.1
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-11-16
 
@@ -9,11 +9,11 @@ DATE MAJ : 2026-11-16
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.22.1: Attachement TIOCSCTTY du PTY bwrap, déduplication buffer/out_queue, reprise par curseur et close 1000.
 # 6.6.21.1: Support des scripts .sh, /etc/passwd et /etc/group dans bwrap, PS1/PATH terminal et route POST /ssh.
 # 6.6.18.1: Tolérance aux requêtes POST sans Content-Type JSON dans create_terminal() (fix HTTP 415).
 # 6.6.5.1: Montage bwrap en lecture seule (--ro-bind-try) du domaine /browserviews.
 # 6.4.0.1: Serveur PTY WebSocket (/api/terminals), endpoints config/openapi et factorisation bwrap.
-# 5.234.1.3: Bind-mount --ro-bind /proc /proc (retrait --proc et --unshare-pid) pour Docker imbriqué.
 
 import asyncio
 import json
@@ -624,12 +624,17 @@ class TerminalSession:
             fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
             cmd = _build_interactive_bwrap_cmd(self.user_id, self.chat_id, self.sandbox_dir)
+
+            def _attach_ctty():
+                os.setsid()
+                fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
             self.proc = subprocess.Popen(
                 cmd,
                 stdin=slave_fd,
                 stdout=slave_fd,
                 stderr=slave_fd,
-                start_new_session=True,
+                preexec_fn=_attach_ctty,
                 close_fds=True,
             )
             os.close(slave_fd)
@@ -1230,32 +1235,55 @@ async def ws_terminal_endpoint(websocket: WebSocket):
         await websocket.close(code=4404)
         return
 
+    init_data = {}
     try:
         init_raw = await websocket.receive_text()
-        init_data = json.loads(init_raw)
-        if init_data.get("chat_id"):
-            session.chat_id = init_data["chat_id"]
+        parsed_init = json.loads(init_raw)
+        if isinstance(parsed_init, dict):
+            init_data = parsed_init
+            if init_data.get("chat_id"):
+                session.chat_id = init_data["chat_id"]
     except Exception:
         pass
 
     # Confirmer la liaison au chat
     await websocket.send_text(json.dumps({"type": "chat", "chat_id": session.chat_id}))
 
-    # Envoyer le buffer accumulé si présent
+    # Envoyer le buffer accumulé si présent (sans doublon avec out_queue)
     with session.lock:
         buffered = bytes(session.buffer)
         curr_cursor = session.cursor
         is_trunc = session.truncated
+        while not session.out_queue.empty():
+            try:
+                session.out_queue.get_nowait()
+            except queue.Empty:
+                break
 
-    if buffered:
-        await websocket.send_text(json.dumps({"type": "output", "end": curr_cursor, "truncated": is_trunc}))
-        await websocket.send_bytes(buffered)
+    try:
+        client_cursor = int(init_data.get("cursor") or 0) if init_data.get("resume") else 0
+    except (TypeError, ValueError):
+        client_cursor = 0
+
+    if client_cursor > 0 and curr_cursor >= client_cursor:
+        delta = curr_cursor - client_cursor
+        truncated_for_client = delta > len(buffered)
+        to_send = buffered[-delta:] if delta > 0 else b""
+    else:
+        truncated_for_client = is_trunc
+        to_send = buffered
+
+    if to_send:
+        await websocket.send_text(
+            json.dumps({"type": "output", "end": curr_cursor, "truncated": truncated_for_client})
+        )
+        await websocket.send_bytes(to_send)
 
     stop_event = asyncio.Event()
 
     async def _reader():
         loop = asyncio.get_running_loop()
-        while not stop_event.is_set() and session.is_alive():
+        while not stop_event.is_set():
             def get_chunk():
                 try:
                     return session.out_queue.get(timeout=0.1)
@@ -1264,6 +1292,10 @@ async def ws_terminal_endpoint(websocket: WebSocket):
             chunk = await loop.run_in_executor(None, get_chunk)
             if chunk == b"":
                 break
+            if chunk is None:
+                if not session.is_alive() and session.out_queue.empty():
+                    break
+                continue
             if chunk and not stop_event.is_set():
                 try:
                     await websocket.send_text(
@@ -1316,6 +1348,11 @@ async def ws_terminal_endpoint(websocket: WebSocket):
             try:
                 await t
             except (asyncio.CancelledError, Exception):
+                pass
+        if not session.is_alive():
+            try:
+                await websocket.close(code=1000)
+            except Exception:
                 pass
 
 
