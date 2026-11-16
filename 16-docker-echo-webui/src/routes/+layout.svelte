@@ -1447,6 +1447,7 @@
 			await tick();
 
 			let removed = false;
+			/** @param {TransitionEvent} e */
 			const onTransitionEnd = (e) => {
 				if (e.target === splash && e.propertyName === 'opacity') {
 					finalize();
