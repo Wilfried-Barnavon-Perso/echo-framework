@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 6.6.5.1
+VERSION : 6.6.18.1
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-11-16
 
@@ -9,11 +9,11 @@ DATE MAJ : 2026-11-16
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.18.1: Tolérance aux requêtes POST sans Content-Type JSON dans create_terminal() (fix HTTP 415).
 # 6.6.5.1: Montage bwrap en lecture seule (--ro-bind-try) du domaine /browserviews.
 # 6.4.0.1: Serveur PTY WebSocket (/api/terminals), endpoints config/openapi et factorisation bwrap.
 # 5.234.1.3: Bind-mount --ro-bind /proc /proc (retrait --proc et --unshare-pid) pour Docker imbriqué.
 # 5.232.5.1: Montage bwrap en lecture seule (--ro-bind-try) des workspaces Codex (/main, /plans, /generated).
-# 5.232.1.2: Unification SSOT de sandbox-agent-readme.md et suppression définitive du .txt redondant.
 
 import asyncio
 import json
@@ -1012,7 +1012,7 @@ def openapi_spec():
 @app.route('/api/terminals', methods=['POST'])
 def create_terminal():
     """Crée une session terminal interactive PTY."""
-    req_json = request.json or {}
+    req_json = request.get_json(silent=True) or {}
     user_id = request.headers.get("X-User-Id") or req_json.get("user_id") or "system"
     chat_id = (
         request.headers.get("X-Session-Id")

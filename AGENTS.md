@@ -166,4 +166,4 @@ L'infrastructure est désormais pilotée via la configuration standardisée `sta
 ---
 ---
 ---
-*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 6.6.18*
+*Document de référence pour l'agent ECHO - Version de Stack Actuelle : 6.6.19*
