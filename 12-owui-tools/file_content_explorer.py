@@ -1,16 +1,16 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 5.233.0.1
+version: 6.6.5.1
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.5.1: Extension du paramètre workspace de show_image_to_user au domaine "browserviews".  # noqa: E501
 # 5.233.0.1: Unification du wrapper dans wrap_tool_output, décoration @echo_tool sur les 6 méthodes publiques et simplification des retours.
 # 5.232.5.1: Extension du paramètre workspace de show_image_to_user aux espaces "main", "plans", "generated" et "sandbox".  # noqa: E501
 # 5.231.59.2: Délégation factorisée du chargement Base64 d'image locale/distante à load_image_as_base64 (echo_http.py) dans show_image_to_user.  # noqa: E501
 # 5.231.53.1: Alignement PAS (Énonciation Impersonnelle, Haut SNR, opérateur ABSOLUMENT INTERDIT) des retours de show_image_to_user.  # noqa: E501
-# 5.231.51.1: Ajout de la consigne anti-duplication Markdown dans le retour d'image locale de show_image_to_user.  # noqa: E501
 
 import io
 import os
@@ -947,7 +947,7 @@ class Tools:
     async def show_image_to_user(
         self,
         target: str,
-        workspace: Optional[Literal["main", "plans", "generated", "sandbox"]] = None,
+        workspace: Optional[Literal["main", "plans", "generated", "sandbox", "browserviews"]] = None,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,

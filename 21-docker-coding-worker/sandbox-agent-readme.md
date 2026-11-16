@@ -12,6 +12,7 @@ Le Système exécute chaque script dans un conteneur isolé Bubblewrap (`bwrap`,
   - `/plans` (**Lecture seule**) : Plans stratégiques et listes de tâches du workspace Codex `plans`.
   - `/generated` (**Lecture seule**) : Médias générés du workspace Codex `generated`.
   - `/files` (**Lecture seule**) : Fichiers téléversés par L'Utilisateur.
+  - `/browserviews` (**Lecture seule**) : Captures d'écran de navigation web de la session.
   - `/echo_libs_sandbox` (**Lecture seule**) : Librairies natives (`echo_monitor.py`, `echo_monitor.js`).
   - `/sandbox-agent-readme.md` (**Lecture seule**) : Présent manuel de référence.
 - **Quotas de concurrence** : Le Système autorise jusqu'à `4` processus simultanés par session (`chat_id`) et `8` processus globaux sur le Worker. Chaque exécution reçoit un `run_id` unique (`run_xxxxxxxx`) et ses propres canaux IPC (`.echo_monitor_{run_id}.jsonl`, `.echo_ui_payload_{run_id}.json`, `.echo_ui_inbox_{run_id}.jsonl`).

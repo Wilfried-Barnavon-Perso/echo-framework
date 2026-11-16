@@ -1,16 +1,16 @@
 """
 title: ECHO Resource Registry
 author: Wilfried BARNAVON
-version: 5.235.5.1
+version: 6.6.5.1
 description: Composant système interne : ECHO Resource Registry.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.5.1: Prise en charge de resource_type="browserview" et affichage de ses métadonnées dans _format_resource_detail.
 # 5.235.5.1: Calcul et affichage de la provenance des ressources de session (branche active vs hors branche).
 # 5.233.0.1: Décoration @echo_tool sur query_registry et remplacement intégral des 7 appels wrap_tool_output par des retours directs.
 # 5.232.5.1: Prise en charge de resource_type="generated", ajout du filtre workspace ("main", "plans", "generated") et de la colonne Localisation (storage_path).
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # ECHO CONFIG NAME : ECHO Registry
 
@@ -39,7 +39,7 @@ class Tools:
     async def query_registry(
         self,
         # [MAINTENANCE_AI] Avertissement: Toujours mettre à jour ces Literal en cas d'évolution du Registre V2.
-        resource_type: Optional[Literal["codex", "plan", "generated", "media", "binary", "weburl", "n8n_workflow", "n8n_template"]] = None,
+        resource_type: Optional[Literal["codex", "plan", "generated", "media", "binary", "weburl", "n8n_workflow", "n8n_template", "browserview"]] = None,
         status: Optional[str] = None,
         search_term: str = None,
         resource_id: str = None,
@@ -164,6 +164,24 @@ class Tools:
                 lines.append(f"- **Dernier commit** : `{r['last_commit']}`")
             if r.get("commit_msg"):
                 lines.append(f"- **Message** : {r['commit_msg']}")
+
+        # Métadonnées BrowserView
+        if r["resource_type"] == "browserview":
+            meta = r.get("metadata") or {}
+            if isinstance(meta, str):
+                try:
+                    import json as _std_json
+                    meta = _std_json.loads(meta)
+                except Exception:
+                    meta = {}
+            if isinstance(meta, dict):
+                if meta.get("session_id"):
+                    lines.append(f"- **Session Navigateur** : `{meta['session_id']}`")
+                if meta.get("url"):
+                    lines.append(f"- **URL** : {meta['url']}")
+                if meta.get("action"):
+                    lines.append(f"- **Action** : `{meta['action']}`")
+                lines.append(f"- **Conservée** : {'Oui' if (r.get('status') == 'retained' or meta.get('retained')) else 'Non (éphémère)'}")
 
         # Résumé (Smart Context)
         if r.get("summary"):

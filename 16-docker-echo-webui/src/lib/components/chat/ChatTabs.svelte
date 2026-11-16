@@ -53,6 +53,7 @@
 		emptyTabs,
 		openTab,
 		openTabInSidePanel,
+		openTabBackgroundInSidePanel,
 		activateTab,
 		removeTab,
 		moveTab,
@@ -458,10 +459,14 @@
 			}
 		};
 	};
-	const openPanel = (tab: PanelTab, inSidePanel = false) => {
+	const openPanel = (tab: PanelTab, inSidePanel = false, backgroundOnly = false) => {
 		if (!viewReady || !viewEntry) return;
 		hasOpenedTabs = true;
-		tabs = inSidePanel ? openTabInSidePanel(tabs, tab) : openTab(tabs, tab);
+		tabs = inSidePanel
+			? backgroundOnly
+				? openTabBackgroundInSidePanel(tabs, tab)
+				: openTabInSidePanel(tabs, tab)
+			: openTab(tabs, tab);
 		changeChatView(viewEntry, { ...viewEntry.state, panels: tabs });
 		showTabs.set(true);
 	};
@@ -519,6 +524,13 @@
 		});
 		if (page != null) fileViews[id]?.revealPage?.(page);
 	};
+	let dismissedAutoTabs = new Set<string>();
+	let lastDismissedChatId = '';
+	$: if ((chatId ?? '') !== lastDismissedChatId) {
+		lastDismissedChatId = chatId ?? '';
+		dismissedAutoTabs = new Set();
+	}
+
 	const openFeature = (
 		kind:
 			| 'artifacts'
@@ -531,10 +543,14 @@
 			| 'echo-browser'
 			| 'echo-vault'
 			| 'echo-canvas',
-		inSidePanel = false
+		inSidePanel = false,
+		backgroundOnly = false
 	) => {
 		if (!availableViews.some((view) => view.kind === kind && view.available)) return;
 		const view = availableViews.find((view) => view.kind === kind)!;
+		if (!backgroundOnly) {
+			dismissedAutoTabs.delete(kind);
+		}
 		if (kind === 'side') {
 			let sideChatNumber = 1;
 			while (tabs.tabs.some((tab) => tab.kind === 'side' && tab.sideChatNumber === sideChatNumber))
@@ -550,11 +566,12 @@
 					sideChatNumber,
 					initialPrompt
 				},
-				inSidePanel
+				inSidePanel,
+				backgroundOnly
 			);
 			return;
 		}
-		openPanel({ id: kind, kind, label: view.label }, inSidePanel);
+		openPanel({ id: kind, kind, label: view.label }, inSidePanel, backgroundOnly);
 	};
 
 	$: if ($echoTabOpenRequest && $echoTabOpenRequest.chatId === chatId) {
@@ -583,7 +600,14 @@
 		if (req.kind === 'echo-canvas' && req.payload?.frameId && chatId) {
 			echoCanvasActiveFrame.update((curr) => ({ ...curr, [chatId]: req.payload!.frameId! }));
 		}
-		openFeature(req.kind, true);
+		if (req.payload?.auto === true) {
+			if (!dismissedAutoTabs.has(req.kind)) {
+				openFeature(req.kind, true, true);
+			}
+		} else {
+			dismissedAutoTabs.delete(req.kind);
+			openFeature(req.kind, true, false);
+		}
 	}
 
 	type SplitDrop = PanelRect & { groupId: string; edge: SplitEdge | null };
@@ -793,6 +817,9 @@
 			}
 			if (tab.kind === 'artifacts') showArtifacts.set(false);
 			if (tab.kind === 'preview') showEmbeds.set(false);
+			if (tab.kind?.startsWith('echo-')) {
+				dismissedAutoTabs.add(tab.kind);
+			}
 			owner.drafts.delete(id);
 			const previousPanels = owner.state.panels;
 			const closedPanels = removeTab(previousPanels, id);

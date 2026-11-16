@@ -443,6 +443,12 @@
 					{formatTimestamp(activeFrame.timestamp)}
 				</span>
 			{/if}
+
+			{#if activeFrame?.retained || activeFrame?.status === 'retained'}
+				<span class="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 shrink-0">
+					📌 Conservée
+				</span>
+			{/if}
 		</div>
 
 		<div class="flex items-center gap-1 shrink-0">

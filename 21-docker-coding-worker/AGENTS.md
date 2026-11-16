@@ -10,7 +10,7 @@ Ce dossier contient le code source de l'**API d'Exécution Multi-Langages Sécur
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `worker_api.py` (v6.4.0.1)
+### `worker_api.py` (v6.6.5.1)
 Fichier hybride combinant une API WSGI Flask et un serveur ASGI Starlette propulsé par `uvicorn` sur le port **5000**.
 - **Architecture Hybride ASGI/WSGI (`asgi_app`)** : Enveloppe l'application Flask via `WSGIMiddleware` pour servir sans friction l'ensemble des routes HTTP existantes, tout en exposant une route native WebSocket asynchrone (`WebSocketRoute("/api/terminals/{session_id}")`).
 - **Endpoints HTTP Terminal & Découverte** :
@@ -27,7 +27,7 @@ Fichier hybride combinant une API WSGI Flask et un serveur ASGI Starlette propul
   - Fallback portable : En l'absence de PTY ou bwrap (ex: exécution de test en `.venv` Windows), lance un sous-processus interactif (`cmd.exe` ou `/bin/sh`) avec pipes standards et lecteur en thread dédié, assurant une testabilité fonctionnelle intégrale en environnement local.
   - Maintient un buffer circulaire de 64 Ko (`max_buffer = 65536`) et un curseur incrémental pour la reprise après déconnexion.
 - **Factorisation Bubblewrap (`_build_base_bwrap_cmd` & `_build_interactive_bwrap_cmd`)** :
-  - Mutualise l'ensemble des montages de sécurité : isolation namespaces (`--unshare-ipc`, `--unshare-uts`, `--unshare-cgroup`, `--die-with-parent`), bascule utilisateur non privilégié (`--unshare-user --uid 65534 --gid 65534`), montage RW de `/sandbox` (`--chdir /sandbox`), montages RO stricts de `/main`, `/plans`, `/generated`, `/files` et RW de `/.deps`.
+  - Mutualise l'ensemble des montages de sécurité : isolation namespaces (`--unshare-ipc`, `--unshare-uts`, `--unshare-cgroup`, `--die-with-parent`), bascule utilisateur non privilégié (`--unshare-user --uid 65534 --gid 65534`), montage RW de `/sandbox` (`--chdir /sandbox`), montages RO stricts de `/main`, `/plans`, `/generated`, `/files`, `/browserviews` et RW de `/.deps`.
 - **Endpoints HTTP Batch Historiques** : `/execute` (synchrone/background), `/status`, `/kill`, `/poll_monitor`, `/update_payload` et `/health`.
 
 ### ECHO Sandbox Monitor (`echo_monitor.py` & `echo_monitor.js` v5.234.1.1)

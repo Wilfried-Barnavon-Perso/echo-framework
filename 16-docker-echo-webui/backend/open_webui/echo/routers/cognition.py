@@ -1,11 +1,12 @@
 """
 title: ECHO V6 Cognition Router
 author: Wilfried BARNAVON
-version: 6.6.2.2
+version: 6.6.5.1
 description: Routeur FastAPI pour la visualisation cognitive et des sous-agents (/echo/v1/cognition).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.5.1: Résolution prioritaire des captures navigateur dans browserviews/ avec GC éphémère à l'entrée et exposition de status/retained.
 # 6.6.2.2: Ajout des endpoints GET /{chat_id}/browser-frames et /{chat_id}/browser-frames/{file_id}/image et alignement niveau_requis/is_question/pending_tool_calls.
 # 6.6.2.1: Sanitization DOM/prompt, regroupement grouped_threads, enrichissement des steps et réactivité SSE via get_cognition_seq.
 # 6.5.3.1: Ajout de POST /{chat_id}/threads/{sub_sid}/message (tours humains directs ou file FIFO) et enrichissement d'état des threads.
@@ -37,6 +38,8 @@ from open_webui.utils.auth import get_verified_user
 
 ensure_echo_sys_path()
 try:
+    from echo_browser_lib import cleanup_expired_browserviews  # type: ignore
+    from echo_constants import BROWSER_VIEWS_DIR_NAME  # type: ignore
     from echo_db_schema import open_db  # type: ignore
     from echo_paths import (  # type: ignore
         get_echo_session_path,
@@ -653,14 +656,22 @@ async def get_browser_frames(chat_id: str, user=Depends(get_verified_user)):
     if not os.path.isfile(db_path):
         return JSONResponse(content={"frames": []})
 
+    try:
+        await cleanup_expired_browserviews(safe_uid, safe_cid)
+    except Exception:
+        pass
+
+    browserviews_dir = os.path.realpath(
+        get_echo_session_path(safe_uid, safe_cid, BROWSER_VIEWS_DIR_NAME)
+    )
     files_dir = os.path.realpath(get_echo_session_path(safe_uid, safe_cid, "files"))
     frames = []
     try:
         with closing(open_db(db_path, readonly=True, timeout=2.0)) as conn:
             rows = conn.execute(
-                "SELECT id, name, storage_path, metadata, created_at "
+                "SELECT id, name, storage_path, metadata, created_at, status "
                 "FROM echo_resources "
-                "WHERE name LIKE '%_frame.jpg' "
+                "WHERE resource_type = 'browserview' OR name LIKE '%_frame.jpg' "
                 "ORDER BY created_at ASC, id ASC"
             ).fetchall()
             for r in rows:
@@ -668,6 +679,7 @@ async def get_browser_frames(chat_id: str, user=Depends(get_verified_user)):
                 filename = os.path.basename(r[1] or "")
                 storage_path = r[2] or ""
                 meta_raw = r[3]
+                res_status = r[5] or "transient"
                 meta: Dict[str, Any] = {}
                 if meta_raw:
                     try:
@@ -683,17 +695,20 @@ async def get_browser_frames(chat_id: str, user=Depends(get_verified_user)):
                     f"{sanitize_echo_id(file_id)}_frame.jpg",
                 ]
                 resolved_path = None
-                for cand in candidate_names:
-                    if not cand:
-                        continue
-                    cand_real = os.path.realpath(os.path.join(files_dir, cand))
-                    if (
-                        cand_real.startswith(files_dir + os.sep)
-                        and os.path.isfile(cand_real)
-                    ):
-                        resolved_path = cand_real
-                        if not filename:
-                            filename = os.path.basename(cand_real)
+                for base_dir in (browserviews_dir, files_dir):
+                    for cand in candidate_names:
+                        if not cand:
+                            continue
+                        cand_real = os.path.realpath(os.path.join(base_dir, cand))
+                        if (
+                            cand_real.startswith(base_dir + os.sep)
+                            and os.path.isfile(cand_real)
+                        ):
+                            resolved_path = cand_real
+                            if not filename:
+                                filename = os.path.basename(cand_real)
+                            break
+                    if resolved_path:
                         break
 
                 if not resolved_path:
@@ -707,6 +722,8 @@ async def get_browser_frames(chat_id: str, user=Depends(get_verified_user)):
                         "url": meta.get("url", ""),
                         "action": meta.get("action", ""),
                         "timestamp": meta.get("timestamp", r[4]),
+                        "status": res_status,
+                        "retained": bool(res_status == "retained" or meta.get("retained")),
                         "image_url": (
                             f"/echo/v1/cognition/{safe_cid}"
                             f"/browser-frames/{file_id}/image"
@@ -729,18 +746,23 @@ async def get_browser_frame_image(
     safe_uid = sanitize_echo_id(user.id)
     safe_cid = sanitize_echo_id(chat_id)
     safe_fid = sanitize_echo_id(file_id)
+    browserviews_dir = os.path.realpath(
+        get_echo_session_path(safe_uid, safe_cid, BROWSER_VIEWS_DIR_NAME)
+    )
     files_dir = os.path.realpath(get_echo_session_path(safe_uid, safe_cid, "files"))
     db_path = get_echo_session_path(safe_uid, safe_cid, "db")
 
     target_path = None
-    default_cand = os.path.realpath(
-        os.path.join(files_dir, f"{safe_fid}_frame.jpg")
-    )
-    if (
-        default_cand.startswith(files_dir + os.sep)
-        and os.path.isfile(default_cand)
-    ):
-        target_path = default_cand
+    for base_dir in (browserviews_dir, files_dir):
+        default_cand = os.path.realpath(
+            os.path.join(base_dir, f"{safe_fid}_frame.jpg")
+        )
+        if (
+            default_cand.startswith(base_dir + os.sep)
+            and os.path.isfile(default_cand)
+        ):
+            target_path = default_cand
+            break
 
     if not target_path and os.path.isfile(db_path):
         try:
@@ -750,16 +772,19 @@ async def get_browser_frame_image(
                     (file_id,),
                 ).fetchone()
                 if row:
-                    for raw_name in (row[1] or "", row[0] or ""):
-                        base = os.path.basename(raw_name)
-                        if not base:
-                            continue
-                        cand = os.path.realpath(os.path.join(files_dir, base))
-                        if (
-                            cand.startswith(files_dir + os.sep)
-                            and os.path.isfile(cand)
-                        ):
-                            target_path = cand
+                    for base_dir in (browserviews_dir, files_dir):
+                        for raw_name in (row[1] or "", row[0] or ""):
+                            base = os.path.basename(raw_name)
+                            if not base:
+                                continue
+                            cand = os.path.realpath(os.path.join(base_dir, base))
+                            if (
+                                cand.startswith(base_dir + os.sep)
+                                and os.path.isfile(cand)
+                            ):
+                                target_path = cand
+                                break
+                        if target_path:
                             break
         except Exception as e:
             log.warning(f"[Cognition] Erreur lookup image frame {file_id}: {e}")

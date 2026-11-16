@@ -619,7 +619,6 @@ async def update_function_user_valves_by_id(
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
-    _raise_functions_readonly()
     function = await Functions.get_function_by_id(id, db=db)
 
     if function:

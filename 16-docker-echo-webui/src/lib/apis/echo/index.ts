@@ -295,6 +295,8 @@ export interface EchoBrowserFrame {
 	b64?: string;
 	live_b64?: string;
 	webp_b64?: string;
+	retained?: boolean;
+	status?: string;
 }
 
 export const getEchoBrowserFrames = async (
@@ -608,6 +610,34 @@ export const restoreEchoCodexFile = async (
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({ detail: 'Échec de restauration Codex' }));
 		throw new Error(err.detail || 'Échec de restauration Codex');
+	}
+	return res.json();
+};
+
+export const uploadEchoCodexFile = async (
+	token: string,
+	chatId: string,
+	workspace: string,
+	file: File,
+	path: string = ''
+): Promise<any> => {
+	const formData = new FormData();
+	formData.append('file', file);
+	formData.append('workspace', workspace);
+	formData.append('path', path);
+
+	const res = await fetch(`${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/upload`, {
+		method: 'POST',
+		headers: {
+			Accept: 'application/json',
+			authorization: `Bearer ${token}`
+		},
+		body: formData
+	});
+
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: "Échec de l'importation du fichier Codex" }));
+		throw new Error(err.detail || "Échec de l'importation du fichier Codex");
 	}
 	return res.json();
 };

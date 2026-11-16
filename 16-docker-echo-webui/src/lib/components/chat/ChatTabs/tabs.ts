@@ -168,6 +168,51 @@ export function openTabInSidePanel(state: PanelTabs, tab: PanelTab): PanelTabs {
 		: splitTab(next, tab.id, mainGroup.id, 'right');
 }
 
+export function openTabBackgroundInSidePanel(state: PanelTabs, tab: PanelTab): PanelTabs {
+	const mainGroup = state.groups.find((group) => group.tabIds.includes(mainChatTabId));
+	if (!mainGroup) return openTabInSidePanel(state, tab);
+
+	const sideGroup =
+		state.groups.find(
+			(group) => group.id === state.activeGroupId && group.id !== mainGroup.id && !!group.activeId
+		) ?? state.groups.find((group) => group.id !== mainGroup.id && !!group.activeId);
+
+	if (!sideGroup) {
+		return openTabInSidePanel(state, tab);
+	}
+
+	if (state.tabs.some((item) => item.id === tab.id)) {
+		if (mainGroup.tabIds.includes(tab.id)) {
+			return {
+				...state,
+				groups: state.groups.map((group) => {
+					if (group.id === mainGroup.id) {
+						const tabIds = group.tabIds.filter((id) => id !== tab.id);
+						return {
+							...group,
+							tabIds,
+							activeId: group.activeId === tab.id ? mainChatTabId : group.activeId
+						};
+					}
+					if (group.id === sideGroup.id && !group.tabIds.includes(tab.id)) {
+						return { ...group, tabIds: [...group.tabIds, tab.id] };
+					}
+					return group;
+				})
+			};
+		}
+		return state;
+	}
+
+	return {
+		...state,
+		tabs: [...state.tabs, tab],
+		groups: state.groups.map((group) =>
+			group.id === sideGroup.id ? { ...group, tabIds: [...group.tabIds, tab.id] } : group
+		)
+	};
+}
+
 function removeLayoutGroup(layout: PanelLayout, groupId: string): PanelLayout | null {
 	if (layout.type === 'group') return layout.groupId === groupId ? null : layout;
 	const first = removeLayoutGroup(layout.first, groupId);

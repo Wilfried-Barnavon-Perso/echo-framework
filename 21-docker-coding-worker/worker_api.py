@@ -1,19 +1,19 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 6.4.0.1
+VERSION : 6.6.5.1
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-11-11
+DATE MAJ : 2026-11-16
 
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.5.1: Montage bwrap en lecture seule (--ro-bind-try) du domaine /browserviews.
 # 6.4.0.1: Serveur PTY WebSocket (/api/terminals), endpoints config/openapi et factorisation bwrap.
 # 5.234.1.3: Bind-mount --ro-bind /proc /proc (retrait --proc et --unshare-pid) pour Docker imbriqué.
 # 5.232.5.1: Montage bwrap en lecture seule (--ro-bind-try) des workspaces Codex (/main, /plans, /generated).
 # 5.232.1.2: Unification SSOT de sandbox-agent-readme.md et suppression définitive du .txt redondant.
-# 5.232.1.1: Prise en charge du double montage bwrap sandbox-agent-readme (.md et .txt).
 
 import asyncio
 import json
@@ -289,6 +289,7 @@ def _build_base_bwrap_cmd(
     files_dir: str | None = None,
     global_files_dir: str | None = None,
     deps_dir: str | None = None,
+    browserviews_dir: str | None = None,
 ) -> list[str]:
     """Construit la base immuable des arguments bubblewrap partagée entre batch et PTY."""
     cmd = [
@@ -314,6 +315,8 @@ def _build_base_bwrap_cmd(
     ]
     if files_dir:
         cmd.extend(["--ro-bind-try", files_dir, "/files"])
+    if browserviews_dir:
+        cmd.extend(["--ro-bind-try", browserviews_dir, "/browserviews"])
     if global_files_dir:
         cmd.extend(["--ro-bind-try", global_files_dir, global_files_dir])
     if sandbox_dir:
@@ -336,6 +339,7 @@ def _build_interactive_bwrap_cmd(
     os.makedirs(sandbox_tmp, exist_ok=True)
 
     files_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/files" if sandbox_dir else None
+    browserviews_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/browserviews" if sandbox_dir else None
     global_files_dir = f"/app/backend/data/users/{safe_uid}/files" if sandbox_dir else None
     if deps_dir is None and sandbox_dir:
         deps_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/dependencies"
@@ -348,6 +352,7 @@ def _build_interactive_bwrap_cmd(
         files_dir=files_dir,
         global_files_dir=global_files_dir,
         deps_dir=deps_dir,
+        browserviews_dir=browserviews_dir,
     )
 
     python_paths = ["/echo_libs_sandbox"] + (["/.deps/python"] if deps_dir else [])
@@ -370,7 +375,8 @@ def _build_interactive_bwrap_cmd(
 def _start_sandbox_job(
     safe_uid, safe_cid, run_id, file_path, dependencies,
     sandbox_dir, files_dir, global_files_dir, deps_dir,
-    timeout_sec, ui_payload, max_output_length
+    timeout_sec, ui_payload, max_output_length,
+    browserviews_dir: str | None = None,
 ):
     if not sandbox_dir:
         return None, {"status": "critical_error", "error": "Espace d'exécution non défini."}
@@ -444,6 +450,7 @@ def _start_sandbox_job(
         files_dir=files_dir,
         global_files_dir=global_files_dir,
         deps_dir=deps_dir,
+        browserviews_dir=browserviews_dir,
     )
     bwrap_cmd.extend([
         "--setenv", "PYTHONUNBUFFERED", "1",
@@ -775,13 +782,15 @@ def execute_code():
 
     sandbox_dir = _get_sandbox_dir(safe_uid, safe_cid)
     files_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/files" if sandbox_dir else None
+    browserviews_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/browserviews" if sandbox_dir else None
     global_files_dir = f"/app/backend/data/users/{safe_uid}/files" if sandbox_dir else None
     deps_dir = f"/app/backend/data/users/{safe_uid}/chats/{safe_cid}/dependencies" if sandbox_dir else None
 
     job, err = _start_sandbox_job(
         safe_uid, safe_cid, run_id, file_path, dependencies,
         sandbox_dir, files_dir, global_files_dir, deps_dir,
-        timeout, ui_payload, max_output_length
+        timeout, ui_payload, max_output_length,
+        browserviews_dir=browserviews_dir,
     )
     if err is not None:
         err["run_id"] = run_id

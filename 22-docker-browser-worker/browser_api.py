@@ -1,19 +1,19 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 5.236.4.1
+VERSION : 6.6.5.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-11-07
+DATE MAJ : 2026-11-16
 
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.5.1: Ajout de l'endpoint GET /sessions pour lister les sessions Playwright actives par user_id/chat_id.
 # 5.236.4.1: Durcissement furtivité anti-bot (Client Hints, prototypes safe, WebGL Linux/Android), élimination du tatouage DOM (Zéro-Trace) et incrustation active du curseur hors-DOM via Pillow sur le screencast.
 # 5.232.1.1: Élimination du FastAPIDeprecationWarning (retrait d'ORJSONResponse obsolète) et typage strict des retours routes (dict[str, Any]) pour sérialisation directe Pydantic v2.
 # 5.232.0.3: Optimisation de la latence de POST /render_ephemeral_view (wait_until="load", polling DOM actif 100ms sur #visual-target svg/canvas et settle_ms=250).
 # 5.232.0.2: Ajout de POST /render_ephemeral_view (rendu incognito 100 % RAM Zéro-Disque), support WebGL SwiftShader headless et détection combinée d'attente asynchrone et d'alertes DOM (⚠️ / data-echo-visual-error).
-# 5.231.20.1: Synchronisation dynamique de chat_id dans /action et /start_session pour routage multi-chat des téléchargements en sessions éphémères ou sous-agents.
 
 import asyncio
 import io
@@ -22,7 +22,7 @@ import os
 import time
 import random
 import logging
-from typing import Any
+from typing import Any, Optional
 import orjson as json
 import html2text
 from PIL import Image, ImageDraw
@@ -937,6 +937,20 @@ async def session_cleanup_loop():
                         pass
                     s.cdp_client = None
                     s.last_screencast_poll = 0
+
+
+@app.get("/sessions")
+async def list_active_sessions(user_id: Optional[str] = None, chat_id: Optional[str] = None) -> dict[str, Any]:
+    """Retourne les identifiants des sessions Playwright actives (filtrés optionnellement par user_id/chat_id)."""
+    active_sids: list[str] = []
+    async with SESSIONS_LOCK:
+        for sid, s in SESSIONS.items():
+            if user_id and getattr(s, "user_id", None) not in (user_id, "anonymous", None):
+                continue
+            if chat_id and getattr(s, "chat_id", None) != chat_id and sid != chat_id:
+                continue
+            active_sids.append(sid)
+    return {"status": "success", "active_sessions": active_sids}
 
 
 @app.post("/start_session")

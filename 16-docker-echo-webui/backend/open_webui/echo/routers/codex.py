@@ -1,11 +1,12 @@
 """
 title: ECHO V6 Codex Router
 author: Wilfried BARNAVON
-version: 6.6.2.1
+version: 6.6.4.1
 description: Routeur FastAPI pour dépôts Codex et conteneurs de session (/echo/v1/codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.4.1: Normalisation canonique GET /{chat_id}/tree (name, path, filename, type, mime) et POST /{chat_id}/upload.
 # 6.6.2.1: Ajout de _format_hex_preview, mime_type, et des endpoints POST /{chat_id}/mkdir, /rename et /restore.
 # 6.3.0.1: Création du routeur /echo/v1/codex (tree, file, log, diff, download et persistance Git Dulwich).
 
@@ -18,7 +19,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -126,6 +127,7 @@ async def get_codex_tree(
                 entries.append({
                     "name": item.name,
                     "path": rel_item_path,
+                    "filename": rel_item_path,
                     "type": "directory" if is_dir else "file",
                     "size": st.st_size if not is_dir else 0,
                     "mime": mime or "application/octet-stream",
@@ -140,7 +142,37 @@ async def get_codex_tree(
         })
 
     repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
-    entries = repo.list_directory(path)
+    raw_entries = repo.list_directory(path)
+    entries = []
+    for item in raw_entries:
+        if isinstance(item, dict):
+            rel_p = str(
+                item.get("path") or item.get("filename") or item.get("name") or ""
+            ).replace("\\", "/").strip("/")
+            base_name = item.get("name") or (rel_p.rsplit("/", 1)[-1] if rel_p else "")
+            raw_type = str(item.get("type") or "file").lower()
+            norm_type = "directory" if raw_type in ("directory", "dir", "folder") else "file"
+            mime, _ = mimetypes.guess_type(base_name)
+            entries.append({
+                **item,
+                "name": base_name,
+                "path": rel_p,
+                "filename": rel_p,
+                "type": norm_type,
+                "mime": item.get("mime") or (mime or "application/octet-stream"),
+            })
+        elif isinstance(item, str):
+            rel_p = item.replace("\\", "/").strip("/")
+            base_name = rel_p.rsplit("/", 1)[-1] if rel_p else rel_p
+            mime, _ = mimetypes.guess_type(base_name)
+            entries.append({
+                "name": base_name,
+                "path": rel_p,
+                "filename": rel_p,
+                "type": "file",
+                "size": 0,
+                "mime": mime or "application/octet-stream",
+            })
     writable = is_codex_workspace_generic_writable(ws)
     return JSONResponse(content={
         "workspace": ws,
@@ -504,6 +536,62 @@ async def restore_codex_file(
             "workspace": ws,
             "path": payload.path,
             "restored_from": payload.commit_hash,
+            "commit_hash": commit_hash,
+        }
+    )
+
+
+@router.post("/{chat_id}/upload")
+async def upload_codex_file(
+    chat_id: str,
+    file: UploadFile = File(...),
+    workspace: str = Form(default="main"),
+    path: str = Form(default=""),
+    user=Depends(get_verified_user),
+):
+    """Importe un fichier (texte ou binaire) dans un espace Codex inscriptible avec commit Git Dulwich."""
+    safe_uid = sanitize_echo_id(user.id)
+    safe_cid = sanitize_echo_id(chat_id)
+    ws = (workspace or "main").strip()
+
+    if ws not in ECHO_CODEX_WORKSPACES or not is_codex_workspace_generic_writable(ws):
+        raise HTTPException(
+            status_code=403,
+            detail=f"L'espace '{ws}' est en lecture seule.",
+        )
+
+    raw_filename = os.path.basename((file.filename or "").replace("\\", "/").strip())
+    if not raw_filename or raw_filename in (".", ".."):
+        raise HTTPException(status_code=400, detail="Nom de fichier invalide.")
+
+    clean_dir = (path or "").replace("\\", "/").strip("/")
+    target_rel_path = f"{clean_dir}/{raw_filename}" if clean_dir else raw_filename
+    parts = [p for p in target_rel_path.split("/") if p]
+    if not parts or any(p in (".", "..") for p in parts):
+        raise HTTPException(status_code=400, detail="Chemin cible invalide.")
+    normalized_rel_path = "/".join(parts)
+
+    raw_bytes = await file.read()
+    author = getattr(user, "name", None) or getattr(user, "email", None) or "Utilisateur"
+
+    async with get_codex_lock(safe_uid, safe_cid):
+        repo = CodexRepo(user_id=safe_uid, chat_id=safe_cid, workspace=ws)
+        try:
+            commit_hash = repo.commit_file(
+                normalized_rel_path,
+                raw_bytes,
+                f"Import UI : {normalized_rel_path}",
+                author=author,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    return JSONResponse(
+        content={
+            "status": "uploaded",
+            "workspace": ws,
+            "path": normalized_rel_path,
+            "size_bytes": len(raw_bytes),
             "commit_hash": commit_hash,
         }
     )

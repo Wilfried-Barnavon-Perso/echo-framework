@@ -13,7 +13,8 @@
 		getEchoCodexDownloadUrl,
 		mkdirEchoCodex,
 		renameEchoCodex,
-		restoreEchoCodexFile
+		restoreEchoCodexFile,
+		uploadEchoCodexFile
 	} from '$lib/apis/echo';
 	import { echoCodexTarget } from '$lib/stores/echo';
 
@@ -30,6 +31,7 @@
 	];
 
 	let selectedWorkspace = 'main';
+	let currentDirPath = '';
 	let selectedPath = '';
 	let fileContent = '';
 	let fileMeta: {
@@ -54,6 +56,16 @@
 	let isSaving = false;
 	let isDeleting = false;
 	let isMutating = false;
+	let isUploading = false;
+	let isDraggingOver = false;
+
+	let splitWidth = 0;
+	let userTreeWidth: number | null = null;
+	let resizingTree = false;
+	let resizeStartX = 0;
+	let resizeStartWidth = 240;
+	let fileUploadInput: HTMLInputElement | null = null;
+	let previewLoadSeq = 0;
 
 	$: effectiveChatId = crossReadChatId || chatId;
 	$: isCrossRead = Boolean(crossReadChatId && crossReadChatId !== chatId);
@@ -78,12 +90,14 @@
 	$: if (chatId && chatId !== currentChatId) {
 		currentChatId = chatId;
 		crossReadChatId = '';
+		currentDirPath = '';
 		selectedPath = '';
 		fileContent = '';
 		fileMeta = null;
+		viewMode = 'code';
 		revokePreviewBlob();
 		if ($echoCodexTarget?.chatId !== chatId) {
-			void loadTree();
+			void loadTree('');
 		}
 	}
 
@@ -92,18 +106,166 @@
 		return idx >= 0 ? path.slice(idx + 1).toLowerCase() : '';
 	};
 
-	$: fileExt = getExt(selectedPath);
-	$: isImageFile =
-		Boolean(fileMeta?.mime?.startsWith('image/')) ||
-		['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico'].includes(fileExt);
-	$: isMarkdownFile = ['md', 'markdown'].includes(fileExt);
-	$: isSvgFile = fileExt === 'svg';
-	$: isHtmlFile = ['html', 'htm'].includes(fileExt);
-	$: canPreview = !fileMeta?.is_binary
-		? isMarkdownFile || isSvgFile || isHtmlFile || isImageFile
-		: isImageFile;
+	const getEntryPath = (entry: any): string =>
+		typeof entry === 'string'
+			? entry.replace(/^\/+/, '')
+			: String(entry?.path || entry?.filename || entry?.name || '').replace(/^\/+/, '');
 
-	const loadImagePreviewBlob = async (cid: string, ws: string, path: string) => {
+	const getEntryName = (entry: any): string => {
+		if (typeof entry === 'string') return entry.split('/').pop() || entry;
+		const p = getEntryPath(entry);
+		return String(entry?.name || (p ? p.split('/').pop() : '') || '');
+	};
+
+	const isDirEntry = (entry: any): boolean =>
+		typeof entry === 'object' &&
+		entry !== null &&
+		['directory', 'dir', 'folder'].includes(String(entry?.type || '').toLowerCase());
+
+	$: maxTreeWidth =
+		splitWidth > 0 ? Math.max(200, Math.min(420, splitWidth - 260, Math.floor(splitWidth * 0.45))) : 420;
+	$: autoTreeWidth = (() => {
+		const maxChars = treeEntries.reduce((acc, entry) => Math.max(acc, getEntryName(entry).length), 14);
+		return Math.max(200, Math.min(maxTreeWidth, Math.round(maxChars * 7.4 + 68)));
+	})();
+	$: effectiveTreeWidth = Math.max(180, Math.min(maxTreeWidth, userTreeWidth ?? autoTreeWidth));
+
+	const startTreeResize = (event: PointerEvent) => {
+		if (event.button !== 0) return;
+		event.preventDefault();
+		(event.currentTarget as HTMLElement)?.setPointerCapture?.(event.pointerId);
+		resizingTree = true;
+		resizeStartX = event.clientX;
+		resizeStartWidth = effectiveTreeWidth;
+	};
+
+	const moveTreeResize = (event: PointerEvent) => {
+		if (!resizingTree) return;
+		userTreeWidth = Math.max(180, Math.min(maxTreeWidth, resizeStartWidth + event.clientX - resizeStartX));
+	};
+
+	const endTreeResize = () => {
+		resizingTree = false;
+	};
+
+	const resetTreeResize = () => {
+		userTreeWidth = null;
+	};
+
+	const handleResizerKeydown = (event: KeyboardEvent) => {
+		if (event.key === 'Enter') {
+			event.preventDefault();
+			resetTreeResize();
+			return;
+		}
+		if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+			event.preventDefault();
+			const next =
+				event.key === 'Home'
+					? 180
+					: event.key === 'End'
+						? maxTreeWidth
+						: effectiveTreeWidth + (event.key === 'ArrowRight' ? 16 : -16);
+			userTreeWidth = Math.max(180, Math.min(maxTreeWidth, next));
+		}
+	};
+
+	const parseCsvRows = (text: string, delimiter: string): string[][] => {
+		const rows: string[][] = [];
+		let row: string[] = [];
+		let field = '';
+		let inQuotes = false;
+		for (let i = 0; i < text.length; i++) {
+			const ch = text[i];
+			if (inQuotes) {
+				if (ch === '"') {
+					if (text[i + 1] === '"') {
+						field += '"';
+						i++;
+					} else {
+						inQuotes = false;
+					}
+				} else {
+					field += ch;
+				}
+			} else if (ch === '"') {
+				inQuotes = true;
+			} else if (ch === delimiter) {
+				row.push(field);
+				field = '';
+			} else if (ch === '\n' || (ch === '\r' && text[i + 1] === '\n')) {
+				if (ch === '\r') i++;
+				row.push(field);
+				field = '';
+				if (row.some((c) => c !== '')) rows.push(row);
+				row = [];
+			} else {
+				field += ch;
+			}
+		}
+		row.push(field);
+		if (row.some((c) => c !== '')) rows.push(row);
+		return rows;
+	};
+
+	type PreviewKind = 'image' | 'pdf' | 'audio' | 'video' | 'markdown' | 'svg' | 'html' | 'csv' | 'none';
+
+	const computePreviewCapabilities = (
+		path: string,
+		meta: { is_binary?: boolean; mime?: string } | null
+	) => {
+		const ext = getExt(path);
+		const mime = String(meta?.mime || '').toLowerCase();
+		const isBinary = Boolean(meta?.is_binary);
+
+		const isImage =
+			mime.startsWith('image/') ||
+			['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif'].includes(ext);
+		const isPdf = mime === 'application/pdf' || ext === 'pdf';
+		const isAudio =
+			mime.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext);
+		const isVideo =
+			mime.startsWith('video/') || ['mp4', 'webm', 'ogv', 'mov'].includes(ext);
+		const isMarkdown = !isBinary && ['md', 'markdown'].includes(ext);
+		const isSvg = !isBinary && ext === 'svg';
+		const isHtml = !isBinary && ['html', 'htm'].includes(ext);
+		const isCsv = !isBinary && ['csv', 'tsv'].includes(ext);
+
+		let kind: PreviewKind = 'none';
+		if (isImage) kind = 'image';
+		else if (isPdf) kind = 'pdf';
+		else if (isAudio) kind = 'audio';
+		else if (isVideo) kind = 'video';
+		else if (isMarkdown) kind = 'markdown';
+		else if (isSvg) kind = 'svg';
+		else if (isHtml) kind = 'html';
+		else if (isCsv) kind = 'csv';
+
+		const needsBlob = isImage || isPdf || isAudio || isVideo;
+		const canPreview = kind !== 'none';
+
+		return {
+			kind,
+			needsBlob,
+			canPreview,
+			isImage,
+			isPdf,
+			isAudio,
+			isVideo,
+			isMarkdown,
+			isSvg,
+			isHtml,
+			isCsv
+		};
+	};
+
+	$: fileExt = getExt(selectedPath);
+	$: previewCaps = computePreviewCapabilities(selectedPath, fileMeta);
+	$: canPreview = previewCaps.canPreview;
+	$: csvRows = previewCaps.kind === 'csv' ? parseCsvRows(fileContent, fileExt === 'tsv' ? '\t' : ',') : [];
+
+	const loadPreviewBlob = async (cid: string, ws: string, path: string) => {
+		const seq = ++previewLoadSeq;
 		revokePreviewBlob();
 		const token = localStorage?.token;
 		if (!token || !cid || !path) return;
@@ -111,8 +273,9 @@
 			const res = await fetch(getEchoCodexDownloadUrl(cid, ws, path), {
 				headers: { Authorization: `Bearer ${token}` }
 			});
-			if (!res.ok) return;
+			if (!res.ok || seq !== previewLoadSeq) return;
 			const blob = await res.blob();
+			if (seq !== previewLoadSeq) return;
 			previewBlobUrl = URL.createObjectURL(blob);
 		} catch {
 			// ignore
@@ -121,13 +284,13 @@
 
 	let treeLoadSeq = 0;
 
-	const loadTree = async () => {
+	const loadTree = async (dirPath: string = currentDirPath) => {
 		const token = localStorage?.token;
 		if (!token || !effectiveChatId) return;
 		const seq = ++treeLoadSeq;
 		loadingTree = true;
 		try {
-			const res = await getEchoCodexTree(token, effectiveChatId, selectedWorkspace, '');
+			const res = await getEchoCodexTree(token, effectiveChatId, selectedWorkspace, dirPath);
 			if (seq !== treeLoadSeq) return;
 			treeEntries = res?.entries || res || [];
 		} catch (e: any) {
@@ -140,7 +303,13 @@
 		}
 	};
 
-	const selectFile = async (path: string) => {
+	const navigateToDir = async (dirPath: string) => {
+		currentDirPath = dirPath;
+		await loadTree(dirPath);
+	};
+
+	const selectFile = async (path: string, forceCodeMode = false) => {
+		if (!path) return;
 		selectedPath = path;
 		activeSubView = 'editor';
 		viewMode = 'code';
@@ -154,17 +323,25 @@
 			const res = await getEchoCodexFile(token, effectiveChatId, selectedWorkspace, path);
 			if (typeof res === 'string') {
 				fileContent = res;
+				const caps = computePreviewCapabilities(path, null);
+				if (!forceCodeMode && caps.canPreview) {
+					viewMode = 'preview';
+				}
 			} else {
-				fileMeta = {
+				const nextMeta = {
 					is_binary: Boolean(res?.is_binary),
 					mime: res?.mime_type || res?.mime,
 					size_bytes: res?.size_bytes,
 					hex_preview: res?.hex_preview
 				};
+				fileMeta = nextMeta;
 				fileContent = res?.content ?? '';
-				if (isImageFile) {
+				const caps = computePreviewCapabilities(path, nextMeta);
+				if (!forceCodeMode && caps.canPreview) {
 					viewMode = 'preview';
-					void loadImagePreviewBlob(effectiveChatId, selectedWorkspace, path);
+					if (caps.needsBlob) {
+						void loadPreviewBlob(effectiveChatId, selectedWorkspace, path);
+					}
 				}
 			}
 		} catch (e: any) {
@@ -176,8 +353,8 @@
 
 	const handleToggleViewMode = (mode: 'code' | 'preview') => {
 		viewMode = mode;
-		if (mode === 'preview' && isImageFile && !previewBlobUrl && selectedPath) {
-			void loadImagePreviewBlob(effectiveChatId, selectedWorkspace, selectedPath);
+		if (mode === 'preview' && previewCaps.needsBlob && !previewBlobUrl && selectedPath) {
+			void loadPreviewBlob(effectiveChatId, selectedWorkspace, selectedPath);
 		}
 	};
 
@@ -228,20 +405,110 @@
 
 	const handleMkdir = async () => {
 		if (!isWritable) return;
-		const folderPath = prompt('Nom ou chemin du nouveau dossier :', '');
+		const defaultPrefix = currentDirPath ? `${currentDirPath}/` : '';
+		const folderPath = prompt('Nom ou chemin du nouveau dossier :', defaultPrefix);
 		if (!folderPath || !folderPath.trim()) return;
+		const cleanFolder = folderPath.trim().replace(/^\/+|\/+$/g, '');
+		if (!cleanFolder) return;
 		const token = localStorage?.token;
 		if (!token || !effectiveChatId) return;
 
 		isMutating = true;
 		try {
-			await mkdirEchoCodex(token, effectiveChatId, selectedWorkspace, folderPath.trim());
-			toast.success(`Dossier créé : ${folderPath.trim()}`);
-			await loadTree();
+			await mkdirEchoCodex(token, effectiveChatId, selectedWorkspace, cleanFolder);
+			toast.success(`Dossier créé : ${cleanFolder}`);
+			await loadTree(currentDirPath);
 		} catch (e: any) {
 			toast.error('Échec création dossier: ' + (e.message || ''));
 		} finally {
 			isMutating = false;
+		}
+	};
+
+	const handleNewFile = async () => {
+		if (!isWritable) return;
+		const defaultPrefix = currentDirPath ? `${currentDirPath}/` : '';
+		const filePath = prompt('Nom ou chemin du nouveau fichier :', defaultPrefix);
+		if (!filePath || !filePath.trim()) return;
+		const trimmed = filePath.trim().replace(/^\/+/, '');
+		if (!trimmed || trimmed.endsWith('/')) {
+			toast.error('Chemin de fichier invalide.');
+			return;
+		}
+		const token = localStorage?.token;
+		if (!token || !effectiveChatId) return;
+
+		isMutating = true;
+		try {
+			await saveEchoCodexFile(token, effectiveChatId, {
+				workspace: selectedWorkspace,
+				path: trimmed,
+				content: '',
+				message: `Création UI : ${trimmed}`
+			});
+			toast.success(`Fichier créé : ${trimmed}`);
+			await loadTree(currentDirPath);
+			await selectFile(trimmed, true);
+		} catch (e: any) {
+			toast.error('Échec création fichier: ' + (e.message || ''));
+		} finally {
+			isMutating = false;
+		}
+	};
+
+	const uploadFilesList = async (files: FileList | File[]) => {
+		if (!isWritable || !files || files.length === 0) return;
+		const token = localStorage?.token;
+		if (!token || !effectiveChatId) return;
+
+		isUploading = true;
+		let uploadedCount = 0;
+		let lastUploadedPath = '';
+		try {
+			for (const file of Array.from(files)) {
+				const res = await uploadEchoCodexFile(
+					token,
+					effectiveChatId,
+					selectedWorkspace,
+					file,
+					currentDirPath
+				);
+				uploadedCount += 1;
+				lastUploadedPath = res?.path || (currentDirPath ? `${currentDirPath}/${file.name}` : file.name);
+			}
+			if (uploadedCount > 0) {
+				toast.success(
+					uploadedCount === 1
+						? `Fichier importé : ${lastUploadedPath}`
+						: `${uploadedCount} fichiers importés`
+				);
+				await loadTree(currentDirPath);
+				if (lastUploadedPath) {
+					await selectFile(lastUploadedPath);
+				}
+			}
+		} catch (e: any) {
+			toast.error('Échec importation: ' + (e.message || ''));
+		} finally {
+			isUploading = false;
+		}
+	};
+
+	const handleUploadChange = async (event: Event) => {
+		const input = event.currentTarget as HTMLInputElement;
+		if (input?.files?.length) {
+			await uploadFilesList(input.files);
+		}
+		if (input) input.value = '';
+	};
+
+	const handleTreeDrop = async (event: DragEvent) => {
+		event.preventDefault();
+		isDraggingOver = false;
+		if (!isWritable) return;
+		const files = event.dataTransfer?.files;
+		if (files && files.length > 0) {
+			await uploadFilesList(files);
 		}
 	};
 
@@ -339,11 +606,13 @@
 
 	const exitCrossRead = () => {
 		crossReadChatId = '';
+		currentDirPath = '';
 		selectedPath = '';
 		fileContent = '';
 		fileMeta = null;
+		viewMode = 'code';
 		revokePreviewBlob();
-		void loadTree();
+		void loadTree('');
 	};
 
 	// Réaction au routage ciblé ($echoCodexTarget)
@@ -358,10 +627,13 @@
 		if (target.workspace && workspaces.some((w) => w.id === target.workspace)) {
 			selectedWorkspace = target.workspace;
 		}
+		const targetFile = target.file ? String(target.file).replace(/^\/+/, '') : '';
+		const lastSlash = targetFile.lastIndexOf('/');
+		currentDirPath = lastSlash > 0 ? targetFile.slice(0, lastSlash) : '';
 		void (async () => {
-			await loadTree();
-			if (target.file) {
-				await selectFile(target.file);
+			await loadTree(currentDirPath);
+			if (targetFile) {
+				await selectFile(targetFile);
 			}
 			if (target.commitHash) {
 				await loadDiff(target.commitHash);
@@ -370,7 +642,7 @@
 	}
 
 	onMount(() => {
-		if (effectiveChatId && $echoCodexTarget?.chatId !== chatId) void loadTree();
+		if (effectiveChatId && $echoCodexTarget?.chatId !== chatId) void loadTree(currentDirPath);
 	});
 </script>
 
@@ -406,11 +678,13 @@
 				class="text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1 font-semibold text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-500"
 				bind:value={selectedWorkspace}
 				on:change={() => {
+					currentDirPath = '';
 					selectedPath = '';
 					fileContent = '';
 					fileMeta = null;
+					viewMode = 'code';
 					revokePreviewBlob();
-					void loadTree();
+					void loadTree('');
 				}}
 			>
 				{#each workspaces as ws}
@@ -455,27 +729,66 @@
 	</div>
 
 	<!-- Corps splité : Arborescence à gauche, contenu au centre -->
-	<div class="flex flex-1 overflow-hidden">
+	<div class="flex flex-1 overflow-hidden" bind:clientWidth={splitWidth}>
 		<!-- Explorateur arborescent (gauche) -->
-		<div class="w-60 border-r border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-950/40 flex flex-col">
-			<div class="p-2 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center text-xs font-semibold text-gray-600 dark:text-gray-400">
-				<span>Fichiers</span>
-				<div class="flex items-center gap-1">
+		<div
+			role="region"
+			aria-label="Explorateur de fichiers Codex"
+			style="width: {effectiveTreeWidth}px"
+			class="shrink-0 border-r border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-950/40 flex flex-col relative transition-colors {isDraggingOver
+				? 'ring-2 ring-inset ring-sky-500 bg-sky-500/5'
+				: ''}"
+			on:dragover={(e) => {
+				if (!isWritable) return;
+				e.preventDefault();
+				isDraggingOver = true;
+			}}
+			on:dragleave={() => (isDraggingOver = false)}
+			on:drop={handleTreeDrop}
+		>
+			<div class="p-2 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center text-xs font-semibold text-gray-600 dark:text-gray-400 gap-1">
+				<span class="truncate">Fichiers</span>
+				<div class="flex items-center gap-0.5 shrink-0">
 					{#if isWritable}
 						<button
 							type="button"
 							class="px-1.5 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-800 text-[11px]"
+							on:click={handleNewFile}
+							disabled={isMutating || isUploading}
+							title="Nouveau fichier"
+						>
+							📄+
+						</button>
+						<button
+							type="button"
+							class="px-1.5 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-800 text-[11px]"
 							on:click={handleMkdir}
-							disabled={isMutating}
+							disabled={isMutating || isUploading}
 							title="Nouveau dossier"
 						>
 							📁+
 						</button>
+						<button
+							type="button"
+							class="px-1.5 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-800 text-[11px]"
+							on:click={() => fileUploadInput?.click()}
+							disabled={isMutating || isUploading}
+							title="Importer des fichiers"
+						>
+							{isUploading ? '⏳' : '⬆️'}
+						</button>
+						<input
+							type="file"
+							multiple
+							class="hidden"
+							bind:this={fileUploadInput}
+							on:change={handleUploadChange}
+						/>
 					{/if}
 					<button
 						type="button"
 						class="p-1 hover:text-sky-500"
-						on:click={loadTree}
+						on:click={() => void loadTree(currentDirPath)}
 						title="Rafraîchir l'arbre"
 					>
 						<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -485,22 +798,81 @@
 				</div>
 			</div>
 
+			{#if currentDirPath}
+				{@const dirSegments = currentDirPath.split('/').filter(Boolean)}
+				<div class="px-2 py-1 border-b border-gray-200 dark:border-gray-800 bg-gray-100/60 dark:bg-gray-900/60 flex items-center gap-1 text-[11px] font-mono overflow-x-auto shrink-0">
+					<button
+						type="button"
+						class="px-1 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-800 text-sky-600 dark:text-sky-400 font-bold shrink-0"
+						on:click={() => void navigateToDir(dirSegments.slice(0, -1).join('/'))}
+						title="Remonter d'un niveau"
+					>
+						..
+					</button>
+					<button
+						type="button"
+						class="px-1 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 shrink-0"
+						on:click={() => void navigateToDir('')}
+						title="Racine"
+					>
+						/
+					</button>
+					{#each dirSegments as seg, idx}
+						{@const segPath = dirSegments.slice(0, idx + 1).join('/')}
+						<span class="text-gray-400">/</span>
+						<button
+							type="button"
+							class="px-1 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-800 truncate {idx === dirSegments.length - 1
+								? 'text-gray-900 dark:text-gray-100 font-semibold'
+								: 'text-gray-600 dark:text-gray-400'}"
+							on:click={() => void navigateToDir(segPath)}
+							title={segPath}
+						>
+							{seg}
+						</button>
+					{/each}
+				</div>
+			{/if}
+
 			<div class="flex-1 overflow-y-auto p-1 space-y-0.5">
 				{#if loadingTree}
 					<div class="p-4 flex justify-center">
 						<Spinner className="w-5 h-5 text-sky-500" />
 					</div>
 				{:else if treeEntries.length === 0}
-					<div class="p-4 text-center text-xs text-gray-400">Aucun fichier dans ce workspace.</div>
+					<div class="p-4 text-center text-xs text-gray-400 space-y-2">
+						<div>{currentDirPath ? 'Dossier vide.' : 'Aucun fichier dans ce workspace.'}</div>
+						{#if isWritable}
+							<div class="flex items-center justify-center gap-1.5">
+								<button
+									type="button"
+									class="px-2 py-1 rounded bg-sky-500/10 hover:bg-sky-500/20 text-sky-600 dark:text-sky-400 text-[11px] font-medium"
+									on:click={handleNewFile}
+								>
+									+ Fichier
+								</button>
+								<button
+									type="button"
+									class="px-2 py-1 rounded bg-gray-200/70 dark:bg-gray-800 hover:bg-gray-300/70 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-[11px] font-medium"
+									on:click={() => fileUploadInput?.click()}
+								>
+									Importer
+								</button>
+							</div>
+						{/if}
+					</div>
 				{:else}
 					{#each treeEntries as entry}
-						{@const p = typeof entry === 'string' ? entry : entry.path || entry.name}
-						{@const isDir = typeof entry === 'object' && entry?.type === 'dir'}
+						{@const entryPath = getEntryPath(entry)}
+						{@const entryName = getEntryName(entry)}
+						{@const isDir = isDirEntry(entry)}
 						<button
 							type="button"
-							class="w-full text-left px-2 py-1.5 rounded-md text-xs font-mono truncate transition flex items-center gap-1.5 {selectedPath === p ? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'}"
-							on:click={() => !isDir && selectFile(p)}
-							title={p}
+							class="w-full text-left px-2 py-1.5 rounded-md text-xs font-mono truncate transition flex items-center gap-1.5 {selectedPath === entryPath
+								? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold'
+								: 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'}"
+							on:click={() => (isDir ? navigateToDir(entryPath) : selectFile(entryPath))}
+							title={entryPath}
 						>
 							{#if isDir}
 								<span class="text-xs flex-shrink-0">📁</span>
@@ -510,15 +882,38 @@
 									<polyline points="14 2 14 8 20 8" />
 								</svg>
 							{/if}
-							<span class="truncate">{p}</span>
+							<span class="truncate">{entryName || entryPath}</span>
 						</button>
 					{/each}
 				{/if}
 			</div>
 		</div>
 
+		<!-- Poignée de redimensionnement -->
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
+		<div
+			role="separator"
+			aria-orientation="vertical"
+			aria-label="Redimensionner la colonne Fichiers"
+			aria-valuemin={180}
+			aria-valuemax={maxTreeWidth}
+			aria-valuenow={Math.round(effectiveTreeWidth)}
+			tabindex="0"
+			class="w-1.5 shrink-0 cursor-col-resize hover:bg-sky-500/40 active:bg-sky-500/60 transition-colors {resizingTree
+				? 'bg-sky-500/60'
+				: 'bg-transparent'}"
+			on:pointerdown={startTreeResize}
+			on:pointermove={moveTreeResize}
+			on:pointerup={endTreeResize}
+			on:pointercancel={endTreeResize}
+			on:lostpointercapture={endTreeResize}
+			on:dblclick={resetTreeResize}
+			on:keydown={handleResizerKeydown}
+			title="Glisser pour redimensionner • Double-clic pour ajustement automatique"
+		></div>
+
 		<!-- Zone Principale (droite) -->
-		<div class="flex-1 flex flex-col overflow-hidden bg-white dark:bg-gray-900">
+		<div class="flex-1 min-w-0 flex flex-col overflow-hidden bg-white dark:bg-gray-900">
 			{#if activeSubView === 'editor'}
 				{#if !selectedPath}
 					<div class="flex flex-col items-center justify-center h-full text-gray-400 text-xs">
@@ -615,7 +1010,7 @@
 					<!-- Zone d'édition / visualisation -->
 					<div class="flex-1 p-2 overflow-hidden flex flex-col">
 						{#if viewMode === 'preview' && canPreview}
-							{#if isImageFile}
+							{#if previewCaps.kind === 'image'}
 								<div class="flex-1 flex items-center justify-center bg-gray-950/90 rounded-lg p-4 overflow-auto">
 									{#if previewBlobUrl}
 										<img src={previewBlobUrl} alt={selectedPath} class="max-w-full max-h-full object-contain rounded shadow-lg" />
@@ -623,24 +1018,81 @@
 										<Spinner className="w-6 h-6 text-sky-400" />
 									{/if}
 								</div>
-							{:else if isMarkdownFile}
+							{:else if previewCaps.kind === 'pdf'}
+								<div class="flex-1 flex flex-col rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden bg-gray-900">
+									{#if previewBlobUrl}
+										<iframe title={selectedPath} src={previewBlobUrl} class="w-full h-full border-0"></iframe>
+									{:else}
+										<div class="flex-1 flex items-center justify-center">
+											<Spinner className="w-6 h-6 text-sky-400" />
+										</div>
+									{/if}
+								</div>
+							{:else if previewCaps.kind === 'audio'}
+								<div class="flex-1 flex flex-col items-center justify-center gap-3 bg-gray-50 dark:bg-gray-950 rounded-lg border border-gray-200 dark:border-gray-800 p-6">
+									<span class="font-mono text-xs text-gray-500">{selectedPath}</span>
+									{#if previewBlobUrl}
+										<audio controls src={previewBlobUrl} class="w-full max-w-md"></audio>
+									{:else}
+										<Spinner className="w-6 h-6 text-sky-400" />
+									{/if}
+								</div>
+							{:else if previewCaps.kind === 'video'}
+								<div class="flex-1 flex items-center justify-center bg-gray-950 rounded-lg p-4 overflow-auto">
+									{#if previewBlobUrl}
+										<!-- svelte-ignore a11y_media_has_caption -->
+										<video controls src={previewBlobUrl} class="max-w-full max-h-full rounded shadow-lg"></video>
+									{:else}
+										<Spinner className="w-6 h-6 text-sky-400" />
+									{/if}
+								</div>
+							{:else if previewCaps.kind === 'markdown'}
 								<div class="flex-1 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none bg-white dark:bg-gray-950 rounded-lg border border-gray-200 dark:border-gray-800">
 									<Markdown id={`codex-${selectedPath}`} content={fileContent} />
 								</div>
-							{:else if isSvgFile}
+							{:else if previewCaps.kind === 'svg'}
 								<iframe
 									title={selectedPath}
 									sandbox=""
 									srcdoc={`<!DOCTYPE html><html><body style="margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#111827;">${fileContent}</body></html>`}
 									class="w-full h-full border border-gray-200 dark:border-gray-800 rounded-lg bg-gray-900"
 								></iframe>
-							{:else if isHtmlFile}
+							{:else if previewCaps.kind === 'html'}
 								<iframe
 									title={selectedPath}
 									sandbox="allow-scripts"
 									srcdoc={fileContent}
 									class="w-full h-full border border-gray-200 dark:border-gray-800 rounded-lg bg-white"
 								></iframe>
+							{:else if previewCaps.kind === 'csv'}
+								<div class="flex-1 overflow-auto bg-white dark:bg-gray-950 rounded-lg border border-gray-200 dark:border-gray-800">
+									{#if csvRows.length === 0}
+										<div class="p-4 text-xs text-gray-400">Tableau vide.</div>
+									{:else}
+										<table class="table-auto w-full border-collapse text-xs">
+											<thead class="bg-gray-100 dark:bg-gray-900 sticky top-0">
+												<tr>
+													{#each csvRows[0] as header}
+														<th class="px-3 py-1.5 text-left font-semibold border-b border-r border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-200 whitespace-nowrap">
+															{header}
+														</th>
+													{/each}
+												</tr>
+											</thead>
+											<tbody>
+												{#each csvRows.slice(1) as row}
+													<tr class="hover:bg-gray-50 dark:hover:bg-gray-900/50">
+														{#each row as cell}
+															<td class="px-3 py-1 border-b border-r border-gray-100 dark:border-gray-800/70 font-mono text-gray-700 dark:text-gray-300 whitespace-nowrap">
+																{cell}
+															</td>
+														{/each}
+													</tr>
+												{/each}
+											</tbody>
+										</table>
+									{/if}
+								</div>
 							{/if}
 						{:else if fileMeta?.is_binary}
 							<div class="flex-1 flex flex-col p-4 overflow-auto space-y-3 bg-gray-50 dark:bg-gray-950 rounded-lg border border-gray-200 dark:border-gray-800">

@@ -1,16 +1,16 @@
 """
 title: ECHO Session Clone & Migration Engine
 author: Wilfried BARNAVON
-version: 5.239.13.1
+version: 6.6.5.1
 description: Moteur partagé de duplication atomique des conteneurs de session ECHO (Clone, Fork et Migration).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.5.1: Inclusion du domaine BROWSER_VIEWS_DIR_NAME ('browserviews') dans duplicate_session_domains et _prune_domain_files_to_cutoff.
 # 5.239.13.1: duplicate_session_rag fiabilisé : retries bornés (_qdrant_call : réseau, 429, 5xx), upsert par lots de 64, comptage de contrôle exact et retour structuré RagCloneReport.
 # 5.239.12.1: Purge de wm_state dans purge_conversational_state, ré-ancrage des ressources actives (_reanchor_resumed_resources) et des vecteurs conversationnels RAG (anchor_msg_id).
 # 5.237.20.3: Alignement généalogique strict de ancestor_msg_ids sur live_msg_ids dans prune_forked_history.
 # 5.237.20.2: Simplification de prune_forked_history et sync_cloned_session sur message_shadows v2 (support tuple/Row et lecture directe model_id).
-# 5.235.5.2: Purge arborescente exacte via compute_dead_set + purge_dead_set, support live_ids dans sync_cloned_session et duplication RAG filtrée.
 
 from contextlib import closing
 import asyncio
@@ -25,6 +25,7 @@ from typing import Callable, List, NamedTuple, Optional, Set, Tuple
 import uuid
 
 from echo_constants import (
+    BROWSER_VIEWS_DIR_NAME,
     CODEX_DIR_NAME,
     CODEX_WORKSPACE_MAIN,
     CODEX_WORKSPACE_PLANS,
@@ -500,7 +501,7 @@ def _prune_domain_files_to_cutoff(
     if not os.path.exists(domain_dir):
         return
 
-    if domain == "files":
+    if domain in ("files", BROWSER_VIEWS_DIR_NAME):
         for entry in list(os.listdir(domain_dir)):
             full_p = os.path.join(domain_dir, entry)
             if any(entry == m or entry.startswith(f"{m}_") for m in kept_markers if m):
@@ -659,7 +660,7 @@ def duplicate_session_domains(
 ) -> None:
     """Duplique les répertoires de l'Espace Utilisateur (files, codex, n8n_workflows, dependencies),
     limite leur contenu à cutoff_ts si is_partial_fork=True, et réajuste orig_cid -> new_cid."""
-    for domain in ("files", CODEX_DIR_NAME, "n8n_workflows", "dependencies"):
+    for domain in ("files", BROWSER_VIEWS_DIR_NAME, CODEX_DIR_NAME, "n8n_workflows", "dependencies"):
         s_dom = get_echo_session_path(user_id, orig_cid, domain)
         d_dom = get_echo_session_path(user_id, new_cid, domain)
         if os.path.exists(s_dom):
@@ -675,7 +676,7 @@ def duplicate_session_domains(
                     kept_wf_ids or set(),
                 )
             rewrite_symlinks(d_dom, orig_cid, new_cid)
-            if domain in ("files", "n8n_workflows"):
+            if domain in ("files", BROWSER_VIEWS_DIR_NAME, "n8n_workflows"):
                 rename_cloned_files(d_dom, orig_cid, new_cid)
             elif domain == CODEX_DIR_NAME:
                 rewrite_codex_plan_frontmatter(d_dom, orig_cid, new_cid)

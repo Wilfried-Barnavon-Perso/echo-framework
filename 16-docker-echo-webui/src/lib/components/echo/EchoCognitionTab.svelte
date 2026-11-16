@@ -32,6 +32,10 @@
 	let participantFilter = 'all';
 	let composerTargetSubSid = '';
 	let autoFollow = true;
+	let manualPause = false;
+	let isProgrammaticScroll = false;
+	let pausedAtStepCount = 0;
+	let pausedNewSteps = 0;
 
 	const syncChatStream = async (cid: string) => {
 		const normalized = cid && isSavedChatId(cid) ? cid : '';
@@ -46,6 +50,8 @@
 		participantFilter = 'all';
 		composerTargetSubSid = '';
 		autoFollow = true;
+		manualPause = false;
+		pausedNewSteps = 0;
 
 		if (!normalized) {
 			initialLoading = false;
@@ -262,6 +268,8 @@
 		participantFilter = 'all';
 		composerTargetSubSid = group.member_sids[0] ?? '';
 		autoFollow = true;
+		manualPause = false;
+		pausedNewSteps = 0;
 		echoCognitionSelectedSubSid.update((curr) => ({
 			...curr,
 			[chatId]: group.member_sids[0] ?? group.id
@@ -395,6 +403,7 @@
 	};
 
 	const scrollToBottom = async (smooth = true) => {
+		isProgrammaticScroll = true;
 		await tick();
 		if (feedContainer) {
 			feedContainer.scrollTo({
@@ -402,17 +411,37 @@
 				behavior: smooth ? 'smooth' : 'auto'
 			});
 		}
+		setTimeout(() => {
+			isProgrammaticScroll = false;
+		}, smooth ? 250 : 50);
 	};
 
 	const handleFeedScroll = () => {
-		if (!feedContainer) return;
+		if (!feedContainer || isProgrammaticScroll) return;
 		const distanceToBottom =
 			feedContainer.scrollHeight - feedContainer.scrollTop - feedContainer.clientHeight;
-		autoFollow = distanceToBottom <= 80;
+		if (distanceToBottom > 80) {
+			if (autoFollow) {
+				autoFollow = false;
+				pausedAtStepCount = displayedSteps.length;
+			}
+		} else if (!manualPause && !autoFollow) {
+			autoFollow = true;
+			pausedNewSteps = 0;
+		}
+	};
+
+	const pauseAutoFollow = () => {
+		manualPause = true;
+		autoFollow = false;
+		pausedAtStepCount = displayedSteps.length;
+		pausedNewSteps = 0;
 	};
 
 	const resumeAutoFollow = () => {
+		manualPause = false;
 		autoFollow = true;
+		pausedNewSteps = 0;
 		void scrollToBottom(true);
 	};
 
@@ -423,6 +452,8 @@
 			lastScrolledKey = scrollKey;
 			if (autoFollow) {
 				void scrollToBottom(true);
+			} else {
+				pausedNewSteps = Math.max(0, displayedSteps.length - pausedAtStepCount);
 			}
 		}
 	}
@@ -449,6 +480,8 @@
 				toast.success('Message envoyé au sous-agent.');
 			}
 			autoFollow = true;
+			manualPause = false;
+			pausedNewSteps = 0;
 			await refreshCognitionSnapshot(chatId);
 			await scrollToBottom(true);
 		} catch (e: any) {
@@ -469,9 +502,9 @@
 
 <div class="flex flex-col h-full bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 overflow-hidden">
 	<!-- Barre de contrôle supérieure -->
-	<div class="flex items-center justify-between gap-2 px-4 py-2.5 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-850 shrink-0">
-		<div class="flex items-center gap-2 min-w-0">
-			<span class="font-semibold text-sm text-gray-900 dark:text-white flex items-center gap-1.5 truncate">
+	<div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-850 shrink-0">
+		<div class="flex flex-wrap items-center gap-2 min-w-0">
+			<span class="font-semibold text-sm text-gray-900 dark:text-white flex items-center gap-1.5 whitespace-nowrap shrink-0">
 				<svg class="w-4 h-4 text-indigo-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 					<circle cx="12" cy="6" r="3" />
 					<circle cx="6" cy="18" r="3" />
@@ -484,20 +517,32 @@
 				{groups.length} • {toolCalls.length} outil(s)
 			</span>
 			{#if activeTab === 'threads' && selectedGroup}
-				{#if autoFollow}
-					<span class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/20 shrink-0">
-						🔴 LIVE
-					</span>
-				{:else}
+				<div
+					role="group"
+					aria-label="Contrôle du suivi temps réel"
+					class="inline-flex items-center rounded-full bg-gray-200/80 dark:bg-gray-800 p-0.5 border border-gray-300/60 dark:border-gray-700/60 shrink-0"
+				>
 					<button
 						type="button"
 						on:click={resumeAutoFollow}
-						class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition shrink-0"
-						title="Reprendre le suivi temps réel"
+						class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full transition {autoFollow
+							? 'bg-white dark:bg-gray-700 text-red-600 dark:text-red-400 shadow-xs'
+							: 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'}"
+						title="Activer le suivi temps réel"
 					>
-						⏸️ Pause défilement
+						🔴 Live
 					</button>
-				{/if}
+					<button
+						type="button"
+						on:click={pauseAutoFollow}
+						class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full transition {!autoFollow
+							? 'bg-white dark:bg-gray-700 text-amber-700 dark:text-amber-300 shadow-xs'
+							: 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'}"
+						title="Mettre en pause le défilement"
+					>
+						⏸ Pause
+					</button>
+				</div>
 			{/if}
 		</div>
 
@@ -832,7 +877,12 @@
 							on:click={resumeAutoFollow}
 							class="pointer-events-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-900/90 dark:bg-gray-100/95 text-white dark:text-gray-900 shadow-lg hover:scale-[1.02] transition"
 						>
-							🔴 Reprendre le suivi temps réel
+							<span>🔴 Reprendre le suivi temps réel</span>
+							{#if pausedNewSteps > 0}
+								<span class="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-red-500 text-white">
+									+{pausedNewSteps}
+								</span>
+							{/if}
 						</button>
 					</div>
 				{/if}

@@ -2,19 +2,20 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - SEMANTIC PRUNING & GC
-VERSION : 5.237.4.1
+VERSION : 6.6.5.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.5.1: Purge des captures browserviews éphémères (non retained) dont la session Playwright est absente de GET http://echo-browser:5001/sessions.
 # 5.237.4.1: Validation stricte par couple propriétaire (user_id, chat_id) via user_valid_chats et suppression du filtre len > 30 sur les dossiers orphelins.
 # 5.235.5.1: Purge des branches mortes dans session.db (gc_session_db) et du RAG Qdrant (_delete_rag_points) sous carence 900s.
 # 5.235.2.1: Décompte explicite des session.db purgées, couverture des utilisateurs orphelins dans purge_orphaned_chats et validation post-rmtree.
 # 5.231.42.1: Ajout de echo_resources.id à la liste blanche N8N lors du Garbage Collection des Drop-Zones pour préserver les dossiers des démons actifs.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 from contextlib import closing
 import datetime
 import html
+import json
 import logging
 import os
 from pathlib import Path
@@ -715,6 +716,82 @@ def _run_semantic_pruning(silent=False):
                                             stats["dead_branches"]["rag_points"] += _delete_rag_points(uid, cid, rag_seeds)
                     except Exception as e:
                         logger.error(f"Erreur GC branches mortes : {e}")
+
+            # --- A.quater Purge des captures browserviews éphémères expirées ---
+            if HAS_HTTPX and valid_ids:
+                try:
+                    active_bv_sessions = None
+                    try:
+                        bv_resp = httpx.get("http://echo-browser:5001/sessions", timeout=5)
+                        if bv_resp.status_code == 200:
+                            bv_data = bv_resp.json()
+                            if isinstance(bv_data, dict) and bv_data.get("status") == "success":
+                                active_bv_sessions = set(bv_data.get("active_sessions") or [])
+                    except Exception:
+                        active_bv_sessions = None
+
+                    if active_bv_sessions is not None:
+                        for uid in valid_ids:
+                            chats_root = os.path.join(ECHO_USERS_ROOT, uid, "chats")
+                            if not os.path.exists(chats_root):
+                                continue
+                            for cid in user_valid_chats.get(uid, set()):
+                                chat_dir = os.path.join(chats_root, cid)
+                                session_db_path = os.path.join(chat_dir, "session.db")
+                                bv_dir = os.path.join(chat_dir, "browserviews")
+                                files_dir = os.path.join(chat_dir, "files")
+                                if not os.path.isfile(session_db_path):
+                                    continue
+                                kept_fnames = set()
+                                try:
+                                    with closing(sqlite3.connect(session_db_path, timeout=10.0)) as s_conn:
+                                        rows = s_conn.execute(
+                                            "SELECT id, name, status, metadata FROM echo_resources WHERE resource_type = 'browserview'"
+                                        ).fetchall()
+                                        del_ids = []
+                                        for r_id, r_name, r_status, r_meta in rows:
+                                            meta = {}
+                                            if r_meta:
+                                                try:
+                                                    parsed = json.loads(r_meta)
+                                                    if isinstance(parsed, dict):
+                                                        meta = parsed
+                                                except Exception:
+                                                    meta = {}
+                                            fname = os.path.basename(r_name or "") or f"{r_id}_frame.jpg"
+                                            if r_status == "retained" or meta.get("retained") is True:
+                                                kept_fnames.add(fname)
+                                                continue
+                                            sess_id = meta.get("session_id") or cid
+                                            if sess_id not in active_bv_sessions:
+                                                for b_dir in (bv_dir, files_dir):
+                                                    fp = os.path.join(b_dir, fname)
+                                                    if os.path.isfile(fp):
+                                                        try:
+                                                            os.unlink(fp)
+                                                        except Exception:
+                                                            pass
+                                                del_ids.append((r_id,))
+                                            else:
+                                                kept_fnames.add(fname)
+                                        if del_ids:
+                                            with s_conn:
+                                                s_conn.executemany("DELETE FROM echo_resources WHERE id = ?", del_ids)
+                                except Exception:
+                                    pass
+                                if os.path.isdir(bv_dir):
+                                    now_ts = time.time()
+                                    for entry in os.listdir(bv_dir):
+                                        if not entry.endswith("_frame.jpg") or entry in kept_fnames:
+                                            continue
+                                        fp = os.path.join(bv_dir, entry)
+                                        if os.path.isfile(fp) and (now_ts - os.path.getmtime(fp) > 60.0):
+                                            try:
+                                                os.unlink(fp)
+                                            except Exception:
+                                                pass
+                except Exception as e:
+                    logger.error(f"Erreur GC browserviews : {e}")
 
             # --- B. Purge Temporelle des Souvenirs & Garbage Collection (Qdrant) ---
             MAINTENANCE_STATE["percent"] = 75

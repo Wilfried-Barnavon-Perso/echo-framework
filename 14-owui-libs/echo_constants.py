@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.6.2.3
+version: 6.6.5.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.5.1: Ajout de BROWSER_VIEWS_DIR_NAME ('browserviews') dans ECHO_SESSION_DOMAINS et BROWSER_VIEW_STATUS ('browserview') dans RESOURCE_STATUS_MAP.
 # 6.6.2.3: Ajout de open_browser_ui dans DELEGATE_AGENT_BLACKLIST et alignement de MODEL_ENUM_BY_POLICY["AUTO"] sur MODEL_ATHENA.
 # 6.6.2.2: Suppression des constantes mortes CODEX_HUD_ID et CODEX_ACTION_ID.
 # 6.6.0.1: Intégration du domaine tools_output, de read_tool_output/delete_tool_output dans DELEGATE_AGENT_SYSTEM_TOOLS, de build_httpx_timeout (600s/300s), d'Antigravity 2.32.0 (cl=1021519450) et des seuils de pagination read_codex.
 # 6.5.3.1: Ajout du plafond d'import fichier ECHO_MAX_FILE_UPLOAD_SIZE_MB = 4096 (4 Go).
-# 6.5.1.1: Migration de MODEL_APOLLO vers Gemini 4 Hydrogen (gemini-4-hydrogen / gemini-4-hydrogen-high).
 
 
 import os
@@ -63,7 +63,8 @@ ECHO_UPLOADS_TRANSIT_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
 
 ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
 
-ECHO_SESSION_DOMAINS = ["codex", "files", "db", "n8n_workflows", "dependencies", "tools_output"]
+BROWSER_VIEWS_DIR_NAME = "browserviews"
+ECHO_SESSION_DOMAINS = ["codex", "files", BROWSER_VIEWS_DIR_NAME, "db", "n8n_workflows", "dependencies", "tools_output"]
 ECHO_GLOBAL_DOMAINS = ["skills", "files", "chats", "n8n_workflow_templates"]
 
 # Identité Réseau (Antigravity 2.32.0 — aligné sur Antigravity Hub agy.exe package.json & language_server --stamp)
@@ -592,6 +593,11 @@ N8N_WORKFLOW_STATUS = {
     "DEPLOYED":  "deployed"     # Démon persistant
 }
 
+BROWSER_VIEW_STATUS = {
+    "TRANSIENT": "transient",
+    "RETAINED":  "retained",
+}
+
 # Mapping Ultime : Quel type supporte quels statuts ?
 RESOURCE_STATUS_MAP = {
     "media":        list(FILE_INGESTION_STATUS.values()),
@@ -601,6 +607,7 @@ RESOURCE_STATUS_MAP = {
     "plan":         list(PLAN_STATUS.values()),
     "n8n_workflow": list(N8N_WORKFLOW_STATUS.values()),
     "n8n_template": [], # Hub global statique, pas de statut
+    "browserview":  list(BROWSER_VIEW_STATUS.values()),
 }
 
 # ==============================================================================

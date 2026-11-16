@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Paths
 author: Wilfried BARNAVON
-version: 5.235.5.2
+version: 6.6.5.1
 description: Résolution des chemins absolus du système.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.5.1: Support du domaine 'browserviews' et resource_type 'browserview' dans resolve_extended_file_path.
 # 5.235.5.2: Ajout de get_echo_identity_db_path, wait_for_chat_clone et sanctuarisation du schéma SQLite identité.
 # 5.234.1.1: Support de default en alias rétrocompatible de fallback dans sanitize_echo_id.
 # 5.232.5.1: Résolution étendue multi-workspaces (main, plans, generated, sandbox) et types ("codex", "plan", "generated") dans resolve_extended_file_path.
 # 5.231.59.1: Support du préfixe URN canonique codex:current: dans resolve_extended_file_path.
-# 5.231.49.1: Factorisation de extract_clean_filename et resolve_extended_file_path (résolution unifiée par ID, Nom et Workspace).
 import os
 import re
 import time
@@ -21,6 +21,7 @@ import asyncio
 from urllib.parse import unquote
 from typing import Optional
 from echo_constants import (
+    BROWSER_VIEWS_DIR_NAME,
     CODEX_DEFAULT_WORKSPACE,
     CODEX_DIR_NAME,
     CODEX_WORKSPACE_MAIN,
@@ -228,18 +229,23 @@ def resolve_extended_file_path(
     effective_ws = workspace.strip().lower() if workspace and workspace.strip() else None
     rel_target = safe_target
     if not effective_ws:
-        for ws_candidate in ECHO_CODEX_WORKSPACES:
-            if safe_target.startswith(f"{CODEX_DIR_NAME}/{ws_candidate}/"):
-                effective_ws = ws_candidate
-                rel_target = safe_target[len(f"{CODEX_DIR_NAME}/{ws_candidate}/"):]
-                break
-            if safe_target.startswith(f"{ws_candidate}/"):
-                effective_ws = ws_candidate
-                rel_target = safe_target[len(f"{ws_candidate}/"):]
-                break
+        if safe_target.startswith(f"{BROWSER_VIEWS_DIR_NAME}/"):
+            effective_ws = BROWSER_VIEWS_DIR_NAME
+            rel_target = safe_target[len(f"{BROWSER_VIEWS_DIR_NAME}/"):]
+        else:
+            for ws_candidate in ECHO_CODEX_WORKSPACES:
+                if safe_target.startswith(f"{CODEX_DIR_NAME}/{ws_candidate}/"):
+                    effective_ws = ws_candidate
+                    rel_target = safe_target[len(f"{CODEX_DIR_NAME}/{ws_candidate}/"):]
+                    break
+                if safe_target.startswith(f"{ws_candidate}/"):
+                    effective_ws = ws_candidate
+                    rel_target = safe_target[len(f"{ws_candidate}/"):]
+                    break
 
     state = None
     base_codex = get_echo_session_path(user_id, chat_id, CODEX_DIR_NAME) if chat_id else None
+    base_bv = get_echo_session_path(user_id, chat_id, BROWSER_VIEWS_DIR_NAME) if chat_id else None
     if chat_id:
         try:
             from echo_state_manager import EchoStateManager
@@ -253,6 +259,17 @@ def resolve_extended_file_path(
         sp = res.get("storage_path") or ""
         if sp and os.path.isabs(sp) and os.path.isfile(sp):
             return sp
+        if base_bv and (
+            res.get("resource_type") == "browserview"
+            or sp.startswith(f"{BROWSER_VIEWS_DIR_NAME}/")
+        ):
+            base_bv_real = os.path.realpath(base_bv)
+            for cand_name in (os.path.basename(sp), res.get("name", "")):
+                if not cand_name:
+                    continue
+                cand_real = os.path.realpath(os.path.join(base_bv, os.path.basename(cand_name)))
+                if cand_real.startswith(base_bv_real + os.sep) and os.path.isfile(cand_real):
+                    return cand_real
         if base_codex and (
             res.get("resource_type") in ("codex", "plan", "generated")
             or sp.startswith(f"{CODEX_DIR_NAME}/")
@@ -272,6 +289,21 @@ def resolve_extended_file_path(
         if res.get("name"):
             return _resolve_upload_by_filename(user_id, res["name"], uploads_dir, chat_id=chat_id)
         return None
+
+    # 0. Si le domaine browserviews est explicitement ciblé
+    if effective_ws == BROWSER_VIEWS_DIR_NAME and base_bv:
+        base_bv_real = os.path.realpath(base_bv)
+        for cand_name in (rel_target, os.path.basename(rel_target)):
+            if not cand_name:
+                continue
+            cand_real = os.path.realpath(os.path.join(base_bv, cand_name))
+            if cand_real.startswith(base_bv_real + os.sep) and os.path.isfile(cand_real):
+                return cand_real
+        if state:
+            res = state.get_resource(rel_target) or state.get_resource(safe_target)
+            resolved = _resolve_from_resource(res)
+            if resolved:
+                return resolved
 
     # 1. Si un workspace Codex explicite est demandé ('main' ou 'sandbox')
     if effective_ws in ECHO_CODEX_WORKSPACES and base_codex:
@@ -321,6 +353,15 @@ def resolve_extended_file_path(
                 cand = os.path.join(ws_dir, clean_rel)
                 if os.path.isfile(cand):
                     return cand
+
+    if base_bv:
+        base_bv_real = os.path.realpath(base_bv)
+        for cand_name in (f"{sanitize_echo_id(safe_target)}_frame.jpg", os.path.basename(rel_target)):
+            if not cand_name:
+                continue
+            cand_real = os.path.realpath(os.path.join(base_bv, cand_name))
+            if cand_real.startswith(base_bv_real + os.sep) and os.path.isfile(cand_real):
+                return cand_real
 
     return _resolve_upload_by_filename(user_id, rel_target, uploads_dir, chat_id=chat_id)
 

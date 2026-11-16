@@ -166,6 +166,7 @@ export interface EchoTabOpenRequest {
 		targetChatId?: string;
 		sessionId?: string;
 		frameIndex?: number;
+		auto?: boolean;
 		[key: string]: any;
 	};
 }

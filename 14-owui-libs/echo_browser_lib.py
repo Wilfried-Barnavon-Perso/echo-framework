@@ -1,23 +1,28 @@
 """
 title: ECHO Browser Lib
 author: ECHO Framework
-version: 5.232.0.1
+version: 6.6.5.1
 description: Composant système interne : ECHO Browser Lib.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.5.1: Ajout de get_active_browser_sessions et cleanup_expired_browserviews pour la gestion éphémère/rétention des captures browserviews.
 # 5.232.0.1: Ajout du helper factorisé render_ephemeral_html pour la rasterisation incognito Zéro-Disque en mémoire vive via /render_ephemeral_view.
 # 5.231.20.1: Propagation explicite de chat_id dans EchoBrowserLib pour isoler les sessions Playwright éphémères et sous-agents sans perdre le coffre de fichiers du chat.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.15: Nouveaux types d'action (select, click_current), option clear_before, et zoom réel CDP (absolute_grid).
-# 1.14: Mise à jour description action_zoom_in pour mentionner le VISEUR ROUGE.
 
+import json
+import os
+import time
 import httpx
 import logging
-from typing import Dict, Callable
+from typing import Dict, Callable, Optional
 
 # On suppose que echo_constants est disponible dans le chemin PYTHONPATH (/app/backend/echo_libs)
 from echo_constants import (
+    BROWSER_VIEWS_DIR_NAME,
+    BROWSER_VIEW_STATUS,
     NAVIGATION_ENGINE_URL,
     DEFAULT_VISION_GRID_STEP,
     EPHEMERAL_RENDER_ENDPOINT,
@@ -25,6 +30,8 @@ from echo_constants import (
     EPHEMERAL_RENDER_VIEWPORT_H,
     EPHEMERAL_RENDER_SETTLE_MS,
 )
+from echo_paths import get_echo_session_path, sanitize_echo_id
+from echo_state_manager import EchoStateManager
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +137,122 @@ async def req_to_browser(timeout: int, endpoint: str, data: dict = None, user_id
         return resp.json()
     except Exception as e:
         return {"status": "error", "message": f"Worker inaccessible : {str(e)}"}
+
+
+async def get_active_browser_sessions(
+    user_id: str,
+    chat_id: Optional[str] = None,
+    timeout: float = 5.0,
+) -> Optional[set[str]]:
+    """Interroge GET /sessions sur le Browser Worker et retourne l'ensemble des session_id actifs (ou None si injoignable)."""
+    url = f"{NAVIGATION_ENGINE_URL}/sessions"
+    params = {}
+    if user_id:
+        params["user_id"] = str(user_id)
+    if chat_id:
+        params["chat_id"] = str(chat_id)
+    client = _get_browser_client(int(max(1, timeout)))
+    try:
+        resp = await client.get(url, params=params, timeout=timeout)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        if isinstance(data, dict) and data.get("status") == "success":
+            return set(data.get("active_sessions") or [])
+    except Exception:
+        return None
+    return None
+
+
+async def cleanup_expired_browserviews(
+    user_id: str,
+    chat_id: str,
+    active_session_ids: Optional[set[str]] = None,
+    force_discard_sids: Optional[set[str]] = None,
+) -> dict:
+    """Purge les captures browserviews éphémères dont la session Playwright est expirée ou réinitialisée."""
+    if not chat_id:
+        return {"purged": 0}
+    db_path = get_echo_session_path(user_id, chat_id, "db")
+    if not os.path.isfile(db_path):
+        return {"purged": 0}
+
+    if active_session_ids is None:
+        active_session_ids = await get_active_browser_sessions(user_id, chat_id)
+    if active_session_ids is None and not force_discard_sids:
+        return {"purged": 0}
+
+    state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+    bv_res = state.get_resources(resource_type="browserview") or []
+    legacy_media = [
+        r for r in (state.get_resources(resource_type="media") or [])
+        if str(r.get("name") or "").endswith("_frame.jpg")
+    ]
+    all_candidates = bv_res + legacy_media
+
+    bv_dir = get_echo_session_path(user_id, chat_id, BROWSER_VIEWS_DIR_NAME)
+    files_dir = get_echo_session_path(user_id, chat_id, "files")
+    kept_filenames: set[str] = set()
+    purged = 0
+
+    for r in all_candidates:
+        raw_meta = r.get("metadata")
+        meta: dict = {}
+        if isinstance(raw_meta, dict):
+            meta = raw_meta
+        elif isinstance(raw_meta, str) and raw_meta:
+            try:
+                parsed = json.loads(raw_meta)
+                if isinstance(parsed, dict):
+                    meta = parsed
+            except Exception:
+                meta = {}
+
+        is_retained = (
+            r.get("status") == BROWSER_VIEW_STATUS["RETAINED"]
+            or meta.get("retained") is True
+        )
+        fname = os.path.basename(str(r.get("name") or "")) or f"{sanitize_echo_id(r['id'])}_frame.jpg"
+        if is_retained:
+            kept_filenames.add(fname)
+            continue
+
+        sess_id = meta.get("session_id") or chat_id
+        should_purge = (
+            (force_discard_sids is not None and sess_id in force_discard_sids)
+            or (active_session_ids is not None and sess_id not in active_session_ids)
+        )
+        if not should_purge:
+            kept_filenames.add(fname)
+            continue
+
+        for base_d in (bv_dir, files_dir):
+            cand = os.path.join(base_d, fname)
+            if os.path.isfile(cand):
+                try:
+                    os.unlink(cand)
+                except Exception:
+                    pass
+        state.delete_resource(r["id"])
+        purged += 1
+
+    if os.path.isdir(bv_dir):
+        now = time.time()
+        try:
+            for entry in os.listdir(bv_dir):
+                if not entry.endswith("_frame.jpg") or entry in kept_filenames:
+                    continue
+                fp = os.path.join(bv_dir, entry)
+                if os.path.isfile(fp) and (now - os.path.getmtime(fp) > 60.0):
+                    try:
+                        os.unlink(fp)
+                        purged += 1
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    return {"purged": purged}
 
 
 async def render_ephemeral_html(

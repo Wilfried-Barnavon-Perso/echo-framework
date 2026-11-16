@@ -1,7 +1,7 @@
 ---
 domain_id: code_and_files
-version: 5.235.5.1
-updated_at: 2026-11-06
+version: 6.6.5.1
+updated_at: 2026-11-16
 name: Registre Unifié, Explorateur de l'Espace Personnel & Sandbox d'Exécution de Code
 description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash) et exécution isolée de scripts Codex sandbox (.py / .js).
 tools: [query_registry, read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes, code_executor, control_sandbox_execution, kill_sandbox_execution]
@@ -56,7 +56,7 @@ Il est ABSOLUMENT INTERDIT de passer du code brut à `code_executor`. Toute mani
 ### 3.2 Environnement Système, Quotas & Pilotage des Processus (`run_id`)
 - **Montages Bubblewrap (`--ro-bind /proc, --die-with-parent`)** :
   - `/sandbox` (**Lecture & Écriture persistante**) : Répertoire de travail courant.
-  - `/main`, `/plans`, `/generated`, `/files` (**Lecture seule**) : Espaces Codex et fichiers téléversés par L'Utilisateur.
+  - `/main`, `/plans`, `/generated`, `/files`, `/browserviews` (**Lecture seule**) : Espaces Codex, fichiers téléversés par L'Utilisateur et captures de navigation web.
   - `/sandbox-agent-readme.md` (**Lecture seule**) : Manuel technique interne de la Sandbox.
 - **Quotas & Isolation** : Chaque exécution est strictement isolée par `(user_id, chat_id, run_id)` (extraits des closures serveur non altérables par Le Modèle), à raison d'un maximum de **4 processus simultanés par session** (`8` globalement sur le Worker).
 - **Modes d'exécution de `code_executor`** :
