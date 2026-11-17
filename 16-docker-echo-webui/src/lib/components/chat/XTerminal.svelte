@@ -147,7 +147,7 @@
 				if (typeof event.data === 'string') {
 					try {
 						const message = JSON.parse(event.data);
-						if (message.type === 'chat') return;
+						if (message.type === 'chat' || message.type === 'pong') return;
 						if (message.type === 'flow_control') {
 							flowControlled = true;
 							return;
