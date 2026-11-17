@@ -265,7 +265,7 @@
 			owner.state.panels = setMainChatTab(owner.state.panels, true, title);
 			owner.transient.initialized = true;
 			tabs = owner.state.panels;
-			selectedTerminalId.set(owner.state.selectedTerminalId);
+			selectedTerminalId.set(owner.state.selectedTerminalId ?? $selectedTerminalId);
 			dirtyFiles = {};
 			fileContexts = {};
 			fileGitStatuses = {};
@@ -1169,11 +1169,21 @@
 					localStorage.token ?? ''
 				)
 			: null;
+	let terminalRetryTimer: ReturnType<typeof setTimeout> | null = null;
+	let terminalChecking = false;
+	const clearTerminalRetry = () => {
+		if (terminalRetryTimer) {
+			clearTimeout(terminalRetryTimer);
+			terminalRetryTimer = null;
+		}
+	};
 	const checkTerminal = async () => {
+		clearTerminalRetry();
 		const version = ++featureVersion;
 		terminalEnabled = false;
 		desktopEnabled = false;
 		if (!selectedConnection) return;
+		terminalChecking = true;
 		try {
 			const result = await terminalRequest<{
 				features?: { terminal?: boolean; desktop?: boolean };
@@ -1183,7 +1193,17 @@
 				desktopEnabled = result.features?.desktop === true;
 			}
 		} catch {
-			/* Files remain available when interactive terminals are disabled. */
+			/* Retry automatically if the terminal worker was restarting or temporarily unreachable. */
+			if (version === featureVersion && !terminalRetryTimer) {
+				terminalRetryTimer = setTimeout(() => {
+					terminalRetryTimer = null;
+					if (version === featureVersion && selectedConnection && !terminalEnabled) {
+						void checkTerminal();
+					}
+				}, 3000);
+			}
+		} finally {
+			if (version === featureVersion) terminalChecking = false;
 		}
 	};
 	$: {
@@ -1263,6 +1283,7 @@
 		if (willUnload && hasChatViewDrafts()) cancel();
 	});
 	onDestroy(() => {
+		clearTerminalRetry();
 		stopTerminalChoice?.(false);
 		captureView();
 		if (viewEntry) void flushChatView(viewEntry);
@@ -1909,7 +1930,15 @@
 				{/each}
 			</div>
 			{#if canOpenNewTab && viewReady && !chatLoading}
-				<Dropdown align="start" closeOnSelect>
+				<Dropdown
+					align="start"
+					closeOnSelect
+					onOpenChange={(open) => {
+						if (open && !terminalEnabled && !terminalChecking && selectedConnection && !terminalNeedsSavedChat) {
+							void checkTerminal();
+						}
+					}}
+				>
 					<button
 						type="button"
 						class="flex items-center justify-center w-7 h-7 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors duration-100 shrink-0"
