@@ -87,7 +87,7 @@ export function chatViewEntry(userId: string, chatId: string | null, temporary =
 		instanceId: uuidv4(),
 		userId,
 		chatId,
-		state: { schemaVersion: 1, selectedTerminalId: null, panels: emptyTabs() },
+		state: { schemaVersion: 1, selectedTerminalId: 'echo-coding-worker', panels: emptyTabs() },
 		drafts: new Map(),
 		transient: {},
 		pending: new Map(),
@@ -112,7 +112,12 @@ export async function loadChatView(entry: Entry) {
 			const result = await getChatView(entry.chatId!);
 			if (result.state && result.state.schemaVersion !== 1)
 				throw new Error('Unsupported chat view version');
-			if (!entry.loaded && result.state) entry.state = result.state;
+			if (!entry.loaded && result.state) {
+				entry.state = {
+					...result.state,
+					selectedTerminalId: result.state.selectedTerminalId || 'echo-coding-worker'
+				};
+			}
 			entry.loaded = true;
 			entry.error = '';
 		} catch (error) {

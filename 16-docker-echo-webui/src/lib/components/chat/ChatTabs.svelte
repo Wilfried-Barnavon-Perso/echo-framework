@@ -260,12 +260,12 @@
 		try {
 			await loadChatView(owner);
 			if (version !== switchVersion) return;
-			if (!owner.transient.initialized && !owner.state.panels.tabs.length)
-				owner.state.selectedTerminalId = $selectedTerminalId;
+			if (!owner.state.selectedTerminalId)
+				owner.state.selectedTerminalId = $selectedTerminalId || 'echo-coding-worker';
 			owner.state.panels = setMainChatTab(owner.state.panels, true, title);
 			owner.transient.initialized = true;
 			tabs = owner.state.panels;
-			selectedTerminalId.set(owner.state.selectedTerminalId ?? $selectedTerminalId);
+			selectedTerminalId.set(owner.state.selectedTerminalId);
 			dirtyFiles = {};
 			fileContexts = {};
 			fileGitStatuses = {};
@@ -975,7 +975,9 @@
 	const chatContextNeedsSavedChat = (terminal: any) =>
 		chatContext(terminal)?.context_id === 'chat_id';
 	$: selectedSystemTerminal = ($terminalServers ?? []).find(
-		(t) => t.id && t.id === $selectedTerminalId
+		(t) =>
+			t.id &&
+			(t.id === $selectedTerminalId || (!$selectedTerminalId && t.id === 'echo-coding-worker'))
 	);
 	$: selectedSystemTerminalAvailable =
 		selectedSystemTerminal &&
