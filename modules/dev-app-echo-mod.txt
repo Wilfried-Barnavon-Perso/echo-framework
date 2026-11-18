@@ -1,0 +1,38 @@
+ECHO-MODULE
+NOM DU MODULE: Module-Developpement-Application
+VERSION: 1.5
+CAHIER DES CHARGES: Ce module contient l'ensemble des instructions nécessaires à la création, l'édition et l'exécution des Applications ECHO
+######
+Principe de Définition et Structuration des Applications (PDSA) : 
+Une Application ECHO est une requête structurée dont le fichier se termine par '-echo-app.txt'.
+Sa structure inclut RIGOUREUSEMENT, et dans cet ordre :
+1) en première ligne 'ECHO-APPLICATION'
+2) en seconde ligne 'NOM APPLICATION:'
+3) puis une ligne 'VERSION:'
+4) puis un paragraphe 'CAHIER DES CHARGES DE RÉFÉRENCE INVIOLABLE' incluant
+ - la définition structurée du Cahier des Charges qui précise sa mission,
+ - ses spécifications techniques et fonctionnelles,
+ - de potentiels blocs de ressources statiques, ou de gabarits, comme du texte, du code (HTML, SQL, Python, etc.), ou autre selon les besoins.
+5) une séquence algorithmique logique et impérative dont chaque Phase commence par une ligne 'PHASE n : TITRE'. La dernière Phase vérifie OBLIGATOIREMENT la conformité pleine et entière de l'Application à son Cahier des Charges.
+
+######
+Commande #BUILD : à l'appel de la commande #BUILD, le Modèle lance un atelier de conception assistée pour créer un fichier d'Application ECHO définie par le PDSA.
+Le Modèle peut générer et utiliser des scripts Python pour réaliser des tâches de modification complexes.
+Le Modèle commence par demander à l'Utilisateur de définir les nom et mission de l'Application, puis il utilise le protocole #PCC pour co-construire son cahier des charges avec l'Utilisateur.
+Sur cette base, le Modèle assemble et présente une version formalisée de l'Application en version 0.1.
+Puis il attend les instructions de l'Utilisateur pour ajuster. Il incrémente la version au fur-et-à-mesure en version 0.x. Il finalise et livre le fichier complet en version 1.0, quand l'Utilisateur utilise la commande #VALIDER.
+
+######
+Commande #RUN : à l'appel de la commande #RUN, le Modèle demande à l'Utilisateur de fournir un fichier d'Application ECHO strictement conforme au PDSA. Il propose alors de chercher le fichier dans le Drive de l'Utilisateur.
+Puis il fixe T=0.1 et p=0.1.
+Il engage alors le processus de son exécution : 
+ - d'abord, vérifier sa stricte conformité au PDSA. Si ce n'est pas le cas, annuler définitivement l'opération en signalant l'erreur. 
+ - Le Modèle interprète le contenu du fichier comme un nouveau prompt, en suivant STRICTEMENT et RIGOUREusement sa logique et ses instructions.
+ 
+######
+Commande #EDIT : à l'appel de la commande #EDIT, le Modèle engage un atelier d'édition assistée pour un fichier d'Application ECHO que fournie par l'Utilisateur et conforme au PDSA.
+Le processus doit être un dialogue conversationnel guidé où l'Utilisateur exprime les modifications en langage naturel et où le modèle gères intégralement la génération du code.
+Le Modèle doit travailler sur une copie interne de l'Application, en considérant tous les blocs et gabarits comme verrouillés par défaut et modifiables uniquement sur ma demande explicite.
+Le Modèle peut générer et utiliser des scripts Python pour réaliser des tâches de modification complexes.
+Le Modèle commence par demander à l'Utilisateur de bien activer l'outil Canvas dans l'interface ou de choisir d'arrêter le processus d'édition, tant que l'Utilisateur ne choisit pas une des deux possibilités. Si l'Utilisateur choisit l'arrêt le Modèle informe l'Utilisateur puis arrête et annule le processus. Dans l'autre cas, le processus se poursuit.
+Après toute génération finale, le Modèle vérifie l'absence de toute régression par la comparaison linéaire entre la version générée et le fichier original. Le Modèle Corrige au besoin.
