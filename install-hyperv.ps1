@@ -1,45 +1,51 @@
 ﻿# ==============================================================================
 # SCRIPT DE DÉPLOIEMENT : ARCHITECTURE "ECHO V5 INFRASTRUCTURE"
 # ==============================================================================
-# VERSION : 5.239.9.1
-# DATE    : 2026-11-13
+# VERSION : 5.239.20.1
+# DATE    : 2026-11-18
 # AUTHOR         : Wilfried BARNAVON
 # ==============================================================================
 #
 # --- QUOI (WHAT) ---
-# Ce script PowerShell automatise la création d'une VM Linux sur Hyper-V et y déploie
-# toute la stack ECHO (Docker, Scripts, Configs) via injection d'archive ZIP.
+# Ce script PowerShell automatise de façon idempotente l'infrastructure réseau
+# hôte (vSwitch interne, passerelle, WinNAT, DNAT, pare-feu) et le déploiement
+# d'une VM Ubuntu sur Hyper-V avec la stack ECHO via disque Seed (CIDATA).
 #
 # --- POURQUOI (WHY) ---
-# L'utilisation d'un disque Seed (CIDATA) pour injecter l'archive ZIP source
-# permet de s'affranchir des limitations de taille du YAML Cloud-Init (Base64)
-# et garantit un transfert rapide des fichiers vers la VM.
+# L'utilisation d'un vSwitch interne + NetNat isole la VM sur un réseau privé
+# portable sur toute machine Windows 10/11, tout en conservant le transfert
+# rapide des sources via archive ZIP sur disque Seed (CIDATA).
 #
 # --- COMMENT (HOW - ALGO) ---
-# 1. PRE-FLIGHT : Vérifie que le fichier VERSION est présent.
-# 2. CONFIGURATION : Définit les ressources VM (RAM 8-10 Go dynamique, QoS Stockage 66% en 2^N).
-# 3. PACKAGING : 
-#    - Zippe le dossier courant (Exclusions: .git, .venv, etc.)
-#    - Monte un disque VHD temporaire (Seed) pour y copier le ZIP.
-# 4. CLOUD-INIT : Génère un fichier 'user-data' qui : 
-#    - Crée l'utilisateur initial ($AutoUser).
-#    - Monte le disque Seed au démarrage.
-#    - Dézippe les sources dans /opt/ECHO/source.
-#    - Installe les outils (Docker, yq, jq, linux-cloud-tools-virtual).
-#    - Lance echo-sync.sh --local-only.
-#    - Lance install-stack.sh.
-# 5. HYPER-V : Crée la VM, calibre la QoS de stockage hors cache quantifiée en puissance de 2 et démarre la VM.
+# 1. PRE-FLIGHT : Vérifie que le fichier VERSION est présent et élève en Admin.
+# 2. RESEAU HÔTE (Idempotent) : Configure vSwitch interne, passerelle, NetNat,
+#    DNAT multi-VM safe et Pare-feu Windows (avec option d'IP dédiée externe).
+# 3. PACKAGING (Si VM absente) : Zippe le dossier courant et prépare le Seed.
+# 4. CLOUD-INIT : Génère un fichier 'user-data' configurant IP statique, outils
+#    (Docker, yq, jq, linux-cloud-tools-virtual), echo-sync.sh et install-stack.sh.
+# 5. HYPER-V : Crée la VM, calibre la QoS de stockage hors cache en 2^N et démarre.
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.20.1: Architecture réseau interne portable (vSwitch ECHO-Internal, NetNat, DNAT multi-VM safe, pare-feu) et idempotence complète.
 # 5.239.9.1: Normalisation du hostname Cloud-Init (version majeure + branche normalisee RFC 1123).
 # 5.239.3.2: Quantification de la Storage QoS sur des puissances de 2 (2^N).
 # 5.239.3.1: Mémoire dynamique 8-10 Go (priorité 35%), Services d'invité et Storage QoS 66% hors cache.
 # 5.231.40.1: Correction encodage UTF-8 BOM pour le parseur PowerShell 5.1 et alignement version.
-# 5.231.39.1: Mise à jour des références cloud-init vers echo-sync.sh.
 
-# --- FONCTION UTILITAIRE : PAUSE SUR ERREUR ---
-$SwitchName = "Bridge LAN" # /!\ Vérifiez le nom de votre switch Hyper-V
+# --- CONFIGURATION RESEAU INTERNE & DNAT (HYPER-V) ---
+$SwitchName = "ECHO-Internal"
+$INTERNAL_SUBNET = "192.168.118.0/24"
+$GATEWAY_IP = "192.168.118.254"
+$STATIC_IP_CIDR = "192.168.118.100/24"
+$VM_IP = $STATIC_IP_CIDR.Split('/')[0]
+$DNS_SERVERS = "[86.54.11.100, 1.1.1.1, 8.8.8.8]"
+$NAT_NAME = "ECHO-NAT"
+$FW_RULE_NAME = "ECHO-DNAT-Services"
+$ENABLE_DNAT = $true # Mettre a $false sur une VM secondaire pour eviter toute collision de ports
+$DNAT_PORTS_TCP = @(22, 80, 443, 3000, 3001, 8000) + (8020..8024)
+$EXTERNAL_DNAT_IP = ""    # Vide = suit automatiquement l'IP LAN de l'hote ; sinon IP dediee (ex: "192.168.147.100")
+
 $ISOPath = "D:\ISO\ubuntu-26.04-live-server-amd64-autoinstall.iso"
 $VMPath = "D:\Virtual Machines"
 $VHDSize = 100GB
@@ -52,11 +58,6 @@ $MemoryPriority = 35
 
 # QoS Stockage : Marge de limitation à 66% des IOPS mesurées hors cache
 $QoSMarginPercent = 66
-
-# --- CONFIGURATION RESEAU (IP STATIQUE) ---
-$STATIC_IP_CIDR = "192.168.147.100/24"
-$GATEWAY_IP = "192.168.147.254"
-$DNS_SERVERS = "[86.54.11.100, 1.1.1.1, 8.8.8.8]"
 
 # --- CONFIGURATION BRANCHE ---
 #$BRANCHE = "dev"
@@ -119,8 +120,186 @@ function Measure-DiskPhysicalIOPS {
   }
 }
 
+# --- FONCTION UTILITAIRE : INITIALISATION RESEAU INTERNE & DNAT HÔTE (IDEMPOTENT) ---
+function Initialize-EchoHostNetwork {
+  param(
+    [string]$SwitchName,
+    [string]$InternalSubnet,
+    [string]$GatewayIP,
+    [string]$VmIP,
+    [string]$NatName,
+    [string]$FwRuleName,
+    [int[]]$DnatPortsTcp,
+    [bool]$EnableDnat,
+    [string]$ExternalDnatIP
+  )
+
+  Write-Host "🌐 Initialisation de l'infrastructure réseau hôte (vSwitch + WinNAT)..." -ForegroundColor Cyan
+
+  # 1. Commutateur virtuel interne
+  $existingSwitch = Get-VMSwitch -Name $SwitchName -ErrorAction SilentlyContinue
+  if (-not $existingSwitch) {
+    Write-Host "   🔨 Création du vSwitch interne '$SwitchName'..." -ForegroundColor Yellow
+    New-VMSwitch -Name $SwitchName -SwitchType Internal | Out-Null
+  }
+  elseif ($existingSwitch.SwitchType -ne 'Internal') {
+    throw "Le commutateur '$SwitchName' existe déjà mais n'est pas de type Internal ($($existingSwitch.SwitchType))."
+  }
+  else {
+    Write-Host "   ✅ vSwitch interne '$SwitchName' déjà présent." -ForegroundColor Green
+  }
+
+  # 2. IP Passerelle hôte sur le vSwitch interne + profil Private (autorise ICMP/diagnostic)
+  $intAdapter = Get-NetAdapter -InterfaceAlias "vEthernet ($SwitchName)" -ErrorAction Stop
+  if (-not (Get-NetIPAddress -InterfaceIndex $intAdapter.InterfaceIndex -AddressFamily IPv4 -IPAddress $GatewayIP -ErrorAction SilentlyContinue)) {
+    Write-Host "   📌 Assignation IP passerelle hôte : $GatewayIP/24" -ForegroundColor Yellow
+    New-NetIPAddress -InterfaceIndex $intAdapter.InterfaceIndex -IPAddress $GatewayIP -PrefixLength 24 -ErrorAction Stop | Out-Null
+  }
+  else {
+    Write-Host "   ✅ Passerelle hôte $GatewayIP/24 déjà active." -ForegroundColor Green
+  }
+  Set-NetConnectionProfile -InterfaceIndex $intAdapter.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue
+
+  # 3. IP externe dédiée optionnelle (détection auto via route 0.0.0.0/0 si renseignée)
+  if (-not [string]::IsNullOrWhiteSpace($ExternalDnatIP)) {
+    $existingExtIP = Get-NetIPAddress -AddressFamily IPv4 -IPAddress $ExternalDnatIP -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($existingExtIP) {
+      Write-Host "   ✅ IP externe dédiée $ExternalDnatIP déjà active sur '$($existingExtIP.InterfaceAlias)'." -ForegroundColor Green
+    }
+    else {
+      $defaultRoute = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue |
+      Sort-Object RouteMetric | Select-Object -First 1
+      if (-not $defaultRoute) {
+        throw "Impossible de détecter l'interface réseau externe active (route 0.0.0.0/0 introuvable)."
+      }
+      $extIdx = $defaultRoute.InterfaceIndex
+      $extAlias = $defaultRoute.InterfaceAlias
+      $ipIf = Get-NetIPInterface -InterfaceIndex $extIdx -AddressFamily IPv4 -ErrorAction Stop
+      $mainIPObj = Get-NetIPAddress -InterfaceIndex $extIdx -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+      Where-Object { $_.IPAddress -notlike "169.254.*" } | Select-Object -First 1
+      $prefixLen = if ($mainIPObj) { [int]$mainIPObj.PrefixLength } else { 24 }
+
+      if ($ipIf.Dhcp -eq 'Enabled') {
+        if (-not $mainIPObj) {
+          throw "Impossible de capturer l'IP DHCP actuelle sur '$extAlias' avant ajout de '$ExternalDnatIP'."
+        }
+        $gw = $defaultRoute.NextHop
+        $dnsList = (Get-DnsClientServerAddress -InterfaceIndex $extIdx -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses
+        Write-Host "   📌 Bascule de '$extAlias' en statique ($($mainIPObj.IPAddress)/$prefixLen) + IP secondaire $ExternalDnatIP..." -ForegroundColor Yellow
+        Set-NetIPInterface -InterfaceIndex $extIdx -AddressFamily IPv4 -Dhcp Disabled
+        Remove-NetIPAddress -InterfaceIndex $extIdx -AddressFamily IPv4 -Confirm:$false -ErrorAction SilentlyContinue
+        Remove-NetRoute -InterfaceIndex $extIdx -AddressFamily IPv4 -DestinationPrefix "0.0.0.0/0" -Confirm:$false -ErrorAction SilentlyContinue
+        New-NetIPAddress -InterfaceIndex $extIdx -IPAddress $mainIPObj.IPAddress -PrefixLength $prefixLen -DefaultGateway $gw -ErrorAction Stop | Out-Null
+        if ($dnsList -and $dnsList.Count -gt 0) {
+          Set-DnsClientServerAddress -InterfaceIndex $extIdx -ServerAddresses $dnsList
+        }
+      }
+      else {
+        Write-Host "   📌 Ajout de l'IP secondaire $ExternalDnatIP/$prefixLen sur '$extAlias'..." -ForegroundColor Yellow
+      }
+      New-NetIPAddress -InterfaceIndex $extIdx -IPAddress $ExternalDnatIP -PrefixLength $prefixLen -SkipAsSource $true -ErrorAction Stop | Out-Null
+    }
+  }
+
+  # 4. NetNat (SNAT sortant - un seul objet NetNat autorisé par hôte Windows)
+  $existingNat = Get-NetNat | Where-Object { $_.InternalIPInterfaceAddressPrefix -eq $InternalSubnet } | Select-Object -First 1
+  if ($existingNat) {
+    $activeNatName = $existingNat.Name
+    Write-Host "   ✅ NetNat '$activeNatName' déjà actif pour $InternalSubnet." -ForegroundColor Green
+  }
+  else {
+    $otherNats = @(Get-NetNat -ErrorAction SilentlyContinue)
+    if ($otherNats.Count -gt 0) {
+      Write-Warning "⚠️  Windows n'autorise qu'un seul NetNat. Existant détecté : '$($otherNats[0].Name)' ($($otherNats[0].InternalIPInterfaceAddressPrefix))."
+      $confirm = Read-Host "Voulez-vous remplacer ce NetNat existant par '$NatName' ($InternalSubnet) ? (o/N)"
+      if ($confirm -notin @('o', 'O', 'y', 'Y')) {
+        throw "NetNat conflictuel conservé par choix utilisateur."
+      }
+      $otherNats | Remove-NetNat -Confirm:$false
+    }
+    New-NetNat -Name $NatName -InternalIPInterfaceAddressPrefix $InternalSubnet -ErrorAction Stop | Out-Null
+    $activeNatName = $NatName
+    Write-Host "   ✅ NetNat '$activeNatName' créé ($InternalSubnet)." -ForegroundColor Green
+  }
+
+  # 5. Mappings DNAT & Pare-feu Windows (protégé contre l'écrasement multi-VM)
+  if ($EnableDnat) {
+    Write-Host "   🔀 Vérification des redirections DNAT (0.0.0.0 -> $VmIP)..." -ForegroundColor Cyan
+    $existingMappings = @(Get-NetNatStaticMapping -NatName $activeNatName -ErrorAction SilentlyContinue)
+    foreach ($port in $DnatPortsTcp) {
+      $currentMap = $existingMappings | Where-Object { $_.ExternalPort -eq $port -and $_.Protocol -eq 'TCP' } | Select-Object -First 1
+      if ($currentMap) {
+        if ($currentMap.InternalIPAddress -eq $VmIP -and $currentMap.InternalPort -eq $port -and $currentMap.ExternalIPAddress -eq "0.0.0.0") {
+          continue
+        }
+        elseif ($currentMap.InternalIPAddress -ne $VmIP) {
+          Write-Warning "   ⚠️  Port TCP $port déjà mappé vers une autre VM ($($currentMap.InternalIPAddress)), conservé (anti-collision multi-VM)."
+          continue
+        }
+        else {
+          $currentMap | Remove-NetNatStaticMapping -Confirm:$false -ErrorAction SilentlyContinue
+        }
+      }
+      Add-NetNatStaticMapping -NatName $activeNatName -Protocol TCP `
+        -ExternalIPAddress "0.0.0.0" -ExternalPort $port `
+        -InternalIPAddress $VmIP -InternalPort $port -ErrorAction Stop | Out-Null
+      Write-Host "      + TCP $port : 0.0.0.0:$port -> ${VmIP}:$port" -ForegroundColor Gray
+    }
+    Write-Host "   ✅ Redirections DNAT vérifiées." -ForegroundColor Green
+
+    $targetLocalAddr = if ([string]::IsNullOrWhiteSpace($ExternalDnatIP)) { "Any" } else { $ExternalDnatIP }
+    $fwRule = Get-NetFirewallRule -Name $FwRuleName -ErrorAction SilentlyContinue
+    $fwNeedsUpdate = $true
+    if ($fwRule) {
+      $addrFilter = $fwRule | Get-NetFirewallAddressFilter
+      $portFilter = $fwRule | Get-NetFirewallPortFilter
+      $expectedPorts = ($DnatPortsTcp | ForEach-Object { [string]$_ } | Sort-Object) -join ","
+      $actualPorts = ($portFilter.LocalPort | ForEach-Object { [string]$_ } | Sort-Object) -join ","
+      if ($addrFilter.LocalAddress -eq $targetLocalAddr -and $actualPorts -eq $expectedPorts -and $fwRule.Enabled -eq 'True') {
+        $fwNeedsUpdate = $false
+      }
+    }
+    if ($fwNeedsUpdate) {
+      if ($fwRule) { Remove-NetFirewallRule -Name $FwRuleName -ErrorAction SilentlyContinue }
+      New-NetFirewallRule -Name $FwRuleName -DisplayName "ECHO DNAT Inbound Services" `
+        -Direction Inbound -Protocol TCP -LocalAddress $targetLocalAddr -LocalPort $DnatPortsTcp -Profile Any -Action Allow | Out-Null
+      Write-Host "   🛡️  Règle Pare-feu '$FwRuleName' appliquée (LocalAddress: $targetLocalAddr)." -ForegroundColor Green
+    }
+    else {
+      Write-Host "   ✅ Règle Pare-feu '$FwRuleName' déjà conforme." -ForegroundColor Green
+    }
+  }
+  else {
+    Write-Host "   ℹ️  DNAT désactivé (`$ENABLE_DNAT = `$false) : VM accessible sur le réseau interne $VmIP." -ForegroundColor Gray
+  }
+}
+
+function Show-EchoAccessSummary {
+  param(
+    [string]$VmIP,
+    [string]$ExternalDnatIP,
+    [bool]$EnableDnat
+  )
+  Write-Host "`n📡 Accès ECHO :" -ForegroundColor Cyan
+  Write-Host "   • Depuis cet hôte Windows : http://${VmIP}:3000  (Admin: http://${VmIP}:3001 | SSH: ssh echo@$VmIP)"
+  if ($EnableDnat) {
+    $lanTarget = $ExternalDnatIP
+    if ([string]::IsNullOrWhiteSpace($lanTarget)) {
+      $defaultRoute = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix "0.0.0.0/0" -ErrorAction SilentlyContinue |
+      Sort-Object RouteMetric | Select-Object -First 1
+      if ($defaultRoute) {
+        $lanTarget = (Get-NetIPAddress -InterfaceIndex $defaultRoute.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+          Where-Object { $_.SkipAsSource -eq $false -and $_.IPAddress -notlike "169.254.*" } | Select-Object -First 1).IPAddress
+      }
+    }
+    if ($lanTarget) {
+      Write-Host "   • Depuis le LAN / Box     : https://$lanTarget  (ou http://${lanTarget}:3000)"
+    }
+  }
+}
+
 # --- 1. INITIALISATION & VERSIONING ---
-$SCRIPT_VERSION = "5.239.9.1"
+$SCRIPT_VERSION = "5.239.20.1"
 $ScriptDir = $PSScriptRoot
 Set-Location -Path $ScriptDir
 $VersionFile = "$ScriptDir\VERSION"
@@ -164,6 +343,35 @@ $HashPassword = '$6$saltsalt$qFmFH.bQmmtXzyBY0s9v7Oicd2z4XSIecDzlB5KiA2/jctKu9Yt
 if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
   Start-Process powershell.exe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
   Exit
+}
+
+# --- 3B. INFRASTRUCTURE RESEAU HÔTE (IDEMPOTENT) ---
+try {
+  Initialize-EchoHostNetwork `
+    -SwitchName $SwitchName `
+    -InternalSubnet $INTERNAL_SUBNET `
+    -GatewayIP $GATEWAY_IP `
+    -VmIP $VM_IP `
+    -NatName $NAT_NAME `
+    -FwRuleName $FW_RULE_NAME `
+    -DnatPortsTcp $DNAT_PORTS_TCP `
+    -EnableDnat $ENABLE_DNAT `
+    -ExternalDnatIP $EXTERNAL_DNAT_IP
+}
+catch {
+  Pause-OnError "Echec configuration réseau hôte : $_"
+}
+
+# --- 3C. VERIFICATION IDEMPOTENTE DE LA VM ---
+$existingVM = Get-VM -Name $VMName -ErrorAction SilentlyContinue
+if ($existingVM) {
+  Write-Host "✅ La VM '$VMName' existe déjà. Synchronisation du commutateur réseau..." -ForegroundColor Green
+  Get-VMNetworkAdapter -VMName $VMName | Where-Object { $_.SwitchName -ne $SwitchName } | ForEach-Object {
+    $_ | Connect-VMNetworkAdapter -SwitchName $SwitchName
+    Write-Host "   🔌 Carte réseau reconnectée sur '$SwitchName'." -ForegroundColor Cyan
+  }
+  Show-EchoAccessSummary -VmIP $VM_IP -ExternalDnatIP $EXTERNAL_DNAT_IP -EnableDnat $ENABLE_DNAT
+  Exit 0
 }
 
 # --- 4. PREPARATION ET ENCODAGE DU PACK SOURCE (ZIP) ---
@@ -315,44 +523,39 @@ Write-Host "   📦 Archive source.zip copiée sur le disque Seed."
 Start-Sleep -Seconds 2
 Dismount-VHD -Path $SeedPath
 
-# Construction VM
-if (-not (Get-VM -Name $VMName -ErrorAction SilentlyContinue)) {
-  Write-Host "🔨 Création de la VM Hyper-V : $VMName"
+# Construction VM (exécutée uniquement si la VM n'existait pas à l'étape 3C)
+Write-Host "🔨 Création de la VM Hyper-V : $VMName"
 
-  New-VM -Name $VMName -MemoryStartupBytes $RAMStartup -Generation 2 -SwitchName $SwitchName -NoVHD
-  
-  # Configuration Mémoire Dynamique (8 Go min, 10 Go max, 4 vCPU et priorité 35%)
-  Set-VM -Name $VMName -DynamicMemory -MemoryMinimumBytes $RAMMinimum -MemoryMaximumBytes $RAMMaximum -ProcessorCount 4
-  Set-VMMemory -VMName $VMName -Priority $MemoryPriority
+New-VM -Name $VMName -MemoryStartupBytes $RAMStartup -Generation 2 -SwitchName $SwitchName -NoVHD
 
-  # Activation des Services d'invité (Guest Service Interface pour Copy-VMFile)
-  Get-VMIntegrationService -VMName $VMName | Where-Object { $_.Name -like "*Guest*" -or $_.Name -like "*invit*" } | Enable-VMIntegrationService
+# Configuration Mémoire Dynamique (8 Go min, 10 Go max, 4 vCPU et priorité 35%)
+Set-VM -Name $VMName -DynamicMemory -MemoryMinimumBytes $RAMMinimum -MemoryMaximumBytes $RAMMaximum -ProcessorCount 4
+Set-VMMemory -VMName $VMName -Priority $MemoryPriority
 
-  Set-VMFirmware -VMName $VMName -EnableSecureBoot Off
-  
-  Add-VMDvdDrive -VMName $VMName -Path $ISOPath
-  Add-VMHardDiskDrive -VMName $VMName -Path $VHDPath
-  Add-VMHardDiskDrive -VMName $VMName -Path $SeedPath
+# Activation des Services d'invité (Guest Service Interface pour Copy-VMFile)
+Get-VMIntegrationService -VMName $VMName | Where-Object { $_.Name -like "*Guest*" -or $_.Name -like "*invit*" } | Enable-VMIntegrationService
 
-  # Mesure physique hors cache et application de la Storage QoS (Plafond 66% quantifié en 2^N)
-  $diskIOPS = Measure-DiskPhysicalIOPS -TargetFolder $VMPath
-  $targetRawIOPS = [double]($diskIOPS * ($QoSMarginPercent / 100))
-  # Règle : Alignement de la limite QoS sur la puissance de 2 immédiatement inférieure (2^N)
-  $power = [Math]::Floor([Math]::Log($targetRawIOPS, 2))
-  $capIOPS = [uint64][Math]::Pow(2, $power)
-  Write-Host "🛡️  Application de la QoS Stockage (Plafond $QoSMarginPercent% quantifié à 2^$power = $capIOPS IOPS)..." -ForegroundColor Cyan
-  Get-VMHardDiskDrive -VMName $VMName | Where-Object { $_.Path -eq $VHDPath } | Set-VMHardDiskDrive -MaximumIOPS $capIOPS
+Set-VMFirmware -VMName $VMName -EnableSecureBoot Off
 
-  Set-VMFirmware -VMName $VMName -FirstBootDevice (Get-VMDvdDrive -VMName $VMName)
+Add-VMDvdDrive -VMName $VMName -Path $ISOPath
+Add-VMHardDiskDrive -VMName $VMName -Path $VHDPath
+Add-VMHardDiskDrive -VMName $VMName -Path $SeedPath
 
-  Write-Host "✅ VM Prête ! Lancement..."
-  Start-VM -Name $VMName
-  
-  if (Test-Path $TempZipPath) { Remove-Item $TempZipPath -Force }
+# Mesure physique hors cache et application de la Storage QoS (Plafond 66% quantifié en 2^N)
+$diskIOPS = Measure-DiskPhysicalIOPS -TargetFolder $VMPath
+$targetRawIOPS = [double]($diskIOPS * ($QoSMarginPercent / 100))
+# Règle : Alignement de la limite QoS sur la puissance de 2 immédiatement inférieure (2^N)
+$power = [Math]::Floor([Math]::Log($targetRawIOPS, 2))
+$capIOPS = [uint64][Math]::Pow(2, $power)
+Write-Host "🛡️  Application de la QoS Stockage (Plafond $QoSMarginPercent% quantifié à 2^$power = $capIOPS IOPS)..." -ForegroundColor Cyan
+Get-VMHardDiskDrive -VMName $VMName | Where-Object { $_.Path -eq $VHDPath } | Set-VMHardDiskDrive -MaximumIOPS $capIOPS
 
-  Start-Process -FilePath "vmconnect.exe" -ArgumentList "localhost $VMName"
-}
-else {
-  Write-Warning "⚠️   La VM $VMName existe déjà. Aucune action effectuée."
-  Pause-OnError "Veuillez supprimer la VM existante ou incrémenter la version du fichier VERSION."
-}
+Set-VMFirmware -VMName $VMName -FirstBootDevice (Get-VMDvdDrive -VMName $VMName)
+
+Write-Host "✅ VM Prête ! Lancement..."
+Start-VM -Name $VMName
+
+if (Test-Path $TempZipPath) { Remove-Item $TempZipPath -Force }
+
+Show-EchoAccessSummary -VmIP $VM_IP -ExternalDnatIP $EXTERNAL_DNAT_IP -EnableDnat $ENABLE_DNAT
+Start-Process -FilePath "vmconnect.exe" -ArgumentList "localhost $VMName"
