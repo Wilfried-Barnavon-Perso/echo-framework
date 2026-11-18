@@ -1,11 +1,12 @@
 """
 title: ECHO Tool Guides Manager
 author: Wilfried BARNAVON
-version: 5.229.0.1
+version: 6.7.1.1
 description: Gestionnaire de la base de connaissances opérationnelle des outils ECHO (tool_guides/*.md).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 5.229.0.1: Intégration de version et updated_at dans le parsing frontmatter, la Carte Hiérarchique et les balises XML.
 # 5.229.0.0: Création initiale de EchoToolGuidesManager (indexation YAML, tool->domain et pré-injection).
 
@@ -234,7 +235,7 @@ class EchoToolGuidesManager:
         if not matched_domains:
             return (
                 "Aucun manuel pré-injecté automatiquement. "
-                "Consultez `<hierarchical_domains_map>` et utilisez `read_tool_guide(targets=[...])` "
+                "Le Modèle DOIT consulter `<hierarchical_domains_map>` et PEUT utiliser `read_tool_guide(targets=[...])` "
                 "si les détails opérationnels d'un domaine sont requis."
             )
 

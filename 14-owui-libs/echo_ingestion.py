@@ -2,16 +2,16 @@
 ECHO Ingestion Pipeline
 Gestion unifiée, asynchrone et Zéro-RAM de l'ingestion des fichiers (CAS 1, 2, 3, 4).
 Factorisé à partir de new_context_filter.py pour permettre le traitement en arrière-plan.
-version: 6.1.0.1
+version: 6.7.1.1
 description: Composant du système ECHO : Echo Ingestion.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.1.0.1: Idempotence de _sync_file_to_global_vault lorsque le fichier réside déjà dans le Vault de session.
 # 5.231.29.1: Alignement sur la constante SSOT CODEX_WORKSPACE_MAIN lors de l'indexation Codex.
 # 5.231.28.1: Normalisation de storage_path via format_codex_storage_path (codex/main/<filename>) et retrait de save_codex_doc.
 # 5.228.7.1: Factorisation de la détection textuelle via is_text_mime (echo_constants).
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 import os
 import asyncio
@@ -219,9 +219,9 @@ class EchoIngestionPipeline:
                         img_mime = mime_map.get(img_ext, 'image/png')
 
                         description = await EchoGeminiClient.call_distillation(
-                            f"Décris cette image extraite du document '{filename}' de manière concise et précise (2-3 phrases max).",
+                            f"Le Système DOIT décrire cette image extraite du document '{filename}' de manière concise et précise (2-3 phrases max).",
                             u_ctx, m_ctx, is_json=False,
-                            parts=[{"role": "user", "parts": [{"text": f"Décris cette image '{os.path.basename(img_name)}' extraite du document '{filename}'."}, {"inline_data": {"mime_type": img_mime, "data": b64}}]}],
+                            parts=[{"role": "user", "parts": [{"text": f"Le Système DOIT décrire cette image '{os.path.basename(img_name)}' extraite du document '{filename}'."}, {"inline_data": {"mime_type": img_mime, "data": b64}}]}],
                             target_model="MODEL_ZEPHYR"
                         )
                         if description and description != "Analyse indisponible.":
@@ -494,7 +494,7 @@ class EchoIngestionPipeline:
             if not brief_summary or brief_summary == "Analyse indisponible.":
                 brief_summary = "L'indexation a été réalisée sans erreur, mais le résumé a échoué."
                 
-        sys_msg = "> ⚙️ INFORMATION SYSTÈME : Les détails du fichier sont vectorisés et accessibles via `search_sessions_context`" if is_text else "> ⚙️ INFORMATION SYSTÈME : Le document complexe est vectorisé, mais pour une analyse structurelle/visuelle profonde, privilégiez l'outil `semantic_probe`"
+        sys_msg = "> ⚙️ INFORMATION SYSTÈME : Les détails du fichier sont vectorisés et accessibles via `search_sessions_context`" if is_text else "> ⚙️ INFORMATION SYSTÈME : Le document complexe est vectorisé ; pour une analyse structurelle/visuelle profonde, le Modèle DOIT privilégier l'outil `semantic_probe`"
         
         from echo_aec import EchoAEC
         res_text = EchoAEC.render_smart_context(

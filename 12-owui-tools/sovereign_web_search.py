@@ -1,16 +1,16 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 6.6.30.1
+version: 6.7.1.1
 description: Composant système interne : ECHO Sovereign Web Search.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Câblage de delegate_deep_research sur EchoSubagentController (ECHO_AUTONOMOUS_ROUND_MAX_CALLS).
 # 5.238.1.1: Ajout de MODEL_ATHENA dans target_model_key de delegate_deep_research.
 # 5.233.0.1: Décoration @echo_tool sur les 3 méthodes publiques et simplification des retours wrap_tool_output.
 # 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/web_search_and_browsing.md.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 import httpx
 import sys
@@ -107,7 +107,7 @@ class Tools:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(url, data=params, headers=headers)
                 if resp.status_code != 200:
-                    return f"❌ SearxNG indisponible ({resp.status_code}). Vérifiez le conteneur Docker."
+                    return f"❌ SearxNG indisponible ({resp.status_code}). Le Système DOIT vérifier le conteneur Docker."
                 
                 data = resp.json()
                 results = data.get("results", [])[:u_valves.MAX_RESULTS]

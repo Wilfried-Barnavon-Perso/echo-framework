@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 6.6.30.1
+version: 6.7.1.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Centralisation et délégation de _TOOLS_CACHE à register_chat_tools (echo_subagent_hub).
 # 6.6.9.1: Retrait de register_echo_wm_routes, de l'appel redondant register_echo_audio_routes dans Pipe.__init__ et de UserValves.SHOW_CONTEXT_METRICS.
 # 6.6.2.1: Exposition du modèle actif réel et du mode cognitif dans les payloads d'état orchestrateur et alignement du routage multi-modèles.
 # 5.239.0.1: Concision maximale des descriptions des vannes UserValves (mode, cible, crédits, cascades, relances).
-# 5.238.1.1: Intégration de MODEL_ATHENA et refonte orthogonale des UserValves (COGNITIVE_MODE + COGNITIVE_MODEL) avec routage et menu d'escalade pilotés par get_allowed_models.
 
 
 # ==============================================================================
@@ -1236,7 +1236,7 @@ class Pipe:
                     })
                     context.append({
                         "role": "user",
-                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "message": f"ERREUR : Niveau '{target_req}' inconnu. Choisissez parmi {valid_choices}."}, "id": sys_tc_id}}]
+                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "message": f"ERREUR : Niveau '{target_req}' inconnu. Le Modèle DOIT choisir parmi {valid_choices}."}, "id": sys_tc_id}}]
                     })
                     continue
 
@@ -1251,7 +1251,7 @@ class Pipe:
                     })
                     context.append({
                         "role": "user",
-                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "model_requested": target_req, "model_used": target_model, "warning": f"{target_req} unavailable (policy)", "message": f"Transfert vers {target_req} refusé. Traitez avec {target_model}."}, "id": sys_tc_id}}]
+                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "model_requested": target_req, "model_used": target_model, "warning": f"{target_req} unavailable (policy)", "message": f"Transfert vers {target_req} refusé. Le Modèle DOIT traiter la requête avec {target_model}."}, "id": sys_tc_id}}]
                     })
                     continue  # On reboucle avec le MÊME target_model
 
@@ -1316,7 +1316,7 @@ class Pipe:
                 if proc.accumulated_text and proc.accumulated_text.strip():
                     msg += (
                         " Le préambule textuel précédent a déjà été affiché à l'Utilisateur : "
-                        "poursuivez directement le traitement de la requête sans répéter les salutations ni l'annonce de transition."
+                        "Le Modèle DOIT poursuivre directement le traitement de la requête sans répéter les salutations ni l'annonce de transition."
                     )
                 user_resp_parts = [{"functionResponse": {"name": "new_cognitive_level", "response": {**escalation_status, "message": msg, "plan": plan_md}, "id": sys_tc_id}}]
 
@@ -1325,7 +1325,7 @@ class Pipe:
                     for c in proc.accumulated_calls:
                         cancel_resp = {
                             "name": c["name"],
-                            "response": {"status": "error", "message": "Exécution annulée (Adaptation cognitive prioritaire). Le Modèle doit relancer cet outil."},
+                            "response": {"status": "error", "message": "Exécution annulée (Adaptation cognitive prioritaire). Le Modèle DOIT relancer cet outil."},
                         }
                         if "id" in c:
                             cancel_resp["id"] = c["id"]
@@ -1370,7 +1370,7 @@ class Pipe:
                         # Le payload partiel est rejeté par le StreamProcessor. On injecte une directive punitive pour forcer la concision.
                         await events.status("⚠️ Appel d'outil tronqué (MAX_TOKENS). Reprise et correction...")
                         await events.toast("Appel d'outil trop volumineux : Reprise automatique de la génération.", "warning")
-                        texte_outil = "Erreur : L'appel d'outil précédent a échoué car les arguments étaient trop volumineux (limite MAX_TOKENS atteinte). Le modèle doit relancer l'outil avec des paramètres strictement plus concis ou expliquer la situation."
+                        texte_outil = "Erreur : L'appel d'outil précédent a échoué car les arguments étaient trop volumineux (limite MAX_TOKENS atteinte). Le Modèle DOIT relancer l'outil avec des paramètres strictement plus concis ou expliquer la situation."
                         xml_outil = f'<artifact id="AEC_directive" source="Système">\\n{texte_outil}\\n</artifact>'
                         user_resp_parts = [{"text": xml_outil}]
                     else:
@@ -1378,7 +1378,7 @@ class Pipe:
                         # Le texte existant a déjà été indexé. On injecte une directive de continuation pure.
                         await events.status("🔄 Reprise automatique de la génération (MAX_TOKENS)...")
                         await events.toast("Limite de contexte (MAX_TOKENS) atteinte : Reprise automatique.", "info")
-                        texte_gene = "Erreur : La génération a été interrompue car la limite de tokens (MAX_TOKENS) a été atteinte. Le modèle doit poursuivre la génération du texte à partir du point de troncature exact, sans introduction."
+                        texte_gene = "Erreur : La génération a été interrompue car la limite de tokens (MAX_TOKENS) a été atteinte. Le Modèle DOIT poursuivre la génération du texte à partir du point de troncature exact, sans introduction."
                         xml_gene = f'<artifact id="AEC_directive" source="Système">\\n{texte_gene}\\n</artifact>'
                         user_resp_parts = [{"text": xml_gene}]
 

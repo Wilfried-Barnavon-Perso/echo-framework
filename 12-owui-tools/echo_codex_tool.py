@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 6.6.2.1
+version: 6.7.1.1
 description: Permet au modèle de manipuler un espace virtuel (Codex) avec versioning Git invisible et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.2.1: Migration de open_codex_ui vers l'onglet natif echo-codex (EchoWindowManager.open_tab + CustomEvent('echo:open-tab')) sans echo_codex_action.
 # 5.239.17.1: Pagination bornée unifiée (HEAD et commits) de read_codex à ECHO_CODEX_MAX_READ_LINES (800 lignes) et ECHO_CODEX_MAX_READ_BYTES (46080 octets), indicateurs has_more/next_start_line et skip_truncation=True.
 # 5.235.5.1: Remplacement de l'accès direct SQLite par la méthode abstraite state.has_pending_directive.
 # 5.235.4.1: Sécurisation binaire exhaustive : refus d'édition assistée, propagation des métadonnées dans restore_codex et guard clause dans summarize_codex.
-# 5.235.2.2: Précision de la docstring OpenAPI de read_codex pour l'introspection dynamique tool_advisor.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -246,9 +246,9 @@ class Tools:
         """Vérifie si l'espace de travail accepte les écritures via les outils génériques Codex."""
         if not is_codex_workspace_generic_writable(workspace):
             hint = (
-                "Utilisez les outils dédiés `build_plan`, `update_plan`, `update_tasks` ou `delete_plan`."
+                "Le Modèle DOIT utiliser les outils dédiés `build_plan`, `update_plan`, `update_tasks` ou `delete_plan`."
                 if workspace == CODEX_WORKSPACE_PLANS
-                else "Utilisez l'outil dédié `generate_image`."
+                else "Le Modèle DOIT utiliser l'outil dédié `generate_image`."
             )
             return wrap_tool_output(
                 text=f"❌ Action refusée : L'espace `{workspace}` est verrouillé en écriture directe. {hint}",
@@ -420,7 +420,7 @@ class Tools:
                 if current_doc and hashlib.sha256(current_doc.get("content", "").encode("utf-8")).hexdigest() != original_sha:
                     await events.status("❌ Conflit d'édition concurrente détecté.", done=True)
                     return wrap_tool_output(
-                        text=f"❌ Conflit d'édition concurrente (OCC) : Le fichier `{filename}` a été modifié pendant l'édition assistée. Relisez le fichier avant de réappliquer vos modifications.",
+                        text=f"❌ Conflit d'édition concurrente (OCC) : Le fichier `{filename}` a été modifié pendant l'édition assistée. Le Modèle DOIT relire le fichier avant de réappliquer les modifications.",
                         status={"status": "error", "error_code": "concurrent_modification_conflict", "filename": filename}
                     )
                 commit_hash = await asyncio.to_thread(repo.commit_file, filename, modified, msg)

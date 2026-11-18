@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.6.30.1
+version: 6.7.1.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Ajout des 8 constantes SSOT V6.7 de parallélisme/supervision, MAJ DELEGATE_AGENT_BLACKLIST (control_subagents) et parallélisme dans DELEGATE_SYSTEM_APPENDIX.
 # 6.6.5.2: Purge des constantes WebGPU v5 obsolètes (ECHO_EDGE_*, ECHO_MOBILE_UA_PATTERN) suite à la factorisation dans le store Svelte.
 # 6.6.5.1: Ajout de BROWSER_VIEWS_DIR_NAME ('browserviews') dans ECHO_SESSION_DOMAINS et BROWSER_VIEW_STATUS ('browserview') dans RESOURCE_STATUS_MAP.
 # 6.6.2.3: Ajout de open_browser_ui dans DELEGATE_AGENT_BLACKLIST et alignement de MODEL_ENUM_BY_POLICY["AUTO"] sur MODEL_ATHENA.
-# 6.6.2.2: Suppression des constantes mortes CODEX_HUD_ID et CODEX_ACTION_ID.
 
 
 import os
@@ -663,14 +663,14 @@ for _ext, _lang in CODEX_LANG_MAP.items():
 
 # Actions rapides prédéfinies (boutons HUD)
 CODEX_QUICK_ACTIONS = {
-    "shorter":    "Raccourcis ce code/texte sans changer la logique ni le comportement.",
-    "longer":     "Développe avec plus de détails, commentaires et documentation.",
-    "comment":    "Ajoute des commentaires explicatifs clairs et concis.",
-    "uncomment":  "Supprime tous les commentaires du code. Ne conserve que le code exécutable.",
-    "refactor":   "Refactorise pour plus de lisibilité, maintenabilité et respect des conventions.",
-    "fix":        "Identifie et corrige les bugs potentiels. Explique chaque correction dans un commentaire.",
-    "tests":      "Génère les tests unitaires pertinents pour ce code.",
-    "optimize":   "Optimise les performances sans changer l'interface publique.",
+    "shorter":    "Le Modèle DOIT raccourcir ce code/texte sans changer la logique ni le comportement.",
+    "longer":     "Le Modèle DOIT développer avec plus de détails, commentaires et documentation.",
+    "comment":    "Le Modèle DOIT ajouter des commentaires explicatifs clairs et concis.",
+    "uncomment":  "Le Modèle DOIT supprimer tous les commentaires du code et ne conserver que le code exécutable.",
+    "refactor":   "Le Modèle DOIT refactoriser pour plus de lisibilité, maintenabilité et respect des conventions.",
+    "fix":        "Le Modèle DOIT identifier et corriger les bugs potentiels, et expliquer chaque correction dans un commentaire.",
+    "tests":      "Le Modèle DOIT générer les tests unitaires pertinents pour ce code.",
+    "optimize":   "Le Modèle DOIT optimiser les performances sans changer l'interface publique.",
 }
 
 # ----------------------------

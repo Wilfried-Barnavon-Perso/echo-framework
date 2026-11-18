@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 6.6.30.1
+version: 6.7.1.1
 description: Composant système interne : ECHO Agent Engine (Délégation par tranches supervisées & Contrôleur unifié).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Refactorisation de delegate_to_agent sur EchoSubagentController (tranches supervisées) et création de l'outil unifié control_subagents (fusion des 8 outils de maintenance).
 # 6.6.2.1: Mise à jour temps réel de subagent_meta.model_key via update_subagent_meta_fields lors des cascades et appels à new_cognitive_level.
 # 6.6.0.1: Persistance de model_used/is_cascaded_fallback, passage du timeout à ECHO_LLM_CALL_TIMEOUT (600s) et filet de sécurité idempotent truncate_and_spill_tool_output vers tools_output/.
 # 6.5.3.1: Support des tours hybrides Orchestrateur/Humain (<REQUETE_ORCHESTRATEUR> / <REQUETE_UTILISATEUR>), verrou par sub_sid et file FIFO SQLite via echo_subagent_hub.
-# 5.238.1.1: Ajout de MODEL_ATHENA dans target_model_key de delegate_to_agent.
 
 import sys
 from typing import Any, List, Literal, Optional
@@ -181,7 +181,7 @@ async def _distill_main_context(
         if not raw:
             return ""
         result = await EchoGeminiClient.call_distillation(
-            f"Résume factuellement cet historique en 5 points clés pour un agent :\n\n{raw}",
+            f"Le Système DOIT résumer factuellement cet historique en 5 points clés pour un Sous-Agent :\n\n{raw}",
             {"id": user_id},
             {},
             is_json=False,

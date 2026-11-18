@@ -1,16 +1,16 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 5.239.11.1
+version: 6.7.1.1
 description: Composant système interne : ECHO Visual Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 5.239.11.1: Ajout dans `context["message"]` de `generate_rich_visualization` de la consigne explicite anti-redondance Markdown après génération dans l'Iframe.
 # 5.233.0.2: Contrainte de sortie JSON via response_schema=VisualCriticOutput dans _run_visual_critic et LeafletSchema dans SYS_VISUAL_REPAIR, décoration @echo_tool et simplification des retours.
 # 5.233.0.1: Support multi-images unifié dans generate_image (paramètre input_images: Optional[List[str]]), factorisation du chargement Base64 via _load_reference_images, plafond IMAGE_GEN_MAX_INPUT_IMAGES=10 et traçabilité PAS.
 # 5.232.5.1: Stockage et versionnement Git par essai/retouche (Option A) dans le workspace CODEX_WORKSPACE_GENERATED ("generated"), nommage court (< 15 caractères via short_name) et indexation sous resource_type="generated".
-# 5.232.3.1: Suppression du paramètre niveau_cognitif (verrouillage MODEL_APOLLO avec clamping), transmission de chat_id à call_cascade, re-validation post-SYS_VISUAL_REPAIR, directive moteur adaptative au retry et résilience par essai dans generate_image.
 # MOTEURS INTÉGRÉS ET DATAFLOWS :
 # - mermaid (v11) : Syntaxe Mermaid pure
 # - echarts (v5) : JSON ECharts strict
@@ -365,7 +365,7 @@ class Tools:
               donnees_contextuelles=donnees_contextuelles[:4000],
           )
           critic_user_msg = (
-              f"Évalue la conformité visuelle et ergonomique de ce schéma `{final_moteur}` "
+              f"Le Système DOIT évaluer la conformité visuelle et ergonomique de ce schéma `{final_moteur}` "
               f"(Essai {try_idx}/{GEN_SCHEMA_MAX_TRIES}) par rapport à l'intention : {intention}"
               f"{runtime_err_note}"
           )
@@ -663,7 +663,7 @@ class Tools:
             aspect_ratio=aspect_ratio,
         )
         critic_user_msg = (
-            f"Évalue la conformité de cette image (Essai {try_idx}/{GEN_IMG_MAX_TRIES}) "
+            f"Le Système DOIT évaluer la conformité de cette image (Essai {try_idx}/{GEN_IMG_MAX_TRIES}) "
             f"par rapport à la requête : {clean_prompt}"
         )
         critic_eval = await self._run_visual_critic(

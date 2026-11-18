@@ -2,11 +2,12 @@
 """
 title: ECHO Subagent Hub
 author: Wilfried BARNAVON
-version: 6.6.30.1
+version: 6.7.1.1
 description: Contrôleur exécutif unifié des sous-agents, tranches supervisées, ToolDispatcher et file FIFO hybride.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Moteur cognitif unifié (EchoAgentRunner, EchoSubagentController, StandardToolDispatcher, BrowserToolDispatcher), tranches supervisées 8/90s, PARE 3 erreurs, _TOOLS_CACHE et scellement kill.
 # 6.6.2.1: Ajout du compteur monotone _COGNITION_SEQ (bump_cognition_seq, get_cognition_seq) et de update_subagent_meta_fields.
 # 6.5.3.1: Création du hub sous-agents hybrides (XML, verrous, file FIFO).
@@ -1522,9 +1523,9 @@ class BrowserToolDispatcher:
                             _resp = {
                                 "status": "success",
                                 "message": (
-                                    f"Zoom appliqué (Essai {self.zoom_attempts}/3). L'image jointe est rognée sur ta zone. "
+                                    f"Zoom appliqué (Essai {self.zoom_attempts}/3). L'image jointe est rognée sur la zone cible. "
                                     f"Un VISEUR ROUGE a été dessiné au centre absolu (X={cx}, Y={cy}). "
-                                    f"Si le point central de ce viseur est STRICTEMENT sur ta cible, utilise "
+                                    f"Si le point central de ce viseur est STRICTEMENT sur la cible, le Sous-Agent DOIT utiliser "
                                     f"action_interact_dom(x={cx}, y={cy}, action_type='click')."
                                 ),
                             }
@@ -1694,7 +1695,7 @@ class BrowserToolDispatcher:
                 target_fr = response_parts[-1]["functionResponse"]
             if target_fr:
                 target_fr["response"]["message"] = (
-                    "Voici la capture d'écran demandée. Analyse-la attentivement."
+                    "Capture d'écran disponible. Le Sous-Agent DOIT analyser la capture."
                 )
                 response_parts.append({
                     "inlineData": {
@@ -2110,7 +2111,7 @@ class EchoAgentRunner:
                                 "text": (
                                     f"Reprise de session interne après saturation.\n"
                                     f"Synthèse des recherches précédentes :\n{synthesis}\n\n"
-                                    "Continuez la mission sans répéter les mêmes actions."
+                                    "Le Sous-Agent DOIT poursuivre la mission sans répéter les mêmes actions."
                                 )
                             }
                         ]
@@ -2418,7 +2419,7 @@ class EchoAgentRunner:
                     > ECHO_MAX_CONTEXT_SIZE * 0.40
                 ):
                     response_parts.append({
-                        "text": "<system_alert>SATURATION DU CONTEXTE ATTEINTE. Appliquez la Règle 10.</system_alert>"
+                        "text": "<system_alert>SATURATION DU CONTEXTE ATTEINTE. Le Sous-Agent DOIT appliquer la Règle 10.</system_alert>"
                     })
 
                 history.append({"role": "user", "parts": response_parts})
@@ -3212,7 +3213,7 @@ class EchoSubagentController:
                             resp = str(fr.get("response", {}))[:300]
                             raw += f"{role} [←OUTIL]: {fr.get('name', '?')} → {resp}\n---\n"
                 distill_prompt = (
-                    "Résume cette session d'agent ECHO en 4 sections :\n"
+                    "Le Système DOIT résumer cette session d'agent ECHO en 4 sections :\n"
                     "1. **Tâche initiale**\n"
                     "2. **Outils utilisés**\n"
                     "3. **Résultats clés**\n"

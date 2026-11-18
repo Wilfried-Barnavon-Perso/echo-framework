@@ -1,16 +1,16 @@
 """
 title: ECHO N8N Orchestrator
 author: ECHO
-version: 5.233.0.1
+version: 6.7.1.1
 description: Outil agentique de cycle de vie et d'exécution N8N (Phase 2 & 3). Refactorisation institutionnelle et N8N Grapher.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 5.233.0.1: Décoration @echo_tool sur les 12 méthodes publiques et remplacement intégral des 68 appels wrap_tool_output par des retours directs.
 # 5.231.42.2: Validation pré-vol des chemins WriteBinaryFile/ReadWriteFile (__ECHO_DOWNLOAD_DIR__/), purge de l'ancien démon au redéploiement et transmission de echo_workflow_id à la suppression.
 # 5.231.21.3: Délégation Vault chiffré à EchoStateManager, désencapsulation/échappement JSON dans _inject_secrets, masquage des secrets dans les logs et alignement ask_user.
 # 5.231.20.2: Conversion en async def des 6 outils synchrones, remplacement de httpx.Client bloquant par httpx.AsyncClient, sécurisation anti-traversal des IDs et alignement de allowed_tools (code_executor) dans delegate_to_n8n_grapher.
-# 5.229.0.0: Compression des docstrings OpenAPI et externalisation de la documentation vers 14-owui-libs/tool_guides/n8n_workflows.md.
 
 import sys
 import asyncio
@@ -213,7 +213,7 @@ class Tools:
         elif content:
             workflow_content = content
         else:
-            return "Erreur : Fournissez 'content' ou 'from_template_id'."
+            return "Erreur : 'content' ou 'from_template_id' REQUIS."
 
         # Barrière Vault (Fail-fast)
         missing = self._check_secrets(workflow_content, uid)
@@ -413,7 +413,7 @@ class Tools:
 
         path = self._get_workflow_path(uid, cid, n8n_workflow_id)
         if not path.exists():
-            return "Erreur: Ce workflow n'existe pas. Créez-le d'abord avec create_n8n_workflow."
+            return "Erreur : Ce workflow n'existe pas. Le Modèle DOIT le créer au préalable via create_n8n_workflow."
 
         workflow_json = path.read_text(encoding="utf-8")
 

@@ -1,16 +1,16 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 5.233.0.1
+version: 6.7.1.1
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 5.233.0.1: Unification du wrapper dans wrap_tool_output, décoration @echo_tool sur les 7 méthodes publiques et simplification des retours.
 # 5.232.5.1: Isolement et versionnement Git des plans et listes de tâches dans le workspace dédié CODEX_WORKSPACE_PLANS ("plans") avec synchronisation de last_commit dans echo_resources.
 # 5.232.1.1: Harmonisation des notifications UI (events.status) avec emojis distinctifs pour le cycle de vie du plan et des tâches.
 # 5.231.29.1: Alignement sur la constante SSOT CODEX_WORKSPACE_MAIN lors de l'indexation des plans dans echo_resources.
-# 5.231.28.1: Normalisation de storage_path via format_codex_storage_path (codex/main/<filename>) et suppression des appels à la table obsolète plans.
 
 import sys
 import uuid
@@ -576,7 +576,7 @@ class Tools:
             user_confirmed = await events.call_execute(js_code)
             if not user_confirmed:
                 await events.status(f"🛑 Lancement du plan {plan_id} refusé par l'utilisateur.", done=True)
-                return "Refus : L'Utilisateur a refusé de lancer l'exécution du plan. Attendez ses consignes."
+                return "Refus : L'Utilisateur a refusé de lancer l'exécution du plan. Le Modèle DOIT attendre les consignes de L'Utilisateur."
 
         # 3. Remplacement du statut dans le frontmatter (proposed -> executing)
         new_plan_content = re.sub(r"^status:\s*(\w+)", "status: executing", plan_content, flags=re.MULTILINE)

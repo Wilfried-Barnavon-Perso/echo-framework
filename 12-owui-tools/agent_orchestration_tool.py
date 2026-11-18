@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 6.6.30.1
+version: 6.7.1.1
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Câblage de consult_council et consult_supervised_workers sur EchoSubagentController et suppression de list_councils, close_council, list_supervised_tasks et close_supervised_task.
 # 6.6.2.1: Persistance save_subagent_meta et save_thread_step pour la synthèse consult_council et les phases critique/consolidation de consult_supervised_workers.
 # 5.239.17.1: Alignement de la Valve COGNITIVE_TIMEOUT par défaut sur ECHO_LLM_CALL_TIMEOUT (600s).
 # 5.238.1.1: Ajout de MODEL_ATHENA dans target_model, synthesis_model et critic_model de consult_council et consult_supervised_workers.
-# 5.233.0.1: Contrainte de sortie JSON via response_schema (SkillRouterOutput et SupervisorCriticOutput), décoration @echo_tool et simplification des retours.
 
 import sys
 import orjson as json
@@ -452,7 +452,7 @@ class Tools:
                             f"### MISSION DU MODÈLE\n"
                             f"Le Modèle est {p['alias']} ({p['name']}). Il DOIT prendre connaissance des contributions ci-dessus "
                             f"pour exprimer son analyse, ses accords, ses désaccords et ses compléments. "
-                            f"Le Modèle peut signifier qu'il préfère ne pas répondre."
+                            f"Le Modèle PEUT signifier qu'il préfère ne pas répondre."
                         )
 
                 # Appels parallèles — chaque participant est un agent indépendant
@@ -692,7 +692,7 @@ class Tools:
             res = await EchoSubagentController.run_or_resume(
                 user_id=user_id,
                 chat_id=chat_id,
-                task=f"### OBJECTIF GLOBAL\n{objective}\n\n### TA TÂCHE\n{w_task}",
+                task=f"### OBJECTIF GLOBAL\n{objective}\n\n### TÂCHE ASSIGNÉE\n{w_task}",
                 system_prompt=w_sys,
                 skill_id=w_role,
                 sub_sid=agent_sid,
@@ -832,7 +832,7 @@ class Tools:
             )
 
             async def _run_correction_worker(w_id: str) -> Tuple[str, str]:
-                feedback = worker_feedback[w_id].get("feedback", "Corrige ton livrable.")
+                feedback = worker_feedback[w_id].get("feedback", "Le Sous-Agent DOIT corriger le livrable.")
                 agent_sid = worker_sids[w_id]
                 w_config = workers_dict.get(w_id, {})
                 w_role = w_config.get("skill_id", w_config.get("role_name"))

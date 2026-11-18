@@ -1,17 +1,17 @@
 """
 title: Résume et Transfert vers un nouveau chat
 author: ECHO Framework
-version: 5.239.13.1
+version: 6.7.1.1
 description: Migre le contexte de travail saturé vers une nouvelle conversation optimisée (clonage Workspace).
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxsaW5lIHgxPSI0IiB5MT0iNCIgeDI9IjQiIHkyPSIyMCIvPjxsaW5lIHgxPSI4IiB5MT0iMTIiIHgyPSIxNiIgeTI9IjEyIi8+PHBvbHlsaW5lIHBvaW50cz0iMTIgOCAxNiAxMiAxMiAxNiIvPjxsaW5lIHgxPSIyMCIgeTE9IjQiIHgyPSIyMCIgeTI9IjIwIi8+PC9zdmc+
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 5.239.13.1: Capture du bilan RagCloneReport de duplicate_session_rag ; si copie vectorielle incomplète, modale EchoEvents.confirm avant redirection (annulation : maintien sur la conversation d'origine).
 # 5.239.12.1: Isolation globale data-echo-scope="global" sur #echo-migration-hud et transmission de live_msg_ids et anchor_msg_id à sync_resumed_session et duplicate_session_rag.
 # 5.229.2.1: Propagation et héritage direct des tags du chat parent vers la nouvelle conversation migrée.
 # 5.228.4.2: Support asynchrone des routines Chats (_call_owui), purge des blocs <details type="reasoning"> avant troncature, ancrage utilisateur racine pour le Session RAG, synchronisation atomique sous clone_lock et redirection window.location.replace.
-# 5.228.1.1: Suppression de l'en-tête de codage UTF-8 obsolète pour alignement sur extract_frontmatter OWUI (affichage icône).
 
 import asyncio
 import inspect
@@ -418,11 +418,10 @@ class Action:
         routine_reprise = (
             "\n\n---\n"
             "**ROUTINE DE REPRISE OBLIGATOIRE**\n"
-            "En tant qu'ECHO, je m'engage fermement à exécuter les actions suivantes dès le premier tour de parole.\n"
-            "Je DOIS ABSOLUMENT via mes outils et agents :\n"
-            "1. Prendre connaissance du profil de l'Utilisateur et de l'environnement (AEC).\n"
-            "2. Explorer les ressources de mon registre (`query_registry`).\n"
-            "3. Interroger la mémoire inter-session (`search_sessions_context`) pour affiner ma compréhension.\n"
+            "Le Modèle DOIT ABSOLUMENT exécuter les actions suivantes dès le premier tour de parole via les Outils et Sous-Agents :\n"
+            "1. Prendre connaissance du profil de L'Utilisateur et de l'environnement (AEC).\n"
+            "2. Explorer les ressources du registre (`query_registry`).\n"
+            "3. Interroger la mémoire inter-session (`search_sessions_context`) pour affiner la compréhension du contexte.\n"
             "4. Reprendre la conversation en continuité stricte avec le résumé cognitif ci-dessus."
         )
         new_content = f"**Session migrée et distillée.**\n\n*Résumé cognitif :*\n{distilled_summary}{routine_reprise}"
