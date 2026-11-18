@@ -1,16 +1,16 @@
 """
 title: ECHO V6 Cognition Router
 author: Wilfried BARNAVON
-version: 6.6.30.1
+version: 6.6.30.2
 description: Routeur FastAPI pour la visualisation cognitive et des sous-agents (/echo/v1/cognition).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.30.2: Suppression troncature [:8] des groupes, tri déterministe des membres par role_order, alignement ECHO_SUBAGENT_ENGINES_REGISTRY et dispatch multi-cibles sur POST /message.
 # 6.6.30.1: Ajout de POST /{chat_id}/threads/{sub_sid}/control, normalisation des 9 statuts canoniques/métriques de tranche et branchement direct sur EchoSubagentController.
 # 6.6.9.1: Passage sur get_echo_sse_user/create_echo_sse_response, déportation asyncio.to_thread sur lectures SQLite/FS et correction fallback ImportError browserviews.
 # 6.6.5.1: Résolution prioritaire des captures navigateur dans browserviews/ avec GC éphémère à l'entrée et exposition de status/retained.
 # 6.6.2.2: Ajout des endpoints GET /{chat_id}/browser-frames et /{chat_id}/browser-frames/{file_id}/image et alignement niveau_requis/is_question/pending_tool_calls.
-# 6.6.2.1: Sanitization DOM/prompt, regroupement grouped_threads, enrichissement des steps et réactivité SSE via get_cognition_seq.
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ import re
 import sys
 from contextlib import closing
 from pathlib import Path
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import orjson as json
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -42,6 +42,7 @@ try:
     from echo_constants import (  # type: ignore
         BROWSER_VIEWS_DIR_NAME,
         ECHO_SUBAGENT_CHECKPOINT_CALLS,
+        ECHO_SUBAGENT_ENGINES_REGISTRY,
     )
     from echo_db_schema import open_db  # type: ignore
     from echo_paths import (  # type: ignore
@@ -53,7 +54,6 @@ try:
         SUBAGENT_META_PREFIX,
         SUBAGENT_QUEUE_PREFIX,
         EchoSubagentController,
-        enqueue_subagent_message,
         extract_turn_origin,
         get_cognition_seq,
         is_subagent_running,
@@ -76,6 +76,7 @@ except ImportError:
     except ImportError:
         BROWSER_VIEWS_DIR_NAME = "browserviews"
         ECHO_SUBAGENT_CHECKPOINT_CALLS = 8
+        ECHO_SUBAGENT_ENGINES_REGISTRY = {}
     from echo_db_schema import open_db  # type: ignore
     from echo_paths import (  # type: ignore
         get_echo_session_path,
@@ -86,7 +87,6 @@ except ImportError:
         SUBAGENT_META_PREFIX,
         SUBAGENT_QUEUE_PREFIX,
         EchoSubagentController,
-        enqueue_subagent_message,
         extract_turn_origin,
         get_cognition_seq,
         is_subagent_running,
@@ -118,6 +118,7 @@ def _launch_bg_task(coro: Any, label: str) -> asyncio.Task:
 
 class SubagentMessagePayload(BaseModel):
     content: str
+    target_sids: Optional[List[str]] = None
 
 
 class SubagentControlRequest(BaseModel):
@@ -130,8 +131,8 @@ class SubagentControlRequest(BaseModel):
 
 _DOM_MAP_PREFIX = "Voici les éléments interactifs actuels (Carte DOM) :"
 _NAV_OBJ_RE = re.compile(r"<objective>(.*?)</objective>", re.DOTALL)
-_COUNCIL_SID_RE = re.compile(r"^thread_council_([^_]+)_(.+)$")
-_SUPERVISOR_SID_RE = re.compile(r"^thread_supervisor_(sup_[a-f0-9]+|[^_]+)_(.+)$")
+_COUNCIL_SID_RE = re.compile(r"^thread_council_(.+?)_(synthesis|[^_]+(?:_\d+)?)$")
+_SUPERVISOR_SID_RE = re.compile(r"^thread_supervisor_(sup_[a-f0-9]+|.+?)_(critic|consolidator|[^_]+)$")
 _QUESTION_RE = re.compile(r"QUESTION:\s*(.+?)$", re.MULTILINE)
 
 
@@ -248,61 +249,103 @@ def _normalize_subagent_status(raw_status: Any, running_override: bool = False) 
     return "idle"
 
 
+def _infer_engine_key(sid: str, role_id: str, meta: Dict[str, Any]) -> str:
+    """Résout la clé canonique de moteur dans ECHO_SUBAGENT_ENGINES_REGISTRY."""
+    explicit = str(meta.get("engine") or "").strip()
+    if explicit and (not ECHO_SUBAGENT_ENGINES_REGISTRY or explicit in ECHO_SUBAGENT_ENGINES_REGISTRY):
+        return explicit
+    if sid.startswith("thread_web_") or role_id == "navigator":
+        return "navigator"
+    if sid.startswith("thread_council_"):
+        return "council_synthesis" if sid.endswith("_synthesis") else "council"
+    if sid.startswith("thread_supervisor_"):
+        if sid.endswith("_critic"):
+            return "supervisor_critic"
+        if sid.endswith("_consolidator"):
+            return "supervisor_consolidator"
+        return "supervisor"
+    if sid.startswith("dlg_img_") or role_id == "image_gen":
+        return "image_gen"
+    if "deep_research" in sid or role_id == "deep_research":
+        return "deep_research"
+    if sid.startswith("thread_n8n_") or "n8n" in sid or role_id == "n8n_grapher":
+        return "n8n_grapher"
+    if sid.startswith("thread_databroker_") or "databroker" in sid or role_id == "data_broker":
+        return "data_broker"
+    return explicit or "delegate"
+
+
 def _classify_thread(sid: str, role_id: str, meta: Dict[str, Any]) -> Dict[str, Any]:
     """Retourne les attributs typés d'affichage d'un thread sous-agent."""
     is_running = _normalize_subagent_status(meta.get("status")) == "running"
     model_key = meta.get("model_key")
     custom_label = meta.get("role_name") or meta.get("role")
+    engine_key = _infer_engine_key(sid, role_id, meta)
+    spec = ECHO_SUBAGENT_ENGINES_REGISTRY.get(engine_key, {})
 
-    if sid.startswith("thread_web_") or role_id == "navigator":
-        return {
-            "thread_type": "web",
-            "icon": "🌐",
-            "color": "#38bdf8",
-            "display_label": custom_label or "Navigateur Web",
-            "model_key": model_key,
-            "is_running": is_running,
-        }
-    if sid.startswith("thread_council_"):
+    default_label = spec.get("default_label")
+    if engine_key == "navigator":
+        fallback_label = default_label or "Navigateur Web"
+        ttype, icon, color = spec.get("thread_type", "web"), spec.get("icon", "🌐"), spec.get("color", "cyan")
+    elif engine_key in ("council", "council_synthesis"):
         m = _COUNCIL_SID_RE.match(sid)
         suffix = m.group(2) if m else sid
-        return {
-            "thread_type": "council",
-            "icon": "🏛️",
-            "color": "#a855f7",
-            "display_label": custom_label or f"Expert ({suffix})",
-            "model_key": model_key,
-            "is_running": is_running,
-        }
-    if sid.startswith("thread_supervisor_"):
+        fallback_label = (default_label or "Synthèse du Conseil") if engine_key == "council_synthesis" else f"Expert ({suffix})"
+        ttype, icon, color = spec.get("thread_type", "council"), spec.get("icon", "🏛️"), spec.get("color", "purple")
+    elif engine_key in ("supervisor", "supervisor_critic", "supervisor_consolidator"):
         m = _SUPERVISOR_SID_RE.match(sid)
         suffix = m.group(2) if m else sid
-        return {
-            "thread_type": "supervisor",
-            "icon": "📋",
-            "color": "#f59e0b",
-            "display_label": custom_label or f"Supervision ({suffix})",
-            "model_key": model_key,
-            "is_running": is_running,
-        }
-    if sid.startswith("thread_"):
+        fallback_label = (
+            (default_label or "Critique") if engine_key == "supervisor_critic"
+            else (default_label or "Consolidation") if engine_key == "supervisor_consolidator"
+            else f"Ouvrier ({suffix})"
+        )
+        ttype, icon, color = spec.get("thread_type", "supervisor"), spec.get("icon", "📋"), spec.get("color", "amber")
+    elif engine_key == "deep_research":
+        fallback_label = default_label or "Recherche Profonde"
+        ttype, icon, color = spec.get("thread_type", "deep_research"), spec.get("icon", "🕵️"), spec.get("color", "cyan")
+    elif engine_key == "n8n_grapher":
+        fallback_label = default_label or "Architecte N8N"
+        ttype, icon, color = spec.get("thread_type", "n8n_grapher"), spec.get("icon", "⚡"), spec.get("color", "amber")
+    elif engine_key == "data_broker":
+        fallback_label = default_label or "Data Broker"
+        ttype, icon, color = spec.get("thread_type", "data_broker"), spec.get("icon", "🔌"), spec.get("color", "cyan")
+    elif engine_key == "image_gen":
+        fallback_label = default_label or f"Studio Visuel IA ({sid})"
+        ttype, icon, color = spec.get("thread_type", "image_gen"), spec.get("icon", "🎨"), spec.get("color", "purple")
+    elif sid.startswith("thread_"):
         parts = sid.split("_")
         role_guess = "_".join(parts[1:-1]) if len(parts) >= 3 else sid
-        return {
-            "thread_type": "expert",
-            "icon": "🎓",
-            "color": "#10b981",
-            "display_label": custom_label or f"Expert ({role_guess})",
-            "model_key": model_key,
-            "is_running": is_running,
-        }
+        fallback_label = f"Expert ({role_guess})"
+        ttype, icon, color = spec.get("thread_type", "expert"), spec.get("icon", "🎓"), spec.get("color", "emerald")
+    else:
+        fallback_label = default_label or f"Agent ({sid})"
+        ttype, icon, color = spec.get("thread_type", "agent"), spec.get("icon", "🤖"), spec.get("color", "indigo")
+
+    has_tool_loop = (
+        bool(meta["has_tool_loop"])
+        if "has_tool_loop" in meta
+        else bool(spec.get("has_tool_loop", True))
+    )
+    is_addressable = (
+        bool(meta["is_addressable"])
+        if "is_addressable" in meta
+        else bool(spec.get("is_addressable", True))
+    )
+    role_order = int(meta.get("role_order") or spec.get("role_order") or 100)
+
     return {
-        "thread_type": "agent",
-        "icon": "🤖",
-        "color": "#6366f1",
-        "display_label": custom_label or f"Agent ({sid})",
+        "engine": engine_key,
+        "thread_type": ttype,
+        "icon": icon,
+        "color": color,
+        "display_label": custom_label or fallback_label,
         "model_key": model_key,
         "is_running": is_running,
+        "member_role": meta.get("member_role") or spec.get("member_role", "agent"),
+        "role_order": role_order,
+        "has_tool_loop": has_tool_loop,
+        "is_addressable": is_addressable,
     }
 
 
@@ -436,19 +479,24 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
         entry["status"] = _normalize_subagent_status(
             entry.get("status"), running_override=running_now
         )
-        entry["slice_calls_used"] = int(entry.get("slice_calls_used") or 0)
-        entry["slice_calls_limit"] = int(
-            entry.get("slice_calls_limit") or ECHO_SUBAGENT_CHECKPOINT_CALLS
-        )
-        entry["total_calls_used"] = int(entry.get("total_calls_used") or 0)
-        entry["consecutive_errors"] = int(entry.get("consecutive_errors") or 0)
-        if "checkpoint_reason" not in entry:
-            entry["checkpoint_reason"] = None
         steps_for_sid = threads.get(sid, [])
         role_id_hint = entry.get("role_id") or (
             steps_for_sid[0].get("role_id", "") if steps_for_sid else ""
         )
         entry.update(_classify_thread(sid, role_id_hint, entry))
+        entry["slice_calls_used"] = int(entry.get("slice_calls_used") or 0)
+        if entry.get("slice_calls_limit") is not None:
+            entry["slice_calls_limit"] = int(entry["slice_calls_limit"])
+        else:
+            entry["slice_calls_limit"] = (
+                0
+                if not entry.get("has_tool_loop", True)
+                else ECHO_SUBAGENT_CHECKPOINT_CALLS
+            )
+        entry["total_calls_used"] = int(entry.get("total_calls_used") or 0)
+        entry["consecutive_errors"] = int(entry.get("consecutive_errors") or 0)
+        if "checkpoint_reason" not in entry:
+            entry["checkpoint_reason"] = None
 
     for sid, steps_list in threads.items():
         meta_entry = thread_meta.get(sid, {})
@@ -517,26 +565,35 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
         )
         sid_running = bool(meta_entry.get("is_running"))
 
+        raw_group_id = str(meta_entry.get("group_id") or "").strip()
+        engine_val = str(meta_entry.get("engine") or "")
         m_ccl = _COUNCIL_SID_RE.match(sid)
         m_sup = _SUPERVISOR_SID_RE.match(sid)
-        if m_ccl:
-            gid = f"ccl_{m_ccl.group(1)}"
+
+        if engine_val in ("council", "council_synthesis") or m_ccl:
+            raw_gid = raw_group_id or (m_ccl.group(1) if m_ccl else sid)
+            gid = raw_gid if raw_gid.startswith("ccl_") else f"ccl_{raw_gid}"
+            display_gid = raw_gid[4:] if raw_gid.startswith("ccl_") else raw_gid
+            gid_display = display_gid if len(display_gid) <= 28 else f"{display_gid[:25]}..."
             gtype = "council"
-            glabel = f"Table Ronde ({m_ccl.group(1)[:8]})"
+            glabel = f"Table Ronde ({gid_display})"
             gicon = "🏛️"
-            gcolor = "#a855f7"
-        elif m_sup:
-            gid = f"sup_{m_sup.group(1)}"
+            gcolor = "purple"
+        elif engine_val in ("supervisor", "supervisor_critic", "supervisor_consolidator") or m_sup:
+            raw_gid = raw_group_id or (m_sup.group(1) if m_sup else sid)
+            gid = raw_gid if raw_gid.startswith("sup_") else f"sup_{raw_gid}"
+            display_gid = raw_gid[4:] if raw_gid.startswith("sup_") else raw_gid
+            gid_display = display_gid if len(display_gid) <= 28 else f"{display_gid[:25]}..."
             gtype = "supervisor"
-            glabel = f"Supervision ({m_sup.group(1)[:8]})"
+            glabel = f"Supervision ({gid_display})"
             gicon = "📋"
-            gcolor = "#f59e0b"
+            gcolor = "amber"
         else:
             gid = sid
             gtype = meta_entry.get("thread_type", "agent")
             glabel = meta_entry.get("display_label") or sid
             gicon = meta_entry.get("icon", "🤖")
-            gcolor = meta_entry.get("color", "#10b981")
+            gcolor = meta_entry.get("color", "emerald")
 
         grp = groups_map.setdefault(
             gid,
@@ -562,6 +619,15 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
             grp["is_running"] = True
         if sid_updated > grp["updated_at"]:
             grp["updated_at"] = sid_updated
+
+    for grp in groups_map.values():
+        grp["threads"].sort(
+            key=lambda s: (
+                int(thread_meta.get(s, {}).get("role_order") or 100),
+                str(thread_meta.get(s, {}).get("display_label") or s).lower(),
+                s,
+            )
+        )
 
     grouped_threads = sorted(
         groups_map.values(),
@@ -706,39 +772,32 @@ async def post_subagent_human_message(
         )
 
     safe_uid, safe_cid = await _validate_cognition_session(chat_id, user.id)
+    _ = safe_uid, safe_cid
 
-    if is_subagent_running(chat_id, sub_sid):
-        sm = EchoStateManager(user_id=safe_uid, chat_id=safe_cid)
-        queue = await asyncio.to_thread(
-            enqueue_subagent_message,
-            sm,
-            sub_sid,
-            content,
-            user.id,
-            "human",
-        )
-        return JSONResponse(
-            content={
-                "status": "queued",
-                "sub_sid": sub_sid,
-                "queue_length": len(queue),
-            },
-            status_code=202,
-        )
-
-    _launch_bg_task(
-        EchoSubagentController.run_or_resume(
-            user_id=user.id,
-            chat_id=chat_id,
-            sub_sid=sub_sid,
-            directive=content,
-            origin="human",
-        ),
-        label=f"human_message:{sub_sid}",
+    dispatch_res = await asyncio.to_thread(
+        EchoSubagentController.dispatch_message,
+        user_id=user.id,
+        chat_id=chat_id,
+        target_ids=payload.target_sids or [sub_sid],
+        directive=content,
+        origin="human",
     )
+    if dispatch_res.get("error"):
+        raise HTTPException(
+            status_code=int(dispatch_res.get("status_code") or 400),
+            detail=dispatch_res["error"],
+        )
+
+    run_coro = dispatch_res.pop("run_coro", None)
+    if run_coro is not None:
+        _launch_bg_task(
+            run_coro,
+            label=f"human_message:{dispatch_res.get('sub_sid', sub_sid)}",
+        )
+
     return JSONResponse(
-        content={"status": "started", "sub_sid": sub_sid},
-        status_code=200,
+        content=dispatch_res,
+        status_code=202 if dispatch_res.get("status") == "queued" else 200,
     )
 
 

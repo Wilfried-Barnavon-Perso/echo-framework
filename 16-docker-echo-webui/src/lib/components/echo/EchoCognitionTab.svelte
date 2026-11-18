@@ -35,7 +35,8 @@
 
 	let selectedGroupId = '';
 	let participantFilter = 'all';
-	let composerTargetSubSid = '';
+	let selectedTargetSids: string[] = [];
+	let toolsScope: 'group' | 'all' = 'group';
 	let autoFollow = true;
 	let manualPause = false;
 	let isProgrammaticScroll = false;
@@ -53,7 +54,7 @@
 		boundChatId = normalized;
 		selectedGroupId = '';
 		participantFilter = 'all';
-		composerTargetSubSid = '';
+		selectedTargetSids = [];
 		autoFollow = true;
 		manualPause = false;
 		pausedNewSteps = 0;
@@ -283,8 +284,11 @@
 			if (matchingGroup && matchingGroup.id !== selectedGroupId) {
 				selectedGroupId = matchingGroup.id;
 				participantFilter = 'all';
-				if (matchingGroup.member_sids.includes(externalSid)) {
-					composerTargetSubSid = externalSid;
+				if (
+					matchingGroup.member_sids.includes(externalSid) &&
+					threadMeta[externalSid]?.is_addressable !== false
+				) {
+					selectedTargetSids = [externalSid];
 				}
 			}
 		}
@@ -296,15 +300,52 @@
 
 	$: selectedGroup = groups.find((g) => g.id === selectedGroupId) ?? groups[0] ?? null;
 
+	$: addressableMemberSids = (selectedGroup?.member_sids ?? []).filter(
+		(sid) => threadMeta[sid]?.is_addressable !== false
+	);
+
 	$: if (selectedGroup) {
 		const members = selectedGroup.member_sids;
-		if (members.length > 0 && (!composerTargetSubSid || !members.includes(composerTargetSubSid))) {
-			composerTargetSubSid = members[0];
+		const validTargets = selectedTargetSids.filter((sid) => addressableMemberSids.includes(sid));
+		if (validTargets.length !== selectedTargetSids.length) {
+			selectedTargetSids = validTargets;
+		}
+		if (selectedTargetSids.length === 0 && addressableMemberSids.length > 0) {
+			selectedTargetSids =
+				participantFilter === 'all'
+					? [...addressableMemberSids]
+					: addressableMemberSids.includes(participantFilter)
+						? [participantFilter]
+						: [...addressableMemberSids];
 		}
 		if (participantFilter !== 'all' && !members.includes(participantFilter)) {
 			participantFilter = 'all';
 		}
 	}
+
+	const selectParticipantFilter = (filter: string) => {
+		participantFilter = filter;
+		if (filter === 'all') {
+			selectedTargetSids = [...addressableMemberSids];
+		} else if (addressableMemberSids.includes(filter)) {
+			selectedTargetSids = [filter];
+		}
+	};
+
+	const toggleTargetSid = (sid: string) => {
+		if (!addressableMemberSids.includes(sid)) return;
+		if (selectedTargetSids.includes(sid)) {
+			if (selectedTargetSids.length > 1) {
+				selectedTargetSids = selectedTargetSids.filter((s) => s !== sid);
+			}
+		} else {
+			selectedTargetSids = [...selectedTargetSids, sid];
+		}
+	};
+
+	const selectAllTargetSids = () => {
+		selectedTargetSids = [...addressableMemberSids];
+	};
 
 	$: rawGroupSteps = ((): EchoCognitionStep[] => {
 		if (!selectedGroup) return [];
@@ -340,9 +381,17 @@
 	})();
 
 	$: selectedIsRunning = selectedGroup?.is_running ?? false;
-	$: targetIsRunning = composerTargetSubSid
-		? threadMeta[composerTargetSubSid]?.status === 'running'
-		: selectedIsRunning;
+	$: targetIsRunning =
+		selectedTargetSids.length > 0
+			? selectedTargetSids.some((sid) => threadMeta[sid]?.status === 'running')
+			: selectedIsRunning;
+	$: groupTotalCallsUsed = (selectedGroup?.member_sids ?? []).reduce(
+		(acc, sid) => acc + Number(threadMeta[sid]?.total_calls_used ?? 0),
+		0
+	);
+	$: isAllTargetsSelected =
+		addressableMemberSids.length > 1 &&
+		selectedTargetSids.length === addressableMemberSids.length;
 	$: activeThreadSid =
 		participantFilter !== 'all'
 			? participantFilter
@@ -384,7 +433,9 @@
 		if (!group) return;
 		selectedGroupId = group.id;
 		participantFilter = 'all';
-		composerTargetSubSid = group.member_sids[0] ?? '';
+		selectedTargetSids = group.member_sids.filter(
+			(sid) => threadMeta[sid]?.is_addressable !== false
+		);
 		autoFollow = true;
 		manualPause = false;
 		pausedNewSteps = 0;
@@ -399,11 +450,37 @@
 		purple: 'border-purple-500/30 bg-purple-500/10 text-purple-700 dark:text-purple-300',
 		amber: 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300',
 		emerald: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
-		indigo: 'border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300'
+		indigo: 'border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300',
+		rose: 'border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300',
+		sky: 'border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300'
 	};
 
-	const getAccentClass = (color?: string): string =>
-		ACCENT_CLASSES[color ?? 'indigo'] ?? ACCENT_CLASSES.indigo;
+	const HEX_COLOR_MAP: Record<string, string> = {
+		'#38bdf8': 'cyan',
+		'#a855f7': 'purple',
+		'#f59e0b': 'amber',
+		'#10b981': 'emerald',
+		'#6366f1': 'indigo'
+	};
+
+	const getAccentClass = (color?: string): string => {
+		const key = HEX_COLOR_MAP[(color ?? '').toLowerCase()] ?? color ?? 'indigo';
+		return ACCENT_CLASSES[key] ?? ACCENT_CLASSES.indigo;
+	};
+
+	interface CriticFeedbackItem {
+		worker_id?: string;
+		status?: string;
+		feedback?: string;
+		reason?: string;
+		[key: string]: any;
+	}
+
+	interface CriticVerdictCard {
+		verdict: string;
+		global_assessment: string;
+		worker_feedback: CriticFeedbackItem[];
+	}
 
 	interface ParsedStepView {
 		thoughtTexts: string[];
@@ -411,6 +488,7 @@
 		toolCalls: { name: string; args?: any }[];
 		toolResponses: { name: string; response?: any }[];
 		domMapCounts: number[];
+		criticVerdict: CriticVerdictCard | null;
 		fallbackRaw: string;
 	}
 
@@ -451,13 +529,80 @@
 		return { cleanText: cleanText.trim(), domCounts };
 	};
 
+	const splitImplicitThoughts = (raw: string): { clean: string; thoughts: string[] } => {
+		const thoughts: string[] = [];
+		let clean = raw;
+		clean = clean.replace(/<(?:thought|think)>([\s\S]*?)<\/(?:thought|think)>/gi, (_m, body) => {
+			const trimmed = String(body || '').trim();
+			if (trimmed) thoughts.push(trimmed);
+			return '';
+		});
+		clean = clean.replace(/<details\b[^>]*type=["']reasoning["'][^>]*>([\s\S]*?)<\/details>/gi, (_m, body) => {
+			const stripped = String(body || '').replace(/<summary>[\s\S]*?<\/summary>/gi, '').trim();
+			if (stripped) thoughts.push(stripped);
+			return '';
+		});
+		const tpMatch = clean.match(/^\s*Thinking Process\s*:\s*([\s\S]*)$/i);
+		if (tpMatch) {
+			const splitIdx = clean.search(
+				/\n\s*(?:#{1,3}\s+\S|---\s*\n|(?:Final Response|Réponse finale)\s*:?)/i
+			);
+			if (splitIdx > 0) {
+				const thoughtBlock = clean
+					.slice(0, splitIdx)
+					.replace(/^\s*Thinking Process\s*:\s*/i, '')
+					.trim();
+				if (thoughtBlock) thoughts.push(thoughtBlock);
+				clean = clean.slice(splitIdx).trim();
+			} else {
+				const body = tpMatch[1].trim();
+				if (body) thoughts.push(body);
+				clean = '';
+			}
+		}
+		return { clean: clean.trim(), thoughts };
+	};
+
+	const tryParseCriticVerdict = (text: string): CriticVerdictCard | null => {
+		const trimmed = text.trim();
+		if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
+		try {
+			const parsed = JSON.parse(trimmed);
+			if (
+				parsed &&
+				typeof parsed === 'object' &&
+				typeof parsed.verdict === 'string' &&
+				typeof parsed.global_assessment === 'string'
+			) {
+				return {
+					verdict: parsed.verdict,
+					global_assessment: parsed.global_assessment,
+					worker_feedback: Array.isArray(parsed.worker_feedback) ? parsed.worker_feedback : []
+				};
+			}
+		} catch {
+			// Ignorer les chaînes non-JSON
+		}
+		return null;
+	};
+
 	const pushCleanVisibleText = (result: ParsedStepView, text: string) => {
-		const { cleanText, domCounts } = extractDomMapGuards(text);
+		const { clean, thoughts } = splitImplicitThoughts(text);
+		if (thoughts.length > 0) {
+			result.thoughtTexts.push(...thoughts);
+		}
+		if (!clean) return;
+		const { cleanText, domCounts } = extractDomMapGuards(clean);
 		if (domCounts.length > 0) {
 			result.domMapCounts.push(...domCounts);
 		}
 		if (cleanText) {
-			result.visibleTexts.push(cleanText);
+			const critic = tryParseCriticVerdict(cleanText);
+			if (critic && !result.criticVerdict) {
+				result.criticVerdict = critic;
+			} else {
+				result.visibleTexts.push(cleanText);
+			}
 		}
 	};
 
@@ -468,6 +613,7 @@
 			toolCalls: [],
 			toolResponses: [],
 			domMapCounts: [],
+			criticVerdict: null,
 			fallbackRaw: ''
 		};
 
@@ -578,8 +724,14 @@
 
 	const sendMessage = async () => {
 		const text = composerText.trim();
-		const targetSid = composerTargetSubSid || selectedGroup?.member_sids[0] || '';
-		if (!text || !chatId || !isSavedChatId(chatId) || !targetSid || sending) return;
+		const targets =
+			selectedTargetSids.length > 0
+				? selectedTargetSids
+				: addressableMemberSids.length > 0
+					? [addressableMemberSids[0]]
+					: [];
+		const primarySid = targets[0] || '';
+		if (!text || !chatId || !isSavedChatId(chatId) || !primarySid || sending) return;
 		const token = localStorage?.token;
 		if (!token) {
 			toast.error('Session expirée : veuillez vous reconnecter.');
@@ -590,8 +742,15 @@
 		const previousText = composerText;
 		composerText = '';
 		try {
-			const res = await postEchoSubagentMessage(token, chatId, targetSid, text);
-			if (res.status === 'queued') {
+			const res = await postEchoSubagentMessage(token, chatId, primarySid, text, targets);
+			const startedCount = res.started_sids?.length ?? (res.status === 'started' ? 1 : 0);
+			const queuedCount = res.queued_sids?.length ?? (res.status === 'queued' ? 1 : 0);
+			if (targets.length > 1) {
+				const parts: string[] = [];
+				if (startedCount > 0) parts.push(`${startedCount} relancé(s)`);
+				if (queuedCount > 0) parts.push(`${queuedCount} en file`);
+				toast.info(`Consigne diffusée à ${targets.length} destinataires (${parts.join(', ') || 'traité'}).`);
+			} else if (res.status === 'queued') {
 				const count = res.queue_length ?? 1;
 				toast.info(`Message mis en file pour le prochain tour (${count} en attente).`);
 			} else {
@@ -608,6 +767,54 @@
 		} finally {
 			sending = false;
 		}
+	};
+
+	$: groupToolCallIds = ((): Set<string> => {
+		const ids = new Set<string>();
+		for (const st of rawGroupSteps) {
+			if (!Array.isArray(st.content)) continue;
+			for (const p of st.content) {
+				if (!p || typeof p !== 'object') continue;
+				if (p.functionCall?.id) ids.add(String(p.functionCall.id));
+				if (p.functionResponse?.id) ids.add(String(p.functionResponse.id));
+			}
+		}
+		return ids;
+	})();
+
+	$: groupToolFnNames = ((): Set<string> => {
+		const names = new Set<string>();
+		for (const st of rawGroupSteps) {
+			if (!Array.isArray(st.content)) continue;
+			for (const p of st.content) {
+				if (p?.functionCall?.name) names.add(String(p.functionCall.name));
+			}
+		}
+		return names;
+	})();
+
+	$: filteredToolCalls =
+		toolsScope === 'all' || !selectedGroup
+			? toolCalls
+			: toolCalls.filter((call) => {
+					if (call.sub_sid && selectedGroup.member_sids.includes(call.sub_sid)) {
+						return true;
+					}
+					if (call.call_id && groupToolCallIds.has(String(call.call_id))) {
+						return true;
+					}
+					if (call.function_name && groupToolFnNames.has(String(call.function_name))) {
+						return true;
+					}
+					return false;
+				});
+
+	const getMemberRoleIcon = (sid: string): string => {
+		const meta = threadMeta[sid];
+		if (meta?.member_role === 'critic' || meta?.engine === 'supervisor_critic') return '⚖️';
+		if (meta?.member_role === 'consolidator' || meta?.engine === 'supervisor_consolidator') return '📑';
+		if (meta?.member_role === 'synthesis' || meta?.engine === 'council_synthesis') return '🏛️';
+		return meta?.icon || '';
 	};
 
 	const handleComposerKeydown = (e: KeyboardEvent) => {
@@ -794,7 +1001,7 @@
 									<span class="font-mono">({activeSliceUsed}/{activeSliceLimit})</span>
 								{/if}
 							</span>
-							{#if activeThreadMeta}
+							{#if activeThreadMeta && activeThreadMeta.has_tool_loop !== false}
 								<span
 									class="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-900/70 text-gray-600 dark:text-gray-300"
 									title="Appels d'outils sur la tranche courante / cumul total"
@@ -803,6 +1010,13 @@
 									{#if activeTotalUsed > activeSliceUsed}
 										<span class="text-gray-400">· total {activeTotalUsed}</span>
 									{/if}
+								</span>
+							{:else if !activeThreadMeta && selectedGroup.member_sids.length > 1}
+								<span
+									class="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-900/70 text-gray-600 dark:text-gray-300"
+									title="Nombre de membres et total d'appels d'outils du groupe"
+								>
+									{selectedGroup.member_sids.length} membres{#if groupTotalCallsUsed > 0} · {groupTotalCallsUsed} appels{/if}
 								</span>
 							{/if}
 							{#if activeConsecutiveErrors > 0}
@@ -886,7 +1100,7 @@
 						<div class="flex flex-wrap items-center gap-1 pt-0.5">
 							<button
 								type="button"
-								on:click={() => (participantFilter = 'all')}
+								on:click={() => selectParticipantFilter('all')}
 								class="text-[11px] px-2 py-0.5 rounded-full border transition {participantFilter === 'all'
 									? 'bg-indigo-600 text-white border-indigo-600'
 									: 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-indigo-400'}"
@@ -894,14 +1108,27 @@
 								Tous ({rawGroupSteps.length})
 							</button>
 							{#each selectedGroup.member_sids as sid (sid)}
+								{@const memberStatus = threadMeta[sid]?.status || 'idle'}
+								{@const memberBadge = getStatusBadge(memberStatus)}
+								{@const roleIcon = getMemberRoleIcon(sid)}
 								<button
 									type="button"
-									on:click={() => (participantFilter = sid)}
-									class="text-[11px] px-2 py-0.5 rounded-full border transition truncate max-w-[180px] {participantFilter === sid
+									on:click={() => selectParticipantFilter(sid)}
+									class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border transition truncate max-w-[210px] {participantFilter === sid
 										? 'bg-indigo-600 text-white border-indigo-600'
 										: 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-indigo-400'}"
 								>
-									{getParticipantLabel(sid)}
+									{#if memberStatus === 'completed'}
+										<span class="text-[10px] text-teal-500 {participantFilter === sid ? 'text-teal-200' : ''} shrink-0">✓</span>
+									{:else if memberStatus === 'error' || memberStatus === 'killed'}
+										<span class="text-[10px] text-red-500 {participantFilter === sid ? 'text-red-200' : ''} shrink-0">✕</span>
+									{:else}
+										<span class="w-1.5 h-1.5 rounded-full shrink-0 {memberBadge.dotClass} {memberBadge.pulse ? 'animate-pulse' : ''}"></span>
+									{/if}
+									{#if roleIcon}
+										<span class="shrink-0">{roleIcon}</span>
+									{/if}
+									<span class="truncate">{getParticipantLabel(sid)}</span>
 								</button>
 							{/each}
 						</div>
@@ -1056,6 +1283,46 @@
 										</details>
 									{/if}
 
+									{#if parsed.criticVerdict}
+										{@const isApproved = parsed.criticVerdict.verdict.toUpperCase() === 'APPROVED'}
+										<div class="rounded-lg border p-2.5 space-y-2 {isApproved
+											? 'bg-emerald-50/70 dark:bg-emerald-950/20 border-emerald-500/30'
+											: 'bg-rose-50/70 dark:bg-rose-950/20 border-rose-500/30'}">
+											<div class="flex items-center justify-between gap-2">
+												<span class="text-[11px] font-semibold uppercase tracking-wide {isApproved
+													? 'text-emerald-700 dark:text-emerald-300'
+													: 'text-rose-700 dark:text-rose-300'}">
+													{isApproved ? '✅ APPROUVÉ' : `❌ ${parsed.criticVerdict.verdict} — CORRECTIONS REQUISES`}
+												</span>
+											</div>
+											<div class="text-xs text-gray-800 dark:text-gray-100 leading-relaxed bg-white/60 dark:bg-gray-900/40 rounded px-2.5 py-1.5 border border-black/5 dark:border-white/5">
+												{parsed.criticVerdict.global_assessment}
+											</div>
+											{#if parsed.criticVerdict.worker_feedback.length > 0}
+												<div class="grid grid-cols-1 gap-1.5 pt-1 border-t border-black/10 dark:border-white/10">
+													{#each parsed.criticVerdict.worker_feedback as fb}
+														{@const fbOk = String(fb.status || '').toLowerCase() === 'approved' || String(fb.status || '').toLowerCase() === 'ok'}
+														<div class="text-[11px] bg-white/80 dark:bg-gray-900/60 rounded-lg px-2.5 py-1.5 border border-gray-200/70 dark:border-gray-800 space-y-0.5">
+															<div class="flex items-center justify-between gap-2">
+																<span class="font-semibold text-gray-900 dark:text-gray-100">{fb.worker_id || 'Ouvrier'}</span>
+																{#if fb.status}
+																	<span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium {fbOk
+																		? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+																		: 'bg-amber-500/15 text-amber-700 dark:text-amber-300'}">
+																		{fbOk ? '✅ Validé' : '🔧 À corriger'}
+																	</span>
+																{/if}
+															</div>
+															<div class="text-gray-700 dark:text-gray-300 leading-relaxed">
+																{fb.feedback || fb.reason || JSON.stringify(fb)}
+															</div>
+														</div>
+													{/each}
+												</div>
+											{/if}
+										</div>
+									{/if}
+
 									{#if parsed.visibleTexts.length > 0}
 										<div class="text-xs text-gray-800 dark:text-gray-100 whitespace-pre-wrap leading-relaxed">
 											{parsed.visibleTexts.join('\n')}
@@ -1134,67 +1401,126 @@
 			{/if}
 
 			<!-- Compositeur interactif -->
-			<div class="p-3 border-t border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-850/70 shrink-0 space-y-2">
-				{#if selectedGroup && selectedGroup.member_sids.length > 1}
-					<div class="flex items-center gap-2 text-[11px]">
-						<span class="text-gray-500 dark:text-gray-400 shrink-0">Destinataire :</span>
-						<select
-							aria-label="Choisir le membre destinataire"
-							bind:value={composerTargetSubSid}
-							class="flex-1 min-w-0 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 text-[11px] font-medium text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
-						>
-							{#each selectedGroup.member_sids as sid (sid)}
-								<option value={sid}>{getParticipantLabel(sid)}</option>
+			{#if addressableMemberSids.length === 0}
+				<div class="px-3 py-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-850/70 text-[11px] text-gray-500 dark:text-gray-400 shrink-0">
+					Ce thread est en lecture seule et n'accepte pas de consigne interactive.
+				</div>
+			{:else}
+				<div class="p-3 border-t border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-850/70 shrink-0 space-y-2">
+					{#if activeThreadMeta && activeThreadMeta.is_addressable === false}
+						<div class="text-[10px] text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg px-2 py-1">
+							Étape non interactive sélectionnée ({getParticipantLabel(activeThreadSid)}) — la consigne sera envoyée aux membres adressables ci-dessous.
+						</div>
+					{/if}
+					{#if addressableMemberSids.length > 1}
+						<div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+							<span class="text-gray-500 dark:text-gray-400 shrink-0">Destinataires :</span>
+							<button
+								type="button"
+								on:click={selectAllTargetSids}
+								class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-medium transition {isAllTargetsSelected
+									? 'bg-indigo-600 text-white border-indigo-600'
+									: 'bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-gray-700 hover:border-indigo-400'}"
+							>
+								📢 Tous ({addressableMemberSids.length})
+							</button>
+							{#each addressableMemberSids as sid (sid)}
+								{@const isSelected = selectedTargetSids.includes(sid)}
+								<button
+									type="button"
+									on:click={() => toggleTargetSid(sid)}
+									class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] transition truncate max-w-[180px] {isSelected
+										? 'bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 border-indigo-500/40 font-medium'
+										: 'bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-indigo-400'}"
+								>
+									<span>{isSelected ? '✓' : '+'}</span>
+									<span class="truncate">{getParticipantLabel(sid)}</span>
+								</button>
 							{/each}
-						</select>
-					</div>
-				{/if}
+						</div>
+					{/if}
 
-				<div class="flex items-end gap-2">
-					<textarea
-						bind:value={composerText}
-						on:keydown={handleComposerKeydown}
-						rows="2"
-						disabled={sending}
-						placeholder={targetIsRunning
-							? 'Envoyer une consigne (mise en file pour le prochain tour)...'
-							: 'Envoyer une consigne directe au sous-agent...'}
-						class="flex-1 resize-none rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-800 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 disabled:opacity-50"
-					></textarea>
-					<button
-						type="button"
-						disabled={sending || !composerText.trim()}
-						on:click={sendMessage}
-						class="px-3 py-2 rounded-xl text-xs font-medium bg-indigo-600 hover:bg-indigo-700 text-white transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0 flex items-center gap-1.5"
-					>
-						{#if sending}
-							<Spinner className="w-3.5 h-3.5" />
-						{:else}
-							<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-								<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
-							</svg>
-						{/if}
-						Envoyer
-					</button>
+					<div class="flex items-end gap-2">
+						<textarea
+							bind:value={composerText}
+							on:keydown={handleComposerKeydown}
+							rows="2"
+							disabled={sending}
+							placeholder={isAllTargetsSelected
+								? `Diffuser une consigne aux ${selectedTargetSids.length} membres...`
+								: targetIsRunning
+									? 'Envoyer une consigne (mise en file pour le prochain tour)...'
+									: 'Envoyer une consigne directe au sous-agent...'}
+							class="flex-1 resize-none rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-800 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 disabled:opacity-50"
+						></textarea>
+						<button
+							type="button"
+							disabled={sending || !composerText.trim() || selectedTargetSids.length === 0}
+							on:click={sendMessage}
+							class="px-3 py-2 rounded-xl text-xs font-medium bg-indigo-600 hover:bg-indigo-700 text-white transition disabled:opacity-40 disabled:cursor-not-allowed shrink-0 flex items-center gap-1.5"
+						>
+							{#if sending}
+								<Spinner className="w-3.5 h-3.5" />
+							{:else}
+								<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+									<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+								</svg>
+							{/if}
+							{#if isAllTargetsSelected}
+								Envoyer à tous ({selectedTargetSids.length})
+							{:else if selectedTargetSids.length > 1}
+								Envoyer ({selectedTargetSids.length})
+							{:else}
+								Envoyer
+							{/if}
+						</button>
+					</div>
+					<div class="text-[10px] text-gray-400">
+						Entrée pour envoyer · Maj+Entrée pour nouvelle ligne
+					</div>
 				</div>
-				<div class="text-[10px] text-gray-400">
-					Entrée pour envoyer · Maj+Entrée pour nouvelle ligne
-				</div>
-			</div>
+			{/if}
 		{/if}
 	{:else}
 		<!-- Onglet Appels d'outils -->
-		<div class="flex-1 overflow-y-auto p-4">
-			{#if toolCalls.length === 0}
+		<div class="flex-1 overflow-y-auto p-4 space-y-3">
+			{#if toolCalls.length > 0 && selectedGroup}
+				<div class="flex items-center justify-between gap-2">
+					<span class="text-[11px] text-gray-500 dark:text-gray-400">
+						{filteredToolCalls.length} appel(s) affiché(s)
+					</span>
+					<div class="inline-flex items-center rounded-lg bg-gray-100 dark:bg-gray-800 p-0.5 text-[11px] border border-gray-200 dark:border-gray-700">
+						<button
+							type="button"
+							on:click={() => (toolsScope = 'group')}
+							class="px-2 py-0.5 rounded-md transition {toolsScope === 'group'
+								? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-xs font-medium'
+								: 'text-gray-500 dark:text-gray-400'}"
+						>
+							Ce groupe
+						</button>
+						<button
+							type="button"
+							on:click={() => (toolsScope = 'all')}
+							class="px-2 py-0.5 rounded-md transition {toolsScope === 'all'
+								? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-xs font-medium'
+								: 'text-gray-500 dark:text-gray-400'}"
+						>
+							Tous les sous-agents
+						</button>
+					</div>
+				</div>
+			{/if}
+			{#if filteredToolCalls.length === 0}
 				<div class="flex flex-col items-center justify-center h-48 text-gray-400 text-xs">
 					<svg class="w-8 h-8 mb-2 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
 						<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
 					</svg>
-					Aucun appel d'outil consigné pour cette session.
+					Aucun appel d'outil consigné pour ce périmètre.
 				</div>
 			{:else}
 				<div class="space-y-2">
-					{#each toolCalls as call}
+					{#each filteredToolCalls as call}
 						{@const rawArgs = call.args ?? call.args_json}
 						<div class="p-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-850 font-mono text-xs space-y-1.5">
 							<div class="flex items-center justify-between">

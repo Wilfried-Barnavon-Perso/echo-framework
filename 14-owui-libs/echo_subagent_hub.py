@@ -2,11 +2,12 @@
 """
 title: ECHO Subagent Hub
 author: Wilfried BARNAVON
-version: 6.7.1.1
+version: 6.7.1.3
 description: Contrôleur exécutif unifié des sous-agents, tranches supervisées, ToolDispatcher et file FIFO hybride.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.3: Câblage ECHO_SUBAGENT_ENGINES_REGISTRY dans save_subagent_meta et ajout de extract_response_parts_and_text, run_cognitive_step et dispatch_message.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Moteur cognitif unifié (EchoAgentRunner, EchoSubagentController, StandardToolDispatcher, BrowserToolDispatcher), tranches supervisées 8/90s, PARE 3 erreurs, _TOOLS_CACHE et scellement kill.
 # 6.6.2.1: Ajout du compteur monotone _COGNITION_SEQ (bump_cognition_seq, get_cognition_seq) et de update_subagent_meta_fields.
@@ -24,7 +25,7 @@ import sys
 import threading
 import time
 import uuid
-from typing import Any, List, Literal, Optional, Protocol
+from typing import Any, Dict, List, Literal, Optional, Protocol, Tuple
 
 from echo_constants import (
     BROWSER_VIEWS_DIR_NAME,
@@ -44,12 +45,14 @@ from echo_constants import (
     ECHO_SUBAGENT_CHECKPOINT_CALLS,
     ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
     ECHO_SUBAGENT_CONTEXT,
+    ECHO_SUBAGENT_ENGINES_REGISTRY,
     ECHO_SUBAGENT_MAX_CONSECUTIVE_ERRORS,
     ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS,
     ECHO_TOOLS_CACHE_MAX_SIZE,
     PRUNE_CONTENT_THRESHOLD,
     get_generation_config,
 )
+from echo_core import split_thought_process
 
 ORCH_OPEN_TAG = "<REQUETE_ORCHESTRATEUR>"
 ORCH_CLOSE_TAG = "</REQUETE_ORCHESTRATEUR>"
@@ -349,21 +352,105 @@ def pop_kill_flag(chat_id: str, sub_sid: str) -> bool:
 def save_subagent_meta(
     state_manager: Any, sub_sid: str, meta: dict
 ) -> dict:
-    """Persiste les métadonnées d'un sous-agent dans echo_settings."""
+    """Persiste les métadonnées d'un sous-agent dans echo_settings avec défauts SSOT."""
     payload = dict(meta or {})
     payload.setdefault("sub_sid", sub_sid)
+    eng_cfg = ECHO_SUBAGENT_ENGINES_REGISTRY.get(
+        str(payload.get("engine") or ""), {}
+    )
+    if eng_cfg:
+        payload.setdefault("member_role", eng_cfg.get("member_role", "agent"))
+        payload.setdefault("role_order", eng_cfg.get("role_order", 100))
+        payload.setdefault("has_tool_loop", eng_cfg.get("has_tool_loop", True))
+        payload.setdefault("is_addressable", eng_cfg.get("is_addressable", True))
+        payload.setdefault("thread_type", eng_cfg.get("thread_type", "agent"))
+        payload.setdefault("icon", eng_cfg.get("icon", "🤖"))
+        payload.setdefault("color", eng_cfg.get("color", "emerald"))
+    has_loop = bool(payload.get("has_tool_loop", True))
+    default_limit = (
+        0
+        if not has_loop
+        else int(
+            eng_cfg.get("default_slice_limit", ECHO_SUBAGENT_CHECKPOINT_CALLS)
+        )
+    )
     payload.setdefault("slice_calls_used", 0)
-    payload.setdefault("slice_calls_limit", ECHO_SUBAGENT_CHECKPOINT_CALLS)
+    payload.setdefault("slice_calls_limit", default_limit)
     payload.setdefault("total_calls_used", 0)
     payload.setdefault("consecutive_errors", 0)
     payload.setdefault("checkpoint_reason", None)
-    payload["updated_at"] = int(time.time())
+    now_s = time.time()
+    payload["updated_at"] = int(now_s)
+    payload["updated_at_ms"] = int(now_s * 1000)
     state_manager.save_session_setting(
         f"{SUBAGENT_META_PREFIX}{sub_sid}",
         json.dumps(payload, ensure_ascii=False),
     )
     bump_cognition_seq(getattr(state_manager, "chat_id", "") or "")
     return payload
+
+
+_THINKING_PROCESS_START_RE = re.compile(r"^\s*Thinking Process\s*:", re.IGNORECASE)
+_THINKING_SPLIT_RE = re.compile(
+    r"\n\s*(?:#{1,4}\s+\S|---\s*\n|\*\*(?:RAPPORT|SYNTHÈSE|RÉSUMÉ|CONCLUSION|ANALYSE)\b|(?:Final Response|Réponse finale)\s*:?)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def extract_response_parts_and_text(
+    res: Optional[dict],
+    fallback_error: str = "❌ Réponse vide.",
+) -> Tuple[List[dict], str]:
+    """
+    Extrait les parts normalisées (isolant les réflexions internes en `thought: True`)
+    et retourne `(normalized_parts, visible_text)` sans fuite de raisonnement.
+    """
+    if not isinstance(res, dict):
+        return [{"text": fallback_error}], fallback_error
+    candidates = res.get("candidates") or []
+    if not candidates or not isinstance(candidates[0], dict):
+        return [{"text": fallback_error}], fallback_error
+    raw_parts = (candidates[0].get("content") or {}).get("parts") or []
+    if not isinstance(raw_parts, list):
+        return [{"text": fallback_error}], fallback_error
+
+    normalized_parts: List[dict] = []
+    clean_chunks: List[str] = []
+
+    for part in raw_parts:
+        if not isinstance(part, dict):
+            continue
+        if part.get("thought"):
+            normalized_parts.append(dict(part))
+            continue
+        if "text" in part and isinstance(part.get("text"), str):
+            raw_txt = part["text"]
+            clean_txt, xml_thought = split_thought_process(raw_txt)
+            if xml_thought:
+                normalized_parts.append({"thought": True, "text": xml_thought})
+            visible_candidate = (clean_txt or "").strip()
+            if visible_candidate and _THINKING_PROCESS_START_RE.match(visible_candidate):
+                m_split = _THINKING_SPLIT_RE.search(visible_candidate)
+                if m_split:
+                    thought_block = visible_candidate[: m_split.start()].strip()
+                    answer_block = visible_candidate[m_split.start():].strip()
+                    if thought_block:
+                        normalized_parts.append({"thought": True, "text": thought_block})
+                    if answer_block:
+                        normalized_parts.append({"text": answer_block})
+                        clean_chunks.append(answer_block)
+                else:
+                    normalized_parts.append({"thought": True, "text": visible_candidate})
+            elif visible_candidate:
+                normalized_parts.append({"text": visible_candidate})
+                clean_chunks.append(visible_candidate)
+        else:
+            normalized_parts.append(dict(part))
+
+    if not normalized_parts:
+        normalized_parts = [{"text": fallback_error}]
+    visible_text = "\n".join(clean_chunks).strip() or fallback_error
+    return normalized_parts, visible_text
 
 
 def update_subagent_meta_fields(
@@ -744,6 +831,10 @@ def resolve_target_sub_sids(
             tid = tid[4:]
         elif tid.startswith("sup_sup_"):
             tid = tid[4:]
+        elif tid.startswith("sup_") and f"thread_supervisor_{tid}_" not in "".join(all_sids):
+            alt_sup = tid[4:]
+            if any(s.startswith(f"thread_supervisor_{alt_sup}_") for s in all_sids):
+                tid = alt_sup
 
         if tid in all_set:
             if tid not in resolved:
@@ -2538,6 +2629,7 @@ class EchoSubagentController:
         engine: Optional[str] = None,
         group_id: Optional[str] = None,
         role_name: Optional[str] = None,
+        role_order: Optional[int] = None,
         start_url: Optional[str] = None,
         custom_dispatcher: Optional[ToolDispatcher] = None,
         key_switch_threshold: int = ECHO_API_KEY_RETRIES,
@@ -2846,6 +2938,11 @@ class EchoSubagentController:
                             "skill_id": eff_skill_id,
                             "model_key": current_model_key,
                             "group_id": eff_group_id,
+                            **(
+                                {"role_order": role_order}
+                                if role_order is not None
+                                else {}
+                            ),
                             "allowed_tools": eff_allowed_tools,
                             "system_prompt": final_system,
                             "final_system": final_system,
@@ -3331,6 +3428,212 @@ class EchoSubagentController:
             text=f"❌ Action `{action}` non reconnue.",
             status={"status": "error", "action": action},
         )
+
+    extract_response_parts_and_text = staticmethod(extract_response_parts_and_text)
+
+    @classmethod
+    async def run_cognitive_step(
+        cls,
+        *,
+        user_id: str,
+        chat_id: str,
+        sub_sid: str,
+        engine: str,
+        role_name: str,
+        target_model_key: str,
+        user_prompt: str,
+        display_user_prompt: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        group_id: Optional[str] = None,
+        role_order: Optional[int] = None,
+        step_index: int = 0,
+        override_thinking: str = "high",
+        max_output_tokens: int = 16000,
+        response_schema: Any = None,
+        timeout: int = ECHO_LLM_CALL_TIMEOUT,
+        events: Any = None,
+        metadata: Optional[dict] = None,
+        fallback_error: str = "❌ Cascade épuisée.",
+    ) -> Tuple[str, str, Any]:
+        """Exécute un appel cognitif unitaire avec persistance meta + thread_step et isolation des pensées."""
+        from echo_gemini_client import EchoGeminiClient
+        from echo_state_manager import EchoStateManager
+
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        base_meta: Dict[str, Any] = {
+            "sub_sid": sub_sid,
+            "chat_id": chat_id,
+            "engine": engine,
+            "role_name": role_name,
+            "model_key": target_model_key,
+            "group_id": group_id,
+            "status": "running",
+        }
+        if role_order is not None:
+            base_meta["role_order"] = role_order
+        save_subagent_meta(state, sub_sid, base_meta)
+        mark_subagent_running(chat_id, sub_sid, True)
+
+        state.save_thread_step(
+            sub_sid,
+            chat_id,
+            engine,
+            step_index,
+            "user",
+            [{"text": display_user_prompt or user_prompt}],
+        )
+
+        gen_cfg = {
+            **get_generation_config(target_model_key, override_thinking=override_thinking),
+            "maxOutputTokens": max_output_tokens,
+        }
+        payload: Dict[str, Any] = {
+            "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+            "generationConfig": gen_cfg,
+        }
+        if system_prompt:
+            payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+
+        res = None
+        model_used = None
+        try:
+            res, model_used, _ = await EchoGeminiClient.call_cascade(
+                target_model_key=target_model_key,
+                payload=payload,
+                user_id=user_id,
+                metadata=(metadata or {}),
+                events=events,
+                timeout=timeout,
+                include_thoughts=False,
+                response_schema=response_schema,
+            )
+        finally:
+            mark_subagent_running(chat_id, sub_sid, False)
+
+        normalized_parts, clean_text = extract_response_parts_and_text(
+            res, fallback_error=fallback_error
+        )
+        final_status = "error" if not res else "completed"
+        eff_model = model_used or target_model_key
+
+        state.save_thread_step(
+            sub_sid,
+            chat_id,
+            engine,
+            step_index + 1,
+            "model",
+            normalized_parts,
+            EchoAgentRunner._extract_thought_sig(normalized_parts),
+        )
+        base_meta["model_key"] = eff_model
+        base_meta["status"] = final_status
+        save_subagent_meta(state, sub_sid, base_meta)
+
+        parsed_obj = None
+        if response_schema is not None and res:
+            try:
+                parsed_obj = response_schema.model_validate_json(clean_text.strip())
+            except Exception:
+                parsed_obj = None
+
+        return clean_text, eff_model, parsed_obj
+
+    @classmethod
+    async def _run_dispatch_batch(
+        cls,
+        *,
+        user_id: str,
+        chat_id: str,
+        sids: List[str],
+        directive: str,
+        origin: str = "human",
+    ) -> None:
+        """Exécute en parallèle la relance des sous-agents ciblés par dispatch_message."""
+        await asyncio.gather(
+            *(
+                cls.run_or_resume(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    sub_sid=sid,
+                    directive=directive,
+                    origin=origin,
+                )
+                for sid in sids
+            ),
+            return_exceptions=True,
+        )
+
+    @classmethod
+    def dispatch_message(
+        cls,
+        *,
+        user_id: str,
+        chat_id: str,
+        target_ids: List[str],
+        directive: str,
+        origin: str = "human",
+    ) -> Dict[str, Any]:
+        """Résout les cibles adressables (unitaire, liste ou groupe) et prépare file FIFO ou relance."""
+        from echo_state_manager import EchoStateManager
+
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        raw_targets = None if target_ids == ["all"] else target_ids
+        resolved_sids = resolve_target_sub_sids(state, chat_id, raw_targets)
+        if not resolved_sids:
+            return {"error": "Aucun sous-agent cible trouvé.", "status_code": 404}
+
+        addressable_sids: List[str] = []
+        for sid in resolved_sids:
+            meta = get_subagent_meta(state, sid) or {}
+            eng = str(meta.get("engine") or "")
+            reg_addr = ECHO_SUBAGENT_ENGINES_REGISTRY.get(eng, {}).get("is_addressable", True)
+            if meta.get("is_addressable", reg_addr):
+                addressable_sids.append(sid)
+
+        if not addressable_sids:
+            return {
+                "error": "Ce thread de synthèse ou d'évaluation n'accepte pas de consigne interactive.",
+                "status_code": 400,
+            }
+
+        queued_sids: List[str] = []
+        started_sids: List[str] = []
+        total_queued = 0
+        for sid in addressable_sids:
+            if is_subagent_running(chat_id, sid):
+                q_res = enqueue_subagent_message(
+                    state, sid, directive, user_id=user_id, origin=origin
+                )
+                q_len = len(q_res) if isinstance(q_res, (list, tuple)) else int(q_res or 0)
+                queued_sids.append(sid)
+                total_queued = max(total_queued, q_len)
+            else:
+                started_sids.append(sid)
+
+        run_coro = (
+            cls._run_dispatch_batch(
+                user_id=user_id,
+                chat_id=chat_id,
+                sids=started_sids,
+                directive=directive,
+                origin=origin,
+            )
+            if started_sids
+            else None
+        )
+        return {
+            "status": (
+                "queued"
+                if not started_sids
+                else ("multi" if len(addressable_sids) > 1 else "started")
+            ),
+            "sub_sid": addressable_sids[0],
+            "affected_sids": addressable_sids,
+            "started_sids": started_sids,
+            "queued_sids": queued_sids,
+            "queue_length": total_queued,
+            "run_coro": run_coro,
+        }
 
 
 async def run_human_subagent_turn(

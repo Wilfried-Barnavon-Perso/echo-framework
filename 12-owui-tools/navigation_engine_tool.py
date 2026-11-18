@@ -1,11 +1,12 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 6.6.30.1
+version: 6.6.30.2
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.30.2: Filtrage des pensées via extract_response_parts_and_text dans analyze_web_page.
 # 6.6.30.1: Migration de delegate_web_browsing sur BrowserToolDispatcher + EchoSubagentController (support sub_sid, tranches supervisées) et suppression de close_web_thread.
 # 6.6.5.1: Isolation des captures dans browserviews/ (resource_type='browserview', statut transient/retained), GC automatique, ouverture unique d'onglet et ajout de retain_browser_frame.
 # 6.6.2.2: Migration de _deploy_navigation_monitor et stream_proxy vers get_window_manager() (open_tab/broadcast_browser_frame) et ajout de open_browser_ui.
@@ -52,6 +53,7 @@ from echo_constants import (
 from echo_subagent_hub import (
     BrowserToolDispatcher,
     EchoSubagentController,
+    extract_response_parts_and_text,
     validate_or_create_sub_sid,
 )
 
@@ -319,8 +321,8 @@ class Tools:
         )
         
         if os.path.exists(tmp_path): os.remove(tmp_path)
-        
-        distillate = "".join(p.get("text", "") for p in data.get("candidates", [])[0]["content"].get("parts", []))
+
+        _, distillate = extract_response_parts_and_text(data)
         return f"Résultat de l'analyse pour '{query}' :\n{distillate}"
 
     @echo_tool

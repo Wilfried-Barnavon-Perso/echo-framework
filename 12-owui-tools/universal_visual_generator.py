@@ -1,11 +1,12 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 6.7.1.1
+version: 6.7.1.2
 description: Composant système interne : ECHO Visual Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.2: Télémétrie temps réel save_subagent_meta/mark_subagent_running sur generate_image et filtrage extract_response_parts_and_text dans _run_visual_critic.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 5.239.11.1: Ajout dans `context["message"]` de `generate_rich_visualization` de la consigne explicite anti-redondance Markdown après génération dans l'Iframe.
 # 5.233.0.2: Contrainte de sortie JSON via response_schema=VisualCriticOutput dans _run_visual_critic et LeafletSchema dans SYS_VISUAL_REPAIR, décoration @echo_tool et simplification des retours.
@@ -50,6 +51,11 @@ from echo_http import load_image_as_base64
 from echo_browser_lib import render_ephemeral_html
 from echo_ui import EchoUI
 from echo_state_manager import EchoStateManager
+from echo_subagent_hub import (
+    extract_response_parts_and_text,
+    mark_subagent_running,
+    save_subagent_meta,
+)
 from echo_codex_git import CodexRepo
 from echo_paths import format_codex_storage_path, get_codex_lock
 from echo_constants import (
@@ -147,9 +153,7 @@ class Tools:
           response_schema=VisualCriticOutput,
       )
       if critic_data and critic_data.get("candidates"):
-        c_parts = critic_data["candidates"][0].get("content", {}).get("parts", [])
-        c_raw = "".join(p.get("text", "") for p in c_parts if not p.get("thought"))
-        c_clean, _ = split_thought_process(c_raw)
+        _, c_clean = extract_response_parts_and_text(critic_data)
         c_parsed = VisualCriticOutput.model_validate_json(c_clean.strip())
         verdict = c_parsed.verdict
         score = max(0, min(10, c_parsed.score))
@@ -564,6 +568,18 @@ class Tools:
     history.append({"role": "user", "parts": user_parts})
     state_mgr.save_thread_step(sid, chat_id, "image_gen", len(history) - 1, "user", user_parts)
 
+    img_meta = {
+        "sub_sid": sid,
+        "chat_id": chat_id,
+        "engine": "image_gen",
+        "role_name": f"Studio Visuel IA ({aspect_ratio})",
+        "model_key": MODEL_IMAGE_GEN,
+        "status": "running",
+    }
+    save_subagent_meta(state_mgr, sid, img_meta)
+    mark_subagent_running(chat_id, sid, True)
+    final_img_status = "error"
+
     generated_candidates: List[Dict[str, Any]] = []
     ext_map = {
         "image/png": ".png",
@@ -850,6 +866,7 @@ class Tools:
           f"lui convient, Le Modèle DOIT clôturer la session via `close_image_session(sub_sid=\"{sid}\")`."
       )
 
+      final_img_status = "completed"
       return (
           html_viewer,
           wrap_tool_output(
@@ -867,11 +884,16 @@ class Tools:
       )
 
     except Exception as e:
+      final_img_status = "error"
       await events.status(f"❌ [{sid}] Échec de la génération d'image.", done=True)
       return wrap_tool_output(
           text=f"❌ Erreur lors de la génération d'image (`{sid}`) : {str(e)}",
           status={"status": "error", "sub_sid": sid},
       )
+    finally:
+      mark_subagent_running(chat_id, sid, False)
+      img_meta["status"] = final_img_status
+      save_subagent_meta(state_mgr, sid, img_meta)
 
   @echo_tool
   async def close_image_session(

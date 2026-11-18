@@ -1,11 +1,12 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.7.1.1
+version: 6.7.1.2
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.2: Ajout du registre SSOT ECHO_SUBAGENT_ENGINES_REGISTRY (11 moteurs) et ajout de delegate_deep_research, delegate_to_n8n_grapher et ask_data_broker dans DELEGATE_AGENT_BLACKLIST.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Ajout des 8 constantes SSOT V6.7 de parallélisme/supervision, MAJ DELEGATE_AGENT_BLACKLIST (control_subagents) et parallélisme dans DELEGATE_SYSTEM_APPENDIX.
 # 6.6.5.2: Purge des constantes WebGPU v5 obsolètes (ECHO_EDGE_*, ECHO_MOBILE_UA_PATTERN) suite à la factorisation dans le store Svelte.
@@ -700,6 +701,131 @@ ECHO_COUNCIL_DEFAULT_CALLS_PER_ROUND = 5  # Quota d'appels d'outils par défaut 
 
 DEEP_RESEARCH_MAX_CALLS_DEFAULT = 200
 
+# Registre SSOT des moteurs de sous-agents et de leurs métadonnées UI/télémétrie
+ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
+    "delegate": {
+        "thread_type": "expert",
+        "icon": "🎓",
+        "color": "emerald",
+        "member_role": "agent",
+        "role_order": 100,
+        "has_tool_loop": True,
+        "is_addressable": True,
+        "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_CALLS,
+        "default_label": "Sous-agent Expert",
+    },
+    "council": {
+        "thread_type": "council",
+        "icon": "🏛️",
+        "color": "purple",
+        "member_role": "participant",
+        "role_order": 100,
+        "has_tool_loop": True,
+        "is_addressable": True,
+        "default_slice_limit": ECHO_COUNCIL_DEFAULT_CALLS_PER_ROUND,
+        "default_label": "Participant Conseil",
+    },
+    "council_synthesis": {
+        "thread_type": "council",
+        "icon": "🏛️",
+        "color": "purple",
+        "member_role": "synthesis",
+        "role_order": 999,
+        "has_tool_loop": False,
+        "is_addressable": False,
+        "default_slice_limit": 0,
+        "default_label": "Synthèse du Conseil",
+    },
+    "supervisor": {
+        "thread_type": "supervisor",
+        "icon": "📋",
+        "color": "amber",
+        "member_role": "worker",
+        "role_order": 100,
+        "has_tool_loop": True,
+        "is_addressable": True,
+        "default_slice_limit": ECHO_AUTONOMOUS_ROUND_MAX_CALLS,
+        "default_label": "Worker Supervisé",
+    },
+    "supervisor_critic": {
+        "thread_type": "supervisor",
+        "icon": "⚖️",
+        "color": "amber",
+        "member_role": "critic",
+        "role_order": 900,
+        "has_tool_loop": False,
+        "is_addressable": False,
+        "default_slice_limit": 0,
+        "default_label": "Critique",
+    },
+    "supervisor_consolidator": {
+        "thread_type": "supervisor",
+        "icon": "📑",
+        "color": "amber",
+        "member_role": "consolidator",
+        "role_order": 999,
+        "has_tool_loop": False,
+        "is_addressable": False,
+        "default_slice_limit": 0,
+        "default_label": "Consolidation",
+    },
+    "navigator": {
+        "thread_type": "web",
+        "icon": "🌐",
+        "color": "cyan",
+        "member_role": "agent",
+        "role_order": 100,
+        "has_tool_loop": True,
+        "is_addressable": True,
+        "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_CALLS,
+        "default_label": "Navigateur Web",
+    },
+    "deep_research": {
+        "thread_type": "deep_research",
+        "icon": "🕵️",
+        "color": "cyan",
+        "member_role": "agent",
+        "role_order": 100,
+        "has_tool_loop": True,
+        "is_addressable": True,
+        "default_slice_limit": ECHO_AUTONOMOUS_ROUND_MAX_CALLS,
+        "default_label": "Recherche Profonde",
+    },
+    "n8n_grapher": {
+        "thread_type": "n8n_grapher",
+        "icon": "⚡",
+        "color": "amber",
+        "member_role": "agent",
+        "role_order": 100,
+        "has_tool_loop": True,
+        "is_addressable": True,
+        "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_CALLS,
+        "default_label": "Architecte N8N",
+    },
+    "data_broker": {
+        "thread_type": "data_broker",
+        "icon": "🔌",
+        "color": "cyan",
+        "member_role": "agent",
+        "role_order": 100,
+        "has_tool_loop": True,
+        "is_addressable": True,
+        "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_CALLS,
+        "default_label": "Data Broker",
+    },
+    "image_gen": {
+        "thread_type": "image_gen",
+        "icon": "🎨",
+        "color": "purple",
+        "member_role": "agent",
+        "role_order": 100,
+        "has_tool_loop": False,
+        "is_addressable": False,
+        "default_slice_limit": 0,
+        "default_label": "Studio Visuel IA",
+    },
+}
+
 # ⚠️  MAINTENANCE OBLIGATOIRE
 # À chaque création, modification ou suppression d'une function call dans les
 # tools ECHO, évaluer si elle doit figurer dans cette blacklist.
@@ -729,6 +855,9 @@ DELEGATE_AGENT_SYSTEM_TOOLS: frozenset = frozenset({
 DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
     # 1. Récursion (depth=1 guard — le seul guard de profondeur nécessaire)
     "delegate_to_agent",
+    "delegate_deep_research",
+    "delegate_to_n8n_grapher",
+    "ask_data_broker",
     # 1b. Orchestration cognitive (chacun lance des agents en interne)
     "consult_council",
     "consult_supervised_workers",

@@ -118,7 +118,19 @@ export interface EchoCognitionThreadMeta {
 	role?: string;
 	role_name?: string;
 	skill_id?: string | null;
-	engine?: 'delegate' | 'navigator' | 'council' | 'supervisor' | 'deep_research' | string;
+	engine?:
+		| 'delegate'
+		| 'navigator'
+		| 'council'
+		| 'council_synthesis'
+		| 'supervisor'
+		| 'supervisor_critic'
+		| 'supervisor_consolidator'
+		| 'deep_research'
+		| 'n8n_grapher'
+		| 'data_broker'
+		| 'image_gen'
+		| string;
 	status?: EchoSubagentStatus | string;
 	slice_calls_used?: number;
 	slice_calls_limit?: number;
@@ -127,12 +139,26 @@ export interface EchoCognitionThreadMeta {
 	checkpoint_reason?: string | null;
 	group_id?: string | null;
 	updated_at?: number;
-	thread_type?: 'web' | 'council' | 'supervisor' | 'expert' | 'agent';
+	updated_at_ms?: number;
+	thread_type?:
+		| 'web'
+		| 'council'
+		| 'supervisor'
+		| 'deep_research'
+		| 'n8n_grapher'
+		| 'data_broker'
+		| 'image_gen'
+		| 'expert'
+		| 'agent';
 	icon?: string;
 	color?: string;
 	display_label?: string;
 	model_key?: string | null;
 	is_running?: boolean;
+	member_role?: 'participant' | 'synthesis' | 'worker' | 'critic' | 'consolidator' | 'agent' | string;
+	role_order?: number;
+	has_tool_loop?: boolean;
+	is_addressable?: boolean;
 	[key: string]: any;
 }
 

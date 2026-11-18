@@ -1,11 +1,12 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 6.7.1.1
+version: 6.7.1.2
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.2: Câblage run_cognitive_step sur synthèse/critique/consolidation, role_order déterministe, normalisation _normalize_workers_input et fail-fast Phase 1.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Câblage de consult_council et consult_supervised_workers sur EchoSubagentController et suppression de list_councils, close_council, list_supervised_tasks et close_supervised_task.
 # 6.6.2.1: Persistance save_subagent_meta et save_thread_step pour la synthèse consult_council et les phases critique/consolidation de consult_supervised_workers.
@@ -18,7 +19,7 @@ import asyncio
 import uuid
 import datetime
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any, Literal, Tuple
+from typing import Optional, List, Dict, Any, Literal, Tuple, Union
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
@@ -293,9 +294,12 @@ class Tools:
     @echo_tool
     async def consult_council(
         self,
-        question: str,
-        participants: List[str],
-        council_id: str,
+        question: str = Field(..., description="Question ou problématique soumise au conseil."),
+        participants: List[str] = Field(
+            ...,
+            description="Liste d'au moins 2 identifiants de skills existants (ou 1 skill avec multiplier >= 2). Appeler list_skills / forge_skill au préalable si nécessaire.",
+        ),
+        council_id: str = Field(..., description="Identifiant unique du conseil."),
         target_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_PROMETHEUS",
         synthesis_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_PROMETHEUS",
         rounds: Optional[int] = None,
@@ -393,19 +397,47 @@ class Tools:
                 f"- Option C (`participants`) : {opt_s}."
             )
 
+        # Résolution et normalisation du council_id (évite toute collision avec le séparateur '_')
+        cid = sanitize_echo_id(council_id, fallback="council").replace("_", "-")
+
         # Chargement et validation de chaque skill, puis démultiplication par multiplier
         roster = []
         participant_idx = 1
         for sid in skill_ids:
             content = await asyncio.to_thread(get_skill_content, user_id, sid)
             if not content:
-                return f"❌ Skill '{sid}' introuvable. Le Modèle DOIT utiliser l'outil forge_skill au préalable."
+                err_msg = f"❌ Skill '{sid}' introuvable. Le Modèle DOIT utiliser l'outil forge_skill au préalable."
+                err_sid = f"thread_council_{cid}_{sid}"
+                err_state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+                save_subagent_meta(
+                    err_state,
+                    err_sid,
+                    {
+                        "sub_sid": err_sid,
+                        "chat_id": chat_id,
+                        "engine": "council",
+                        "role_name": f"Erreur Skill ({sid})",
+                        "group_id": cid,
+                        "role_order": 100 + participant_idx,
+                        "status": "error",
+                    },
+                )
+                err_state.save_thread_step(
+                    err_sid,
+                    chat_id,
+                    "council",
+                    0,
+                    "model",
+                    [{"text": err_msg}],
+                )
+                return err_msg
             meta = parse_skill_metadata(content)
             base_name = meta.get("name", sid)
             for m_idx in range(1, multiplier + 1):
                 inst_id = f"{sid}_{m_idx}" if multiplier > 1 else sid
                 inst_name = f"{base_name} #{m_idx}" if multiplier > 1 else base_name
                 roster.append({
+                    "idx": participant_idx,
                     "instance_id": inst_id,
                     "skill_id": sid,
                     "name": inst_name,
@@ -414,8 +446,6 @@ class Tools:
                 })
                 participant_idx += 1
 
-        # Résolution et normalisation du council_id (évite toute collision avec le séparateur '_')
-        cid = sanitize_echo_id(council_id, fallback="council").replace("_", "-")
         max_calls_per_round = self.user_valves.COUNCIL_EXPERT_MAX_CALLS_PER_ROUND
 
         await events.status(
@@ -490,6 +520,7 @@ class Tools:
                         engine="council",
                         group_id=cid,
                         role_name=f"{participant['alias']} ({participant['name']})",
+                        role_order=100 + participant["idx"],
                         key_switch_threshold=self.valves.KEY_SWITCH_THRESHOLD,
                         max_retries=self.valves.MAX_RETRIES,
                         __user__=__user__,
@@ -546,59 +577,24 @@ class Tools:
 
             synthesis_system = SYS_ORCHESTRATOR_COUNCIL_SYNTHESIS
 
-            synthesis_payload = {
-                "contents": [{"role": "user", "parts": [{"text": transcript}]}],
-                "systemInstruction": {"parts": [{"text": synthesis_system}]},
-                "generationConfig": {**get_generation_config(synthesis_model, override_thinking="high"), "maxOutputTokens": 16000}
-            }
-
-            res, synth_model_used, _ = await EchoGeminiClient.call_cascade(
-                target_model_key=synthesis_model,
-                payload=synthesis_payload,
+            synthesis_text, synth_model_used, _ = await EchoSubagentController.run_cognitive_step(
                 user_id=user_id,
-                metadata=(__metadata__ or {}),
-                events=events,
+                chat_id=chat_id,
+                sub_sid=f"thread_council_{cid}_synthesis",
+                engine="council_synthesis",
+                role_name=f"Synthèse du Conseil ({cid})",
+                target_model_key=synthesis_model,
+                user_prompt=transcript,
+                display_user_prompt=f"Synthèse du conseil [{cid}] ({len(roster)} experts, {effective_rounds} tours) — Question : {question[:500]}",
+                system_prompt=synthesis_system,
+                group_id=cid,
+                role_order=999,
+                override_thinking="high",
+                max_output_tokens=16000,
                 timeout=self.valves.COGNITIVE_TIMEOUT,
-                include_thoughts=False,
-            )
-
-            if not res:
-                synthesis_text = "❌ Cascade épuisée : aucun modèle disponible pour la synthèse."
-            else:
-                candidates = res.get("candidates", [])
-                synthesis_text = "".join(
-                    p.get("text", "") for p in candidates[0]["content"]["parts"]
-                ) if candidates else "❌ Erreur : synthèse vide."
-
-            state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-            synth_sid = f"thread_council_{cid}_synthesis"
-            save_subagent_meta(
-                state,
-                synth_sid,
-                {
-                    "sub_sid": synth_sid,
-                    "engine": "council_synthesis",
-                    "role_name": f"Synthèse du Conseil ({cid})",
-                    "model_key": synth_model_used or synthesis_model,
-                    "group_id": cid,
-                    "status": "completed",
-                },
-            )
-            state.save_thread_step(
-                synth_sid,
-                chat_id,
-                "council_synthesis",
-                0,
-                "user",
-                [{"text": f"Synthèse du conseil [{cid}] ({len(roster)} experts, {effective_rounds} tours) — Question : {question[:500]}"}],
-            )
-            state.save_thread_step(
-                synth_sid,
-                chat_id,
-                "council_synthesis",
-                1,
-                "model",
-                [{"text": synthesis_text}],
+                events=events,
+                metadata=(__metadata__ or {}),
+                fallback_error="❌ Cascade épuisée : aucun modèle disponible pour la synthèse.",
             )
 
             # ── Phase 4 : Clôture ──
@@ -619,11 +615,77 @@ class Tools:
     # 3. SUPERVISEUR (Boucle critique / correction récursive)
     # ==========================================================================
 
+    @staticmethod
+    def _normalize_workers_input(raw_workers: Any) -> Dict[str, dict]:
+        """Normalise l'entrée `workers` (dict, list ou JSON string) en `{worker_id: {task, ...}}`."""
+        parsed = raw_workers
+        if isinstance(raw_workers, str):
+            try:
+                parsed = json.loads(raw_workers)
+            except Exception as e:
+                raise ValueError(f"Format JSON invalide pour `workers` : {e}")
+
+        if isinstance(parsed, list):
+            if not parsed:
+                raise ValueError("`workers` ne peut pas être une liste vide.")
+            converted: Dict[str, dict] = {}
+            for idx, item in enumerate(parsed, 1):
+                if isinstance(item, str) and item.strip():
+                    converted[f"worker_{idx}"] = {"task": item.strip()}
+                elif isinstance(item, dict):
+                    w_id = str(item.get("id") or item.get("worker_id") or f"worker_{idx}").strip()
+                    w_task = str(item.get("task") or item.get("description") or "").strip()
+                    if not w_task:
+                        raise ValueError(
+                            f"Entrée `{w_id}` invalide dans `workers` : le champ `task` est requis et non vide."
+                        )
+                    entry = dict(item)
+                    entry["task"] = w_task
+                    converted[w_id] = entry
+                else:
+                    raise ValueError(
+                        f"Élément #{idx} invalide dans `workers` : dict ou str attendu."
+                    )
+            return converted
+
+        if not parsed or not isinstance(parsed, dict):
+            raise ValueError(
+                "`workers` DOIT être un dictionnaire non vide de la forme "
+                "`{'worker_id': {'task': '...', 'skill_id': '...'}}` ou `{'worker_id': 'description'}`."
+            )
+
+        normalized: Dict[str, dict] = {}
+        for raw_id, raw_cfg in parsed.items():
+            w_id = str(raw_id or "").strip()
+            if not w_id:
+                raise ValueError("Identifiant de worker vide interdit dans `workers`.")
+            if isinstance(raw_cfg, str):
+                if not raw_cfg.strip():
+                    raise ValueError(f"La tâche du worker `{w_id}` ne peut pas être vide.")
+                normalized[w_id] = {"task": raw_cfg.strip()}
+            elif isinstance(raw_cfg, dict):
+                w_task = str(raw_cfg.get("task") or raw_cfg.get("description") or "").strip()
+                if not w_task:
+                    raise ValueError(
+                        f"Le worker `{w_id}` DOIT définir un champ `task` non vide."
+                    )
+                entry = dict(raw_cfg)
+                entry["task"] = w_task
+                normalized[w_id] = entry
+            else:
+                raise ValueError(
+                    f"Configuration invalide pour le worker `{w_id}` : dict ou str attendu."
+                )
+        return normalized
+
     @echo_tool
     async def consult_supervised_workers(
         self,
-        objective: str,
-        workers: dict,
+        objective: str = Field(..., description="Objectif global de la mission supervisée."),
+        workers: Union[dict, list, str] = Field(
+            ...,
+            description="Dictionnaire des workers {'worker_id': {'task': '...', 'skill_id': '(optionnel)', 'system_prompt': '(optionnel)'}} ou {'worker_id': 'description de la tâche'}.",
+        ),
         target_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_APOLLO",
         critic_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_PROMETHEUS",
         max_correction_rounds: Optional[int] = None,
@@ -641,14 +703,10 @@ class Tools:
         if not chat_id:
             return "❌ Erreur: Aucun chat_id détecté."
 
-        # Parsing du dict workers
         try:
-            workers_dict = json.loads(workers) if isinstance(workers, str) else workers
-        except Exception as e:
-            return f"❌ Format JSON invalide pour workers : {e}"
-
-        if not workers_dict or not isinstance(workers_dict, dict):
-            return "❌ workers doit être un dict JSON non vide."
+            workers_dict = self._normalize_workers_input(workers)
+        except ValueError as e:
+            return f"❌ Erreur de format pour `workers` : {e}"
 
         task_id = f"sup_{uuid.uuid4().hex[:8]}"
         max_rounds = max_correction_rounds or self.user_valves.SUPERVISOR_MAX_CORRECTION_ROUNDS
@@ -683,9 +741,21 @@ class Tools:
                 text_val += "\n\n[⚠️ AVERTISSEMENT SYSTÈME : Ce worker a épuisé son budget d'appels d'outils et a été interrompu. Si la direction de son travail est bonne et que la tâche justifie d'être poursuivie, le Superviseur DOIT retourner un statut `needs_correction` avec des directives pour la suite. La relance lui octroiera automatiquement un nouveau budget.]"
             return text_val
 
-        async def _run_initial_worker(w_id: str, w_config: dict) -> Tuple[str, str]:
+        # Validation gracieuse des skill_id éventuels (repli en rôle descriptif si absent)
+        for w_id, w_cfg in workers_dict.items():
+            w_role = w_cfg.get("skill_id")
+            if w_role:
+                skill_txt = await asyncio.to_thread(get_skill_content, user_id, str(w_role))
+                if not skill_txt:
+                    base_sys = w_cfg.get("system_prompt") or f"Le Modèle est un agent chargé de : {w_cfg.get('task', '')}"
+                    w_cfg["system_prompt"] = f"[Rôle assigné : {w_role}]\n{base_sys}"
+                    w_cfg["role_name"] = w_cfg.get("role_name") or str(w_role)
+                    w_cfg["skill_id"] = None
+
+        async def _run_initial_worker(w_idx: int, w_id: str, w_config: dict) -> Tuple[str, str]:
             w_task = w_config.get("task", "")
             w_role = w_config.get("skill_id")
+            w_label = w_config.get("role_name") or w_id
             w_sys = w_config.get("system_prompt", f"Le Modèle est un agent chargé de : {w_task}")
             agent_sid = f"thread_supervisor_{task_id}_{w_id}"
             worker_sids[w_id] = agent_sid
@@ -701,6 +771,8 @@ class Tools:
                 autonomous_slice=True,
                 engine="supervisor",
                 group_id=task_id,
+                role_name=w_label,
+                role_order=100 + w_idx,
                 key_switch_threshold=self.valves.KEY_SWITCH_THRESHOLD,
                 max_retries=self.valves.MAX_RETRIES,
                 __user__=__user__,
@@ -711,19 +783,57 @@ class Tools:
             return w_id, _extract_worker_deliverable(res)
 
         init_results = await asyncio.gather(
-            *[_run_initial_worker(w_id, w_cfg) for w_id, w_cfg in workers_dict.items()],
+            *[_run_initial_worker(idx, w_id, w_cfg) for idx, (w_id, w_cfg) in enumerate(workers_dict.items(), 1)],
             return_exceptions=True,
         )
-        for idx, (w_id, _) in enumerate(workers_dict.items()):
-            res_item = init_results[idx]
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        for idx, (w_id, w_cfg) in enumerate(workers_dict.items(), 1):
+            res_item = init_results[idx - 1]
             if isinstance(res_item, Exception):
-                deliverables[w_id] = f"⚠️ Erreur d'exécution du worker `{w_id}` : {res_item}"
+                err_msg = f"⚠️ Erreur d'exécution du worker `{w_id}` : {res_item}"
+                deliverables[w_id] = err_msg
+                agent_sid = worker_sids.get(w_id) or f"thread_supervisor_{task_id}_{w_id}"
+                worker_sids[w_id] = agent_sid
+                save_subagent_meta(
+                    state,
+                    agent_sid,
+                    {
+                        "sub_sid": agent_sid,
+                        "chat_id": chat_id,
+                        "engine": "supervisor",
+                        "role_name": w_cfg.get("role_name") or w_id,
+                        "role_order": 100 + idx,
+                        "group_id": task_id,
+                        "model_key": target_model,
+                        "status": "error",
+                    },
+                )
+                state.save_thread_step(
+                    agent_sid,
+                    chat_id,
+                    "supervisor",
+                    0,
+                    "model",
+                    [{"text": err_msg}],
+                )
             else:
                 _, text_out = res_item
                 deliverables[w_id] = text_out
 
+        # Fail-Fast : si tous les workers ont échoué techniquement, court-circuiter Critique & Consolidation
+        if init_results and all(isinstance(r, Exception) for r in init_results):
+            await events.status(f"❌ [{task_id}] Échec fatal de tous les workers.", done=True)
+            err_report = "\n\n".join(f"### WORKER: {w_id}\n{txt}" for w_id, txt in deliverables.items())
+            return wrap_tool_output(
+                text=f"❌ Échec technique de tous les workers [{task_id}] :\n\n{err_report}",
+                status={
+                    "status": "error",
+                    "task_id": task_id,
+                    "workers_count": len(workers_dict),
+                },
+            )
+
         # ── Phase 2+3 : Boucle critique / correction ──
-        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
         critic_sid = f"thread_supervisor_{task_id}_critic"
         critic_step_idx = 0
         correction_round = 0
@@ -745,67 +855,30 @@ class Tools:
                 objective=objective,
                 deliverables_text=deliverables_text
             )
-            critic_res, critic_used, _ = await EchoGeminiClient.call_cascade(
-                target_model_key=critic_model,
-                payload={
-                    "contents": [{"role": "user", "parts": [{"text": critic_prompt}]}],
-                    "generationConfig": get_generation_config(critic_model, override_thinking="high"),
-                },
+            critic_text, critic_used, critic_parsed = await EchoSubagentController.run_cognitive_step(
                 user_id=user_id,
-                metadata=(__metadata__ or {}),
-                events=events,
-                timeout=self.valves.COGNITIVE_TIMEOUT,
-                include_thoughts=False,
+                chat_id=chat_id,
+                sub_sid=critic_sid,
+                engine="supervisor_critic",
+                role_name=f"Critique ({task_id})",
+                target_model_key=critic_model,
+                user_prompt=critic_prompt,
+                display_user_prompt=f"Évaluation critique round {correction_round}/{max_rounds} ({len(deliverables)} livrables) — Objectif : {objective[:400]}",
+                group_id=task_id,
+                role_order=900,
+                step_index=critic_step_idx,
+                override_thinking="high",
+                max_output_tokens=8192,
                 response_schema=SupervisorCriticOutput,
-            )
-
-            if not critic_res:
-                await events.status(f"⚠️ [{task_id}] Critique indisponible — validation forcée.", done=True)
-                break
-
-            # Extraction du verdict JSON
-            critic_text = ""
-            candidates = critic_res.get("candidates", [])
-            if candidates:
-                critic_text = "".join(
-                    p.get("text", "") for p in candidates[0].get("content", {}).get("parts", [])
-                    if "text" in p and not p.get("thought")
-                )
-
-            save_subagent_meta(
-                state,
-                critic_sid,
-                {
-                    "sub_sid": critic_sid,
-                    "engine": "supervisor_critic",
-                    "role_name": f"Critique ({task_id})",
-                    "model_key": critic_used or critic_model,
-                    "group_id": task_id,
-                    "status": "completed",
-                },
-            )
-            state.save_thread_step(
-                critic_sid,
-                chat_id,
-                "supervisor_critic",
-                critic_step_idx,
-                "user",
-                [{"text": f"Évaluation critique round {correction_round}/{max_rounds} ({len(deliverables)} livrables) — Objectif : {objective[:400]}"}],
-            )
-            state.save_thread_step(
-                critic_sid,
-                chat_id,
-                "supervisor_critic",
-                critic_step_idx + 1,
-                "model",
-                [{"text": critic_text}],
+                timeout=self.valves.COGNITIVE_TIMEOUT,
+                events=events,
+                metadata=(__metadata__ or {}),
+                fallback_error="",
             )
             critic_step_idx += 2
 
-            try:
-                critic_parsed = SupervisorCriticOutput.model_validate_json(critic_text.strip())
-            except Exception:
-                await events.status(f"⚠️ [{task_id}] Verdict non parseable — validation forcée.", done=True)
+            if not critic_text or critic_parsed is None:
+                await events.status(f"⚠️ [{task_id}] Critique indisponible ou non parseable — validation forcée.", done=True)
                 break
 
             verdict = critic_parsed.verdict
@@ -886,56 +959,23 @@ class Tools:
             consolidation_text=consolidation_text
         )
 
-        consolidation_res, consol_used, _ = await EchoGeminiClient.call_cascade(
-            target_model_key="MODEL_APOLLO",
-            payload={
-                "contents": [{"role": "user", "parts": [{"text": consolidation_prompt}]}],
-                "generationConfig": {**get_generation_config("MODEL_APOLLO", override_thinking="medium"), "maxOutputTokens": 16000},
-            },
+        final_text, consol_used, _ = await EchoSubagentController.run_cognitive_step(
             user_id=user_id,
-            metadata=(__metadata__ or {}),
-            events=events,
+            chat_id=chat_id,
+            sub_sid=f"thread_supervisor_{task_id}_consolidator",
+            engine="supervisor_consolidator",
+            role_name=f"Consolidation ({task_id})",
+            target_model_key=target_model,
+            user_prompt=consolidation_prompt,
+            display_user_prompt=f"Consolidation [{task_id}] ({len(deliverables)} livrables) — Objectif : {objective[:400]}",
+            group_id=task_id,
+            role_order=999,
+            override_thinking="medium",
+            max_output_tokens=16000,
             timeout=self.valves.COGNITIVE_TIMEOUT,
-            include_thoughts=False,
-        )
-
-        if not consolidation_res:
-            final_text = "❌ Cascade épuisée pour la consolidation."
-        else:
-            candidates = consolidation_res.get("candidates", [])
-            final_text = "".join(
-                p.get("text", "") for p in candidates[0].get("content", {}).get("parts", [])
-                if "text" in p
-            ) if candidates else "❌ Consolidation vide."
-
-        consol_sid = f"thread_supervisor_{task_id}_consolidator"
-        save_subagent_meta(
-            state,
-            consol_sid,
-            {
-                "sub_sid": consol_sid,
-                "engine": "supervisor_consolidator",
-                "role_name": f"Consolidation ({task_id})",
-                "model_key": consol_used or "MODEL_APOLLO",
-                "group_id": task_id,
-                "status": "completed",
-            },
-        )
-        state.save_thread_step(
-            consol_sid,
-            chat_id,
-            "supervisor_consolidator",
-            0,
-            "user",
-            [{"text": f"Consolidation [{task_id}] ({len(deliverables)} livrables) — Objectif : {objective[:400]}"}],
-        )
-        state.save_thread_step(
-            consol_sid,
-            chat_id,
-            "supervisor_consolidator",
-            1,
-            "model",
-            [{"text": final_text}],
+            events=events,
+            metadata=(__metadata__ or {}),
+            fallback_error="❌ Cascade épuisée pour la consolidation.",
         )
 
         # Clôture

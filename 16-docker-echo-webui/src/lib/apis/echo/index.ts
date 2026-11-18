@@ -307,8 +307,11 @@ export const getEchoCognitionSnapshot = async (
 	);
 
 export interface EchoSubagentMessageResponse {
-	status: 'queued' | 'started';
+	status: 'queued' | 'started' | 'multi';
 	sub_sid: string;
+	affected_sids?: string[];
+	started_sids?: string[];
+	queued_sids?: string[];
 	queue_length?: number;
 }
 
@@ -316,12 +319,19 @@ export const postEchoSubagentMessage = async (
 	token: string,
 	chatId: string,
 	subSid: string,
-	content: string
+	content: string,
+	targetSids?: string[]
 ): Promise<EchoSubagentMessageResponse> =>
 	echoRequestJson<EchoSubagentMessageResponse>(
 		`/cognition/${encodeURIComponent(chatId)}/threads/${encodeURIComponent(subSid)}/message`,
 		token,
-		{ method: 'POST', body: JSON.stringify({ content }) },
+		{
+			method: 'POST',
+			body: JSON.stringify({
+				content,
+				...(targetSids && targetSids.length > 0 ? { target_sids: targetSids } : {})
+			})
+		},
 		"Échec d'envoi du message au sous-agent"
 	);
 

@@ -1,11 +1,12 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 6.7.1.1
+version: 6.7.1.2
 description: Composant système interne : ECHO Sovereign Web Search.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.2: Conservation de l'historique thread deep_research pour observabilité UI (suppression close auto) et role_name explicite.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Câblage de delegate_deep_research sur EchoSubagentController (ECHO_AUTONOMOUS_ROUND_MAX_CALLS).
 # 5.238.1.1: Ajout de MODEL_ATHENA dans target_model_key de delegate_deep_research.
@@ -185,19 +186,14 @@ class Tools:
             slice_max_calls=ECHO_AUTONOMOUS_ROUND_MAX_CALLS,
             autonomous_slice=True,
             engine="deep_research",
+            role_name="Recherche Profonde",
             __user__=__user__,
             __metadata__=child_metadata,
             __event_emitter__=__event_emitter__,
             __event_call__=__event_call__,
         )
-        
-        # Nettoyage de la DB (thread éphémère) et de la session Playwright éventuelle
-        try:
-            await EchoSubagentController.execute_control_action(
-                action="close", user_id=user_id, chat_id=chat_id, target_ids=[sid]
-            )
-        except Exception:
-            pass
+
+        # Nettoyage de la session Playwright éventuelle uniquement (conservation du thread pour l'UI)
         try:
             from echo_browser_lib import EchoBrowserLib
             await EchoBrowserLib(10, sid, user_id).reset_session()

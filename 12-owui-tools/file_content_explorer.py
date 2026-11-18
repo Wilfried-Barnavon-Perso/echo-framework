@@ -1,11 +1,12 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 6.6.5.1
+version: 6.6.5.2
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.5.2: Filtrage des pensées via extract_response_parts_and_text dans _call_apollo_with_heartbeat.  # noqa: E501
 # 6.6.5.1: Extension du paramètre workspace de show_image_to_user au domaine "browserviews".  # noqa: E501
 # 5.233.0.1: Unification du wrapper dans wrap_tool_output, décoration @echo_tool sur les 6 méthodes publiques et simplification des retours.
 # 5.232.5.1: Extension du paramètre workspace de show_image_to_user aux espaces "main", "plans", "generated" et "sandbox".  # noqa: E501
@@ -28,7 +29,7 @@ from fastapi.responses import HTMLResponse
 # Importations ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_events import EchoEvents  # noqa: E402
-from echo_core import wrap_tool_output, echo_tool, split_thought_process  # noqa: E402
+from echo_core import wrap_tool_output, echo_tool  # noqa: E402
 from echo_paths import (  # noqa: E402
     extract_clean_filename,
     resolve_extended_file_path,
@@ -46,6 +47,7 @@ from echo_constants import (  # noqa: E402
     is_text_mime,
 )
 from echo_prompts import SYS_EXPLORE_SENSORY, SYS_EXPLORER_PROBE, USR_EXPLORE_SENSORY  # noqa: E402
+from echo_subagent_hub import extract_response_parts_and_text  # noqa: E402
 
 
 class Tools:
@@ -710,9 +712,12 @@ class Tools:
         candidates = target.get("candidates", [])
         if not candidates:
             return None, None, model_used, reason, "Réponse vide du modèle."
-        cand = candidates[0]
-        full_text = "".join([p["text"] for p in cand.get("content", {}).get("parts", []) if "text" in p])
-        clean, thought = split_thought_process(full_text)
+        parts, clean = extract_response_parts_and_text({"candidates": candidates})
+        thought = "\n\n".join(
+            p.get("text", "").strip()
+            for p in parts
+            if p.get("thought") and p.get("text")
+        ) or None
         return clean, thought, model_used, reason, None
 
     async def _execute_multimodal_analysis(

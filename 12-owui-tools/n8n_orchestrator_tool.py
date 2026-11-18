@@ -1,11 +1,12 @@
 """
 title: ECHO N8N Orchestrator
 author: ECHO
-version: 6.7.1.1
+version: 6.7.1.2
 description: Outil agentique de cycle de vie et d'exécution N8N (Phase 2 & 3). Refactorisation institutionnelle et N8N Grapher.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.1.2: Délégation directe de delegate_to_n8n_grapher via EchoSubagentController.run_or_resume (engine="n8n_grapher").
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 5.233.0.1: Décoration @echo_tool sur les 12 méthodes publiques et remplacement intégral des 68 appels wrap_tool_output par des retours directs.
 # 5.231.42.2: Validation pré-vol des chemins WriteBinaryFile/ReadWriteFile (__ECHO_DOWNLOAD_DIR__/), purge de l'ancien démon au redéploiement et transmission de echo_workflow_id à la suppression.
@@ -25,8 +26,13 @@ sys.path.append("/app/backend/echo_libs")
 from echo_state_manager import EchoStateManager
 from echo_core import echo_tool
 from echo_events import EchoEvents
-from echo_constants import ECHO_N8N_WORKER_URL
+from echo_constants import (
+    ECHO_N8N_WORKER_URL,
+    ECHO_SUBAGENT_CHECKPOINT_CALLS,
+    ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+)
 from echo_paths import sanitize_echo_id
+from echo_subagent_hub import EchoSubagentController
 
 
 class Tools:
@@ -698,29 +704,32 @@ class Tools:
             "code_executor", "create_codex", "read_codex", "edit_codex", "list_codex", "search_codex"
         ]
 
-        import sys
-        _delegate_mod = sys.modules.get("tool_agent_engine_tool")
-        _delegate_cls = getattr(_delegate_mod, "Tools", None) if _delegate_mod else None
-        if not _delegate_cls: 
-            return "Erreur : Délégation impossible (agent_engine introuvable)."
-
-        delegate = _delegate_cls()
         await events.status("⚙️ N8N Grapher : Conception du graphe en cours...")
 
         try:
             from echo_prompts import SYS_ORCHESTRATOR_N8N_GRAPHER
-            result = await delegate.delegate_to_agent(
+            result = await EchoSubagentController.run_or_resume(
+                user_id=__user__.get("id", "system"),
+                chat_id=chat_id or "",
                 task=instructions,
                 system_prompt=SYS_ORCHESTRATOR_N8N_GRAPHER,
+                sub_sid=f"thread_n8n_{uuid.uuid4().hex[:8]}",
                 target_model_key="MODEL_PROMETHEUS",
                 allowed_tools=allowed,
+                slice_max_calls=ECHO_SUBAGENT_CHECKPOINT_CALLS,
+                slice_timeout_sec=ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+                autonomous_slice=False,
+                engine="n8n_grapher",
+                role_name="Architecte N8N",
                 __user__=__user__,
-                __chat_id__=chat_id,
                 __metadata__=__metadata__,
                 __event_emitter__=__event_emitter__,
-                __event_call__=__event_call__
+                __event_call__=__event_call__,
             )
             await events.status("✅ N8N Grapher : Diagramme achevé et testé.", done=True)
+            if isinstance(result, dict) and "text" in result:
+                result["text"] = f"Rapport N8N Grapher :\n{result['text']}"
+                return result
             return f"Rapport N8N Grapher :\n{result}"
         except Exception as e:
             return f"Erreur lors de la délégation N8N Grapher : {str(e)}"
