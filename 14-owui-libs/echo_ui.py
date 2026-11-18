@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.239.7.1
+version: 5.239.7.2
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.7.2: Retrait de l'appel obsolète window.EchoWM.registerMountedWindow dans get_context_gauge_renderer_js.  # noqa: E501
 # 5.239.7.1: Rectification du fallback du tenant dans le HUD (aicode-consumers au lieu de ECHO).  # noqa: E501
 # 5.238.0.1: Factorisation intégrale du plein écran d'Iframe dans _get_boilerplate (script en <head>, Fullscreen API native + fallback postMessage, auto-binding #echo-iv-btn-fs et dimensionnement CSS déclaratif).  # noqa: E501
 # 5.234.1.1: Ajout du canal RPC Bidi dans get_floating_monitor_js (_echoUIInboxByChat, echoPushMonitorEvent, window.echoRequest, window.onEchoEvent).  # noqa: E501
 # 5.232.2.1: Support tactile mobile en mode 1:1 dans image_viewer (pan 1 doigt, pinch-to-zoom focalisé 2 doigts, touch-action dynamique et double-tap).  # noqa: E501
-# 5.232.0.1: Factorisation de build_rich_view_html et instrumentation JS d'interception d'erreurs (data-echo-visual-error sur console.error, error et unhandledrejection).  # noqa: E501
 
 
 import sys
@@ -2750,10 +2750,6 @@ class EchoUI(EchoRichUI):
     var barHtml = `<div class="echo-tooltip" style="min-width:180px;"><div style="display:flex;width:100%;height:6px;background:rgba(255,255,255,0.05);border-radius:3px;overflow:hidden;"><div style="width:${cache_pct}%;background:#8b5cf6;"></div><div style="width:${prompt_pct}%;background:#10b981;"></div><div style="width:${gen_pct}%;background:#f59e0b;"></div></div>${deltaBadge}<div class="tooltip-box" style="width:260px;"><div class="tooltip-title">CONTEXTE ${is_pending ? '(CALCUL EN COURS...)' : ''}</div><div class="tooltip-row"><span>Cache:</span> <span>${c_t}</span></div><div class="tooltip-row"><span>Prompt:</span> <span>${active_p_t}</span></div><div class="tooltip-row"><span>Génération:</span> <span>${g_t}</span></div><div class="tooltip-row" style="font-weight:bold;margin-top:4px;"><span>Total:</span> <span>${total_t} / ${max_t} (${total_pct}%)</span></div>${compRowHtml}${deltaTooltipRows}</div></div>`;
 
     hud.innerHTML = iconHtml + barHtml;
-
-    if (window.EchoWM && window.EchoWM.registerMountedWindow && chatId) {
-      window.EchoWM.registerMountedWindow('echo-nav-context-hud-wrapper', chatId);
-    }
   };
 """
 

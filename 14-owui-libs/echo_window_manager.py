@@ -2,16 +2,16 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 5.239.12.1
+version: 5.239.12.3
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.12.3: Isolation stricte de applyParkingForElement aux enfants directs de document.body et exclusion de [data-main-chat-pane] (Open WebUI v0.13.4).
+# 5.239.12.2: Purge des payloads de fenêtres fermées, auto-guérison wm_state au chargement et bridage de update_codes (0 pour jauge contexte, 1 hors Codex, 16 pour Codex).
 # 5.239.12.1: Exclusion SSOT et auto-guérison des HUDs transitoires (echo-migration-hud, echo-clone-hud) dans handle_rpc, get_chat_snapshot et hydrateChatState.
 # 5.237.19.1: Support du plein écran d'Iframe via EchoWM.toggleIframeFullscreen (echo:iframe:fullscreen, echo:iframe:fullscreen-state et touche Escape).
 # 5.237.4.1: Garde anti-matérialisation session.db dans _save_chat_state et résolution stricte propriétaire (user_id, chat_id) sans fallback multi-comptes.
-# 5.231.60.1: Retrait RPC img_session_action, EchoWM.submitChatPrompt et écouteurs postMessage echo:img_session:* (restauration agnosticisme pur).
-# 5.231.50.1: Pont postMessage echo:iframe:init/theme-update pour synchroniser fond et police des Iframes avec la fenêtre principale Open WebUI.
 
 import asyncio
 from contextlib import closing
@@ -34,7 +34,7 @@ WM_PREFIX = f"{ECHO_AUDIO_PREFIX}/wm"
 wm_router = APIRouter(prefix=WM_PREFIX, tags=["echo_wm"])
 wm_static_router = APIRouter(tags=["echo_wm_static"])
 
-WM_SCRIPT_VERSION = "5.239.12.1"
+WM_SCRIPT_VERSION = "5.239.12.3"
 LOADER_MARKER_START = "/* === ECHO_WM_START === */"
 LOADER_MARKER_END = "/* === ECHO_WM_END === */"
 WM_STATE_KEY = "wm_state"
@@ -49,6 +49,42 @@ def _is_transient_hud_id(wid: str) -> bool:
     """Indique si l'ID DOM cible un HUD transitoire/global exclu de wm_state."""
     s_wid = str(wid or "").strip()
     return not s_wid or s_wid.startswith(TRANSIENT_HUD_PREFIXES)
+
+
+def _sanitize_windows_dict(wins: Dict[str, Any]) -> bool:
+    """Assainit in-place le dictionnaire des fenêtres (auto-guérison du bloat SQLite). Retourne True si modifié."""
+    if not isinstance(wins, dict):
+        return False
+    dirty = False
+    for wid in list(wins.keys()):
+        w_entry = wins.get(wid)
+        if _is_transient_hud_id(wid) or not isinstance(w_entry, dict):
+            wins.pop(wid, None)
+            dirty = True
+            continue
+        if not w_entry.get("is_open"):
+            if w_entry.get("mount_code") or w_entry.get("update_code") or w_entry.get("update_codes"):
+                w_entry["mount_code"] = ""
+                w_entry["update_code"] = ""
+                w_entry["update_codes"] = []
+                dirty = True
+            continue
+        uc_list = w_entry.get("update_codes")
+        if wid == "echo-nav-context-hud-wrapper":
+            latest_uc = (uc_list[-1] if isinstance(uc_list, list) and uc_list else "") or w_entry.get("update_code") or ""
+            if latest_uc and latest_uc != w_entry.get("mount_code"):
+                w_entry["mount_code"] = latest_uc
+                dirty = True
+            if w_entry.get("update_code") or uc_list:
+                w_entry["update_code"] = ""
+                w_entry["update_codes"] = []
+                dirty = True
+        elif wid != "echo-codex-hud":
+            if isinstance(uc_list, list) and len(uc_list) > 1:
+                w_entry["update_codes"] = [uc_list[-1]]
+                w_entry["update_code"] = uc_list[-1]
+                dirty = True
+    return dirty
 
 
 def extract_closure_context(fn: Any) -> Dict[str, str]:
@@ -262,6 +298,7 @@ class EchoWindowManager:
             return self._chat_states[key]
 
         state = {"windows": {}, "kv": {}}
+        needs_heal_save = False
         try:
             sm = EchoStateManager(uid, chat_id)
             if not os.path.isfile(sm.db_path):
@@ -272,10 +309,14 @@ class EchoWindowManager:
                 if isinstance(parsed, dict):
                     state["windows"] = parsed.get("windows") if isinstance(parsed.get("windows"), dict) else {}
                     state["kv"] = parsed.get("kv") if isinstance(parsed.get("kv"), dict) else {}
+                    if _sanitize_windows_dict(state["windows"]):
+                        needs_heal_save = True
         except Exception as e:
             print(f"[EchoWindowManager] Load state error ({chat_id}): {e}")
 
         self._chat_states[key] = state
+        if needs_heal_save:
+            self._save_chat_state(uid, chat_id)
         return state
 
     def _save_chat_state(self, user_id: str, chat_id: str) -> None:
@@ -493,19 +534,22 @@ class EchoWindowManager:
                     }
                     w_entry["is_open"] = True
                     w_entry["updated_at"] = now
-                    if action == "window_mounted" or not w_entry.get("mount_code"):
+                    if wid == "echo-nav-context-hud-wrapper" or action == "window_mounted" or not w_entry.get("mount_code"):
                         w_entry["mount_code"] = code
                         w_entry["update_code"] = ""
                         w_entry["update_codes"] = []
                     else:
                         if code != w_entry.get("mount_code"):
                             w_entry["update_code"] = code
-                            uc_list = w_entry.get("update_codes")
-                            if not isinstance(uc_list, list):
-                                uc_list = []
-                            if not uc_list or uc_list[-1] != code:
-                                uc_list.append(code)
-                            w_entry["update_codes"] = uc_list[-16:]
+                            if wid == "echo-codex-hud":
+                                uc_list = w_entry.get("update_codes")
+                                if not isinstance(uc_list, list):
+                                    uc_list = []
+                                if not uc_list or uc_list[-1] != code:
+                                    uc_list.append(code)
+                                w_entry["update_codes"] = uc_list[-16:]
+                            else:
+                                w_entry["update_codes"] = [code]
                     wins[wid] = w_entry
                 self._save_chat_state(effective_uid, effective_cid)
             return {"status": "ok"}
@@ -517,6 +561,9 @@ class EchoWindowManager:
                 wins = state.get("windows", {})
                 if window_id in wins:
                     wins[window_id]["is_open"] = False
+                    wins[window_id]["mount_code"] = ""
+                    wins[window_id]["update_code"] = ""
+                    wins[window_id]["update_codes"] = []
                     wins[window_id]["updated_at"] = time.time()
                     self._save_chat_state(user_id, chat_id)
                 await self.broadcast(
@@ -550,10 +597,7 @@ class EchoWindowManager:
         """Retourne l'état complet (KV, fenêtres ouvertes, appels RPC en attente et stats contexte) pour un chat."""
         state = self._load_chat_state(user_id, chat_id)
         wins_dict = state.get("windows", {})
-        stale_transient = [wid for wid in list(wins_dict.keys()) if _is_transient_hud_id(wid)]
-        if stale_transient:
-            for wid in stale_transient:
-                wins_dict.pop(wid, None)
+        if _sanitize_windows_dict(wins_dict):
             self._save_chat_state(user_id, chat_id)
 
         open_windows = [
@@ -675,13 +719,14 @@ def get_client_loader_js() -> str:
         const tag = (el.tagName || '').toUpperCase();
         if (tag === 'STYLE' || tag === 'SCRIPT' || tag === 'LINK') return true;
         if (el.getAttribute('data-echo-scope') === 'global') return true;
+        if (el.hasAttribute('data-main-chat-pane') || el.hasAttribute('data-chat')) return true;
         const id = el.id || '';
         if (
             id.startsWith('uctp-loader-') || id.startsWith('echo-edge-hud')
             || id === 'echo-migration-hud' || id === 'echo-clone-hud'
             || id === 'echo-hud-container' || id === 'echo-app-drawer-container'
         ) return true;
-        if (el.classList && el.classList.contains('echo-tooltip-floating')) return true;
+        if (el.classList && (el.classList.contains('echo-tooltip-floating') || el.classList.contains('app'))) return true;
         return false;
     }
 
@@ -884,7 +929,7 @@ def get_client_loader_js() -> str:
         },
 
         applyParkingForElement: function(el) {
-            if (!el || el.nodeType !== 1) return;
+            if (!el || el.nodeType !== 1 || el.parentElement !== document.body || isGlobalElement(el)) return;
             const cid = getElementChatId(el);
             if (!cid) return;
             if (!el.getAttribute('data-echo-chat-id')) {
@@ -916,8 +961,15 @@ def get_client_loader_js() -> str:
 
         syncAllWindowsVisibility: function() {
             if (!document.body) return;
-            const nodes = document.body.querySelectorAll('[data-echo-chat-id], [data-chat-id]');
-            nodes.forEach(el => EchoWM.applyParkingForElement(el));
+            document.body.querySelectorAll('[data-main-chat-pane][data-echo-chat-id], [data-main-chat-pane][data-echo-parked]').forEach(pane => {
+                pane.removeAttribute('data-echo-chat-id');
+                pane.removeAttribute('data-echo-parked');
+                pane.removeAttribute('data-echo-prev-display');
+                pane.style.removeProperty('display');
+            });
+            Array.from(document.body.children).forEach(el => {
+                if (getElementChatId(el)) EchoWM.applyParkingForElement(el);
+            });
         },
 
         tagInsertedElement: function(el) {

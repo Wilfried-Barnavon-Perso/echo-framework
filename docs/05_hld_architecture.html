@@ -758,7 +758,7 @@
           (<code>echo_protocol.py</code> v5.233.0.1,
           <code>echo_core.py</code> v5.239.17.1, <code>echo_db_schema.py</code> v5.237.20.2,
           <code>echo_session_gc.py</code> v5.237.20.2, <code>echo_aec.py</code> v5.235.5.2,
-          <code>echo_window_manager.py</code> v5.239.12.1 &amp; <code>echo_session_clone.py</code> v5.239.13.1)
+          <code>echo_window_manager.py</code> v5.239.12.3 &amp; <code>echo_session_clone.py</code> v5.239.13.1)
         </h3>
         <ul>
           <li><strong>Schéma Déclaratif SQLite v2 &amp; Gestion des Branches Mortes :</strong>
@@ -818,11 +818,12 @@
             événements
             transitoires <code>aec_event</code> / <code>aec_directive</code>. Le singleton
             <code>EchoWindowManager</code> (<code>echo_window_manager.py</code>
-            v5.239.12.1, intégrant la résolution stricte du couple propriétaire <code>(user_id, chat_id)</code> via
+            v5.239.12.3, intégrant la résolution stricte du couple propriétaire <code>(user_id, chat_id)</code> via
             <code>_resolve_user_id_by_email</code> et <code>_find_existing_chat_owner</code> /
             <code>_resolve_owner_uid</code>, la garde <code>os.path.isfile(sm.db_path)</code> interdisant
-            toute création de <code>session.db</code> orpheline et l'exclusion SSOT des HUDs transitoires
-            <code>_is_transient_hud_id</code>) et <code>echo_events.py</code> (v5.231.48.1)
+            toute création de <code>session.db</code> orpheline, l'exclusion SSOT des HUDs transitoires
+            <code>_is_transient_hud_id</code> et l'auto-guérison <code>_sanitize_windows_dict</code> purgeant les
+            payloads fermés et bridant <code>update_codes</code>) et <code>echo_events.py</code> (v5.231.48.1)
             assurent le double transport non-destructif UCTP
             bidirectionnel
             (Socket.IO + SSE/RPC <code>/echo/v1/wm/*</code> avec fallback <code>EchoWindowManager</code> dans
@@ -870,7 +871,7 @@
         </p>
 
         <h3>4. Algorithmes de Hachage Merkle, Registre Unifié &amp; Chiffrement AEAD du Vault
-          (<code>echo_state_manager.py</code> v5.239.11.1 &amp; <code>echo_crypto.py</code> v5.231.21.3)
+          (<code>echo_state_manager.py</code> v5.239.11.2 &amp; <code>echo_crypto.py</code> v5.231.21.3)
         </h3>
         <p><strong>1. Invariant Hash :</strong> <code>SHA-256(role + content_sorted + tool_io)</code>. Identité pure
           du
@@ -885,7 +886,9 @@
           (<code>enc:v1:&lt;nonce_b64&gt;:&lt;ciphertext_b64&gt;:&lt;tag_b64&gt;</code>) avec une clé 256 bits dérivée
           par utilisateur via <code>HKDF-SHA256</code> (<code>salt=user_id</code>,
           <code>info=b"echo-identity-vault"</code>) depuis <code>ECHO_VAULT_ENCRYPTION_KEY</code> et liée au contexte
-          <code>AAD = f"{user_id}:{service}:{account_id}"</code> (politique <em>Fail-Closed</em>).
+          <code>AAD = f"{user_id}:{service}:{account_id}"</code> (politique <em>Fail-Closed</em>). En parallèle,
+          <code>save_thread_step</code> déduplique <code>thoughtSignature</code> hors de <code>content_json</code> et
+          <code>get_thread_history</code> assure sa réhydratation universelle (incluant <code>inlineData</code>).
         </p>
         <div class="audit-note">
           <h4>✅ Exactitude - Cold Recovery</h4>
@@ -921,7 +924,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.239.24 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.31 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

@@ -200,8 +200,8 @@
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
         <h3>1. Architecture Backend ↔ Frontend, EchoWindowManager &amp; Protocole UCTP
-          (<code>echo_window_manager.py</code> v5.239.12.1, <code>echo_events.py</code> v5.231.48.1 &amp;
-          <code>echo_ui.py</code> v5.239.7.1)
+          (<code>echo_window_manager.py</code> v5.239.12.3, <code>echo_events.py</code> v5.231.48.1 &amp;
+          <code>echo_ui.py</code> v5.239.7.2)
         </h3>
         <ul>
           <li><strong>Canal d'Événements &amp; Double Transport Non-Destructif (<code>EchoEvents</code> &amp;
@@ -222,7 +222,7 @@
             d'<code>EchoWindowManager</code>).
           </li>
           <li><strong>Gestionnaire de Fenêtres Agnostique &amp; Isolation Multi-Chat
-            (<code>window_manager_filter.py</code> v5.231.55.1 &amp; <code>echo_ui.py</code> v5.239.7.1) :</strong>
+            (<code>window_manager_filter.py</code> v5.231.55.1 &amp; <code>echo_ui.py</code> v5.239.7.2) :</strong>
             Sert dynamiquement <code>/static/loader.js</code> sans cache (<code>Cache-Control: no-store</code>) en
             isolant le bundle (<code>get_full_loader_bundle_js</code>) dans un élément <code>&lt;script&gt;</code>
             dynamique (neutralisant <code>crossorigin="use-credentials"</code>, complété par
@@ -230,7 +230,9 @@
             <code>/</code>, synchronise les couleurs de fond et de police de la fenêtre principale vers les Iframes via
             <code>echo:iframe:init</code> / <code>theme-update</code>, parque et dé-parque les fenêtres selon la norme
             W3C CSSOM
-            (<code>data-echo-parked="1"</code>) lors des changements de chat SPA, scelle l'isolation par conversation
+            (<code>data-echo-parked="1"</code>, isolation stricte de <code>applyParkingForElement</code> aux enfants
+            directs de <code>document.body</code> avec exclusion de <code>[data-main-chat-pane]</code> pour Open WebUI
+            v0.13.4) lors des changements de chat SPA, scelle l'isolation par conversation
             (<code>data-chat-id</code>, <code>data-echo-chat-id</code>, <code>_echoUIPayloadsByChat</code> dans
             <code>_echoGetAggregatedPayload(chatId)</code>, <code>scoped_hud_id</code> sur <code>monitor_ECHO</code>,
             canal RPC bidirectionnel temps réel sans rechargement DOM <code>window.echoPushMonitorEvent</code> dans
@@ -244,7 +246,9 @@
             <code>_generate_webplayer_js</code>), isole les HUDs globaux (<code>data-echo-scope="global"</code>) et
             persiste la géométrie (<code>window.echoBindHudGeometry</code>) ainsi que le journal
             <code>[mount_code, update_codes]</code> dans <code>session.db</code>
-            (<code>echo_settings['wm_state']</code>).
+            (<code>echo_settings['wm_state']</code>) avec auto-guérison <code>_sanitize_windows_dict</code>
+            (purge des payloads fermés et bridage de <code>update_codes</code> : 0 pour jauge contexte, 1 hors Codex,
+            16 pour Codex).
           </li>
           <li><strong>Fragmentation UCTP Bidirectionnelle (<code>ECHO_UCTP_CHUNK_SIZE = 256 000</code>) :</strong> Tout
             payload Python &rarr; JS ou JS &rarr; Python excédant 256 Ko est découpé en chunks séquentiels
@@ -257,7 +261,7 @@
         </ul>
 
         <h3>2. Filtre Context Gauge, Calcul Différentiel &amp; Rendu Hot-Updatable (<code>context_gauge_filter.py</code>
-        v5.231.55.1 &amp; <code>echo_ui.py</code> v5.239.7.1)</h3>
+        v5.231.55.1 &amp; <code>echo_ui.py</code> v5.239.7.2)</h3>
         <p>Le filtre bidirectionnel <code>context_gauge_filter.py</code> (priorité 40) active en Inlet l'anneau pulsant
           (<code>is_pending=True</code>, <code>@keyframes echo-pulse</code>) et fige l'état du tour précédent via
           <code>archive_previous_context_stats()</code> ou initialise la référence du premier tour via
@@ -319,7 +323,7 @@
             iOS, cibles tactiles 44px, modales asynchrones (<code>window.echoCustomConfirm</code>,
             <code>window.echoCustomPrompt</code> à boutons <em>pills</em>, <code>window.mcpAlert</code>), CRUD du HUD
             Identity Vault intégralement chiffré en <code>AES-256-GCM</code> (<code>save_vault_credential</code> /
-            <code>list_vault_credentials</code> via <code>EchoStateManager</code> v5.239.11.1 et
+            <code>list_vault_credentials</code> via <code>EchoStateManager</code> v5.239.11.2 et
             <code>echo_crypto.py</code> v5.231.21.3) et assainissement DOM systématique via
             <code>window.echoSanitizeHTML</code>.
           </li>
@@ -334,7 +338,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.239.24 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.31 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

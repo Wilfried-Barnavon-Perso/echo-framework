@@ -2,16 +2,16 @@
 """
 title: ECHO Echo State Manager
 author: Wilfried BARNAVON
-version: 5.239.11.1
+version: 5.239.11.2
 description: Gestionnaire d'état SQLite et RAG.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.11.2: Déduplication de thoughtSignature hors de content_json dans save_thread_step et réhydratation universelle (incluant inlineData) dans get_thread_history.
 # 5.239.11.1: Fallback compte par défaut dans get_vault_credential si account_id est un alias externe.
 # 5.237.20.1: Persistance model_id dans message_shadows, lecture get_signature_by_id depuis les Shadows et suppression des méthodes de hachage cumulatif.
 # 5.236.0.1: Auto-matérialisation déclarative idempotente via ensure_db en écriture non-readonly.
 # 5.235.5.3: Alignement sur les 20 colonnes déclaratives de echo_resources (CRUD, allowed fields et _row_to_resource).
-# 5.235.5.2: Décorateur @_session_scope, suppression des DDL et tables mortes, intégration ECHO_TURN_CONTEXT et alignement 14 colonnes echo_resources.
 import contextlib
 import functools
 import os
@@ -561,10 +561,19 @@ class EchoStateManager:
     def save_thread_step(self, sub_sid: str, chat_id: Optional[str], role_id: str, step_index: int, role: str, content: List[dict], signature: Optional[str] = None):
         """Persiste une étape de thread cognitif (chat_id conservé pour compatibilité, ignoré en SQL)."""
         try:
+            clean_content = []
+            extracted_sig = signature
+            for part in (content or []):
+                if isinstance(part, dict) and "thoughtSignature" in part:
+                    if not extracted_sig and part.get("thoughtSignature"):
+                        extracted_sig = part["thoughtSignature"]
+                    clean_content.append({k: v for k, v in part.items() if k != "thoughtSignature"})
+                else:
+                    clean_content.append(part)
             with self._get_connection() as conn, conn:
                 conn.execute(
                     "INSERT OR REPLACE INTO cognitive_threads (sub_sid, step_index, role_id, role, content_json, thought_signature, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (sub_sid, step_index, role_id, role, json.dumps(content).decode('utf-8'), signature, int(time.time())),
+                    (sub_sid, step_index, role_id, role, json.dumps(clean_content).decode('utf-8'), extracted_sig, int(time.time())),
                 )
         except EchoDbMissingError:
             pass
@@ -585,7 +594,10 @@ class EchoStateManager:
                     item = {"role": row[0], "parts": parts}
                     if row[2]:
                         if parts and isinstance(parts, list):
-                            if "functionCall" in parts[0] or "text" in parts[0]:
+                            fc_part = next((p for p in parts if isinstance(p, dict) and "functionCall" in p), None)
+                            if fc_part is not None:
+                                fc_part["thoughtSignature"] = row[2]
+                            elif isinstance(parts[0], dict):
                                 parts[0]["thoughtSignature"] = row[2]
                     history.append(item)
         except EchoDbMissingError:
