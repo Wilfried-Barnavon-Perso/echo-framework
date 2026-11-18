@@ -237,15 +237,19 @@ sudo bash 00-echo-scripts/install-stack.sh
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-        <h3>1. Configuration Hyper-V &amp; Provisioning (<code>install-hyperv.ps1</code> v5.231.40.1)</h3>
+        <h3>1. Configuration Hyper-V &amp; Provisioning (<code>install-hyperv.ps1</code> v6.6.27.1)</h3>
         <p>
-          Lors du déploiement Windows, <code>install-hyperv.ps1</code> crée une archive ZIP pointant par défaut sur la
-          branche <code>dev</code> du projet (hors <code>.git</code>, <code>.venv</code>, <code>node_modules</code>),
-          génère un disque CIDATA de 64 Mo contenant <code>user-data</code>, <code>meta-data</code>,
-          <code>vendor-data</code> et <code>source.zip</code>, puis provisionne une VM Hyper-V Génération 2 sous
-          <strong>Ubuntu 26.04</strong> (4 vCPUs, 8 Go de RAM au démarrage avec allocation dynamique 4 Go – 10 Go, et
-          VHDX dynamique de 100 Go). Au premier démarrage, Subiquity exécute cloud-init, installe Docker Compose v2,
-          <code>jq</code>, <code>yq</code>, <code>git</code> et lance <code>echo-sync.sh</code> puis
+          Lors du déploiement Windows, <code>install-hyperv.ps1</code> configure de façon idempotente l'infrastructure
+          réseau interne hôte (vSwitch interne <code>ECHO-Internal</code> avec passerelle <code>192.168.118.254/24</code>,
+          <code>ECHO-NAT</code> sur <code>192.168.118.0/24</code>, IP statique de la VM <code>192.168.118.101</code>,
+          DNAT multi-VM safe optionnel désactivé par défaut pour les tests internes), crée une archive ZIP pointant par
+          défaut sur la branche <code>dev_v6</code> (exclusions dynamiques <code>.gitignore</code>), génère un disque
+          CIDATA de 256 Mo contenant <code>user-data</code>, <code>meta-data</code>, <code>vendor-data</code> et
+          <code>source.zip</code>, puis provisionne une VM Hyper-V Génération 2 sous <strong>Ubuntu 26.04.1</strong>
+          (4 vCPUs, 8 Go de RAM fixe sur les 3 niveaux 8192 Mo avec priorité 50 %, snapshots automatiques désactivés,
+          Services d'invité activés, Storage QoS à 66 % quantifiée en <code>2^N</code> et VHDX dynamique de 60 Go). Au
+          premier démarrage, Subiquity exécute cloud-init, installe Docker Compose v2, <code>jq</code>, <code>yq</code>,
+          <code>git</code>, <code>linux-cloud-tools-virtual</code> et lance <code>echo-sync.sh</code> puis
           <code>install-stack.sh</code>.
         </p>
 
@@ -406,7 +410,7 @@ sudo bash 00-echo-scripts/install-stack.sh
     </div>
 
     <footer>
-      ECHO Framework - Version 6.6.26 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 6.6.28 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

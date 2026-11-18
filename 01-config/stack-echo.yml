@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 6.6.3.2
+# VERSION : 6.6.27.1
 # ==============================================================================
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
@@ -26,11 +26,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.27.1: Suppression de l'exposition hôte 8000:8000 sur echo-mcp-broker (accès interne Docker uniquement).
 # 6.5.3.1: Renommage du service et de l'image echo-open-webui en echo-webui (ECHO-UI).
 # 6.5.2.1: Ajout explicite de QDRANT_URI=http://echo-qdrant:6333 dans echo-open-webui.
 # 6.5.0.1: Montage en lecture seule de /opt/ECHO/.env vers /app/host_env/.env:ro dans echo-admin-manager pour l'archivage sécurisé des clés maîtresses.
 # 6.0.0.1: Bascule d'Open WebUI vers le build local natif ECHO V6 (16-docker-echo-webui).
-# 5.237.6.2: Verrouillage de l'image Open WebUI sur la version 0.13.2 (ghcr.io/open-webui/open-webui:0.13.2-slim).
 
 name: echo
 
@@ -361,8 +361,6 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=false"
       - "echo.hot-reload=true"
-    ports:
-      - "8000:8000"
     healthcheck:
       test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/ping\")' 2>/dev/null || exit 1"]
       interval: 15s
