@@ -25,7 +25,7 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 
 ### Sécurité Périmétrique (`enable-bunkerweb.sh` & `disable-bunkerweb.sh`)
 **Rôle** : Bascule de l'infrastructure réseau derrière le WAF BunkerWeb.
-- Le script `enable-bunkerweb.sh` (v6.5.3.1) gère l'injection des secrets SSL, sécurise la création IPAM dynamique (`echo-network`, `echo-sandbox`, `bw-universe`), assure la présence de l'image de base partagée (`echo-python-base`), expose les points d'entrée dont l'interface utilisateur `https://my.$DOMAIN` (`echo-user-manager`), cible `echo-webui` et reconfigure les ports via `update_env()` et `ensure_echo_secrets()` (y compris lors d'une sortie idempotente).
+- Le script `enable-bunkerweb.sh` (v6.6.29.1) gère l'injection des secrets SSL, sécurise la création IPAM dynamique (`echo-network`, `echo-sandbox`, `bw-universe`), assure la présence de l'image de base partagée (`echo-python-base`), expose les points d'entrée dont l'interface utilisateur `https://my.$DOMAIN` (`echo-user-manager`), cible `echo-webui` et reconfigure les ports via `update_env()` et `ensure_echo_secrets()` (y compris lors d'une sortie idempotente).
 - Le script `disable-bunkerweb.sh` (v6.5.3.1) révoque la proxyfication et expose directement les ports d'`echo-webui` (ECHO-UI) et de l'Admin Manager (Port 3001).
 
 ### Utilitaires

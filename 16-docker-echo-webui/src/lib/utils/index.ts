@@ -1425,9 +1425,15 @@ export const getWeekday = () => {
 
 export const createMessagesList = (history, messageId) => {
 	const list = [];
+	const visitedMessageIds = new Set();
 	let currentId = messageId;
 
 	while (currentId !== null && currentId !== undefined) {
+		if (visitedMessageIds.has(currentId)) {
+			console.warn('Circular dependency detected in message history', currentId);
+			break;
+		}
+		visitedMessageIds.add(currentId);
 		const message = history.messages[currentId];
 		if (message === undefined) {
 			break;

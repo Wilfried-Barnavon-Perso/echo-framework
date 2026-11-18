@@ -1,18 +1,18 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : enable-bunkerweb.sh
-# VERSION : 6.5.3.1
+# VERSION : 6.6.29.1
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Activation de la couche de sécurité BunkerWeb (Secure Edge).
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.29.1: Suppression de la mention obsolète v4.1 dans la bannière d'affichage.
 # 6.5.3.1: Renommage du service echo-open-webui vers echo-webui.
 # 6.0.0.1: Retrait des appels à config-owui.sh au profit du bootstrap déclaratif lifespan.
 # 5.236.5.1: Affichage du sous-domaine my.$DOMAIN et vérification préalable de l'image echo-python-base:latest.
 # 5.231.21.2: Délégation de la génération des secrets .env (dont ECHO_VAULT_ENCRYPTION_KEY) à ensure_echo_secrets (y compris en sortie idempotente).
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 set -euo pipefail
 
@@ -45,7 +45,7 @@ if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
 
 clear
 echo "=================================================="
-echo "🛡️  ECHO SECURE EDGE (SSO/MFA - v4.1)"
+echo "🛡️  ECHO SECURE EDGE (SSO/MFA)"
 echo "=================================================="
 echo ""
 

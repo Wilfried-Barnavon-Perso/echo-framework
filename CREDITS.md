@@ -11,7 +11,7 @@ Ces projets constituent la colonne vertébrale absolue du framework ECHO.
 
 * **[Open WebUI](https://github.com/open-webui/open-webui)** : L'écosystème hôte et l'interface principale, que le Kernel ECHO utilise comme moteur de rendu et système nerveux central. (Open WebUI License)
 * **[Google Gemini](https://ai.google.dev/)** : L'intelligence brute et les modèles de raisonnement profonds (Argon / Flash / Flash-Lite) pilotés via l'API Google AI Studio et Code Assist.
-* **[Qdrant](https://qdrant.tech/)** : Le moteur de base de données vectorielle ultra-performant, supportant la "Mémoire Organique V4" et la fusion sémantique. (Apache License 2.0)
+* **[Qdrant](https://qdrant.tech/)** : Le moteur de base de données vectorielle ultra-performant, supportant la "Mémoire Organique à Long Terme" et la fusion sémantique. (Apache License 2.0)
 * **[SQLite](https://www.sqlite.org/)** : Le moteur de base de données relationnelle embarqué assurant la persistance bit-perfect (les "Ombres Riches"). (Public Domain)
 * **[Docker](https://www.docker.com/) & [Docker Compose](https://docs.docker.com/compose/)** : L'infrastructure de conteneurisation qui garantit l'isolation, la souveraineté et la portabilité d'ECHO. (Apache License 2.0)
 

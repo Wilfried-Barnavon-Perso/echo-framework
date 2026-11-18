@@ -355,9 +355,8 @@
 			serverContextUsage?.threshold ??
 			null)
 		: null;
-	$: contextUsage =
-		getContextUsage(history, $settings?.system ?? '', contextThreshold) ??
-		(contextCompactionEnabled ? serverContextUsage : null);
+	// [ECHO-V6-HOOK] Disable O(N) client-side token estimation on every history update (handled by EchoContextGauge)
+	$: contextUsage = serverContextUsage;
 	$: embeddedHeaderTitle = embeddedTitle || $chatTitle || $i18n.t('Chat');
 
 	let selectedToolIds: string[] = [];
@@ -1115,16 +1114,20 @@
 	let settingDefaults: Promise<void> | null = null;
 
 	const setDefaults = async (preserveSelections = false) => {
-		const modelIds = atSelectedModel ? [atSelectedModel.id] : [...selectedModels];
 		const id = $chatId;
 		while (settingDefaults) await settingDefaults;
 		let resolveDefaults = () => {};
 		settingDefaults = new Promise<void>((resolve) => (resolveDefaults = resolve));
 
 		try {
-			if (!$tools) tools.set(await getTools(localStorage.token));
-			if (!$functions) functions.set(await getFunctions(localStorage.token));
-			if (!$skills) skills.set(await getSkills(localStorage.token));
+			const modelIds = atSelectedModel ? [atSelectedModel.id] : [...selectedModels];
+			await Promise.all([
+				!$tools ? getTools(localStorage.token).then((res) => tools.set(res)) : Promise.resolve(),
+				!$functions
+					? getFunctions(localStorage.token).then((res) => functions.set(res))
+					: Promise.resolve(),
+				!$skills ? getSkills(localStorage.token).then((res) => skills.set(res)) : Promise.resolve()
+			]);
 			if ($tools === null || $functions === null || $skills === null) return;
 			if (
 				id !== $chatId ||
@@ -2930,14 +2933,34 @@
 		}
 
 		const id = $chatId;
-		const loadedChat = await getChatById(localStorage.token, id, signal).catch(async (error) => {
-			console.error('[note-chat] getChatById failed', {
-				chatIdProp,
-				activeChatId: $chatId,
-				error
-			});
-			return null;
-		});
+		const [loadedChat, loadedTags, pendingTaskIds] = await Promise.all([
+			getChatById(localStorage.token, id, signal).catch(async (error) => {
+				console.error('[note-chat] getChatById failed', {
+					chatIdProp,
+					activeChatId: $chatId,
+					error
+				});
+				return null;
+			}),
+			getTagsById(localStorage.token, id, signal).catch(async (error) => {
+				console.warn('[note-chat] getTagsById failed; continuing without tags', {
+					chatIdProp,
+					activeChatId: $chatId,
+					error
+				});
+				return [];
+			}),
+			getTaskIdsByChatId(localStorage.token, id, signal)
+				.then((res) => res?.task_ids ?? [])
+				.catch((error) => {
+					console.warn('[note-chat] getTaskIdsByChatId failed; continuing without tasks', {
+						chatIdProp,
+						activeChatId: $chatId,
+						error
+					});
+					return [];
+				})
+		]);
 		if (signal.aborted) return;
 		noteChatDebug('getChatById completed', {
 			found: !!loadedChat,
@@ -2947,15 +2970,6 @@
 		});
 
 		if (loadedChat) {
-			const loadedTags = await getTagsById(localStorage.token, id, signal).catch(async (error) => {
-				console.warn('[note-chat] getTagsById failed; continuing without tags', {
-					chatIdProp,
-					activeChatId: $chatId,
-					error
-				});
-				return [];
-			});
-			if (signal.aborted) return;
 			chat = loadedChat;
 			tags = loadedTags;
 			noteChatDebug('getTagsById completed', { tagCount: tags?.length ?? 0 });
@@ -3030,8 +3044,6 @@
 				serverContextUsage = chat?.context_usage ?? null;
 
 				autoScroll = true;
-				await tick();
-				if (signal.aborted) return;
 
 				// Mark all non-current assistant messages as done
 				if (history.currentId) {
@@ -3052,17 +3064,6 @@
 				// work (follow-ups, title gen) that shouldn't block the input.
 				const activeTaskIds = taskIds;
 				const currentMessage = history.currentId ? history.messages[history.currentId] : null;
-				const pendingTaskIds = await getTaskIdsByChatId(localStorage.token, id, signal)
-					.then((res) => res?.task_ids ?? [])
-					.catch((error) => {
-						console.warn('[note-chat] getTaskIdsByChatId failed; continuing without tasks', {
-							chatIdProp,
-							activeChatId: $chatId,
-							error
-						});
-						return [];
-					});
-				if (signal.aborted) return;
 				noteChatDebug('task reconciliation completed', {
 					pendingTaskCount: pendingTaskIds.length,
 					hasCurrentMessage: !!currentMessage
@@ -3081,7 +3082,8 @@
 									message?.role === 'assistant' &&
 									(message.user_id ?? chat?.user_id) === $user?.id &&
 									!message.done &&
-									!messageHasPendingAskUser(message)
+									!messageHasPendingAskUser(message) &&
+									!message.output?.some((item) => item?.type === 'function_call' && item?.status === 'pending')
 								) {
 									message.done = true;
 									history = history;
@@ -3091,22 +3093,21 @@
 					}
 				}
 
-				await tick();
-
 				if (signal.aborted) return;
 				if (loading) {
 					if (chatIdProp && !$temporaryChatEnabled) updateLastReadAt(chatIdProp);
 
-					const lastMessage = history.currentId ? history.messages[history.currentId] : null;
-					if (!lastMessage || lastMessage.role !== 'assistant' || lastMessage.done) {
-						await processNextInQueue(chatIdProp);
-					}
-					if (signal.aborted) return;
 					const restored = await restoreChatInput(
 						sessionStorage.getItem(`chat-input${chatIdProp ? `-${chatIdProp}` : ''}`)
 					);
 					if (signal.aborted) return;
 					await setDefaults(restored);
+					if (signal.aborted) return;
+
+					const lastMessage = history.currentId ? history.messages[history.currentId] : null;
+					if (!lastMessage || lastMessage.role !== 'assistant' || lastMessage.done) {
+						await processNextInQueue(chatIdProp);
+					}
 					if (signal.aborted) return;
 					loading = false;
 					await tick();
@@ -5472,7 +5473,7 @@
 					{/if}
 					<div id="chat-pane" class="flex flex-col flex-auto z-10 w-full @container overflow-auto">
 						<div class="sr-only" aria-live="polite" aria-atomic="true">{liveStatus}</div>
-						{#if ($settings?.landingPageMode === 'chat' && !$selectedFolder) || createMessagesList(history, history.currentId).length > 0}
+						{#if ($settings?.landingPageMode === 'chat' && !$selectedFolder) || Boolean(history?.currentId && history?.messages?.[history.currentId])}
 							<div
 								class=" pb-2.5 flex flex-col justify-between w-full flex-auto overflow-auto h-0 max-w-full z-10 scrollbar-hidden"
 								id="messages-container"

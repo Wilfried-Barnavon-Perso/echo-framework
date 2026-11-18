@@ -61,6 +61,7 @@
 
 	export let messagesCount: number | null = 8;
 	let messagesLoading = false;
+	let lastLoadedChatId = chatId;
 
 	const getMessagesContainer = () => document.getElementById(messagesContainerId);
 
@@ -70,7 +71,10 @@
 
 	const loadMoreMessages = async () => {
 		const element = getMessagesContainer();
-		const previousScrollHeight = element?.scrollHeight ?? 0;
+		// Anchor to the current top message: content-visibility uses intrinsic
+		// size estimates for off-screen items, so scrollHeight deltas drift.
+		const firstMessage = element?.querySelector('.message-listitem') as HTMLElement | null;
+		const previousTop = firstMessage?.getBoundingClientRect().top ?? 0;
 
 		messagesLoading = true;
 		messagesCount += 8;
@@ -79,8 +83,8 @@
 
 		await tick();
 
-		if (element) {
-			element.scrollTop += element.scrollHeight - previousScrollHeight;
+		if (element && firstMessage?.isConnected) {
+			element.scrollTop += firstMessage.getBoundingClientRect().top - previousTop;
 		}
 
 		messagesLoading = false;
@@ -88,6 +92,11 @@
 
 	let pendingRebuild = null;
 	let lastCurrentId = null;
+
+	$: if (chatId !== lastLoadedChatId) {
+		lastLoadedChatId = chatId;
+		messagesCount = 8;
+	}
 
 	const buildMessages = () => {
 		let _messages = [];

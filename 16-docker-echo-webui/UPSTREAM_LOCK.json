@@ -3,6 +3,19 @@
   "base_tag": "v0.13.2",
   "base_commit": "b7a005e5a5c0c0d869f2aebf4b8f051c5fb37245",
   "extracted_at": "2026-11-08",
+  "backported_commits": [
+    "5f1d050ed",
+    "87bdec44c",
+    "a121ac4d0",
+    "b4a88505e",
+    "956ee485f",
+    "0f54aee85",
+    "4360aeee7",
+    "c7dcba6b04",
+    "80478abea1",
+    "139ca26f93",
+    "4720ff19e7"
+  ],
   "tracked_paths": [
     "backend",
     "src",
