@@ -2,16 +2,16 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 6.6.16.2
+version: 6.7.0.1
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.0.1: Purge des payloads de fenêtres fermées (_sanitize_windows_dict), auto-guérison wm_state, bridage update_codes et suppression du code mort get_client_loader_js.
 # 6.6.16.2: Ajout du bus Canvas bidirectionnel (broadcast_canvas_frame, broadcast_canvas_event, consume_canvas_ui_payload, clear_canvas_signal et RPC canvas_ui_event).
 # 6.6.9.1: Suppression du loader JS/FastAPI legacy (get_full_loader_bundle_js, inject_client_loader, wm_router, wm_static_router, register_echo_wm_routes, resolve_wm_user_id).
 # 6.6.8.1: Chargement systématique de l'identité Google et des quotas dans get_chat_snapshot même hors session.db active et support du paramètre refresh sur wm_get_chat_state.
 # 6.6.2.1: Ajout de open_tab et broadcast_browser_frame (diffusion SSE vers les onglets natifs echo-browser et echo-codex).
-# 5.239.12.1: Exclusion SSOT et auto-guérison des HUDs transitoires (echo-migration-hud, echo-clone-hud) dans handle_rpc, get_chat_snapshot et hydrateChatState.
 
 import asyncio
 from contextlib import closing
@@ -27,7 +27,6 @@ from echo_constants import ECHO_BASE_DATA_DIR, ECHO_UCTP_CHUNK_SIZE, ECHO_USERS_
 from echo_paths import sanitize_echo_id
 from echo_state_manager import EchoStateManager
 
-WM_SCRIPT_VERSION = "5.239.12.1"
 WM_STATE_KEY = "wm_state"
 MAX_TRACKED_WINDOWS_PER_CHAT = 32
 MAX_KV_ENTRIES_PER_CHAT = 128
@@ -40,6 +39,42 @@ def _is_transient_hud_id(wid: str) -> bool:
     """Indique si l'ID DOM cible un HUD transitoire/global exclu de wm_state."""
     s_wid = str(wid or "").strip()
     return not s_wid or s_wid.startswith(TRANSIENT_HUD_PREFIXES)
+
+
+def _sanitize_windows_dict(wins: Dict[str, Any]) -> bool:
+    """Assainit in-place le dictionnaire des fenêtres (auto-guérison du bloat SQLite). Retourne True si modifié."""
+    if not isinstance(wins, dict):
+        return False
+    dirty = False
+    for wid in list(wins.keys()):
+        w_entry = wins.get(wid)
+        if _is_transient_hud_id(wid) or not isinstance(w_entry, dict):
+            wins.pop(wid, None)
+            dirty = True
+            continue
+        if not w_entry.get("is_open"):
+            if w_entry.get("mount_code") or w_entry.get("update_code") or w_entry.get("update_codes"):
+                w_entry["mount_code"] = ""
+                w_entry["update_code"] = ""
+                w_entry["update_codes"] = []
+                dirty = True
+            continue
+        uc_list = w_entry.get("update_codes")
+        if wid == "echo-nav-context-hud-wrapper":
+            latest_uc = (uc_list[-1] if isinstance(uc_list, list) and uc_list else "") or w_entry.get("update_code") or ""
+            if latest_uc and latest_uc != w_entry.get("mount_code"):
+                w_entry["mount_code"] = latest_uc
+                dirty = True
+            if w_entry.get("update_code") or uc_list:
+                w_entry["update_code"] = ""
+                w_entry["update_codes"] = []
+                dirty = True
+        elif wid != "echo-codex-hud":
+            if isinstance(uc_list, list) and len(uc_list) > 1:
+                w_entry["update_codes"] = [uc_list[-1]]
+                w_entry["update_code"] = uc_list[-1]
+                dirty = True
+    return dirty
 
 
 def extract_closure_context(fn: Any) -> Dict[str, str]:
@@ -314,6 +349,7 @@ class EchoWindowManager:
             return self._chat_states[key]
 
         state = {"windows": {}, "kv": {}}
+        needs_heal_save = False
         try:
             sm = EchoStateManager(uid, chat_id)
             if not os.path.isfile(sm.db_path):
@@ -324,10 +360,14 @@ class EchoWindowManager:
                 if isinstance(parsed, dict):
                     state["windows"] = parsed.get("windows") if isinstance(parsed.get("windows"), dict) else {}
                     state["kv"] = parsed.get("kv") if isinstance(parsed.get("kv"), dict) else {}
+                    if _sanitize_windows_dict(state["windows"]):
+                        needs_heal_save = True
         except Exception as e:
             print(f"[EchoWindowManager] Load state error ({chat_id}): {e}")
 
         self._chat_states[key] = state
+        if needs_heal_save:
+            self._save_chat_state(uid, chat_id)
         return state
 
     def _save_chat_state(self, user_id: str, chat_id: str) -> None:
@@ -545,19 +585,22 @@ class EchoWindowManager:
                     }
                     w_entry["is_open"] = True
                     w_entry["updated_at"] = now
-                    if action == "window_mounted" or not w_entry.get("mount_code"):
+                    if wid == "echo-nav-context-hud-wrapper" or action == "window_mounted" or not w_entry.get("mount_code"):
                         w_entry["mount_code"] = code
                         w_entry["update_code"] = ""
                         w_entry["update_codes"] = []
                     else:
                         if code != w_entry.get("mount_code"):
                             w_entry["update_code"] = code
-                            uc_list = w_entry.get("update_codes")
-                            if not isinstance(uc_list, list):
-                                uc_list = []
-                            if not uc_list or uc_list[-1] != code:
-                                uc_list.append(code)
-                            w_entry["update_codes"] = uc_list[-16:]
+                            if wid == "echo-codex-hud":
+                                uc_list = w_entry.get("update_codes")
+                                if not isinstance(uc_list, list):
+                                    uc_list = []
+                                if not uc_list or uc_list[-1] != code:
+                                    uc_list.append(code)
+                                w_entry["update_codes"] = uc_list[-16:]
+                            else:
+                                w_entry["update_codes"] = [code]
                     wins[wid] = w_entry
                 self._save_chat_state(effective_uid, effective_cid)
             return {"status": "ok"}
@@ -569,6 +612,9 @@ class EchoWindowManager:
                 wins = state.get("windows", {})
                 if window_id in wins:
                     wins[window_id]["is_open"] = False
+                    wins[window_id]["mount_code"] = ""
+                    wins[window_id]["update_code"] = ""
+                    wins[window_id]["update_codes"] = []
                     wins[window_id]["updated_at"] = time.time()
                     self._save_chat_state(user_id, chat_id)
                 await self.broadcast(
@@ -625,10 +671,7 @@ class EchoWindowManager:
         """Retourne l'état complet (KV, fenêtres ouvertes, appels RPC en attente et stats contexte) pour un chat."""
         state = self._load_chat_state(user_id, chat_id)
         wins_dict = state.get("windows", {})
-        stale_transient = [wid for wid in list(wins_dict.keys()) if _is_transient_hud_id(wid)]
-        if stale_transient:
-            for wid in stale_transient:
-                wins_dict.pop(wid, None)
+        if _sanitize_windows_dict(wins_dict):
             self._save_chat_state(user_id, chat_id)
 
         open_windows = [
@@ -691,753 +734,3 @@ def get_window_manager() -> EchoWindowManager:
     if _WM_SINGLETON is None:
         _WM_SINGLETON = EchoWindowManager()
     return _WM_SINGLETON
-
-
-def get_client_loader_js() -> str:
-    """Génère le script client global agnostique window.EchoWM injecté dans /static/loader.js et via window_manager_filter."""
-    js_template = r"""
-(function() {
-    if (window.EchoWM && window.EchoWM._version === '__WM_SCRIPT_VERSION__') {
-        if (typeof window.EchoWM.connectSSE === 'function') window.EchoWM.connectSSE();
-        if (typeof window.EchoWM.onRouteChanged === 'function') window.EchoWM.onRouteChanged();
-        return;
-    }
-
-    const prevWM = window.EchoWM || null;
-    if (prevWM && typeof prevWM.destroy === 'function') {
-        try { prevWM.destroy(); } catch (e) {}
-    } else if (prevWM && prevWM.sse) {
-        try { prevWM.sse.close(); } catch (e) {}
-        prevWM.sse = null;
-    }
-
-    const clientId = (prevWM && prevWM.clientId) ? prevWM.clientId : ((typeof crypto !== 'undefined' && crypto.randomUUID)
-        ? crypto.randomUUID()
-        : ('wm-' + Math.random().toString(36).slice(2) + Date.now()));
-
-    const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-    if (!window._echoWmRawMethods) {
-        window._echoWmRawMethods = {
-            setItem: Storage.prototype.setItem,
-            removeItem: Storage.prototype.removeItem,
-            appendChild: Element.prototype.appendChild,
-            insertBefore: Element.prototype.insertBefore,
-            pushState: history.pushState,
-            replaceState: history.replaceState
-        };
-    }
-    const rawSetItem = window._echoWmRawMethods.setItem;
-    const rawRemoveItem = window._echoWmRawMethods.removeItem;
-    const rawAppendChild = window._echoWmRawMethods.appendChild;
-    const rawInsertBefore = window._echoWmRawMethods.insertBefore;
-
-    function extractChatIdFromUrl(pathname) {
-        const p = pathname || (typeof location !== 'undefined' ? location.pathname : '');
-        const m = p.match(/\/c\/([a-zA-Z0-9_-]+)/);
-        return m ? m[1] : '';
-    }
-
-    function getAuthToken() {
-        try {
-            const raw = localStorage.getItem('token') || '';
-            return raw.replace(/^"|"$/g, '');
-        } catch (e) {
-            return '';
-        }
-    }
-
-    function getElementChatId(el) {
-        if (!el || typeof el.getAttribute !== 'function') return '';
-        return el.getAttribute('data-echo-chat-id') || el.getAttribute('data-chat-id') || '';
-    }
-
-    function isGlobalElement(el) {
-        if (!el || el.nodeType !== 1) return true;
-        const tag = (el.tagName || '').toUpperCase();
-        if (tag === 'STYLE' || tag === 'SCRIPT' || tag === 'LINK') return true;
-        if (el.getAttribute('data-echo-scope') === 'global') return true;
-        const id = el.id || '';
-        if (
-            id.startsWith('uctp-loader-') || id.startsWith('echo-edge-hud')
-            || id === 'echo-migration-hud' || id === 'echo-clone-hud'
-            || id === 'echo-hud-container' || id === 'echo-app-drawer-container'
-        ) return true;
-        if (el.classList && el.classList.contains('echo-tooltip-floating')) return true;
-        return false;
-    }
-
-    function isWaitRpcCode(code) {
-        if (!code || typeof code !== 'string') return false;
-        return /new\s+Promise\s*\(\s*r\s*=>\s*\{\s*window\./.test(code);
-    }
-
-    const EchoWM = {
-        _version: '__WM_SCRIPT_VERSION__',
-        clientId: clientId,
-        activeChatId: extractChatIdFromUrl(),
-        currentExecContext: null,
-        _execStack: [],
-        _activeExecCount: 0,
-        _replayCount: 0,
-        suppressCloseReport: false,
-        suppressKvIntercept: false,
-        isReplaying: false,
-        hydratedChats: (prevWM && prevWM.hydratedChats) ? prevWM.hydratedChats : {},
-        hydratingPromises: {},
-        executedIds: (prevWM && prevWM.executedIds) ? prevWM.executedIds : {},
-        executedPromises: (prevWM && prevWM.executedPromises) ? prevWM.executedPromises : {},
-        uctpBuffers: {},
-        kvFlushTimers: {},
-        kvPending: {},
-        sse: null,
-        bodyObs: null,
-        themeObs: null,
-        _msgHandler: null,
-        getElementChatId: getElementChatId,
-
-        destroy: function() {
-            EchoWM._destroyed = true;
-            if (EchoWM.sse) {
-                try { EchoWM.sse.close(); } catch (e) {}
-                EchoWM.sse = null;
-            }
-            if (EchoWM.bodyObs) {
-                try { EchoWM.bodyObs.disconnect(); } catch (e) {}
-                EchoWM.bodyObs = null;
-            }
-            if (EchoWM.themeObs) {
-                try { EchoWM.themeObs.disconnect(); } catch (e) {}
-                EchoWM.themeObs = null;
-            }
-            if (EchoWM._msgHandler) {
-                try { window.removeEventListener('message', EchoWM._msgHandler); } catch (e) {}
-                EchoWM._msgHandler = null;
-            }
-        },
-
-        resolveParentTheme: function() {
-            const docEl = document.documentElement;
-            const isDark = docEl ? docEl.classList.contains('dark') : true;
-            const isOled = docEl ? (docEl.classList.contains('oled-dark') || docEl.style.getPropertyValue('--color-gray-900') === '#000000') : false;
-            const theme = isOled ? 'oled-dark' : (isDark ? 'dark' : 'light');
-            let bgColor = isOled ? '#000000' : (isDark ? '#171717' : '#ffffff');
-            let textColor = isOled ? '#ffffff' : (isDark ? '#ececec' : '#171717');
-            try {
-                const candidates = [
-                    document.getElementById('chat-container'),
-                    document.querySelector('main'),
-                    document.body,
-                    docEl
-                ];
-                for (const el of candidates) {
-                    if (!el || typeof window.getComputedStyle !== 'function') continue;
-                    const cs = window.getComputedStyle(el);
-                    if (cs && cs.backgroundColor && cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent') {
-                        bgColor = cs.backgroundColor;
-                        if (cs.color) textColor = cs.color;
-                        break;
-                    }
-                }
-            } catch (e) {}
-            return { type: 'theme-update', theme: theme, bgColor: bgColor, textColor: textColor };
-        },
-
-        broadcastThemeToIframes: function(targetWin) {
-            const payload = EchoWM.resolveParentTheme();
-            if (targetWin && typeof targetWin.postMessage === 'function') {
-                try { targetWin.postMessage(payload, '*'); } catch (e) {}
-                return;
-            }
-            document.querySelectorAll('iframe').forEach(ifr => {
-                try {
-                    if (ifr.contentWindow) ifr.contentWindow.postMessage(payload, '*');
-                } catch (e) {}
-            });
-        },
-
-        toggleIframeFullscreen: function(sourceWin, forceState) {
-            if (!sourceWin) return;
-            let targetIframe = null;
-            document.querySelectorAll('iframe').forEach(ifr => {
-                try {
-                    if (ifr.contentWindow === sourceWin) targetIframe = ifr;
-                } catch (e) {}
-            });
-            if (!targetIframe) return;
-            const isCurrentlyFs = targetIframe.getAttribute('data-echo-iframe-fs') === '1';
-            const nextState = (typeof forceState === 'boolean') ? forceState : !isCurrentlyFs;
-            if (nextState) {
-                if (!isCurrentlyFs) {
-                    targetIframe.setAttribute('data-echo-prev-style', targetIframe.getAttribute('style') || '');
-                    targetIframe.setAttribute('data-echo-iframe-fs', '1');
-                }
-                targetIframe.style.cssText = 'position:fixed !important; inset:0 !important; width:100vw !important; height:100dvh !important; max-width:100vw !important; max-height:100dvh !important; z-index:999999 !important; border:none !important; border-radius:0 !important; margin:0 !important; background:#000 !important;';
-            } else {
-                const prevStyle = targetIframe.getAttribute('data-echo-prev-style') || '';
-                targetIframe.removeAttribute('data-echo-iframe-fs');
-                targetIframe.removeAttribute('data-echo-prev-style');
-                targetIframe.setAttribute('style', prevStyle);
-            }
-            try {
-                sourceWin.postMessage({ type: 'echo:iframe:fullscreen-state', active: nextState }, '*');
-            } catch (e) {}
-        },
-
-        postRpc: async function(payload) {
-            try {
-                const token = getAuthToken();
-                const headers = { 'Content-Type': 'application/json' };
-                if (token) headers['Authorization'] = 'Bearer ' + token;
-                await fetch('/echo/v1/wm/rpc', {
-                    method: 'POST',
-                    headers: headers,
-                    body: JSON.stringify(Object.assign({ client_id: clientId }, payload))
-                });
-            } catch (e) {}
-        },
-
-        queueKvSync: function(chatId, key, value) {
-            if (!chatId || !key || EchoWM.suppressKvIntercept) return;
-            if (!EchoWM.kvPending[chatId]) EchoWM.kvPending[chatId] = {};
-            EchoWM.kvPending[chatId][key] = value;
-            if (EchoWM.kvFlushTimers[chatId]) clearTimeout(EchoWM.kvFlushTimers[chatId]);
-            EchoWM.kvFlushTimers[chatId] = setTimeout(() => {
-                const entries = EchoWM.kvPending[chatId];
-                delete EchoWM.kvPending[chatId];
-                delete EchoWM.kvFlushTimers[chatId];
-                if (entries && Object.keys(entries).length > 0) {
-                    EchoWM.postRpc({ action: 'kv_sync', chat_id: chatId, entries: entries });
-                }
-            }, 250);
-        },
-
-        getGeometryKey: function(hud) {
-            const cid = getElementChatId(hud) || EchoWM.activeChatId || 'global';
-            const wid = (hud && hud.id) || 'default';
-            return 'echo_geom_' + cid + '_' + wid;
-        },
-
-        loadGeometry: function(hud) {
-            try {
-                const key = EchoWM.getGeometryKey(hud);
-                const raw = localStorage.getItem(key);
-                return raw ? JSON.parse(raw) : null;
-            } catch (e) {
-                return null;
-            }
-        },
-
-        saveGeometry: function(hud, bounds, ctrl) {
-            try {
-                if (!hud || !hud.id) return;
-                const cid = getElementChatId(hud) || EchoWM.activeChatId || '';
-                const key = EchoWM.getGeometryKey(hud);
-                const data = JSON.stringify({
-                    x: bounds.x,
-                    y: bounds.y,
-                    w: bounds.w,
-                    h: bounds.h,
-                    tx: bounds.tx,
-                    isMinimized: !!(ctrl && ctrl.isMinimized),
-                    isFullscreen: !!(ctrl && ctrl.isFullscreen)
-                });
-                rawSetItem.call(localStorage, key, data);
-                if (cid) EchoWM.queueKvSync(cid, key, data);
-            } catch (e) {}
-        },
-
-        resetWindowMinimized: function(hud) {
-            try {
-                if (!hud || !hud.id) return;
-                const key = EchoWM.getGeometryKey(hud);
-                const raw = localStorage.getItem(key);
-                if (raw) {
-                    const parsed = JSON.parse(raw);
-                    if (parsed && parsed.isMinimized) {
-                        parsed.isMinimized = false;
-                        const data = JSON.stringify(parsed);
-                        rawSetItem.call(localStorage, key, data);
-                        const cid = getElementChatId(hud) || EchoWM.activeChatId || '';
-                        if (cid) EchoWM.queueKvSync(cid, key, data);
-                    }
-                }
-            } catch (e) {}
-        },
-
-        applyParkingForElement: function(el) {
-            if (!el || el.nodeType !== 1) return;
-            const cid = getElementChatId(el);
-            if (!cid) return;
-            if (!el.getAttribute('data-echo-chat-id')) {
-                el.setAttribute('data-echo-chat-id', cid);
-            }
-            const active = EchoWM.activeChatId;
-            if (active && cid === active) {
-                if (el.getAttribute('data-echo-parked') === '1') {
-                    const prev = el.getAttribute('data-echo-prev-display');
-                    const restoreDisplay = (prev && prev !== 'none') ? prev : 'flex';
-                    el.style.removeProperty('display');
-                    el.style.setProperty('display', restoreDisplay);
-                    el.setAttribute('data-echo-parked', '0');
-                    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-                        window.requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
-                    }
-                }
-            } else {
-                if (el.getAttribute('data-echo-parked') !== '1') {
-                    const cur = (el.style.getPropertyValue ? el.style.getPropertyValue('display') : '') || el.style.display;
-                    if (cur && cur !== 'none') {
-                        el.setAttribute('data-echo-prev-display', cur);
-                    }
-                    el.setAttribute('data-echo-parked', '1');
-                }
-                el.style.setProperty('display', 'none', 'important');
-            }
-        },
-
-        syncAllWindowsVisibility: function() {
-            if (!document.body) return;
-            const nodes = document.body.querySelectorAll('[data-echo-chat-id], [data-chat-id]');
-            nodes.forEach(el => EchoWM.applyParkingForElement(el));
-        },
-
-        tagInsertedElement: function(el) {
-            if (!el || el.nodeType !== 1 || isGlobalElement(el)) return;
-            const ctx = EchoWM.currentExecContext;
-            const explicitCid = getElementChatId(el);
-            const cid = explicitCid || (ctx && ctx.chatId) || '';
-            if (!cid) return;
-            if (!EchoWM.activeChatId && !extractChatIdFromUrl()) {
-                EchoWM.activeChatId = cid;
-            }
-
-            if (!el.id) {
-                const baseId = (ctx && ctx.execId) ? ctx.execId.slice(0, 10) : Math.random().toString(36).slice(2, 10);
-                el.id = 'echo-auto-win-' + baseId;
-            }
-            el.setAttribute('data-echo-chat-id', cid);
-            if (!el.getAttribute('data-chat-id')) {
-                el.setAttribute('data-chat-id', cid);
-            }
-            if (ctx && ctx.mountedIds) {
-                ctx.mountedIds.add(el.id);
-            }
-            EchoWM.applyParkingForElement(el);
-        },
-
-        runInChatScope: async function(chatId, execId, code, mode, isReplay) {
-            if (execId && !isReplay) {
-                if (EchoWM.executedPromises[execId]) {
-                    return await EchoWM.executedPromises[execId];
-                }
-                EchoWM.executedIds[execId] = Date.now();
-            }
-
-            const execTask = async () => {
-                const waitRpc = isWaitRpcCode(code);
-                const ctx = {
-                    chatId: chatId || '',
-                    execId: execId || '',
-                    mountedIds: new Set(),
-                    updatedIds: new Set()
-                };
-                if (!waitRpc) {
-                    EchoWM._execStack.push(ctx);
-                    EchoWM.currentExecContext = ctx;
-                    EchoWM._activeExecCount += 1;
-                    EchoWM.suppressCloseReport = true;
-                    if (isReplay) {
-                        EchoWM._replayCount += 1;
-                        EchoWM.isReplaying = true;
-                    }
-                }
-
-                let mutObs = null;
-                if (!waitRpc && document.body && typeof MutationObserver !== 'undefined') {
-                    mutObs = new MutationObserver((mutations) => {
-                        for (const m of mutations) {
-                            let node = m.target;
-                            while (node && node.parentElement && node.parentElement !== document.body) {
-                                node = node.parentElement;
-                            }
-                            if (node && node.parentElement === document.body && node.id && !isGlobalElement(node)) {
-                                const nodeCid = getElementChatId(node);
-                                if (!ctx.mountedIds.has(node.id) && (!chatId || !nodeCid || nodeCid === chatId)) {
-                                    if (chatId && !nodeCid) {
-                                        node.setAttribute('data-echo-chat-id', chatId);
-                                        node.setAttribute('data-chat-id', chatId);
-                                        EchoWM.applyParkingForElement(node);
-                                    }
-                                    ctx.updatedIds.add(node.id);
-                                }
-                            }
-                        }
-                    });
-                    mutObs.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
-                }
-
-                let result = null;
-                try {
-                    const fn = new AsyncFunction(code);
-                    result = await fn();
-                } catch (err) {
-                    console.error('[EchoWM] Execution error:', err);
-                } finally {
-                    if (mutObs) mutObs.disconnect();
-                    if (!waitRpc) {
-                        const idx = EchoWM._execStack.indexOf(ctx);
-                        if (idx !== -1) EchoWM._execStack.splice(idx, 1);
-                        EchoWM.currentExecContext = EchoWM._execStack.length > 0
-                            ? EchoWM._execStack[EchoWM._execStack.length - 1]
-                            : null;
-                        if (isReplay) {
-                            EchoWM._replayCount = Math.max(0, EchoWM._replayCount - 1);
-                            EchoWM.isReplaying = EchoWM._replayCount > 0;
-                        }
-                        setTimeout(() => {
-                            EchoWM._activeExecCount = Math.max(0, EchoWM._activeExecCount - 1);
-                            EchoWM.suppressCloseReport = EchoWM._activeExecCount > 0;
-                        }, 0);
-                        EchoWM.syncAllWindowsVisibility();
-                    }
-                }
-
-                if (!isReplay && !waitRpc && chatId) {
-                    const liveMounted = Array.from(ctx.mountedIds).filter(id => {
-                        const el = document.getElementById(id);
-                        return el && !isGlobalElement(el);
-                    });
-                    const liveUpdated = Array.from(ctx.updatedIds).filter(id => {
-                        const el = document.getElementById(id);
-                        return el && !ctx.mountedIds.has(id) && !isGlobalElement(el);
-                    });
-
-                    if (liveMounted.length > 0) {
-                        EchoWM.postRpc({
-                            action: 'window_mounted',
-                            chat_id: chatId,
-                            exec_id: execId,
-                            window_ids: liveMounted
-                        });
-                    } else if (liveUpdated.length > 0) {
-                        EchoWM.postRpc({
-                            action: 'window_updated',
-                            chat_id: chatId,
-                            exec_id: execId,
-                            window_ids: liveUpdated
-                        });
-                    }
-                }
-
-                if (mode === 'call') {
-                    if (typeof window.echoWrapUctpPayload === 'function' && (!code || !code.includes('_echoUctpNextChunk'))) {
-                        result = window.echoWrapUctpPayload(result);
-                    }
-                    if (execId) {
-                        await EchoWM.postRpc({
-                            action: 'rpc_result',
-                            chat_id: chatId,
-                            exec_id: execId,
-                            result: result
-                        });
-                    }
-                }
-                return result;
-            };
-
-            if (execId && !isReplay) {
-                const p = execTask();
-                EchoWM.executedPromises[execId] = p;
-                try {
-                    return await p;
-                } finally {
-                    const t = setTimeout(() => { delete EchoWM.executedPromises[execId]; }, 60000);
-                    if (t && typeof t.unref === 'function') t.unref();
-                }
-            }
-            return await execTask();
-        },
-
-        hydrateChatState: async function(chatId) {
-            if (!chatId) return;
-            if (EchoWM.hydratingPromises[chatId]) {
-                return await EchoWM.hydratingPromises[chatId];
-            }
-            const task = (async () => {
-                try {
-                    const token = getAuthToken();
-                    const headers = {};
-                    if (token) headers['Authorization'] = 'Bearer ' + token;
-                    const res = await fetch('/echo/v1/wm/chat/' + encodeURIComponent(chatId), { headers: headers });
-                    if (!res.ok) return;
-                    const snapshot = await res.json();
-
-                    if (snapshot.kv && typeof snapshot.kv === 'object') {
-                        EchoWM.suppressKvIntercept = true;
-                        try {
-                            for (const [k, v] of Object.entries(snapshot.kv)) {
-                                if (v !== null && v !== undefined) {
-                                    rawSetItem.call(localStorage, k, String(v));
-                                }
-                            }
-                        } finally {
-                            EchoWM.suppressKvIntercept = false;
-                        }
-                    }
-
-                    const staleMig = document.getElementById('echo-migration-hud');
-                    if (staleMig) staleMig.remove();
-                    if (Array.isArray(snapshot.windows)) {
-                        for (const win of snapshot.windows) {
-                            if (
-                                !win || !win.window_id || !win.is_open
-                                || win.window_id === 'echo-migration-hud'
-                                || win.window_id === 'echo-clone-hud'
-                            ) continue;
-                            const existing = document.getElementById(win.window_id);
-                            const existingCid = getElementChatId(existing);
-                            if (!existing || (existingCid && existingCid !== chatId)) {
-                                if (win.mount_code) {
-                                    await EchoWM.runInChatScope(chatId, 'replay-mount-' + win.window_id, win.mount_code, 'emit', true);
-                                }
-                                const uCodes = Array.isArray(win.update_codes) && win.update_codes.length > 0
-                                    ? win.update_codes
-                                    : (win.update_code ? [win.update_code] : []);
-                                for (let i = 0; i < uCodes.length; i++) {
-                                    if (uCodes[i]) {
-                                        await EchoWM.runInChatScope(chatId, 'replay-upd-' + win.window_id + '-' + i, uCodes[i], 'emit', true);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (Array.isArray(snapshot.pending_calls)) {
-                        for (const pc of snapshot.pending_calls) {
-                            if (pc && pc.exec_id && pc.code && !EchoWM.executedIds[pc.exec_id]) {
-                                EchoWM.runInChatScope(chatId, pc.exec_id, pc.code, 'call', false);
-                            }
-                        }
-                    }
-
-                    if (snapshot.context_stats && (snapshot.context_stats.totalTokenCount > 0 || snapshot.context_stats.quota_fraction != null)) {
-                        if (typeof window.echoRenderContextGauge === 'function') {
-                            window.echoRenderContextGauge(Object.assign({ chat_id: chatId }, snapshot.context_stats));
-                        }
-                    } else {
-                        const g = document.getElementById('echo-nav-context-hud-wrapper');
-                        if (g) g.remove();
-                    }
-
-                    EchoWM.syncAllWindowsVisibility();
-                } catch (e) {
-                    console.warn('[EchoWM] Hydrate error:', e);
-                }
-            })();
-            EchoWM.hydratingPromises[chatId] = task;
-            try {
-                return await task;
-            } finally {
-                delete EchoWM.hydratingPromises[chatId];
-            }
-        },
-
-        onRouteChanged: function() {
-            const nextCid = extractChatIdFromUrl();
-            const changed = nextCid !== EchoWM.activeChatId;
-            EchoWM.activeChatId = nextCid;
-            EchoWM.syncAllWindowsVisibility();
-            if (nextCid && (changed || !EchoWM.hydratedChats[nextCid])) {
-                EchoWM.hydratedChats[nextCid] = true;
-                EchoWM.hydrateChatState(nextCid);
-            }
-        },
-
-        connectSSE: function() {
-            if (EchoWM._destroyed) return;
-            if (EchoWM.sse && EchoWM.sse.readyState !== 2) return;
-            const token = getAuthToken();
-            const url = '/echo/v1/wm/stream?client_id=' + encodeURIComponent(clientId)
-                + (token ? '&token=' + encodeURIComponent(token) : '');
-            try {
-                const es = new EventSource(url, { withCredentials: true });
-                EchoWM.sse = es;
-                es.onmessage = async (ev) => {
-                    try {
-                        const msg = JSON.parse(ev.data);
-                        if (!msg || !msg.type) return;
-
-                        if (msg.type === 'wm_execute') {
-                            await EchoWM.runInChatScope(msg.chat_id || '', msg.exec_id || '', msg.code || '', msg.mode || 'emit', false);
-                        } else if (msg.type === 'wm_uctp_chunk' && msg.exec_id) {
-                            EchoWM.uctpBuffers[msg.exec_id] = (EchoWM.uctpBuffers[msg.exec_id] || '') + (msg.data || '');
-                        } else if (msg.type === 'wm_uctp_exec' && msg.exec_id) {
-                            const fullCode = EchoWM.uctpBuffers[msg.exec_id] || '';
-                            delete EchoWM.uctpBuffers[msg.exec_id];
-                            if (fullCode) {
-                                await EchoWM.runInChatScope(msg.chat_id || '', msg.exec_id, fullCode, msg.mode || 'emit', false);
-                            }
-                        } else if (msg.type === 'wm_window_closed') {
-                            const el = msg.window_id ? document.getElementById(msg.window_id) : null;
-                            if (el) {
-                                EchoWM._activeExecCount += 1;
-                                EchoWM.suppressCloseReport = true;
-                                try {
-                                    el.remove();
-                                } finally {
-                                    setTimeout(() => {
-                                        EchoWM._activeExecCount = Math.max(0, EchoWM._activeExecCount - 1);
-                                        EchoWM.suppressCloseReport = EchoWM._activeExecCount > 0;
-                                    }, 0);
-                                }
-                            }
-                        } else if (msg.type === 'wm_kv_sync' && msg.entries) {
-                            EchoWM.suppressKvIntercept = true;
-                            try {
-                                for (const [k, v] of Object.entries(msg.entries)) {
-                                    if (v === null || v === undefined) rawRemoveItem.call(localStorage, k);
-                                    else rawSetItem.call(localStorage, k, String(v));
-                                }
-                            } finally {
-                                EchoWM.suppressKvIntercept = false;
-                            }
-                        }
-                    } catch (e) {}
-                };
-                es.onerror = () => {
-                    try { es.close(); } catch (e) {}
-                    EchoWM.sse = null;
-                    if (!EchoWM._destroyed) setTimeout(() => EchoWM.connectSSE(), 3000);
-                };
-            } catch (e) {
-                if (!EchoWM._destroyed) setTimeout(() => EchoWM.connectSSE(), 3000);
-            }
-        }
-    };
-
-    if (!window._echoWmHooksInstalled) {
-        window._echoWmHooksInstalled = true;
-        Element.prototype.appendChild = function(node) {
-            const res = rawAppendChild.call(this, node);
-            if (this === document.body && node && node.nodeType === 1 && window.EchoWM) {
-                window.EchoWM.tagInsertedElement(node);
-            }
-            return res;
-        };
-
-        Element.prototype.insertBefore = function(node, refNode) {
-            const res = rawInsertBefore.call(this, node, refNode);
-            if (this === document.body && node && node.nodeType === 1 && window.EchoWM) {
-                window.EchoWM.tagInsertedElement(node);
-            }
-            return res;
-        };
-
-        Storage.prototype.setItem = function(key, value) {
-            rawSetItem.call(this, key, value);
-            const wm = window.EchoWM;
-            if (wm && this === localStorage && !wm.suppressKvIntercept && typeof key === 'string') {
-                if (key.startsWith('echo_') || key.startsWith('nav_state_')) {
-                    const cid = (wm.currentExecContext && wm.currentExecContext.chatId) || wm.activeChatId || '';
-                    if (cid) wm.queueKvSync(cid, key, String(value));
-                }
-            }
-        };
-
-        const origPushState = window._echoWmRawMethods.pushState;
-        const origReplaceState = window._echoWmRawMethods.replaceState;
-        history.pushState = function() {
-            const r = origPushState.apply(this, arguments);
-            if (window.EchoWM) window.EchoWM.onRouteChanged();
-            return r;
-        };
-        history.replaceState = function() {
-            const r = origReplaceState.apply(this, arguments);
-            if (window.EchoWM) window.EchoWM.onRouteChanged();
-            return r;
-        };
-        window.addEventListener('popstate', () => {
-            if (window.EchoWM) window.EchoWM.onRouteChanged();
-        });
-    }
-
-    function attachBodyObserver() {
-        if (!document.body || typeof MutationObserver === 'undefined') return;
-        if (EchoWM.bodyObs) {
-            try { EchoWM.bodyObs.disconnect(); } catch (e) {}
-        }
-        const bodyObs = new MutationObserver((mutations) => {
-            if (EchoWM._destroyed) return;
-            for (const m of mutations) {
-                if (m.addedNodes) {
-                    m.addedNodes.forEach(node => {
-                        if (node && node.nodeType === 1) {
-                            EchoWM.tagInsertedElement(node);
-                        }
-                    });
-                }
-                if (m.removedNodes && !EchoWM.suppressCloseReport && !EchoWM.currentExecContext) {
-                    m.removedNodes.forEach(node => {
-                        if (node && node.nodeType === 1 && node.id && !isGlobalElement(node)) {
-                            if (document.getElementById(node.id)) return;
-                            const cid = getElementChatId(node);
-                            const parked = node.getAttribute('data-echo-parked') === '1';
-                            if (cid && !parked) {
-                                EchoWM.postRpc({
-                                    action: 'window_closed',
-                                    chat_id: cid,
-                                    window_id: node.id
-                                });
-                            }
-                        }
-                    });
-                }
-            }
-        });
-        EchoWM.bodyObs = bodyObs;
-        bodyObs.observe(document.body, { childList: true });
-    }
-
-    function attachThemeBridge() {
-        EchoWM._msgHandler = (ev) => {
-            if (EchoWM._destroyed || !ev || !ev.data) return;
-            if (ev.data.type === 'echo:iframe:init' && ev.source) {
-                EchoWM.broadcastThemeToIframes(ev.source);
-            }
-            if (ev.data.type === 'echo:iframe:fullscreen' && ev.source) {
-                EchoWM.toggleIframeFullscreen(ev.source, ev.data.active);
-            }
-        };
-        window.addEventListener('message', EchoWM._msgHandler);
-        window.addEventListener('keydown', (ke) => {
-            if (ke.key === 'Escape') {
-                document.querySelectorAll('iframe[data-echo-iframe-fs="1"]').forEach(ifr => {
-                    if (ifr.contentWindow) EchoWM.toggleIframeFullscreen(ifr.contentWindow, false);
-                });
-            }
-        });
-        if (document.documentElement && typeof MutationObserver !== 'undefined') {
-            EchoWM.themeObs = new MutationObserver(() => {
-                if (!EchoWM._destroyed) EchoWM.broadcastThemeToIframes();
-            });
-            EchoWM.themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] });
-        }
-    }
-
-    window.EchoWM = EchoWM;
-    attachThemeBridge();
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-            attachBodyObserver();
-            EchoWM.connectSSE();
-            EchoWM.onRouteChanged();
-        });
-    } else {
-        attachBodyObserver();
-        EchoWM.connectSSE();
-        EchoWM.onRouteChanged();
-    }
-})();
-"""
-    return js_template.replace("__WM_SCRIPT_VERSION__", WM_SCRIPT_VERSION)
