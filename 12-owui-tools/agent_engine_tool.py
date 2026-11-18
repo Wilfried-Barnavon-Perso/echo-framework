@@ -1,99 +1,61 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 6.6.2.1
-description: Composant système interne : ECHO Agent Engine.
+version: 6.6.30.1
+description: Composant système interne : ECHO Agent Engine (Délégation par tranches supervisées & Contrôleur unifié).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.30.1: Refactorisation de delegate_to_agent sur EchoSubagentController (tranches supervisées) et création de l'outil unifié control_subagents (fusion des 8 outils de maintenance).
 # 6.6.2.1: Mise à jour temps réel de subagent_meta.model_key via update_subagent_meta_fields lors des cascades et appels à new_cognitive_level.
 # 6.6.0.1: Persistance de model_used/is_cascaded_fallback, passage du timeout à ECHO_LLM_CALL_TIMEOUT (600s) et filet de sécurité idempotent truncate_and_spill_tool_output vers tools_output/.
 # 6.5.3.1: Support des tours hybrides Orchestrateur/Humain (<REQUETE_ORCHESTRATEUR> / <REQUETE_UTILISATEUR>), verrou par sub_sid et file FIFO SQLite via echo_subagent_hub.
 # 5.238.1.1: Ajout de MODEL_ATHENA dans target_model_key de delegate_to_agent.
-# 5.235.5.1: Restriction de la distillation du contexte aux seuls messages de la branche active via load_active_branch_ids.
 
 import sys
-import uuid
-import re
-import time
-import datetime
-import inspect
-import asyncio
+from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, Field
-from typing import Optional, Any, List, Literal
 
 sys.path.append("/app/backend/echo_libs")
-from echo_core import (
+from echo_constants import (  # noqa: E402
+    ECHO_API_KEY_RETRIES,
+    ECHO_API_MAX_RETRIES,
+    ECHO_SUBAGENT_CHECKPOINT_CALLS,
+    ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+)
+from echo_core import (  # noqa: E402
+    EchoCompactionEngine,
     echo_tool,
     wrap_tool_output,
-    truncate_and_spill_tool_output,
-    clamp_model,
-    estimate_token_size,
-    smart_truncate_history,
-    EchoCompactionEngine,
 )
-from echo_events import EchoEvents
-from echo_gemini_client import EchoGeminiClient
-from echo_state_manager import EchoStateManager
-from echo_constants import (
-    ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES,
-    DELEGATE_AGENT_BLACKLIST,
-    DELEGATE_AGENT_SYSTEM_TOOLS,
-    CONTEXT_TRUNCATE_THRESHOLD,
-    ECHO_LLM_CALL_TIMEOUT,
-    ECHO_MAX_CONTEXT_SIZE,
-    ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS,
-    get_generation_config
-)
-from echo_prompts import SYS_ORCHESTRATOR_APPENDIX, ECHO_FOUNDATION_KERNEL
-from echo_skills import get_skill_content, parse_skill_metadata
-from echo_aec import EchoAEC
-from echo_subagent_hub import (
-    get_subagent_lock,
-    get_subagent_meta,
-    mark_subagent_running,
-    pop_next_human_message,
-    save_subagent_meta,
-    update_subagent_meta_fields,
-    update_subagent_status,
-    wrap_human_turn,
-    wrap_orchestrator_turn,
+from echo_events import EchoEvents  # noqa: E402
+from echo_gemini_client import EchoGeminiClient  # noqa: E402
+from echo_state_manager import EchoStateManager  # noqa: E402
+from echo_subagent_hub import (  # noqa: E402
+    EchoSubagentController,
+    run_human_subagent_turn,
 )
 
-# Identifiant de rôle pour les threads delegate dans cognitive_threads
-_DELEGATE_ROLE_ID = "delegate"
-
+__all__ = ["Tools", "run_human_subagent_turn"]
 
 
 class Tools:
     class Valves(BaseModel):
         KEY_SWITCH_THRESHOLD: int = Field(
             default=ECHO_API_KEY_RETRIES,
-            description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours."
+            description="Nombre d'erreurs 429/503 avant de basculer sur la clé de secours.",
         )
         MAX_RETRIES: int = Field(
             default=ECHO_API_MAX_RETRIES,
-            description="Nombre de tentatives maximum."
+            description="Nombre de tentatives maximum.",
         )
 
     class UserValves(BaseModel):
-        MAX_AGENT_FUNCTION_CALLS: int = Field(
-            default=25, ge=5, le=50,
-            description=(
-                "Budget d'appels de fonctions par invocation d'agent. "
-                "Compte les décisions d'appel de l'agent uniquement — "
-                "les opérations internes des outils appelés (ex: itérations d'un conseil) "
-                "ne sont pas comptées."
-            )
-        )
+        pass
 
     def __init__(self):
         self.valves = self.Valves()
         self.user_valves = self.UserValves()
-
-    # ==========================================================================
-    # 1. DÉLÉGATION PRINCIPALE
-    # ==========================================================================
 
     @echo_tool
     async def delegate_to_agent(
@@ -103,991 +65,101 @@ class Tools:
         skill_id: Optional[str] = None,
         sub_sid: Optional[str] = None,
         with_context_distillate: bool = False,
-        target_model_key: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_APOLLO",
-        # --- Paramètres internes (non exposés au LLM) ---
+        target_model_key: Literal[
+            "MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"
+        ] = "MODEL_APOLLO",
         allowed_tools: Optional[List[str]] = None,
-        max_calls_override: Optional[int] = None,
-        __tools__: Optional[list] = None,
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
         __metadata__: Optional[dict] = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None,
-    ) -> str:
-        """Délègue une tâche isolée ou multi-outils à un sous-agent autonome outillé (avec `skill_id` optionnel et reprise possible via `sub_sid`)."""
+    ) -> dict:
+        """Délègue une tâche à un sous-agent autonome outillé exécuté par tranches supervisées (avec skill_id et sub_sid optionnels)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = (__user__ or {}).get("id", "system")
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id") or ""
-        max_calls = max_calls_override or self.user_valves.MAX_AGENT_FUNCTION_CALLS
 
         if not user_id or user_id == "system":
             return wrap_tool_output(
                 text="❌ Contexte utilisateur manquant.",
-                status={"status": "error", "message": "user_id requis"}
+                status={"status": "error", "message": "user_id requis"},
             )
 
-        if not skill_id and not system_prompt:
-            # Fallback : Transfert du system_prompt d'ECHO au sous-agent
-            system_prompt = ECHO_FOUNDATION_KERNEL
-
-        # 1. Résolution de la persona (Skill optionnel)
-        role_name = None
-        if skill_id:
-            skill_content = get_skill_content(user_id, skill_id)
-            if not skill_content:
-                return wrap_tool_output(
-                    text=f"❌ Skill '{skill_id}' introuvable.",
-                    status={"status": "error", "message": f"Skill '{skill_id}' not found"}
-                )
-            
-            # Extraction du nom lisible pour l'UI
-            skill_meta = parse_skill_metadata(skill_content)
-            role_name = skill_meta.get("name", skill_id)
-
-            # Le Skill définit la persona, le system_prompt l'enrichit contextuellement
-            base_system = f"{skill_content}\n\n{system_prompt}" if system_prompt else skill_content
-        else:
-            base_system = system_prompt
-
-
-        current_time = datetime.datetime.now().isoformat()
-        
-        if not base_system or ("<directives_globales>" not in base_system and "<context_temporel>" not in base_system):
-            if base_system and "PRAF" in base_system:
-                # Si le système hérite déjà du Kernel (contenant PRAF), on n'injecte que la date
-                appendix = (
-                    f"\n\n<directives_globales>\n"
-                    f"- Ancrage Temporel : {current_time}\n"
-                    f"</directives_globales>"
-                )
-            else:
-                # Sinon, on injecte la date et une consigne de rigueur factuelle sans jargon
-                appendix = (
-                    f"\n\n<directives_globales>\n"
-                    f"- Ancrage Temporel : {current_time}\n"
-                    f"- Rigueur Factuelle : Le Modèle DOIT asseoir son raisonnement sur des certitudes.\n"
-                    f"- Budget Maîtrisé : Si des outils de recherche sont disponibles, leur utilisation est ABSOLUMENT réservée à la levée d'un doute critique, la mise à jour temporelle d'une connaissance ou la validation d'un pivot factuel.\n"
-                    f"</directives_globales>"
-                )
-            
-            base_system = f"{base_system}{appendix}" if base_system else appendix
-
-
-        # 2. Résolution du sub_sid
-        if sub_sid:
-            sid = sub_sid
-        elif skill_id:
-            sid = f"thread_{skill_id}_{uuid.uuid4().hex[:8]}"
-        else:
-            sid = f"dlg_{uuid.uuid4().hex[:10]}"
-        is_resume = sub_sid is not None
-
-        # 3. Résolution du modèle — orchestrateur > politique par défaut
-        #    clamp_model = min(demandé, plafond_politique), centralisé dans echo_utils
-        requested = target_model_key or "MODEL_APOLLO"
-        current_model_key = clamp_model(requested, __metadata__ or {}, user_id)
-
-        # -----------------------------------------------------------------------
-        # 3. Résolution des outils disponibles pour le sous-agent
-        # -----------------------------------------------------------------------
-        # Contrainte architecturale OWUI :
-        #   OWUI injecte __tools__ (le dict des outils avec callables) uniquement
-        #   dans le Pipe principal. Les tool callables (comme delegate_to_agent)
-        #   ne reçoivent PAS __tools__ et ne peuvent PAS modifier __metadata__ de
-        #   façon visible par les autres outils (chaque outil reçoit un __metadata__
-        #   indépendant).
-        #
-        # Solution (ECHO v5.166.2) :
-        #   Le Pipe stocke __tools__ dans _TOOLS_CACHE[chat_id] (module-level).
-        #   agent_engine_tool lit ce cache via sys.modules["function_echo_orchestrator"].
-        #   Cette lecture est un accès direct à un attribut de module, PAS un scan.
-        #
-        # Priorité des sources :
-        #   1. _TOOLS_CACHE[chat_id]            ← callables OWUI originaux (optimal)
-        #   2. __metadata__["_echo_tools_dict"] ← fallback symétrique (normalement vide)
-        #   3. _resolve_sub_tools_from_sys_modules ← dernier recours si specs disponibles
-        # -----------------------------------------------------------------------
-        import logging as _dlog
-        _log = _dlog.getLogger("echo.delegate")
-
-        sub_tools, _body_tools_specs, _cache_len, _tools_dict_len = _resolve_delegate_tools(
-            chat_id=chat_id,
-            allowed_tools=allowed_tools,
-            __metadata__=__metadata__,
-            __user__=__user__,
-        )
-
-        _callable_count = sum(1 for v in sub_tools.values() if v.get("callable") is not None)
-        _log.debug(
-            "delegate [%s]: cache_keys=%d, _tools_dict=%d, sub_tools=%d, callables=%d",
-            sid, _cache_len, _tools_dict_len, len(sub_tools), _callable_count,
-        )
-
-        # 4. System prompt final (appendice cadre d'exécution)
-        final_system = base_system + SYS_ORCHESTRATOR_APPENDIX.format(
-            sub_sid=sid, max_calls=max_calls
-        )
-
-        # 5. Chargement de l'instance EchoStateManager sur chat_id
-        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-
-        # 6. Distillat de contexte principal (optionnel, non-bloquant)
-        if with_context_distillate and not is_resume:
+        distillate = ""
+        if with_context_distillate and not sub_sid and chat_id:
             try:
-                await events.status(f"🧠 [{sid}] Distillation du contexte principal...")
+                state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+                await events.status("🧠 Distillation du contexte principal...")
                 distillate = await _distill_main_context(state, chat_id, user_id)
-                if distillate:
-                    final_system += f"\n\n## CONTEXTE DU CHAT PRINCIPAL (distillé)\n{distillate}"
             except Exception:
-                pass  # Non-bloquant : la tâche continue sans distillat
+                distillate = ""
 
-        # 7 & 8. Verrouillage hybride, persistance et boucle agentique
-        async with get_subagent_lock(chat_id, sid):
-            mark_subagent_running(chat_id, sid, True)
-            completed_normally = False
-            try:
-                history = state.get_thread_history(sid)
-                save_subagent_meta(
-                    state,
-                    sid,
-                    {
-                        "sub_sid": sid,
-                        "engine": "delegate",
-                        "role_name": role_name or sid,
-                        "skill_id": skill_id,
-                        "model_key": current_model_key,
-                        "final_system": final_system,
-                        "allowed_tools": allowed_tools,
-                        "max_calls": max_calls,
-                        "status": "running",
-                    },
-                )
-                step_index = len(history)
-                task_parts = [{"text": wrap_orchestrator_turn(task)}]
-                history.append({"role": "user", "parts": task_parts})
-                state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_index, "user", task_parts)
-
-                label = f"🎓 Expert [{role_name}]" if role_name else f"🤖 Agent [{sid}]"
-                await events.status(f"{label} démarré ({current_model_key})...")
-
-                res = await _run_agent_loop(
-                    sid=sid,
-                    chat_id=chat_id,
-                    user_id=user_id,
-                    history=history,
-                    state=state,
-                    sub_tools=sub_tools,
-                    body_tools_specs=_body_tools_specs,
-                    final_system=final_system,
-                    current_model_key=current_model_key,
-                    max_calls=max_calls,
-                    events=events,
-                    valves=self.valves,
-                    __user__=__user__,
-                    __chat_id__=chat_id,
-                    __metadata__=__metadata__,
-                    __event_emitter__=__event_emitter__,
-                    __event_call__=__event_call__,
-                )
-                completed_normally = True
-                return res
-            finally:
-                if not completed_normally:
-                    try:
-                        update_subagent_status(state, sid, "error")
-                    except Exception:
-                        pass
-                mark_subagent_running(chat_id, sid, False)
-
-    # ==========================================================================
-    # 2. LISTE DES SESSIONS
-    # ==========================================================================
-
-    @echo_tool
-    async def list_agent_sessions(
-        self,
-        __user__: Optional[dict] = None,
-        __chat_id__: Optional[str] = None,
-        __event_emitter__: Any = None,
-        __metadata__: dict = {},
-    ) -> str:
-        """Liste toutes les sessions de sous-agents actives (`sub_sid`) dans la conversation."""
-        user_id = (__user__ or {}).get("id", "system")
-        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
-        if not chat_id:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"})
-
-        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-        threads = state.list_threads(chat_id)
-
-        if not threads:
-            return wrap_tool_output(
-                text="ℹ️ Aucune session d'agent active pour cette conversation.",
-                status={"status": "success", "sessions": []}
-            )
-
-        md = "### 🤖 SESSIONS D'AGENTS ACTIVES\n\n"
-        for t in threads:
-            sid = t["sub_sid"]
-            # Classification par préfixe
-            if sid.startswith("thread_council_"):
-                t_type, t_icon = "council", "🏛️"
-            elif sid.startswith("thread_supervisor_"):
-                t_type, t_icon = "supervisor", "📋"
-            elif sid.startswith("thread_"):
-                t_type, t_icon = "expert", "🎓"
-            elif sid.startswith("dlg_img_"):
-                t_type, t_icon = "image_gen", "🎨"
-            else:
-                t_type, t_icon = "agent", "🤖"
-            ts = time.strftime("%H:%M:%S", time.localtime(t.get("updated_at", 0)))
-            md += (
-                f"- {t_icon} **SID:** `{sid}` | **Type:** {t_type} | "
-                f"**Étapes:** {t['last_step'] + 1} | **Modifié:** {ts}\n"
-                f"  > *{t['summary']}*\n\n"
-            )
-
-        return wrap_tool_output(
-            text=md,
-            status={"status": "success", "sessions": [t["sub_sid"] for t in threads]}
+        return await EchoSubagentController.run_or_resume(
+            user_id=user_id,
+            chat_id=chat_id,
+            task=task,
+            system_prompt=system_prompt,
+            skill_id=skill_id,
+            sub_sid=sub_sid,
+            context_distillate=distillate,
+            target_model_key=target_model_key,
+            allowed_tools=allowed_tools,
+            slice_max_calls=ECHO_SUBAGENT_CHECKPOINT_CALLS,
+            slice_timeout_sec=ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+            autonomous_slice=False,
+            engine="delegate",
+            key_switch_threshold=self.valves.KEY_SWITCH_THRESHOLD,
+            max_retries=self.valves.MAX_RETRIES,
+            __user__=__user__,
+            __metadata__=__metadata__,
+            __event_emitter__=__event_emitter__,
+            __event_call__=__event_call__,
         )
 
-    # ==========================================================================
-    # 3. FERMETURE DE SESSION
-    # ==========================================================================
-
     @echo_tool
-    async def close_agent_session(
+    async def control_subagents(
         self,
-        sub_sid: str,
-        __user__: Optional[dict] = None,
-        __chat_id__: Optional[str] = None,
-        __event_emitter__: Any = None,
-        __metadata__: dict = {},
-    ) -> str:
-        """Ferme définitivement une session de sous-agent (`sub_sid`) et purge son historique, à n'appeler que si aucune reprise ultérieure de son travail n'est requise."""
-        user_id = (__user__ or {}).get("id", "system")
-        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
-        if not chat_id:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"})
-
-        # Garde-fou : vérifier que le thread appartient au chat courant
-        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-        threads = state.list_threads(chat_id)
-        sids_in_chat = {t["sub_sid"] for t in threads}
-
-        if sub_sid not in sids_in_chat:
-            return wrap_tool_output(
-                text=f"❌ Session `{sub_sid}` introuvable dans ce chat ou accès refusé.",
-                status={"status": "error"}
-            )
-
-        state.delete_thread(sub_sid)
-        return wrap_tool_output(
-            text=f"✅ Session `{sub_sid}` fermée et purgée.",
-            status={"status": "success", "sid": sub_sid}
-        )
-
-    # ==========================================================================
-    # 4. RÉSUMÉ DE SESSION
-    # ==========================================================================
-
-    @echo_tool
-    async def summarize_agent_session(
-        self,
-        sub_sid: str,
+        action: Literal[
+            "status",
+            "collect",
+            "steer",
+            "resume",
+            "suspend",
+            "kill",
+            "summarize",
+            "close",
+        ] = "status",
+        target_ids: Optional[List[str]] = None,
+        filter_type: Literal["all", "agent", "council", "supervisor", "web"] = "all",
+        directive: Optional[str] = None,
+        target_model_key: Optional[
+            Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"]
+        ] = None,
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
         __metadata__: Optional[dict] = None,
         __event_emitter__: Any = None,
-    ) -> str:
-        """Génère un résumé structuré (Tâche, Outils utilisés, Résultats, Conclusion) de l'historique d'une session de sous-agent (`sub_sid`)."""
-        events = EchoEvents(__event_emitter__)
+        __event_call__: Any = None,
+    ) -> dict:
+        """Inspecte, collecte, réoriente (steer), relance (resume), met en pause (suspend), stoppe (kill), résume ou ferme (close) un ou plusieurs sous-agents ou groupes."""
         user_id = (__user__ or {}).get("id", "system")
-        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
-        if not chat_id:
-            return wrap_tool_output(text="❌ Aucun chat_id détecté.", status={"status": "error"})
-
-        # Garde-fou d'appartenance
-        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-        threads = state.list_threads(chat_id)
-        sids_in_chat = {t["sub_sid"] for t in threads}
-
-        if sub_sid not in sids_in_chat:
-            return wrap_tool_output(
-                text=f"❌ Session `{sub_sid}` introuvable dans ce chat.",
-                status={"status": "error"}
-            )
-
-        await events.status(f"🧠 Résumé de la session [{sub_sid}]...")
-        history = state.get_thread_history(sub_sid)
-
-        if not history:
-            return wrap_tool_output(
-                text=f"ℹ️ Session `{sub_sid}` vide.",
-                status={"status": "success", "sid": sub_sid}
-            )
-
-        # Construction du texte brut de l'historique
-        raw = ""
-        for step in history:
-            role = step.get("role", "user").upper()
-            for part in step.get("parts", []):
-                if "text" in part and not part.get("thought"):
-                    raw += f"{role}: {part['text'][:800]}\n---\n"
-                elif "functionCall" in part:
-                    fc = part["functionCall"]
-                    raw += f"{role} [OUTIL→]: {fc.get('name', '?')} args={str(fc.get('args', {}))[:200]}\n---\n"
-                elif "functionResponse" in part:
-                    fr = part["functionResponse"]
-                    resp = str(fr.get("response", {}))[:300]
-                    raw += f"{role} [←OUTIL]: {fr.get('name', '?')} → {resp}\n---\n"
-
-        distill_prompt = (
-            "Résume cette session d'agent ECHO en 4 sections :\n"
-            "1. **Tâche initiale** — Quelle était la mission ?\n"
-            "2. **Outils utilisés** — Lesquels et dans quel ordre ?\n"
-            "3. **Résultats clés** — Qu'a-t-on découvert ou produit ?\n"
-            "4. **Conclusion** — Réponse finale ou état actuel.\n\n"
-            f"### HISTORIQUE\n{raw}"
-        )
-
-        data, model_used, _ = await EchoGeminiClient.call_cascade(
-            target_model_key="MODEL_APOLLO",
-            payload={
-                "contents": [{"role": "user", "parts": [{"text": distill_prompt}]}],
-                "generationConfig": {**get_generation_config("MODEL_APOLLO", override_thinking="medium"), "maxOutputTokens": 8192},
-            },
+        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id") or ""
+        return await EchoSubagentController.execute_control_action(
+            action=action,
             user_id=user_id,
-            metadata=__metadata__,
-            events=events,
-            threshold=self.valves.KEY_SWITCH_THRESHOLD,
+            chat_id=chat_id,
+            target_ids=target_ids,
+            filter_type=filter_type,
+            directive=directive,
+            target_model_key=target_model_key,
+            key_switch_threshold=self.valves.KEY_SWITCH_THRESHOLD,
             max_retries=self.valves.MAX_RETRIES,
-            include_thoughts=False,
+            __user__=__user__,
+            __metadata__=__metadata__,
+            __event_emitter__=__event_emitter__,
+            __event_call__=__event_call__,
         )
-
-        if not data:
-            return wrap_tool_output(
-                text="❌ Échec de la génération du résumé.",
-                status={"status": "error"}
-            )
-
-        summary = ""
-        candidates = data.get("candidates", [])
-        if candidates and candidates[0].get("content"):
-            for p in candidates[0]["content"].get("parts", []):
-                if "text" in p:
-                    summary += p["text"]
-
-        await events.status("✅ Résumé généré.", done=True)
-        return wrap_tool_output(
-            text=f"### Résumé de la session `{sub_sid}`\n\n{summary}",
-            status={"status": "success", "sid": sub_sid, "steps": len(history)}
-        )
-
-
-# ==============================================================================
-# HELPERS PRIVÉS (fonctions module-level pour clarté)
-# ==============================================================================
-
-def _resolve_delegate_tools(
-    chat_id: str,
-    allowed_tools: Optional[List[str]],
-    __metadata__: Optional[dict],
-    __user__: Optional[dict],
-) -> tuple[dict, list, int, int]:
-    """Résout les outils disponibles et leurs specs pour un sous-agent."""
-    _pipe_mod = sys.modules.get("function_echo_orchestrator")
-    _tools_cache: dict = (getattr(_pipe_mod, "_TOOLS_CACHE", {}) or {}) if _pipe_mod else {}
-    _tools_dict: dict = _tools_cache.get(chat_id, {})
-
-    if not _tools_dict:
-        _tools_dict = (__metadata__ or {}).get("_echo_tools_dict", {})
-
-    _body_tools_specs: list = (__metadata__ or {}).get("_echo_body_tools", [])
-
-    sub_tools: dict = {}
-    if _tools_dict:
-        sub_tools = {
-            k: v for k, v in _tools_dict.items()
-            if k not in DELEGATE_AGENT_BLACKLIST and (
-                not allowed_tools or k in allowed_tools or k in DELEGATE_AGENT_SYSTEM_TOOLS
-            )
-        }
-    elif _body_tools_specs:
-        sub_tools = _resolve_sub_tools_from_sys_modules(_body_tools_specs, __user__)
-        if allowed_tools:
-            sub_tools = {
-                k: v for k, v in sub_tools.items()
-                if k in allowed_tools or k in DELEGATE_AGENT_SYSTEM_TOOLS
-            }
-
-    return sub_tools, _body_tools_specs, len(_tools_cache), len(_tools_dict)
-
-
-async def _enqueue_next_human_turn_if_any(
-    state: EchoStateManager,
-    sid: str,
-    chat_id: str,
-    history: List[dict],
-    events: EchoEvents,
-    final_status: str,
-) -> bool:
-    """Dépile un éventuel message humain en file ; sinon met à jour final_status."""
-    next_human = pop_next_human_message(state, sid)
-    if next_human and next_human.get("content"):
-        human_parts = [{"text": wrap_human_turn(next_human["content"])}]
-        history.append({"role": "user", "parts": human_parts})
-        state.save_thread_step(
-            sid, chat_id, _DELEGATE_ROLE_ID, len(history) - 1, "user", human_parts
-        )
-        await events.status(
-            f"💬 [{sid}] Message utilisateur en file détecté — traitement du tour..."
-        )
-        return True
-    update_subagent_status(state, sid, final_status)
-    return False
-
-
-async def _run_agent_loop(
-    sid: str,
-    chat_id: str,
-    user_id: str,
-    history: List[dict],
-    state: EchoStateManager,
-    sub_tools: dict,
-    body_tools_specs: list,
-    final_system: str,
-    current_model_key: str,
-    max_calls: int,
-    events: EchoEvents,
-    valves,
-    __user__, __chat_id__, __metadata__,
-    __event_emitter__, __event_call__,
-) -> str:
-    """Boucle agentique principale de l'agent."""
-    calls_used = 0
-    is_cascaded_fallback = False
-
-    while True:
-        # 1. Construction des function_declarations (source A : sub_tools, B : body_tools_specs)
-        # Si le budget d'appels d'outils est atteint ou dépassé (calls_used >= max_calls),
-        # les déclarations sont maintenues pour la cohérence de l'historique mais
-        # functionCallingConfig.mode est forcé à "NONE" pour contraindre mécaniquement
-        # le décodeur Gemini à formuler sa synthèse finale en texte pur sans appel d'outil.
-        fn_decls = _build_function_declarations(sub_tools, body_tools_specs)
-        is_budget_exhausted = calls_used >= max_calls
-
-        # 1.5. Défense passive : Troncature de l'historique de l'agent
-        current_size = estimate_token_size(history) + estimate_token_size(final_system)
-        max_tokens = ECHO_MAX_CONTEXT_SIZE
-        if current_size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
-            try:
-                await events.toast(f"⚠️ Agent [{sid}] : saturation contextuelle ({int(current_size/max_tokens*100)}%). Troncature silencieuse active.", "warning")
-            except AttributeError:
-                if __event_emitter__: await events.toast(f"⚠️ Agent [{sid}] : saturation contextuelle. Troncature silencieuse active.", level="warning", title="ECHO Agent")
-            while current_size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(history) > 3:
-                removed = smart_truncate_history(history, 0)
-                if not removed:
-                    break
-                current_size -= removed
-
-        # 2. Payload Gemini complet
-        payload: dict = {
-            "contents": history,
-            "systemInstruction": {"parts": [{"text": final_system}]},
-            "generationConfig": get_generation_config(current_model_key, is_fallback_cascade=is_cascaded_fallback)
-        }
-        if fn_decls:
-            payload["tools"] = [{"functionDeclarations": fn_decls}]
-            payload["tool_config"] = {
-                "functionCallingConfig": {"mode": "NONE" if is_budget_exhausted else "AUTO"}
-            }
-
-        # 3. Appel API via call_cascade (clamping + thinkingConfig + cascade descendante)
-        try:
-            data, model_used, reason = await EchoGeminiClient.call_cascade(
-                target_model_key=current_model_key,
-                payload=payload,
-                user_id=user_id,
-                metadata=__metadata__,
-                events=events,
-                threshold=valves.KEY_SWITCH_THRESHOLD,
-                max_retries=valves.MAX_RETRIES,
-                timeout=ECHO_LLM_CALL_TIMEOUT,
-                include_thoughts=False,
-            )
-        except Exception as e:
-            update_subagent_status(state, sid, "error")
-            return wrap_tool_output(
-                text=f"❌ Erreur API dans l'agent [{sid}] : {str(e)}",
-                status={"status": "error", "sid": sid, "message": str(e)}
-            )
-
-        if not data:
-            update_subagent_status(state, sid, "error")
-            return wrap_tool_output(
-                text=f"❌ Cascade épuisée pour l'agent [{sid}].",
-                status={"status": "error", "sid": sid, "message": "cascade exhausted"}
-            )
-
-        if model_used and model_used != current_model_key:
-            current_model_key = model_used
-            is_cascaded_fallback = True
-            update_subagent_meta_fields(state, sid, model_key=current_model_key)
-
-        # 4. Extraction des parts BRUTES de la réponse
-        # Conservation des parts BRUTES (thoughtSignature Gemini 3.x) :
-        # on ne reconstruit PAS les parts — les parts brutes conservent le
-        # thoughtSignature Gemini 3.x. Le perdre cause un 400 Bad Request
-        # systématique sur TOUS les appels suivant une exécution d'outil.
-        candidates = data.get("candidates", [])
-        if not candidates or not candidates[0].get("content"):
-            update_subagent_status(state, sid, "error")
-            return wrap_tool_output(
-                text=f"❌ Réponse vide du modèle pour l'agent [{sid}].",
-                status={"status": "error", "sid": sid}
-            )
-
-        # Parts brutes — NE PAS EXTRAIRE de sous-dict, conserver intégralement
-        raw_parts = candidates[0]["content"].get("parts", [])
-
-        # Tri des parts par type
-        tools_raw = [p for p in raw_parts if "functionCall" in p]
-        text_raw  = [p for p in raw_parts if "text" in p and not p.get("thought")]
-
-        real_fc   = [p["functionCall"] for p in tools_raw]
-        text      = "".join(p.get("text", "") for p in text_raw).strip()
-
-        step_idx = len(history)
-
-        # Helper inline : extrait la première thoughtSignature présente dans une liste de parts
-        def _sig(raw_list):
-            return next((p["thoughtSignature"] for p in raw_list if "thoughtSignature" in p), None)
-
-
-        # =====================================================================
-        # CAS 2 : Question de clarification (QUESTION: en dernière ligne)
-        # =====================================================================
-        if not real_fc and text:
-            question_match = re.search(r"QUESTION:\s*(.+?)$", text, re.MULTILINE)
-            if question_match:
-                question = question_match.group(1).strip()
-                progress = text[:text.rfind("QUESTION:")].strip()
-
-                # Parts brutes du modèle (thoughtSignature préservée)
-                model_raw = raw_parts if raw_parts else [{"text": text}]
-                history.append({"role": "model", "parts": model_raw})
-                state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", model_raw, _sig(model_raw))
-
-                if await _enqueue_next_human_turn_if_any(
-                    state, sid, chat_id, history, events, "pending_question"
-                ):
-                    calls_used = 0
-                    continue
-
-                return wrap_tool_output(
-                    text=f"⚠️ Agent [{sid}] en attente de clarification : {question}",
-                    status={
-                        "status": "pending_question",
-                        "sid": sid,
-                        "question": question,
-                        "progress": progress or "(en cours)",
-                        "calls_remaining": max_calls - calls_used,
-                    }
-                )
-
-        # =====================================================================
-        # CAS 3 : Réponse finale (texte pur, pas de tool call)
-        # =====================================================================
-        if not real_fc:
-            model_raw = raw_parts if raw_parts else [{"text": "(Réponse vide)"}]
-            history.append({"role": "model", "parts": model_raw})
-            state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", model_raw, _sig(model_raw))
-
-            if await _enqueue_next_human_turn_if_any(
-                state, sid, chat_id, history, events, "idle"
-            ):
-                calls_used = 0
-                continue
-
-            final_text = text or "(Réponse vide)"
-            status_dict = {
-                "status": "success",
-                "sid": sid,
-                "calls_remaining": max(0, max_calls - calls_used),
-                "model_used": model_used,
-            }
-            if calls_used >= max_calls:
-                status_dict["warning"] = "budget_exhausted"
-                await events.status(
-                    f"🛑 Agent [{sid}] — budget d'outils atteint ou dépassé "
-                    f"({calls_used}/{max_calls} appels). Synthèse terminée.",
-                    done=True
-                )
-            else:
-                await events.status(
-                    f"✅ Agent [{sid}] terminé ({calls_used}/{max_calls} appels).",
-                    done=True
-                )
-            return wrap_tool_output(
-                text=final_text,
-                status=status_dict)
-
-        # =====================================================================
-        # CAS 4 : Garde-fou hallucination — tool call sur tour verrouillé (calls_used >= max_calls)
-        # =====================================================================
-        if calls_used >= max_calls and real_fc:
-            if not text:
-                cancel_parts = []
-                for fc in real_fc:
-                    _cfr: dict = {
-                        "name": fc.get("name", "unknown"),
-                        "response": {
-                            "status": "cancelled_budget_exhausted",
-                            "message": (
-                                f"APPEL REFUSÉ : Budget de {max_calls} appels d'outils épuisé ({calls_used}/{max_calls}). "
-                                "Le Modèle a l'INTERDICTION d'appeler un outil et DOIT rédiger immédiatement "
-                                "sa synthèse finale complète et détaillée en texte pur."
-                            ),
-                        },
-                    }
-                    if fc.get("id"):
-                        _cfr["id"] = fc["id"]
-                    cancel_parts.append({"functionResponse": _cfr})
-
-                recovery_payload: dict = {
-                    "contents": history + [
-                        {"role": "model", "parts": raw_parts},
-                        {"role": "user", "parts": cancel_parts},
-                    ],
-                    "systemInstruction": {"parts": [{"text": final_system}]},
-                    "generationConfig": get_generation_config(current_model_key, is_fallback_cascade=is_cascaded_fallback),
-                }
-                if fn_decls:
-                    recovery_payload["tools"] = [{"functionDeclarations": fn_decls}]
-                    recovery_payload["tool_config"] = {"functionCallingConfig": {"mode": "NONE"}}
-                try:
-                    rec_data, rec_model, _ = await EchoGeminiClient.call_cascade(
-                        target_model_key=current_model_key,
-                        payload=recovery_payload,
-                        user_id=user_id,
-                        metadata=__metadata__,
-                        events=events,
-                        threshold=valves.KEY_SWITCH_THRESHOLD,
-                        max_retries=valves.MAX_RETRIES,
-                        timeout=ECHO_LLM_CALL_TIMEOUT,
-                        include_thoughts=False,
-                    )
-                    if rec_data:
-                        rec_cands = rec_data.get("candidates", [])
-                        if rec_cands and rec_cands[0].get("content"):
-                            rec_parts = rec_cands[0]["content"].get("parts", [])
-                            text = "".join(
-                                p.get("text", "") for p in rec_parts if "text" in p and not p.get("thought")
-                            ).strip()
-                            if rec_model:
-                                model_used = rec_model
-                except Exception:
-                    pass
-
-            final_text = text or "(Synthèse finale — budget d'outils atteint ou dépassé)"
-            clean_model_parts = [p for p in raw_parts if "functionCall" not in p]
-            if not any("text" in p and not p.get("thought") for p in clean_model_parts):
-                clean_model_parts.append({"text": final_text})
-            history.append({"role": "model", "parts": clean_model_parts})
-            state.save_thread_step(
-                sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model",
-                clean_model_parts, _sig(clean_model_parts) or _sig(raw_parts)
-            )
-            if await _enqueue_next_human_turn_if_any(
-                state, sid, chat_id, history, events, "idle"
-            ):
-                calls_used = 0
-                continue
-            await events.status(
-                f"🛑 Agent [{sid}] — budget d'outils atteint ou dépassé "
-                f"({calls_used}/{max_calls} appels). Synthèse terminée.",
-                done=True
-            )
-            return wrap_tool_output(
-                text=final_text,
-                status={
-                    "status": "success",
-                    "sid": sid,
-                    "warning": "budget_exhausted",
-                    "calls_remaining": 0,
-                    "model_used": model_used,
-                })
-
-        # =====================================================================
-        # CAS 5 : Exécution des outils (appels linéaires ou parallèles)
-        # =====================================================================
-        # Règle Gemini 3.x : le thoughtSignature est dans la 1ère functionCall part
-        # (appels parallèles). On conserve les parts BRUTES — jamais reconstruites.
-        history.append({"role": "model", "parts": raw_parts})
-        state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx, "model", raw_parts, _sig(raw_parts))
-
-        # Exécution de chaque outil (potentiellement en parallèle dans les parts)
-        response_parts = []
-        for fc in real_fc:
-            fn_name = fc.get("name", "")
-            fn_args = fc.get("args", {})
-            # L'ID Gemini identifie chaque appel outil individuel — INDISPENSABLE pour les
-            # appels parallèles au même outil (ex: 2× consult_council).
-            # Sans ID correspondant dans functionResponse, l'API retourne 400.
-            fn_id = fc.get("id")  # Peut être None pour les appels non-parallèles
-
-            callable_fn = (sub_tools.get(fn_name) or {}).get("callable")
-            if callable_fn is None:
-                # Callable absent : soit outil inconnu, soit specs-only (__tools__ non injecté).
-                # Le sous-agent doit utiliser QUESTION: pour déléguer à l'orchestrateur.
-                result = {
-                    "status": "error",
-                    "message": (
-                        f"L'outil '{fn_name}' est déclaré mais son exécution n'est pas disponible "
-                        "dans ce contexte de sous-agent. "
-                        "Utilise QUESTION: pour demander à l'orchestrateur de l'exécuter."
-                    )
-                }
-            else:
-                try:
-                    import functools
-                    infra_kwargs = {
-                        "__user__": __user__,
-                        "__chat_id__": chat_id,
-                        "__metadata__": __metadata__,
-                        "__event_emitter__": __event_emitter__,
-                        "__event_call__": __event_call__,
-                    }
-                    # Filtrage des params infra acceptés par le callable sans muter en place _TOOLS_CACHE[chat_id].
-                    exec_callable = callable_fn
-                    try:
-                        target_fn = getattr(callable_fn, "func", callable_fn)
-                        sig = inspect.signature(callable_fn)
-                        already_frozen = getattr(callable_fn, "keywords", None)
-                        if isinstance(already_frozen, dict):
-                            local_frozen = dict(already_frozen)
-                            for _k, _v in infra_kwargs.items():
-                                if _k in local_frozen and _v is not None:
-                                    local_frozen[_k] = _v
-                            exec_callable = functools.partial(
-                                callable_fn.func,
-                                *(getattr(callable_fn, "args", ()) or ()),
-                                **local_frozen,
-                            )
-                        accepted_infra = {
-                            k: v for k, v in infra_kwargs.items()
-                            if k in sig.parameters and not (isinstance(already_frozen, dict) and k in already_frozen)
-                        }
-                    except (ValueError, TypeError):
-                        target_fn = getattr(callable_fn, "func", callable_fn)
-                        accepted_infra = {}  # Partial OWUI — ne pas passer d'infra
-
-                    # Injection asynchrone de l'identité du sous-agent (contournement du proxy OWUI)
-                    from echo_constants import ECHO_SUBAGENT_CONTEXT
-                    token = ECHO_SUBAGENT_CONTEXT.set({
-                        "is_subagent": True, 
-                        "sub_sid": sid,
-                        "sub_tools_names": list(sub_tools.keys())
-                    })
-                    try:
-                        if inspect.iscoroutinefunction(target_fn):
-                            result = await exec_callable(**fn_args, **accepted_infra)
-                        else:
-                            result = await asyncio.to_thread(exec_callable, **fn_args, **accepted_infra)
-                    finally:
-                        # Réinitialisation stricte du contexte asynchrone
-                        ECHO_SUBAGENT_CONTEXT.reset(token)
-                except Exception as e:
-                    result = {"status": "error", "message": str(e)}
-
-            if fn_name == "new_cognitive_level" and not (
-                isinstance(result, dict) and result.get("status") == "error"
-            ):
-                new_lvl = (fn_args or {}).get("niveau_requis")
-                if new_lvl:
-                    current_model_key = str(new_lvl)
-                    update_subagent_meta_fields(state, sid, model_key=current_model_key)
-
-            calls_used += 1
-            await events.status(f"🔧 [{sid}] {fn_name} ({calls_used}/{max_calls})")
-
-            # Construction du functionResponse pour l'historique Gemini.
-            # ATTENTION : Gemini rejette les payloads trop lourds (HTTP 400).
-            # Les outils cognitifs (consult_council) peuvent retourner des milliers
-            # de tokens. On tronque et nettoie avant d'insérer dans l'historique.
-            if isinstance(result, dict):
-                _resp = dict(result)
-                # Supprimer les champs volumineux inutiles pour le LLM du sous-agent
-                _resp.pop("echo_tool_multiparts", None)
-                # Filet de sécurité (no-op si déjà délesté par @echo_tool)
-                _text = _resp.get("text", "")
-                if isinstance(_text, str) and len(_text) > ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS:
-                    _preview, _spill = truncate_and_spill_tool_output(
-                        _text, uid=user_id, cid=chat_id, tool_name=fn_name, call_id=fn_id
-                    )
-                    _resp["text"] = _preview
-                    if _spill:
-                        if not isinstance(_resp.get("status"), dict):
-                            _resp["status"] = {"status": "success"}
-                        _resp["status"].update(_spill)
-            else:
-                _preview, _spill = truncate_and_spill_tool_output(
-                    str(result), uid=user_id, cid=chat_id, tool_name=fn_name, call_id=fn_id
-                )
-                _resp = {"result": _preview}
-                if _spill:
-                    _resp.update(_spill)
-
-            # Construction du functionResponse avec son ID Gemini.
-            # L'ID est obligatoire pour les appels parallèles au même outil
-            # (Gemini l'utilise pour associer chaque réponse à son appel).
-            _fr: dict = {"name": fn_name, "response": _resp}
-            if fn_id:
-                _fr["id"] = fn_id
-            response_parts.append({"functionResponse": _fr})
-
-        if response_parts:
-            last_resp = response_parts[-1]["functionResponse"]["response"]
-            if calls_used >= max_calls:
-                last_resp["_budget_alert"] = (
-                    f"BUDGET D'OUTILS ÉPUISÉ ({calls_used}/{max_calls} appels utilisés). "
-                    "Plus aucun appel d'outil n'est disponible. Le Modèle DOIT impérativement "
-                    "rédiger immédiatement son rapport final complet et détaillé synthétisant "
-                    "l'ensemble des actions réalisées, les résultats obtenus et l'état exact de la mission."
-                )
-            else:
-                last_resp["_budget"] = (
-                    f"{calls_used}/{max_calls} appels utilisés ({max_calls - calls_used} restants)"
-                )
-
-        # Règle API : le message user après une functionCall doit contenir
-        # UNIQUEMENT des functionResponse parts — pas de text mélangé.
-        # Le budget est géré par l'infrastructure (Tool Stripping au tour suivant si calls_used >= max_calls),
-        # pas par le LLM sous-agent via l'historique.
-        history.append({"role": "user", "parts": response_parts})
-        state.save_thread_step(sid, chat_id, _DELEGATE_ROLE_ID, step_idx + 1, "user", response_parts)
-
-
-def _resolve_sub_tools_from_sys_modules(body_tools_specs: list, __user__: Optional[dict], __metadata__: dict = None) -> dict:
-    """
-    Construit sub_tools en combinant specs OpenAI (body_tools_specs) et callables récupérés
-    directement depuis sys.modules.
-
-    OWUI charge tous les modules tool_* dans sys.modules avant d'invoquer le Pipe. Ces modules
-    restent accessibles dans le même processus Python. On peut donc instancier chaque classe
-    Tools, injecter user_valves depuis __user__['valves'], et récupérer les méthodes async
-    comme callables.
-
-    Limitation : les instances créées sont fraîches (Valves defaults). Les user_valves sont
-    injectées depuis __user__['valves'] pour minimiser la perte de configuration.
-    """
-    import sys, asyncio as _asyncio
-
-    # 1. Construire fn_name → callable depuis sys.modules
-    fn_to_callable: dict = {}
-    user_valves_data: dict = (__user__ or {}).get("valves", {}) or {}
-
-    for mod_name, module in list(sys.modules.items()):
-        if not mod_name.startswith("tool_") or module is None:
-            continue
-        try:
-            tools_class = getattr(module, "Tools", None)
-            if tools_class is None:
-                continue
-            instance = tools_class()
-            # Injection user_valves depuis __user__['valves'] pour préserver la config utilisateur
-            if user_valves_data and hasattr(instance, "user_valves") and hasattr(instance, "UserValves"):
-                try:
-                    instance.user_valves = instance.UserValves(**{
-                        k: v for k, v in user_valves_data.items()
-                        if k in instance.UserValves.model_fields
-                    })
-                except Exception:
-                    pass  # Non-bloquant : user_valves defaults si échec
-            # Scanner les méthodes d'outils publiques (async et sync)
-            for attr_name in dir(instance):
-                if attr_name.startswith("_") or attr_name in ("valves", "user_valves", "Valves", "UserValves"):
-                    continue
-                try:
-                    attr = getattr(instance, attr_name)
-                    if _asyncio.iscoroutinefunction(attr) or (callable(attr) and not isinstance(attr, type)):
-                        fn_to_callable[attr_name] = attr
-                except Exception:
-                    continue
-        except Exception:
-            continue
-
-    # 2. Construire sub_tools : specs (OpenAI → RAW) + callables
-    sub_tools: dict = {}
-    for t in (body_tools_specs or []):
-        if not isinstance(t, dict) or t.get("type") != "function":
-            continue
-        f = t.get("function", {})
-        fn_name = f.get("name", "")
-        if not fn_name or fn_name in DELEGATE_AGENT_BLACKLIST:
-            continue
-        sub_tools[fn_name] = {
-            "spec": {
-                "name": fn_name,
-                "description": f.get("description", ""),
-                "parameters": f.get("parameters", {"type": "object", "properties": {}}),
-            },
-            "callable": fn_to_callable.get(fn_name),  # None si non trouvé dans sys.modules
-        }
-
-    return sub_tools
-
-
-def _build_function_declarations(sub_tools: dict, body_tools_specs: list = None) -> List[dict]:
-    """
-    Construit les function_declarations Gemini depuis 2 sources, par ordre de priorité :
-
-    Source A — sub_tools (dict OWUI) : {fn_name: {callable, spec:{name, description, parameters}}}
-      → Source primaire quand __tools__ est injecté par OWUI.
-      → Contient les callables → exécution directe possible.
-
-    Source B — body_tools_specs (list OpenAI) : [{type:'function', function:{name,description,parameters}}]
-      → Fallback quand sub_tools est vide (__tools__ non injecté dans le contexte Pipe).
-      → Specs seules, pas de callable → exécution via QUESTION: si le sous-agent en a besoin.
-
-    Le filtrage DELEGATE_AGENT_BLACKLIST est appliqué dans les deux cas.
-    """
-    decls = []
-
-    if sub_tools:
-        # Source A : format RAW OWUI
-        for name, tool_data in sub_tools.items():
-            if not isinstance(tool_data, dict):
-                continue
-            spec = tool_data.get("spec") or tool_data.get("function") or {}
-            decl = {
-                "name": name,
-                "description": spec.get("description", ""),
-                "parameters": spec.get("parameters", {"type": "object", "properties": {}}),
-            }
-            decls.append(decl)
-
-    elif body_tools_specs:
-        # Source B : format OpenAI (fallback)
-        for t in (body_tools_specs or []):
-            if not isinstance(t, dict) or t.get("type") != "function":
-                continue
-            f = t.get("function", {})
-            fn_name = f.get("name", "")
-            if not fn_name or fn_name in DELEGATE_AGENT_BLACKLIST:
-                continue
-            decl = {
-                "name": fn_name,
-                "description": f.get("description", ""),
-                "parameters": f.get("parameters", {"type": "object", "properties": {}}),
-            }
-            decls.append(decl)
-
-    return decls
-
-
 
 
 async def _distill_main_context(
@@ -1117,103 +189,3 @@ async def _distill_main_context(
         return result or ""
     except Exception:
         return ""
-
-
-async def run_human_subagent_turn(
-    user_id: str, chat_id: str, sub_sid: str, content: str
-) -> dict:
-    """Exécute à froid une relance humaine directe sur un sous-agent existant."""
-    state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-    events = EchoEvents(None, None)
-
-    async with get_subagent_lock(chat_id, sub_sid):
-        mark_subagent_running(chat_id, sub_sid, True)
-        completed_normally = False
-        try:
-            meta = get_subagent_meta(state, sub_sid) or {}
-            current_model_key = meta.get("model_key") or "MODEL_APOLLO"
-            max_calls = int(meta.get("max_calls") or 10)
-            allowed_tools = meta.get("allowed_tools")
-            role_name = meta.get("role_name") or sub_sid
-            final_system = meta.get("final_system") or (
-                ECHO_FOUNDATION_KERNEL
-                + SYS_ORCHESTRATOR_APPENDIX.format(
-                    sub_sid=sub_sid, max_calls=max_calls
-                )
-            )
-            sub_tools, _body_tools_specs, _, _ = _resolve_delegate_tools(
-                chat_id=chat_id,
-                allowed_tools=allowed_tools,
-                __metadata__=None,
-                __user__={"id": user_id},
-            )
-            save_subagent_meta(
-                state,
-                sub_sid,
-                {
-                    **meta,
-                    "sub_sid": sub_sid,
-                    "engine": meta.get("engine") or "delegate",
-                    "role_name": role_name,
-                    "model_key": current_model_key,
-                    "final_system": final_system,
-                    "allowed_tools": allowed_tools,
-                    "max_calls": max_calls,
-                    "status": "running",
-                },
-            )
-
-            history = state.get_thread_history(sub_sid)
-            human_parts = [{"text": wrap_human_turn(content)}]
-            history.append({"role": "user", "parts": human_parts})
-            state.save_thread_step(
-                sub_sid,
-                chat_id,
-                _DELEGATE_ROLE_ID,
-                len(history) - 1,
-                "user",
-                human_parts,
-            )
-
-            res = await _run_agent_loop(
-                sid=sub_sid,
-                chat_id=chat_id,
-                user_id=user_id,
-                history=history,
-                state=state,
-                sub_tools=sub_tools,
-                body_tools_specs=_body_tools_specs,
-                final_system=final_system,
-                current_model_key=current_model_key,
-                max_calls=max_calls,
-                events=events,
-                valves=Tools.Valves(),
-                __user__={"id": user_id},
-                __chat_id__=chat_id,
-                __metadata__={},
-                __event_emitter__=None,
-                __event_call__=None,
-            )
-            completed_normally = True
-
-            if isinstance(res, dict):
-                reply_text = str(res.get("text") or "")
-            else:
-                reply_text = str(res or "")
-
-            EchoAEC.record_event(
-                state,
-                f"subagent_human_interaction:{sub_sid}",
-                summary=(
-                    f"Intervention directe de l'utilisateur sur le sous-agent [{sub_sid}] ({role_name}). "
-                    f"Question utilisateur : {content[:240]} | Réponse sous-agent : {reply_text[:400]}"
-                ),
-            )
-            return {"status": "ok", "sub_sid": sub_sid, "reply": reply_text}
-        finally:
-            if not completed_normally:
-                try:
-                    update_subagent_status(state, sub_sid, "error")
-                except Exception:
-                    pass
-            mark_subagent_running(chat_id, sub_sid, False)

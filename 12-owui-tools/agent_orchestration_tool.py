@@ -1,19 +1,18 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 6.6.2.1
+version: 6.6.30.1
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.30.1: Câblage de consult_council et consult_supervised_workers sur EchoSubagentController et suppression de list_councils, close_council, list_supervised_tasks et close_supervised_task.
 # 6.6.2.1: Persistance save_subagent_meta et save_thread_step pour la synthèse consult_council et les phases critique/consolidation de consult_supervised_workers.
 # 5.239.17.1: Alignement de la Valve COGNITIVE_TIMEOUT par défaut sur ECHO_LLM_CALL_TIMEOUT (600s).
 # 5.238.1.1: Ajout de MODEL_ATHENA dans target_model, synthesis_model et critic_model de consult_council et consult_supervised_workers.
 # 5.233.0.1: Contrainte de sortie JSON via response_schema (SkillRouterOutput et SupervisorCriticOutput), décoration @echo_tool et simplification des retours.
-# 5.231.43.1: Ajout du paramètre multiplier (1..5) dans consult_council, renommage COUNCIL_MAX_SKILLS=7, COUNCIL_ROUNDS_MIN=3, COUNCIL_ROUNDS_MAX=10, COUNCIL_MAX_PR_COMPLEXITY=60, validation arithmétique PAS et droit d'abstention.
 
 import sys
-import re
 import orjson as json
 import asyncio
 import uuid
@@ -28,9 +27,14 @@ from echo_protocol import SkillRouterOutput, SupervisorCriticOutput
 from echo_events import EchoEvents
 from echo_gemini_client import EchoGeminiClient
 from echo_state_manager import EchoStateManager
-from echo_subagent_hub import save_subagent_meta
+from echo_subagent_hub import EchoSubagentController, save_subagent_meta
 from echo_constants import (
-    ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, ECHO_LLM_CALL_TIMEOUT, get_generation_config
+    ECHO_API_KEY_RETRIES,
+    ECHO_API_MAX_RETRIES,
+    ECHO_AUTONOMOUS_ROUND_MAX_CALLS,
+    ECHO_COUNCIL_DEFAULT_CALLS_PER_ROUND,
+    ECHO_LLM_CALL_TIMEOUT,
+    get_generation_config,
 )
 from echo_skills import get_all_skills, get_skill_content, save_skill, parse_skill_metadata, delete_skill
 from echo_paths import sanitize_echo_id, get_user_skill_lock
@@ -63,7 +67,7 @@ class Tools:
         COUNCIL_ROUNDS_MIN: int = Field(default=3, description="Nombre de tours de parole minimum et par défaut pour un conseil d'experts.")
         COUNCIL_ROUNDS_MAX: int = Field(default=10, description="Limite haute du nombre de tours de parole.")
         COUNCIL_MAX_SKILLS: int = Field(default=7, description="Nombre maximum d'expertises (skills) distinctes au conseil (hors synthétiseur).")
-        COUNCIL_EXPERT_MAX_CALLS_PER_ROUND: int = Field(default=3, ge=0, le=10, description="Budget max d'appels d'outils par expert et par tour de conseil.")
+        COUNCIL_EXPERT_MAX_CALLS_PER_ROUND: int = Field(default=ECHO_COUNCIL_DEFAULT_CALLS_PER_ROUND, ge=0, le=10, description="Budget max d'appels d'outils par expert et par tour de conseil.")
         COUNCIL_MAX_PR_COMPLEXITY: int = Field(default=60, description="Complexité maximale (participants * rounds) d'un conseil.")
         SUPERVISOR_MAX_CORRECTION_ROUNDS: int = Field(default=3, ge=1, le=5, description="Nombre maximum de tours de correction du superviseur.")
 
@@ -419,17 +423,7 @@ class Tools:
             f"{max_calls_per_round} outils/tour..."
         )
 
-        # ── Phase 1 : Résolution du agent_engine_tool ──
-        _delegate_mod = sys.modules.get("tool_agent_engine_tool")
-        _delegate_cls = getattr(_delegate_mod, "Tools", None) if _delegate_mod else None
-        if not _delegate_cls:
-            return "❌ Module agent_engine_tool introuvable dans sys.modules."
-        delegate = _delegate_cls()
-        # Propager les valves infra du parent
-        delegate.valves.KEY_SWITCH_THRESHOLD = self.valves.KEY_SWITCH_THRESHOLD
-        delegate.valves.MAX_RETRIES = self.valves.MAX_RETRIES
-
-        # ── Phase 2 : Boucle des tours (protocole Delphi via delegate_to_agent, verrouillé par council_id) ──
+        # ── Phase 1 & 2 : Boucle des tours (protocole Delphi via EchoSubagentController, verrouillé par council_id) ──
         all_rounds: List[Dict[str, str]] = []
         council_sids: List[str] = []  # Pour la purge finale
 
@@ -483,15 +477,22 @@ class Tools:
                         current_time=current_time
                     )
 
-                    result = await delegate.delegate_to_agent(
+                    result = await EchoSubagentController.run_or_resume(
+                        user_id=user_id,
+                        chat_id=chat_id,
                         task=prompt,
                         system_prompt=council_system,
                         skill_id=sid,
                         sub_sid=agent_sid,
                         target_model_key=target_model,
-                        max_calls_override=max_calls_per_round,
+                        slice_max_calls=max_calls_per_round,
+                        autonomous_slice=True,
+                        engine="council",
+                        group_id=cid,
+                        role_name=f"{participant['alias']} ({participant['name']})",
+                        key_switch_threshold=self.valves.KEY_SWITCH_THRESHOLD,
+                        max_retries=self.valves.MAX_RETRIES,
                         __user__=__user__,
-                        __chat_id__=chat_id,
                         __metadata__=__metadata__,
                         __event_emitter__=__event_emitter__,
                         __event_call__=__event_call__,
@@ -579,7 +580,8 @@ class Tools:
                     "engine": "council_synthesis",
                     "role_name": f"Synthèse du Conseil ({cid})",
                     "model_key": synth_model_used or synthesis_model,
-                    "status": "idle",
+                    "group_id": cid,
+                    "status": "completed",
                 },
             )
             state.save_thread_step(
@@ -601,8 +603,9 @@ class Tools:
 
             # ── Phase 4 : Clôture ──
             if close_on_finish:
-                for agent_sid in council_sids:
-                    state.delete_thread(agent_sid)
+                await EchoSubagentController.execute_control_action(
+                    action="close", user_id=user_id, chat_id=chat_id, target_ids=[cid]
+                )
 
         roster_summary = ", ".join(f"{p['alias']} ({p['name']})" for p in roster)
         await events.status("🏛️ Conseil terminé.", done=True)
@@ -654,15 +657,6 @@ class Tools:
             f"📋 Superviseur [{task_id}] : {len(workers_dict)} workers, max {max_rounds} corrections..."
         )
 
-        # Résolution du agent_engine_tool
-        _delegate_mod = sys.modules.get("tool_agent_engine_tool")
-        _delegate_cls = getattr(_delegate_mod, "Tools", None) if _delegate_mod else None
-        if not _delegate_cls:
-            return "❌ Module agent_engine_tool introuvable dans sys.modules."
-        delegate = _delegate_cls()
-        delegate.valves.KEY_SWITCH_THRESHOLD = self.valves.KEY_SWITCH_THRESHOLD
-        delegate.valves.MAX_RETRIES = self.valves.MAX_RETRIES
-
         worker_sids = {}  # worker_id → sub_sid
         deliverables = {}  # worker_id → texte du livrable
 
@@ -695,14 +689,21 @@ class Tools:
             w_sys = w_config.get("system_prompt", f"Le Modèle est un agent chargé de : {w_task}")
             agent_sid = f"thread_supervisor_{task_id}_{w_id}"
             worker_sids[w_id] = agent_sid
-            res = await delegate.delegate_to_agent(
+            res = await EchoSubagentController.run_or_resume(
+                user_id=user_id,
+                chat_id=chat_id,
                 task=f"### OBJECTIF GLOBAL\n{objective}\n\n### TA TÂCHE\n{w_task}",
                 system_prompt=w_sys,
                 skill_id=w_role,
                 sub_sid=agent_sid,
                 target_model_key=target_model,
+                slice_max_calls=ECHO_AUTONOMOUS_ROUND_MAX_CALLS,
+                autonomous_slice=True,
+                engine="supervisor",
+                group_id=task_id,
+                key_switch_threshold=self.valves.KEY_SWITCH_THRESHOLD,
+                max_retries=self.valves.MAX_RETRIES,
                 __user__=__user__,
-                __chat_id__=chat_id,
                 __metadata__=__metadata__,
                 __event_emitter__=__event_emitter__,
                 __event_call__=__event_call__,
@@ -779,7 +780,8 @@ class Tools:
                     "engine": "supervisor_critic",
                     "role_name": f"Critique ({task_id})",
                     "model_key": critic_used or critic_model,
-                    "status": "idle",
+                    "group_id": task_id,
+                    "status": "completed",
                 },
             )
             state.save_thread_step(
@@ -835,14 +837,21 @@ class Tools:
                 w_config = workers_dict.get(w_id, {})
                 w_role = w_config.get("skill_id", w_config.get("role_name"))
                 w_sys = w_config.get("system_prompt", "")
-                res = await delegate.delegate_to_agent(
+                res = await EchoSubagentController.run_or_resume(
+                    user_id=user_id,
+                    chat_id=chat_id,
                     task=f"### FEEDBACK DU CRITIQUE\n{feedback}\n\n### OBJECTIF\nLe Modèle DOIT corriger son livrable précédent.",
                     system_prompt=w_sys,
                     skill_id=w_role,
                     sub_sid=agent_sid,
                     target_model_key=target_model,
+                    slice_max_calls=ECHO_AUTONOMOUS_ROUND_MAX_CALLS,
+                    autonomous_slice=True,
+                    engine="supervisor",
+                    group_id=task_id,
+                    key_switch_threshold=self.valves.KEY_SWITCH_THRESHOLD,
+                    max_retries=self.valves.MAX_RETRIES,
                     __user__=__user__,
-                    __chat_id__=chat_id,
                     __metadata__=__metadata__,
                     __event_emitter__=__event_emitter__,
                     __event_call__=__event_call__,
@@ -908,7 +917,8 @@ class Tools:
                 "engine": "supervisor_consolidator",
                 "role_name": f"Consolidation ({task_id})",
                 "model_key": consol_used or "MODEL_APOLLO",
-                "status": "idle",
+                "group_id": task_id,
+                "status": "completed",
             },
         )
         state.save_thread_step(
@@ -930,8 +940,9 @@ class Tools:
 
         # Clôture
         if close_on_finish:
-            for agent_sid in worker_sids.values():
-                state.delete_thread(agent_sid)
+            await EchoSubagentController.execute_control_action(
+                action="close", user_id=user_id, chat_id=chat_id, target_ids=[task_id]
+            )
 
         await events.status(f"📋 Superviseur [{task_id}] terminé.", done=True)
         return wrap_tool_output(
@@ -946,157 +957,3 @@ class Tools:
                 "workers_count": len(workers_dict)
             }
         )
-
-    # ==========================================================================
-    # 4. OUTILS D'ADMINISTRATION (Conseils & Superviseurs)
-    # ==========================================================================
-
-    @echo_tool
-    async def list_councils(
-        self,
-        __user__: Optional[dict] = None,
-        __chat_id__: Optional[str] = None,
-        __metadata__: dict = {},
-    ) -> str:
-        """Liste les conseils d'experts actifs dans la session courante."""
-        user_id = __user__.get("id", "system") if __user__ else "system"
-        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
-        if not chat_id:
-            return "❌ Aucun chat_id détecté."
-
-        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-        threads = state.list_threads(chat_id)
-        known_skills = sorted([s["id"] for s in await asyncio.to_thread(get_all_skills, user_id)], key=len, reverse=True)
-
-        councils: Dict[str, list] = {}
-        for t in threads:
-            sid = t["sub_sid"]
-            if sid.startswith("thread_council_"):
-                rem = sid[len("thread_council_"):]
-                cid_found, skill_found = None, None
-                for k_sid in known_skills:
-                    if rem.endswith(f"_{k_sid}"):
-                        cid_found = rem[: -(len(k_sid) + 1)]
-                        skill_found = k_sid
-                        break
-                if not cid_found:
-                    m_inst = re.match(r"^(.+)_(\d+)$", rem)
-                    if m_inst:
-                        rem_base, inst_num = m_inst.group(1), m_inst.group(2)
-                        for k_sid in known_skills:
-                            if rem_base.endswith(f"_{k_sid}"):
-                                cid_found = rem_base[: -(len(k_sid) + 1)]
-                                skill_found = f"{k_sid} #{inst_num}"
-                                break
-                if not cid_found and "_" in rem:
-                    cid_found, skill_found = rem.split("_", 1)
-                if cid_found:
-                    councils.setdefault(cid_found, []).append(skill_found or "?")
-
-        if not councils:
-            return "ℹ️ Aucun conseil actif."
-
-        md = "### 🏛️ CONSEILS ACTIFS\n\n"
-        for cid, skills in councils.items():
-            md += f"- **ID:** `{cid}` | **Participants:** {', '.join(skills)} | **Sessions:** {len(skills)}\n"
-
-        return wrap_tool_output(text=md, status={"status": "success", "councils": list(councils.keys())})
-
-    @echo_tool
-    async def close_council(
-        self,
-        council_id: str,
-        __user__: Optional[dict] = None,
-        __chat_id__: Optional[str] = None,
-        __metadata__: dict = {},
-    ) -> str:
-        """Ferme définitivement un conseil d'experts et purge les sessions de ses participants."""
-        user_id = __user__.get("id", "system") if __user__ else "system"
-        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
-        if not chat_id:
-            return "❌ Aucun chat_id détecté."
-
-        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-        threads = state.list_threads(chat_id)
-        norm_cid = sanitize_echo_id(council_id, fallback="council").replace("_", "-")
-        prefixes = (f"thread_council_{council_id}_", f"thread_council_{norm_cid}_")
-        to_delete = [t["sub_sid"] for t in threads if t["sub_sid"].startswith(prefixes)]
-
-        if not to_delete:
-            return f"❌ Conseil '{council_id}' introuvable."
-
-        for sid in to_delete:
-            state.delete_thread(sid)
-
-        return f"✅ Conseil `{council_id}` fermé ({len(to_delete)} sessions purgées)."
-
-    @echo_tool
-    async def list_supervised_tasks(
-        self,
-        __user__: Optional[dict] = None,
-        __chat_id__: Optional[str] = None,
-        __metadata__: dict = {},
-    ) -> str:
-        """Liste les tâches supervisées actives dans la session courante."""
-        user_id = __user__.get("id", "system") if __user__ else "system"
-        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
-        if not chat_id:
-            return "❌ Aucun chat_id détecté."
-
-        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-        threads = state.list_threads(chat_id)
-
-        tasks: Dict[str, list] = {}
-        for t in threads:
-            sid = t["sub_sid"]
-            if sid.startswith("thread_supervisor_"):
-                # Format canonique : thread_supervisor_sup_<hex>_<worker_id>
-                m = re.match(r"^thread_supervisor_(sup_[0-9a-fA-F]+)_(.+)$", sid)
-                if m:
-                    tid, wid = m.group(1), m.group(2)
-                    tasks.setdefault(tid, []).append(wid)
-                else:
-                    rem = sid[len("thread_supervisor_"):]
-                    if "_" in rem:
-                        tid, wid = rem.split("_", 1)
-                        tasks.setdefault(tid, []).append(wid)
-
-        if not tasks:
-            return "ℹ️ Aucune tâche supervisée active."
-
-        md = "### 📋 TÂCHES SUPERVISÉES ACTIVES\n\n"
-        for tid, worker_ids in tasks.items():
-            md += f"- **ID:** `{tid}` | **Workers:** {', '.join(worker_ids)} | **Sessions:** {len(worker_ids)}\n"
-
-        return wrap_tool_output(text=md, status={"status": "success", "tasks": list(tasks.keys())})
-
-    @echo_tool
-    async def close_supervised_task(
-        self,
-        task_id: str,
-        __user__: Optional[dict] = None,
-        __chat_id__: Optional[str] = None,
-        __metadata__: dict = {},
-    ) -> str:
-        """Ferme définitivement une tâche supervisée et purge les sessions de ses workers."""
-        user_id = __user__.get("id", "system") if __user__ else "system"
-        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
-        if not chat_id:
-            return "❌ Aucun chat_id détecté."
-
-        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-        threads = state.list_threads(chat_id)
-        clean_tid = task_id[len("thread_supervisor_"):] if task_id.startswith("thread_supervisor_") else task_id
-        prefix = f"thread_supervisor_{clean_tid}_"
-        to_delete = [
-            t["sub_sid"] for t in threads
-            if t["sub_sid"].startswith(prefix) or t["sub_sid"] == f"thread_supervisor_critic_{clean_tid}"
-        ]
-
-        if not to_delete:
-            return f"❌ Tâche '{task_id}' introuvable."
-
-        for sid in to_delete:
-            state.delete_thread(sid)
-
-        return f"✅ Tâche supervisée `{task_id}` fermée ({len(to_delete)} sessions purgées)."

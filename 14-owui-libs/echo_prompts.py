@@ -1,16 +1,16 @@
 """
 title: ECHO Prompts Library
 author: Wilfried BARNAVON
-version: 6.5.3.1
+version: 6.6.30.1
 description: Système de Registre Cognitif ECHO (Prompts Library).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.30.1: Échappement des accolades JSON du bloc <example> dans SYS_ORCHESTRATOR_CRITIC pour compatibilité str.format().
 # 6.5.3.1: Distinction explicite des balises XML <REQUETE_ORCHESTRATEUR> et <REQUETE_UTILISATEUR> dans ECHO_FOUNDATION_KERNEL pour les sous-agents hybrides.
 # 5.239.11.1: Renforcement de la règle `mermaid` v11.16.0 dans `SYS_VISUAL_GENERATE` imposant des identifiants `subgraph` strictement ASCII (`subgraph ID["Titre (Info)"]`).
 # 5.235.1.1: Refonte de SYS_COMPACTION_DISTILL (Archiviste Contextuel, pleine exploitation du budget, reproduction in extenso du code et des données).
 # 5.233.0.1: Alignement de SYS_ORCHESTRATOR_CRITIC sur le schéma contraint SupervisorCriticOutput (statut explicite ok / needs_correction).
-# 5.233.0.1: Extension de la règle 3 de SYS_VISUAL_IMAGE_GEN pour encadrer la fusion et composition multi-images (N images de référence).
 
 # ==============================================================================
 # Système de Registre Cognitif ECHO (Prompts Library)
@@ -670,17 +670,17 @@ Le Modèle doit évaluer la qualité, la logique formelle et la pertinence séma
 <output_format>
 Le Modèle DOIT respecter STRICTEMENT ce schéma JSON exact :
 <example>
-{
+{{
   "global_assessment": "(RÉFLEXION) Analyse des résultats, identification des points faibles et justification logique du verdict.",
   "verdict": "APPROVED",
   "worker_feedback": [
-    {
+    {{
       "worker_id": "worker_id_1",
       "status": "ok | needs_correction",
       "feedback": "Directives précises pour la correction..."
-    }
+    }}
   ]
-}
+}}
 </example>
 </output_format>"""
 

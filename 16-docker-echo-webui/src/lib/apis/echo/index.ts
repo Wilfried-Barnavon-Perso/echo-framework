@@ -325,6 +325,34 @@ export const postEchoSubagentMessage = async (
 		"Échec d'envoi du message au sous-agent"
 	);
 
+export type EchoSubagentControlAction = 'suspend' | 'resume' | 'kill' | 'close';
+
+export interface EchoSubagentControlRequest {
+	action: EchoSubagentControlAction;
+	directive?: string;
+	target_model_key?: 'MODEL_ZEPHYR' | 'MODEL_APOLLO' | 'MODEL_PROMETHEUS' | 'MODEL_ATHENA';
+}
+
+export interface EchoSubagentControlResponse {
+	status: 'ok' | 'started';
+	action: EchoSubagentControlAction;
+	sub_sid: string;
+	affected_sids: string[];
+}
+
+export const postEchoSubagentControl = async (
+	token: string,
+	chatId: string,
+	subSid: string,
+	payload: EchoSubagentControlRequest
+): Promise<EchoSubagentControlResponse> =>
+	echoRequestJson<EchoSubagentControlResponse>(
+		`/cognition/${encodeURIComponent(chatId)}/threads/${encodeURIComponent(subSid)}/control`,
+		token,
+		{ method: 'POST', body: JSON.stringify(payload) },
+		'Échec du pilotage du sous-agent'
+	);
+
 // ============================================================================
 // CODEX GIT & FICHIERS (/echo/v1/codex)
 // ============================================================================

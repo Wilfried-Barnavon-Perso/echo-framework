@@ -183,6 +183,14 @@ from open_webui.utils.tools import (
 )
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
+# [ECHO-V6-HOOK] Plafond SSOT de parallélisme des outils par tour
+from open_webui.echo.runtime import ensure_echo_sys_path
+try:
+    ensure_echo_sys_path()
+    from echo_constants import ECHO_MAX_PARALLEL_TOOLS_PER_TURN
+except Exception:
+    ECHO_MAX_PARALLEL_TOOLS_PER_TURN = 5
+
 logging.basicConfig(stream=sys.stdout, level=GLOBAL_LOG_LEVEL)
 log = logging.getLogger(__name__)
 
@@ -3177,7 +3185,7 @@ async def build_chat_response_context(request, form_data, user, model, metadata,
     }
 
 
-async def execute_tool_call(form_data, metadata, event_caller, tool_call, history=None):
+async def execute_tool_call(form_data, metadata, event_caller, tool_call, history=None, *, skip_approval_check: bool = False):
     """Execute a resolved call; resumed approvals use the same validation and loop policy."""
     name = tool_call.get('name', '')
     tool = metadata.get('tools', {}).get(name)
@@ -3212,7 +3220,11 @@ async def execute_tool_call(form_data, metadata, event_caller, tool_call, histor
     if tool_type != 'mcp':
         allowed_params = tool.get('spec', {}).get('parameters', {}).get('properties', {})
         params = {key: value for key, value in params.items() if key in allowed_params}
-    requires_approval = await requires_tool_approval(form_data, metadata, tool_call, tool, params)
+    requires_approval = (
+        False
+        if skip_approval_check
+        else await requires_tool_approval(form_data, metadata, tool_call, tool, params)
+    )
     if (
         requires_approval
         and is_saved_chat_id(metadata.get('chat_id'))
@@ -5987,35 +5999,64 @@ async def streaming_chat_response_handler(response, ctx):
                     # Provider calls have been resolved and staged; execute their saved items directly.
                     response_tool_calls = [output_by_call_id[call['id']] for call in response_tool_calls]
                     tool_results = {}
-                    if tool_approval_mode != 'auto':
-                        delegate_calls = [call for call in response_tool_calls if call.get('name') == 'delegate_task']
-                        for tool_call in response_tool_calls:
-                            if tool_call.get('name') != 'delegate_task':
-                                tool_results[tool_call['call_id']] = await execute_tool_call(
-                                    form_data, metadata, event_caller, tool_call, tool_history
+                    # [ECHO-V6-HOOK] Phase A (pré-validation séquentielle) + Phase B (exécution parallèle bornée)
+                    is_auto_saved = (
+                        tool_approval_mode == 'auto'
+                        and is_saved_chat_id(metadata.get('chat_id'))
+                        and bool(metadata.get('message_id') or metadata.get('assistant_message_id'))
+                        and metadata.get('params', {}).get('function_calling') != 'legacy'
+                    )
+                    ready_calls = []
+                    for tool_call in response_tool_calls:
+                        blocked = tool_repetition_error(tool_call, tool_history)
+                        tool_history.append(tool_call)
+                        if blocked:
+                            tool_call['status'] = 'failed'
+                            tool_results[tool_call['call_id']] = ({}, blocked, None, None, False)
+                            continue
+
+                        if is_auto_saved:
+                            tc_name = tool_call.get('name', '')
+                            tc_tool = metadata.get('tools', {}).get(tc_name)
+                            if tc_tool:
+                                try:
+                                    tc_params = JSONCodec.loads(tool_call.get('arguments', '{}'))
+                                except Exception:
+                                    tc_params = None
+                                if isinstance(tc_params, dict):
+                                    if tc_tool.get('type', '') != 'mcp':
+                                        allowed_p = tc_tool.get('spec', {}).get('parameters', {}).get('properties', {})
+                                        tc_params = {k: v for k, v in tc_params.items() if k in allowed_p}
+                                    if await requires_tool_approval(form_data, metadata, tool_call, tc_tool, tc_params):
+                                        tool_call['status'] = 'pending'
+                                        break
+                        ready_calls.append(tool_call)
+
+                    if ready_calls:
+                        tool_sem = asyncio.Semaphore(ECHO_MAX_PARALLEL_TOOLS_PER_TURN)
+
+                        async def _run_bounded_tool(tc):
+                            async with tool_sem:
+                                return await execute_tool_call(
+                                    form_data,
+                                    metadata,
+                                    event_caller,
+                                    tc,
+                                    history=None,
+                                    skip_approval_check=is_auto_saved,
                                 )
-                        tool_results.update(
-                            zip(
-                                [tool_call['call_id'] for tool_call in delegate_calls],
-                                await asyncio.gather(
-                                    *(
-                                        execute_tool_call(form_data, metadata, event_caller, tool_call, tool_history)
-                                        for tool_call in delegate_calls
-                                    )
-                                ),
-                            )
+
+                        gathered_results = await asyncio.gather(
+                            *(_run_bounded_tool(tc) for tc in ready_calls)
                         )
+                        for tc, res in zip(ready_calls, gathered_results):
+                            tool_results[tc['call_id']] = res
 
                     for tool_call in response_tool_calls:
                         tool_call_id = tool_call['call_id']
                         tool_function_name = tool_call.get('name', '')
-                        if tool_approval_mode == 'auto':
-                            try:
-                                tool_results[tool_call_id] = await execute_tool_call(
-                                    form_data, metadata, event_caller, tool_call, tool_history
-                                )
-                            except ToolApprovalRequired:
-                                break
+                        if tool_call_id not in tool_results:
+                            break
                         tool_function_params, tool_result, tool, tool_type, direct_tool = tool_results[
                             tool_call['call_id']
                         ]

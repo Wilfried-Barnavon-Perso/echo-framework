@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.6.5.2
+version: 6.6.30.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.30.1: Ajout des 8 constantes SSOT V6.7 de parallélisme/supervision, MAJ DELEGATE_AGENT_BLACKLIST (control_subagents) et parallélisme dans DELEGATE_SYSTEM_APPENDIX.
 # 6.6.5.2: Purge des constantes WebGPU v5 obsolètes (ECHO_EDGE_*, ECHO_MOBILE_UA_PATTERN) suite à la factorisation dans le store Svelte.
 # 6.6.5.1: Ajout de BROWSER_VIEWS_DIR_NAME ('browserviews') dans ECHO_SESSION_DOMAINS et BROWSER_VIEW_STATUS ('browserview') dans RESOURCE_STATUS_MAP.
 # 6.6.2.3: Ajout de open_browser_ui dans DELEGATE_AGENT_BLACKLIST et alignement de MODEL_ENUM_BY_POLICY["AUTO"] sur MODEL_ATHENA.
 # 6.6.2.2: Suppression des constantes mortes CODEX_HUD_ID et CODEX_ACTION_ID.
-# 6.6.0.1: Intégration du domaine tools_output, de read_tool_output/delete_tool_output dans DELEGATE_AGENT_SYSTEM_TOOLS, de build_httpx_timeout (600s/300s), d'Antigravity 2.32.0 (cl=1021519450) et des seuils de pagination read_codex.
 
 
 import os
@@ -686,6 +686,18 @@ ECHO_SESSION_RAG_CHUNK_SIZE   = 4000     # ~1000 tokens Harrier : Seuil de densi
 # 1.5 DELEGATE SUB-AGENT — Blacklist et appendice système
 # ==============================================================================
 
+# ==============================================================================
+# 1.5b PARALLÉLISME & SUPERVISION PAR TRANCHES DES SOUS-AGENTS (SSOT V6.7)
+# ==============================================================================
+ECHO_MAX_PARALLEL_TOOLS_PER_TURN = 5      # Sémaphore max d'outils exécutés en parallèle dans un même tour (Orchestrateur & Sous-Agent)
+ECHO_MAX_PARALLEL_SUBAGENTS = 4           # Sémaphore max de sous-agents simultanés en vol par chat_id
+ECHO_MAX_CONCURRENT_BROWSERS = 2          # Sémaphore global max d'instances Playwright Chromium actives simultanément
+ECHO_SUBAGENT_CHECKPOINT_CALLS = 8        # Quota d'appels d'outils par tranche supervisée avant pause automatique (suspended_checkpoint)
+ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC = 90 # Durée max (secondes) d'une tranche supervisée avant pause automatique en fin de tour
+ECHO_SUBAGENT_MAX_CONSECUTIVE_ERRORS = 3  # Disjoncteur PARE : 3 erreurs d'outils consécutives -> pause immédiate (suspended_pare_alert)
+ECHO_AUTONOMOUS_ROUND_MAX_CALLS = 12      # Quota d'appels d'outils par passe autonome fermée (consult_supervised_workers, delegate_deep_research)
+ECHO_COUNCIL_DEFAULT_CALLS_PER_ROUND = 5  # Quota d'appels d'outils par défaut par round de participant dans consult_council
+
 DEEP_RESEARCH_MAX_CALLS_DEFAULT = 200
 
 # ⚠️  MAINTENANCE OBLIGATOIRE
@@ -735,13 +747,7 @@ DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
     "open_codex_ui",                # Déclenchement UI HUD réservé au flux principal
     "open_browser_ui",              # Déclenchement UI onglet Navigateur Web réservé au flux principal
     # 4. Méta-session (gestion des sessions du tool delegate)
-    "list_agent_sessions",
-    "close_agent_session",
-    "summarize_agent_session",
-    "list_councils",
-    "close_council",
-    "list_supervised_tasks",
-    "close_supervised_task",
+    "control_subagents",
     "get_context_load",       # Dépend de l'état interne du Pipe principal
 })
 
@@ -756,18 +762,22 @@ BUDGET     : Le Modèle dispose de {max_calls} appels de fonctions pour cette mi
              En cas d'approche de l'épuisement du budget, le Modèle DOIT produire sa meilleure réponse partielle immédiatement.
 
 OPTIMISATION ET VÉRIFICATION : 
-             - Le Modèle DOIT optimiser l'usage de ses outils pour préserver son budget. Le Modèle DOIT regrouper au maximum l'étendue de ses recherches dans chaque appel puisque le parallélisme est interdit. Il DOIT éviter toute redondance.
+             - Le Modèle DOIT optimiser l'usage de ses outils pour préserver son budget et éviter toute redondance.
              - Le Modèle DOIT impérativement utiliser les outils de recherche web disponibles pour mettre à jour ses connaissances en cas de manque d'informations factuelles ou techniques récentes dans son domaine d'expertise.
+
+PROVENANCE DES REQUÊTES :
+             - `<REQUETE_ORCHESTRATEUR>` : directive ou réponse issue de l'Orchestrateur parent.
+             - `<REQUETE_UTILISATEUR>` : question ou instruction directe envoyée par l'Utilisateur depuis le panneau latéral.
+             - Le Modèle DOIT traiter ces deux provenances avec une rigueur identique et répondre directement à l'émetteur du tour actif.
 
 CLARIFICATION : Si le Modèle bloque sur une ambiguïté irrésoluble par lui-même,
                 il DOIT terminer sa réponse par cette ligne exacte :
                 QUESTION: <sa question précise>
                 Le Modèle DOIT ne pas continuer et ne rien inventer avant d'avoir la réponse.
-SÉQUENTIALITÉ OBLIGATOIRE : Le Modèle DOIT appeler les outils STRICTEMENT UN PAR UN.
-                            N'émets jamais plusieurs functionCall dans le même tour de réponse.
-                            Chaque outil doit être entièrement exécuté et son résultat
-                            intégré avant d'en appeler un autre.
-                            La parallélisation d'outils est interdite dans ce contexte.
+EXÉCUTION D'OUTILS & PARALLÉLISME :
+                            - Le Modèle PEUT émettre plusieurs `functionCall` indépendants dans un même tour de réponse (jusqu'à 5 appels parallèles simultanés) lorsque leurs entrées ne dépendent pas les unes des autres.
+                            - Si un appel dépend du résultat d'un appel précédent, le Modèle DOIT attendre ce résultat au tour suivant.
+                            - Disjoncteur PARE : 3 erreurs d'outils consécutives interrompent immédiatement la tranche d'exécution (`suspended_pare_alert`).
 """
 
 # 2. REGISTRE COGNITIF ECHO (UNIFIÉ & STATIQUE)

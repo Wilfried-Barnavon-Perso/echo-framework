@@ -1,7 +1,11 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import { postEchoSubagentMessage } from '$lib/apis/echo';
+	import {
+		postEchoSubagentControl,
+		postEchoSubagentMessage,
+		type EchoSubagentControlAction
+	} from '$lib/apis/echo';
 	import {
 		acquireCognitionStream,
 		echoCognitionSelectedSubSid,
@@ -25,6 +29,7 @@
 	let activeTab: 'threads' | 'tools' = 'threads';
 	let composerText = '';
 	let sending = false;
+	let controlActionPending: EchoSubagentControlAction | null = null;
 	let feedContainer: HTMLDivElement | null = null;
 	let lastScrolledKey = '';
 
@@ -119,6 +124,95 @@
 		return Boolean(step.pending_tool_calls);
 	};
 
+	interface StatusUiSpec {
+		label: string;
+		shortLabel: string;
+		badgeClass: string;
+		dotClass: string;
+		pulse: boolean;
+	}
+
+	const STATUS_UI_MAP: Record<string, StatusUiSpec> = {
+		running: {
+			label: 'En cours',
+			shortLabel: '⚡ En cours',
+			badgeClass: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30',
+			dotClass: 'bg-emerald-500',
+			pulse: true
+		},
+		suspended_checkpoint: {
+			label: 'Point de contrôle',
+			shortLabel: '⏸ Point de contrôle',
+			badgeClass: 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30',
+			dotClass: 'bg-amber-500',
+			pulse: false
+		},
+		suspended_pare_alert: {
+			label: 'Alerte PARE (3 erreurs)',
+			shortLabel: '⚠️ Alerte PARE',
+			badgeClass: 'bg-red-500/15 text-red-700 dark:text-red-300 border-red-500/30',
+			dotClass: 'bg-red-500',
+			pulse: false
+		},
+		pending_question: {
+			label: 'Question en attente',
+			shortLabel: '❓ Question',
+			badgeClass: 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/40',
+			dotClass: 'bg-amber-500',
+			pulse: true
+		},
+		suspended: {
+			label: 'En pause',
+			shortLabel: '⏸ En pause',
+			badgeClass: 'bg-slate-500/15 text-slate-700 dark:text-slate-300 border-slate-500/30',
+			dotClass: 'bg-slate-400',
+			pulse: false
+		},
+		killed: {
+			label: 'Interrompu',
+			shortLabel: '⛔ Interrompu',
+			badgeClass: 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30',
+			dotClass: 'bg-rose-500',
+			pulse: false
+		},
+		error: {
+			label: 'Erreur',
+			shortLabel: '❌ Erreur',
+			badgeClass: 'bg-red-600/15 text-red-700 dark:text-red-300 border-red-600/30',
+			dotClass: 'bg-red-600',
+			pulse: false
+		},
+		completed: {
+			label: 'Terminé',
+			shortLabel: '✅ Terminé',
+			badgeClass: 'bg-teal-500/15 text-teal-700 dark:text-teal-300 border-teal-500/30',
+			dotClass: 'bg-teal-500',
+			pulse: false
+		},
+		idle: {
+			label: 'En attente',
+			shortLabel: 'En attente',
+			badgeClass: 'bg-gray-200/70 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-300/60 dark:border-gray-700/60',
+			dotClass: 'bg-indigo-400',
+			pulse: false
+		}
+	};
+
+	const STATUS_PRIORITY: Record<string, number> = {
+		running: 9,
+		suspended_pare_alert: 8,
+		pending_question: 7,
+		suspended_checkpoint: 6,
+		suspended: 5,
+		error: 4,
+		killed: 3,
+		completed: 2,
+		idle: 1
+	};
+
+	const getStatusBadge = (status?: string | null): StatusUiSpec =>
+		STATUS_UI_MAP[status || 'idle'] ?? STATUS_UI_MAP.idle;
+
 	const normalizeGroup = (g: EchoCognitionGroup): Required<Pick<EchoCognitionGroup, 'id' | 'thread_type' | 'icon' | 'color' | 'display_label' | 'member_sids' | 'is_running' | 'updated_at'>> & EchoCognitionGroup => {
 		const id = g.id || g.group_id || '';
 		const member_sids = g.member_sids ?? g.threads ?? [];
@@ -129,6 +223,13 @@
 					.filter((mk): mk is string => Boolean(mk))
 			)
 		);
+		let group_status = g.group_status || '';
+		if (!group_status) {
+			group_status = member_sids.reduce((best, sid) => {
+				const st = threadMeta[sid]?.status || 'idle';
+				return (STATUS_PRIORITY[st] ?? 0) > (STATUS_PRIORITY[best] ?? 0) ? st : best;
+			}, 'idle');
+		}
 		return {
 			...g,
 			id,
@@ -138,6 +239,7 @@
 			display_label: g.display_label || g.label || id,
 			member_sids,
 			model_keys,
+			group_status,
 			is_running: Boolean(g.is_running),
 			updated_at: Number(g.updated_at ?? 0) || 0
 		};
@@ -241,12 +343,28 @@
 	$: targetIsRunning = composerTargetSubSid
 		? threadMeta[composerTargetSubSid]?.status === 'running'
 		: selectedIsRunning;
+	$: activeThreadSid =
+		participantFilter !== 'all'
+			? participantFilter
+			: selectedGroup?.member_sids.length === 1
+				? selectedGroup.member_sids[0]
+				: '';
+	$: activeThreadMeta = activeThreadSid ? threadMeta[activeThreadSid] : undefined;
+	$: activeStatus = activeThreadMeta?.status || selectedGroup?.group_status || (selectedIsRunning ? 'running' : 'idle');
+	$: activeStatusBadge = getStatusBadge(activeStatus);
+	$: activeSliceUsed = Number(activeThreadMeta?.slice_calls_used ?? 0);
+	$: activeSliceLimit = Number(activeThreadMeta?.slice_calls_limit ?? 8);
+	$: activeTotalUsed = Number(activeThreadMeta?.total_calls_used ?? 0);
+	$: activeConsecutiveErrors = Number(activeThreadMeta?.consecutive_errors ?? 0);
+	$: activeCheckpointReason = activeThreadMeta?.checkpoint_reason ?? null;
+	$: controlTargetId = activeThreadSid || selectedGroup?.id || '';
+	$: canResumeStatus = ['suspended', 'suspended_checkpoint', 'suspended_pare_alert', 'idle', 'pending_question'].includes(activeStatus);
 
 	const getGroupQueueCount = (g: ReturnType<typeof normalizeGroup>): number =>
 		g.member_sids.reduce((acc, sid) => acc + (queuedMap[sid]?.length ?? 0), 0);
 
 	const getGroupOptionLabel = (g: ReturnType<typeof normalizeGroup>): string => {
-		const statusLabel = g.is_running ? '⚡ En cours' : 'En attente';
+		const statusLabel = getStatusBadge(g.group_status).shortLabel;
 		const queueLen = getGroupQueueCount(g);
 		const queueBadge = queueLen > 0 ? ` (+${queueLen} en attente)` : '';
 		return `${g.icon} ${g.display_label} — ${statusLabel}${queueBadge}`;
@@ -498,6 +616,36 @@
 			void sendMessage();
 		}
 	};
+
+	const CONTROL_TOAST_MAP: Record<EchoSubagentControlAction, string> = {
+		suspend: 'Pause demandée (arrêt en fin de tour d’outil).',
+		resume: 'Nouvelle tranche (+8 appels) lancée.',
+		kill: 'Sous-agent interrompu et scellé.',
+		close: 'Session sous-agent fermée et purgée.'
+	};
+
+	const runSubagentControl = async (action: EchoSubagentControlAction) => {
+		if (!chatId || !isSavedChatId(chatId) || !controlTargetId || controlActionPending) return;
+		const token = localStorage?.token;
+		if (!token) {
+			toast.error('Session expirée : veuillez vous reconnecter.');
+			return;
+		}
+
+		controlActionPending = action;
+		try {
+			await postEchoSubagentControl(token, chatId, controlTargetId, { action });
+			toast.success(CONTROL_TOAST_MAP[action]);
+			if (action === 'close' && controlTargetId === selectedGroupId) {
+				selectedGroupId = '';
+			}
+			await refreshCognitionSnapshot(chatId);
+		} catch (e: any) {
+			toast.error(e?.message || 'Action impossible sur le sous-agent.');
+		} finally {
+			controlActionPending = null;
+		}
+	};
 </script>
 
 <div class="flex flex-col h-full bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 overflow-hidden">
@@ -607,11 +755,11 @@
 			<div class="px-4 py-2.5 border-b border-gray-200 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-850/60 space-y-2 shrink-0">
 				<div class="flex items-center gap-2.5">
 					<span class="relative flex items-center justify-center w-2.5 h-2.5 shrink-0">
-						{#if selectedIsRunning}
-							<span class="absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping bg-emerald-500"></span>
-							<span class="relative inline-flex rounded-full w-2 h-2 bg-emerald-500"></span>
+						{#if activeStatusBadge.pulse}
+							<span class="absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping {activeStatusBadge.dotClass}"></span>
+							<span class="relative inline-flex rounded-full w-2 h-2 {activeStatusBadge.dotClass}"></span>
 						{:else}
-							<span class="relative inline-flex rounded-full w-2 h-2 bg-indigo-400"></span>
+							<span class="relative inline-flex rounded-full w-2 h-2 {activeStatusBadge.dotClass}"></span>
 						{/if}
 					</span>
 
@@ -634,26 +782,104 @@
 				</div>
 
 				{#if selectedGroup}
-					<div class="flex flex-wrap items-center gap-1.5">
-						<span class="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full border {getAccentClass(selectedGroup.color)}">
-							<span>{selectedGroup.icon}</span>
-							<span class="truncate max-w-[200px]">{selectedGroup.display_label}</span>
-						</span>
-						<span class="text-[11px] px-2 py-0.5 rounded-full font-medium {selectedGroup.is_running
-							? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-							: 'bg-gray-200/70 dark:bg-gray-800 text-gray-600 dark:text-gray-400'}">
-							{selectedGroup.is_running ? '⚡ En cours' : 'En attente'}
-						</span>
-						{#each selectedGroup.model_keys ?? [] as mk}
-							{@const badge = getEchoModelBadge(mk)}
-							{#if badge}
-								<span class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border {badge.badgeClass}">
-									<span>{badge.icon}</span>
-									<span>{badge.label}</span>
+					<div class="flex flex-wrap items-center justify-between gap-2">
+						<div class="flex flex-wrap items-center gap-1.5">
+							<span class="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full border {getAccentClass(selectedGroup.color)}">
+								<span>{selectedGroup.icon}</span>
+								<span class="truncate max-w-[200px]">{selectedGroup.display_label}</span>
+							</span>
+							<span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border font-medium {activeStatusBadge.badgeClass}">
+								{activeStatusBadge.label}
+								{#if activeStatus === 'suspended_checkpoint' && activeThreadMeta}
+									<span class="font-mono">({activeSliceUsed}/{activeSliceLimit})</span>
+								{/if}
+							</span>
+							{#if activeThreadMeta}
+								<span
+									class="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-900/70 text-gray-600 dark:text-gray-300"
+									title="Appels d'outils sur la tranche courante / cumul total"
+								>
+									{activeSliceUsed}/{activeSliceLimit} appels
+									{#if activeTotalUsed > activeSliceUsed}
+										<span class="text-gray-400">· total {activeTotalUsed}</span>
+									{/if}
 								</span>
 							{/if}
-						{/each}
+							{#if activeConsecutiveErrors > 0}
+								<span class="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400">
+									{activeConsecutiveErrors}/3 err.
+								</span>
+							{/if}
+							{#each selectedGroup.model_keys ?? [] as mk}
+								{@const badge = getEchoModelBadge(mk)}
+								{#if badge}
+									<span class="inline-flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full border {badge.badgeClass}">
+										<span>{badge.icon}</span>
+										<span>{badge.label}</span>
+									</span>
+								{/if}
+							{/each}
+						</div>
+
+						<!-- Barre de pilotage temps réel -->
+						<div class="flex items-center gap-1 shrink-0">
+							{#if activeStatus === 'running'}
+								<button
+									type="button"
+									disabled={Boolean(controlActionPending)}
+									on:click={() => runSubagentControl('suspend')}
+									class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 transition disabled:opacity-40"
+									title="Mettre en pause propre à la fin du tour d'outil"
+								>
+									⏸ Pause
+								</button>
+								<button
+									type="button"
+									disabled={Boolean(controlActionPending)}
+									on:click={() => runSubagentControl('kill')}
+									class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300 hover:bg-rose-500/20 transition disabled:opacity-40"
+									title="Interrompre immédiatement et sceller l'historique"
+								>
+									⏹ Stop
+								</button>
+							{:else}
+								{#if canResumeStatus}
+									<button
+										type="button"
+										disabled={Boolean(controlActionPending)}
+										on:click={() => runSubagentControl('resume')}
+										class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 transition disabled:opacity-40"
+										title="Accorder une nouvelle tranche supervisée (+8 appels)"
+									>
+										▶ Reprendre (+8)
+									</button>
+								{/if}
+								<button
+									type="button"
+									disabled={Boolean(controlActionPending)}
+									on:click={() => runSubagentControl('close')}
+									class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 hover:border-rose-400 hover:text-rose-600 dark:hover:text-rose-400 transition disabled:opacity-40"
+									title="Fermer et purger cette session sous-agent"
+								>
+									✕ Fermer
+								</button>
+							{/if}
+						</div>
 					</div>
+
+					{#if activeStatus === 'suspended_checkpoint'}
+						<div class="rounded-lg px-2.5 py-1.5 text-[11px] bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-300">
+							Point de contrôle atteint ({activeCheckpointReason === 'timeout' ? 'délai 90s' : `${activeSliceUsed}/${activeSliceLimit} appels`}) — cliquez sur <strong>Reprendre (+8)</strong> ou envoyez une consigne.
+						</div>
+					{:else if activeStatus === 'suspended_pare_alert'}
+						<div class="rounded-lg px-2.5 py-1.5 text-[11px] bg-red-500/10 border border-red-500/30 text-red-700 dark:text-red-300">
+							Disjoncteur PARE déclenché (3 erreurs d'outils consécutives) — vérifiez les échanges avant de reprendre ou réorienter.
+						</div>
+					{:else if activeStatus === 'pending_question'}
+						<div class="rounded-lg px-2.5 py-1.5 text-[11px] bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-300">
+							Le sous-agent attend votre réponse ci-dessous pour poursuivre son exécution.
+						</div>
+					{/if}
 
 					<!-- Filtre par participant pour les groupes multi-agents -->
 					{#if selectedGroup.member_sids.length > 1}

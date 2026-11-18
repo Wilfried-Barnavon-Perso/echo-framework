@@ -1,28 +1,27 @@
 """
 title: ECHO V6 Cognition Router
 author: Wilfried BARNAVON
-version: 6.6.9.1
+version: 6.6.30.1
 description: Routeur FastAPI pour la visualisation cognitive et des sous-agents (/echo/v1/cognition).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.30.1: Ajout de POST /{chat_id}/threads/{sub_sid}/control, normalisation des 9 statuts canoniques/métriques de tranche et branchement direct sur EchoSubagentController.
 # 6.6.9.1: Passage sur get_echo_sse_user/create_echo_sse_response, déportation asyncio.to_thread sur lectures SQLite/FS et correction fallback ImportError browserviews.
 # 6.6.5.1: Résolution prioritaire des captures navigateur dans browserviews/ avec GC éphémère à l'entrée et exposition de status/retained.
 # 6.6.2.2: Ajout des endpoints GET /{chat_id}/browser-frames et /{chat_id}/browser-frames/{file_id}/image et alignement niveau_requis/is_question/pending_tool_calls.
 # 6.6.2.1: Sanitization DOM/prompt, regroupement grouped_threads, enrichissement des steps et réactivité SSE via get_cognition_seq.
-# 6.5.3.1: Ajout de POST /{chat_id}/threads/{sub_sid}/message (tours humains directs ou file FIFO) et enrichissement d'état des threads.
 
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import logging
 import os
 import re
 import sys
 from contextlib import closing
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Literal, Optional
 
 import orjson as json
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -34,16 +33,16 @@ from open_webui.echo.http_utils import (
     get_echo_sse_user,
     get_echo_verified_user,
 )
-from open_webui.echo.runtime import (
-    ensure_echo_sys_path,
-    load_echo_tool_from_disk,
-)
+from open_webui.echo.runtime import ensure_echo_sys_path
 from open_webui.models.chats import Chats
 
 ensure_echo_sys_path()
 try:
     from echo_browser_lib import cleanup_expired_browserviews  # type: ignore
-    from echo_constants import BROWSER_VIEWS_DIR_NAME  # type: ignore
+    from echo_constants import (  # type: ignore
+        BROWSER_VIEWS_DIR_NAME,
+        ECHO_SUBAGENT_CHECKPOINT_CALLS,
+    )
     from echo_db_schema import open_db  # type: ignore
     from echo_paths import (  # type: ignore
         get_echo_session_path,
@@ -53,10 +52,12 @@ try:
     from echo_subagent_hub import (  # type: ignore
         SUBAGENT_META_PREFIX,
         SUBAGENT_QUEUE_PREFIX,
-        enqueue_human_message,
+        EchoSubagentController,
+        enqueue_subagent_message,
         extract_turn_origin,
         get_cognition_seq,
         is_subagent_running,
+        resolve_target_sub_sids,
     )
 except ImportError:
     local_libs = Path(__file__).resolve().parents[5] / "14-owui-libs"
@@ -68,9 +69,13 @@ except ImportError:
         def cleanup_expired_browserviews(*args: Any, **kwargs: Any) -> int:
             return 0
     try:
-        from echo_constants import BROWSER_VIEWS_DIR_NAME  # type: ignore
+        from echo_constants import (  # type: ignore
+            BROWSER_VIEWS_DIR_NAME,
+            ECHO_SUBAGENT_CHECKPOINT_CALLS,
+        )
     except ImportError:
         BROWSER_VIEWS_DIR_NAME = "browserviews"
+        ECHO_SUBAGENT_CHECKPOINT_CALLS = 8
     from echo_db_schema import open_db  # type: ignore
     from echo_paths import (  # type: ignore
         get_echo_session_path,
@@ -80,10 +85,12 @@ except ImportError:
     from echo_subagent_hub import (  # type: ignore
         SUBAGENT_META_PREFIX,
         SUBAGENT_QUEUE_PREFIX,
-        enqueue_human_message,
+        EchoSubagentController,
+        enqueue_subagent_message,
         extract_turn_origin,
         get_cognition_seq,
         is_subagent_running,
+        resolve_target_sub_sids,
     )
 
 log = logging.getLogger(__name__)
@@ -93,31 +100,32 @@ router = APIRouter()
 _BG_SUBAGENT_TASKS: set[asyncio.Task] = set()
 
 
+def _launch_bg_task(coro: Any, label: str) -> asyncio.Task:
+    """Lance et trace une tâche asynchrone de sous-agent en arrière-plan."""
+    async def _runner() -> None:
+        try:
+            await coro
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("[Cognition] Échec tâche arrière-plan (%s)", label)
+
+    task = asyncio.create_task(_runner())
+    _BG_SUBAGENT_TASKS.add(task)
+    task.add_done_callback(_BG_SUBAGENT_TASKS.discard)
+    return task
+
+
 class SubagentMessagePayload(BaseModel):
     content: str
 
 
-async def _load_agent_engine_module():
-    """Charge le module agent_engine_tool depuis /opt/ECHO ou le dépôt."""
-    loaded = await load_echo_tool_from_disk(
-        "agent_engine_tool", sync_db_specs_on_reload=False
-    )
-    if loaded is not None:
-        return loaded[2]
-    local_path = (
-        Path(__file__).resolve().parents[5]
-        / "12-owui-tools"
-        / "agent_engine_tool.py"
-    )
-    spec = importlib.util.spec_from_file_location(
-        "tool_agent_engine_tool", str(local_path)
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError("agent_engine_tool introuvable")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["tool_agent_engine_tool"] = mod
-    spec.loader.exec_module(mod)
-    return mod
+class SubagentControlRequest(BaseModel):
+    action: Literal["suspend", "resume", "kill", "close"]
+    directive: Optional[str] = None
+    target_model_key: Optional[
+        Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"]
+    ] = None
 
 
 _DOM_MAP_PREFIX = "Voici les éléments interactifs actuels (Carte DOM) :"
@@ -201,9 +209,48 @@ def _sanitize_cognition_content(
     return sanitized
 
 
+_CANONICAL_SUBAGENT_STATUSES = frozenset({
+    "running",
+    "idle",
+    "completed",
+    "pending_question",
+    "suspended",
+    "suspended_checkpoint",
+    "suspended_pare_alert",
+    "killed",
+    "error",
+})
+
+_GROUP_STATUS_PRIORITY = {
+    "running": 9,
+    "suspended_pare_alert": 8,
+    "pending_question": 7,
+    "suspended_checkpoint": 6,
+    "suspended": 5,
+    "error": 4,
+    "killed": 3,
+    "completed": 2,
+    "idle": 1,
+}
+
+
+def _normalize_subagent_status(raw_status: Any, running_override: bool = False) -> str:
+    """Normalise un statut de sous-agent vers l'un des 9 statuts canoniques."""
+    if running_override:
+        return "running"
+    val = str(raw_status or "").strip()
+    if val in _CANONICAL_SUBAGENT_STATUSES:
+        return val
+    if val in ("active", "in_progress"):
+        return "idle"
+    if val in ("done", "finished"):
+        return "completed"
+    return "idle"
+
+
 def _classify_thread(sid: str, role_id: str, meta: Dict[str, Any]) -> Dict[str, Any]:
     """Retourne les attributs typés d'affichage d'un thread sous-agent."""
-    is_running = meta.get("status") == "running"
+    is_running = _normalize_subagent_status(meta.get("status")) == "running"
     model_key = meta.get("model_key")
     custom_label = meta.get("role_name") or meta.get("role")
 
@@ -385,8 +432,18 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
 
     for sid in set(threads.keys()) | set(thread_meta.keys()):
         entry = thread_meta.setdefault(sid, {"sub_sid": sid})
-        if is_subagent_running(chat_id, sid):
-            entry["status"] = "running"
+        running_now = is_subagent_running(chat_id, sid)
+        entry["status"] = _normalize_subagent_status(
+            entry.get("status"), running_override=running_now
+        )
+        entry["slice_calls_used"] = int(entry.get("slice_calls_used") or 0)
+        entry["slice_calls_limit"] = int(
+            entry.get("slice_calls_limit") or ECHO_SUBAGENT_CHECKPOINT_CALLS
+        )
+        entry["total_calls_used"] = int(entry.get("total_calls_used") or 0)
+        entry["consecutive_errors"] = int(entry.get("consecutive_errors") or 0)
+        if "checkpoint_reason" not in entry:
+            entry["checkpoint_reason"] = None
         steps_for_sid = threads.get(sid, [])
         role_id_hint = entry.get("role_id") or (
             steps_for_sid[0].get("role_id", "") if steps_for_sid else ""
@@ -489,12 +546,18 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
                 "label": glabel,
                 "icon": gicon,
                 "color": gcolor,
+                "group_status": "idle",
                 "is_running": False,
                 "updated_at": 0.0,
                 "threads": [],
             },
         )
         grp["threads"].append(sid)
+        sid_status = str(meta_entry.get("status") or "idle")
+        if _GROUP_STATUS_PRIORITY.get(sid_status, 0) > _GROUP_STATUS_PRIORITY.get(
+            grp["group_status"], 0
+        ):
+            grp["group_status"] = sid_status
         if sid_running:
             grp["is_running"] = True
         if sid_updated > grp["updated_at"]:
@@ -511,7 +574,7 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
         for m in thread_meta.values()
         if isinstance(m, dict) and m.get("status") == "running"
     )
-    total_count = len(threads)
+    total_count = len(thread_meta)
 
     return {
         "chat_id": chat_id,
@@ -607,6 +670,27 @@ async def get_cognition_stream(
     return create_echo_sse_response(event_generator())
 
 
+def _normalize_control_target(raw_id: str) -> str:
+    """Normalise un identifiant de thread ou groupe UI pour resolve_target_sub_sids."""
+    tid = (raw_id or "").strip()
+    if tid.startswith("ccl_"):
+        return tid[4:]
+    if tid.startswith("sup_sup_"):
+        return tid[4:]
+    return tid
+
+
+async def _validate_cognition_session(chat_id: str, user_id: str) -> tuple[str, str]:
+    """Vérifie l'accès à la session de chat et retourne (safe_uid, safe_cid)."""
+    chat = await Chats.get_chat_by_id_and_user_id(chat_id, user_id)
+    safe_uid = sanitize_echo_id(user_id)
+    safe_cid = sanitize_echo_id(chat_id)
+    db_path = get_echo_session_path(safe_uid, safe_cid, "db")
+    if not chat and not os.path.isfile(db_path):
+        raise HTTPException(status_code=404, detail="Session introuvable.")
+    return safe_uid, safe_cid
+
+
 @router.post("/{chat_id}/threads/{sub_sid}/message")
 async def post_subagent_human_message(
     chat_id: str,
@@ -621,16 +705,18 @@ async def post_subagent_human_message(
             status_code=400, detail="Le message ne peut pas être vide."
         )
 
-    chat = await Chats.get_chat_by_id_and_user_id(chat_id, user.id)
-    safe_uid = sanitize_echo_id(user.id)
-    safe_cid = sanitize_echo_id(chat_id)
-    db_path = get_echo_session_path(safe_uid, safe_cid, "db")
-    if not chat and not os.path.isfile(db_path):
-        raise HTTPException(status_code=404, detail="Session introuvable.")
+    safe_uid, safe_cid = await _validate_cognition_session(chat_id, user.id)
 
     if is_subagent_running(chat_id, sub_sid):
         sm = EchoStateManager(user_id=safe_uid, chat_id=safe_cid)
-        queue = await asyncio.to_thread(enqueue_human_message, sm, sub_sid, content, user.id)
+        queue = await asyncio.to_thread(
+            enqueue_subagent_message,
+            sm,
+            sub_sid,
+            content,
+            user.id,
+            "human",
+        )
         return JSONResponse(
             content={
                 "status": "queued",
@@ -640,14 +726,82 @@ async def post_subagent_human_message(
             status_code=202,
         )
 
-    mod = await _load_agent_engine_module()
-    task = asyncio.create_task(
-        mod.run_human_subagent_turn(user.id, chat_id, sub_sid, content)
+    _launch_bg_task(
+        EchoSubagentController.run_or_resume(
+            user_id=user.id,
+            chat_id=chat_id,
+            sub_sid=sub_sid,
+            directive=content,
+            origin="human",
+        ),
+        label=f"human_message:{sub_sid}",
     )
-    _BG_SUBAGENT_TASKS.add(task)
-    task.add_done_callback(_BG_SUBAGENT_TASKS.discard)
     return JSONResponse(
         content={"status": "started", "sub_sid": sub_sid},
+        status_code=200,
+    )
+
+
+@router.post("/{chat_id}/threads/{sub_sid}/control")
+async def post_subagent_control(
+    chat_id: str,
+    sub_sid: str,
+    payload: SubagentControlRequest,
+    user=Depends(get_echo_verified_user),
+):
+    """Pilote le cycle de vie d'un sous-agent ou groupe (suspend, resume, kill, close)."""
+    safe_uid, safe_cid = await _validate_cognition_session(chat_id, user.id)
+    sm = EchoStateManager(user_id=safe_uid, chat_id=safe_cid)
+    target_key = _normalize_control_target(sub_sid)
+    affected_sids = await asyncio.to_thread(
+        resolve_target_sub_sids, sm, chat_id, [target_key]
+    )
+    if not affected_sids:
+        raise HTTPException(status_code=404, detail="Sous-agent introuvable.")
+
+    if payload.action == "resume":
+        async def _resume_all() -> None:
+            await asyncio.gather(
+                *(
+                    EchoSubagentController.run_or_resume(
+                        user_id=user.id,
+                        chat_id=chat_id,
+                        sub_sid=sid,
+                        directive=payload.directive,
+                        origin="human",
+                        target_model_key=payload.target_model_key,
+                    )
+                    for sid in affected_sids
+                )
+            )
+
+        _launch_bg_task(_resume_all(), label=f"resume:{sub_sid}")
+        return JSONResponse(
+            content={
+                "status": "started",
+                "action": "resume",
+                "sub_sid": sub_sid,
+                "affected_sids": affected_sids,
+            },
+            status_code=200,
+        )
+
+    res = await EchoSubagentController.execute_control_action(
+        action=payload.action,
+        user_id=user.id,
+        chat_id=chat_id,
+        target_ids=affected_sids,
+        directive=payload.directive,
+        target_model_key=payload.target_model_key,
+    )
+    final_sids = (res or {}).get("affected_sids") or affected_sids
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "action": payload.action,
+            "sub_sid": sub_sid,
+            "affected_sids": final_sids,
+        },
         status_code=200,
     )
 

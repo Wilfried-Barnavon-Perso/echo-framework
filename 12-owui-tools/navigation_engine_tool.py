@@ -1,16 +1,16 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 6.6.5.1
+version: 6.6.30.1
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.30.1: Migration de delegate_web_browsing sur BrowserToolDispatcher + EchoSubagentController (support sub_sid, tranches supervisées) et suppression de close_web_thread.
 # 6.6.5.1: Isolation des captures dans browserviews/ (resource_type='browserview', statut transient/retained), GC automatique, ouverture unique d'onglet et ajout de retain_browser_frame.
 # 6.6.2.2: Migration de _deploy_navigation_monitor et stream_proxy vers get_window_manager() (open_tab/broadcast_browser_frame) et ajout de open_browser_ui.
 # 6.6.2.1: Suivi temps réel du sous-agent navigator (mark_subagent_running, save_subagent_meta, update_subagent_meta_fields, update_subagent_status).
 # 5.238.1.1: Ajout de MODEL_ATHENA dans target_model_key de delegate_web_browsing.
-# 5.233.0.1: Décoration @echo_tool sur les 6 méthodes publiques et simplification des retours wrap_tool_output.
 
 import os
 import time
@@ -28,8 +28,6 @@ from echo_core import (
     echo_tool,
     wrap_tool_output,
     clamp_model,
-    estimate_token_size,
-    smart_truncate_history
 )
 from echo_state_manager import EchoStateManager
 from echo_paths import generate_echo_file_id, get_echo_session_path, sanitize_echo_id
@@ -38,7 +36,6 @@ from echo_prompts import SYS_NAV_BROWSER
 from echo_window_manager import get_window_manager
 from echo_browser_lib import (
     EchoBrowserLib,
-    BROWSER_TOOLS_SCHEMA,
     req_to_browser,
     cleanup_expired_browserviews,
 )
@@ -46,17 +43,16 @@ from echo_constants import (
     BROWSER_VIEWS_DIR_NAME,
     BROWSER_VIEW_STATUS,
     FILE_INGESTION_STATUS,
-    CONTEXT_TRUNCATE_THRESHOLD,
-    ECHO_MAX_CONTEXT_SIZE,
     PRUNE_CONTENT_THRESHOLD,
     DEFAULT_VISION_GRID_STEP,
+    ECHO_SUBAGENT_CHECKPOINT_CALLS,
+    ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
     ECHO_SUBAGENT_CONTEXT,
 )
 from echo_subagent_hub import (
-    mark_subagent_running,
-    save_subagent_meta,
-    update_subagent_meta_fields,
-    update_subagent_status,
+    BrowserToolDispatcher,
+    EchoSubagentController,
+    validate_or_create_sub_sid,
 )
 
 async def _verify_engine_status(
@@ -178,537 +174,93 @@ class Tools:
 
     @echo_tool
     async def delegate_web_browsing(
-        self, task_objective: str, start_url: Optional[str] = None, 
-        target_model_key: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_APOLLO", 
-        max_iterations: int = 30,
-        __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None
+        self,
+        task_objective: str,
+        start_url: Optional[str] = None,
+        sub_sid: Optional[str] = None,
+        target_model_key: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_APOLLO",
+        __user__: Optional[dict] = None,
+        __metadata__: Optional[dict] = None,
+        __event_call__: Any = None,
+        __event_emitter__: Any = None,
     ) -> dict:
-        """Délègue une navigation web interactive complexe (clics, formulaires, SPA) au Navigateur Autonome."""
-        events = EchoEvents(__event_emitter__, __event_call__)
-        
-        # Récupération de l'identité du sous-agent via contextvars
-        sub_context = ECHO_SUBAGENT_CONTEXT.get()
+        """Délègue une navigation web interactive complexe (clics, formulaires, SPA) au Navigateur Autonome par tranches supervisées (reprise possible via sub_sid)."""
+        sub_context = ECHO_SUBAGENT_CONTEXT.get() or {}
         chat_id = (__metadata__ or {}).get("chat_id", "default_session")
         uid = (__user__ or {}).get("id", "anonymous")
         events = EchoEvents(__event_emitter__, __event_call__, user_id=uid, chat_id=chat_id)
-        sub_sid = sub_context.get("sub_sid")
-        sid = f"thread_web_{uuid.uuid4().hex[:8]}"
-        
-        # Isolation Playwright en RAM via browser_session_id dédié, persistance SQLite/Vault stricte sur chat_id
-        browser_session_id = sub_sid if sub_sid else sid
-        
+        parent_sub_sid = sub_context.get("sub_sid")
+        sid = validate_or_create_sub_sid(sub_sid=sub_sid, prefix="thread_web")
+        browser_session_id = parent_sub_sid if parent_sub_sid else sid
+
         u_valves = (__user__ or {}).get("valves", self.UserValves())
-        use_vision = getattr(u_valves, 'USE_MULTIMODAL_VISION', True)
-
-        await events.status(f"📡 Agent Navigateur [{browser_session_id[:8]}]: Prise de contrôle...")
-        if not await _verify_engine_status(self.valves.HTTP_TIMEOUT, browser_session_id, uid, u_valves, events, chat_id=chat_id):
-            return "❌ Navigateur indisponible."
-
-        await cleanup_expired_browserviews(uid, chat_id)
-
-        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, browser_session_id, uid, vision_grid_step=getattr(u_valves, 'VISION_GRID_STEP', DEFAULT_VISION_GRID_STEP), chat_id=chat_id)
-        registry = browser.get_registry()
-        
         state = EchoStateManager(user_id=uid, chat_id=chat_id)
-        nav_success = False
-        current_nav_model = clamp_model(target_model_key, __metadata__, user_id=uid)
-        mark_subagent_running(chat_id, sid, True)
-        save_subagent_meta(
-            state,
-            sid,
-            {
-                "sub_sid": sid,
-                "engine": "navigator",
-                "role_name": "Navigateur Web",
-                "skill_id": "navigator",
-                "model_key": current_nav_model,
-                "status": "running",
-            },
-        )
+        existing_history = state.get_thread_history(sid)
+        is_new_session = len(existing_history) == 0
 
-        if start_url:
-            await events.status(f"🌐 Navigation vers {start_url}...")
-            await browser.action_browser_control(command="navigate", value=start_url)
-        
-        res_view = await browser.highlight()
-        await _deploy_navigation_monitor(
-            res_view,
-            chat_id,
-            uid,
-            u_valves,
-            events,
+        async def _analyze_cb(url: str, query: str) -> Any:
+            return await self.analyze_web_page(url, query, __user__, __metadata__, __event_call__, __event_emitter__)
+
+        async def _archive_cb(url: str) -> Any:
+            return await self.archive_web_page(url, __user__, __metadata__, __event_call__, __event_emitter__)
+
+        dispatcher = BrowserToolDispatcher(
+            sid=sid,
             browser_session_id=browser_session_id,
-            open_tab_on_deploy=True,
+            chat_id=chat_id,
+            user_id=uid,
+            events=events,
+            http_timeout=self.valves.HTTP_TIMEOUT,
+            browser_mode=getattr(u_valves, "BROWSER_MODE", "desktop"),
+            show_browser_hud=getattr(u_valves, "SHOW_BROWSER_HUD", True),
+            use_multimodal_vision=getattr(u_valves, "USE_MULTIMODAL_VISION", True),
+            vision_grid_step=getattr(u_valves, "VISION_GRID_STEP", DEFAULT_VISION_GRID_STEP),
+            prune_threshold=getattr(u_valves, "PRUNE_CONTENT_THRESHOLD", PRUNE_CONTENT_THRESHOLD),
+            analyze_page_cb=_analyze_cb,
+            archive_page_cb=_archive_cb,
         )
 
-        vision_requested = False
-
-        sys_prompt = SYS_NAV_BROWSER.format(task_objective=task_objective)
-
-        history = [{"role": "user", "parts": [{"text": sys_prompt}]}]
-        state.save_thread_step(sid, chat_id, "navigator", 0, "user", history[0]["parts"])
-        
-        def push_state(res_view_dict, fn_name=None):
-            dom_data = res_view_dict.get("metadata", [])
-            parts = []
-            
-            if fn_name:
-                parts.append({
-                    "functionResponse": {
-                        "name": fn_name,
-                        "response": {
-                            "status": "success",
-                            "dom_map": dom_data
-                        }
-                    }
-                })
-            else:
-                import orjson as json
-                dom_text = json.dumps(dom_data).decode('utf-8')[:60000]
-                viewport = res_view_dict.get("viewport")
-                vp_text = f"\nDimensions de l'écran (Viewport) : {viewport['width']}x{viewport['height']} pixels." if viewport else ""
-                parts.append({"text": f"Voici les éléments interactifs actuels (Carte DOM) :{vp_text}\n{dom_text}"})
-                
-            nonlocal vision_requested
-            if use_vision and vision_requested and res_view_dict.get("screenshot_b64"):
-                parts.append({"text": "Voici la capture d'écran demandée. Analyse-la attentivement pour résoudre ton blocage."})
-                parts.append({"inlineData": {"mimeType": "image/jpeg", "data": res_view_dict["screenshot_b64"]}})
-                vision_requested = False
-                
-            history.append({"role": "user", "parts": parts})
-            state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "user", parts)
-        def prune_heavy_context(history_list, threshold: int, is_zooming: bool = False):
-            """Élagage proactif : Filtre universel avec seuil de tolérance élevé et troncature intelligente pour éviter le Token Bloat."""
-            heavy_keys = ["dom_map", "a11y_tree", "content", "html", "search_dom"]
-            
-            for i, msg in enumerate(history_list):
-                # Mémoire Glissante (T-1) : On préserve inlineData uniquement pour les 2 derniers messages utilisateur
-                if "parts" in msg and not is_zooming:
-                    # Tolérance si msg fait partie des 4 derniers éléments de l'historique (2 user, 2 model)
-                    if i < len(history_list) - 4:
-                        msg["parts"] = [p for p in msg["parts"] if "inlineData" not in p]
-                    
-                for part in msg.get("parts", []):
-                    # Purge ou Troncature dans les retours d'outils
-                    if "functionResponse" in part:
-                        fr = part["functionResponse"]
-                        resp = fr.get("response", {})
-                        if isinstance(resp, dict):
-                            for key in heavy_keys:
-                                if key in resp:
-                                    val = resp[key]
-                                    if isinstance(val, str) and ("[PURGED" in val or "[TRUNCATED" in val):
-                                        continue
-                                    if isinstance(val, str) and len(val) > threshold:
-                                        resp[key] = val[:threshold] + "\n... [TRUNCATED_TO_PREVENT_BLOAT]"
-                                    elif not isinstance(val, str) and len(str(val)) > threshold:
-                                        resp[key] = "[PURGED_OBSOLETE_UI_STATE]"
-                                
-                    # Troncature du DOM initial en texte brut (push_state)
-                    if "text" in part:
-                        text = part["text"]
-                        if text.startswith("Voici les éléments interactifs actuels") and "[TRUNCATED" not in text:
-                            if len(text) > threshold:
-                                part["text"] = text[:threshold] + "\n... [TRUNCATED_TO_PREVENT_BLOAT]"
-
-        push_state(res_view)
-
-        iterations = 0
-        zoom_attempts = 0
-        is_zooming = False
-        
-        # Injection du Proxy Live Asynchrone
-        stop_streaming = asyncio.Event()
-        async def stream_proxy():
-            last_id = 0
-            wm = get_window_manager()
-            while not stop_streaming.is_set():
-                try:
-                    resp = await req_to_browser(10, "/screencast/latest", {"session_id": browser_session_id, "last_frame_id": last_id}, uid)
-                    if resp and resp.get("status") == "success":
-                        new_id = resp.get("frame_id", last_id)
-                        b64 = resp.get("frame_b64")
-                        if b64 and new_id != last_id:
-                            last_id = new_id
-                            url = resp.get("url", "")
-                            await wm.broadcast_browser_frame(
-                                uid,
-                                chat_id,
-                                {
-                                    "session_id": browser_session_id,
-                                    "live_frame_id": new_id,
-                                    "url": url,
-                                    "live_b64": b64,
-                                    "timestamp": int(time.time()),
-                                },
-                            )
-                except asyncio.CancelledError:
-                    break
-                except Exception:
-                    pass
-                await asyncio.sleep(0.1)
-                
-        if getattr(u_valves, 'SHOW_BROWSER_HUD', True):
-            proxy_task = asyncio.create_task(stream_proxy())
-        else:
-            proxy_task = None
-            
-        try:
-            last_fn_name = "action"
-            text_out = ""
-            while True:
-                is_budget_exhausted = iterations >= max_iterations
-                if is_budget_exhausted:
-                    await events.status(
-                        f"🛑 Agent Navigateur: Budget atteint ({iterations}/{max_iterations}), synthèse finale...",
-                        done=False
-                    )
-                else:
-                    await events.status(f"🤖 Agent Navigateur: Analyse en cours (Étape {iterations + 1}/{max_iterations})...", done=False)
-            
-                # Défense passive : Troncature de l'historique du navigateur
-                current_size = estimate_token_size(history)
-                max_tokens = ECHO_MAX_CONTEXT_SIZE
-                if current_size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
-                    try:
-                        await events.toast(f"⚠️ Navigateur [{sid}] : saturation contextuelle ({int(current_size/max_tokens*100)}%). Troncature silencieuse active.", "warning")
-                    except AttributeError:
-                        if __event_emitter__: await events.toast(f"⚠️ Navigateur [{sid}] : saturation contextuelle. Troncature silencieuse active.", level="warning", title="ECHO Browser")
-                    while current_size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(history) > 3:
-                        removed_size = smart_truncate_history(history, 1)
-                        if not removed_size:
-                            break
-                        current_size -= removed_size
-            
-                schema_extensions = [
-                    {
-                        "name": "action_analyze_page",
-                        "description": "Analyse intelligemment le contenu textuel complet de la page actuelle en tâche de fond (recherche précise, résumé large bande, etc.) sans saturer ta mémoire de travail.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "query": {"type": "string", "description": "L'objectif de l'analyse (ex: 'Cherche la date de naissance', ou 'Résume les grands axes de cet article')."}
-                            },
-                            "required": ["query"]
-                        }
-                    },
-                    {
-                        "name": "action_archive_page",
-                        "description": "Archive silencieusement tout le texte de la page actuelle dans la mémoire à long terme (RAG). À n'utiliser que si la page contient un savoir encyclopédique ou technique vital.",
-                        "parameters": {"type": "object", "properties": {}}
-                    }
-                ]
-
-                all_browser_tools = BROWSER_TOOLS_SCHEMA + schema_extensions
-                payload = {
-                    "contents": history,
-                    "tools": [{"functionDeclarations": all_browser_tools}],
-                    "tool_config": {
-                        "functionCallingConfig": {"mode": "NONE" if is_budget_exhausted else "AUTO"}
-                    }
-                }
-
-                from echo_constants import get_generation_config
-                # Élasticité Cognitive : HIGH pour l'analyse (Vision, DOM, A11y, ou démarrage initial), LOW pour l'exécution motrice (Clic, Scroll)
-                thinking_mode = "high" if (is_budget_exhausted or last_fn_name in ["action", "action_inspect_page"]) else "low"
-                payload["generationConfig"] = get_generation_config(target_model_key, override_thinking=thinking_mode)
-                
-                model = clamp_model(target_model_key, __metadata__, user_id=uid)
-                data, model_used, err = await EchoGeminiClient.call_cascade(model, payload, uid, __metadata__, events, timeout=120)
-                if model_used and model_used != current_nav_model:
-                    current_nav_model = model_used
-                    update_subagent_meta_fields(state, sid, model_key=model_used)
-
-                if err or not data:
-                    return f"❌ Erreur modèle: {err}"
-
-                candidates = data.get("candidates", [])
-                if not candidates or not candidates[0].get("content"): break
-            
-                # Conservation des parts BRUTES pour préserver thoughtSignature (Gemini 3.x)
-                raw_parts = candidates[0]["content"].get("parts", [])
-                tools_raw = [p for p in raw_parts if "functionCall" in p]
-                text_raw = [p for p in raw_parts if "text" in p and not p.get("thought")]
-            
-                tool_called = len(tools_raw) > 0
-
-                if is_budget_exhausted:
-                    text_out = "".join(p.get("text", "") for p in text_raw).strip()
-                    if tool_called and not text_out:
-                        cancel_parts = []
-                        for part in tools_raw:
-                            fc = part["functionCall"]
-                            _cfr = {
-                                "name": fc.get("name", "unknown"),
-                                "response": {
-                                    "status": "cancelled_budget_exhausted",
-                                    "message": (
-                                        f"ACTION REFUSÉE : Nombre maximum d'itérations atteint ({iterations}/{max_iterations}). "
-                                        "Le Modèle a l'INTERDICTION d'appeler un outil et DOIT rédiger immédiatement "
-                                        "une synthèse complète et détaillée de ses observations et actions."
-                                    ),
-                                },
-                            }
-                            if fc.get("id"):
-                                _cfr["id"] = fc["id"]
-                            cancel_parts.append({"functionResponse": _cfr})
-                        rec_payload = {
-                            "contents": history + [
-                                {"role": "model", "parts": raw_parts},
-                                {"role": "user", "parts": cancel_parts},
-                            ],
-                            "tools": [{"functionDeclarations": all_browser_tools}],
-                            "tool_config": {"functionCallingConfig": {"mode": "NONE"}},
-                            "generationConfig": get_generation_config(target_model_key, override_thinking="high"),
-                        }
-                        rec_data, _, _ = await EchoGeminiClient.call_cascade(
-                            model, rec_payload, uid, __metadata__, events, timeout=120
-                        )
-                        if rec_data:
-                            rec_cands = rec_data.get("candidates", [])
-                            if rec_cands and rec_cands[0].get("content"):
-                                rec_parts = rec_cands[0]["content"].get("parts", [])
-                                text_out = "".join(
-                                    p.get("text", "") for p in rec_parts if "text" in p and not p.get("thought")
-                                ).strip()
-
-                    clean_model_parts = [p for p in raw_parts if "functionCall" not in p]
-                    if not any("text" in p and not p.get("thought") for p in clean_model_parts) and text_out:
-                        clean_model_parts.append({"text": text_out})
-                    if clean_model_parts:
-                        history.append({"role": "model", "parts": clean_model_parts})
-                        sig = next((p["thoughtSignature"] for p in raw_parts if "thoughtSignature" in p), None)
-                        state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "model", clean_model_parts, sig)
-                    break
-
-                if tool_called:
-                    iterations += 1
-                    # 1. Ajout du message modèle avec TOUTES les parts brutes (préservation thoughtSignature STRICTE)
-                    history.append({"role": "model", "parts": raw_parts})
-                
-                    sig = next((p["thoughtSignature"] for p in raw_parts if "thoughtSignature" in p), None)
-                    state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "model", raw_parts, sig)
-                
-                    response_parts = []
-                    last_view = None
-                    last_fn_name = "action"
-                
-                    # 2. Exécution des outils
-                    try:
-                        await browser.start_screencast()
-                    except: pass
-                
-                    for index, part in enumerate(tools_raw):
-                        fc = part["functionCall"]
-                        fn_name = fc["name"]
-                        fn_args = fc.get("args", {})
-                        fn_id = fc.get("id") # Gemini 3.x parallèle
-                        is_last_tool = (index == len(tools_raw) - 1)
-                    
-                        if fn_args.get("action_type") in ["download", "save_target"]:
-                            file_id = f"DL_{str(uuid.uuid4())[:8]}"
-                            fn_args["download_file_id"] = file_id
-                        
-                        await events.status(f"🖱️ Agent exécute : {fn_name}({fn_args})", done=False)
-                    
-                        _resp = {"status": "error", "message": "Outil inconnu."}
-                        if fn_name in registry:
-                            try:
-                                action_res = await registry[fn_name](**fn_args)
-                            
-                                if action_res.get("_trigger_vision"):
-                                    vision_requested = True
-                                    grid = action_res.get("grid", False)
-                                    zb = action_res.get("zoom_box")
-                                    
-                                    if action_res.get("is_zoom"):
-                                        is_zooming = True
-                                        zoom_attempts += 1
-                                        cx, cy = action_res.get('cx'), action_res.get('cy')
-                                        _resp = {"status": "success", "message": f"Zoom appliqué (Essai {zoom_attempts}/3). L'image jointe est rognée sur ta zone. Un VISEUR ROUGE a été dessiné au centre absolu (X={cx}, Y={cy}). Si le point central de ce viseur est STRICTEMENT sur ta cible, utilise action_interact_dom(x={cx}, y={cy}, action_type='click'). S'il est à côté, NE CLIQUE PAS : effectue un nouveau action_zoom_in plus serré centré sur ta cible."}
-                                    elif action_res.get("is_zoom_out"):
-                                        is_zooming = False
-                                        zoom_attempts = 0
-                                        _resp = {"status": "success", "message": "Zoom annulé. Retour à la vue globale."}
-                                    else:
-                                        _resp = {"status": "success", "message": "Capture d'écran demandée. Elle est jointe à ce message."}
-                                        
-                                    if grid:
-                                        last_view = await browser.vision_capture(grid=True, zoom_box=zb)
-                                    else:
-                                        last_view = await browser.highlight()
-                                        
-                                    # On déploie avec highlight() spécifiquement pour le moniteur visuel, car la grille ne possède pas les hitboxes sémantiques.
-                                    hud_view = await browser.highlight() if grid else last_view
-                                    if is_last_tool:
-                                        try:
-                                            sc_res = await browser.stop_screencast()
-                                            if sc_res and sc_res.get("webp_b64"):
-                                                hud_view["webp_b64"] = sc_res["webp_b64"]
-                                        except: pass
-                                    
-                                    await _deploy_navigation_monitor(hud_view, chat_id, uid, u_valves, events, browser_session_id=browser_session_id)
-                                    last_fn_name = fn_name
-                                    
-                                elif action_res.get("status") != "error":
-                                    if fn_name in ["action_interact_dom", "action_interact_a11y", "action_browser_control"]:
-                                        is_zooming = False
-                                        zoom_attempts = 0
-                                    if is_last_tool:
-                                        if "metadata" in action_res and "screenshot_b64" in action_res:
-                                            last_view = action_res
-                                        else:
-                                            last_view = await browser.highlight()
-                                            
-                                        try:
-                                            sc_res = await browser.stop_screencast()
-                                            if sc_res and sc_res.get("webp_b64"):
-                                                last_view["webp_b64"] = sc_res["webp_b64"]
-                                        except: pass
-                                    
-                                        await _deploy_navigation_monitor(last_view, chat_id, uid, u_valves, events, browser_session_id=browser_session_id)
-                                        _resp = {"status": "success", "dom_map": last_view.get("metadata", [])}
-                                    
-                                        if action_res.get("status") == "downloading":
-                                            _resp["message"] = f"📥 Téléchargement asynchrone démarré. Identifiant du fichier attendu : {fn_args.get('download_file_id')}. Résultat en attente. Utilisez 'query_registry' ultérieurement pour vérifier son statut."
-
-                                        # Intégrer les résultats spécifiques de l'action dans la réponse
-                                        if "search_result" in action_res:
-                                            _resp["search_result"] = action_res["search_result"]
-                                        if "content" in action_res:
-                                            _resp["content"] = action_res["content"]
-                                        if "value" in action_res:
-                                            _resp["value"] = action_res["value"]
-                                    else:
-                                        _resp = {"status": "success", "message": "Action exécutée avec succès."}
-                                        if action_res.get("status") == "downloading":
-                                            _resp["message"] = f"📥 Téléchargement asynchrone démarré. Identifiant du fichier attendu : {fn_args.get('download_file_id')}. Résultat en attente. Utilisez 'query_registry' ultérieurement pour vérifier son statut."
-                                        if "content" in action_res:
-                                            _resp["content"] = action_res["content"]
-                                        if "value" in action_res:
-                                            _resp["value"] = action_res["value"]
-                                        
-                                    last_fn_name = fn_name
-                                else:
-                                    _resp = {"status": "error", "error": action_res.get("message")}
-                            except Exception as e:
-                                _resp = {"status": "error", "error": str(e)}
-                        elif fn_name == "action_analyze_page":
-                            try:
-                                current_url_resp = await browser.action_inspect_page(target="url")
-                                raw_res = await self.analyze_web_page(current_url_resp.get("url", ""), fn_args.get("query", ""), __user__, __metadata__, __event_call__, __event_emitter__)
-                                _resp = {"status": "success", "result": raw_res}
-                            except Exception as e:
-                                _resp = {"status": "error", "error": str(e)}
-                        elif fn_name == "action_archive_page":
-                            try:
-                                current_url_resp = await browser.action_inspect_page(target="url")
-                                raw_res = await self.archive_web_page(current_url_resp.get("url", ""), __user__, __metadata__, __event_call__, __event_emitter__)
-                                _resp = {"status": "success", "result": raw_res}
-                            except Exception as e:
-                                _resp = {"status": "error", "error": str(e)}
-                            
-                        # Construction stricte du functionResponse avec l'ID natif
-                        _fr = {"name": fn_name, "response": _resp}
-                        if fn_id: _fr["id"] = fn_id
-                        response_parts.append({"functionResponse": _fr})
-                
-                    if response_parts:
-                        last_fr_resp = response_parts[-1]["functionResponse"]["response"]
-                        if isinstance(last_fr_resp, dict):
-                            if iterations >= max_iterations:
-                                last_fr_resp["_budget_alert"] = (
-                                    f"BUDGET D'ITÉRATION ÉPUISÉ ({iterations}/{max_iterations}). "
-                                    "Plus aucune action navigateur n'est disponible. Le Modèle DOIT impérativement "
-                                    "rédiger immédiatement une synthèse complète et détaillée de toutes les informations "
-                                    "collectées, des actions accomplies et de l'état exact de la navigation."
-                                )
-                            else:
-                                last_fr_resp["_budget"] = (
-                                    f"Étape {iterations}/{max_iterations} ({max_iterations - iterations} restantes)"
-                                )
-
-                    # 3. Ajout du message utilisateur contenant toutes les réponses
-                    # Injection de la vision base64 dans la functionResponse correspondante si elle a été demandée
-                    if last_view and use_vision and vision_requested and last_view.get("screenshot_b64"):
-                        # On attache la capture d'écran directement dans les 'parts' de la dernière functionResponse
-                        # Règle Gemini 3.x : Multimodal function calling
-                        # On trouve la functionResponse qui a déclenché la vision (last_fn_name) ou la dernière.
-                        target_fr = None
-                        for rp in reversed(response_parts):
-                            if "functionResponse" in rp and rp["functionResponse"].get("name") == last_fn_name:
-                                target_fr = rp["functionResponse"]
-                                break
-                        if not target_fr and response_parts:
-                            target_fr = response_parts[-1]["functionResponse"]
-                        
-                        if target_fr:
-                            target_fr["response"]["message"] = "Voici la capture d'écran demandée. Analyse-la attentivement."
-                            response_parts.append(
-                                {"inlineData": {"mimeType": "image/png", "data": last_view["screenshot_b64"]}}
-                            )
-                        vision_requested = False
-                    
-                    # Détection de saturation et trigger du Graceful Shutdown (40% max)
-                    if estimate_token_size(history) > ECHO_MAX_CONTEXT_SIZE * 0.40:
-                        response_parts.append({"text": "<system_alert>SATURATION DU CONTEXTE ATTEINTE. Appliquez la Règle 10.</system_alert>"})
-                    
-                    # Élagage des vieux contextes lourds (Seuil de tolérance généreux via constante centrale)
-                    prune_heavy_context(history, getattr(u_valves, 'PRUNE_CONTENT_THRESHOLD', PRUNE_CONTENT_THRESHOLD), is_zooming)
-                
-                    history.append({"role": "user", "parts": response_parts})
-                    state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "user", response_parts)
-                
-                else:
-                    # Synthèse finale ou Auto-Relaunch
-                    text_out = "".join(p.get("text", "") for p in text_raw)
-                
-                    history.append({"role": "model", "parts": raw_parts})
-                    sig = next((p["thoughtSignature"] for p in raw_parts if "thoughtSignature" in p), None)
-                    state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "model", raw_parts, sig)
-                    
-                    if "[SATURATION_CONTEXTE]" in text_out:
-                        await events.status("🔄 Saturation mémoire : Auto-synthèse et Relance interne...", done=False)
-                        synthesis = text_out.replace("[SATURATION_CONTEXTE]", "").strip()
-                        
-                        # Auto-Relaunch : Réinitialisation de la mémoire avec injection de la synthèse
-                        history = [{"role": "user", "parts": [{"text": sys_prompt}]}]
-                        history.append({
-                            "role": "user", 
-                            "parts": [{"text": f"Reprise de session interne.\nObjectif initial :\n{task_objective}\n\nSynthèse des recherches précédentes :\n{synthesis}\n\nContinuez la mission sans répéter les mêmes actions."}]
-                        })
-                        if last_view:
-                            # push_state formate et ajoute automatiquement le DOM (et l'image) dans 'history'
-                            push_state(last_view)
-                        state.save_thread_step(sid, chat_id, "navigator", len(history) - 1, "user", history[1]["parts"])
-                        continue  # Relance la boucle while
-                
-                    await events.status(f"✅ Mission terminée en {iterations} étapes.", done=True)
-                    nav_success = True
-                    return wrap_tool_output(
-                        text=f"🤖 Synthèse du Navigateur :\n{text_out}",
-                        status={"status": "success", "steps": iterations, "sid": sid}
-                    )
-
-            fallback_msg = "Aucune synthèse (Interrompu en cours d'action)."
-            nav_success = True
+        await events.status(f"📡 Agent Navigateur [{browser_session_id[:12]}]: Prise de contrôle...")
+        res_view = await dispatcher.ensure_engine_ready(
+            start_url=start_url, open_tab=is_new_session
+        )
+        if res_view is None:
             return wrap_tool_output(
-                text=(
-                    f"ÉCHEC : Nombre maximum d'itérations atteint ({max_iterations}). "
-                    "Le Modèle doit analyser la synthèse suivante et relancer l'outil `delegate_web_browsing` pour poursuivre la tâche.\n"
-                    f"[SYNTHÈSE_NAVIGATEUR] :\n{text_out if text_out else fallback_msg}"
-                ), 
-                status={"status": "too_many_tries", "steps": iterations, "sid": sid}
+                text="❌ Navigateur indisponible.",
+                status={"status": "error", "sid": sid, "sub_sid": sid},
             )
-        finally:
-            stop_streaming.set()
-            if proxy_task:
-                proxy_task.cancel()
-            try:
-                update_subagent_status(state, sid, "idle" if nav_success else "error")
-            except Exception:
-                pass
-            mark_subagent_running(chat_id, sid, False)
+
+        if is_new_session:
+            import orjson as _orjson
+            sys_prompt = SYS_NAV_BROWSER.format(task_objective=task_objective)
+            state.save_thread_step(sid, chat_id, "navigator", 0, "user", [{"text": sys_prompt}])
+            dom_data = res_view.get("metadata", [])
+            dom_text = _orjson.dumps(dom_data).decode("utf-8")[:60000]
+            vp = res_view.get("viewport")
+            vp_text = f"\nDimensions de l'écran (Viewport) : {vp['width']}x{vp['height']} pixels." if vp else ""
+            dom_parts = [{"text": f"Voici les éléments interactifs actuels (Carte DOM) :{vp_text}\n{dom_text}"}]
+            state.save_thread_step(sid, chat_id, "navigator", 1, "user", dom_parts)
+            effective_task = ""
+        else:
+            effective_task = task_objective
+
+        return await EchoSubagentController.run_or_resume(
+            user_id=uid,
+            chat_id=chat_id,
+            task=effective_task,
+            sub_sid=sid,
+            target_model_key=target_model_key,
+            slice_max_calls=ECHO_SUBAGENT_CHECKPOINT_CALLS,
+            slice_timeout_sec=ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+            autonomous_slice=False,
+            engine="navigator",
+            role_name="Navigateur Web",
+            custom_dispatcher=dispatcher,
+            __user__=__user__,
+            __metadata__=__metadata__,
+            __event_emitter__=__event_emitter__,
+            __event_call__=__event_call__,
+        )
 
     @echo_tool
     async def analyze_web_page(self, url: str, query: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
@@ -837,31 +389,6 @@ class Tools:
         res = await browser.reset_session()
         await cleanup_expired_browserviews(uid, chat_id, force_discard_sids={browser_session_id})
         return wrap_tool_output(text="🚀 Navigateur réinitialisé.", status=res)
-
-    @echo_tool
-    async def close_web_thread(self, sub_sid: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
-        """Ferme définitivement une session de navigation web (`thread_web_*`) et purge son historique."""
-        chat_id = (__metadata__ or {}).get("chat_id", "default_session")
-        uid = (__user__ or {}).get("id", "anonymous")
-        
-        state = EchoStateManager(user_id=uid, chat_id=chat_id)
-        threads = state.list_threads(chat_id)
-        sids_in_chat = {t["sub_sid"] for t in threads}
-        
-        if sub_sid not in sids_in_chat or not sub_sid.startswith("thread_web_"):
-            return f"❌ Session `{sub_sid}` introuvable dans ce chat ou de type invalide."
-            
-        state.delete_thread(sub_sid)
-        
-        # Fermeture physique de la session Playwright du sous-agent ciblé (et non du chat_id parent)
-        browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, sub_sid, uid, chat_id=chat_id)
-        await browser.reset_session()
-        await cleanup_expired_browserviews(uid, chat_id, force_discard_sids={sub_sid})
-        
-        return wrap_tool_output(
-            text=f"✅ Session web `{sub_sid}` fermée et purgée de l'historique.",
-            status={"status": "success", "sid": sub_sid}
-        )
 
     @echo_tool
     async def get_browser_frames_history(self, depth: Optional[int] = 10, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None) -> dict:

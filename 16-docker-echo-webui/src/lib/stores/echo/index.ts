@@ -101,11 +101,31 @@ export interface EchoCognitionStep {
 	participant_label?: string;
 }
 
+export type EchoSubagentStatus =
+	| 'running'
+	| 'idle'
+	| 'completed'
+	| 'pending_question'
+	| 'suspended'
+	| 'suspended_checkpoint'
+	| 'suspended_pare_alert'
+	| 'killed'
+	| 'error';
+
 export interface EchoCognitionThreadMeta {
 	sub_sid?: string;
 	role_id?: string;
 	role?: string;
-	status?: string;
+	role_name?: string;
+	skill_id?: string | null;
+	engine?: 'delegate' | 'navigator' | 'council' | 'supervisor' | 'deep_research' | string;
+	status?: EchoSubagentStatus | string;
+	slice_calls_used?: number;
+	slice_calls_limit?: number;
+	total_calls_used?: number;
+	consecutive_errors?: number;
+	checkpoint_reason?: string | null;
+	group_id?: string | null;
 	updated_at?: number;
 	thread_type?: 'web' | 'council' | 'supervisor' | 'expert' | 'agent';
 	icon?: string;
@@ -137,6 +157,7 @@ export interface EchoCognitionGroup {
 	threads?: string[];
 	participant_labels?: Record<string, string>;
 	model_keys?: string[];
+	group_status?: EchoSubagentStatus | string;
 	is_running: boolean;
 	updated_at: number;
 	steps_count?: number;

@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 5.239.17.1
+version: 6.6.30.1
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.30.1: Verrou thread-safe _get_aec_drain_lock(chat_id) autour de _drain_tool_aec_events.
 # 5.239.17.1: Délestage automatique des sorties d'outils > 32 Ko dans tools_output/{output_id}.txt avec aperçu Head+Tail aligné sur les lignes et métadonnées JSON (truncate_and_spill_tool_output, skip_truncation).
 # 5.239.11.1: Parsing JSON-first (`std_json.loads`) dans `unbox_tool_output` pour accepter la sérialisation Open WebUI (`null`/`true`/`false`), avec repli `ast.literal_eval` et garde `unstructured_data`.
 # 5.238.1.1: Support orthogonal COGNITIVE_MODE:COGNITIVE_MODEL dans resolve_model_policy et convert_owui_tools (copie profonde sans mutation in-place) et surcharge thinking_override="low" étendue à MODEL_ATHENA en compaction.
 # 5.237.20.2: Ancrage head_last_msg_id dans le checkpoint de compaction pour isoler les branches sœurs antérieures au pivot.
-# 5.237.20.1: Division entière sur CHARS_PER_TOKEN=3.2, exclusion de thoughtSignature, pesée max(shadow, output) et résolution résiliente du pivot (resolve_pivot_turn_index, tail_anchor_ids, break_on_ids).
 import os
 import re
 import uuid
@@ -19,6 +19,7 @@ import time
 import inspect
 import functools
 import contextvars
+import threading
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -27,7 +28,7 @@ from echo_state_manager import EchoStateManager
 from echo_aec import EchoAEC
 import orjson as std_json
 from echo_paths import get_echo_version
-from echo_constants import CHARS_PER_TOKEN, AEC_REMINDERS
+from echo_constants import CHARS_PER_TOKEN, AEC_REMINDERS, ECHO_SUBAGENT_CONTEXT
 
 logger = logging.getLogger("ECHO_CORE")
 
@@ -198,6 +199,18 @@ def split_thought_process(text: str) -> Tuple[str, Optional[str]]:
     return text, None
 
 _ECHO_IN_TOOL_CALL: contextvars.ContextVar[bool] = contextvars.ContextVar("_ECHO_IN_TOOL_CALL", default=False)
+_AEC_DRAIN_LOCKS: Dict[str, threading.Lock] = {}
+_AEC_DRAIN_META_LOCK = threading.Lock()
+
+
+def _get_aec_drain_lock(chat_id: str) -> threading.Lock:
+    """Retourne un verrou thread-safe dédié au drainage AEC d'une session chat_id."""
+    with _AEC_DRAIN_META_LOCK:
+        lock = _AEC_DRAIN_LOCKS.get(chat_id)
+        if lock is None:
+            lock = threading.Lock()
+            _AEC_DRAIN_LOCKS[chat_id] = lock
+        return lock
 
 
 def _drain_tool_aec_events(user_id: str = None, chat_id: str = None, metadata: dict = None) -> Optional[str]:
@@ -206,68 +219,68 @@ def _drain_tool_aec_events(user_id: str = None, chat_id: str = None, metadata: d
     """
     aec_events = None
     if user_id and chat_id and metadata is not None:
-        # [NOUVEAU] Rappels Cognitifs par Outil (AVANT le delta)
-        call_count = metadata.get("_echo_tool_call_count", 0) + 1
-        metadata["_echo_tool_call_count"] = call_count
+        with _get_aec_drain_lock(chat_id):
+            # [NOUVEAU] Rappels Cognitifs par Outil (AVANT le delta)
+            call_count = metadata.get("_echo_tool_call_count", 0) + 1
+            metadata["_echo_tool_call_count"] = call_count
 
-        state_manager = None
-        for reminder in AEC_REMINDERS:
-            threshold = reminder.get("tool_calls_threshold", 0)
-            if threshold > 0 and call_count % threshold == 0:
-                if state_manager is None:
+            state_manager = None
+            for reminder in AEC_REMINDERS:
+                threshold = reminder.get("tool_calls_threshold", 0)
+                if threshold > 0 and call_count % threshold == 0:
+                    if state_manager is None:
+                        state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
+                    EchoAEC.record_event(
+                        state_manager=state_manager,
+                        event_name=reminder["id"],
+                        status="avertissement",
+                        summary=reminder["message"],
+                        resource_type="aec_directive"
+                    )
+
+            last_check = metadata.get("_echo_last_event_check_at")
+            is_subagent = ECHO_SUBAGENT_CONTEXT.get().get("is_subagent", False)
+            if last_check and not is_subagent:
+                try:
                     state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
-                EchoAEC.record_event(
-                    state_manager=state_manager,
-                    event_name=reminder["id"],
-                    status="avertissement",
-                    summary=reminder["message"],
-                    resource_type="aec_directive"
-                )
+                    delta = EchoAEC.get_pending_events(state_manager, float(last_check))
+                    if delta:
+                        # Résolution du fuseau horaire de l'utilisateur depuis les variables OWUI
+                        user_tz_str = metadata.get("variables", {}).get("{{CURRENT_TIMEZONE}}", "UTC")
+                        try:
+                            user_tz = ZoneInfo(user_tz_str)
+                        except Exception:
+                            user_tz = ZoneInfo("UTC")
 
-        last_check = metadata.get("_echo_last_event_check_at")
-        from echo_constants import ECHO_SUBAGENT_CONTEXT
-        is_subagent = ECHO_SUBAGENT_CONTEXT.get().get("is_subagent", False)
-        if last_check and not is_subagent:
-            try:
-                state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
-                delta = EchoAEC.get_pending_events(state_manager, float(last_check))
-                if delta:
-                    # Résolution du fuseau horaire de l'utilisateur depuis les variables OWUI
-                    user_tz_str = metadata.get("variables", {}).get("{{CURRENT_TIMEZONE}}", "UTC")
-                    try:
-                        user_tz = ZoneInfo(user_tz_str)
-                    except Exception:
-                        user_tz = ZoneInfo("UTC")
+                        events = [{
+                            "type": r.get("status", "unknown"),
+                            "name": r.get("name", "unnamed"),
+                            "mime": r.get("mime"),
+                            "date": datetime.fromtimestamp(r.get("created_at", time.time()), tz=user_tz).strftime("%Y-%m-%d %H:%M:%S"),
+                            "source": "Système" if r.get("resource_type") in ("aec_event", "aec_directive") else "outil/HUD",
+                            "message": r.get("summary"),
+                            "resource_type": r.get("resource_type")
+                        } for r in delta]
 
-                    events = [{
-                        "type": r.get("status", "unknown"),
-                        "name": r.get("name", "unnamed"),
-                        "mime": r.get("mime"),
-                        "date": datetime.fromtimestamp(r.get("created_at", time.time()), tz=user_tz).strftime("%Y-%m-%d %H:%M:%S"),
-                        "source": "Système" if r.get("resource_type") in ("aec_event", "aec_directive") else "outil/HUD",
-                        "message": r.get("summary"),
-                        "resource_type": r.get("resource_type")
-                    } for r in delta]
+                        # Nettoyage des clés avec des valeurs None
+                        events = [{k: v for k, v in e.items() if v is not None} for e in events]
 
-                    # Nettoyage des clés avec des valeurs None
-                    events = [{k: v for k, v in e.items() if v is not None} for e in events]
+                        # Appel de la fonction factorisée
+                        events_text = EchoAEC.render_system_events(sys_events=events)
+                        if events_text:
+                            aec_events = events_text
+                            metadata["_echo_last_event_check_at"] = time.time()
 
-                    # Appel de la fonction factorisée
-                    events_text = EchoAEC.render_system_events(sys_events=events)
-                    if events_text:
-                        aec_events = events_text
-                        metadata["_echo_last_event_check_at"] = time.time()
-
-                    # FIFO destructif : Purge EXCLUSIVE des événements purement système (AEC).
-                    # Les fichiers (codex, uploads) remontés dans ce delta sont conservés.
-                    for r in delta:
-                        if r.get("resource_type") in ("aec_event", "aec_directive"):
-                            try:
-                                state_manager.delete_resource(r.get("id"))
-                            except Exception as e:
-                                print(f"[_drain_tool_aec_events] Erreur purge AEC {r.get('id')}: {e}")
-            except Exception as e:
-                print(f"[_drain_tool_aec_events] Erreur Delta SQLite: {e}")
+                        # FIFO destructif : Purge EXCLUSIVE des événements purement système (AEC).
+                        # Les fichiers (codex, uploads) remontés dans ce delta sont conservés.
+                        for r in delta:
+                            if r.get("resource_type") in ("aec_event", "aec_directive"):
+                                try:
+                                    state_manager.delete_resource(r.get("id"))
+                                except Exception as e:
+                                    print(f"[_drain_tool_aec_events] Erreur purge AEC {r.get('id')}: {e}")
+                except Exception as e:
+                    print(f"[_drain_tool_aec_events] Erreur Delta SQLite: {e}")
 
     return aec_events
 

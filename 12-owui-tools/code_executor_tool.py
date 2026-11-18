@@ -1,16 +1,16 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 6.6.21.1
+version: 6.6.30.1
 description: Composant système interne : ECHO Code Executor (Python, Node.js, Bash & SSH).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.30.1: Isolation par sub_sid (ECHO_SUBAGENT_CONTEXT) des jobs, pollers et actions status/listen/kill.
 # 6.6.21.1: Support Bash (.sh) dans code_executor et ajout de ssh_executor branché sur l'Identity Vault.
 # 6.6.16.1: Raccordement natif de echo_monitor à l'onglet echo-canvas via EchoWindowManager (broadcast_canvas_frame, broadcast_canvas_event, consume_canvas_ui_payload) et suppression des appels emit_execute/call_execute legacy.
 # 5.234.1.2: Support du mode background=False/True (_BACKGROUND_POLLERS), ajout de control_sandbox_execution (status, listen, kill), routage d'événements echoPushMonitorEvent et alignement PAS.
 # 5.233.0.1: Décoration @echo_tool sur les 2 méthodes publiques et simplification des retours wrap_tool_output.
-# 5.232.5.1: Mise à jour de la docstring code_executor mentionnant les montages RO /main, /plans, /generated et /files.
 
 # ECHO CONFIG NAME : ECHO Code Sandbox
 
@@ -27,6 +27,7 @@ from echo_constants import (  # noqa: E402
     ECHO_DEFAULT_CODE_EXECUTION_TIMEOUT,
     ECHO_MAX_CODE_EXECUTION_TIMEOUT,
     ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS,
+    ECHO_SUBAGENT_CONTEXT,
     SANDBOX_LISTEN_MAX_WAIT_SEC,
 )
 from echo_core import echo_tool, wrap_tool_output  # noqa: E402
@@ -36,12 +37,24 @@ from echo_state_manager import EchoStateManager  # noqa: E402
 from echo_window_manager import get_window_manager  # noqa: E402
 
 _BACKGROUND_POLLERS: dict[str, dict[str, Any]] = {}
+_SANDBOX_RUN_OWNERS: dict[str, str] = {}
 
 
-def _resolve_sandbox_identity(__user__: Optional[dict], __metadata__: Optional[dict]) -> tuple[str, str]:
+def _resolve_sandbox_identity(__user__: Optional[dict], __metadata__: Optional[dict]) -> tuple[str, str, str]:
     uid = sanitize_echo_id((__user__ or {}).get("id") or "system", fallback="system")
     cid = sanitize_echo_id((__metadata__ or {}).get("chat_id") or "", fallback="")
-    return uid, cid
+    sub_sid = sanitize_echo_id((ECHO_SUBAGENT_CONTEXT.get() or {}).get("sub_sid") or "", fallback="")
+    return uid, cid, sub_sid
+
+
+def _is_run_owned_by_subagent(uid: str, cid: str, run_id: str, sub_sid: str) -> bool:
+    if not sub_sid:
+        return True
+    key = f"{uid}:{cid}:{run_id}"
+    poller = _BACKGROUND_POLLERS.get(key)
+    if poller is not None and "sub_sid" in poller:
+        return poller["sub_sid"] == sub_sid
+    return _SANDBOX_RUN_OWNERS.get(key) == sub_sid
 
 
 async def _emit_monitor_payload(uid: str, cid: str, meta: dict) -> None:
@@ -78,13 +91,21 @@ async def _emit_monitor_payload(uid: str, cid: str, meta: dict) -> None:
     )
 
 
-def _stop_background_poller(uid: str, cid: str, run_id: Optional[str] = None) -> None:
+def _stop_background_poller(uid: str, cid: str, run_id: Optional[str] = None, sub_sid: str = "") -> list[str]:
     prefix = f"{uid}:{cid}:"
     keys = [f"{prefix}{run_id}"] if run_id else [k for k in list(_BACKGROUND_POLLERS.keys()) if k.startswith(prefix)]
+    stopped: list[str] = []
     for k in keys:
+        if sub_sid:
+            rid = k[len(prefix):] if k.startswith(prefix) else k
+            if not _is_run_owned_by_subagent(uid, cid, rid, sub_sid):
+                continue
         entry = _BACKGROUND_POLLERS.pop(k, None)
-        if entry and entry.get("task") and not entry["task"].done():
-            entry["task"].cancel()
+        if entry:
+            stopped.append(k[len(prefix):] if k.startswith(prefix) else k)
+            if entry.get("task") and not entry["task"].done():
+                entry["task"].cancel()
+    return stopped
 
 
 class Tools:
@@ -101,23 +122,62 @@ class Tools:
         __metadata__: Optional[dict] = None,
     ) -> dict | str:
         """Contrôle l'état ('status'), écoute les flux stdout/stderr ('listen') ou interrompt ('kill') les processus Sandbox de la session."""
-        uid, cid = _resolve_sandbox_identity(__user__, __metadata__)
+        uid, cid, sub_sid = _resolve_sandbox_identity(__user__, __metadata__)
         if not cid:
             return "❌ Contexte de session manquant (chat_id)."
 
         sandbox_base = ECHO_CODING_WORKER_URL.replace("/execute", "")
         clean_rid = sanitize_echo_id(run_id, fallback="") if run_id else ""
+        if sub_sid and clean_rid and not _is_run_owned_by_subagent(uid, cid, clean_rid, sub_sid):
+            return f"❌ Accès refusé : le processus `{clean_rid}` n'appartient pas au sous-agent `{sub_sid}`."
 
         import httpx
         try:
             if action == "kill":
-                _stop_background_poller(uid, cid, clean_rid or None)
+                if sub_sid and not clean_rid:
+                    prefix = f"{uid}:{cid}:"
+                    candidate_rids = set()
+                    for k in list(_BACKGROUND_POLLERS.keys()):
+                        if k.startswith(prefix):
+                            candidate_rids.add(k[len(prefix):])
+                    for k in list(_SANDBOX_RUN_OWNERS.keys()):
+                        if k.startswith(prefix):
+                            candidate_rids.add(k[len(prefix):])
+                    owned_rids = sorted(rid for rid in candidate_rids if _is_run_owned_by_subagent(uid, cid, rid, sub_sid))
+                    _stop_background_poller(uid, cid, None, sub_sid=sub_sid)
+                    if not owned_rids:
+                        return "⚠️ Aucun processus Sandbox actif trouvé pour ce sous-agent."
+                    killed_rids: list[str] = []
+                    pids: list[Any] = []
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        for rid in owned_rids:
+                            res = await client.post(
+                                f"{sandbox_base}/kill",
+                                json={"user_id": uid, "chat_id": cid, "run_id": rid},
+                            )
+                            data = res.json()
+                            if data.get("status") == "killed":
+                                killed_rids.extend(data.get("run_ids") or [rid])
+                                pids.extend(data.get("pids") or ([data["pid"]] if "pid" in data else []))
+                            _SANDBOX_RUN_OWNERS.pop(f"{prefix}{rid}", None)
+                    if killed_rids:
+                        msg = f"Processus Sandbox arrêté (run_id: {', '.join(killed_rids)} | PID: {', '.join(str(p) for p in pids)})."
+                        return wrap_tool_output(text=msg, status={"status": "killed", "run_ids": killed_rids, "pids": pids})
+                    return "⚠️ Aucun processus Sandbox actif trouvé pour ce sous-agent."
+
+                _stop_background_poller(uid, cid, clean_rid or None, sub_sid=sub_sid)
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     res = await client.post(
                         f"{sandbox_base}/kill",
                         json={"user_id": uid, "chat_id": cid, "run_id": clean_rid or None},
                     )
                 data = res.json()
+                if clean_rid:
+                    _SANDBOX_RUN_OWNERS.pop(f"{uid}:{cid}:{clean_rid}", None)
+                else:
+                    prefix = f"{uid}:{cid}:"
+                    for k in [k for k in list(_SANDBOX_RUN_OWNERS.keys()) if k.startswith(prefix)]:
+                        _SANDBOX_RUN_OWNERS.pop(k, None)
                 if data.get("status") == "killed":
                     pids = data.get("pids") or ([data["pid"]] if "pid" in data else [])
                     rids = data.get("run_ids") or ([clean_rid] if clean_rid else [])
@@ -135,7 +195,11 @@ class Tools:
                 if action == "listen" and not clean_rid:
                     list_res = await client.get(f"{sandbox_base}/status", params={"user_id": uid, "chat_id": cid})
                     jobs = list_res.json().get("jobs", [])
-                    running = [j for j in jobs if j.get("state") == "running"]
+                    running = [
+                        j for j in jobs
+                        if j.get("state") == "running"
+                        and _is_run_owned_by_subagent(uid, cid, j.get("run_id", ""), sub_sid)
+                    ]
                     if len(running) == 1:
                         clean_rid = running[0]["run_id"]
                         key_cursor = f"{uid}:{cid}:{clean_rid}"
@@ -162,6 +226,8 @@ class Tools:
             data = res.json()
             if not clean_rid:
                 jobs = data.get("jobs", [])
+                if sub_sid:
+                    jobs = [j for j in jobs if _is_run_owned_by_subagent(uid, cid, j.get("run_id", ""), sub_sid)]
                 if not jobs:
                     return "Aucun processus Sandbox enregistré dans cette session."
                 lines = [
@@ -231,7 +297,7 @@ class Tools:
     ) -> dict | str:
         """Exécute un script Python (.py), Node.js (.js) ou Bash (.sh) isolé dans le workspace `sandbox` du Codex en mode synchrone (`background=False`) ou serveur détaché (`background=True`)."""
         dependencies = dependencies or []
-        uid, cid = _resolve_sandbox_identity(__user__, __metadata__)
+        uid, cid, sub_sid = _resolve_sandbox_identity(__user__, __metadata__)
         if not cid:
             return "❌ Contexte de session manquant (chat_id)."
 
@@ -244,6 +310,10 @@ class Tools:
 
         actual_timeout = timeout_sec
         run_id = f"run_{uuid.uuid4().hex[:8]}"
+        owner_key = f"{uid}:{cid}:{run_id}"
+        while len(_SANDBOX_RUN_OWNERS) >= 1000:
+            _SANDBOX_RUN_OWNERS.pop(next(iter(_SANDBOX_RUN_OWNERS)))
+        _SANDBOX_RUN_OWNERS[owner_key] = sub_sid
         ext = file_path.split(".")[-1]
         runtime_icon = "🐍" if ext == "py" else "📦" if ext == "js" else "🐚" if ext == "sh" else "⚙️"
         mode_label = "arrière-plan" if background else "synchrone"
@@ -372,6 +442,7 @@ class Tools:
                             "task": polling_task,
                             "stdout_offset": len(worker_res.get("output", "")),
                             "stderr_offset": 0,
+                            "sub_sid": sub_sid,
                         }
                         await events.status(f"Serveur/Tâche Sandbox {run_id} actif en arrière-plan.", done=True)
                         init_out = worker_res.get("output", "")
@@ -450,7 +521,7 @@ class Tools:
         __metadata__: Optional[dict] = None,
     ) -> dict | str:
         """Exécute une commande sur un serveur SSH configuré dans l'Identity Vault sans exposer ses secrets."""
-        uid, cid = _resolve_sandbox_identity(__user__, __metadata__)
+        uid, cid, _ = _resolve_sandbox_identity(__user__, __metadata__)
         if not cid:
             return "❌ Contexte de session manquant (chat_id)."
 

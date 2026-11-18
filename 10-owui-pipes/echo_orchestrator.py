@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 6.6.9.1
+version: 6.6.30.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.30.1: Centralisation et délégation de _TOOLS_CACHE à register_chat_tools (echo_subagent_hub).
 # 6.6.9.1: Retrait de register_echo_wm_routes, de l'appel redondant register_echo_audio_routes dans Pipe.__init__ et de UserValves.SHOW_CONTEXT_METRICS.
 # 6.6.2.1: Exposition du modèle actif réel et du mode cognitif dans les payloads d'état orchestrateur et alignement du routage multi-modèles.
 # 5.239.0.1: Concision maximale des descriptions des vannes UserValves (mode, cible, crédits, cascades, relances).
 # 5.238.1.1: Intégration de MODEL_ATHENA et refonte orthogonale des UserValves (COGNITIVE_MODE + COGNITIVE_MODEL) avec routage et menu d'escalade pilotés par get_allowed_models.
-# 5.237.20.2: Synchronisation chirurgicale des éditions in-place Open WebUI (user/assistant) dans message_shadows et préservation intégrale du préfixe multi-étapes en vol.
 
 
 # ==============================================================================
@@ -54,7 +54,6 @@ from echo_constants import (
     get_allowed_models, parse_model_policy,
     FILE_INGESTION_STATUS,
     CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE,
-    ECHO_TOOLS_CACHE_MAX_SIZE,
     ECHO_MODELS_REGISTRY, get_model_identity, get_generation_config,
     get_descending_cascade, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN,
     AEC_REMINDERS,
@@ -65,6 +64,7 @@ from echo_constants import (
 )
 from echo_auth import EchoAuth
 from echo_protocol import FAST_TRACK_TASK_SCHEMAS, normalize_response_schema
+from echo_subagent_hub import _TOOLS_CACHE, register_chat_tools  # noqa: E402
 
 
 # --- IMPORTATIONS TIERCES CRITIQUES ---
@@ -664,7 +664,7 @@ class StreamProcessor:
 # Durée de vie : le cache persiste tant que le processus uvicorn tourne.
 #   En cas de redémarrage, il est reconstitué au premier message de chaque chat.
 # =============================================================================
-_TOOLS_CACHE: dict = {}  # {chat_id: dict[fn_name, {callable, spec, tool_id, metadata}]}
+
 
 class Pipe:
     class Valves(BaseModel):
@@ -841,12 +841,7 @@ class Pipe:
             ]
             # Bridge principal : stockage dans le cache module-level
             if chat_id:
-                _TOOLS_CACHE[chat_id] = __tools__
-                # Mécanisme de fenêtre glissante (Garbage Collection FIFO)
-                # Préserve les ECHO_TOOLS_CACHE_MAX_SIZE dernières sessions actives.
-                # Protège le processus Uvicorn d'une fuite de mémoire à long terme.
-                if len(_TOOLS_CACHE) > ECHO_TOOLS_CACHE_MAX_SIZE:
-                    _TOOLS_CACHE.pop(next(iter(_TOOLS_CACHE)))
+                register_chat_tools(chat_id, __tools__)
                 _log_pipe.debug("_TOOLS_CACHE[%s] = %d outils", chat_id, len(__tools__))
 
         elif isinstance(__tools__, list) and __tools__:
@@ -871,13 +866,7 @@ class Pipe:
                 "__event_emitter__": __event_emitter__,
                 "__event_call__": __event_call__ or kwargs.get("__event_call__"),
             }
-            for _t_entry in _TOOLS_CACHE[chat_id].values():
-                if isinstance(_t_entry, dict) and "callable" in _t_entry:
-                    _cb = _t_entry["callable"]
-                    if hasattr(_cb, "keywords") and isinstance(_cb.keywords, dict):
-                        for _ck, _cv in fresh_closures.items():
-                            if _ck in _cb.keywords and _cv is not None:
-                                _cb.keywords[_ck] = _cv
+            register_chat_tools(chat_id, None, fresh_closures=fresh_closures)
 
         # Log diagnostic (DEBUG uniquement, ne pas laisser en WARNING en production)
         if isinstance(__tools__, dict):

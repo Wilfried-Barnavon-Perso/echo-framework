@@ -1,16 +1,16 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 5.238.1.1
+version: 6.6.30.1
 description: Composant système interne : ECHO Sovereign Web Search.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.30.1: Câblage de delegate_deep_research sur EchoSubagentController (ECHO_AUTONOMOUS_ROUND_MAX_CALLS).
 # 5.238.1.1: Ajout de MODEL_ATHENA dans target_model_key de delegate_deep_research.
 # 5.233.0.1: Décoration @echo_tool sur les 3 méthodes publiques et simplification des retours wrap_tool_output.
 # 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/web_search_and_browsing.md.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.21: Fermeture explicite de la session navigateur Playwright (reset_session) en fin de delegate_deep_research.
 
 import httpx
 import sys
@@ -22,9 +22,9 @@ from pydantic import BaseModel, Field
 sys.path.append("/app/backend/echo_libs")
 from echo_events import EchoEvents
 from echo_core import wrap_tool_output, echo_tool
-from echo_state_manager import EchoStateManager
-from echo_constants import ECHO_USER_AGENT, ECHO_SEARXNG_BASE_URL, DEEP_RESEARCH_MAX_CALLS_DEFAULT
+from echo_constants import ECHO_AUTONOMOUS_ROUND_MAX_CALLS, ECHO_SEARXNG_BASE_URL, ECHO_USER_AGENT
 from echo_prompts import SYS_SEARCH_STATIC
+from echo_subagent_hub import EchoSubagentController
 
 class Tools:
     class Valves(BaseModel):
@@ -32,10 +32,6 @@ class Tools:
 
     class UserValves(BaseModel):
         MAX_RESULTS: int = Field(default=8, description="Nombre de résultats web à extraire.")
-        DEEP_RESEARCH_MAX_CALLS: int = Field(
-            default=DEEP_RESEARCH_MAX_CALLS_DEFAULT,
-            description="Budget max d'appels de fonctions pour l'agent de recherche profonde."
-        )
 
     def __init__(self):
         self.valves = self.Valves()
@@ -159,24 +155,11 @@ class Tools:
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system")
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id") or ""
-        u_valves = __user__.get("valves", self.UserValves()) if __user__ else self.UserValves()
         
         await events.status(f"🕵️‍♂️ Initialisation de la recherche profonde : {query}...")
         
-        # Récupération de l'agent engine via sys.modules
-        _agent_mod = sys.modules.get("tool_agent_engine_tool")
-        if not _agent_mod or not hasattr(_agent_mod, "Tools"):
-            return "❌ Moteur de délégation `agent_engine_tool` indisponible."
-        
-        # Instanciation du Delegate
-        delegate = _agent_mod.Tools()
-        # On passe les valves de l'utilisateur
-        delegate.user_valves = u_valves
-        
         sid = f"thread_deepresearch_{uuid.uuid4().hex[:8]}"
-        
-        # La définition de STATIC_SYSTEM_PROMPT a été migrée vers echo_prompts.py
-        
+
         allowed = ["search_web", "search_instant_answer", "search_maps", "wait_timer", "delegate_web_browsing"]
         
         # Injection du flag de suppression d'UI pour maps et flag d'agent de recherche
@@ -190,26 +173,29 @@ class Tools:
             augmented_query += f"\n\n[INSTRUCTION SYSTÈME : Le Modèle DOIT restreindre ses recherches aux moteurs suivants via l'argument 'engines' des outils : {engines}]"
         
         # Exécution
-        result = await delegate.delegate_to_agent(
+        result = await EchoSubagentController.run_or_resume(
+            user_id=user_id,
+            chat_id=chat_id,
             task=augmented_query,
             system_prompt=SYS_SEARCH_STATIC,
             skill_id=None,
             sub_sid=sid,
-            with_context_distillate=False,
             target_model_key=target_model_key,
             allowed_tools=allowed,
-            max_calls_override=u_valves.DEEP_RESEARCH_MAX_CALLS,
-            __tools__=None,
+            slice_max_calls=ECHO_AUTONOMOUS_ROUND_MAX_CALLS,
+            autonomous_slice=True,
+            engine="deep_research",
             __user__=__user__,
-            __chat_id__=chat_id,
             __metadata__=child_metadata,
             __event_emitter__=__event_emitter__,
-            __event_call__=__event_call__
+            __event_call__=__event_call__,
         )
         
         # Nettoyage de la DB (thread éphémère) et de la session Playwright éventuelle
         try:
-            EchoStateManager(user_id, chat_id).delete_thread(sid)
+            await EchoSubagentController.execute_control_action(
+                action="close", user_id=user_id, chat_id=chat_id, target_ids=[sid]
+            )
         except Exception:
             pass
         try:

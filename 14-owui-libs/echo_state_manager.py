@@ -2,16 +2,16 @@
 """
 title: ECHO Echo State Manager
 author: Wilfried BARNAVON
-version: 6.6.2.1
+version: 6.6.30.1
 description: Gestionnaire d'état SQLite et RAG.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.6.30.1: Ajout du context manager _write_tx() (BEGIN IMMEDIATE) sur les transactions d'écriture et mixtes lecture/écriture.
 # 6.6.2.1: Câblage de bump_cognition_seq(self.chat_id) dans save_call_bridge et save_thread_step pour la réactivité SSE temps réel.
 # 5.239.11.1: Fallback compte par défaut dans get_vault_credential si account_id est un alias externe.
 # 5.237.20.1: Persistance model_id dans message_shadows, lecture get_signature_by_id depuis les Shadows et suppression des méthodes de hachage cumulatif.
 # 5.236.0.1: Auto-matérialisation déclarative idempotente via ensure_db en écriture non-readonly.
-# 5.235.5.3: Alignement sur les 20 colonnes déclaratives de echo_resources (CRUD, allowed fields et _row_to_resource).
 import contextlib
 import functools
 import os
@@ -107,6 +107,31 @@ class EchoStateManager:
         finally:
             conn.close()
 
+    @contextlib.contextmanager
+    def _write_tx(self, identity: bool = False):
+        """Ouvre une transaction d'écriture immédiate (BEGIN IMMEDIATE) pour prévenir les deadlocks de promotion WAL."""
+        conn_cm = self._get_identity_connection() if identity else self._get_connection()
+        with conn_cm as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+
+    @staticmethod
+    def _read_setting_dict(conn: sqlite3.Connection, key: str) -> dict:
+        row = conn.execute("SELECT value FROM echo_settings WHERE key = ?", (key,)).fetchone()
+        if row and row[0]:
+            try:
+                parsed = std_json.loads(row[0])
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+        return {}
+
     # =========================================================================
     # SUTURE & SHADOWS (SESSION.DB)
     # =========================================================================
@@ -126,7 +151,7 @@ class EchoStateManager:
             return
         ts = updated_at if updated_at is not None else int(time.time())
         try:
-            with self._get_connection() as conn, conn:
+            with self._write_tx() as conn:
                 conn.execute("""
                     INSERT INTO message_shadows (message_id, role, full_parts_json, model_id, updated_at)
                     VALUES (?, ?, ?, ?, ?)
@@ -208,7 +233,7 @@ class EchoStateManager:
     @_session_scope()
     def save_call_bridge(self, call_id: str, signature: str, function_name: str, args: dict = None, message_id: Optional[str] = None):
         try:
-            with self._get_connection() as conn, conn:
+            with self._write_tx() as conn:
                 conn.execute(
                     "INSERT OR REPLACE INTO call_bridge (call_id, signature, function_name, args_json, message_id, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
                     (call_id, signature, function_name, json.dumps(args).decode('utf-8') if args is not None else None, message_id, int(time.time())),
@@ -293,7 +318,7 @@ class EchoStateManager:
         from echo_crypto import encrypt_vault_payload
         enc_creds = encrypt_vault_payload(credentials, self.user_id, service, account_id)
         try:
-            with self._get_identity_connection() as conn, conn:
+            with self._write_tx(identity=True) as conn:
                 conn.execute(
                     "INSERT OR REPLACE INTO identity_vault (user_id, service, account_id, credentials) VALUES (?, ?, ?, ?)",
                     (self.user_id, service, account_id, enc_creds),
@@ -392,7 +417,7 @@ class EchoStateManager:
     def delete_vault_credential(self, service: str, account_id: str) -> None:
         """Supprime une identité de identity_vault."""
         try:
-            with self._get_identity_connection() as conn, conn:
+            with self._write_tx(identity=True) as conn:
                 conn.execute(
                     "DELETE FROM identity_vault WHERE user_id = ? AND service = ? AND account_id = ?",
                     (self.user_id, service, account_id),
@@ -409,7 +434,7 @@ class EchoStateManager:
     def save_setting(self, key: str, value: str):
         """Persiste une préférence utilisateur dans echo_settings (identity.db)."""
         try:
-            with self._get_identity_connection() as conn, conn:
+            with self._write_tx(identity=True) as conn:
                 conn.execute(
                     "INSERT OR REPLACE INTO echo_settings (key, value, updated_at) VALUES (?, ?, ?)",
                     (key, value, int(time.time())),
@@ -451,7 +476,7 @@ class EchoStateManager:
                     (key, value, int(time.time())),
                 )
             else:
-                with self._get_connection() as c, c:
+                with self._write_tx() as c:
                     c.execute(
                         "INSERT OR REPLACE INTO echo_settings (key, value, updated_at) VALUES (?, ?, ?)",
                         (key, value, int(time.time())),
@@ -499,31 +524,49 @@ class EchoStateManager:
     @_session_scope()
     def init_session_context_baseline(self, quota_5h_fraction: Optional[float] = None, quota_weekly_fraction: Optional[float] = None):
         """Initialise la référence initiale de la session au tour 1 si aucun historique n'existe."""
-        if not self.get_previous_context_stats() and not self.get_last_context_stats():
-            baseline = {
-                "totalTokenCount": 0,
-                "promptTokenCount": 0,
-                "candidatesTokenCount": 0,
-                "cachedContentTokenCount": 0,
-                "quota_5h_fraction": quota_5h_fraction,
-                "quota_weekly_fraction": quota_weekly_fraction,
-                "is_first_turn": True,
-            }
-            self.save_session_setting('previous_context_stats', std_json.dumps(baseline).decode('utf-8'))
+        try:
+            with self._write_tx() as conn:
+                if not self._read_setting_dict(conn, 'previous_context_stats') and not self._read_setting_dict(conn, 'context_stats'):
+                    baseline = {
+                        "totalTokenCount": 0,
+                        "promptTokenCount": 0,
+                        "candidatesTokenCount": 0,
+                        "cachedContentTokenCount": 0,
+                        "quota_5h_fraction": quota_5h_fraction,
+                        "quota_weekly_fraction": quota_weekly_fraction,
+                        "is_first_turn": True,
+                    }
+                    self.save_session_setting('previous_context_stats', std_json.dumps(baseline).decode('utf-8'), conn=conn)
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(f"[EchoStateManager] init_session_context_baseline error: {e}")
 
     @_session_scope()
     def archive_previous_context_stats(self):
         """Archive l'état final du tour précédent au tout début d'un nouveau tour utilisateur."""
-        old_dict = self.get_last_context_stats()
-        if old_dict and old_dict.get("totalTokenCount", 0) > 0:
-            self.save_session_setting('previous_context_stats', std_json.dumps(old_dict).decode('utf-8'))
+        try:
+            with self._write_tx() as conn:
+                old_dict = self._read_setting_dict(conn, 'context_stats')
+                if old_dict and old_dict.get("totalTokenCount", 0) > 0:
+                    self.save_session_setting('previous_context_stats', std_json.dumps(old_dict).decode('utf-8'), conn=conn)
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(f"[EchoStateManager] archive_previous_context_stats error: {e}")
 
     @_session_scope()
     def save_context_stats(self, stats: dict):
         """Met à jour context_stats par fusion sans écraser previous_context_stats en cours de tour."""
-        merged = self.get_last_context_stats()
-        merged.update(stats)
-        self.save_session_setting('context_stats', std_json.dumps(merged).decode('utf-8'))
+        try:
+            with self._write_tx() as conn:
+                merged = self._read_setting_dict(conn, 'context_stats')
+                merged.update(stats)
+                self.save_session_setting('context_stats', std_json.dumps(merged).decode('utf-8'), conn=conn)
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(f"[EchoStateManager] save_context_stats error: {e}")
 
     @_session_scope(dict)
     def get_last_context_stats(self) -> dict:
@@ -567,7 +610,7 @@ class EchoStateManager:
     def save_thread_step(self, sub_sid: str, chat_id: Optional[str], role_id: str, step_index: int, role: str, content: List[dict], signature: Optional[str] = None):
         """Persiste une étape de thread cognitif (chat_id conservé pour compatibilité, ignoré en SQL)."""
         try:
-            with self._get_connection() as conn, conn:
+            with self._write_tx() as conn:
                 conn.execute(
                     "INSERT OR REPLACE INTO cognitive_threads (sub_sid, step_index, role_id, role, content_json, thought_signature, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (sub_sid, step_index, role_id, role, json.dumps(content).decode('utf-8'), signature, int(time.time())),
@@ -656,7 +699,7 @@ class EchoStateManager:
     @_session_scope()
     def delete_thread(self, sub_sid: str):
         try:
-            with self._get_connection() as conn, conn:
+            with self._write_tx() as conn:
                 conn.execute("DELETE FROM cognitive_threads WHERE sub_sid = ?", (sub_sid,))
         except EchoDbMissingError:
             pass
@@ -740,7 +783,7 @@ class EchoStateManager:
 
         ts = time.time()
         try:
-            with self._get_connection() as conn, conn:
+            with self._write_tx() as conn:
                 conn.execute(
                     "INSERT INTO echo_resources "
                     "(id, name, resource_type, item_type, status, mime, summary, content, metadata, "
@@ -773,7 +816,7 @@ class EchoStateManager:
     def update_resource_status(self, id: str, status: str):
         """Met à jour le statut d'une ressource (préserve les autres champs)."""
         try:
-            with self._get_connection() as conn, conn:
+            with self._write_tx() as conn:
                 conn.execute(
                     "UPDATE echo_resources SET status = ?, updated_at = ? WHERE id = ?",
                     (status, time.time(), id),
@@ -797,7 +840,7 @@ class EchoStateManager:
         set_clause = ", ".join(f"{k} = ?" for k in updates)
         values = list(updates.values()) + [id]
         try:
-            with self._get_connection() as conn, conn:
+            with self._write_tx() as conn:
                 conn.execute(f"UPDATE echo_resources SET {set_clause} WHERE id = ?", values)
         except EchoDbMissingError:
             pass
@@ -807,7 +850,7 @@ class EchoStateManager:
     def delete_resource(self, id: str):
         """Supprime une ressource par ID."""
         try:
-            with self._get_connection() as conn, conn:
+            with self._write_tx() as conn:
                 conn.execute("DELETE FROM echo_resources WHERE id = ?", (id,))
         except EchoDbMissingError:
             pass
@@ -885,7 +928,7 @@ class EchoStateManager:
     def clear_resources_by_type(self, resource_type: str):
         """Supprime toutes les ressources d'un type donné."""
         try:
-            with self._get_connection() as conn, conn:
+            with self._write_tx() as conn:
                 conn.execute("DELETE FROM echo_resources WHERE resource_type = ?", (resource_type,))
         except EchoDbMissingError:
             pass
@@ -898,7 +941,7 @@ class EchoStateManager:
         clean_rel = str(rel_path or "").strip().lstrip("/\\").replace("\\", "/")
         storage_path = f"codex/{clean_ws}/{clean_rel}"
         try:
-            with self._get_connection() as conn, conn:
+            with self._write_tx() as conn:
                 conn.execute(
                     "DELETE FROM echo_resources WHERE storage_path = ? OR (id = ? AND storage_path LIKE ?)",
                     (storage_path, clean_rel, f"codex/{clean_ws}/%"),
@@ -914,7 +957,7 @@ class EchoStateManager:
         if not clean_ws:
             return
         try:
-            with self._get_connection() as conn, conn:
+            with self._write_tx() as conn:
                 conn.execute("DELETE FROM echo_resources WHERE storage_path LIKE ?", (f"codex/{clean_ws}/%",))
         except EchoDbMissingError:
             pass
@@ -1073,7 +1116,7 @@ class EchoStateManager:
         if not message_id:
             return
         try:
-            with self._get_connection() as conn, conn:
+            with self._write_tx() as conn:
                 conn.execute(
                     "INSERT OR IGNORE INTO rag_index_state (message_id, embedded_at) VALUES (?, ?)",
                     (message_id, int(time.time())),
@@ -1105,7 +1148,7 @@ class EchoStateManager:
         if not resource_types:
             return []
         try:
-            with self._get_connection() as conn, conn:
+            with self._write_tx() as conn:
                 placeholders = ", ".join("?" for _ in resource_types)
                 rows = conn.execute(
                     f"SELECT id, name, resource_type, status, summary, content, created_at FROM echo_resources WHERE resource_type IN ({placeholders}) ORDER BY created_at ASC",
@@ -1140,7 +1183,7 @@ class EchoStateManager:
         if not resource_types:
             return 0
         try:
-            with self._get_connection() as conn, conn:
+            with self._write_tx() as conn:
                 placeholders = ", ".join("?" for _ in resource_types)
                 params = list(resource_types) + [t_pivot]
                 cur = conn.execute(f"DELETE FROM echo_resources WHERE resource_type IN ({placeholders}) AND created_at > ?", params)
