@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 6.7.10.2
+version: 6.7.11.1
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.11.1: Factorisation de apply_tool_spillover et paginate_lines_window.
 # 6.7.10.2: Application des 3 régimes SSOT, préservation de _skip_truncation sous ECHO_SUBAGENT_CONTEXT/is_nested dans _apply_final_spillover et directive PAS 800 lignes.
 # 6.6.30.1: Verrou thread-safe _get_aec_drain_lock(chat_id) autour de _drain_tool_aec_events.
 # 5.239.17.1: Délestage automatique des sorties d'outils > 32 Ko dans tools_output/{output_id}.txt avec aperçu Head+Tail aligné sur les lignes et métadonnées JSON (truncate_and_spill_tool_output, skip_truncation).
 # 5.239.11.1: Parsing JSON-first (`std_json.loads`) dans `unbox_tool_output` pour accepter la sérialisation Open WebUI (`null`/`true`/`false`), avec repli `ast.literal_eval` et garde `unstructured_data`.
-# 5.238.1.1: Support orthogonal COGNITIVE_MODE:COGNITIVE_MODEL dans resolve_model_policy et convert_owui_tools (copie profonde sans mutation in-place) et surcharge thinking_override="low" étendue à MODEL_ATHENA en compaction.
 import os
 import re
 import uuid
@@ -402,6 +402,84 @@ def truncate_and_spill_tool_output(
     return preview_text, spill_meta
 
 
+def paginate_lines_window(
+    lines: List[str],
+    start_line: Optional[int] = 1,
+    end_line: Optional[int] = None,
+    max_lines: Optional[int] = None,
+    max_bytes: Optional[int] = None,
+    with_line_numbers: bool = False,
+) -> dict:
+    """
+    Extrait une fenêtre paginée bornée en lignes (`ECHO_CODEX_MAX_READ_LINES`) et en octets UTF-8
+    (`ECHO_CODEX_MAX_READ_BYTES`) à partir d'une liste de lignes.
+    Mutualisé entre `read_codex` et `read_tool_output`.
+    """
+    from echo_constants import ECHO_CODEX_MAX_READ_BYTES, ECHO_CODEX_MAX_READ_LINES
+
+    lim_lines = int(max_lines) if max_lines is not None else ECHO_CODEX_MAX_READ_LINES
+    lim_bytes = int(max_bytes) if max_bytes is not None else ECHO_CODEX_MAX_READ_BYTES
+    total_lines = len(lines)
+    s = max(1, int(start_line)) if start_line is not None else 1
+
+    if total_lines == 0:
+        return {
+            "selected_lines": [],
+            "start_line": 0,
+            "end_line": 0,
+            "total_lines": 0,
+            "lines_returned": 0,
+            "has_more": False,
+            "next_start_line": None,
+            "next_end_line": None,
+            "out_of_range": False,
+        }
+
+    if s > total_lines:
+        return {
+            "selected_lines": [],
+            "start_line": s,
+            "end_line": 0,
+            "total_lines": total_lines,
+            "lines_returned": 0,
+            "has_more": False,
+            "next_start_line": None,
+            "next_end_line": None,
+            "out_of_range": True,
+        }
+
+    req_e = int(end_line) if end_line is not None else (s + lim_lines - 1)
+    max_e = min(total_lines, req_e, s + lim_lines - 1)
+
+    selected: List[str] = []
+    acc_bytes = 0
+    actual_e = s - 1
+    for ln_no in range(s, max_e + 1):
+        entry = f"L{ln_no}: {lines[ln_no - 1]}" if with_line_numbers else lines[ln_no - 1]
+        entry_bytes = len(entry.encode("utf-8")) + 1
+        if acc_bytes + entry_bytes > lim_bytes and selected:
+            break
+        selected.append(entry)
+        acc_bytes += entry_bytes
+        actual_e = ln_no
+
+    has_more = actual_e < total_lines
+    next_s = actual_e + 1 if has_more else None
+    next_e = min(total_lines, next_s + lim_lines - 1) if next_s else None
+
+    return {
+        "selected_lines": selected,
+        "start_line": s,
+        "end_line": actual_e,
+        "total_lines": total_lines,
+        "lines_returned": len(selected),
+        "has_more": has_more,
+        "next_start_line": next_s,
+        "next_end_line": next_e,
+        "out_of_range": False,
+    }
+
+
 def wrap_tool_output(
     text: str,
     status: dict = None,
@@ -458,29 +536,62 @@ def _infer_string_status(text_str: str) -> str:
     return "success"
 
 
+def apply_tool_spillover(
+    payload: dict,
+    uid: Optional[str] = None,
+    cid: Optional[str] = None,
+    tool_name: str = "tool",
+    call_id: Optional[str] = None,
+    is_subagent: bool = False,
+    is_error: bool = False,
+    text_key: str = "text",
+) -> dict:
+    """
+    Applique de façon unifiée la politique SSOT de délestage tools_output/ (3 régimes)
+    sur un dictionnaire de retour d'outil (Orchestrateur ou Sous-Agent).
+    Consomme systématiquement la clé interne '_skip_truncation'.
+    """
+    skip_trunc = bool(payload.pop("_skip_truncation", False))
+    if is_error:
+        return payload
+    st = payload.get("status")
+    if isinstance(st, dict) and st.get("status") == "error":
+        return payload
+    raw_text = payload.get(text_key)
+    if not isinstance(raw_text, str):
+        return payload
+
+    from echo_constants import get_tool_truncation_limit
+    max_chars = get_tool_truncation_limit(
+        tool_name, skip_truncation=skip_trunc, is_subagent=is_subagent
+    )
+    if max_chars is None:
+        return payload
+
+    preview_text, spill_meta = truncate_and_spill_tool_output(
+        raw_text,
+        uid=uid,
+        cid=cid,
+        tool_name=tool_name,
+        call_id=call_id,
+        max_chars=max_chars,
+    )
+    if spill_meta:
+        payload[text_key] = preview_text
+        if text_key == "text":
+            if not isinstance(payload.get("status"), dict):
+                payload["status"] = {"status": str(payload.get("status") or "success")}
+            payload["status"].update(spill_meta)
+        else:
+            payload.update(spill_meta)
+    return payload
+
+
 def _apply_final_spillover(out: dict, uid: Optional[str], cid: Optional[str], is_nested: bool, tool_name: str) -> dict:
     is_subagent_ctx = bool((ECHO_SUBAGENT_CONTEXT.get() or {}).get("is_subagent"))
     if is_nested or is_subagent_ctx:
         return out
-    skip_trunc = bool(out.pop("_skip_truncation", False))
-    if not isinstance(out.get("text"), str):
-        return out
-    st = out.get("status")
-    if isinstance(st, dict) and st.get("status") == "error":
-        return out
-    from echo_constants import get_tool_truncation_limit
-    max_chars = get_tool_truncation_limit(tool_name, skip_truncation=skip_trunc, is_subagent=False)
-    if max_chars is None:
-        return out
-    preview_text, spill_meta = truncate_and_spill_tool_output(
-        out["text"], uid=uid, cid=cid, tool_name=tool_name, max_chars=max_chars
-    )
-    if spill_meta:
-        out["text"] = preview_text
-        if not isinstance(out.get("status"), dict):
-            out["status"] = {"status": str(out.get("status") or "success")}
-        out["status"].update(spill_meta)
-    return out
+    return apply_tool_spillover(out, uid=uid, cid=cid, tool_name=tool_name, is_subagent=False)
 
 
 def _finalize_tool_result(

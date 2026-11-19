@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 6.7.4.1
+version: 6.7.11.1
 description: Permet au modèle de manipuler un espace virtuel (Codex) avec versioning Git invisible et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.11.1: Délégation du fenêtrage read_codex à paginate_lines_window et suppression des skip_truncation=True redondants.
 # 6.7.4.1: Alignement de get_generation_config sur CODEX_EDIT_MODEL dans edit_codex.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.2.1: Migration de open_codex_ui vers l'onglet natif echo-codex (EchoWindowManager.open_tab + CustomEvent('echo:open-tab')) sans echo_codex_action.
 # 5.239.17.1: Pagination bornée unifiée (HEAD et commits) de read_codex à ECHO_CODEX_MAX_READ_LINES (800 lignes) et ECHO_CODEX_MAX_READ_BYTES (46080 octets), indicateurs has_more/next_start_line et skip_truncation=True.
-# 5.235.5.1: Remplacement de l'accès direct SQLite par la méthode abstraite state.has_pending_directive.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, Any
 
 sys.path.append("/app/backend/echo_libs")
-from echo_core import wrap_tool_output, echo_tool
+from echo_core import echo_tool, paginate_lines_window, wrap_tool_output
 from echo_events import EchoEvents
 from echo_gemini_client import EchoGeminiClient
 from echo_state_manager import EchoStateManager
@@ -548,10 +548,16 @@ class Tools:
 
         raw_content = ctx["commit_content"] if commit_hash else (ctx["head_result"].get("content") or "")
         lines = raw_content.splitlines()
-        total_lines = len(lines)
-        s = max(1, int(start_line)) if start_line is not None else 1
+        page = paginate_lines_window(
+            lines,
+            start_line=start_line,
+            end_line=end_line,
+            with_line_numbers=False,
+        )
+        total_lines = page["total_lines"]
+        s = page["start_line"]
 
-        if total_lines > 0 and s > total_lines:
+        if page["out_of_range"]:
             urn_scope = cid if is_remote else "current"
             urn_ref = f"[{safe_file}](codex:{urn_scope}:{workspace}/{safe_file})"
             return wrap_tool_output(
@@ -568,29 +574,14 @@ class Tools:
                     "target_chat_id": cid if is_remote else None,
                     "commit_hash": commit_hash[:12] if commit_hash else "HEAD",
                 },
-                skip_truncation=True,
             )
 
-        req_e = int(end_line) if end_line is not None else (s + ECHO_CODEX_MAX_READ_LINES - 1)
-        max_e = min(total_lines, req_e, s + ECHO_CODEX_MAX_READ_LINES - 1) if total_lines > 0 else 0
-
-        selected_lines = []
-        acc_bytes = 0
-        actual_e = s - 1
-        for ln_no in range(s, max_e + 1):
-            line_str = lines[ln_no - 1]
-            line_bytes = len(line_str.encode("utf-8")) + 1
-            if acc_bytes + line_bytes > ECHO_CODEX_MAX_READ_BYTES and selected_lines:
-                break
-            selected_lines.append(line_str)
-            acc_bytes += line_bytes
-            actual_e = ln_no
-
-        content_subset = "\n".join(selected_lines)
-        lines_returned = len(selected_lines)
-        has_more = actual_e < total_lines
-        next_s = actual_e + 1 if has_more else None
-        next_e = min(total_lines, next_s + ECHO_CODEX_MAX_READ_LINES - 1) if next_s else None
+        actual_e = page["end_line"]
+        content_subset = "\n".join(page["selected_lines"])
+        lines_returned = page["lines_returned"]
+        has_more = page["has_more"]
+        next_s = page["next_start_line"]
+        next_e = page["next_end_line"]
         commit_label = f" (commit {commit_hash[:7]})" if commit_hash else ""
         range_info = (
             f"lignes {s}-{actual_e}{commit_label}"
@@ -614,15 +605,14 @@ class Tools:
                 "language": lang,
                 "total_lines": total_lines,
                 "lines_returned": lines_returned,
-                "start_line": s if total_lines > 0 else 0,
-                "end_line": actual_e if total_lines > 0 else 0,
+                "start_line": s,
+                "end_line": actual_e,
                 "has_more": has_more,
                 "next_start_line": next_s,
                 "is_remote": is_remote,
                 "target_chat_id": cid if is_remote else None,
                 "commit_hash": commit_hash[:12] if commit_hash else "HEAD",
             },
-            skip_truncation=True,
         )
 
     @echo_tool

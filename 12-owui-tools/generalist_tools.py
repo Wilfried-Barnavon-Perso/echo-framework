@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 6.7.10.1
+version: 6.7.11.1
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.11.1: Délégation du fenêtrage read_tool_output à paginate_lines_window et suppression des 7 skip_truncation=True redondants.
 # 6.7.10.1: Alignement de la fenêtre par défaut de read_tool_output (end_line=None) sur ECHO_CODEX_MAX_READ_LINES (800 lignes).
 # 5.239.17.1: Ajout des outils dédiés read_tool_output (lecture paginée par lignes et recherche regex/motif) et delete_tool_output pour l'exploitation du domaine tools_output.
 # 5.233.0.1: Décoration @echo_tool sur les 16 méthodes publiques et simplification de safe_owui_call et des retours wrap_tool_output.
 # 5.231.20.1: Isolation multi-chat du HUD wait_timer (data-chat-id) et suppression des fuites de listeners document.
-# 5.229.2.1: Ajout de l'outil list_ui_tags (consultation locale des tags du chat courant ou globale de toutes les conversations).
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -25,11 +25,10 @@ from typing import Any, Optional
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
-from echo_core import echo_tool, wrap_tool_output
+from echo_core import echo_tool, paginate_lines_window, wrap_tool_output
 from echo_events import EchoEvents
 from echo_constants import (
     ECHO_CODEX_MAX_READ_BYTES,
-    ECHO_CODEX_MAX_READ_LINES,
     ECHO_MAX_WAIT_TIMER,
     get_generation_config,
     OWUI_ORCHESTRATOR_MODEL,
@@ -876,7 +875,6 @@ class Tools:
                 return wrap_tool_output(
                     text=f"ℹ️ Aucune occurrence de `{pat_str}` trouvée dans `{clean_id}` ({total_lines} lignes).",
                     status={"status": "success", "output_id": clean_id, "matches": 0, "total_lines": total_lines},
-                    skip_truncation=True,
                 )
 
             blocks = []
@@ -916,34 +914,25 @@ class Tools:
                     "shown_matches": shown_matches,
                     "total_lines": total_lines,
                 },
-                skip_truncation=True,
             )
 
-        s = max(1, int(start_line or 1))
-        if s > total_lines:
+        page = paginate_lines_window(
+            lines,
+            start_line=start_line or 1,
+            end_line=end_line,
+            with_line_numbers=True,
+        )
+        s = page["start_line"]
+        if page["out_of_range"]:
             return wrap_tool_output(
                 text=f"⚠️ `start_line={s}` dépasse le nombre total de lignes de `{clean_id}` ({total_lines} lignes).",
                 status={"status": "warning", "output_id": clean_id, "total_lines": total_lines},
-                skip_truncation=True,
             )
-        req_e = int(end_line) if end_line is not None else (s + ECHO_CODEX_MAX_READ_LINES - 1)
-        max_e = min(total_lines, req_e, s + ECHO_CODEX_MAX_READ_LINES - 1)
-
-        selected = []
-        acc_bytes = 0
-        actual_e = s - 1
-        for ln_no in range(s, max_e + 1):
-            formatted = f"L{ln_no}: {lines[ln_no - 1]}"
-            line_bytes = len(formatted.encode("utf-8")) + 1
-            if acc_bytes + line_bytes > ECHO_CODEX_MAX_READ_BYTES and selected:
-                break
-            selected.append(formatted)
-            acc_bytes += line_bytes
-            actual_e = ln_no
-
-        has_more = actual_e < total_lines
-        next_s = actual_e + 1 if has_more else None
-        next_e = min(total_lines, next_s + ECHO_CODEX_MAX_READ_LINES - 1) if next_s else None
+        selected = page["selected_lines"]
+        actual_e = page["end_line"]
+        has_more = page["has_more"]
+        next_s = page["next_start_line"]
+        next_e = page["next_end_line"]
         footer = (
             f"\n\nℹ️ Suite disponible : `read_tool_output(output_id=\"{clean_id}\", start_line={next_s}, end_line={next_e})`. "
             f"En fin d'exploitation : `delete_tool_output(output_id=\"{clean_id}\")`."
@@ -961,7 +950,6 @@ class Tools:
                 "has_more": has_more,
                 "next_start_line": next_s,
             },
-            skip_truncation=True,
         )
 
     @echo_tool
@@ -995,7 +983,6 @@ class Tools:
             return wrap_tool_output(
                 text=f"🗑️ Purge de `tools_output` effectuée ({removed} fichier(s) supprimé(s)).",
                 status={"status": "success", "deleted_count": removed},
-                skip_truncation=True,
             )
 
         if raw_id.endswith(".txt"):
@@ -1006,11 +993,9 @@ class Tools:
             return wrap_tool_output(
                 text=f"ℹ️ Fichier `tools_output/{clean_id or raw_id}.txt` déjà absent.",
                 status={"status": "success", "output_id": clean_id, "deleted": False},
-                skip_truncation=True,
             )
         await asyncio.to_thread(os.remove, file_path)
         return wrap_tool_output(
             text=f"🗑️ Sortie temporaire `{clean_id}` supprimée de `tools_output`.",
             status={"status": "success", "output_id": clean_id, "deleted": True},
-            skip_truncation=True,
         )

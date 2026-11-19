@@ -1,7 +1,7 @@
 ---
 domain_id: codex_management
-version: 6.6.2.1
-updated_at: 2026-11-15
+version: 6.7.11.1
+updated_at: 2026-11-19
 name: Gestionnaire Documentaire & Versionnement Git (ECHO Codex)
 description: Création, édition directe ou assistée, lecture paginée/historique, recherche spatiale ou temporelle, navigation multi-chat et versionnement Git sur les espaces main, plans, generated et sandbox.
 tools: [create_codex, edit_codex, delete_codex, read_codex, restore_codex, search_codex, summarize_codex, list_codex, list_other_chats_ids, history_codex, open_codex_ui]
@@ -56,7 +56,7 @@ Le Codex ECHO gère des fichiers texte, code et médias répartis en 4 espaces d
 - `read_codex` :
   - Lit le contenu d'un fichier du workspace local ou d'un chat distant (`target_chat_id`).
   - Si `commit_hash` est fourni, lit l'état exact du fichier à ce commit sans impacter HEAD.
-  - **Pagination Bornée Unifiée (`HEAD` & `commit_hash`)** : Chaque appel retourne au plus `ECHO_CODEX_MAX_READ_LINES` (`800` lignes) et `ECHO_CODEX_MAX_READ_BYTES` (`46 080` octets / ~45 Ko) via `start_line` et `end_line`. Le retour inclut `total_lines`, `has_more`, `next_start_line` (et retourne un statut `"warning"` si `start_line > total_lines`). Le délestage `tools_output` est désactivé sur `read_codex` (`skip_truncation=True`).
+  - **Pagination Bornée Unifiée (`HEAD` & `commit_hash`)** : Chaque appel retourne au plus `ECHO_CODEX_MAX_READ_LINES` (`800` lignes) et `ECHO_CODEX_MAX_READ_BYTES` (`46 080` octets / ~45 Ko) via `start_line` et `end_line`. Le retour inclut `total_lines`, `has_more`, `next_start_line` (et retourne un statut `"warning"` si `start_line > total_lines`). Le délestage `tools_output` est exempté sur `read_codex` via le registre SSOT `ECHO_PAGINATED_READER_TOOLS`.
   - **Traitement des Fichiers Binaires** : Interception automatique de tout fichier non textuel (images, audio/vidéo, PDF compilés, archives, exécutables, bases SQLite). Le contenu brut est omis (`status="warning"`, `error_code="binary_content_omitted"`) avec restitution des métadonnées (`mime`, `size_bytes`, blocs hexdump de 16 octets `total_lines`). Le Modèle **DOIT** s'abstenir de lire un binaire sous forme textuelle, et **DOIT** mobiliser un script Python via `code_executor` pour l'analyser ou `open_codex_ui` pour l'afficher à l'Utilisateur.
 - `summarize_codex` :
   - Génère un résumé technique structuré d'un fichier volumineux via `MODEL_APOLLO` pour économiser le contexte de l'Orchestrateur.
