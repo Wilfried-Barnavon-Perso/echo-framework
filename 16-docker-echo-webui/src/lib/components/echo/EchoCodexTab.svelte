@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Markdown from '$lib/components/chat/Messages/Markdown.svelte';
@@ -104,6 +104,20 @@
 	let fileUploadInput: HTMLInputElement | null = null;
 	let previewLoadSeq = 0;
 
+	let renamingEntryPath = '';
+	let renamingDraftName = '';
+	let renameInputRef: HTMLInputElement | null = null;
+	let isSubmittingRename = false;
+
+	let editorViewportRef: HTMLDivElement | null = null;
+	let previewContainerRef: HTMLDivElement | null = null;
+	let pdfIframeRef: HTMLIFrameElement | null = null;
+	let htmlIframeRef: HTMLIFrameElement | null = null;
+	let activePrintIframe: HTMLIFrameElement | null = null;
+	let domSelectionText = '';
+	let copySuccess = false;
+	let copySuccessTimer: ReturnType<typeof setTimeout> | null = null;
+
 	const getEffectiveChatId = () => crossReadChatId || chatId;
 	$: effectiveChatId = crossReadChatId || chatId;
 	$: isCrossRead = Boolean(crossReadChatId && crossReadChatId !== chatId);
@@ -118,6 +132,10 @@
 
 	const resetAiState = () => {
 		editorSelection = '';
+		domSelectionText = '';
+		renamingEntryPath = '';
+		renamingDraftName = '';
+		copySuccess = false;
 		aiPendingContent = null;
 		aiLastInstruction = '';
 		aiUsedModel = '';
@@ -137,6 +155,17 @@
 
 	onDestroy(() => {
 		revokePreviewBlob();
+		if (typeof document !== 'undefined') {
+			document.removeEventListener('selectionchange', updateDomSelection);
+		}
+		if (copySuccessTimer) {
+			clearTimeout(copySuccessTimer);
+			copySuccessTimer = null;
+		}
+		if (activePrintIframe) {
+			activePrintIframe.remove();
+			activePrintIframe = null;
+		}
 	});
 
 	$: if (chatId && chatId !== currentChatId) {
@@ -187,7 +216,7 @@
 		splitWidth > 0 ? Math.max(200, Math.min(420, splitWidth - 260, Math.floor(splitWidth * 0.45))) : 420;
 	$: autoTreeWidth = (() => {
 		const maxChars = treeEntries.reduce((acc, entry) => Math.max(acc, getEntryName(entry).length), 14);
-		return Math.max(200, Math.min(maxTreeWidth, Math.round(maxChars * 7.4 + 68)));
+		return Math.max(200, Math.min(maxTreeWidth, Math.round(maxChars * 7.4 + (isWritable ? 112 : 68))));
 	})();
 	$: effectiveTreeWidth = Math.max(180, Math.min(maxTreeWidth, userTreeWidth ?? autoTreeWidth));
 
@@ -454,6 +483,7 @@
 
 	const handleToggleViewMode = (mode: 'code' | 'preview') => {
 		viewMode = mode;
+		domSelectionText = '';
 		const targetCid = getEffectiveChatId();
 		if (mode === 'preview' && previewCaps.needsBlob && !previewBlobUrl && selectedPath && targetCid) {
 			void loadPreviewBlob(targetCid, selectedWorkspace, selectedPath);
@@ -489,24 +519,27 @@
 		}
 	};
 
-	const handleDelete = async () => {
-		if (!isWritable || !selectedPath) return;
-		if (!confirm(`Confirmer la suppression de ${selectedPath} ?`)) return;
-		const token = localStorage?.token;
+	const handleDeleteEntry = async (targetPath: string, isDir = false, event?: MouseEvent) => {
+		event?.stopPropagation();
+		if (!isWritable || !targetPath || isDeleting) return;
+		if (!confirm(`Confirmer la suppression ${isDir ? 'du dossier' : 'du fichier'} « ${targetPath} » ?`)) return;
+		const token = getEchoToken();
 		const targetCid = getEffectiveChatId();
 		if (!token || !targetCid) return;
 
 		isDeleting = true;
 		try {
-			await deleteEchoCodexFile(token, targetCid, selectedWorkspace, selectedPath);
-			toast.success('Fichier supprimé');
-			selectedPath = '';
-			fileContent = '';
-			savedFileContent = '';
-			fileMeta = null;
-			resetAiState();
-			revokePreviewBlob();
-			await loadTree();
+			await deleteEchoCodexFile(token, targetCid, selectedWorkspace, targetPath);
+			toast.success(isDir ? 'Dossier supprimé' : 'Fichier supprimé');
+			if (selectedPath === targetPath || (isDir && selectedPath.startsWith(targetPath + '/'))) {
+				selectedPath = '';
+				fileContent = '';
+				savedFileContent = '';
+				fileMeta = null;
+				resetAiState();
+				revokePreviewBlob();
+			}
+			await loadTree(currentDirPath);
 		} catch (e: any) {
 			toast.error('Échec suppression: ' + (e.message || ''));
 		} finally {
@@ -626,24 +659,61 @@
 		}
 	};
 
-	const handleRename = async () => {
-		if (!isWritable || !selectedPath) return;
-		const newPath = prompt('Nouveau chemin du fichier :', selectedPath);
-		if (!newPath || !newPath.trim() || newPath.trim() === selectedPath) return;
-		const token = localStorage?.token;
-		const targetCid = getEffectiveChatId();
-		if (!token || !targetCid) return;
+	const startInlineRename = async (entryPath: string, entryName: string, event?: MouseEvent) => {
+		event?.stopPropagation();
+		if (!isWritable || isMutating) return;
+		renamingEntryPath = entryPath;
+		renamingDraftName = entryName;
+		await tick();
+		renameInputRef?.focus();
+		renameInputRef?.select();
+	};
 
+	const cancelInlineRename = () => {
+		renamingEntryPath = '';
+		renamingDraftName = '';
+	};
+
+	const commitInlineRename = async (oldPath: string, oldName: string, isDir = false) => {
+		if (isSubmittingRename || renamingEntryPath !== oldPath) return;
+		const rawNew = renamingDraftName.trim().replace(/^\/+|\/+$/g, '');
+		if (!rawNew || rawNew === oldName || rawNew === oldPath) {
+			cancelInlineRename();
+			return;
+		}
+		let cleanNew = rawNew;
+		if (!rawNew.includes('/')) {
+			const lastSlash = oldPath.lastIndexOf('/');
+			cleanNew = lastSlash >= 0 ? `${oldPath.slice(0, lastSlash)}/${rawNew}` : rawNew;
+		}
+		if (cleanNew === oldPath) {
+			cancelInlineRename();
+			return;
+		}
+		const token = getEchoToken();
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) {
+			cancelInlineRename();
+			return;
+		}
+
+		isSubmittingRename = true;
 		isMutating = true;
+		renamingEntryPath = '';
+		renamingDraftName = '';
 		try {
-			const cleanNew = newPath.trim();
-			await renameEchoCodex(token, targetCid, selectedWorkspace, selectedPath, cleanNew);
+			await renameEchoCodex(token, targetCid, selectedWorkspace, oldPath, cleanNew);
 			toast.success(`Renommé en ${cleanNew}`);
-			selectedPath = cleanNew;
-			await loadTree();
+			if (selectedPath === oldPath) {
+				selectedPath = cleanNew;
+			} else if (isDir && selectedPath.startsWith(oldPath + '/')) {
+				selectedPath = cleanNew + selectedPath.slice(oldPath.length);
+			}
+			await loadTree(currentDirPath);
 		} catch (e: any) {
 			toast.error('Échec renommage: ' + (e.message || ''));
 		} finally {
+			isSubmittingRename = false;
 			isMutating = false;
 		}
 	};
@@ -674,11 +744,18 @@
 
 	const handleDownload = async () => {
 		const targetCid = getEffectiveChatId();
-		if (!selectedPath || !targetCid) return;
-		const token = getEchoToken();
-		if (!token) return;
+		if (!selectedPath || loadingFile || !targetCid) return;
 		try {
-			const blob = await downloadEchoCodexFileBlob(token, targetCid, selectedWorkspace, selectedPath);
+			let blob: Blob;
+			if (!fileMeta?.is_binary && isDirty) {
+				blob = new Blob([fileContent], {
+					type: fileMeta?.mime || 'text/plain;charset=utf-8'
+				});
+			} else {
+				const token = getEchoToken();
+				if (!token) return;
+				blob = await downloadEchoCodexFileBlob(token, targetCid, selectedWorkspace, selectedPath);
+			}
 			const url = URL.createObjectURL(blob);
 			const a = document.createElement('a');
 			a.href = url;
@@ -690,6 +767,447 @@
 		} catch (e: any) {
 			toast.error('Échec téléchargement: ' + (e.message || ''));
 		}
+	};
+
+	const updateDomSelection = () => {
+		const sel = window.getSelection();
+		if (!sel || sel.isCollapsed || !editorViewportRef) {
+			domSelectionText = '';
+			return;
+		}
+		if (
+			sel.anchorNode &&
+			editorViewportRef.contains(sel.anchorNode) &&
+			!(codeTextarea && (codeTextarea === sel.anchorNode || codeTextarea.contains(sel.anchorNode)))
+		) {
+			domSelectionText = sel.toString();
+		} else {
+			domSelectionText = '';
+		}
+	};
+
+	$: activeTextareaSelection =
+		viewMode === 'code' && !fileMeta?.is_binary && aiPendingContent === null ? editorSelection : '';
+	$: activeSelectionText = activeTextareaSelection || domSelectionText;
+	$: activeSelectionLength = activeSelectionText.length;
+	$: canCopy = Boolean(
+		selectedPath &&
+			!loadingFile &&
+			!(viewMode === 'preview' && ['pdf', 'audio', 'video'].includes(previewCaps.kind)) &&
+			!(
+				fileMeta?.is_binary &&
+				!(viewMode === 'preview' && previewCaps.kind === 'image') &&
+				!fileMeta?.hex_preview
+			)
+	);
+	$: canPrint = Boolean(
+		selectedPath &&
+			!loadingFile &&
+			!(viewMode === 'preview' && ['audio', 'video'].includes(previewCaps.kind)) &&
+			!(
+				fileMeta?.is_binary &&
+				!(viewMode === 'preview' && ['image', 'pdf'].includes(previewCaps.kind)) &&
+				!fileMeta?.hex_preview
+			)
+	);
+	$: copyButtonTitle = !selectedPath
+		? 'Copier (sélectionnez un fichier)'
+		: activeSelectionLength > 0
+			? `Copier la sélection (${activeSelectionLength} car.)`
+			: viewMode === 'preview' && previewCaps.kind === 'image'
+				? "Copier l'image PNG"
+				: viewMode === 'preview' && previewCaps.kind === 'markdown'
+					? 'Copier le rendu'
+					: 'Copier le fichier entier';
+
+	const triggerCopyFeedback = () => {
+		copySuccess = true;
+		if (copySuccessTimer) clearTimeout(copySuccessTimer);
+		copySuccessTimer = setTimeout(() => {
+			copySuccess = false;
+			copySuccessTimer = null;
+		}, 1500);
+	};
+
+	const writePlainTextClipboard = async (text: string): Promise<boolean> => {
+		if (navigator.clipboard?.writeText && window.isSecureContext) {
+			try {
+				await navigator.clipboard.writeText(text);
+				return true;
+			} catch {
+				// fallback below
+			}
+		}
+		const ta = document.createElement('textarea');
+		ta.value = text;
+		ta.style.position = 'fixed';
+		ta.style.left = '-9999px';
+		ta.style.opacity = '0';
+		document.body.appendChild(ta);
+		ta.focus();
+		ta.select();
+		let ok = false;
+		try {
+			ok = document.execCommand('copy');
+		} catch {
+			ok = false;
+		} finally {
+			ta.remove();
+		}
+		return ok;
+	};
+
+	const writeRichHtmlClipboard = async (html: string, plainText: string): Promise<boolean> => {
+		if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined' && window.isSecureContext) {
+			try {
+				await navigator.clipboard.write([
+					new ClipboardItem({
+						'text/html': new Blob([html], { type: 'text/html' }),
+						'text/plain': new Blob([plainText], { type: 'text/plain' })
+					})
+				]);
+				return true;
+			} catch {
+				// fallback below
+			}
+		}
+		const container = document.createElement('div');
+		container.innerHTML = html;
+		container.style.position = 'fixed';
+		container.style.left = '-9999px';
+		container.style.opacity = '0';
+		container.style.pointerEvents = 'none';
+		document.body.appendChild(container);
+		let ok = false;
+		try {
+			const range = document.createRange();
+			range.selectNodeContents(container);
+			const sel = window.getSelection();
+			if (sel) {
+				sel.removeAllRanges();
+				sel.addRange(range);
+				ok = document.execCommand('copy');
+				sel.removeAllRanges();
+			}
+		} catch {
+			ok = false;
+		} finally {
+			container.remove();
+		}
+		if (ok) return true;
+		return writePlainTextClipboard(plainText);
+	};
+
+	const handleCopy = async () => {
+		if (!canCopy || !selectedPath) return;
+
+		if (viewMode === 'preview' && previewCaps.kind === 'image') {
+			if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined' || !window.isSecureContext) {
+				toast.error("La copie d'image nécessite un contexte sécurisé (HTTPS).");
+				return;
+			}
+			const token = getEchoToken();
+			const targetCid = getEffectiveChatId();
+			const pngBlobPromise: Promise<Blob> = (async () => {
+				let rawBlob: Blob;
+				if (previewBlobUrl) {
+					const resp = await fetch(previewBlobUrl);
+					rawBlob = await resp.blob();
+				} else if (token && targetCid) {
+					rawBlob = await downloadEchoCodexFileBlob(token, targetCid, selectedWorkspace, selectedPath);
+				} else {
+					throw new Error('Source image indisponible');
+				}
+				if (rawBlob.type === 'image/png') {
+					return rawBlob;
+				}
+				const objUrl = URL.createObjectURL(rawBlob);
+				try {
+					const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+						const image = new Image();
+						image.onload = () => resolve(image);
+						image.onerror = () => reject(new Error('Chargement image impossible'));
+						image.src = objUrl;
+					});
+					const canvas = document.createElement('canvas');
+					canvas.width = img.naturalWidth || img.width;
+					canvas.height = img.naturalHeight || img.height;
+					const ctx = canvas.getContext('2d');
+					if (!ctx) throw new Error('Contexte canvas indisponible');
+					ctx.drawImage(img, 0, 0);
+					const pngBlob = await new Promise<Blob | null>((resolve) =>
+						canvas.toBlob((b) => resolve(b), 'image/png')
+					);
+					if (!pngBlob) throw new Error('Conversion PNG échouée');
+					return pngBlob;
+				} finally {
+					URL.revokeObjectURL(objUrl);
+				}
+			})();
+			try {
+				await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlobPromise })]);
+				triggerCopyFeedback();
+				toast.success('Image copiée dans le presse-papiers');
+			} catch (e: any) {
+				toast.error("Échec copie de l'image: " + (e?.message || ''));
+			}
+			return;
+		}
+
+		if (viewMode === 'preview' && previewCaps.kind === 'markdown') {
+			const sel = window.getSelection();
+			if (
+				sel &&
+				!sel.isCollapsed &&
+				sel.rangeCount > 0 &&
+				previewContainerRef &&
+				sel.anchorNode &&
+				previewContainerRef.contains(sel.anchorNode)
+			) {
+				const selText = sel.toString();
+				const div = document.createElement('div');
+				div.appendChild(sel.getRangeAt(0).cloneContents());
+				div.querySelectorAll('button').forEach((b) => b.remove());
+				const ok = await writeRichHtmlClipboard(div.innerHTML, selText);
+				if (ok) {
+					triggerCopyFeedback();
+					toast.success(`Sélection copiée (${selText.length} car.)`);
+				} else {
+					toast.error('Échec copie dans le presse-papiers');
+				}
+				return;
+			}
+			if (previewContainerRef) {
+				const clone = previewContainerRef.cloneNode(true) as HTMLDivElement;
+				clone.querySelectorAll('button').forEach((b) => b.remove());
+				const ok = await writeRichHtmlClipboard(clone.innerHTML, clone.innerText || fileContent);
+				if (ok) {
+					triggerCopyFeedback();
+					toast.success('Rendu copié');
+				} else {
+					toast.error('Échec copie dans le presse-papiers');
+				}
+				return;
+			}
+		}
+
+		if (viewMode === 'code' && !fileMeta?.is_binary && aiPendingContent === null) {
+			const liveSel = codeTextarea
+				? codeTextarea.selectionEnd > codeTextarea.selectionStart
+					? codeTextarea.value.slice(codeTextarea.selectionStart, codeTextarea.selectionEnd)
+					: editorSelection
+				: editorSelection;
+			if (liveSel) {
+				const ok = await writePlainTextClipboard(liveSel);
+				if (ok) {
+					triggerCopyFeedback();
+					toast.success(`Sélection copiée (${liveSel.length} car.)`);
+				} else {
+					toast.error('Échec copie dans le presse-papiers');
+				}
+			} else {
+				const ok = await writePlainTextClipboard(fileContent);
+				if (ok) {
+					triggerCopyFeedback();
+					toast.success('Fichier copié');
+				} else {
+					toast.error('Échec copie dans le presse-papiers');
+				}
+			}
+			return;
+		}
+
+		if (domSelectionText) {
+			const ok = await writePlainTextClipboard(domSelectionText);
+			if (ok) {
+				triggerCopyFeedback();
+				toast.success(`Sélection copiée (${domSelectionText.length} car.)`);
+			} else {
+				toast.error('Échec copie dans le presse-papiers');
+			}
+		} else {
+			const fullText = aiPendingContent ?? (fileMeta?.is_binary ? fileMeta.hex_preview || '' : fileContent);
+			const ok = await writePlainTextClipboard(fullText);
+			if (ok) {
+				triggerCopyFeedback();
+				toast.success('Fichier copié');
+			} else {
+				toast.error('Échec copie dans le presse-papiers');
+			}
+		}
+	};
+
+	const escapeHtml = (text: string): string =>
+		text
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#39;');
+
+	const buildHtmlPreviewSrcdoc = (rawHtml: string): string => {
+		const printHook =
+			'<' +
+			'script>' +
+			"window.addEventListener('message',function(e){if(e&&e.data==='echo-codex-print')window.print();});" +
+			'<' +
+			'/script>';
+		return `${printHook}${rawHtml}`;
+	};
+
+	const printViaHiddenIframe = (docTitle: string, bodyHtml: string, waitImages = false) => {
+		if (activePrintIframe) {
+			activePrintIframe.remove();
+			activePrintIframe = null;
+		}
+		const iframe = document.createElement('iframe');
+		iframe.style.position = 'fixed';
+		iframe.style.right = '0';
+		iframe.style.bottom = '0';
+		iframe.style.width = '0';
+		iframe.style.height = '0';
+		iframe.style.border = '0';
+		iframe.style.visibility = 'hidden';
+		activePrintIframe = iframe;
+
+		const headLinks = Array.from(document.head.querySelectorAll('link[rel="stylesheet"]'))
+			.map((link) => link.outerHTML)
+			.join('\n');
+
+		const cleanup = () => {
+			if (activePrintIframe === iframe) {
+				activePrintIframe = null;
+			}
+			iframe.remove();
+		};
+
+		let printed = false;
+		const triggerPrint = () => {
+			if (printed) return;
+			printed = true;
+			const win = iframe.contentWindow;
+			if (!win) {
+				cleanup();
+				return;
+			}
+			win.addEventListener('afterprint', cleanup, { once: true });
+			setTimeout(cleanup, 60000);
+			win.focus();
+			win.print();
+		};
+
+		iframe.onload = () => {
+			const doc = iframe.contentDocument;
+			if (!waitImages || !doc) {
+				triggerPrint();
+				return;
+			}
+			const imgs = Array.from(doc.querySelectorAll('img'));
+			if (imgs.length === 0) {
+				triggerPrint();
+				return;
+			}
+			let pending = imgs.length;
+			const doneOne = () => {
+				pending -= 1;
+				if (pending <= 0) triggerPrint();
+			};
+			for (const img of imgs) {
+				if (img.complete) {
+					doneOne();
+				} else {
+					img.addEventListener('load', doneOne, { once: true });
+					img.addEventListener('error', doneOne, { once: true });
+				}
+			}
+		};
+
+		iframe.srcdoc = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>${escapeHtml(docTitle)}</title>
+${headLinks}
+<style>
+@page { margin: 15mm; }
+html, body { background: #ffffff !important; color: #111827 !important; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+.print-header { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; color: #374151; border-bottom: 1px solid #d1d5db; padding-bottom: 6px; margin-bottom: 12px; }
+pre { background: #f9fafb !important; color: #111827 !important; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+table { width: 100%; border-collapse: collapse; font-size: 11px; }
+thead { display: table-header-group; }
+th, td { border: 1px solid #d1d5db; padding: 4px 8px; text-align: left; color: #111827 !important; }
+th { background: #f3f4f6 !important; font-weight: 600; }
+blockquote { border-left: 3px solid #d1d5db; padding-left: 10px; color: #374151; }
+img, svg { max-width: 100%; height: auto; }
+.prose { color: #111827 !important; max-width: none !important; }
+</style>
+</head>
+<body>${bodyHtml}</body>
+</html>`;
+		document.body.appendChild(iframe);
+	};
+
+	const handlePrint = () => {
+		if (!canPrint || !selectedPath) return;
+
+		if (viewMode === 'preview' && previewCaps.kind === 'pdf') {
+			if (pdfIframeRef?.contentWindow) {
+				pdfIframeRef.contentWindow.focus();
+				pdfIframeRef.contentWindow.print();
+			}
+			return;
+		}
+
+		if (viewMode === 'preview' && previewCaps.kind === 'html') {
+			if (htmlIframeRef?.contentWindow) {
+				htmlIframeRef.contentWindow.postMessage('echo-codex-print', '*');
+			}
+			return;
+		}
+
+		if (viewMode === 'preview' && previewCaps.kind === 'markdown' && previewContainerRef) {
+			const clone = previewContainerRef.cloneNode(true) as HTMLDivElement;
+			clone.querySelectorAll('button').forEach((b) => b.remove());
+			printViaHiddenIframe(selectedPath, `<div class="prose">${clone.innerHTML}</div>`);
+			return;
+		}
+
+		if (viewMode === 'preview' && previewCaps.kind === 'csv') {
+			if (csvRows.length === 0) {
+				printViaHiddenIframe(selectedPath, `<div class="print-header">${escapeHtml(selectedPath)}</div><p>Tableau vide.</p>`);
+				return;
+			}
+			const thead = `<thead><tr>${csvRows[0].map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead>`;
+			const tbody = `<tbody>${csvRows
+				.slice(1)
+				.map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`)
+				.join('')}</tbody>`;
+			printViaHiddenIframe(
+				selectedPath,
+				`<div class="print-header">${escapeHtml(selectedPath)}</div><table>${thead}${tbody}</table>`
+			);
+			return;
+		}
+
+		if (viewMode === 'preview' && previewCaps.kind === 'image' && previewBlobUrl) {
+			printViaHiddenIframe(
+				selectedPath,
+				`<div style="text-align:center;"><img src="${escapeHtml(previewBlobUrl)}" alt="${escapeHtml(selectedPath)}" /></div>`,
+				true
+			);
+			return;
+		}
+
+		if (viewMode === 'preview' && previewCaps.kind === 'svg') {
+			printViaHiddenIframe(selectedPath, `<div style="text-align:center;">${fileContent}</div>`);
+			return;
+		}
+
+		const text = aiPendingContent ?? (fileMeta?.is_binary ? fileMeta.hex_preview || '' : fileContent);
+		printViaHiddenIframe(
+			selectedPath,
+			`<div class="print-header">${escapeHtml(selectedPath)}</div><pre>${escapeHtml(text)}</pre>`
+		);
 	};
 
 	const loadLog = async () => {
@@ -941,6 +1459,7 @@
 	}
 
 	onMount(() => {
+		document.addEventListener('selectionchange', updateDomSelection);
 		if (getEffectiveChatId() && $echoCodexTarget?.chatId !== chatId) {
 			void loadChats();
 			void loadTree(currentDirPath);
@@ -949,6 +1468,13 @@
 </script>
 
 <div class="flex flex-col h-full bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 overflow-hidden">
+	<input
+		type="file"
+		multiple
+		class="hidden"
+		bind:this={fileUploadInput}
+		on:change={handleUploadChange}
+	/>
 	<!-- Bannière lecture croisée -->
 	{#if isCrossRead}
 		<div class="flex items-center justify-between gap-2 px-4 py-1.5 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200 shrink-0">
@@ -1095,22 +1621,6 @@
 						>
 							📁+
 						</button>
-						<button
-							type="button"
-							class="px-1.5 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-800 text-[11px]"
-							on:click={() => fileUploadInput?.click()}
-							disabled={isMutating || isUploading}
-							title="Importer des fichiers"
-						>
-							{isUploading ? '⏳' : '⬆️'}
-						</button>
-						<input
-							type="file"
-							multiple
-							class="hidden"
-							bind:this={fileUploadInput}
-							on:change={handleUploadChange}
-						/>
 					{/if}
 					<button
 						type="button"
@@ -1196,24 +1706,89 @@
 						{@const entryPath = getEntryPath(entry)}
 						{@const entryName = getEntryName(entry)}
 						{@const isDir = isDirEntry(entry)}
-						<button
-							type="button"
-							class="w-full text-left px-2 py-1.5 rounded-md text-xs font-mono truncate transition flex items-center gap-1.5 {selectedPath === entryPath
+						<div
+							class="group flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-mono transition {selectedPath === entryPath
 								? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold'
 								: 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'}"
-							on:click={() => (isDir ? navigateToDir(entryPath) : selectFile(entryPath))}
-							title={entryPath}
 						>
-							{#if isDir}
-								<span class="text-xs flex-shrink-0">📁</span>
+							{#if renamingEntryPath === entryPath}
+								{#if isDir}
+									<span class="text-xs flex-shrink-0">📁</span>
+								{:else}
+									<svg class="w-3.5 h-3.5 text-gray-400 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+										<polyline points="14 2 14 8 20 8" />
+									</svg>
+								{/if}
+								<input
+									type="text"
+									bind:this={renameInputRef}
+									bind:value={renamingDraftName}
+									class="flex-1 min-w-0 bg-white dark:bg-gray-900 border border-sky-500 rounded px-1.5 py-0.5 text-xs font-mono text-gray-900 dark:text-gray-100 focus:outline-none"
+									on:click|stopPropagation
+									on:keydown={(e) => {
+										if (e.key === 'Enter') {
+											e.preventDefault();
+											void commitInlineRename(entryPath, entryName, isDir);
+										} else if (e.key === 'Escape') {
+											e.preventDefault();
+											cancelInlineRename();
+										}
+									}}
+									on:blur={() => void commitInlineRename(entryPath, entryName, isDir)}
+								/>
 							{:else}
-								<svg class="w-3.5 h-3.5 text-gray-400 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-									<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-									<polyline points="14 2 14 8 20 8" />
-								</svg>
+								<button
+									type="button"
+									class="flex-1 min-w-0 text-left flex items-center gap-1.5 truncate"
+									on:click={() => (isDir ? navigateToDir(entryPath) : selectFile(entryPath))}
+									title={entryPath}
+								>
+									{#if isDir}
+										<span class="text-xs flex-shrink-0">📁</span>
+									{:else}
+										<svg class="w-3.5 h-3.5 text-gray-400 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+											<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+											<polyline points="14 2 14 8 20 8" />
+										</svg>
+									{/if}
+									<span class="truncate">{entryName || entryPath}</span>
+								</button>
+								{#if isWritable}
+									<div
+										class="flex items-center gap-0.5 shrink-0 transition-opacity {selectedPath === entryPath
+											? 'opacity-100'
+											: 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}"
+									>
+										<button
+											type="button"
+											title="Renommer"
+											aria-label="Renommer"
+											disabled={isMutating}
+											on:click={(e) => void startInlineRename(entryPath, entryName, e)}
+											class="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 hover:text-sky-600 dark:text-gray-400 dark:hover:text-sky-400 disabled:opacity-40 transition"
+										>
+											<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+												<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+											</svg>
+										</button>
+										<button
+											type="button"
+											title="Supprimer"
+											aria-label="Supprimer"
+											disabled={isDeleting}
+											on:click={(e) => void handleDeleteEntry(entryPath, isDir, e)}
+											class="p-1 rounded hover:bg-red-500/15 text-gray-500 hover:text-red-500 dark:text-gray-400 dark:hover:text-red-400 disabled:opacity-40 transition"
+										>
+											<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+												<polyline points="3 6 5 6 21 6" />
+												<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+											</svg>
+										</button>
+									</div>
+								{/if}
 							{/if}
-							<span class="truncate">{entryName || entryPath}</span>
-						</button>
+						</div>
 					{/each}
 				{/if}
 			</div>
@@ -1245,22 +1820,10 @@
 		<!-- Zone Principale (droite) -->
 		<div class="flex-1 min-w-0 flex flex-col overflow-hidden bg-white dark:bg-gray-900">
 			{#if activeSubView === 'editor'}
-				{#if !selectedPath}
-					<div class="flex flex-col items-center justify-center h-full text-gray-400 text-xs">
-						<svg class="w-12 h-12 mb-2 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-							<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-							<polyline points="14 2 14 8 20 8" />
-						</svg>
-						Sélectionnez un fichier dans l'arborescence à gauche.
-					</div>
-				{:else if loadingFile}
-					<div class="flex items-center justify-center h-full">
-						<Spinner className="w-6 h-6 text-sky-500" />
-					</div>
-				{:else}
-					<!-- Barre d'actions fichier -->
-					<div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-850/50">
-						<div class="flex items-center gap-2 min-w-0">
+				<!-- Barre d'actions fichier -->
+				<div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-850/50 shrink-0">
+					<div class="flex items-center gap-2 min-w-0">
+						{#if selectedPath}
 							<span class="font-mono text-xs font-semibold text-gray-800 dark:text-gray-200 truncate">
 								{selectedPath}
 							</span>
@@ -1272,74 +1835,139 @@
 									● Modifié
 								</span>
 							{/if}
-						</div>
+						{:else}
+							<span class="font-mono text-xs text-gray-400 dark:text-gray-500 truncate">
+								Aucun fichier sélectionné
+							</span>
+						{/if}
+					</div>
 
-						<div class="flex flex-wrap items-center gap-1.5">
-							{#if canPreview}
-								<div class="flex items-center bg-gray-200/80 dark:bg-gray-800 p-0.5 rounded text-[11px] font-medium mr-1">
-									{#if !fileMeta?.is_binary}
-										<button
-											type="button"
-											on:click={() => handleToggleViewMode('code')}
-											class="px-2 py-0.5 rounded transition {viewMode === 'code' ? 'bg-white dark:bg-gray-700 shadow-xs text-gray-900 dark:text-white' : 'text-gray-500'}"
-										>
-											Code
-										</button>
-									{/if}
+					<div class="flex flex-wrap items-center gap-1.5">
+						{#if selectedPath && !loadingFile && canPreview}
+							<div class="flex items-center bg-gray-200/80 dark:bg-gray-800 p-0.5 rounded text-[11px] font-medium mr-1">
+								{#if !fileMeta?.is_binary}
 									<button
 										type="button"
-										on:click={() => handleToggleViewMode('preview')}
-										class="px-2 py-0.5 rounded transition {viewMode === 'preview' ? 'bg-white dark:bg-gray-700 shadow-xs text-gray-900 dark:text-white' : 'text-gray-500'}"
+										on:click={() => handleToggleViewMode('code')}
+										class="px-2 py-0.5 rounded transition {viewMode === 'code' ? 'bg-white dark:bg-gray-700 shadow-xs text-gray-900 dark:text-white' : 'text-gray-500'}"
 									>
-										👁️ Aperçu
+										Code
 									</button>
-								</div>
+								{/if}
+								<button
+									type="button"
+									on:click={() => handleToggleViewMode('preview')}
+									class="px-2 py-0.5 rounded transition {viewMode === 'preview' ? 'bg-white dark:bg-gray-700 shadow-xs text-gray-900 dark:text-white' : 'text-gray-500'}"
+								>
+									👁️ Aperçu
+								</button>
+							</div>
+						{/if}
+
+						<div class="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700/80">
+							{#if isWritable}
+								<button
+									type="button"
+									disabled={isMutating || isUploading}
+									on:click={() => fileUploadInput?.click()}
+									title="Importer (PC → Codex)"
+									aria-label="Importer des fichiers"
+									class="p-1.5 rounded-md text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white disabled:opacity-40 disabled:pointer-events-none transition"
+								>
+									{#if isUploading}
+										<Spinner className="w-3.5 h-3.5 text-sky-500" />
+									{:else}
+										<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+											<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+											<polyline points="17 8 12 3 7 8" />
+											<line x1="12" y1="3" x2="12" y2="15" />
+										</svg>
+									{/if}
+								</button>
 							{/if}
 
 							<button
 								type="button"
+								disabled={!selectedPath || loadingFile}
 								on:click={handleDownload}
-								class="px-2 py-1 rounded bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-xs font-medium text-gray-700 dark:text-gray-300 transition"
-								title="Télécharger"
+								title={!selectedPath ? 'Exporter (sélectionnez un fichier)' : isDirty ? 'Exporter le contenu modifié (Codex → PC)' : 'Exporter / Télécharger (Codex → PC)'}
+								aria-label="Exporter le fichier"
+								class="p-1.5 rounded-md text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white disabled:opacity-40 disabled:pointer-events-none transition"
 							>
-								Télécharger
+								<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+									<polyline points="7 10 12 15 17 10" />
+									<line x1="12" y1="15" x2="12" y2="3" />
+								</svg>
 							</button>
 
-							{#if isWritable}
-								<button
-									type="button"
-									class="px-2 py-1 rounded bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-xs font-medium text-gray-700 dark:text-gray-300 transition"
-									on:click={handleRename}
-									disabled={isMutating}
-								>
-									✏️ Renommer
-								</button>
-								<button
-									type="button"
-									class="px-2 py-1 rounded bg-red-500/10 hover:bg-red-500/20 text-red-500 text-xs font-medium transition"
-									on:click={handleDelete}
-									disabled={isDeleting}
-								>
-									{isDeleting ? '...' : 'Supprimer'}
-								</button>
-								{#if !fileMeta?.is_binary}
-									<button
-										type="button"
-										class="px-3 py-1 rounded bg-sky-500 hover:bg-sky-600 text-white text-xs font-medium shadow-sm transition"
-										on:click={handleSave}
-										disabled={isSaving}
-									>
-										{isSaving
-											? 'Enregistrement...'
-											: currentWsObj.versioned
-												? 'Enregistrer (Commit)'
-												: 'Enregistrer'}
-									</button>
+							<button
+								type="button"
+								disabled={!canCopy}
+								on:mousedown|preventDefault
+								on:click={handleCopy}
+								title={copyButtonTitle}
+								aria-label={copyButtonTitle}
+								class="p-1.5 rounded-md disabled:opacity-40 disabled:pointer-events-none transition {copySuccess ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10' : activeSelectionLength > 0 ? 'text-sky-600 dark:text-sky-400 bg-sky-500/15 ring-1 ring-inset ring-sky-500/30' : 'text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-700 hover:text-sky-600 dark:hover:text-sky-400'}"
+							>
+								{#if copySuccess}
+									<svg class="w-3.5 h-3.5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+										<polyline points="20 6 9 17 4 12" />
+									</svg>
+								{:else}
+									<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+										<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+										<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+									</svg>
 								{/if}
-							{/if}
-						</div>
-					</div>
+							</button>
 
+							<button
+								type="button"
+								disabled={!canPrint}
+								on:click={handlePrint}
+								title={selectedPath ? 'Imprimer / Exporter en PDF' : 'Imprimer (sélectionnez un fichier)'}
+								aria-label="Imprimer le fichier"
+								class="p-1.5 rounded-md text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white disabled:opacity-40 disabled:pointer-events-none transition"
+							>
+								<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<polyline points="6 9 6 2 18 2 18 9" />
+									<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+									<rect x="6" y="14" width="12" height="8" />
+								</svg>
+							</button>
+						</div>
+
+						{#if isWritable && selectedPath && !loadingFile && !fileMeta?.is_binary}
+							<button
+								type="button"
+								class="px-3 py-1 rounded bg-sky-500 hover:bg-sky-600 text-white text-xs font-medium shadow-sm transition"
+								on:click={handleSave}
+								disabled={isSaving}
+							>
+								{isSaving
+									? 'Enregistrement...'
+									: currentWsObj.versioned
+										? 'Enregistrer (Commit)'
+										: 'Enregistrer'}
+							</button>
+						{/if}
+					</div>
+				</div>
+
+				{#if !selectedPath}
+					<div class="flex-1 flex flex-col items-center justify-center text-gray-400 text-xs">
+						<svg class="w-12 h-12 mb-2 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+							<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+							<polyline points="14 2 14 8 20 8" />
+						</svg>
+						Sélectionnez un fichier dans l'arborescence à gauche.
+					</div>
+				{:else if loadingFile}
+					<div class="flex-1 flex items-center justify-center">
+						<Spinner className="w-6 h-6 text-sky-500" />
+					</div>
+				{:else}
 					{#if isWritable && currentWsObj.versioned && !fileMeta?.is_binary && viewMode === 'code'}
 						<div class="px-4 py-1.5 border-b border-gray-100 dark:border-gray-800 bg-gray-50/20">
 							<input
@@ -1352,7 +1980,7 @@
 					{/if}
 
 					<!-- Zone d'édition / visualisation -->
-					<div class="flex-1 p-2 overflow-hidden flex flex-col">
+					<div bind:this={editorViewportRef} class="flex-1 p-2 overflow-hidden flex flex-col">
 						{#if viewMode === 'preview' && canPreview}
 							{#if previewCaps.kind === 'image'}
 								<div class="flex-1 flex items-center justify-center bg-gray-950/90 rounded-lg p-4 overflow-auto">
@@ -1365,7 +1993,7 @@
 							{:else if previewCaps.kind === 'pdf'}
 								<div class="flex-1 flex flex-col rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden bg-gray-900">
 									{#if previewBlobUrl}
-										<iframe title={selectedPath} src={previewBlobUrl} class="w-full h-full border-0"></iframe>
+										<iframe bind:this={pdfIframeRef} title={selectedPath} src={previewBlobUrl} class="w-full h-full border-0"></iframe>
 									{:else}
 										<div class="flex-1 flex items-center justify-center">
 											<Spinner className="w-6 h-6 text-sky-400" />
@@ -1391,7 +2019,7 @@
 									{/if}
 								</div>
 							{:else if previewCaps.kind === 'markdown'}
-								<div class="flex-1 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none bg-white dark:bg-gray-950 rounded-lg border border-gray-200 dark:border-gray-800">
+								<div bind:this={previewContainerRef} class="flex-1 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none bg-white dark:bg-gray-950 rounded-lg border border-gray-200 dark:border-gray-800">
 									<Markdown id={`codex-${selectedPath}`} content={fileContent} />
 								</div>
 							{:else if previewCaps.kind === 'svg'}
@@ -1403,13 +2031,14 @@
 								></iframe>
 							{:else if previewCaps.kind === 'html'}
 								<iframe
+									bind:this={htmlIframeRef}
 									title={selectedPath}
-									sandbox="allow-scripts"
-									srcdoc={fileContent}
+									sandbox="allow-scripts allow-modals"
+									srcdoc={buildHtmlPreviewSrcdoc(fileContent)}
 									class="w-full h-full border border-gray-200 dark:border-gray-800 rounded-lg bg-white"
 								></iframe>
 							{:else if previewCaps.kind === 'csv'}
-								<div class="flex-1 overflow-auto bg-white dark:bg-gray-950 rounded-lg border border-gray-200 dark:border-gray-800">
+								<div bind:this={previewContainerRef} class="flex-1 overflow-auto bg-white dark:bg-gray-950 rounded-lg border border-gray-200 dark:border-gray-800">
 									{#if csvRows.length === 0}
 										<div class="p-4 text-xs text-gray-400">Tableau vide.</div>
 									{:else}
@@ -1542,6 +2171,7 @@
 								class="w-full h-full p-3 font-mono text-xs bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-500 resize-none"
 								bind:value={fileContent}
 								readonly={!isWritable}
+								on:input={updateSelectionFromTextarea}
 								on:select={updateSelectionFromTextarea}
 								on:keyup={updateSelectionFromTextarea}
 								on:mouseup={updateSelectionFromTextarea}
