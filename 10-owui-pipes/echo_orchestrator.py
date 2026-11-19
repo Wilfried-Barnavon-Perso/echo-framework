@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 6.7.1.1
+version: 6.7.5.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.5.1: Garde-fous None-safe sur content, auto-guérison _sanitize_shadow_none_parts, fallback meta["message_id"] sur sous-tour actif et filtrage tamponné "None"+functionCall dans StreamProcessor.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Centralisation et délégation de _TOOLS_CACHE à register_chat_tools (echo_subagent_hub).
 # 6.6.9.1: Retrait de register_echo_wm_routes, de l'appel redondant register_echo_audio_routes dans Pipe.__init__ et de UserValves.SHOW_CONTEXT_METRICS.
 # 6.6.2.1: Exposition du modèle actif réel et du mode cognitif dans les payloads d'état orchestrateur et alignement du routage multi-modèles.
-# 5.239.0.1: Concision maximale des descriptions des vannes UserValves (mode, cible, crédits, cascades, relances).
 
 
 # ==============================================================================
@@ -90,9 +90,24 @@ class UserDataManager:
         self.identity_manager = EchoStateManager(user_id=user_id, chat_id=None)
         self.debug_mode = debug_mode
 
+    @staticmethod
+    def _sanitize_shadow_none_parts(shadow: Optional[List[dict]]) -> Optional[List[dict]]:
+        """Purge auto-cicatrisante des parts parasites {'text': 'None'} scellées devant un functionCall."""
+        if not isinstance(shadow, list):
+            return shadow
+        for item in shadow:
+            if isinstance(item, dict) and item.get("role") in ("model", "assistant") and isinstance(item.get("parts"), list):
+                parts = item["parts"]
+                if any(isinstance(p, dict) and "functionCall" in p for p in parts):
+                    item["parts"] = [
+                        p for p in parts
+                        if not (isinstance(p, dict) and "text" in p and "functionCall" not in p and str(p.get("text") or "").strip() == "None")
+                    ]
+        return shadow
+
     def get_shadow(self, message_id: str, updated_at: Optional[int] = None) -> Optional[List[dict]]:
         """Restauration Bit-Perfect par ID physique (et Timestamp optionnel pour user)."""
-        return self.state_manager.get_shadow(message_id, updated_at)
+        return self._sanitize_shadow_none_parts(self.state_manager.get_shadow(message_id, updated_at))
 
     def save_shadow(self, message_id: str, updated_at: Optional[int], parts: List[dict], chat_id: str, role: str, model_id: Optional[str] = None):
         """Scellement définitif de l'ombre d'un message."""
@@ -223,7 +238,7 @@ class Orchestrator:
 
             if sys_events_to_inject:
                 aec_text = EchoAEC.render_system_events(sys_events=sys_events_to_inject)
-                messages[-1]["content"] = aec_text + str(messages[-1].get("content", ""))
+                messages[-1]["content"] = aec_text + str(messages[-1].get("content") or "")
 
         # --- RÉSOLUTION DU CHECKPOINT DE COMPACTION CONTEXTUELLE IN-PLACE ---
         ckpt_prefix = []
@@ -260,7 +275,7 @@ class Orchestrator:
                 u_parts = self.user_data_manager.get_shadow(msg_id) if msg_id else None
                 if u_parts:
                     if not (m is messages[-1] and meta.get("_echo_user_parts_draft") is not None):
-                        raw_c = m.get("content", "")
+                        raw_c = m.get("content") or ""
                         if isinstance(raw_c, list):
                             curr_txt = "".join(str(it.get("text", "")) for it in raw_c if isinstance(it, dict) and it.get("type") == "text")
                         else:
@@ -290,7 +305,7 @@ class Orchestrator:
                     if m is messages[-1] and meta.get("_echo_user_parts_draft") is not None:
                         u_parts = ensure_gemini_parts(meta.get("_echo_user_parts_draft"), model_id, self.model_origin)
                     else:
-                        content = m.get("content", "")
+                        content = m.get("content") or ""
                         u_parts = ensure_gemini_parts(content, model_id, self.model_origin)
                         for p in u_parts:
                             if "text" in p and "<REQUETE_UTILISATEUR>" not in p["text"] and not p["text"].strip().startswith("<artifact"):
@@ -313,13 +328,16 @@ class Orchestrator:
                 and m.get("role") != "system"
                 and not (
                     m.get("role") in ("assistant", "model")
-                    and any(marker in str(m.get("content", "")) for marker in ECHO_AUTH_NOTICE_MARKERS)
+                    and any(marker in str(m.get("content") or "") for marker in ECHO_AUTH_NOTICE_MARKERS)
                 )
             ]
             if not non_u_msgs:
                 continue
 
-            turn_asst_id = next((m.get("_echo_turn_asst_id") or m.get("id") for m in reversed(non_u_msgs) if m.get("_echo_turn_asst_id") or m.get("id")), None)
+            turn_asst_id = next(
+                (m.get("_echo_turn_asst_id") or m.get("id") for m in reversed(non_u_msgs) if m.get("_echo_turn_asst_id") or m.get("id")),
+                meta.get("message_id") if is_in_flight_tool_turn else None,
+            )
             turn_asst_ts = next((m.get("_echo_turn_asst_ts") or m.get("updated_at") for m in reversed(non_u_msgs) if m.get("_echo_turn_asst_ts") or m.get("updated_at")), None)
 
             existing_asst_sh = self.user_data_manager.get_shadow(turn_asst_id) if turn_asst_id else None
@@ -339,7 +357,7 @@ class Orchestrator:
                     None,
                 )
                 if last_owui_asst:
-                    c_raw = last_owui_asst.get("content", "")
+                    c_raw = last_owui_asst.get("content") or ""
                     c_clean, _ = split_thought_process(c_raw if isinstance(c_raw, str) else str(c_raw or ""))
                     owui_clean = resolve_placeholders(c_clean, model_id, self.model_origin).strip()
                     last_sh_model = next(
@@ -414,7 +432,7 @@ class Orchestrator:
                     aggregated_tool_parts = []
                     while k < len(non_u_msgs) and non_u_msgs[k].get("role") == "tool":
                         m_tool = non_u_msgs[k]
-                        content_tool = m_tool.get("content", "")
+                        content_tool = m_tool.get("content") or ""
                         call_id = m_tool.get("tool_call_id")
                         bridge = self.user_data_manager.get_call_bridge(call_id) if call_id else None
                         func_name = bridge["name"] if bridge else "unknown"
@@ -424,12 +442,12 @@ class Orchestrator:
                     turn_asst_msgs.append({"role": "user", "parts": ensure_gemini_parts(aggregated_tool_parts, model_id, self.model_origin)})
                 elif cur_role == "user":
                     # Image synthétique d'outil
-                    turn_asst_msgs.append({"role": "user", "parts": ensure_gemini_parts(cur_m.get("content", ""), model_id, self.model_origin)})
+                    turn_asst_msgs.append({"role": "user", "parts": ensure_gemini_parts(cur_m.get("content") or "", model_id, self.model_origin)})
                     k += 1
                 else:
                     # assistant / model
-                    content_raw = cur_m.get("content", "")
-                    content_clean, _ = split_thought_process(content_raw if isinstance(content_raw, str) else str(content_raw))
+                    content_raw = cur_m.get("content") or ""
+                    content_clean, _ = split_thought_process(content_raw if isinstance(content_raw, str) else str(content_raw or ""))
                     tool_calls = cur_m.get("tool_calls", [])
                     sig = None
                     if tool_calls:
@@ -550,6 +568,7 @@ class StreamProcessor:
         in_think = False; buffer = ""; decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
         buffered_lines = []
         pending_tool_deltas = []
+        buffered_none_text = ""
         async for chunk in response.aiter_bytes():
             buffer += decoder.decode(chunk, final=False)
             while "\n" in buffer:
@@ -621,6 +640,14 @@ class StreamProcessor:
                                         raw_t = part["text"].replace("<think>", "").replace("</think>", "")
                                         if "<EPHEMERAL_MESSAGE>" in raw_t or "CRITICAL INSTRUCTION" in raw_t:
                                             continue
+                                        if not self.accumulated_text:
+                                            candidate = buffered_none_text + raw_t
+                                            if candidate.strip() in ("N", "No", "Non", "None"):
+                                                buffered_none_text = candidate
+                                                continue
+                                            if buffered_none_text:
+                                                raw_t = candidate
+                                                buffered_none_text = ""
                                         self.accumulated_text += raw_t; yield raw_t
                     except std_json.JSONDecodeError:
                         # Trame réseau probablement fragmentée, réintégration dans le tampon d'attente
@@ -635,6 +662,12 @@ class StreamProcessor:
                         yield f"\n\n> ❌ **Erreur critique de décodage du flux API** : {str(e)}\n"
         if in_think:
             in_think = False
+        if buffered_none_text:
+            if (pending_tool_deltas or self.escalation_requested) and buffered_none_text.strip() == "None":
+                pass
+            else:
+                self.accumulated_text += buffered_none_text
+                yield buffered_none_text
         if not self.escalation_requested and pending_tool_deltas:
             for delta_chunk in pending_tool_deltas:
                 yield delta_chunk
@@ -711,7 +744,7 @@ class Pipe:
                 if msg.get("role") == "system":
                     continue
                 role = "user" if msg.get("role") == "user" else "model"
-                parts = ensure_gemini_parts(msg.get("content", ""))
+                parts = ensure_gemini_parts(msg.get("content") or "")
 
                 if gemini_contents and gemini_contents[-1]["role"] == role:
                     # Fusion des rôles consécutifs (Gemini API l'exige)
@@ -1080,7 +1113,7 @@ class Pipe:
                 cascade_history.append(directive_msg)
 
             # --- [NOUVEAU] RÉSOLUTION DYNAMIQUE DES INSTRUCTIONS SYSTÈME ---
-            sys_instr_raw = "\n".join([m.get("content", "") for m in body.get("messages", []) if m.get("role") == "system"]) or "Le Modèle est ECHO."
+            sys_instr_raw = "\n".join([m.get("content") or "" for m in body.get("messages", []) if m.get("role") == "system"]) or "Le Modèle est ECHO."
             resolved_sys = resolve_placeholders(sys_instr_raw, target_model, orch.model_origin)
             sys_instr = {"parts": [{"text": resolved_sys}]}
 
@@ -1403,7 +1436,7 @@ class Pipe:
             user_updated_at = meta.get("_echo_user_msg_updated_at")
             user_draft = meta.get("_echo_user_parts_draft")
             if user_msg_id and user_draft:
-                user_text = body['messages'][-1].get('content', "")
+                user_text = body['messages'][-1].get('content') or ""
                 full_user_parts = ensure_gemini_parts(user_draft, target_model, orch.model_origin)
                 # Guard : si content est une liste (multipart OWUI), le texte est déjà dans user_draft.
                 # Sans ce guard, la liste entière serait passée à resolve_placeholders, corrompant le shadow.

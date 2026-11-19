@@ -1,11 +1,12 @@
 """
 title: ECHO DB Schema
 author: ECHO Framework
-version: 5.237.20.2
+version: 6.7.5.1
 description: Schéma déclaratif SQLite v2 et moteur de migration transactionnel (identity.db & session.db).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.5.1: Normalisation None/list de msg["content"] et filtrage de "None" devant functionCall dans backfill_session_shadows_from_webui.
 # 5.237.20.2: Conformité stricte Gemini 3/4 (priorité functionCall sur text dans _migrate et regroupement des appels parallèles dans backfill_session_shadows_from_webui).
 # 5.237.20.1: Schéma déclaratif SQLite v2 (6 tables session.db, model_id sur message_shadows, purge suture_index/cognitive_signatures/tool_journal et rétro-conversion webui.db).
 # 5.235.5.3: Schéma de production identity_vault (clé composite), 20 colonnes echo_resources et COALESCE défensif dans _migrate.
@@ -471,9 +472,25 @@ def backfill_session_shadows_from_webui(
             _flush_fc()
             _flush_fr()
 
-            content_str = msg.get("content", "")
+            raw_c = msg.get("content")
+            if raw_c is None:
+                content_str = ""
+            elif isinstance(raw_c, list):
+                content_str = "".join(
+                    str(p.get("text") or "")
+                    for p in raw_c
+                    if isinstance(p, dict) and p.get("type") == "text"
+                )
+            else:
+                content_str = str(raw_c)
             clean_text = re.sub(r"<think>.*?</think>", "", content_str, flags=re.DOTALL).strip()
-            if clean_text:
+            has_fc_in_seq = any(
+                isinstance(p, dict) and "functionCall" in p
+                for s_item in seq
+                if isinstance(s_item, dict)
+                for p in (s_item.get("parts") or [])
+            )
+            if clean_text and not (clean_text == "None" and has_fc_in_seq):
                 text_part: Dict[str, Any] = {"text": clean_text}
                 if last_sig:
                     text_part["thoughtSignature"] = last_sig

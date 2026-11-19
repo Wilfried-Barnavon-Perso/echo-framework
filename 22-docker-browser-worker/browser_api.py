@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 6.6.5.1
+VERSION : 6.7.5.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-11-16
 
@@ -9,11 +9,11 @@ DATE MAJ : 2026-11-16
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.5.1: Ajout de _goto_resilient (wait_until="domcontentloaded", repli gracieux sur PlaywrightTimeoutError hors about:blank) pour navigate, tab_new et refresh.
 # 6.6.5.1: Ajout de l'endpoint GET /sessions pour lister les sessions Playwright actives par user_id/chat_id.
 # 5.236.4.1: Durcissement furtivité anti-bot (Client Hints, prototypes safe, WebGL Linux/Android), élimination du tatouage DOM (Zéro-Trace) et incrustation active du curseur hors-DOM via Pillow sur le screencast.
 # 5.232.1.1: Élimination du FastAPIDeprecationWarning (retrait d'ORJSONResponse obsolète) et typage strict des retours routes (dict[str, Any]) pour sérialisation directe Pydantic v2.
 # 5.232.0.3: Optimisation de la latence de POST /render_ephemeral_view (wait_until="load", polling DOM actif 100ms sur #visual-target svg/canvas et settle_ms=250).
-# 5.232.0.2: Ajout de POST /render_ephemeral_view (rendu incognito 100 % RAM Zéro-Disque), support WebGL SwiftShader headless et détection combinée d'attente asynchrone et d'alertes DOM (⚠️ / data-echo-visual-error).
 
 import asyncio
 import io
@@ -29,7 +29,7 @@ from PIL import Image, ImageDraw
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from playwright.async_api import async_playwright
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright
 import logging.config
 
 if os.path.exists('/app/logging.json'):
@@ -532,6 +532,21 @@ async def wait_for_settle(page, quiet_ms: int = 400, timeout_ms: int = 3000):
             await page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
         except Exception:
             pass
+
+
+async def _goto_resilient(page, url: str, timeout_ms: int = 25000) -> Optional[str]:
+    """Navigue en attendant domcontentloaded + stabilisation légère, avec repli gracieux sur les portails à flux continu."""
+    warning_msg: Optional[str] = None
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+    except PlaywrightTimeoutError as te:
+        cur_url = getattr(page, "url", "") or ""
+        if cur_url and cur_url != "about:blank":
+            warning_msg = f"Chargement partiel (délai {timeout_ms}ms dépassé sur ressources secondaires, DOM actif sur {cur_url})."
+        else:
+            raise te
+    await wait_for_settle(page, quiet_ms=400, timeout_ms=3000)
+    return warning_msg
 
 
 def pick_lru_victim():
@@ -1499,8 +1514,10 @@ async def browser_action(request: Request) -> dict[str, Any]:
                 if cmd == "navigate":
                     if not val:
                         return {"status": "error", "message": "URL manquante."}
-                    await page.goto(val, wait_until="load", timeout=60000)
+                    nav_warn = await _goto_resilient(page, val, timeout_ms=25000)
                     result["title"], result["url"] = await page.title(), page.url
+                    if nav_warn:
+                        result["warning"] = nav_warn
                 elif cmd == "scroll":
                     if val in ("down", "up"):
                         before = await page.evaluate("() => window.scrollY")
@@ -1523,7 +1540,12 @@ async def browser_action(request: Request) -> dict[str, Any]:
                     await asyncio.sleep(float(val or 2))
                     result["url"] = page.url
                 elif cmd == "refresh":
-                    await page.reload(wait_until="load", timeout=30000)
+                    try:
+                        await page.reload(wait_until="domcontentloaded", timeout=20000)
+                    except PlaywrightTimeoutError:
+                        if not page.url or page.url == "about:blank":
+                            raise
+                    await wait_for_settle(page, quiet_ms=400, timeout_ms=3000)
                     result["url"] = page.url
                 elif cmd == "reset":
                     async with SESSIONS_LOCK:
@@ -1533,11 +1555,13 @@ async def browser_action(request: Request) -> dict[str, Any]:
                     result["message"] = "Session réinitialisée."
                 elif cmd == "tab_new":
                     new_p = await session.context.new_page()
-                    await new_p.goto(val or "about:blank", wait_until="load")
+                    nav_warn = await _goto_resilient(new_p, val or "about:blank", timeout_ms=25000)
                     if new_p not in session.pages:
                         session.pages.append(new_p)
                     session.active_page_index = len(session.pages) - 1
                     result["message"] = f"Nouvel onglet ouvert (Index: {session.active_page_index})"
+                    if nav_warn:
+                        result["warning"] = nav_warn
                 elif cmd == "tab_switch":
                     idx = int(val or 0)
                     if 0 <= idx < len(session.pages):

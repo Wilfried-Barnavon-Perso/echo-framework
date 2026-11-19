@@ -1981,6 +1981,17 @@ def process_messages_with_output(
                 flatten_tool_images=True,
             )
             if output_messages:
+                # [ECHO-V6-HOOK] Préservation déterministe de l'ID et du timestamp du tour assistant sur les sous-messages d'outils
+                asst_id = message.get('id')
+                asst_ts = message.get('updated_at') or message.get('timestamp')
+                for om in output_messages:
+                    if asst_id:
+                        om['_echo_turn_asst_id'] = asst_id
+                    if asst_ts:
+                        om['_echo_turn_asst_ts'] = asst_ts
+                last_asst_om = next((om for om in reversed(output_messages) if om.get('role') == 'assistant'), None)
+                if last_asst_om is not None and asst_id and not last_asst_om.get('id'):
+                    last_asst_om['id'] = asst_id
                 processed.extend(output_messages)
                 processed.extend(speech)
                 continue
@@ -1988,7 +1999,8 @@ def process_messages_with_output(
                 continue
 
         clean_message = dict(message)
-        for key in ('id', 'output', 'model', 'contextSummary', 'context_summary', 'usage', 'meta'):
+        # [ECHO-V6-HOOK] Conservation de 'id' pour la suture bit-perfect ECHO (évite la dépendance exclusive à la réhydratation DB)
+        for key in ('output', 'model', 'contextSummary', 'context_summary', 'usage', 'meta'):
             clean_message.pop(key, None)
         processed.append(clean_message)
         processed.extend(speech)
@@ -3202,7 +3214,12 @@ async def execute_tool_call(form_data, metadata, event_caller, tool_call, histor
     if history is not None:
         error = error or tool_repetition_error(tool_call, history)
         history.append(tool_call)
-    tool_call['status'] = 'failed' if error else 'in_progress'
+    # [ECHO-V6-HOOK] Conserver 'completed' (arguments scellés -> UI 'Exécution de...') au lieu de rétrograder en 'in_progress' ('Préparation de...')
+    tool_call['status'] = (
+        'failed'
+        if error
+        else ('completed' if tool_call.get('status') == 'completed' else 'in_progress')
+    )
     if error:
         return {}, error, None, None, False
     params = JSONCodec.loads(tool_call['arguments'])
@@ -6188,6 +6205,11 @@ async def streaming_chat_response_handler(response, ctx):
                                 reasoning_format=get_reasoning_format(model),
                                 flatten_tool_images=True,
                             )
+                            # [ECHO-V6-HOOK] Ancrage explicite du message_id assistant courant pendant les sous-tours avant persistance DB finale
+                            in_flight_msg_id = metadata.get('message_id') or metadata.get('assistant_message_id')
+                            if in_flight_msg_id:
+                                for tm in tool_messages:
+                                    tm['_echo_turn_asst_id'] = in_flight_msg_id
 
                             # Chat Completions providers don't support multimodal
                             # tool messages.  Extract images into a user message.

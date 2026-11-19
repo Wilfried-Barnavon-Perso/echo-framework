@@ -2,16 +2,16 @@
 """
 title: ECHO Subagent Hub
 author: Wilfried BARNAVON
-version: 6.7.1.3
+version: 6.7.5.1
 description: Contrôleur exécutif unifié des sous-agents, tranches supervisées, ToolDispatcher et file FIFO hybride.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.5.1: Unification du flux navigator sous verrou EchoSubagentController (step 0 2 parts, carte DOM à la reprise, sémaphore dès ensure_engine_ready, format_browser_dom_view et statuts pré-LLM).
 # 6.7.1.3: Câblage ECHO_SUBAGENT_ENGINES_REGISTRY dans save_subagent_meta et ajout de extract_response_parts_and_text, run_cognitive_step et dispatch_message.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Moteur cognitif unifié (EchoAgentRunner, EchoSubagentController, StandardToolDispatcher, BrowserToolDispatcher), tranches supervisées 8/90s, PARE 3 erreurs, _TOOLS_CACHE et scellement kill.
 # 6.6.2.1: Ajout du compteur monotone _COGNITION_SEQ (bump_cognition_seq, get_cognition_seq) et de update_subagent_meta_fields.
-# 6.5.3.1: Création du hub sous-agents hybrides (XML, verrous, file FIFO).
 
 from __future__ import annotations
 
@@ -1244,6 +1244,31 @@ def prune_browser_heavy_context(
                     )
 
 
+def format_browser_dom_view(res_view: dict) -> str:
+    """Formate la carte DOM et l'état de navigation pour injection dans l'historique navigateur."""
+    dom_data = res_view.get("metadata", [])
+    dom_text = json.dumps(dom_data, ensure_ascii=False)[:60000]
+    vp = res_view.get("viewport")
+    vp_text = (
+        f"\nDimensions de l'écran (Viewport) : {vp['width']}x{vp['height']} pixels."
+        if vp
+        else ""
+    )
+    url = res_view.get("url") or ""
+    url_text = f"\nURL active : {url}" if url else ""
+    nav_error = res_view.get("nav_error")
+    nav_warning = res_view.get("nav_warning")
+    alert_lines = ""
+    if nav_error:
+        alert_lines += f"\n⚠️ Erreur de navigation : {nav_error}"
+    if nav_warning:
+        alert_lines += f"\n⚠️ Avertissement de navigation : {nav_warning}"
+    return (
+        f"Voici les éléments interactifs actuels (Carte DOM) :"
+        f"{url_text}{alert_lines}{vp_text}\n{dom_text}"
+    )
+
+
 async def deploy_browser_navigation_monitor(
     res_view: dict,
     chat_id: str,
@@ -1430,6 +1455,20 @@ class BrowserToolDispatcher:
             else "low"
         )
 
+    async def acquire_browser_slot(self) -> None:
+        if not self._sem_acquired:
+            sem = get_global_browser_semaphore()
+            await sem.acquire()
+            self._sem_acquired = True
+
+    def release_browser_slot(self) -> None:
+        if self._sem_acquired:
+            self._sem_acquired = False
+            try:
+                get_global_browser_semaphore().release()
+            except ValueError:
+                pass
+
     async def ensure_engine_ready(
         self, start_url: Optional[str] = None, open_tab: bool = False
     ) -> Optional[dict]:
@@ -1467,13 +1506,25 @@ class BrowserToolDispatcher:
                 return None
 
         await cleanup_expired_browserviews(self.user_id, self.chat_id)
+        nav_res: Optional[dict] = None
         if start_url:
             if self.events:
-                await self.events.status(f"🌐 Navigation vers {start_url}...")
-            await self.browser.action_browser_control(
+                await self.events.status(
+                    f"🌐 Navigation vers {start_url}...", done=False
+                )
+            nav_res = await self.browser.action_browser_control(
                 command="navigate", value=start_url
             )
+        if self.events:
+            await self.events.status(
+                f"📸 [{self.sid}] Extraction de la carte DOM...", done=False
+            )
         res_view = await self.browser.highlight()
+        if isinstance(res_view, dict) and isinstance(nav_res, dict):
+            if nav_res.get("status") == "error":
+                res_view["nav_error"] = nav_res.get("message")
+            if nav_res.get("warning"):
+                res_view["nav_warning"] = nav_res.get("warning")
         self.last_view = res_view
         await deploy_browser_navigation_monitor(
             res_view,
@@ -1489,9 +1540,7 @@ class BrowserToolDispatcher:
         from echo_browser_lib import req_to_browser
         from echo_window_manager import get_window_manager
 
-        sem = get_global_browser_semaphore()
-        await sem.acquire()
-        self._sem_acquired = True
+        await self.acquire_browser_slot()
         self._stop_streaming.clear()
 
         if self.show_browser_hud:
@@ -1538,12 +1587,7 @@ class BrowserToolDispatcher:
         if self._proxy_task:
             self._proxy_task.cancel()
             self._proxy_task = None
-        if self._sem_acquired:
-            self._sem_acquired = False
-            try:
-                get_global_browser_semaphore().release()
-            except ValueError:
-                pass
+        self.release_browser_slot()
 
     async def on_cleanup(self) -> None:
         from echo_browser_lib import cleanup_expired_browserviews
@@ -2057,6 +2101,15 @@ class EchoAgentRunner:
                     }
 
                 # 5. Appel LLM via EchoGeminiClient.call_cascade
+                if events:
+                    await events.status(
+                        (
+                            f"📝 [{sid}] Synthèse d'étape ({slice_calls_used}/{slice_max_calls} appels)..."
+                            if is_slice_exhausted
+                            else f"🧠 [{sid}] Raisonnement en cours (Appel {slice_calls_used + 1}/{slice_max_calls})..."
+                        ),
+                        done=False,
+                    )
                 try:
                     data, model_used, _ = await EchoGeminiClient.call_cascade(
                         target_model_key=current_model_key,
@@ -2194,7 +2247,12 @@ class EchoAgentRunner:
                         synthesis = text.replace(
                             "[SATURATION_CONTEXTE]", ""
                         ).strip()
-                        first_msg = history[0]
+                        first_parts = history[0].get("parts", [])
+                        first_msg = (
+                            {"role": "user", "parts": [first_parts[0]]}
+                            if first_parts
+                            else history[0]
+                        )
                         history.clear()
                         history.append(first_msg)
                         resume_parts = [
@@ -2771,13 +2829,15 @@ class EchoSubagentController:
                 mark_subagent_running(chat_id, sid, True)
                 register_subagent_task(chat_id, sid, curr_task)
                 completed_normally = False
+                dispatcher: Any = custom_dispatcher
                 try:
                     history = state.get_thread_history(sid)
 
                     # Construction du ToolDispatcher (Standard ou Navigateur Web)
-                    dispatcher = custom_dispatcher
-                    if dispatcher is None:
-                        if eff_engine == "navigator":
+                    nav_res_view: Optional[dict] = None
+                    is_initial_nav = False
+                    if eff_engine == "navigator":
+                        if dispatcher is None:
                             parent_sub_sid = (
                                 ECHO_SUBAGENT_CONTEXT.get() or {}
                             ).get("sub_sid")
@@ -2786,93 +2846,96 @@ class EchoSubagentController:
                                 or parent_sub_sid
                                 or sid
                             )
-                            nav_disp = BrowserToolDispatcher(
+                            dispatcher = BrowserToolDispatcher(
                                 sid=sid,
                                 browser_session_id=browser_sid,
                                 chat_id=chat_id,
                                 user_id=user_id,
                                 events=events,
+                                browser_mode=existing_meta.get(
+                                    "browser_mode", "desktop"
+                                ),
+                                show_browser_hud=existing_meta.get(
+                                    "show_browser_hud", True
+                                ),
+                                use_multimodal_vision=existing_meta.get(
+                                    "use_multimodal_vision", True
+                                ),
+                                vision_grid_step=existing_meta.get(
+                                    "vision_grid_step", DEFAULT_VISION_GRID_STEP
+                                ),
+                                prune_threshold=existing_meta.get(
+                                    "prune_threshold", PRUNE_CONTENT_THRESHOLD
+                                ),
                             )
-                            res_view = await nav_disp.ensure_engine_ready(
+                        if events:
+                            await events.status(
+                                f"📡 Agent Navigateur [{dispatcher.browser_session_id[:12]}]: Prise de contrôle...",
+                                done=False,
+                            )
+                        await dispatcher.acquire_browser_slot()
+                        try:
+                            nav_res_view = await dispatcher.ensure_engine_ready(
                                 start_url=start_url,
                                 open_tab=(len(history) == 0),
                             )
-                            if res_view is None:
-                                update_subagent_status(state, sid, "error")
-                                return wrap_tool_output(
-                                    text="❌ Navigateur indisponible.",
-                                    status={
-                                        "status": "error",
-                                        "sid": sid,
-                                        "sub_sid": sid,
-                                    },
-                                )
-                            if not history:
-                                nav_prompt = SYS_NAV_BROWSER.format(
-                                    task_objective=effective_task
-                                    or "Explorer la page courante."
-                                )
-                                init_parts = [{"text": nav_prompt}]
-                                history.append(
-                                    {"role": "user", "parts": init_parts}
-                                )
-                                state.save_thread_step(
-                                    sid,
-                                    chat_id,
-                                    "navigator",
-                                    0,
-                                    "user",
-                                    init_parts,
-                                )
-                                dom_data = res_view.get("metadata", [])
-                                dom_text = json.dumps(
-                                    dom_data, ensure_ascii=False
-                                )[:60000]
-                                vp = res_view.get("viewport")
-                                vp_text = (
-                                    f"\nDimensions de l'écran (Viewport) : {vp['width']}x{vp['height']} pixels."
-                                    if vp
-                                    else ""
-                                )
-                                dom_parts = [
-                                    {
-                                        "text": f"Voici les éléments interactifs actuels (Carte DOM) :{vp_text}\n{dom_text}"
-                                    }
-                                ]
-                                history.append(
-                                    {"role": "user", "parts": dom_parts}
-                                )
-                                state.save_thread_step(
-                                    sid,
-                                    chat_id,
-                                    "navigator",
-                                    1,
-                                    "user",
-                                    dom_parts,
-                                )
-                                effective_task = ""
-                            dispatcher = nav_disp
-                        else:
-                            sub_tools, body_specs = resolve_delegate_tools(
-                                chat_id=chat_id,
-                                allowed_tools=eff_allowed_tools,
-                                __metadata__=__metadata__,
-                                __user__=__user__ or {"id": user_id},
+                        except Exception:
+                            dispatcher.release_browser_slot()
+                            raise
+                        if nav_res_view is None:
+                            dispatcher.release_browser_slot()
+                            update_subagent_status(state, sid, "error")
+                            return wrap_tool_output(
+                                text="❌ Navigateur indisponible.",
+                                status={
+                                    "status": "error",
+                                    "sid": sid,
+                                    "sub_sid": sid,
+                                },
                             )
-                            dispatcher = StandardToolDispatcher(
-                                sid=sid,
-                                chat_id=chat_id,
-                                user_id=user_id,
-                                state=state,
-                                sub_tools=sub_tools,
-                                body_tools_specs=body_specs,
-                                events=events,
-                                __user__=__user__ or {"id": user_id},
-                                __metadata__=__metadata__
-                                or {"chat_id": chat_id},
-                                __event_emitter__=__event_emitter__,
-                                __event_call__=__event_call__,
+                        if not history:
+                            is_initial_nav = True
+                            nav_prompt = SYS_NAV_BROWSER.format(
+                                task_objective=effective_task
+                                or "Explorer la page courante."
                             )
+                            init_parts = [
+                                {"text": nav_prompt},
+                                {"text": format_browser_dom_view(nav_res_view)},
+                            ]
+                            history.append(
+                                {"role": "user", "parts": init_parts}
+                            )
+                            state.save_thread_step(
+                                sid,
+                                chat_id,
+                                "navigator",
+                                0,
+                                "user",
+                                init_parts,
+                            )
+                            effective_task = ""
+                    elif dispatcher is None:
+                        sub_tools, body_specs = resolve_delegate_tools(
+                            chat_id=chat_id,
+                            allowed_tools=eff_allowed_tools,
+                            __metadata__=__metadata__,
+                            __user__=__user__ or {"id": user_id},
+                        )
+                        dispatcher = StandardToolDispatcher(
+                            sid=sid,
+                            chat_id=chat_id,
+                            user_id=user_id,
+                            state=state,
+                            sub_tools=sub_tools,
+                            body_tools_specs=body_specs,
+                            events=events,
+                            __user__=__user__ or {"id": user_id},
+                            __metadata__=__metadata__
+                            or {"chat_id": chat_id},
+                            __event_emitter__=__event_emitter__,
+                            __event_call__=__event_call__,
+                        )
 
                     # Scellement préventif si l'historique existant avait une functionCall orpheline
                     EchoAgentRunner._seal_dangling_function_calls(
@@ -2884,6 +2947,13 @@ class EchoSubagentController:
                         reason_msg="Reprise de session après interruption : appel précédent clos.",
                     )
 
+                    attach_resume_dom = (
+                        eff_engine == "navigator"
+                        and not is_initial_nav
+                        and nav_res_view is not None
+                        and bool(start_url or nav_res_view.get("nav_error"))
+                    )
+
                     # Injection de la tâche/directive ou d'une instruction de continuation de tranche
                     if effective_task:
                         wrapped = (
@@ -2892,6 +2962,10 @@ class EchoSubagentController:
                             else wrap_orchestrator_turn(effective_task)
                         )
                         user_parts = [{"text": wrapped}]
+                        if attach_resume_dom and nav_res_view is not None:
+                            user_parts.append(
+                                {"text": format_browser_dom_view(nav_res_view)}
+                            )
                         history.append({"role": "user", "parts": user_parts})
                         state.save_thread_step(
                             sid,
@@ -2916,6 +2990,10 @@ class EchoSubagentController:
                             else wrap_orchestrator_turn(cont_msg)
                         )
                         user_parts = [{"text": wrapped}]
+                        if attach_resume_dom and nav_res_view is not None:
+                            user_parts.append(
+                                {"text": format_browser_dom_view(nav_res_view)}
+                            )
                         history.append({"role": "user", "parts": user_parts})
                         state.save_thread_step(
                             sid,
@@ -2925,6 +3003,20 @@ class EchoSubagentController:
                             "user",
                             user_parts,
                         )
+
+                    nav_meta_fields = (
+                        {
+                            "browser_session_id": dispatcher.browser_session_id,
+                            "browser_mode": dispatcher.browser_mode,
+                            "show_browser_hud": dispatcher.show_browser_hud,
+                            "use_multimodal_vision": dispatcher.use_vision,
+                            "vision_grid_step": dispatcher.vision_grid_step,
+                            "prune_threshold": dispatcher.prune_threshold,
+                        }
+                        if eff_engine == "navigator"
+                        and isinstance(dispatcher, BrowserToolDispatcher)
+                        else {}
+                    )
 
                     save_subagent_meta(
                         state,
@@ -2948,6 +3040,7 @@ class EchoSubagentController:
                             "final_system": final_system,
                             "slice_calls_limit": slice_max_calls,
                             "status": "running",
+                            **nav_meta_fields,
                         },
                     )
 
@@ -2991,6 +3084,10 @@ class EchoSubagentController:
                             pass
                     return res
                 finally:
+                    if eff_engine == "navigator" and isinstance(
+                        dispatcher, BrowserToolDispatcher
+                    ):
+                        dispatcher.release_browser_slot()
                     if not completed_normally:
                         meta_after = get_subagent_meta(state, sid) or {}
                         if meta_after.get("status") == "running":

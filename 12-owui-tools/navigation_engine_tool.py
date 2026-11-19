@@ -1,16 +1,16 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 6.7.4.1
+version: 6.7.5.1
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.5.1: Délégation directe de delegate_web_browsing à EchoSubagentController.run_or_resume (avec start_url et custom_dispatcher).
 # 6.7.4.1: Évaluation de clamp_model en amont de get_generation_config dans analyze_web_page.
 # 6.6.30.2: Filtrage des pensées via extract_response_parts_and_text dans analyze_web_page.
 # 6.6.30.1: Migration de delegate_web_browsing sur BrowserToolDispatcher + EchoSubagentController (support sub_sid, tranches supervisées) et suppression de close_web_thread.
 # 6.6.5.1: Isolation des captures dans browserviews/ (resource_type='browserview', statut transient/retained), GC automatique, ouverture unique d'onglet et ajout de retain_browser_frame.
-# 6.6.2.2: Migration de _deploy_navigation_monitor et stream_proxy vers get_window_manager() (open_tab/broadcast_browser_frame) et ajout de open_browser_ui.
 
 import os
 import time
@@ -195,9 +195,6 @@ class Tools:
         browser_session_id = parent_sub_sid if parent_sub_sid else sid
 
         u_valves = (__user__ or {}).get("valves", self.UserValves())
-        state = EchoStateManager(user_id=uid, chat_id=chat_id)
-        existing_history = state.get_thread_history(sid)
-        is_new_session = len(existing_history) == 0
 
         async def _analyze_cb(url: str, query: str) -> Any:
             return await self.analyze_web_page(url, query, __user__, __metadata__, __event_call__, __event_emitter__)
@@ -221,34 +218,10 @@ class Tools:
             archive_page_cb=_archive_cb,
         )
 
-        await events.status(f"📡 Agent Navigateur [{browser_session_id[:12]}]: Prise de contrôle...")
-        res_view = await dispatcher.ensure_engine_ready(
-            start_url=start_url, open_tab=is_new_session
-        )
-        if res_view is None:
-            return wrap_tool_output(
-                text="❌ Navigateur indisponible.",
-                status={"status": "error", "sid": sid, "sub_sid": sid},
-            )
-
-        if is_new_session:
-            import orjson as _orjson
-            sys_prompt = SYS_NAV_BROWSER.format(task_objective=task_objective)
-            state.save_thread_step(sid, chat_id, "navigator", 0, "user", [{"text": sys_prompt}])
-            dom_data = res_view.get("metadata", [])
-            dom_text = _orjson.dumps(dom_data).decode("utf-8")[:60000]
-            vp = res_view.get("viewport")
-            vp_text = f"\nDimensions de l'écran (Viewport) : {vp['width']}x{vp['height']} pixels." if vp else ""
-            dom_parts = [{"text": f"Voici les éléments interactifs actuels (Carte DOM) :{vp_text}\n{dom_text}"}]
-            state.save_thread_step(sid, chat_id, "navigator", 1, "user", dom_parts)
-            effective_task = ""
-        else:
-            effective_task = task_objective
-
         return await EchoSubagentController.run_or_resume(
             user_id=uid,
             chat_id=chat_id,
-            task=effective_task,
+            task=task_objective,
             sub_sid=sid,
             target_model_key=target_model_key,
             slice_max_calls=ECHO_SUBAGENT_CHECKPOINT_CALLS,
@@ -256,6 +229,7 @@ class Tools:
             autonomous_slice=False,
             engine="navigator",
             role_name="Navigateur Web",
+            start_url=start_url,
             custom_dispatcher=dispatcher,
             __user__=__user__,
             __metadata__=__metadata__,

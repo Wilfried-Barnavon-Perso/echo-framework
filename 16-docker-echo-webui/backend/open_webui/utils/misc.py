@@ -465,9 +465,10 @@ def convert_output_to_messages(
         if not pending_content and not pending_tool_calls and not pending_reasoning and not pending_reasoning_details:
             return
 
+        # [ECHO-V6-HOOK] Monoculture Gemini souveraine : toujours émettre '' au lieu de None pour préserver l'intégrité des filtres et shadows ECHO
         message = {
             'role': 'assistant',
-            'content': '\n'.join(pending_content) if pending_content else (None if pending_tool_calls else ''),
+            'content': '\n'.join(pending_content) if pending_content else '',
             **({'tool_calls': pending_tool_calls} if pending_tool_calls else {}),
         }
 
