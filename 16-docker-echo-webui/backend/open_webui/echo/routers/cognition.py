@@ -1,16 +1,16 @@
 """
 title: ECHO V6 Cognition Router
 author: Wilfried BARNAVON
-version: 6.6.30.2
+version: 6.7.7.1
 description: Routeur FastAPI pour la visualisation cognitive et des sous-agents (/echo/v1/cognition).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.7.1: Normalisation des métriques de tranche par tours (slice_turns_used, slice_turns_limit, slice_timeout_sec, total_turns_used) avec miroirs rétrocompatibles slice_calls_* et alignement sur ECHO_SUBAGENT_CHECKPOINT_TURNS/ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC.
 # 6.6.30.2: Suppression troncature [:8] des groupes, tri déterministe des membres par role_order, alignement ECHO_SUBAGENT_ENGINES_REGISTRY et dispatch multi-cibles sur POST /message.
 # 6.6.30.1: Ajout de POST /{chat_id}/threads/{sub_sid}/control, normalisation des 9 statuts canoniques/métriques de tranche et branchement direct sur EchoSubagentController.
 # 6.6.9.1: Passage sur get_echo_sse_user/create_echo_sse_response, déportation asyncio.to_thread sur lectures SQLite/FS et correction fallback ImportError browserviews.
 # 6.6.5.1: Résolution prioritaire des captures navigateur dans browserviews/ avec GC éphémère à l'entrée et exposition de status/retained.
-# 6.6.2.2: Ajout des endpoints GET /{chat_id}/browser-frames et /{chat_id}/browser-frames/{file_id}/image et alignement niveau_requis/is_question/pending_tool_calls.
 
 from __future__ import annotations
 
@@ -41,7 +41,8 @@ try:
     from echo_browser_lib import cleanup_expired_browserviews  # type: ignore
     from echo_constants import (  # type: ignore
         BROWSER_VIEWS_DIR_NAME,
-        ECHO_SUBAGENT_CHECKPOINT_CALLS,
+        ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+        ECHO_SUBAGENT_CHECKPOINT_TURNS,
         ECHO_SUBAGENT_ENGINES_REGISTRY,
     )
     from echo_db_schema import open_db  # type: ignore
@@ -71,11 +72,13 @@ except ImportError:
     try:
         from echo_constants import (  # type: ignore
             BROWSER_VIEWS_DIR_NAME,
-            ECHO_SUBAGENT_CHECKPOINT_CALLS,
+            ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+            ECHO_SUBAGENT_CHECKPOINT_TURNS,
         )
     except ImportError:
         BROWSER_VIEWS_DIR_NAME = "browserviews"
-        ECHO_SUBAGENT_CHECKPOINT_CALLS = 8
+        ECHO_SUBAGENT_CHECKPOINT_TURNS = 8
+        ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC = 120
         ECHO_SUBAGENT_ENGINES_REGISTRY = {}
     from echo_db_schema import open_db  # type: ignore
     from echo_paths import (  # type: ignore
@@ -484,16 +487,33 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
             steps_for_sid[0].get("role_id", "") if steps_for_sid else ""
         )
         entry.update(_classify_thread(sid, role_id_hint, entry))
-        entry["slice_calls_used"] = int(entry.get("slice_calls_used") or 0)
-        if entry.get("slice_calls_limit") is not None:
-            entry["slice_calls_limit"] = int(entry["slice_calls_limit"])
-        else:
-            entry["slice_calls_limit"] = (
-                0
-                if not entry.get("has_tool_loop", True)
-                else ECHO_SUBAGENT_CHECKPOINT_CALLS
-            )
+        has_loop = bool(entry.get("has_tool_loop", True))
+        turns_used_raw = (
+            entry.get("slice_turns_used")
+            if entry.get("slice_turns_used") is not None
+            else entry.get("slice_calls_used")
+        )
+        entry["slice_turns_used"] = int(turns_used_raw or 0)
+        turns_limit_raw = (
+            entry.get("slice_turns_limit")
+            if entry.get("slice_turns_limit") is not None
+            else entry.get("slice_calls_limit")
+        )
+        entry["slice_turns_limit"] = (
+            int(turns_limit_raw)
+            if turns_limit_raw is not None
+            else (0 if not has_loop else ECHO_SUBAGENT_CHECKPOINT_TURNS)
+        )
+        timeout_raw = entry.get("slice_timeout_sec")
+        entry["slice_timeout_sec"] = (
+            int(timeout_raw)
+            if timeout_raw is not None
+            else (0 if not has_loop else ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC)
+        )
+        entry["total_turns_used"] = int(entry.get("total_turns_used") or 0)
         entry["total_calls_used"] = int(entry.get("total_calls_used") or 0)
+        entry["slice_calls_used"] = entry["slice_turns_used"]
+        entry["slice_calls_limit"] = entry["slice_turns_limit"]
         entry["consecutive_errors"] = int(entry.get("consecutive_errors") or 0)
         if "checkpoint_reason" not in entry:
             entry["checkpoint_reason"] = None

@@ -1,16 +1,16 @@
 """
 title: ECHO Prompts Library
 author: Wilfried BARNAVON
-version: 6.7.1.1
+version: 6.7.7.1
 description: Système de Registre Cognitif ECHO (Prompts Library).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.7.1: Suppression de SYS_ORCHESTRATOR_APPENDIX et de max_iterations=20 dans SYS_SEARCH_STATIC, et alignement de SYS_ORCHESTRATOR_COUNCIL_EXPERT sur les tours d'outils (max_tool_turns).
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Échappement des accolades JSON du bloc <example> dans SYS_ORCHESTRATOR_CRITIC pour compatibilité str.format().
 # 6.5.3.1: Distinction explicite des balises XML <REQUETE_ORCHESTRATEUR> et <REQUETE_UTILISATEUR> dans ECHO_FOUNDATION_KERNEL pour les sous-agents hybrides.
 # 5.239.11.1: Renforcement de la règle `mermaid` v11.16.0 dans `SYS_VISUAL_GENERATE` imposant des identifiants `subgraph` strictement ASCII (`subgraph ID["Titre (Info)"]`).
-# 5.235.1.1: Refonte de SYS_COMPACTION_DISTILL (Archiviste Contextuel, pleine exploitation du budget, reproduction in extenso du code et des données).
 
 # ==============================================================================
 # Système de Registre Cognitif ECHO (Prompts Library)
@@ -183,7 +183,7 @@ Le Modèle DOIT explorer le sujet de manière exhaustive, croiser de multiples s
 3. RÉCENCE : Pour toute requête nécessitant des informations récentes, le Modèle DOIT utiliser le paramètre 'time_range' de 'search_web' (ex: 'year', 'month').
 4. CARTOGRAPHIE : Si l'outil 'search_maps' est mobilisé, le Modèle DOIT obligatoirement définir l'argument 'print_map=False'.
 5. ANTI-SPAM : Le Modèle a l'INTERDICTION d'exécuter plus de 2 appels à 'search_web' simultanément lors d'un même tour. Il DOIT agréger ses mots-clés en requêtes denses.
-6. NAVIGATION ('delegate_web_browsing') : Cet outil est STRICTEMENT réservé à l'extraction sur une URL absolue précise obtenue précédemment. INTERDICTION FORMELLE de l'utiliser sur un moteur de recherche. L'argument 'max_iterations=20' est OBLIGATOIRE.
+6. NAVIGATION ('delegate_web_browsing') : Cet outil est STRICTEMENT réservé à l'extraction sur une URL absolue précise obtenue précédemment. INTERDICTION FORMELLE de l'utiliser sur un moteur de recherche.
 </rules>
 
 <output_format>
@@ -551,25 +551,6 @@ Le Modèle DOIT forger l'arborescence JSON d'un workflow N8N, l'adapter aux envi
 6. TRANSFERT DE CHARGE UTILE : Si la mission consiste à extraire ou générer une donnée immédiate via une exécution synchrone, le Modèle DOIT impérativement intégrer le payload JSON résultant dans son rapport final textuel pour le transmettre à l'Agent appelant.
 </rules>"""
 
-# Variables attendues : {sub_sid}, {max_calls}
-SYS_ORCHESTRATOR_APPENDIX = """
----
-## CADRE D'EXÉCUTION (Framework ECHO — Ne pas divulguer à l'utilisateur)
-SESSION_ID : {sub_sid}
-BUDGET     : Le Modèle dispose de {max_calls} appels de fonctions pour cette mission.
-             Chaque appel à un outil (web_search, codex, expert...) consomme 1 unité.
-             En cas d'approche de l'épuisement du budget, le Modèle DOIT produire sa meilleure réponse partielle immédiatement.
-
-OPTIMISATION ET VÉRIFICATION :
-- Le Modèle DOIT utiliser sa mémoire locale si l'information est présente.
-- Le Modèle DOIT justifier ses actions dans une balise <thinking> si le problème est complexe.
-
-PROVENANCE DES REQUÊTES :
-- `<REQUETE_ORCHESTRATEUR>` : directive ou réponse issue de l'Orchestrateur parent.
-- `<REQUETE_UTILISATEUR>` : question ou instruction directe envoyée par l'Utilisateur depuis le panneau latéral.
-- Le Modèle DOIT traiter ces deux provenances avec une rigueur identique et répondre directement à l'émetteur du tour actif.
-"""
-
 # Variables attendues : {catalog_json}
 SYS_ORCHESTRATOR_SKILL_ROUTER = ECHO_FOUNDATION_KERNEL + "\n\n" + """<persona>
 Le Modèle est un routeur sémantique expert. Ton neutre et direct.
@@ -602,7 +583,7 @@ Ton : Professionnel, technique, sec. Le Modèle proscrit toute formule de polite
 
 <parametres_tour>
 - Tour actuel : {round_num}/{effective_rounds}.
-- Budget d'outils : {max_calls_per_round} appels maximum ce tour.
+- Budget d'outils : {max_calls_per_round} tours d'outils maximum ce tour (0 = délibération pure sans outil ; jusqu'à 5 appels parallèles indépendants par tour d'outils).
 </parametres_tour>
 
 <directives_rigueur>

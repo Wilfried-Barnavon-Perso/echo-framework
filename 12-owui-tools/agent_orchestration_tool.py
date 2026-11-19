@@ -1,17 +1,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 6.7.1.2
+version: 6.7.7.1
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.7.1: Migration vers le découpage en tours d'outils (COUNCIL_EXPERT_MAX_TOOL_TURNS_PER_ROUND = 3 [0..6], ECHO_COUNCIL_ROUND_TIMEOUT_SEC = 120, ECHO_AUTONOMOUS_MAX_TURNS = 15, ECHO_AUTONOMOUS_TIMEOUT_SEC = 300).
 # 6.7.1.2: Câblage run_cognitive_step sur synthèse/critique/consolidation, role_order déterministe, normalisation _normalize_workers_input et fail-fast Phase 1.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Câblage de consult_council et consult_supervised_workers sur EchoSubagentController et suppression de list_councils, close_council, list_supervised_tasks et close_supervised_task.
 # 6.6.2.1: Persistance save_subagent_meta et save_thread_step pour la synthèse consult_council et les phases critique/consolidation de consult_supervised_workers.
-# 5.239.17.1: Alignement de la Valve COGNITIVE_TIMEOUT par défaut sur ECHO_LLM_CALL_TIMEOUT (600s).
-# 5.238.1.1: Ajout de MODEL_ATHENA dans target_model, synthesis_model et critic_model de consult_council et consult_supervised_workers.
 
 import sys
 import orjson as json
@@ -32,8 +31,10 @@ from echo_subagent_hub import EchoSubagentController, save_subagent_meta
 from echo_constants import (
     ECHO_API_KEY_RETRIES,
     ECHO_API_MAX_RETRIES,
-    ECHO_AUTONOMOUS_ROUND_MAX_CALLS,
-    ECHO_COUNCIL_DEFAULT_CALLS_PER_ROUND,
+    ECHO_AUTONOMOUS_MAX_TURNS,
+    ECHO_AUTONOMOUS_TIMEOUT_SEC,
+    ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND,
+    ECHO_COUNCIL_ROUND_TIMEOUT_SEC,
     ECHO_LLM_CALL_TIMEOUT,
     get_generation_config,
 )
@@ -68,7 +69,12 @@ class Tools:
         COUNCIL_ROUNDS_MIN: int = Field(default=3, description="Nombre de tours de parole minimum et par défaut pour un conseil d'experts.")
         COUNCIL_ROUNDS_MAX: int = Field(default=10, description="Limite haute du nombre de tours de parole.")
         COUNCIL_MAX_SKILLS: int = Field(default=7, description="Nombre maximum d'expertises (skills) distinctes au conseil (hors synthétiseur).")
-        COUNCIL_EXPERT_MAX_CALLS_PER_ROUND: int = Field(default=ECHO_COUNCIL_DEFAULT_CALLS_PER_ROUND, ge=0, le=10, description="Budget max d'appels d'outils par expert et par tour de conseil.")
+        COUNCIL_EXPERT_MAX_TOOL_TURNS_PER_ROUND: int = Field(
+            default=ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND,
+            ge=0,
+            le=6,
+            description="Nombre max de tours d'outils par expert et par tour de conseil (0 = délibération pure sans outil).",
+        )
         COUNCIL_MAX_PR_COMPLEXITY: int = Field(default=60, description="Complexité maximale (participants * rounds) d'un conseil.")
         SUPERVISOR_MAX_CORRECTION_ROUNDS: int = Field(default=3, ge=1, le=5, description="Nombre maximum de tours de correction du superviseur.")
 
@@ -446,11 +452,11 @@ class Tools:
                 })
                 participant_idx += 1
 
-        max_calls_per_round = self.user_valves.COUNCIL_EXPERT_MAX_CALLS_PER_ROUND
+        max_turns_per_round = self.user_valves.COUNCIL_EXPERT_MAX_TOOL_TURNS_PER_ROUND
 
         await events.status(
             f"🏛️ Conseil [{cid}] convoqué : {len(roster)} experts, {effective_rounds} tours, "
-            f"{max_calls_per_round} outils/tour..."
+            f"{max_turns_per_round} tours d'outils/tour..."
         )
 
         # ── Phase 1 & 2 : Boucle des tours (protocole Delphi via EchoSubagentController, verrouillé par council_id) ──
@@ -503,7 +509,7 @@ class Tools:
                         members=members,
                         round_num=round_num,
                         effective_rounds=effective_rounds,
-                        max_calls_per_round=max_calls_per_round,
+                        max_calls_per_round=max_turns_per_round,
                         current_time=current_time
                     )
 
@@ -515,7 +521,8 @@ class Tools:
                         skill_id=sid,
                         sub_sid=agent_sid,
                         target_model_key=target_model,
-                        slice_max_calls=max_calls_per_round,
+                        slice_max_turns=max_turns_per_round,
+                        slice_timeout_sec=ECHO_COUNCIL_ROUND_TIMEOUT_SEC,
                         autonomous_slice=True,
                         engine="council",
                         group_id=cid,
@@ -738,7 +745,7 @@ class Tools:
             else:
                 text_val = str(result)
             if budget_exhausted:
-                text_val += "\n\n[⚠️ AVERTISSEMENT SYSTÈME : Ce worker a épuisé son budget d'appels d'outils et a été interrompu. Si la direction de son travail est bonne et que la tâche justifie d'être poursuivie, le Superviseur DOIT retourner un statut `needs_correction` avec des directives pour la suite. La relance lui octroiera automatiquement un nouveau budget.]"
+                text_val += "\n\n[⚠️ AVERTISSEMENT SYSTÈME : Ce worker a atteint le garde-fou de sa passe autonome (tours ou délai) et a été interrompu. Si la direction de son travail est bonne et que la tâche justifie d'être poursuivie, le Superviseur DOIT retourner un statut `needs_correction` avec des directives pour la suite. La relance lui octroiera automatiquement une nouvelle passe autonome.]"
             return text_val
 
         # Validation gracieuse des skill_id éventuels (repli en rôle descriptif si absent)
@@ -767,7 +774,8 @@ class Tools:
                 skill_id=w_role,
                 sub_sid=agent_sid,
                 target_model_key=target_model,
-                slice_max_calls=ECHO_AUTONOMOUS_ROUND_MAX_CALLS,
+                slice_max_turns=ECHO_AUTONOMOUS_MAX_TURNS,
+                slice_timeout_sec=ECHO_AUTONOMOUS_TIMEOUT_SEC,
                 autonomous_slice=True,
                 engine="supervisor",
                 group_id=task_id,
@@ -918,7 +926,8 @@ class Tools:
                     skill_id=w_role,
                     sub_sid=agent_sid,
                     target_model_key=target_model,
-                    slice_max_calls=ECHO_AUTONOMOUS_ROUND_MAX_CALLS,
+                    slice_max_turns=ECHO_AUTONOMOUS_MAX_TURNS,
+                    slice_timeout_sec=ECHO_AUTONOMOUS_TIMEOUT_SEC,
                     autonomous_slice=True,
                     engine="supervisor",
                     group_id=task_id,

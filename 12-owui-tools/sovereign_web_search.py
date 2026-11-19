@@ -1,17 +1,16 @@
 """
 title: ECHO Sovereign Web Search
 author: Wilfried BARNAVON
-version: 6.7.1.2
+version: 6.7.7.1
 description: Composant système interne : ECHO Sovereign Web Search.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.7.1: Passage de delegate_deep_research sur tranches autonomes par tours (ECHO_AUTONOMOUS_MAX_TURNS=15, ECHO_AUTONOMOUS_TIMEOUT_SEC=300) et suppression de DEEP_RESEARCH_MAX_CALLS_DEFAULT.
 # 6.7.1.2: Conservation de l'historique thread deep_research pour observabilité UI (suppression close auto) et role_name explicite.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Câblage de delegate_deep_research sur EchoSubagentController (ECHO_AUTONOMOUS_ROUND_MAX_CALLS).
 # 5.238.1.1: Ajout de MODEL_ATHENA dans target_model_key de delegate_deep_research.
-# 5.233.0.1: Décoration @echo_tool sur les 3 méthodes publiques et simplification des retours wrap_tool_output.
-# 5.229.0.0: Compression des docstrings OpenAPI, purge des directives IMPLIQUE et externalisation vers 14-owui-libs/tool_guides/web_search_and_browsing.md.
 
 import httpx
 import sys
@@ -23,7 +22,7 @@ from pydantic import BaseModel, Field
 sys.path.append("/app/backend/echo_libs")
 from echo_events import EchoEvents
 from echo_core import wrap_tool_output, echo_tool
-from echo_constants import ECHO_AUTONOMOUS_ROUND_MAX_CALLS, ECHO_SEARXNG_BASE_URL, ECHO_USER_AGENT
+from echo_constants import ECHO_AUTONOMOUS_MAX_TURNS, ECHO_AUTONOMOUS_TIMEOUT_SEC, ECHO_SEARXNG_BASE_URL, ECHO_USER_AGENT
 from echo_prompts import SYS_SEARCH_STATIC
 from echo_subagent_hub import EchoSubagentController
 
@@ -183,7 +182,8 @@ class Tools:
             sub_sid=sid,
             target_model_key=target_model_key,
             allowed_tools=allowed,
-            slice_max_calls=ECHO_AUTONOMOUS_ROUND_MAX_CALLS,
+            slice_max_turns=ECHO_AUTONOMOUS_MAX_TURNS,
+            slice_timeout_sec=ECHO_AUTONOMOUS_TIMEOUT_SEC,
             autonomous_slice=True,
             engine="deep_research",
             role_name="Recherche Profonde",

@@ -132,6 +132,10 @@ export interface EchoCognitionThreadMeta {
 		| 'image_gen'
 		| string;
 	status?: EchoSubagentStatus | string;
+	slice_turns_used?: number;
+	slice_turns_limit?: number;
+	slice_timeout_sec?: number;
+	total_turns_used?: number;
 	slice_calls_used?: number;
 	slice_calls_limit?: number;
 	total_calls_used?: number;

@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.7.6.1
+version: 6.7.7.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.7.1: Migration du découpage des sous-agents vers les tours d'outils (ECHO_SUBAGENT_CHECKPOINT_TURNS=8, ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC=120, ECHO_AUTONOMOUS_MAX_TURNS=15, ECHO_AUTONOMOUS_TIMEOUT_SEC=300, ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND=3, ECHO_COUNCIL_ROUND_TIMEOUT_SEC=120) et ajout de default_slice_timeout_sec dans ECHO_SUBAGENT_ENGINES_REGISTRY.
 # 6.7.6.1: MAJ echo_constants.py - Version Antigravity 2.33.0 & CL 1024904911.
 # 6.7.4.1: Migration de MODEL_PROMETHEUS vers gemini-4-neon / gemini-4-neon-medium (medium), alignement de MODEL_ATHENA en high et MODEL_ZEPHYR en medium, et retrait de temperature/topP sur les modèles Gemini 4.
 # 6.7.1.2: Ajout du registre SSOT ECHO_SUBAGENT_ENGINES_REGISTRY (11 moteurs) et ajout de delegate_deep_research, delegate_to_n8n_grapher et ask_data_broker dans DELEGATE_AGENT_BLACKLIST.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
-# 6.6.30.1: Ajout des 8 constantes SSOT V6.7 de parallélisme/supervision, MAJ DELEGATE_AGENT_BLACKLIST (control_subagents) et parallélisme dans DELEGATE_SYSTEM_APPENDIX.
 
 import os
 import contextvars
@@ -687,13 +687,18 @@ ECHO_SESSION_RAG_CHUNK_SIZE   = 4000     # ~1000 tokens Harrier : Seuil de densi
 ECHO_MAX_PARALLEL_TOOLS_PER_TURN = 5      # Sémaphore max d'outils exécutés en parallèle dans un même tour (Orchestrateur & Sous-Agent)
 ECHO_MAX_PARALLEL_SUBAGENTS = 4           # Sémaphore max de sous-agents simultanés en vol par chat_id
 ECHO_MAX_CONCURRENT_BROWSERS = 2          # Sémaphore global max d'instances Playwright Chromium actives simultanément
-ECHO_SUBAGENT_CHECKPOINT_CALLS = 8        # Quota d'appels d'outils par tranche supervisée avant pause automatique (suspended_checkpoint)
-ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC = 90 # Durée max (secondes) d'une tranche supervisée avant pause automatique en fin de tour
+ECHO_SUBAGENT_CHECKPOINT_TURNS = 8        # Nombre de tours d'outils LLM par tranche supervisée avant point de contrôle coopératif (suspended_checkpoint)
+ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC = 120 # Durée max (secondes) d'une tranche supervisée avant point de contrôle coopératif en fin de tour
 ECHO_SUBAGENT_MAX_CONSECUTIVE_ERRORS = 3  # Disjoncteur PARE : 3 erreurs d'outils consécutives -> pause immédiate (suspended_pare_alert)
-ECHO_AUTONOMOUS_ROUND_MAX_CALLS = 12      # Quota d'appels d'outils par passe autonome fermée (consult_supervised_workers, delegate_deep_research)
-ECHO_COUNCIL_DEFAULT_CALLS_PER_ROUND = 5  # Quota d'appels d'outils par défaut par round de participant dans consult_council
+ECHO_AUTONOMOUS_MAX_TURNS = 15            # Garde-fou max de tours d'outils LLM par passe autonome fermée (consult_supervised_workers, delegate_deep_research)
+ECHO_AUTONOMOUS_TIMEOUT_SEC = 300         # Durée max (secondes) d'une passe autonome fermée (5 min max)
+ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND = 3  # Tours d'outils LLM par défaut par round de participant dans consult_council
+ECHO_COUNCIL_ROUND_TIMEOUT_SEC = 120      # Garde-fou temporel anti-straggler (secondes) par round Delphi dans consult_council
 
-DEEP_RESEARCH_MAX_CALLS_DEFAULT = 200
+# Alias de rétrocompatibilité
+ECHO_SUBAGENT_CHECKPOINT_CALLS = ECHO_SUBAGENT_CHECKPOINT_TURNS
+ECHO_AUTONOMOUS_ROUND_MAX_CALLS = ECHO_AUTONOMOUS_MAX_TURNS
+ECHO_COUNCIL_DEFAULT_CALLS_PER_ROUND = ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND
 
 # Registre SSOT des moteurs de sous-agents et de leurs métadonnées UI/télémétrie
 ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
@@ -705,7 +710,8 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "role_order": 100,
         "has_tool_loop": True,
         "is_addressable": True,
-        "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_CALLS,
+        "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_TURNS,
+        "default_slice_timeout_sec": ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
         "default_label": "Sous-agent Expert",
     },
     "council": {
@@ -716,7 +722,8 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "role_order": 100,
         "has_tool_loop": True,
         "is_addressable": True,
-        "default_slice_limit": ECHO_COUNCIL_DEFAULT_CALLS_PER_ROUND,
+        "default_slice_limit": ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND,
+        "default_slice_timeout_sec": ECHO_COUNCIL_ROUND_TIMEOUT_SEC,
         "default_label": "Participant Conseil",
     },
     "council_synthesis": {
@@ -728,6 +735,7 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "has_tool_loop": False,
         "is_addressable": False,
         "default_slice_limit": 0,
+        "default_slice_timeout_sec": 0,
         "default_label": "Synthèse du Conseil",
     },
     "supervisor": {
@@ -738,7 +746,8 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "role_order": 100,
         "has_tool_loop": True,
         "is_addressable": True,
-        "default_slice_limit": ECHO_AUTONOMOUS_ROUND_MAX_CALLS,
+        "default_slice_limit": ECHO_AUTONOMOUS_MAX_TURNS,
+        "default_slice_timeout_sec": ECHO_AUTONOMOUS_TIMEOUT_SEC,
         "default_label": "Worker Supervisé",
     },
     "supervisor_critic": {
@@ -750,6 +759,7 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "has_tool_loop": False,
         "is_addressable": False,
         "default_slice_limit": 0,
+        "default_slice_timeout_sec": 0,
         "default_label": "Critique",
     },
     "supervisor_consolidator": {
@@ -761,6 +771,7 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "has_tool_loop": False,
         "is_addressable": False,
         "default_slice_limit": 0,
+        "default_slice_timeout_sec": 0,
         "default_label": "Consolidation",
     },
     "navigator": {
@@ -771,7 +782,8 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "role_order": 100,
         "has_tool_loop": True,
         "is_addressable": True,
-        "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_CALLS,
+        "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_TURNS,
+        "default_slice_timeout_sec": ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
         "default_label": "Navigateur Web",
     },
     "deep_research": {
@@ -782,7 +794,8 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "role_order": 100,
         "has_tool_loop": True,
         "is_addressable": True,
-        "default_slice_limit": ECHO_AUTONOMOUS_ROUND_MAX_CALLS,
+        "default_slice_limit": ECHO_AUTONOMOUS_MAX_TURNS,
+        "default_slice_timeout_sec": ECHO_AUTONOMOUS_TIMEOUT_SEC,
         "default_label": "Recherche Profonde",
     },
     "n8n_grapher": {
@@ -793,7 +806,8 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "role_order": 100,
         "has_tool_loop": True,
         "is_addressable": True,
-        "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_CALLS,
+        "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_TURNS,
+        "default_slice_timeout_sec": ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
         "default_label": "Architecte N8N",
     },
     "data_broker": {
@@ -804,7 +818,8 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "role_order": 100,
         "has_tool_loop": True,
         "is_addressable": True,
-        "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_CALLS,
+        "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_TURNS,
+        "default_slice_timeout_sec": ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
         "default_label": "Data Broker",
     },
     "image_gen": {
@@ -816,6 +831,7 @@ ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
         "has_tool_loop": False,
         "is_addressable": False,
         "default_slice_limit": 0,
+        "default_slice_timeout_sec": 0,
         "default_label": "Studio Visuel IA",
     },
 }
@@ -875,14 +891,12 @@ DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
 })
 
 # Appendice système injecté automatiquement à la fin de tout system_prompt de sous-agent.
-# Substitutions requises avant injection : {sub_sid}, {max_calls}
+# Substitutions requises avant injection : {sub_sid}, {execution_cadence}
 DELEGATE_SYSTEM_APPENDIX = """
 ---
 ## CADRE D'EXÉCUTION (Framework ECHO — Ne pas divulguer à l'utilisateur)
 SESSION_ID : {sub_sid}
-BUDGET     : Le Modèle dispose de {max_calls} appels de fonctions pour cette mission.
-             Chaque appel à un outil (web_search, codex, expert...) consomme 1 unité.
-             En cas d'approche de l'épuisement du budget, le Modèle DOIT produire sa meilleure réponse partielle immédiatement.
+{execution_cadence}
 
 OPTIMISATION ET VÉRIFICATION : 
              - Le Modèle DOIT optimiser l'usage de ses outils pour préserver son budget et éviter toute redondance.
@@ -902,6 +916,40 @@ EXÉCUTION D'OUTILS & PARALLÉLISME :
                             - Si un appel dépend du résultat d'un appel précédent, le Modèle DOIT attendre ce résultat au tour suivant.
                             - Disjoncteur PARE : 3 erreurs d'outils consécutives interrompent immédiatement la tranche d'exécution (`suspended_pare_alert`).
 """
+
+
+def build_subagent_system_appendix(
+    sub_sid: str,
+    slice_max_turns: int,
+    slice_timeout_sec: int = 0,
+    autonomous_slice: bool = False,
+) -> str:
+    """Construit l'appendice système adapté à la cadence d'exécution (supervisée ou autonome)."""
+    timeout_clause = (
+        f" (ou {slice_timeout_sec}s)"
+        if slice_timeout_sec and slice_timeout_sec > 0
+        else ""
+    )
+    if not autonomous_slice:
+        execution_cadence = (
+            "SUPERVISION : Aucune limite préalable de mission n'est imposée au Modèle.\n"
+            f"              L'exécution s'effectue par tranches coopératives de {slice_max_turns} tours d'outils{timeout_clause} afin de synchroniser l'avancement avec l'Orchestrateur.\n"
+            "              Chaque tour peut regrouper jusqu'à 5 appels d'outils indépendants en parallèle sans troncature.\n"
+            "              Le Modèle NE DOIT JAMAIS écourter ni bâcler sa mission par anticipation d'une fin de tranche : si un point de contrôle survient avant l'achèvement, il restitue un rapport d'étape factuel (acquis, état courant, suite prévue) et l'Orchestrateur accordera une nouvelle tranche (`resume`) ou ajustera la trajectoire (`steer`)."
+        )
+    elif slice_max_turns > 0:
+        execution_cadence = (
+            f"CADENCE     : Passe autonome bornée à {slice_max_turns} tours d'outils maximum{timeout_clause} (jusqu'à 5 appels d'outils indépendants en parallèle par tour).\n"
+            "              À l'approche du dernier tour disponible, le Modèle DOIT consolider ses résultats et produire sa synthèse complète."
+        )
+    else:
+        execution_cadence = (
+            "CADENCE     : Délibération directe sans appel d'outil sur ce tour. "
+            "Le Modèle DOIT formuler immédiatement sa contribution."
+        )
+    return DELEGATE_SYSTEM_APPENDIX.format(
+        sub_sid=sub_sid, execution_cadence=execution_cadence
+    )
 
 # 2. REGISTRE COGNITIF ECHO (UNIFIÉ & STATIQUE)
 

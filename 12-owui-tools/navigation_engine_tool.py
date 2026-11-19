@@ -1,16 +1,16 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 6.7.5.1
+version: 6.7.7.1
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.7.1: Alignement de delegate_web_browsing sur ECHO_SUBAGENT_CHECKPOINT_TURNS (8) et ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC (120).
 # 6.7.5.1: Délégation directe de delegate_web_browsing à EchoSubagentController.run_or_resume (avec start_url et custom_dispatcher).
 # 6.7.4.1: Évaluation de clamp_model en amont de get_generation_config dans analyze_web_page.
 # 6.6.30.2: Filtrage des pensées via extract_response_parts_and_text dans analyze_web_page.
 # 6.6.30.1: Migration de delegate_web_browsing sur BrowserToolDispatcher + EchoSubagentController (support sub_sid, tranches supervisées) et suppression de close_web_thread.
-# 6.6.5.1: Isolation des captures dans browserviews/ (resource_type='browserview', statut transient/retained), GC automatique, ouverture unique d'onglet et ajout de retain_browser_frame.
 
 import os
 import time
@@ -45,7 +45,7 @@ from echo_constants import (
     FILE_INGESTION_STATUS,
     PRUNE_CONTENT_THRESHOLD,
     DEFAULT_VISION_GRID_STEP,
-    ECHO_SUBAGENT_CHECKPOINT_CALLS,
+    ECHO_SUBAGENT_CHECKPOINT_TURNS,
     ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
     ECHO_SUBAGENT_CONTEXT,
 )
@@ -224,7 +224,7 @@ class Tools:
             task=task_objective,
             sub_sid=sid,
             target_model_key=target_model_key,
-            slice_max_calls=ECHO_SUBAGENT_CHECKPOINT_CALLS,
+            slice_max_turns=ECHO_SUBAGENT_CHECKPOINT_TURNS,
             slice_timeout_sec=ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
             autonomous_slice=False,
             engine="navigator",

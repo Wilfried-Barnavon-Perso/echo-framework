@@ -1,17 +1,16 @@
 """
 title: ECHO N8N Orchestrator
 author: ECHO
-version: 6.7.1.2
+version: 6.7.7.1
 description: Outil agentique de cycle de vie et d'exécution N8N (Phase 2 & 3). Refactorisation institutionnelle et N8N Grapher.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.7.1: Passage de delegate_to_n8n_grapher sur ECHO_SUBAGENT_CHECKPOINT_TURNS (8) et ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC (120).
 # 6.7.1.2: Délégation directe de delegate_to_n8n_grapher via EchoSubagentController.run_or_resume (engine="n8n_grapher").
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 5.233.0.1: Décoration @echo_tool sur les 12 méthodes publiques et remplacement intégral des 68 appels wrap_tool_output par des retours directs.
 # 5.231.42.2: Validation pré-vol des chemins WriteBinaryFile/ReadWriteFile (__ECHO_DOWNLOAD_DIR__/), purge de l'ancien démon au redéploiement et transmission de echo_workflow_id à la suppression.
-# 5.231.21.3: Délégation Vault chiffré à EchoStateManager, désencapsulation/échappement JSON dans _inject_secrets, masquage des secrets dans les logs et alignement ask_user.
-# 5.231.20.2: Conversion en async def des 6 outils synchrones, remplacement de httpx.Client bloquant par httpx.AsyncClient, sécurisation anti-traversal des IDs et alignement de allowed_tools (code_executor) dans delegate_to_n8n_grapher.
 
 import sys
 import asyncio
@@ -28,7 +27,7 @@ from echo_core import echo_tool
 from echo_events import EchoEvents
 from echo_constants import (
     ECHO_N8N_WORKER_URL,
-    ECHO_SUBAGENT_CHECKPOINT_CALLS,
+    ECHO_SUBAGENT_CHECKPOINT_TURNS,
     ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
 )
 from echo_paths import sanitize_echo_id
@@ -716,7 +715,7 @@ class Tools:
                 sub_sid=f"thread_n8n_{uuid.uuid4().hex[:8]}",
                 target_model_key="MODEL_PROMETHEUS",
                 allowed_tools=allowed,
-                slice_max_calls=ECHO_SUBAGENT_CHECKPOINT_CALLS,
+                slice_max_turns=ECHO_SUBAGENT_CHECKPOINT_TURNS,
                 slice_timeout_sec=ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
                 autonomous_slice=False,
                 engine="n8n_grapher",

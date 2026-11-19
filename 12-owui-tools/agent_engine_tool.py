@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Engine
 author: ECHO Framework
-version: 6.7.1.1
+version: 6.7.7.1
 description: Composant système interne : ECHO Agent Engine (Délégation par tranches supervisées & Contrôleur unifié).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.7.1: Alignement sur ECHO_SUBAGENT_CHECKPOINT_TURNS (8) et ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC (120) pour delegate_to_agent et control_subagents.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Refactorisation de delegate_to_agent sur EchoSubagentController (tranches supervisées) et création de l'outil unifié control_subagents (fusion des 8 outils de maintenance).
 # 6.6.2.1: Mise à jour temps réel de subagent_meta.model_key via update_subagent_meta_fields lors des cascades et appels à new_cognitive_level.
 # 6.6.0.1: Persistance de model_used/is_cascaded_fallback, passage du timeout à ECHO_LLM_CALL_TIMEOUT (600s) et filet de sécurité idempotent truncate_and_spill_tool_output vers tools_output/.
-# 6.5.3.1: Support des tours hybrides Orchestrateur/Humain (<REQUETE_ORCHESTRATEUR> / <REQUETE_UTILISATEUR>), verrou par sub_sid et file FIFO SQLite via echo_subagent_hub.
 
 import sys
 from typing import Any, List, Literal, Optional
@@ -20,7 +20,7 @@ sys.path.append("/app/backend/echo_libs")
 from echo_constants import (  # noqa: E402
     ECHO_API_KEY_RETRIES,
     ECHO_API_MAX_RETRIES,
-    ECHO_SUBAGENT_CHECKPOINT_CALLS,
+    ECHO_SUBAGENT_CHECKPOINT_TURNS,
     ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
 )
 from echo_core import (  # noqa: E402
@@ -105,7 +105,7 @@ class Tools:
             context_distillate=distillate,
             target_model_key=target_model_key,
             allowed_tools=allowed_tools,
-            slice_max_calls=ECHO_SUBAGENT_CHECKPOINT_CALLS,
+            slice_max_turns=ECHO_SUBAGENT_CHECKPOINT_TURNS,
             slice_timeout_sec=ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
             autonomous_slice=False,
             engine="delegate",

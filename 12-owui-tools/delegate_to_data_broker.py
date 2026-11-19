@@ -1,11 +1,12 @@
 """
 title: ECHO Delegate to Data Broker
 author: ECHO
-version: 6.7.1.1
+version: 6.7.7.1
 description: Délégation de collecte de données externes structurées au Data Broker autonome.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.7.1: Passage de ask_data_broker sur ECHO_SUBAGENT_CHECKPOINT_TURNS (8) et ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC (120).
 # 6.7.1.1: Délégation directe de ask_data_broker via EchoSubagentController.run_or_resume (engine="data_broker").
 # 5.233.0.1: Généralisation de l'encapsulation @echo_tool sur ask_data_broker.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
@@ -17,7 +18,7 @@ import uuid
 
 sys.path.append("/app/backend/echo_libs")
 from echo_constants import (  # noqa: E402
-    ECHO_SUBAGENT_CHECKPOINT_CALLS,
+    ECHO_SUBAGENT_CHECKPOINT_TURNS,
     ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
 )
 from echo_core import echo_tool  # noqa: E402
@@ -73,7 +74,7 @@ class Tools:
                 sub_sid=f"thread_databroker_{uuid.uuid4().hex[:8]}",
                 target_model_key="MODEL_APOLLO",
                 allowed_tools=allowed,
-                slice_max_calls=ECHO_SUBAGENT_CHECKPOINT_CALLS,
+                slice_max_turns=ECHO_SUBAGENT_CHECKPOINT_TURNS,
                 slice_timeout_sec=ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
                 autonomous_slice=False,
                 engine="data_broker",

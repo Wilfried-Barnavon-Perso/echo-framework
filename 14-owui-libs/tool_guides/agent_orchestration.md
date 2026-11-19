@@ -1,7 +1,7 @@
 ---
 domain_id: agent_orchestration
-version: v6.6.30.1
-updated_at: 2026-11-18
+version: v6.7.7.1
+updated_at: 2026-11-19
 name: Orchestration Multi-Agents, Sous-Agents Autonomes, Data Broker & Skills
 description: Délégation par tranches supervisées (delegate_to_agent), pilotage unifié (control_subagents), Table Ronde Delphi (consult_council), Ouvriers Supervisés (consult_supervised_workers), Data Broker et gestion des Skills.
 tools: [delegate_to_agent, control_subagents, consult_council, consult_supervised_workers, forge_skill, list_skills, read_skill, search_skill, delete_user_skill, ask_data_broker]
@@ -14,9 +14,9 @@ keywords: [agent, sous-agent, délégation, control_subagents, tranche, checkpoi
 
 | Moteur | Architecture & Modèles | Cas d'Usage Nominal | Gestion des Sessions |
 | :--- | :--- | :--- | :--- |
-| **`delegate_to_agent`** | 1 Sous-Agent autonome outillé (défaut `MODEL_APOLLO`, exécuté par **tranches supervisées de 8 appels d'outils / 90s** avec disjoncteur PARE à 3 erreurs). Parallélisable (jusqu'à 4 sous-agents simultanés par tour). | Tâche spécialisée isolée, exécution technique multi-outils, offload cognitif parallèle. | `sub_sid` piloté via **`control_subagents`**. |
-| **`consult_council`** | **Table Ronde Delphi** : 1 à 7 profils (`participants` = liste de `skill_id`) démultipliés par `multiplier` ($1 \dots 5$, min 2 participants effectifs) débattant en parallèle sur $R$ tours ($3 \dots 10$, 5 outils/tour) + Synthétiseur (`MODEL_PROMETHEUS`). | Sujet multidimensionnel, incertain ou stratégique nécessitant un débat contradictoire multi-perspectives ou intra-spécialité. | `council_id` piloté via **`control_subagents`**. |
-| **`consult_supervised_workers`** | **Boucle Critique/Correction** : $N$ sous-agents Ouvriers (`Workers`, `MODEL_APOLLO`, 12 outils/passe) + 1 Superviseur Critique (`MODEL_PROMETHEUS`) + 1 Consolidateur (`MODEL_APOLLO`). | Livrables complexes exigeant une qualité irréprochable (code critique, architecture, rédaction formelle multi-parties) avec vérification et correction itérative. | `task_id` (`sup_xxxxxxxx`) piloté via **`control_subagents`**. |
+| **`delegate_to_agent`** | 1 Sous-Agent autonome outillé (défaut `MODEL_APOLLO`, exécuté par **tranches coopératives de 8 tours d'outils (jusqu'à 5 appels parallèles/tour) / 120s** sans limite préalable de mission, avec disjoncteur PARE à 3 erreurs). Parallélisable (jusqu'à 4 sous-agents simultanés par tour). | Tâche spécialisée isolée, exécution technique multi-outils, offload cognitif parallèle. | `sub_sid` piloté via **`control_subagents`**. |
+| **`consult_council`** | **Table Ronde Delphi** : 1 à 7 profils (`participants` = liste de `skill_id`) démultipliés par `multiplier` ($1 \dots 5$, min 2 participants effectifs) débattant en parallèle sur $R$ tours ($3 \dots 10$, **3 tours d'outils par défaut (`0..6`) / 120s par round Delphi**) + Synthétiseur (`MODEL_PROMETHEUS`). | Sujet multidimensionnel, incertain ou stratégique nécessitant un débat contradictoire multi-perspectives ou intra-spécialité. | `council_id` piloté via **`control_subagents`**. |
+| **`consult_supervised_workers`** | **Boucle Critique/Correction** : $N$ sous-agents Ouvriers (`Workers`, `MODEL_APOLLO`, **passe autonome de 15 tours d'outils / 300s**) + 1 Superviseur Critique (`MODEL_PROMETHEUS`) + 1 Consolidateur (`MODEL_APOLLO`). | Livrables complexes exigeant une qualité irréprochable (code critique, architecture, rédaction formelle multi-parties) avec vérification et correction itérative. | `task_id` (`sup_xxxxxxxx`) piloté via **`control_subagents`**. |
 | **`ask_data_broker`** | Sous-agent `MODEL_APOLLO` pré-câblé sur les outils de recherche Web, Identity Vault et MCP. | Collecte et extraction rapide de données externes structurées (Web + MCP) sans saturer l'Orchestrateur. | Stateless (pas de session persistée). |
 
 ---
@@ -42,17 +42,17 @@ Les **Skills** définissent l'expertise métier et la méthodologie d'un sous-ag
 - `sub_sid` : Identifiant (`^[a-zA-Z0-9_-]{3,48}$`) choisi par l'Orchestrateur (ex: `"audit_api"`, `"test_db"`) ou auto-généré si omis. **Pour lancer plusieurs sous-agents en parallèle dans le même tour**, émettre plusieurs appels `delegate_to_agent` simultanés avec des `sub_sid` explicites distincts.
 - `with_context_distillate=True` : Injecte un résumé distillé de la conversation principale dans le prompt initial du sous-agent.
 - `target_model_key` : `"MODEL_ZEPHYR"`, `"MODEL_APOLLO"` (défaut), `"MODEL_PROMETHEUS"` ou `"MODEL_ATHENA"`.
-- **Gouvernance par Tranches Supervisées (sans plafond fixe)** :
-  - Chaque invocation ou reprise accorde une tranche fraîche de **8 appels d'outils** (ou **90 secondes**).
+- **Gouvernance par Tranches Coopératives (sans limite préalable de mission)** :
+  - Chaque invocation ou reprise accorde une tranche fraîche de **8 tours d'outils** (jusqu'à 5 appels parallèles par tour) ou **120 secondes**.
   - Si la mission n'est pas achevée en fin de tranche, l'agent retourne `status="suspended_checkpoint"` avec sa synthèse d'étape. S'il subit 3 erreurs d'outils consécutives, il s'arrête en `status="suspended_pare_alert"`.
 
 ### 3.2 Contrôleur Unifié des Sous-Agents (`control_subagents`)
 Outil unique gouvernant le cycle de vie de tous les sous-agents unitaires (`sub_sid`), conseils (`council_id`), missions supervisées (`sup_xxxxxxxx`) et sessions navigateur (`thread_web_*`) :
 - `action` :
-  - `"status"` (défaut) : État temps réel des sessions (`status`, tranche `slice_calls_used/limit`, cumul `total_calls_used`, `checkpoint_reason`, file FIFO). Filtrable par `filter_type` (`"all" | "agent" | "council" | "supervisor" | "web"`).
+  - `"status"` (défaut) : État temps réel des sessions (`status`, tranche `slice_turns_used/limit`, cumul `total_turns_used`, `total_calls_used`, `checkpoint_reason`, file FIFO). Filtrable par `filter_type` (`"all" | "agent" | "council" | "supervisor" | "web"`).
   - `"collect"` : Lit la dernière production et les métadonnées des `target_ids` sans consommer d'appel LLM.
   - `"steer"` : Injecte une `directive` (`<REQUETE_ORCHESTRATEUR>`) dans la file FIFO de `target_ids` (dépilée entre deux tours d'outils) et modifie optionnellement `target_model_key`.
-  - `"resume"` : Relance `target_ids` pour une nouvelle tranche fraîche de 8 appels / 90s (avec `directive` et/ou `target_model_key` optionnels). **Si `target_ids` contient plusieurs identifiants, les reprises s'exécutent simultanément en parallèle (`asyncio.gather`)**.
+  - `"resume"` : Relance `target_ids` pour une nouvelle tranche fraîche de 8 tours d'outils (jusqu'à 5 appels parallèles/tour) / 120s (avec `directive` et/ou `target_model_key` optionnels). **Si `target_ids` contient plusieurs identifiants, les reprises s'exécutent simultanément en parallèle (`asyncio.gather`)**.
   - `"suspend"` : Met en pause proprement (`status="suspended"`) à la fin du tour d'outil courant.
   - `"kill"` : Interrompt immédiatement l'exécution, scelle proprement l'historique d'outils et libère les ressources (ex: navigateur) sans supprimer l'historique.
   - `"summarize"` : Génère un résumé structuré en 4 sections de l'historique des `target_ids` sans les fermer.
@@ -61,7 +61,7 @@ Outil unique gouvernant le cycle de vie de tous les sous-agents unitaires (`sub_
 ### 3.3 Table Ronde Delphi (`consult_council`)
 - `participants` : Liste de `skill_id` existants (`List[str]`, maximum `7`, avec `len(participants) * multiplier >= 2`). Tous les `skill_id` DOIVENT exister (sinon appeler `forge_skill` au préalable).
 - `multiplier` : Facteur multiplicateur par `skill_id` (entier `1` à `5`, défaut `1`), permettant d'instancier plusieurs experts de même spécialité pour se contredire entre eux.
-- `rounds` : Nombre de tours de délibération (min et défaut `3`, max `10`, sous la contrainte arithmétique stricte `(len(participants) * multiplier) * rounds <= 60`).
+- `rounds` : Nombre de tours de délibération (min et défaut `3`, max `10`, sous la contrainte arithmétique stricte `(len(participants) * multiplier) * rounds <= 60`), avec **3 tours d'outils par défaut (`0..6`) / 120s par round Delphi** (`0` = délibération pure sans outil).
 - `council_id` : Identifiant choisi pour le conseil (ex: `"arch_review"`).
 - `close_on_finish` : `False` par défaut (permet de relancer `consult_council` avec le même `council_id` pour approfondir). Une fois la délibération terminée, appeler **`control_subagents(action="close", target_ids=[council_id])`**.
 - **Directive de restitution** : Le rapport de synthèse du conseil n'étant pas affiché directement à l'Utilisateur, l'Orchestrateur DOIT en restituer la substance dans sa réponse.

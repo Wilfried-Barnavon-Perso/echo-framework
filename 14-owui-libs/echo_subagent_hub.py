@@ -2,16 +2,16 @@
 """
 title: ECHO Subagent Hub
 author: Wilfried BARNAVON
-version: 6.7.5.1
+version: 6.7.7.1
 description: Contrôleur exécutif unifié des sous-agents, tranches supervisées, ToolDispatcher et file FIFO hybride.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.7.1: Découpage des tranches par tours d'outils et timeout (slice_max_turns, slice_timeout_sec, autonomous_slice), suppression de la troncature zéro-batch dans execute_tool_calls et de la limite préalable de mission dans build_subagent_system_appendix.
 # 6.7.5.1: Unification du flux navigator sous verrou EchoSubagentController (step 0 2 parts, carte DOM à la reprise, sémaphore dès ensure_engine_ready, format_browser_dom_view et statuts pré-LLM).
 # 6.7.1.3: Câblage ECHO_SUBAGENT_ENGINES_REGISTRY dans save_subagent_meta et ajout de extract_response_parts_and_text, run_cognitive_step et dispatch_message.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Moteur cognitif unifié (EchoAgentRunner, EchoSubagentController, StandardToolDispatcher, BrowserToolDispatcher), tranches supervisées 8/90s, PARE 3 erreurs, _TOOLS_CACHE et scellement kill.
-# 6.6.2.1: Ajout du compteur monotone _COGNITION_SEQ (bump_cognition_seq, get_cognition_seq) et de update_subagent_meta_fields.
 
 from __future__ import annotations
 
@@ -34,7 +34,6 @@ from echo_constants import (
     DEFAULT_VISION_GRID_STEP,
     DELEGATE_AGENT_BLACKLIST,
     DELEGATE_AGENT_SYSTEM_TOOLS,
-    DELEGATE_SYSTEM_APPENDIX,
     ECHO_API_KEY_RETRIES,
     ECHO_API_MAX_RETRIES,
     ECHO_LLM_CALL_TIMEOUT,
@@ -42,14 +41,15 @@ from echo_constants import (
     ECHO_MAX_CONTEXT_SIZE,
     ECHO_MAX_PARALLEL_SUBAGENTS,
     ECHO_MAX_PARALLEL_TOOLS_PER_TURN,
-    ECHO_SUBAGENT_CHECKPOINT_CALLS,
     ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+    ECHO_SUBAGENT_CHECKPOINT_TURNS,
     ECHO_SUBAGENT_CONTEXT,
     ECHO_SUBAGENT_ENGINES_REGISTRY,
     ECHO_SUBAGENT_MAX_CONSECUTIVE_ERRORS,
     ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS,
     ECHO_TOOLS_CACHE_MAX_SIZE,
     PRUNE_CONTENT_THRESHOLD,
+    build_subagent_system_appendix,
     get_generation_config,
 )
 from echo_core import split_thought_process
@@ -371,11 +371,38 @@ def save_subagent_meta(
         0
         if not has_loop
         else int(
-            eng_cfg.get("default_slice_limit", ECHO_SUBAGENT_CHECKPOINT_CALLS)
+            eng_cfg.get("default_slice_limit", ECHO_SUBAGENT_CHECKPOINT_TURNS)
         )
     )
-    payload.setdefault("slice_calls_used", 0)
-    payload.setdefault("slice_calls_limit", default_limit)
+    default_timeout = (
+        0
+        if not has_loop
+        else int(
+            eng_cfg.get(
+                "default_slice_timeout_sec", ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC
+            )
+        )
+    )
+    slice_turns_used = int(
+        payload.get("slice_turns_used")
+        if payload.get("slice_turns_used") is not None
+        else (payload.get("slice_calls_used") or 0)
+    )
+    slice_turns_limit = int(
+        payload.get("slice_turns_limit")
+        if payload.get("slice_turns_limit") is not None
+        else (
+            payload.get("slice_calls_limit")
+            if payload.get("slice_calls_limit") is not None
+            else default_limit
+        )
+    )
+    payload["slice_turns_used"] = slice_turns_used
+    payload["slice_turns_limit"] = slice_turns_limit
+    payload["slice_calls_used"] = slice_turns_used
+    payload["slice_calls_limit"] = slice_turns_limit
+    payload.setdefault("slice_timeout_sec", default_timeout)
+    payload.setdefault("total_turns_used", 0)
     payload.setdefault("total_calls_used", 0)
     payload.setdefault("consecutive_errors", 0)
     payload.setdefault("checkpoint_reason", None)
@@ -1139,10 +1166,9 @@ class StandardToolDispatcher:
                     response_parts.append({"functionResponse": _cfr})
             return response_parts, 1, 0, escalated, "new_cognitive_level"
 
-        # 2. Découpage selon le quota restant dans la tranche supervisée
-        budget = max(1, remaining_slice_calls)
-        allowed_calls = tool_calls[:budget]
-        deferred_calls = tool_calls[budget:]
+        # 2. Plafonnement par tour uniquement (ECHO_MAX_PARALLEL_TOOLS_PER_TURN = 5)
+        allowed_calls = tool_calls[:ECHO_MAX_PARALLEL_TOOLS_PER_TURN]
+        excess_calls = tool_calls[ECHO_MAX_PARALLEL_TOOLS_PER_TURN:]
 
         sem = asyncio.Semaphore(ECHO_MAX_PARALLEL_TOOLS_PER_TURN)
 
@@ -1174,21 +1200,21 @@ class StandardToolDispatcher:
             else:
                 err_streak = 0
 
-        for fc in deferred_calls:
+        for fc in excess_calls:
             fn_id = fc.get("id")
-            _dfr: dict = {
+            _efr: dict = {
                 "name": fc.get("name", "unknown"),
                 "response": {
-                    "status": "deferred_checkpoint_limit",
+                    "status": "exceeded_parallel_per_turn_limit",
                     "message": (
-                        "Tranche supervisée atteinte : cet appel n'a pas été exécuté "
-                        "et sera repris après validation du point de contrôle."
+                        f"Limite par tour atteinte ({ECHO_MAX_PARALLEL_TOOLS_PER_TURN} appels simultanés max par tour). "
+                        "Réémettre au tour suivant si nécessaire."
                     ),
                 },
             }
             if fn_id:
-                _dfr["id"] = fn_id
-            response_parts.append({"functionResponse": _dfr})
+                _efr["id"] = fn_id
+            response_parts.append({"functionResponse": _efr})
 
         return (
             response_parts,
@@ -1613,9 +1639,8 @@ class BrowserToolDispatcher:
         current_model_key: str,
         history: List[dict],
     ) -> tuple[List[dict], int, int, Optional[str], str]:
-        budget = max(1, remaining_slice_calls)
-        allowed_calls = tool_calls[:budget]
-        deferred_calls = tool_calls[budget:]
+        allowed_calls = tool_calls[:ECHO_MAX_PARALLEL_TOOLS_PER_TURN]
+        excess_calls = tool_calls[ECHO_MAX_PARALLEL_TOOLS_PER_TURN:]
 
         response_parts: List[dict] = []
         last_view = None
@@ -1797,18 +1822,21 @@ class BrowserToolDispatcher:
                 _fr["id"] = fn_id
             response_parts.append({"functionResponse": _fr})
 
-        for fc in deferred_calls:
+        for fc in excess_calls:
             fn_id = fc.get("id")
-            _dfr = {
+            _efr: dict = {
                 "name": fc.get("name", "unknown"),
                 "response": {
-                    "status": "deferred_checkpoint_limit",
-                    "message": "Tranche supervisée atteinte : action reportée au prochain point de contrôle.",
+                    "status": "exceeded_parallel_per_turn_limit",
+                    "message": (
+                        f"Limite par tour atteinte ({ECHO_MAX_PARALLEL_TOOLS_PER_TURN} appels simultanés max par tour). "
+                        "Réémettre au tour suivant si nécessaire."
+                    ),
                 },
             }
             if fn_id:
-                _dfr["id"] = fn_id
-            response_parts.append({"functionResponse": _dfr})
+                _efr["id"] = fn_id
+            response_parts.append({"functionResponse": _efr})
 
         if last_view:
             self.last_view = last_view
@@ -1857,7 +1885,7 @@ class EchoAgentRunner:
     Moteur d'exécution unifié par tranches supervisées pour tous les sous-agents ECHO.
     Gère :
     - Dépilage inter-tours de la file FIFO (Orchestrateur <REQUETE_ORCHESTRATEUR> & Humain <REQUETE_UTILISATEUR>)
-    - Tranches supervisées (8 appels / 90s) avec synthèse d'étape en mode NONE -> status='suspended_checkpoint'
+    - Tranches coopératives par tours d'outils (8 tours / 120s) avec synthèse d'étape en mode NONE -> status='suspended_checkpoint'
     - Disjoncteur PARE (3 erreurs consécutives) -> status='suspended_pare_alert'
     - Pause manuelle gracieuse (request_subagent_suspend) -> status='suspended'
     - Interruption immédiate (kill / CancelledError) avec scellement synthétique des functionCall ouverts -> status='killed'
@@ -1933,7 +1961,8 @@ class EchoAgentRunner:
         dispatcher: ToolDispatcher,
         final_system: Optional[str],
         current_model_key: str,
-        slice_max_calls: int = ECHO_SUBAGENT_CHECKPOINT_CALLS,
+        slice_max_turns: Optional[int] = None,
+        slice_max_calls: int = ECHO_SUBAGENT_CHECKPOINT_TURNS,
         slice_timeout_sec: int = ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
         autonomous_slice: bool = False,
         events: Any = None,
@@ -1948,9 +1977,13 @@ class EchoAgentRunner:
         )
         from echo_gemini_client import EchoGeminiClient
 
+        eff_max_turns = int(
+            slice_max_turns if slice_max_turns is not None else slice_max_calls
+        )
         meta = get_subagent_meta(state, sid) or {"sub_sid": sid}
+        total_turns_used = int(meta.get("total_turns_used") or 0)
         total_calls_used = int(meta.get("total_calls_used") or 0)
-        slice_calls_used = 0
+        slice_turns_used = 0
         consecutive_errors = 0
         checkpoint_reason: Optional[str] = None
         is_cascaded_fallback = False
@@ -1965,8 +1998,12 @@ class EchoAgentRunner:
             sid,
             status="running",
             model_key=current_model_key,
+            slice_turns_used=0,
+            slice_turns_limit=eff_max_turns,
+            slice_timeout_sec=slice_timeout_sec,
             slice_calls_used=0,
-            slice_calls_limit=slice_max_calls,
+            slice_calls_limit=eff_max_turns,
+            total_turns_used=total_turns_used,
             total_calls_used=total_calls_used,
             consecutive_errors=0,
             checkpoint_reason=None,
@@ -2016,46 +2053,56 @@ class EchoAgentRunner:
                         state,
                         sid,
                         status="suspended",
-                        slice_calls_used=slice_calls_used,
+                        slice_turns_used=slice_turns_used,
+                        slice_turns_limit=eff_max_turns,
+                        slice_timeout_sec=slice_timeout_sec,
+                        slice_calls_used=slice_turns_used,
+                        slice_calls_limit=eff_max_turns,
+                        total_turns_used=total_turns_used,
                         total_calls_used=total_calls_used,
                         consecutive_errors=consecutive_errors,
                         checkpoint_reason=checkpoint_reason,
                     )
                     if events:
                         await events.status(
-                            f"⏸️ [{sid}] Mis en pause ({slice_calls_used}/{slice_max_calls} appels).",
+                            f"⏸️ [{sid}] Mis en pause ({slice_turns_used}/{eff_max_turns} tours, {total_calls_used} outils).",
                             done=True,
                         )
                     return wrap_tool_output(
                         text=(
                             f"⏸️ Sous-agent `{sid}` mis en pause sur demande "
-                            f"({slice_calls_used}/{slice_max_calls} appels dans la tranche, "
-                            f"{total_calls_used} au total)."
+                            f"({slice_turns_used}/{eff_max_turns} tours dans la tranche, "
+                            f"{total_calls_used} outils cumulés)."
                         ),
                         status={
                             "status": "suspended",
                             "sid": sid,
                             "sub_sid": sid,
                             "checkpoint_reason": checkpoint_reason,
-                            "slice_calls_used": slice_calls_used,
-                            "slice_calls_limit": slice_max_calls,
+                            "slice_turns_used": slice_turns_used,
+                            "slice_turns_limit": eff_max_turns,
+                            "slice_timeout_sec": slice_timeout_sec,
+                            "total_turns_used": total_turns_used,
                             "total_calls_used": total_calls_used,
+                            "slice_calls_used": slice_turns_used,
+                            "slice_calls_limit": eff_max_turns,
                             "model_used": current_model_key,
                         },
                     )
 
-                # 2. Vérification d'échéance de tranche (quota d'appels ou timeout de tranche)
+                # 2. Vérification d'échéance de tranche (quota de tours d'outils ou timeout de tranche)
                 elapsed_sec = time.monotonic() - slice_started_at
-                is_calls_exhausted = slice_calls_used >= slice_max_calls
+                is_turns_exhausted = slice_turns_used >= eff_max_turns
                 is_timeout_exhausted = (
-                    not autonomous_slice
-                    and slice_calls_used > 0
+                    slice_timeout_sec is not None
+                    and slice_timeout_sec > 0
+                    and slice_turns_used > 0
                     and elapsed_sec >= slice_timeout_sec
                 )
-                is_slice_exhausted = is_calls_exhausted or is_timeout_exhausted
+                is_slice_exhausted = is_turns_exhausted or is_timeout_exhausted
                 if is_slice_exhausted and checkpoint_reason is None:
                     checkpoint_reason = (
-                        "timeout" if is_timeout_exhausted else "calls_limit"
+                        "timeout" if is_timeout_exhausted else "turns_limit"
                     )
 
                 fn_decls = dispatcher.get_tool_declarations()
@@ -2102,14 +2149,17 @@ class EchoAgentRunner:
 
                 # 5. Appel LLM via EchoGeminiClient.call_cascade
                 if events:
-                    await events.status(
-                        (
-                            f"📝 [{sid}] Synthèse d'étape ({slice_calls_used}/{slice_max_calls} appels)..."
-                            if is_slice_exhausted
-                            else f"🧠 [{sid}] Raisonnement en cours (Appel {slice_calls_used + 1}/{slice_max_calls})..."
-                        ),
-                        done=False,
-                    )
+                    if eff_max_turns == 0:
+                        pre_status_msg = f"🧠 [{sid}] Délibération directe..."
+                    elif is_slice_exhausted:
+                        pre_status_msg = (
+                            f"📝 [{sid}] Synthèse d'étape ({slice_turns_used}/{eff_max_turns} tours, {total_calls_used} outils)..."
+                        )
+                    else:
+                        pre_status_msg = (
+                            f"🧠 [{sid}] Raisonnement en cours (Tour {slice_turns_used + 1}/{eff_max_turns})..."
+                        )
+                    await events.status(pre_status_msg, done=False)
                 try:
                     data, model_used, _ = await EchoGeminiClient.call_cascade(
                         target_model_key=current_model_key,
@@ -2204,7 +2254,12 @@ class EchoAgentRunner:
                             sid,
                             status="pending_question",
                             checkpoint_reason="question",
-                            slice_calls_used=slice_calls_used,
+                            slice_turns_used=slice_turns_used,
+                            slice_turns_limit=eff_max_turns,
+                            slice_timeout_sec=slice_timeout_sec,
+                            slice_calls_used=slice_turns_used,
+                            slice_calls_limit=eff_max_turns,
+                            total_turns_used=total_turns_used,
                             total_calls_used=total_calls_used,
                             last_output_preview=question[:1000],
                         )
@@ -2216,9 +2271,13 @@ class EchoAgentRunner:
                                 "sub_sid": sid,
                                 "question": question,
                                 "progress": progress or "(en cours)",
-                                "slice_calls_used": slice_calls_used,
-                                "slice_calls_limit": slice_max_calls,
+                                "slice_turns_used": slice_turns_used,
+                                "slice_turns_limit": eff_max_turns,
+                                "slice_timeout_sec": slice_timeout_sec,
+                                "total_turns_used": total_turns_used,
                                 "total_calls_used": total_calls_used,
+                                "slice_calls_used": slice_turns_used,
+                                "slice_calls_limit": eff_max_turns,
                             },
                         )
 
@@ -2281,26 +2340,31 @@ class EchoAgentRunner:
                     final_text = text or "(Réponse vide)"
                     if is_slice_exhausted and not autonomous_slice:
                         final_status_for_hook = "suspended_checkpoint"
+                        eff_reason = checkpoint_reason or "turns_limit"
                         update_subagent_meta_fields(
                             state,
                             sid,
                             status="suspended_checkpoint",
-                            checkpoint_reason=checkpoint_reason or "calls_limit",
-                            slice_calls_used=slice_calls_used,
-                            slice_calls_limit=slice_max_calls,
+                            checkpoint_reason=eff_reason,
+                            slice_turns_used=slice_turns_used,
+                            slice_turns_limit=eff_max_turns,
+                            slice_timeout_sec=slice_timeout_sec,
+                            slice_calls_used=slice_turns_used,
+                            slice_calls_limit=eff_max_turns,
+                            total_turns_used=total_turns_used,
                             total_calls_used=total_calls_used,
                             consecutive_errors=consecutive_errors,
                             last_output_preview=final_text[:1000],
                         )
                         if events:
                             await events.status(
-                                f"⏸️ [{sid}] Point de contrôle atteint ({slice_calls_used}/{slice_max_calls} appels, {total_calls_used} cumulés).",
+                                f"⏸️ [{sid}] Point de contrôle atteint ({slice_turns_used}/{eff_max_turns} tours, {total_calls_used} outils cumulés).",
                                 done=True,
                             )
                         header = (
-                            f"⏸️ **[POINT DE CONTRÔLE SOUS-AGENT `{sid}` — Tranche {slice_calls_used}/{slice_max_calls} appels "
-                            f"(cumul : {total_calls_used}) | Raison : {checkpoint_reason or 'calls_limit'}]**\n"
-                            f"Utiliser `control_subagents(action='resume', target_ids=['{sid}'])` pour accorder une nouvelle tranche (+{ECHO_SUBAGENT_CHECKPOINT_CALLS} appels), "
+                            f"⏸️ **[POINT DE CONTRÔLE SOUS-AGENT `{sid}` — Tranche {slice_turns_used}/{eff_max_turns} tours d'outils "
+                            f"({total_calls_used} outils cumulés) | Raison : {eff_reason}]**\n"
+                            f"Utiliser `control_subagents(action='resume', target_ids=['{sid}'])` pour accorder une nouvelle tranche (+{ECHO_SUBAGENT_CHECKPOINT_TURNS} tours), "
                             f"`action='steer'` pour réorienter, ou `action='close'` si le résultat suffit.\n\n"
                         )
                         return wrap_tool_output(
@@ -2310,19 +2374,24 @@ class EchoAgentRunner:
                                 "sid": sid,
                                 "sub_sid": sid,
                                 "warning": "checkpoint_reached",
-                                "checkpoint_reason": checkpoint_reason
-                                or "calls_limit",
-                                "slice_calls_used": slice_calls_used,
-                                "slice_calls_limit": slice_max_calls,
+                                "checkpoint_reason": eff_reason,
+                                "slice_turns_used": slice_turns_used,
+                                "slice_turns_limit": eff_max_turns,
+                                "slice_timeout_sec": slice_timeout_sec,
+                                "total_turns_used": total_turns_used,
                                 "total_calls_used": total_calls_used,
+                                "turns_remaining": 0,
+                                "slice_calls_used": slice_turns_used,
+                                "slice_calls_limit": eff_max_turns,
                                 "calls_remaining": 0,
                                 "model_used": current_model_key,
                             },
                         )
 
                     # Fin nominale de la mission (avant épuisement de la tranche, ou en mode autonomous_slice)
+                    is_real_exhaustion = is_slice_exhausted and eff_max_turns > 0
                     target_done_status = (
-                        "idle" if is_slice_exhausted else "completed"
+                        "idle" if is_real_exhaustion else "completed"
                     )
                     final_status_for_hook = target_done_status
                     update_subagent_meta_fields(
@@ -2330,31 +2399,39 @@ class EchoAgentRunner:
                         sid,
                         status=target_done_status,
                         checkpoint_reason=None,
-                        slice_calls_used=slice_calls_used,
-                        slice_calls_limit=slice_max_calls,
+                        slice_turns_used=slice_turns_used,
+                        slice_turns_limit=eff_max_turns,
+                        slice_timeout_sec=slice_timeout_sec,
+                        slice_calls_used=slice_turns_used,
+                        slice_calls_limit=eff_max_turns,
+                        total_turns_used=total_turns_used,
                         total_calls_used=total_calls_used,
                         consecutive_errors=0,
                         last_output_preview=final_text[:1000],
                     )
                     if events:
                         await events.status(
-                            f"✅ [{sid}] Terminé ({slice_calls_used}/{slice_max_calls} appels, {total_calls_used} au total).",
+                            f"✅ [{sid}] Terminé ({slice_turns_used}/{eff_max_turns} tours, {total_calls_used} outils au total).",
                             done=True,
                         )
+                    turns_rem = max(0, eff_max_turns - slice_turns_used)
                     status_payload: dict = {
                         "status": "success",
                         "subagent_status": target_done_status,
                         "sid": sid,
                         "sub_sid": sid,
-                        "slice_calls_used": slice_calls_used,
-                        "slice_calls_limit": slice_max_calls,
+                        "slice_turns_used": slice_turns_used,
+                        "slice_turns_limit": eff_max_turns,
+                        "slice_timeout_sec": slice_timeout_sec,
+                        "total_turns_used": total_turns_used,
                         "total_calls_used": total_calls_used,
-                        "calls_remaining": max(
-                            0, slice_max_calls - slice_calls_used
-                        ),
+                        "turns_remaining": turns_rem,
+                        "slice_calls_used": slice_turns_used,
+                        "slice_calls_limit": eff_max_turns,
+                        "calls_remaining": turns_rem,
                         "model_used": current_model_key,
                     }
-                    if is_slice_exhausted:
+                    if is_real_exhaustion:
                         status_payload["warning"] = "budget_exhausted"
                     return wrap_tool_output(
                         text=final_text, status=status_payload
@@ -2370,7 +2447,7 @@ class EchoAgentRunner:
                                 "response": {
                                     "status": "cancelled_budget_exhausted",
                                     "message": (
-                                        f"APPEL REFUSÉ : Quota de la tranche ({slice_calls_used}/{slice_max_calls}) atteint. "
+                                        f"APPEL REFUSÉ : Quota de la tranche ({slice_turns_used}/{eff_max_turns} tours) atteint. "
                                         "Rédiger immédiatement la synthèse d'étape complète en texte pur."
                                     ),
                                 },
@@ -2453,43 +2530,55 @@ class EchoAgentRunner:
                         cls._extract_thought_sig(clean_model_parts)
                         or cls._extract_thought_sig(raw_parts),
                     )
+                    is_real_exhaustion = is_slice_exhausted and eff_max_turns > 0
+                    eff_reason = checkpoint_reason or "turns_limit"
                     target_status = (
-                        "idle" if autonomous_slice else "suspended_checkpoint"
+                        ("idle" if is_real_exhaustion else "completed")
+                        if autonomous_slice
+                        else "suspended_checkpoint"
                     )
                     final_status_for_hook = target_status
                     update_subagent_meta_fields(
                         state,
                         sid,
                         status=target_status,
-                        checkpoint_reason=checkpoint_reason or "calls_limit",
-                        slice_calls_used=slice_calls_used,
-                        slice_calls_limit=slice_max_calls,
+                        checkpoint_reason=eff_reason,
+                        slice_turns_used=slice_turns_used,
+                        slice_turns_limit=eff_max_turns,
+                        slice_timeout_sec=slice_timeout_sec,
+                        slice_calls_used=slice_turns_used,
+                        slice_calls_limit=eff_max_turns,
+                        total_turns_used=total_turns_used,
                         total_calls_used=total_calls_used,
                         last_output_preview=final_text[:1000],
                     )
+                    c_status_payload: dict = {
+                        "status": (
+                            "success"
+                            if autonomous_slice
+                            else "suspended_checkpoint"
+                        ),
+                        "sid": sid,
+                        "sub_sid": sid,
+                        "checkpoint_reason": eff_reason,
+                        "slice_turns_used": slice_turns_used,
+                        "slice_turns_limit": eff_max_turns,
+                        "slice_timeout_sec": slice_timeout_sec,
+                        "total_turns_used": total_turns_used,
+                        "total_calls_used": total_calls_used,
+                        "turns_remaining": 0,
+                        "slice_calls_used": slice_turns_used,
+                        "slice_calls_limit": eff_max_turns,
+                        "calls_remaining": 0,
+                        "model_used": current_model_key,
+                    }
+                    if not autonomous_slice:
+                        c_status_payload["warning"] = "checkpoint_reached"
+                    elif is_real_exhaustion:
+                        c_status_payload["warning"] = "budget_exhausted"
                     return wrap_tool_output(
                         text=final_text,
-                        status={
-                            "status": (
-                                "success"
-                                if autonomous_slice
-                                else "suspended_checkpoint"
-                            ),
-                            "sid": sid,
-                            "sub_sid": sid,
-                            "warning": (
-                                "budget_exhausted"
-                                if autonomous_slice
-                                else "checkpoint_reached"
-                            ),
-                            "checkpoint_reason": checkpoint_reason
-                            or "calls_limit",
-                            "slice_calls_used": slice_calls_used,
-                            "slice_calls_limit": slice_max_calls,
-                            "total_calls_used": total_calls_used,
-                            "calls_remaining": 0,
-                            "model_used": current_model_key,
-                        },
+                        status=c_status_payload,
                     )
 
                 # CAS D : Exécution des appels d'outils via le ToolDispatcher
@@ -2504,7 +2593,7 @@ class EchoAgentRunner:
                     cls._extract_thought_sig(raw_parts),
                 )
 
-                remaining = max(0, slice_max_calls - slice_calls_used)
+                remaining = max(0, eff_max_turns - slice_turns_used)
                 (
                     response_parts,
                     consumed,
@@ -2515,7 +2604,8 @@ class EchoAgentRunner:
                     real_fc, remaining, current_model_key, history
                 )
 
-                slice_calls_used += consumed
+                slice_turns_used += 1
+                total_turns_used += 1
                 total_calls_used += consumed
                 if batch_err_streak > 0:
                     if batch_err_streak == consumed:
@@ -2533,8 +2623,12 @@ class EchoAgentRunner:
                     state,
                     sid,
                     model_key=current_model_key,
-                    slice_calls_used=slice_calls_used,
-                    slice_calls_limit=slice_max_calls,
+                    slice_turns_used=slice_turns_used,
+                    slice_turns_limit=eff_max_turns,
+                    slice_timeout_sec=slice_timeout_sec,
+                    slice_calls_used=slice_turns_used,
+                    slice_calls_limit=eff_max_turns,
+                    total_turns_used=total_turns_used,
                     total_calls_used=total_calls_used,
                     consecutive_errors=consecutive_errors,
                 )
@@ -2550,16 +2644,32 @@ class EchoAgentRunner:
                         None,
                     )
                     if last_fr and isinstance(last_fr.get("response"), dict):
-                        if slice_calls_used >= slice_max_calls:
-                            last_fr["response"]["_budget_alert"] = (
-                                f"QUOTA DE TRANCHE ATTEINT ({slice_calls_used}/{slice_max_calls} appels, "
-                                f"cumul total {total_calls_used}). Plus aucun appel d'outil n'est disponible dans cette tranche. "
-                                "Le Modèle DOIT impérativement rédiger immédiatement son rapport d'étape complet et détaillé."
-                            )
+                        will_exhaust_turns = slice_turns_used >= eff_max_turns
+                        will_exhaust_timeout = (
+                            slice_timeout_sec is not None
+                            and slice_timeout_sec > 0
+                            and (time.monotonic() - slice_started_at)
+                            >= slice_timeout_sec
+                        )
+                        if will_exhaust_turns or will_exhaust_timeout:
+                            if not autonomous_slice:
+                                last_fr["response"]["_checkpoint_alert"] = (
+                                    f"TRANCHE COOPÉRATIVE ATTEINTE ({slice_turns_used}/{eff_max_turns} tours d'outils, "
+                                    f"{total_calls_used} outils exécutés au total). "
+                                    "La mission n'est pas terminée si du travail reste à accomplir : "
+                                    "le Modèle DOIT rédiger un rapport d'étape factuel (acquis, état courant, suite prévue) "
+                                    "pour synchronisation avec l'Orchestrateur."
+                                )
+                            else:
+                                last_fr["response"]["_budget_alert"] = (
+                                    f"QUOTA DE TRANCHE ATTEINT ({slice_turns_used}/{eff_max_turns} tours, "
+                                    f"cumul total {total_calls_used} outils). Plus aucun tour d'outil n'est disponible dans cette passe. "
+                                    "Le Modèle DOIT impérativement rédiger immédiatement sa synthèse complète et détaillée."
+                                )
                         else:
-                            last_fr["response"]["_budget"] = (
-                                f"Tranche : {slice_calls_used}/{slice_max_calls} appels utilisés "
-                                f"({slice_max_calls - slice_calls_used} restants | cumul : {total_calls_used})"
+                            last_fr["response"]["_slice_progress"] = (
+                                f"Tranche : {slice_turns_used}/{eff_max_turns} tours utilisés "
+                                f"({eff_max_turns - slice_turns_used} restants | outils cumulés : {total_calls_used})"
                             )
 
                 if (
@@ -2588,7 +2698,7 @@ class EchoAgentRunner:
                     pare_msg = (
                         f"⚠️ **[ALERTE DISJONCTEUR PARE — Sous-agent `{sid}`]** : "
                         f"{consecutive_errors} erreurs d'outils consécutives détectées "
-                        f"({slice_calls_used}/{slice_max_calls} appels sur la tranche, {total_calls_used} au total). "
+                        f"({slice_turns_used}/{eff_max_turns} tours sur la tranche, {total_calls_used} outils cumulés). "
                         f"Exécution suspendue (`suspended_pare_alert`). Utiliser `control_subagents(action='steer' | 'resume' | 'close', target_ids=['{sid}'])`."
                     )
                     update_subagent_meta_fields(
@@ -2596,7 +2706,12 @@ class EchoAgentRunner:
                         sid,
                         status="suspended_pare_alert",
                         checkpoint_reason=checkpoint_reason,
-                        slice_calls_used=slice_calls_used,
+                        slice_turns_used=slice_turns_used,
+                        slice_turns_limit=eff_max_turns,
+                        slice_timeout_sec=slice_timeout_sec,
+                        slice_calls_used=slice_turns_used,
+                        slice_calls_limit=eff_max_turns,
+                        total_turns_used=total_turns_used,
                         total_calls_used=total_calls_used,
                         consecutive_errors=consecutive_errors,
                         last_output_preview=pare_msg[:1000],
@@ -2615,9 +2730,13 @@ class EchoAgentRunner:
                             "warning": "pare_circuit_breaker",
                             "checkpoint_reason": checkpoint_reason,
                             "consecutive_errors": consecutive_errors,
-                            "slice_calls_used": slice_calls_used,
-                            "slice_calls_limit": slice_max_calls,
+                            "slice_turns_used": slice_turns_used,
+                            "slice_turns_limit": eff_max_turns,
+                            "slice_timeout_sec": slice_timeout_sec,
+                            "total_turns_used": total_turns_used,
                             "total_calls_used": total_calls_used,
+                            "slice_calls_used": slice_turns_used,
+                            "slice_calls_limit": eff_max_turns,
                             "model_used": current_model_key,
                         },
                     )
@@ -2643,7 +2762,12 @@ class EchoAgentRunner:
                 sid,
                 status=target_cancel_status,
                 checkpoint_reason="killed" if was_killed else "parent_cancelled",
-                slice_calls_used=slice_calls_used,
+                slice_turns_used=slice_turns_used,
+                slice_turns_limit=eff_max_turns,
+                slice_timeout_sec=slice_timeout_sec,
+                slice_calls_used=slice_turns_used,
+                slice_calls_limit=eff_max_turns,
+                total_turns_used=total_turns_used,
                 total_calls_used=total_calls_used,
             )
             if was_killed:
@@ -2654,8 +2778,13 @@ class EchoAgentRunner:
                         "status": "killed",
                         "sid": sid,
                         "sub_sid": sid,
-                        "slice_calls_used": slice_calls_used,
+                        "slice_turns_used": slice_turns_used,
+                        "slice_turns_limit": eff_max_turns,
+                        "slice_timeout_sec": slice_timeout_sec,
+                        "total_turns_used": total_turns_used,
                         "total_calls_used": total_calls_used,
+                        "slice_calls_used": slice_turns_used,
+                        "slice_calls_limit": eff_max_turns,
                     },
                 )
             raise
@@ -2681,8 +2810,9 @@ class EchoSubagentController:
         context_distillate: str = "",
         target_model_key: Optional[str] = None,
         allowed_tools: Optional[List[str]] = None,
-        slice_max_calls: int = ECHO_SUBAGENT_CHECKPOINT_CALLS,
-        slice_timeout_sec: int = ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+        slice_max_turns: Optional[int] = None,
+        slice_max_calls: Optional[int] = None,
+        slice_timeout_sec: Optional[int] = None,
         autonomous_slice: bool = False,
         engine: Optional[str] = None,
         group_id: Optional[str] = None,
@@ -2730,6 +2860,27 @@ class EchoSubagentController:
                 text=f"ℹ️ Thread de synthèse `{sid}` ({eff_engine}) non exécutable en tranche.",
                 status={"status": "idle", "sid": sid, "sub_sid": sid},
             )
+
+        eng_cfg = ECHO_SUBAGENT_ENGINES_REGISTRY.get(eff_engine, {})
+        eff_max_turns = int(
+            slice_max_turns
+            if slice_max_turns is not None
+            else (
+                slice_max_calls
+                if slice_max_calls is not None
+                else eng_cfg.get(
+                    "default_slice_limit", ECHO_SUBAGENT_CHECKPOINT_TURNS
+                )
+            )
+        )
+        eff_timeout_sec = int(
+            slice_timeout_sec
+            if slice_timeout_sec is not None
+            else eng_cfg.get(
+                "default_slice_timeout_sec",
+                ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+            )
+        )
 
         eff_skill_id = skill_id or existing_meta.get("skill_id")
         eff_role_name = role_name or existing_meta.get("role_name")
@@ -2808,8 +2959,11 @@ class EchoSubagentController:
                         )
                     base_system = f"{base_system}{appendix}"
 
-                final_system = base_system + DELEGATE_SYSTEM_APPENDIX.format(
-                    sub_sid=sid, max_calls=slice_max_calls
+                final_system = base_system + build_subagent_system_appendix(
+                    sub_sid=sid,
+                    slice_max_turns=eff_max_turns,
+                    slice_timeout_sec=eff_timeout_sec,
+                    autonomous_slice=autonomous_slice,
                 )
                 if context_distillate:
                     final_system += f"\n\n## CONTEXTE DU CHAT PRINCIPAL (distillé)\n{context_distillate}"
@@ -3038,7 +3192,9 @@ class EchoSubagentController:
                             "allowed_tools": eff_allowed_tools,
                             "system_prompt": final_system,
                             "final_system": final_system,
-                            "slice_calls_limit": slice_max_calls,
+                            "slice_turns_limit": eff_max_turns,
+                            "slice_timeout_sec": eff_timeout_sec,
+                            "slice_calls_limit": eff_max_turns,
                             "status": "running",
                             **nav_meta_fields,
                         },
@@ -3054,8 +3210,8 @@ class EchoSubagentController:
                         dispatcher=dispatcher,
                         final_system=final_system,
                         current_model_key=current_model_key,
-                        slice_max_calls=slice_max_calls,
-                        slice_timeout_sec=slice_timeout_sec,
+                        slice_max_turns=eff_max_turns,
+                        slice_timeout_sec=eff_timeout_sec,
                         autonomous_slice=autonomous_slice,
                         events=events,
                         key_switch_threshold=key_switch_threshold,
@@ -3076,7 +3232,7 @@ class EchoSubagentController:
                                 f"subagent_human_interaction:{sid}",
                                 summary=(
                                     f"Intervention directe de l'utilisateur sur le sous-agent [{sid}] ({eff_role_name}). "
-                                    f"Instruction : {(effective_task or 'Reprise de tranche (+8)')[:240]} | "
+                                    f"Instruction : {(effective_task or f'Reprise de tranche (+{eff_max_turns} tours)')[:240]} | "
                                     f"Réponse : {reply_text[:400]}"
                                 ),
                             )
@@ -3169,12 +3325,27 @@ class EchoSubagentController:
                     else (meta.get("status") or "idle")
                 )
                 q_len = len(peek_human_queue(state, sid))
-                s_used = int(meta.get("slice_calls_used") or 0)
-                s_lim = int(
-                    meta.get("slice_calls_limit")
-                    or ECHO_SUBAGENT_CHECKPOINT_CALLS
+                s_used = int(
+                    meta.get("slice_turns_used")
+                    if meta.get("slice_turns_used") is not None
+                    else (meta.get("slice_calls_used") or 0)
                 )
-                t_used = int(meta.get("total_calls_used") or 0)
+                s_lim = int(
+                    meta.get("slice_turns_limit")
+                    if meta.get("slice_turns_limit") is not None
+                    else (
+                        meta.get("slice_calls_limit")
+                        if meta.get("slice_calls_limit") is not None
+                        else ECHO_SUBAGENT_CHECKPOINT_TURNS
+                    )
+                )
+                s_timeout = int(
+                    meta.get("slice_timeout_sec")
+                    if meta.get("slice_timeout_sec") is not None
+                    else ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC
+                )
+                t_turns = int(meta.get("total_turns_used") or 0)
+                t_calls = int(meta.get("total_calls_used") or 0)
                 c_err = int(meta.get("consecutive_errors") or 0)
                 c_reason = meta.get("checkpoint_reason")
                 role = meta.get("role_name") or sid
@@ -3186,16 +3357,20 @@ class EchoSubagentController:
                     "role_name": role,
                     "model_key": mk,
                     "status": st,
+                    "slice_turns_used": s_used,
+                    "slice_turns_limit": s_lim,
+                    "slice_timeout_sec": s_timeout,
+                    "total_turns_used": t_turns,
+                    "total_calls_used": t_calls,
                     "slice_calls_used": s_used,
                     "slice_calls_limit": s_lim,
-                    "total_calls_used": t_used,
                     "consecutive_errors": c_err,
                     "checkpoint_reason": c_reason,
                     "queued_count": q_len,
                 })
                 md += (
                     f"- **`{sid}`** ({role} | `{mk}`) — Statut : **`{st}`** "
-                    f"| Tranche : `{s_used}/{s_lim}` (Total : `{t_used}`) "
+                    f"| Tranche : `{s_used}/{s_lim}` tours (Outils cumulés : `{t_calls}`) "
                     f"| File FIFO : `{q_len}`"
                     + (f" | Raison : `{c_reason}`" if c_reason else "")
                     + "\n"
@@ -3247,7 +3422,17 @@ class EchoSubagentController:
                         if is_subagent_running(chat_id, sid)
                         else (meta.get("status") or "idle")
                     ),
-                    "slice_calls_used": int(meta.get("slice_calls_used") or 0),
+                    "slice_turns_used": int(
+                        meta.get("slice_turns_used")
+                        if meta.get("slice_turns_used") is not None
+                        else (meta.get("slice_calls_used") or 0)
+                    ),
+                    "total_turns_used": int(meta.get("total_turns_used") or 0),
+                    "slice_calls_used": int(
+                        meta.get("slice_turns_used")
+                        if meta.get("slice_turns_used") is not None
+                        else (meta.get("slice_calls_used") or 0)
+                    ),
                     "total_calls_used": int(meta.get("total_calls_used") or 0),
                     "output": last_text,
                 }
@@ -3465,7 +3650,7 @@ class EchoSubagentController:
                     directive=directive,
                     origin="orchestrator",
                     target_model_key=target_model_key,
-                    slice_max_calls=ECHO_SUBAGENT_CHECKPOINT_CALLS,
+                    slice_max_turns=ECHO_SUBAGENT_CHECKPOINT_TURNS,
                     slice_timeout_sec=ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
                     autonomous_slice=False,
                     key_switch_threshold=key_switch_threshold,
@@ -3485,7 +3670,7 @@ class EchoSubagentController:
                         directive=directive,
                         origin="orchestrator",
                         target_model_key=target_model_key,
-                        slice_max_calls=ECHO_SUBAGENT_CHECKPOINT_CALLS,
+                        slice_max_turns=ECHO_SUBAGENT_CHECKPOINT_TURNS,
                         slice_timeout_sec=ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
                         autonomous_slice=False,
                         key_switch_threshold=key_switch_threshold,

@@ -401,8 +401,9 @@
 	$: activeThreadMeta = activeThreadSid ? threadMeta[activeThreadSid] : undefined;
 	$: activeStatus = activeThreadMeta?.status || selectedGroup?.group_status || (selectedIsRunning ? 'running' : 'idle');
 	$: activeStatusBadge = getStatusBadge(activeStatus);
-	$: activeSliceUsed = Number(activeThreadMeta?.slice_calls_used ?? 0);
-	$: activeSliceLimit = Number(activeThreadMeta?.slice_calls_limit ?? 8);
+	$: activeSliceUsed = Number(activeThreadMeta?.slice_turns_used ?? activeThreadMeta?.slice_calls_used ?? 0);
+	$: activeSliceLimit = Number(activeThreadMeta?.slice_turns_limit ?? activeThreadMeta?.slice_calls_limit ?? 8);
+	$: activeSliceTimeout = Number(activeThreadMeta?.slice_timeout_sec ?? 120);
 	$: activeTotalUsed = Number(activeThreadMeta?.total_calls_used ?? 0);
 	$: activeConsecutiveErrors = Number(activeThreadMeta?.consecutive_errors ?? 0);
 	$: activeCheckpointReason = activeThreadMeta?.checkpoint_reason ?? null;
@@ -826,7 +827,7 @@
 
 	const CONTROL_TOAST_MAP: Record<EchoSubagentControlAction, string> = {
 		suspend: 'Pause demandée (arrêt en fin de tour d’outil).',
-		resume: 'Nouvelle tranche (+8 appels) lancée.',
+		resume: 'Nouvelle tranche supervisée lancée.',
 		kill: 'Sous-agent interrompu et scellé.',
 		close: 'Session sous-agent fermée et purgée.'
 	};
@@ -1004,11 +1005,11 @@
 							{#if activeThreadMeta && activeThreadMeta.has_tool_loop !== false}
 								<span
 									class="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-900/70 text-gray-600 dark:text-gray-300"
-									title="Appels d'outils sur la tranche courante / cumul total"
+									title="Tours d'outils sur la tranche courante / cumul total d'outils exécutés"
 								>
-									{activeSliceUsed}/{activeSliceLimit} appels
-									{#if activeTotalUsed > activeSliceUsed}
-										<span class="text-gray-400">· total {activeTotalUsed}</span>
+									{activeSliceUsed}/{activeSliceLimit} tours
+									{#if activeTotalUsed > 0}
+										<span class="text-gray-400">· {activeTotalUsed} outils</span>
 									{/if}
 								</span>
 							{:else if !activeThreadMeta && selectedGroup.member_sids.length > 1}
@@ -1063,9 +1064,9 @@
 										disabled={Boolean(controlActionPending)}
 										on:click={() => runSubagentControl('resume')}
 										class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 transition disabled:opacity-40"
-										title="Accorder une nouvelle tranche supervisée (+8 appels)"
+										title="Accorder une nouvelle tranche supervisée (+{activeSliceLimit} tours)"
 									>
-										▶ Reprendre (+8)
+										▶ Reprendre (+{activeSliceLimit})
 									</button>
 								{/if}
 								<button
@@ -1083,7 +1084,7 @@
 
 					{#if activeStatus === 'suspended_checkpoint'}
 						<div class="rounded-lg px-2.5 py-1.5 text-[11px] bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-300">
-							Point de contrôle atteint ({activeCheckpointReason === 'timeout' ? 'délai 90s' : `${activeSliceUsed}/${activeSliceLimit} appels`}) — cliquez sur <strong>Reprendre (+8)</strong> ou envoyez une consigne.
+							Point de contrôle atteint ({activeCheckpointReason === 'timeout' ? `délai ${activeSliceTimeout}s` : `${activeSliceUsed}/${activeSliceLimit} tours`}) — cliquez sur <strong>Reprendre (+{activeSliceLimit})</strong> ou envoyez une consigne.
 						</div>
 					{:else if activeStatus === 'suspended_pare_alert'}
 						<div class="rounded-lg px-2.5 py-1.5 text-[11px] bg-red-500/10 border border-red-500/30 text-red-700 dark:text-red-300">
