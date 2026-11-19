@@ -1,17 +1,16 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 6.7.1.2
+version: 6.7.4.1
 description: Composant système interne : ECHO Visual Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.4.1: Passage intégral en override_thinking='medium' des 3 étapes (génération, réparation JSON et critique multimodal) de generate_rich_visualization.
 # 6.7.1.2: Télémétrie temps réel save_subagent_meta/mark_subagent_running sur generate_image et filtrage extract_response_parts_and_text dans _run_visual_critic.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 5.239.11.1: Ajout dans `context["message"]` de `generate_rich_visualization` de la consigne explicite anti-redondance Markdown après génération dans l'Iframe.
 # 5.233.0.2: Contrainte de sortie JSON via response_schema=VisualCriticOutput dans _run_visual_critic et LeafletSchema dans SYS_VISUAL_REPAIR, décoration @echo_tool et simplification des retours.
-# 5.233.0.1: Support multi-images unifié dans generate_image (paramètre input_images: Optional[List[str]]), factorisation du chargement Base64 via _load_reference_images, plafond IMAGE_GEN_MAX_INPUT_IMAGES=10 et traçabilité PAS.
-# 5.232.5.1: Stockage et versionnement Git par essai/retouche (Option A) dans le workspace CODEX_WORKSPACE_GENERATED ("generated"), nommage court (< 15 caractères via short_name) et indexation sous resource_type="generated".
 # MOTEURS INTÉGRÉS ET DATAFLOWS :
 # - mermaid (v11) : Syntaxe Mermaid pure
 # - echarts (v5) : JSON ECharts strict
@@ -229,7 +228,7 @@ class Tools:
             payload={
                 "contents": contents,
                 "systemInstruction": {"parts": [{"text": system_prompt}]},
-                "generationConfig": get_generation_config(MODEL_APOLLO, override_thinking="low"),
+                "generationConfig": get_generation_config(MODEL_APOLLO, override_thinking="medium"),
             },
             user_id=user_id,
             metadata=__metadata__,
@@ -296,7 +295,7 @@ class Tools:
                 payload={
                     "contents": [{"role": "user", "parts": [{"text": repair_prompt}]}],
                     "systemInstruction": {"parts": [{"text": SYS_VISUAL_REPAIR}]},
-                    "generationConfig": {**get_generation_config(MODEL_APOLLO, override_thinking="low"), "responseMimeType": "application/json"},
+                    "generationConfig": {**get_generation_config(MODEL_APOLLO, override_thinking="medium"), "responseMimeType": "application/json"},
                 },
                 user_id=user_id,
                 metadata=__metadata__,
@@ -381,7 +380,7 @@ class Tools:
               user_id=user_id,
               metadata=__metadata__,
               events=events,
-              override_thinking="low",
+              override_thinking="medium",
               chat_id=chat_id,
           )
           verdict = critic_eval["verdict"]

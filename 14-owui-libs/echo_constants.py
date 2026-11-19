@@ -1,17 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.7.1.2
+version: 6.7.4.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.4.1: Migration de MODEL_PROMETHEUS vers gemini-4-neon / gemini-4-neon-medium (medium), alignement de MODEL_ATHENA en high et MODEL_ZEPHYR en medium, et retrait de temperature/topP sur les modèles Gemini 4.
 # 6.7.1.2: Ajout du registre SSOT ECHO_SUBAGENT_ENGINES_REGISTRY (11 moteurs) et ajout de delegate_deep_research, delegate_to_n8n_grapher et ask_data_broker dans DELEGATE_AGENT_BLACKLIST.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Ajout des 8 constantes SSOT V6.7 de parallélisme/supervision, MAJ DELEGATE_AGENT_BLACKLIST (control_subagents) et parallélisme dans DELEGATE_SYSTEM_APPENDIX.
 # 6.6.5.2: Purge des constantes WebGPU v5 obsolètes (ECHO_EDGE_*, ECHO_MOBILE_UA_PATTERN) suite à la factorisation dans le store Svelte.
-# 6.6.5.1: Ajout de BROWSER_VIEWS_DIR_NAME ('browserviews') dans ECHO_SESSION_DOMAINS et BROWSER_VIEW_STATUS ('browserview') dans RESOURCE_STATUS_MAP.
-# 6.6.2.3: Ajout de open_browser_ui dans DELEGATE_AGENT_BLACKLIST et alignement de MODEL_ENUM_BY_POLICY["AUTO"] sur MODEL_ATHENA.
 
 
 import os
@@ -232,7 +231,7 @@ ECHO_RETRY_JITTER_MAX    = 1.3
 ECHO_LLM_CONNECT_TIMEOUT = 15.0  # Timeout d'établissement TCP/TLS (s)
 ECHO_LLM_WRITE_TIMEOUT   = 30.0  # Timeout d'écriture de requête HTTP/2 (s)
 ECHO_LLM_POOL_TIMEOUT    = 15.0  # Timeout d'acquisition de connexion du pool (s)
-ECHO_LLM_CALL_TIMEOUT    = 600   # Timeout de lecture Non-Stream (s) dimensionné pour Argon / Carbon
+ECHO_LLM_CALL_TIMEOUT    = 600   # Timeout de lecture Non-Stream (s) dimensionné pour Neon / Carbon
 ECHO_LLM_STREAM_TIMEOUT  = 300   # Timeout d'inactivité inter-chunks Stream SSE (s)
 ECHO_RETRY_SERVER_MAX_WAIT_SEC = 60.0  # Plafond (s) d'attente sur Retry-After / RetryInfo serveur
 
@@ -358,19 +357,15 @@ ECHO_MODELS_REGISTRY = {
         "ca_model_id":  "gemini-4-carbon-high",
         "hierarchy": 3,
         "generationConfig": {
-            "temperature": 1.0,
-            "topP": 0.9,
             "maxOutputTokens": 65535,
-            "thinkingConfig": {"thinkingLevel": "medium"}
+            "thinkingConfig": {"thinkingLevel": "high"}
         }
     },
     "MODEL_PROMETHEUS": {
-        "ai_studio_id": "gemini-4-argon",
-        "ca_model_id":  "gemini-4-argon-high",
+        "ai_studio_id": "gemini-4-neon",
+        "ca_model_id":  "gemini-4-neon-medium",
         "hierarchy": 2,
         "generationConfig": {
-            "temperature": 1.0,
-            "topP": 0.9,
             "maxOutputTokens": 65535,
             "thinkingConfig": {"thinkingLevel": "medium"}
         }
@@ -380,8 +375,6 @@ ECHO_MODELS_REGISTRY = {
         "ca_model_id":  "gemini-4-hydrogen-high",
         "hierarchy": 1,
         "generationConfig": {
-            "temperature": 1.0,
-            "topP": 0.9,
             "maxOutputTokens": 65535,
             "thinkingConfig": {"thinkingLevel": "high"}
         }
@@ -394,7 +387,7 @@ ECHO_MODELS_REGISTRY = {
             "temperature": 1.0,
             "topP": 0.9,
             "maxOutputTokens": 65535,
-            "thinkingConfig": {"thinkingLevel": "high"}
+            "thinkingConfig": {"thinkingLevel": "medium"}
         }
     },
     "MODEL_DISTILLATION": {

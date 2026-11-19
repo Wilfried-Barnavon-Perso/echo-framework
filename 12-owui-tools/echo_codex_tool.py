@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 6.7.1.1
+version: 6.7.4.1
 description: Permet au modèle de manipuler un espace virtuel (Codex) avec versioning Git invisible et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.4.1: Alignement de get_generation_config sur CODEX_EDIT_MODEL dans edit_codex.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.2.1: Migration de open_codex_ui vers l'onglet natif echo-codex (EchoWindowManager.open_tab + CustomEvent('echo:open-tab')) sans echo_codex_action.
 # 5.239.17.1: Pagination bornée unifiée (HEAD et commits) de read_codex à ECHO_CODEX_MAX_READ_LINES (800 lignes) et ECHO_CODEX_MAX_READ_BYTES (46080 octets), indicateurs has_more/next_start_line et skip_truncation=True.
 # 5.235.5.1: Remplacement de l'accès direct SQLite par la méthode abstraite state.has_pending_directive.
-# 5.235.4.1: Sécurisation binaire exhaustive : refus d'édition assistée, propagation des métadonnées dans restore_codex et guard clause dans summarize_codex.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -384,16 +384,17 @@ class Tools:
             original_sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
             user_prompt = f"## Document complet\n```{lang}\n{content}\n```\n\n## Instructions\n{instructions}"
 
+            edit_model = self.user_valves.CODEX_EDIT_MODEL or "MODEL_APOLLO"
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-                "generationConfig": get_generation_config("MODEL_APOLLO"),
+                "generationConfig": get_generation_config(edit_model),
                 "systemInstruction": {
                     "parts": [{"text": SYS_CODEX_EDIT.format(filename=filename, language=lang)}]
                 },
             }
 
             data, model_key, reason = await EchoGeminiClient.call_cascade(
-                target_model_key=self.user_valves.CODEX_EDIT_MODEL,
+                target_model_key=edit_model,
                 payload=payload,
                 user_id=uid,
                 metadata=__metadata__,

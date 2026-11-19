@@ -2,16 +2,16 @@
 ECHO Ingestion Pipeline
 Gestion unifiée, asynchrone et Zéro-RAM de l'ingestion des fichiers (CAS 1, 2, 3, 4).
 Factorisé à partir de new_context_filter.py pour permettre le traitement en arrière-plan.
-version: 6.7.1.1
+version: 6.7.4.1
 description: Composant du système ECHO : Echo Ingestion.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.4.1: Bascule de la description d'images OOXML (_extract_and_describe_zip_images) sur MODEL_DISTILLATION et factorisation de son import global.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.1.0.1: Idempotence de _sync_file_to_global_vault lorsque le fichier réside déjà dans le Vault de session.
 # 5.231.29.1: Alignement sur la constante SSOT CODEX_WORKSPACE_MAIN lors de l'indexation Codex.
 # 5.231.28.1: Normalisation de storage_path via format_codex_storage_path (codex/main/<filename>) et retrait de save_codex_doc.
-# 5.228.7.1: Factorisation de la détection textuelle via is_text_mime (echo_constants).
 
 import os
 import asyncio
@@ -32,7 +32,7 @@ from echo_gemini_client import EchoGeminiClient
 from echo_state_manager import EchoStateManager
 from echo_prompts import SYS_INGEST_EXTRACT, USR_INGEST_SYNTHESIS
 from echo_constants import (
-    CODEX_WORKSPACE_MAIN,
+    CODEX_WORKSPACE_MAIN, MODEL_DISTILLATION,
     get_gemini_mime, is_text_mime,
     FILE_INGESTION_STATUS,
     MAX_DIRECT_TEXT_INJECT_SIZE, MAX_DIRECT_MMEDIA_INJECT_SIZE,
@@ -222,7 +222,7 @@ class EchoIngestionPipeline:
                             f"Le Système DOIT décrire cette image extraite du document '{filename}' de manière concise et précise (2-3 phrases max).",
                             u_ctx, m_ctx, is_json=False,
                             parts=[{"role": "user", "parts": [{"text": f"Le Système DOIT décrire cette image '{os.path.basename(img_name)}' extraite du document '{filename}'."}, {"inline_data": {"mime_type": img_mime, "data": b64}}]}],
-                            target_model="MODEL_ZEPHYR"
+                            target_model=MODEL_DISTILLATION
                         )
                         if description and description != "Analyse indisponible.":
                             descriptions.append(f"**Image {i+1}** (`{os.path.basename(img_name)}`) : {description}")
@@ -336,9 +336,7 @@ class EchoIngestionPipeline:
         filepath: str, is_text: bool
     ) -> dict:
         """Pipeline RAG Streamé End-to-End."""
-        from echo_constants import (
-            MODEL_DISTILLATION, ECHO_MODELS_REGISTRY
-        )
+        from echo_constants import ECHO_MODELS_REGISTRY
         import copy
         from echo_auth import EchoAuth
         from echo_gemini_client import EchoGeminiClient
