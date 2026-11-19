@@ -1,17 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.7.4.1
+version: 6.7.6.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.6.1: MAJ echo_constants.py - Version Antigravity 2.33.0 & CL 1024904911.
 # 6.7.4.1: Migration de MODEL_PROMETHEUS vers gemini-4-neon / gemini-4-neon-medium (medium), alignement de MODEL_ATHENA en high et MODEL_ZEPHYR en medium, et retrait de temperature/topP sur les modèles Gemini 4.
 # 6.7.1.2: Ajout du registre SSOT ECHO_SUBAGENT_ENGINES_REGISTRY (11 moteurs) et ajout de delegate_deep_research, delegate_to_n8n_grapher et ask_data_broker dans DELEGATE_AGENT_BLACKLIST.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Ajout des 8 constantes SSOT V6.7 de parallélisme/supervision, MAJ DELEGATE_AGENT_BLACKLIST (control_subagents) et parallélisme dans DELEGATE_SYSTEM_APPENDIX.
-# 6.6.5.2: Purge des constantes WebGPU v5 obsolètes (ECHO_EDGE_*, ECHO_MOBILE_UA_PATTERN) suite à la factorisation dans le store Svelte.
-
 
 import os
 import contextvars
@@ -70,8 +69,10 @@ ECHO_GLOBAL_DOMAINS = ["skills", "files", "chats", "n8n_workflow_templates"]
 # Identité Réseau (Antigravity 2.32.0 — aligné sur Antigravity Hub agy.exe package.json & language_server --stamp)
 # Format natif AGY Hub : "antigravity/hub/{ideVersion} (os_type=...; arch=...; cl=...; auth_method=personal_consumer; proxy_client=antigravity/{ideVersion})"
 # ECHO tourne sous Docker Linux — on émet l'identité réelle de la plateforme hôte.
-_AGY_IDE_VERSION = "2.32.0"      # Miroir de package.json:version — à synchroniser lors des mises à jour
-_AGY_LS_CL       = "1021519450"  # Changelist language_server (--stamp)
+#_AGY_IDE_VERSION = "2.32.0"
+_AGY_IDE_VERSION = "2.33.0"      # Miroir de package.json:version — à synchroniser lors des mises à jour (trouvé dans agy.exe à 0xbd24556)
+# _AGY_LS_CL       = "1021519450"  # Changelist language_server (--stamp)
+_AGY_LS_CL       = "1024904911" # (agy.exe à 0xbc635b0)
 ECHO_USER_AGENT             = f"antigravity/{_AGY_IDE_VERSION}"
 ECHO_AGY_USER_AGENT         = (
     f"antigravity/hub/{_AGY_IDE_VERSION} "
