@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.7.10.1
+version: 6.7.12.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.12.1: Passage du thinkingLevel par défaut de MODEL_ZEPHYR à high dans ECHO_MODELS_REGISTRY.
 # 6.7.10.1: Gouvernance SSOT à 3 régimes de troncature (ECHO_COGNITIVE_OUTPUT_PREVIEW_CHARS=524288, ECHO_PAGINATED_READER_TOOLS, ECHO_COGNITIVE_DISTILLATION_TOOLS, get_tool_truncation_limit).
 # 6.7.7.1: Migration du découpage des sous-agents vers les tours d'outils (ECHO_SUBAGENT_CHECKPOINT_TURNS=8, ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC=120, ECHO_AUTONOMOUS_MAX_TURNS=15, ECHO_AUTONOMOUS_TIMEOUT_SEC=300, ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND=3, ECHO_COUNCIL_ROUND_TIMEOUT_SEC=120) et ajout de default_slice_timeout_sec dans ECHO_SUBAGENT_ENGINES_REGISTRY.
 # 6.7.6.1: MAJ echo_constants.py - Version Antigravity 2.33.0 & CL 1024904911.
 # 6.7.4.1: Migration de MODEL_PROMETHEUS vers gemini-4-neon / gemini-4-neon-medium (medium), alignement de MODEL_ATHENA en high et MODEL_ZEPHYR en medium, et retrait de temperature/topP sur les modèles Gemini 4.
-# 6.7.1.2: Ajout du registre SSOT ECHO_SUBAGENT_ENGINES_REGISTRY (11 moteurs) et ajout de delegate_deep_research, delegate_to_n8n_grapher et ask_data_broker dans DELEGATE_AGENT_BLACKLIST.
 
 import os
 import contextvars
@@ -430,7 +430,7 @@ ECHO_MODELS_REGISTRY = {
             "temperature": 1.0,
             "topP": 0.9,
             "maxOutputTokens": 65535,
-            "thinkingConfig": {"thinkingLevel": "medium"}
+            "thinkingConfig": {"thinkingLevel": "high"}
         }
     },
     "MODEL_DISTILLATION": {
