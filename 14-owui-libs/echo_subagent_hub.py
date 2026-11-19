@@ -2,16 +2,16 @@
 """
 title: ECHO Subagent Hub
 author: Wilfried BARNAVON
-version: 6.7.7.1
+version: 6.7.10.1
 description: Contrôleur exécutif unifié des sous-agents, tranches supervisées, ToolDispatcher et file FIFO hybride.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.10.1: Alignement de StandardToolDispatcher._invoke_single_tool sur get_tool_truncation_limit et respect de _skip_truncation (suppression de la re-troncature à 32 Ko).
 # 6.7.7.1: Découpage des tranches par tours d'outils et timeout (slice_max_turns, slice_timeout_sec, autonomous_slice), suppression de la troncature zéro-batch dans execute_tool_calls et de la limite préalable de mission dans build_subagent_system_appendix.
 # 6.7.5.1: Unification du flux navigator sous verrou EchoSubagentController (step 0 2 parts, carte DOM à la reprise, sémaphore dès ensure_engine_ready, format_browser_dom_view et statuts pré-LLM).
 # 6.7.1.3: Câblage ECHO_SUBAGENT_ENGINES_REGISTRY dans save_subagent_meta et ajout de extract_response_parts_and_text, run_cognitive_step et dispatch_message.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
-# 6.6.30.1: Moteur cognitif unifié (EchoAgentRunner, EchoSubagentController, StandardToolDispatcher, BrowserToolDispatcher), tranches supervisées 8/90s, PARE 3 erreurs, _TOOLS_CACHE et scellement kill.
 
 from __future__ import annotations
 
@@ -46,11 +46,11 @@ from echo_constants import (
     ECHO_SUBAGENT_CONTEXT,
     ECHO_SUBAGENT_ENGINES_REGISTRY,
     ECHO_SUBAGENT_MAX_CONSECUTIVE_ERRORS,
-    ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS,
     ECHO_TOOLS_CACHE_MAX_SIZE,
     PRUNE_CONTENT_THRESHOLD,
     build_subagent_system_appendix,
     get_generation_config,
+    get_tool_truncation_limit,
 )
 from echo_core import split_thought_process
 
@@ -1092,10 +1092,19 @@ class StandardToolDispatcher:
         if isinstance(result, dict):
             _resp = dict(result)
             _resp.pop("echo_tool_multiparts", None)
+            _skip_trunc = bool(_resp.pop("_skip_truncation", False))
             _text = _resp.get("text", "")
+            _max_chars = (
+                None
+                if is_err
+                else get_tool_truncation_limit(
+                    fn_name, skip_truncation=_skip_trunc, is_subagent=True
+                )
+            )
             if (
-                isinstance(_text, str)
-                and len(_text) > ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS
+                _max_chars is not None
+                and isinstance(_text, str)
+                and len(_text) > _max_chars
             ):
                 _preview, _spill = truncate_and_spill_tool_output(
                     _text,
@@ -1103,6 +1112,7 @@ class StandardToolDispatcher:
                     cid=self.chat_id,
                     tool_name=fn_name,
                     call_id=fn_id,
+                    max_chars=_max_chars,
                 )
                 _resp["text"] = _preview
                 if _spill:
@@ -1110,13 +1120,24 @@ class StandardToolDispatcher:
                         _resp["status"] = {"status": "success"}
                     _resp["status"].update(_spill)
         else:
-            _preview, _spill = truncate_and_spill_tool_output(
-                str(result),
-                uid=self.user_id,
-                cid=self.chat_id,
-                tool_name=fn_name,
-                call_id=fn_id,
+            _max_chars = (
+                None
+                if is_err
+                else get_tool_truncation_limit(
+                    fn_name, skip_truncation=False, is_subagent=True
+                )
             )
+            if _max_chars is not None:
+                _preview, _spill = truncate_and_spill_tool_output(
+                    str(result),
+                    uid=self.user_id,
+                    cid=self.chat_id,
+                    tool_name=fn_name,
+                    call_id=fn_id,
+                    max_chars=_max_chars,
+                )
+            else:
+                _preview, _spill = str(result), None
             _resp = {"result": _preview}
             if _spill:
                 _resp.update(_spill)

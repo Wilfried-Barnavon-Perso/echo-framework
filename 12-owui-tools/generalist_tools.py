@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 5.239.17.1
+version: 6.7.10.1
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.10.1: Alignement de la fenêtre par défaut de read_tool_output (end_line=None) sur ECHO_CODEX_MAX_READ_LINES (800 lignes).
 # 5.239.17.1: Ajout des outils dédiés read_tool_output (lecture paginée par lignes et recherche regex/motif) et delete_tool_output pour l'exploitation du domaine tools_output.
 # 5.233.0.1: Décoration @echo_tool sur les 16 méthodes publiques et simplification de safe_owui_call et des retours wrap_tool_output.
 # 5.231.20.1: Isolation multi-chat du HUD wait_timer (data-chat-id) et suppression des fuites de listeners document.
 # 5.229.2.1: Ajout de l'outil list_ui_tags (consultation locale des tags du chat courant ou globale de toutes les conversations).
-# 5.229.1.2: Précision de la transmission par défaut aux sous-agents dans la docstring de tool_advisor.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -825,7 +825,7 @@ class Tools:
         self,
         output_id: str,
         start_line: int = 1,
-        end_line: int = 400,
+        end_line: Optional[int] = None,
         search_pattern: Optional[str] = None,
         __user__: dict = {},
         __metadata__: dict = {},
@@ -926,7 +926,7 @@ class Tools:
                 status={"status": "warning", "output_id": clean_id, "total_lines": total_lines},
                 skip_truncation=True,
             )
-        req_e = int(end_line) if end_line else (s + ECHO_CODEX_MAX_READ_LINES - 1)
+        req_e = int(end_line) if end_line is not None else (s + ECHO_CODEX_MAX_READ_LINES - 1)
         max_e = min(total_lines, req_e, s + ECHO_CODEX_MAX_READ_LINES - 1)
 
         selected = []

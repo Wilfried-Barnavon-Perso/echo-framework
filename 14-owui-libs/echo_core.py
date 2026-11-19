@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 6.6.30.1
+version: 6.7.10.2
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.10.2: Application des 3 régimes SSOT, préservation de _skip_truncation sous ECHO_SUBAGENT_CONTEXT/is_nested dans _apply_final_spillover et directive PAS 800 lignes.
 # 6.6.30.1: Verrou thread-safe _get_aec_drain_lock(chat_id) autour de _drain_tool_aec_events.
 # 5.239.17.1: Délestage automatique des sorties d'outils > 32 Ko dans tools_output/{output_id}.txt avec aperçu Head+Tail aligné sur les lignes et métadonnées JSON (truncate_and_spill_tool_output, skip_truncation).
 # 5.239.11.1: Parsing JSON-first (`std_json.loads`) dans `unbox_tool_output` pour accepter la sérialisation Open WebUI (`null`/`true`/`false`), avec repli `ast.literal_eval` et garde `unstructured_data`.
 # 5.238.1.1: Support orthogonal COGNITIVE_MODE:COGNITIVE_MODEL dans resolve_model_policy et convert_owui_tools (copie profonde sans mutation in-place) et surcharge thinking_override="low" étendue à MODEL_ATHENA en compaction.
-# 5.237.20.2: Ancrage head_last_msg_id dans le checkpoint de compaction pour isoler les branches sœurs antérieures au pivot.
 import os
 import re
 import uuid
@@ -299,6 +299,7 @@ def truncate_and_spill_tool_output(
     """
     from echo_constants import (
         ECHO_CODEX_MAX_READ_LINES,
+        ECHO_MAX_PARALLEL_TOOLS_PER_TURN,
         ECHO_SUBAGENT_CONTEXT,
         ECHO_TOOL_OUTPUT_PREVIEW_CHARS,
     )
@@ -360,19 +361,22 @@ def truncate_and_spill_tool_output(
     omitted_end_line = max(omitted_start_line, omitted_end_line)
     omitted_chars = max(0, tail_start_idx - head_cut)
     omitted_lines = max(0, omitted_end_line - omitted_start_line + 1)
-    suggested_end = min(omitted_end_line, omitted_start_line + (ECHO_CODEX_MAX_READ_LINES // 2) - 1)
+    suggested_end = min(omitted_end_line, omitted_start_line + ECHO_CODEX_MAX_READ_LINES - 1)
 
     if saved_on_disk:
         header = (
             f"⚠️ [SORTIE D'OUTIL TRONQUÉE : {total_chars} caractères ({total_lines} lignes) > plafond inline de {max_chars} caractères]\n"
-            f"L'intégralité de la sortie brute a été sauvegardée dans `tools_output/{output_id}.txt` (output_id: `{output_id}`).\n"
-            f"- DOIT utiliser `read_tool_output(output_id=\"{output_id}\", start_line={omitted_start_line}, end_line={suggested_end})` "
-            f"(ou `search_pattern=\"...\"`) pour inspecter les lignes manquantes si nécessaire.\n"
-            f"- DOIT appeler `delete_tool_output(output_id=\"{output_id}\")` dès que l'exploitation de cette sortie est terminée.\n\n"
+            f"L'intégralité de la sortie est sauvegardée dans `tools_output/{output_id}.txt` (output_id: `{output_id}`).\n"
+            f"- Extraction ciblée : Le Modèle DOIT utiliser `read_tool_output(output_id=\"{output_id}\", search_pattern=\"...\")` ou cibler la plage utile.\n"
+            f"- Restitution exhaustive ou verbatim exigée : Il est ABSOLUMENT INTERDIT de synthétiser ou d'extrapoler depuis cet aperçu partiel ; "
+            f"Le Modèle DOIT lire l'intégralité des lignes {omitted_start_line} à {omitted_end_line} par fenêtres de {ECHO_CODEX_MAX_READ_LINES} lignes "
+            f"(parallélisables jusqu'à {ECHO_MAX_PARALLEL_TOOLS_PER_TURN} appels `read_tool_output` par tour ; "
+            f"1ère fenêtre : `read_tool_output(output_id=\"{output_id}\", start_line={omitted_start_line}, end_line={suggested_end})`).\n"
+            f"- Nettoyage : Le Modèle DOIT appeler `delete_tool_output(output_id=\"{output_id}\")` dès l'exploitation terminée.\n\n"
         )
         mid_marker = (
             f"\n\n... [TRONQUÉ : {omitted_chars} caractères ({omitted_lines} lignes) omis — "
-            f"Lignes {omitted_start_line} à {omitted_end_line} disponibles via "
+            f"Lignes {omitted_start_line} à {omitted_end_line} disponibles par fenêtres via "
             f"read_tool_output(output_id=\"{output_id}\", start_line={omitted_start_line}, end_line={suggested_end})] ...\n\n"
         )
     else:
@@ -455,14 +459,21 @@ def _infer_string_status(text_str: str) -> str:
 
 
 def _apply_final_spillover(out: dict, uid: Optional[str], cid: Optional[str], is_nested: bool, tool_name: str) -> dict:
-    skip_trunc = out.pop("_skip_truncation", False)
-    if is_nested or skip_trunc or not isinstance(out.get("text"), str):
+    is_subagent_ctx = bool((ECHO_SUBAGENT_CONTEXT.get() or {}).get("is_subagent"))
+    if is_nested or is_subagent_ctx:
+        return out
+    skip_trunc = bool(out.pop("_skip_truncation", False))
+    if not isinstance(out.get("text"), str):
         return out
     st = out.get("status")
     if isinstance(st, dict) and st.get("status") == "error":
         return out
+    from echo_constants import get_tool_truncation_limit
+    max_chars = get_tool_truncation_limit(tool_name, skip_truncation=skip_trunc, is_subagent=False)
+    if max_chars is None:
+        return out
     preview_text, spill_meta = truncate_and_spill_tool_output(
-        out["text"], uid=uid, cid=cid, tool_name=tool_name
+        out["text"], uid=uid, cid=cid, tool_name=tool_name, max_chars=max_chars
     )
     if spill_meta:
         out["text"] = preview_text

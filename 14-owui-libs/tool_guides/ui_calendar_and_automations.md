@@ -1,7 +1,7 @@
 ---
 domain_id: ui_calendar_and_automations
-version: 5.239.17.1
-updated_at: 2026-11-14
+version: 6.7.10.1
+updated_at: 2026-11-19
 name: Agenda de l'Interface Utilisateur, Automatisations CRON (RRULE), Dossiers UI, Étiquettes, Saisie Interactive & Lecture des Sorties Délestées
 description: Gestion complète du calendrier de l'Interface Utilisateur, programmation de tâches de fond CRON (syntaxe RRULE iCalendar), dossiers UI, exploration des étiquettes (tags), ask_user_input, wait_timer et exploitation paginée/purge des sorties d'outils délestées (read_tool_output, delete_tool_output).
 tools: [search_ui_calendar_events, list_ui_calendar_events, read_ui_calendar_events, create_ui_calendar_event, update_ui_calendar_event, delete_ui_calendar_event, create_ui_automation, update_ui_automation, delete_ui_automation, read_ui_automations, list_ui_automations, list_ui_folders, list_ui_tags, ask_user_input, wait_timer, read_tool_output, delete_tool_output]
@@ -66,9 +66,9 @@ L'argument `rrule` dans `create_ui_automation` et `update_ui_automation` **DOIT 
   - Met en pause l'exécution de `1` à `300` secondes. **Strictement limité à 1 seul appel par boucle agentique**.
 
 ## 4. LECTURE PAGINÉE & PURGE DES SORTIES D'OUTILS DÉLESTÉES (`read_tool_output`, `delete_tool_output`)
-- Tout retour textuel d'outil (hors contenu Base64 protégé) excédant `ECHO_TOOL_OUTPUT_PREVIEW_CHARS` (`32 768` caractères) est automatiquement délesté intégralement dans le domaine de session `tools_output/{output_id}.txt`. La réponse inline retourne alors un aperçu `Head + Tail` (avec marquage exact des lignes omises) accompagné des métadonnées `truncated: true`, `output_id`, `total_chars`, `total_lines`, `omitted_lines_range` et `next_tools: ["read_tool_output", "delete_tool_output"]`.
-- `read_tool_output(output_id, start_line=1, end_line=400, search_pattern=None)` :
-  - Lit une tranche bornée (au plus `800` lignes et `46 080` octets / ~45 Ko par appel) d'une sortie délestée identifiée par `output_id`.
+- Gouvernance SSOT à 3 régimes (`get_tool_truncation_limit`) : `32 768` caractères (`ECHO_TOOL_OUTPUT_PREVIEW_CHARS`) pour les outils I/O bruts par défaut, `524 288` caractères (`ECHO_COGNITIVE_OUTPUT_PREVIEW_CHARS`, 512 Ko) pour les outils de distillation cognitive et sous-agents (`ECHO_COGNITIVE_DISTILLATION_TOOLS`), et exemption totale pour les lecteurs déjà fenêtrés (`ECHO_PAGINATED_READER_TOOLS`). Lorsqu'un seuil est franchi (hors Base64 protégé), l'intégralité de la sortie est délestée dans `tools_output/{output_id}.txt` et la réponse inline retourne un aperçu `Head + Tail` accompagné de `truncated: true`, `output_id`, `total_chars`, `total_lines`, `omitted_lines_range` et `next_tools`. Si la requête de l'Utilisateur exige une restitution exhaustive ou un verbatim, il est ABSOLUMENT INTERDIT de synthétiser l'aperçu partiel sans paginer toutes les lignes omises.
+- `read_tool_output(output_id, start_line=1, end_line=None, search_pattern=None)` :
+  - Lit une fenêtre bornée (par défaut et au plus `800` lignes `ECHO_CODEX_MAX_READ_LINES` et `46 080` octets `ECHO_CODEX_MAX_READ_BYTES` par appel, parcours total illimité) d'une sortie délestée identifiée par `output_id`. Les fenêtres peuvent être lues séquentiellement via `has_more` / `next_start_line` ou en parallèle (jusqu'à 5 appels `read_tool_output` par tour lorsque `omitted_lines_range` est connu).
   - Si `search_pattern` (expression régulière) est fourni, extrait uniquement les lignes correspondantes avec `±2` lignes de contexte et les numéros de lignes exacts avant toute lecture ciblée.
   - Restitue `has_more` et `next_start_line` pour l'enchaînement paginé.
 - `delete_tool_output(output_id)` :

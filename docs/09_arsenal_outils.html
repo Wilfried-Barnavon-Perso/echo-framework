@@ -109,11 +109,16 @@
             multimodaux sont encapsulés sous la clé standardisée <code>echo_tool_multiparts</code> (déballée par
             <code>unbox_tool_output()</code> dans <code>echo_core.py</code>), tandis que les événements système
             (<code>aec_event</code>, <code>aec_directive</code>) sont consommés selon un mécanisme FIFO destructif qui
-            préserve intactes les ressources persistantes du registre. Toute sortie texte dépassant
-            <code>ECHO_TOOL_OUTPUT_PREVIEW_CHARS</code> (<code>32 768</code> car.) est délestée automatiquement
-            dans <code>tools_output/{output_id}.txt</code> via <code>truncate_and_spill_tool_output</code> (hors
-            Base64 protégé et outils exemptés via <code>skip_truncation=True</code>), avec aperçu Head+Tail et
-            recommandation d'accès par <code>read_tool_output</code> / <code>delete_tool_output</code>.
+            préserve intactes les ressources persistantes du registre. Toute sortie texte dépassant le plafond résolu par
+            <code>get_tool_truncation_limit</code> (<code>32 768</code> car.
+            <code>ECHO_TOOL_OUTPUT_PREVIEW_CHARS</code> par défaut pour les outils I/O bruts,
+            <code>524 288</code> car. <code>ECHO_COGNITIVE_OUTPUT_PREVIEW_CHARS</code> pour les outils de
+            distillation cognitive et sous-agents <code>ECHO_COGNITIVE_DISTILLATION_TOOLS</code>) est délestée
+            automatiquement dans <code>tools_output/{output_id}.txt</code> via
+            <code>truncate_and_spill_tool_output</code> (hors lecteurs paginés exemptés
+            <code>ECHO_PAGINATED_READER_TOOLS</code>, Base64 protégé et outils exemptés via
+            <code>skip_truncation=True</code>), avec aperçu Head+Tail et recommandation d'accès par
+            <code>read_tool_output</code> / <code>delete_tool_output</code>.
           </li>
           <li><strong>Norme PEP8 &amp; Énonciation Impersonnelle :</strong> Suppression des imports inutilisés,
             préfixage par <code>_</code> des variables locales non consommées, et rédaction des docstrings d'outils à la
@@ -140,7 +145,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 6.7.10 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 6.7.11 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

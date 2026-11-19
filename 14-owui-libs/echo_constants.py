@@ -1,20 +1,20 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.7.7.1
+version: 6.7.10.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.10.1: Gouvernance SSOT à 3 régimes de troncature (ECHO_COGNITIVE_OUTPUT_PREVIEW_CHARS=524288, ECHO_PAGINATED_READER_TOOLS, ECHO_COGNITIVE_DISTILLATION_TOOLS, get_tool_truncation_limit).
 # 6.7.7.1: Migration du découpage des sous-agents vers les tours d'outils (ECHO_SUBAGENT_CHECKPOINT_TURNS=8, ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC=120, ECHO_AUTONOMOUS_MAX_TURNS=15, ECHO_AUTONOMOUS_TIMEOUT_SEC=300, ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND=3, ECHO_COUNCIL_ROUND_TIMEOUT_SEC=120) et ajout de default_slice_timeout_sec dans ECHO_SUBAGENT_ENGINES_REGISTRY.
 # 6.7.6.1: MAJ echo_constants.py - Version Antigravity 2.33.0 & CL 1024904911.
 # 6.7.4.1: Migration de MODEL_PROMETHEUS vers gemini-4-neon / gemini-4-neon-medium (medium), alignement de MODEL_ATHENA en high et MODEL_ZEPHYR en medium, et retrait de temperature/topP sur les modèles Gemini 4.
 # 6.7.1.2: Ajout du registre SSOT ECHO_SUBAGENT_ENGINES_REGISTRY (11 moteurs) et ajout de delegate_deep_research, delegate_to_n8n_grapher et ask_data_broker dans DELEGATE_AGENT_BLACKLIST.
-# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 
 import os
 import contextvars
-from typing import Literal
+from typing import Literal, Optional
 
 # Information à ne pas effacer : Ce ContextVar permet de transmettre l'identité du sous-agent
 # à travers les frontières asynchrones (asyncio) de manière "télépathique", sans avoir à modifier
@@ -238,9 +238,51 @@ ECHO_RETRY_SERVER_MAX_WAIT_SEC = 60.0  # Plafond (s) d'attente sur Retry-After /
 
 # Seuils SSOT de délestage (spillover tools_output) et de lecture paginée (alignés AGY)
 ECHO_TOOL_OUTPUT_PREVIEW_CHARS = 32768  # Seuil d'aperçu inline Head+Tail (~10k tokens) avant délestage dans tools_output/
+ECHO_COGNITIVE_OUTPUT_PREVIEW_CHARS = 524288  # Seuil inline étendu (512 Ko / ~160k tokens) pour les livrables de distillation cognitive et sous-agents
 ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS = ECHO_TOOL_OUTPUT_PREVIEW_CHARS
 ECHO_CODEX_MAX_READ_LINES = 800    # Nombre maximum de lignes retournées par appel read_codex / read_tool_output
 ECHO_CODEX_MAX_READ_BYTES = 46080  # Volume maximum (45 Ko) retourné par appel read_codex / read_tool_output
+
+# Registres déclaratifs SSOT des régimes de troncature par outil (@echo_tool & StandardToolDispatcher)
+ECHO_PAGINATED_READER_TOOLS: frozenset = frozenset({
+    "read_codex",
+    "read_tool_output",
+    "delete_tool_output",
+})
+
+ECHO_COGNITIVE_DISTILLATION_TOOLS: frozenset = frozenset({
+    "read_multimedia_file",
+    "semantic_probe",
+    "analyze_web_page",
+    "summarize_codex",
+    "delegate_to_agent",
+    "control_subagents",
+    "consult_council",
+    "consult_supervised_workers",
+    "delegate_deep_research",
+    "delegate_web_browsing",
+    "delegate_to_n8n_grapher",
+    "ask_data_broker",
+    "build_plan",
+    "read_plan",
+    "analyze_plan",
+    "tool_advisor",
+    "query_n8n_documentation",
+    "read_skill",
+})
+
+
+def get_tool_truncation_limit(
+    tool_name: str,
+    skip_truncation: bool = False,
+    is_subagent: bool = False,
+) -> Optional[int]:
+    """Résout le plafond de caractères inline avant délestage dans tools_output/ selon le régime SSOT de l'outil."""
+    if skip_truncation or tool_name in ECHO_PAGINATED_READER_TOOLS:
+        return None
+    if tool_name in ECHO_COGNITIVE_DISTILLATION_TOOLS:
+        return ECHO_COGNITIVE_OUTPUT_PREVIEW_CHARS
+    return ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS if is_subagent else ECHO_TOOL_OUTPUT_PREVIEW_CHARS
 
 
 def build_httpx_timeout(read_timeout: float):

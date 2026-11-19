@@ -94,8 +94,10 @@
             </li>
             <li><strong>Agent Engine :</strong> <code>delegate_to_agent</code> (timeout
               <code>ECHO_LLM_CALL_TIMEOUT = 600s</code>, filet de sécurité idempotent
-              <code>truncate_and_spill_tool_output</code> vers <code>tools_output/</code> au seuil
-              <code>ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS = 32 768</code> car., extraction de contexte restreinte à la
+              <code>truncate_and_spill_tool_output</code> vers <code>tools_output/</code> gouverné par
+              <code>get_tool_truncation_limit</code> (<code>32 768</code> car. I/O brut,
+              <code>524 288</code> car. distillation cognitive et sous-agents, exemption
+              <code>ECHO_PAGINATED_READER_TOOLS</code> / <code>_skip_truncation</code>), extraction de contexte restreinte à la
               branche active via <code>load_active_branch_ids</code> dans <code>_distill_main_context</code>,
               verrouillage
               explicite <code>functionCallingConfig: {"mode": "NONE"}</code> en fin de budget avec conservation des
@@ -244,7 +246,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 6.7.10 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 6.7.11 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 
