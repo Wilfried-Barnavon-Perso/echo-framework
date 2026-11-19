@@ -288,27 +288,75 @@ async def process_uploaded_file(
         _cleanup_local_cache(file_path)
 
 
+async def _resolve_upload_max_bytes() -> tuple[int, int]:
+    config_max_mb = await Config.get('rag.file.max_size')
+    effective_max_mb = (
+        min(int(config_max_mb), ECHO_MAX_FILE_UPLOAD_SIZE_MB)
+        if config_max_mb
+        else ECHO_MAX_FILE_UPLOAD_SIZE_MB
+    )
+    return effective_max_mb, effective_max_mb * 1024 * 1024
+
+
 @router.post('/', response_model=FileModelResponse)
 async def upload_file(
     request: Request,
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    metadata: Optional[dict | str] = Form(None),
     process: bool = Query(True),
     process_in_background: bool = Query(True),
     user=Depends(get_verified_user),
     db: AsyncSession = Depends(get_async_session),
 ):
-    result = await upload_file_handler(
-        request,
-        file=file,
-        metadata=metadata,
-        process=process,
-        process_in_background=process_in_background,
-        user=user,
-        background_tasks=background_tasks,
-        db=db,
-    )
+    # [ECHO-V6-HOOK] Streaming multipart direct vers .tmp_uploads/<uuid>.part + adoption os.replace() O(1)
+    from starlette.datastructures import UploadFile as StarletteUploadFile
+    from starlette.formparsers import MultiPartException
+    from open_webui.echo.storage import _unlink_silent, parse_staged_multipart
+
+    effective_max_mb, max_bytes = await _resolve_upload_max_bytes()
+    staged_paths: list[str] = []
+    form = None
+    try:
+        try:
+            form, staged_paths = await parse_staged_multipart(request, max_bytes=max_bytes)
+        except ValueError as ve:
+            if str(ve) == 'FILE_TOO_LARGE':
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=ERROR_MESSAGES.FILE_TOO_LARGE(size=f'{effective_max_mb} MB'),
+                )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+        except MultiPartException as me:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(me))
+
+        raw_file = form.get('file')
+        if not isinstance(raw_file, StarletteUploadFile):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=ERROR_MESSAGES.DEFAULT('Missing file field'),
+            )
+        raw_metadata = form.get('metadata')
+        metadata = raw_metadata if isinstance(raw_metadata, (dict, str)) else None
+
+        result = await upload_file_handler(
+            request,
+            file=raw_file,
+            metadata=metadata,
+            process=process,
+            process_in_background=process_in_background,
+            user=user,
+            background_tasks=background_tasks,
+            db=db,
+        )
+    finally:
+        if form is not None:
+            for _, val in form.multi_items():
+                if isinstance(val, StarletteUploadFile) and not getattr(val.file, 'closed', True):
+                    try:
+                        await val.close()
+                    except Exception:
+                        pass
+        for sp in staged_paths:
+            _unlink_silent(sp)
 
     if isinstance(result, dict):
         result_id = result.get('id')
@@ -405,13 +453,8 @@ async def upload_file_handler(
             'Echo-Original-Name': name,
             'Echo-Mime-Type': str(file.content_type or 'application/octet-stream'),
         }
-        config_max_mb = await Config.get('rag.file.max_size')
-        effective_max_mb = (
-            min(int(config_max_mb), ECHO_MAX_FILE_UPLOAD_SIZE_MB)
-            if config_max_mb
-            else ECHO_MAX_FILE_UPLOAD_SIZE_MB
-        )
-        max_bytes = effective_max_mb * 1024 * 1024
+        effective_max_mb, max_bytes = await _resolve_upload_max_bytes()
+        staged_path = getattr(file, '_echo_staged_path', None)
 
         try:
             if hasattr(Storage, 'upload_file_streamed'):
@@ -423,11 +466,13 @@ async def upload_file_handler(
                         tags,
                         max_bytes,
                         compute_hash=bool(knowledge_id),
+                        staged_path=staged_path,
                     )
                 except OSError as e:
                     if e.errno != errno.ENAMETOOLONG:
                         raise
-                    file.file.seek(0)
+                    if not getattr(file.file, 'closed', False):
+                        file.file.seek(0)
                     filename = f'{id}.{file_extension}' if file_extension else id
                     file_size, file_path, streamed_hash = await asyncio.to_thread(
                         Storage.upload_file_streamed,
@@ -436,6 +481,7 @@ async def upload_file_handler(
                         tags,
                         max_bytes,
                         compute_hash=bool(knowledge_id),
+                        staged_path=staged_path,
                     )
             else:
                 try:

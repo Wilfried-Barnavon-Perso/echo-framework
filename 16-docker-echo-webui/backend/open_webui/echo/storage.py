@@ -1,29 +1,48 @@
 """
 title: ECHO V6 Unified Vault Storage Provider
 author: Wilfried BARNAVON
-version: 6.7.8.1
+version: 6.7.9.1
 description: Écriture directe des uploads dans l'arborescence ECHO (/users/{uid}/chats/{cid}/files
              ou /users/{uid}/files) et indexation immédiate dans echo_resources.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.9.1: Ajout de EchoStagedMultiPartParser / parse_staged_multipart (staging nommé tamponné 4 MiB) et adoption os.replace() O(1) avec fallback EXDEV et préservation ENAMETOOLONG dans upload_file_streamed.
 # 6.7.8.1: Streaming par blocs de 4 MiB et calcul SHA-256 optionnel (compute_hash=False par défaut) dans upload_file_streamed.
 # 6.5.3.1: Ajout de upload_file_streamed (streaming zéro-RAM par blocs de 1 MiB jusqu'à 4 Go avec hachage SHA-256 à la volée).
 # 6.1.0.1: Création de EchoStorageProvider unifiant l'écriture dans les Vaults ECHO et echo_resources.
 
 from __future__ import annotations
 
+import asyncio
+import codecs
+import errno
 import hashlib
 import logging
 import mimetypes
 import os
 import shutil
-from typing import Any, BinaryIO, Dict, Tuple
+import uuid
+from typing import TYPE_CHECKING, Any, BinaryIO, Dict, Tuple
+
+import python_multipart as multipart
+from python_multipart.exceptions import FormParserError
+from python_multipart.multipart import parse_options_header
+from starlette.datastructures import FormData, Headers
+from starlette.formparsers import MultiPartException, MultiPartParser, _user_safe_decode
+
+try:
+    from fastapi import UploadFile
+except ImportError:
+    from starlette.datastructures import UploadFile
 
 from open_webui.config import UPLOAD_DIR
 from open_webui.constants import ERROR_MESSAGES
 from open_webui.echo.identity_bridge import ensure_user_identity_db
 from open_webui.echo.runtime import ensure_echo_sys_path
+
+if TYPE_CHECKING:
+    from python_multipart.multipart import MultipartCallbacks
 
 log = logging.getLogger(__name__)
 
@@ -202,6 +221,166 @@ def _finalize_vault_mirrors_and_index(ctx: Dict[str, Any]) -> None:
         )
 
 
+def get_echo_staging_dir() -> str:
+    """Retourne et crée le répertoire de staging multipart sur le volume persistant."""
+    tmp_dir = os.environ.get("TMPDIR", "").strip()
+    if tmp_dir:
+        staging_dir = tmp_dir
+    else:
+        staging_dir = os.path.join(os.path.dirname(os.path.normpath(UPLOAD_DIR)), ".tmp_uploads")
+    os.makedirs(staging_dir, exist_ok=True)
+    return staging_dir
+
+
+def _flush_and_rewind(fh: BinaryIO) -> None:
+    """Force l'écriture disque et rembobine le descripteur de fichier."""
+    fh.flush()
+    fh.seek(0)
+
+
+class EchoStagedMultiPartParser(MultiPartParser):
+    """Parseur multipart streamé directement sur disque sans bufferisation RAM."""
+
+    def __init__(
+        self,
+        headers: Headers,
+        stream: Any,
+        *,
+        staging_dir: str,
+        max_bytes: int | None = None,
+        write_buffer_bytes: int = 4 * 1024 * 1024,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(headers, stream, **kwargs)
+        self.staging_dir = staging_dir
+        self.max_bytes = max_bytes
+        self.write_buffer_bytes = max(65536, int(write_buffer_bytes))
+        self._staged_paths: list[str] = []
+        self._part_buffers: dict[int, bytearray] = {}
+
+    def on_headers_finished(self) -> None:
+        _, options = parse_options_header(self._current_part.content_disposition)
+        try:
+            self._current_part.field_name = _user_safe_decode(options[b"name"], self._charset)
+        except KeyError:
+            raise MultiPartException('The Content-Disposition header field "name" must be provided.')
+        if b"filename" in options:
+            self._current_files += 1
+            if self._current_files > self.max_files:
+                raise MultiPartException(f"Too many files. Maximum number of files is {self.max_files}.")
+            filename = _user_safe_decode(options[b"filename"], self._charset)
+            stage_path = os.path.join(self.staging_dir, f"upload_{uuid.uuid4().hex}.part")
+            fh = open(stage_path, "w+b", buffering=self.write_buffer_bytes)
+            self._files_to_close_on_error.append(fh)  # type: ignore[arg-type]
+            self._staged_paths.append(stage_path)
+            upload = UploadFile(
+                file=fh,  # type: ignore[arg-type]
+                size=0,
+                filename=filename,
+                headers=Headers(raw=self._current_part.item_headers),
+            )
+            setattr(upload, "_echo_staged_path", stage_path)
+            self._part_buffers[id(upload)] = bytearray()
+            self._current_part.file = upload
+        else:
+            self._current_fields += 1
+            if self._current_fields > self.max_fields:
+                raise MultiPartException(f"Too many fields. Maximum number of fields is {self.max_fields}.")
+            self._current_part.file = None
+
+    async def parse(self) -> FormData:
+        if "content-type" not in self.headers:
+            raise MultiPartException("Missing Content-Type header.")
+
+        _, params = parse_options_header(self.headers["Content-Type"])
+        charset = params.get(b"charset", "utf-8")
+        if isinstance(charset, bytes):
+            charset = charset.decode("latin-1")
+        try:
+            self._charset = codecs.lookup(charset).name
+        except LookupError:
+            self._charset = "latin-1"
+        try:
+            boundary = params[b"boundary"]
+        except KeyError:
+            raise MultiPartException("Missing boundary in multipart.")
+
+        callbacks: MultipartCallbacks = {
+            "on_part_begin": self.on_part_begin,
+            "on_part_data": self.on_part_data,
+            "on_part_end": self.on_part_end,
+            "on_header_field": self.on_header_field,
+            "on_header_value": self.on_header_value,
+            "on_header_end": self.on_header_end,
+            "on_headers_finished": self.on_headers_finished,
+            "on_end": self.on_end,
+        }
+
+        async def _drain_pending() -> None:
+            for part, data in self._file_parts_to_write:
+                uf = part.file
+                assert uf is not None
+                buf = self._part_buffers[id(uf)]
+                buf.extend(data)
+                uf.size = (uf.size or 0) + len(data)
+                if self.max_bytes is not None and uf.size > self.max_bytes:
+                    raise ValueError("FILE_TOO_LARGE")
+                if len(buf) >= self.write_buffer_bytes:
+                    payload = bytes(buf)
+                    buf.clear()
+                    await asyncio.to_thread(uf.file.write, payload)
+            for part in self._file_parts_to_finish:
+                uf = part.file
+                assert uf is not None
+                buf = self._part_buffers.pop(id(uf), None)
+                if buf:
+                    payload = bytes(buf)
+                    buf.clear()
+                    await asyncio.to_thread(uf.file.write, payload)
+                await asyncio.to_thread(_flush_and_rewind, uf.file)
+            self._file_parts_to_write.clear()
+            self._file_parts_to_finish.clear()
+
+        try:
+            parser = multipart.MultipartParser(boundary, callbacks)
+            async for chunk in self.stream:
+                parser.write(chunk)
+                await _drain_pending()
+            parser.finalize()
+            await _drain_pending()
+        except BaseException as exc:
+            for fh in self._files_to_close_on_error:
+                try:
+                    fh.close()
+                except Exception:
+                    pass
+            for path in self._staged_paths:
+                _unlink_silent(path)
+            if isinstance(exc, FormParserError):
+                raise MultiPartException("Invalid multipart data.") from exc
+            raise
+
+        return FormData(self.items)
+
+
+async def parse_staged_multipart(
+    request: Any,
+    max_bytes: int | None = None,
+    write_buffer_bytes: int = 4 * 1024 * 1024,
+) -> tuple[FormData, list[str]]:
+    """Parse une requête multipart en écrivant les fichiers par blocs vers le staging disque."""
+    if not str(request.headers.get("content-type", "")).lower().startswith("multipart/"):
+        raise MultiPartException("Invalid Content-Type for multipart upload.")
+    parser = EchoStagedMultiPartParser(
+        request.headers,
+        request.stream(),
+        staging_dir=get_echo_staging_dir(),
+        max_bytes=max_bytes,
+        write_buffer_bytes=write_buffer_bytes,
+    )
+    return (await parser.parse(), list(parser._staged_paths))
+
+
 class EchoStorageProvider:
     """
     Fournisseur de stockage souverain ECHO V6 :
@@ -219,8 +398,61 @@ class EchoStorageProvider:
         max_bytes: int = 4096 * 1024 * 1024,
         chunk_size: int = 4 * 1024 * 1024,
         compute_hash: bool = False,
+        staged_path: str | None = None,
     ) -> Tuple[int, str, str]:
-        """Écrit le flux par blocs de 4 MiB avec SHA-256 optionnel à la volée et plafond."""
+        """Écrit le flux par blocs de 4 MiB (ou adopte un fichier stagé) avec SHA-256 optionnel et plafond."""
+        if staged_path and os.path.isfile(staged_path):
+            if file is not None and not getattr(file, "closed", True):
+                file.flush()
+                file.close()
+
+            total_bytes = os.path.getsize(staged_path)
+            if total_bytes == 0:
+                _unlink_silent(staged_path)
+                raise ValueError(ERROR_MESSAGES.EMPTY_CONTENT)
+            if total_bytes > max_bytes:
+                _unlink_silent(staged_path)
+                raise ValueError("FILE_TOO_LARGE")
+
+            if compute_hash:
+                hasher = hashlib.sha256()
+                with open(staged_path, "rb") as f_src:
+                    while True:
+                        chunk = f_src.read(chunk_size)
+                        if not chunk:
+                            break
+                        hasher.update(chunk)
+                digest = hasher.hexdigest()
+            else:
+                digest = ""
+
+            ctx = _resolve_vault_context(filename, tags)
+            primary_path = ctx["primary_path"]
+            try:
+                os.replace(staged_path, primary_path)
+            except OSError as exc:
+                if exc.errno == errno.ENAMETOOLONG:
+                    raise
+                if exc.errno == errno.EXDEV:
+                    try:
+                        with open(staged_path, "rb") as f_src, open(primary_path, "wb") as f_dst:
+                            while True:
+                                chunk = f_src.read(chunk_size)
+                                if not chunk:
+                                    break
+                                f_dst.write(chunk)
+                    except Exception:
+                        _unlink_silent(primary_path)
+                        raise
+                    _unlink_silent(staged_path)
+                else:
+                    _unlink_silent(primary_path)
+                    _unlink_silent(staged_path)
+                    raise
+
+            _finalize_vault_mirrors_and_index(ctx)
+            return total_bytes, primary_path, digest
+
         ctx = _resolve_vault_context(filename, tags)
         primary_path = ctx["primary_path"]
         hasher = hashlib.sha256() if compute_hash else None
