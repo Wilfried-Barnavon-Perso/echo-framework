@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.7.12.1
+version: 6.7.13.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.13.1: Ajout de ECHO_MAX_CONCURRENT_MULTIMODAL_SEGMENTS = 3 pour la régulation globale des segments multimodaux en parallèle.
 # 6.7.12.1: Passage du thinkingLevel par défaut de MODEL_ZEPHYR à high dans ECHO_MODELS_REGISTRY.
 # 6.7.10.1: Gouvernance SSOT à 3 régimes de troncature (ECHO_COGNITIVE_OUTPUT_PREVIEW_CHARS=524288, ECHO_PAGINATED_READER_TOOLS, ECHO_COGNITIVE_DISTILLATION_TOOLS, get_tool_truncation_limit).
 # 6.7.7.1: Migration du découpage des sous-agents vers les tours d'outils (ECHO_SUBAGENT_CHECKPOINT_TURNS=8, ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC=120, ECHO_AUTONOMOUS_MAX_TURNS=15, ECHO_AUTONOMOUS_TIMEOUT_SEC=300, ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND=3, ECHO_COUNCIL_ROUND_TIMEOUT_SEC=120) et ajout de default_slice_timeout_sec dans ECHO_SUBAGENT_ENGINES_REGISTRY.
 # 6.7.6.1: MAJ echo_constants.py - Version Antigravity 2.33.0 & CL 1024904911.
-# 6.7.4.1: Migration de MODEL_PROMETHEUS vers gemini-4-neon / gemini-4-neon-medium (medium), alignement de MODEL_ATHENA en high et MODEL_ZEPHYR en medium, et retrait de temperature/topP sur les modèles Gemini 4.
 
 import os
 import contextvars
@@ -729,6 +729,7 @@ ECHO_SESSION_RAG_CHUNK_SIZE   = 4000     # ~1000 tokens Harrier : Seuil de densi
 ECHO_MAX_PARALLEL_TOOLS_PER_TURN = 5      # Sémaphore max d'outils exécutés en parallèle dans un même tour (Orchestrateur & Sous-Agent)
 ECHO_MAX_PARALLEL_SUBAGENTS = 4           # Sémaphore max de sous-agents simultanés en vol par chat_id
 ECHO_MAX_CONCURRENT_BROWSERS = 2          # Sémaphore global max d'instances Playwright Chromium actives simultanément
+ECHO_MAX_CONCURRENT_MULTIMODAL_SEGMENTS = 3  # Sémaphore global max de segments multimodaux (<= 30 Mo) analysés en parallèle vers Gemini
 ECHO_SUBAGENT_CHECKPOINT_TURNS = 8        # Nombre de tours d'outils LLM par tranche supervisée avant point de contrôle coopératif (suspended_checkpoint)
 ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC = 120 # Durée max (secondes) d'une tranche supervisée avant point de contrôle coopératif en fin de tour
 ECHO_SUBAGENT_MAX_CONSECUTIVE_ERRORS = 3  # Disjoncteur PARE : 3 erreurs d'outils consécutives -> pause immédiate (suspended_pare_alert)

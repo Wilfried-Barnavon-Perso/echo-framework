@@ -1,7 +1,7 @@
 ---
 domain_id: code_and_files
-version: 6.6.21.2
-updated_at: 2026-11-16
+version: 6.7.13.1
+updated_at: 2026-11-19
 name: Registre Unifié, Explorateur de l'Espace Personnel & Sandbox d'Exécution de Code
 description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash), exécution isolée de scripts Codex sandbox (.py / .js / .sh) et exécution SSH distante (ssh_executor).
 tools: [query_registry, read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes, code_executor, control_sandbox_execution, kill_sandbox_execution, ssh_executor]
@@ -33,8 +33,8 @@ Tous les outils ci-dessous résolvent `file_id` (ou `target`) dans l'ordre : 1) 
 ### 2.1 Matrice de Sélection de l'Outil d'Exploration
 | Besoin Opérationnel | Outil à Invoquer | Spécifications & Contraintes Critiques |
 | :--- | :--- | :--- |
-| **Extraction chirurgicale ciblée dans un fichier ou média volumineux (Texte, PDF, Image, Audio, Vidéo)** | `semantic_probe(file_id, query)` | Délègue l'extraction ciblée à un sous-agent (`MODEL_APOLLO`) qui répond précisément au motif `query` (avec segmentation automatique au-delà de 30 Mo ou 45 min). |
-| **Rapport descriptif complet et horodaté d'un Média (Image, Audio, Vidéo, PDF)** | `read_multimedia_file(file_id, instruction=None)` | Sonde multimodale (`MODEL_APOLLO`) restituant une distillation complète et horodatée du média. `instruction` optionnel pour surcharger la consigne par défaut. |
+| **Extraction chirurgicale ciblée dans un fichier ou média volumineux (Texte, PDF, Image, Audio, Vidéo)** | `semantic_probe(file_id, query)` | Délègue l'extraction ciblée à `MODEL_APOLLO` selon `query` (segmentation Map-Reduce parallélisée en mémoire vive avec backpressure au-delà de 30 Mo ou 45 min). Appels parallélisables intra-tour sur fichiers distincts. |
+| **Rapport descriptif complet et horodaté d'un Média (Image, Audio, Vidéo, PDF)** | `read_multimedia_file(file_id, instruction=None)` | Sonde multimodale (`MODEL_APOLLO`) restituant une distillation complète et horodatée du média (segmentation parallèle bornée au-delà de 30 Mo ou 45 min). `instruction` optionnel pour surcharger la consigne par défaut. Appels parallélisables intra-tour sur fichiers distincts. |
 | **Lecture brute de lignes ou d'octets** | `read_raw_file_content(file_id, start_line=1, end_line=100, output_mode="text", byte_offset=0)` | `output_mode` : `"text"`, `"base64"` ou `"hex"`. **CONTRAINTE CRITIQUE** : `byte_offset` (> 0) est mutuellement exclusif avec `start_line`/`end_line`. Limiter à ~100 lignes par appel (max 16 Ko). Si un binaire lu en `"text"` est illisible, interdiction de boucler : utiliser `semantic_probe` ou `read_multimedia_file`. |
 | **Afficher une image à l'Utilisateur** | `show_image_to_user(target, workspace=None)` | Rend toute image locale (par ID Registre, par Nom de fichier ou par `workspace="main"\|"plans"\|"generated"\|"sandbox"`) ou distante (`http(s)://`) dans une Iframe interactive intégrée au message destiné à L'Utilisateur. **Outil strictement réservé au Modèle principal (Orchestrateur)** : son appel depuis un Sous-Agent headless est ABSOLUMENT INTERDIT (le Sous-Agent DOIT restituer l'identifiant, le nom ou l'URL au Modèle principal qui exécute l'affichage). L'affichage visuel étant assuré nativement par l'Iframe du Système, il est ABSOLUMENT INTERDIT pour Le Modèle d'émettre une balise Markdown `![...](...)` ou un lien d'image redondant dans sa réponse. |
 | **Métadonnées & Intégrité cryptographique** | `get_file_metadata(file_id)` / `calculate_file_hashes(file_ids, algorithm="sha256")` | `get_file_metadata` retourne taille et MIME. `calculate_file_hashes` accepte une liste `file_ids` et `algorithm` parmi `"sha256"`, `"md5"`, `"sha1"`, `"sha512"`, `"blake2b"`, `"crc32"`. |

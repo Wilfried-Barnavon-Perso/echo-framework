@@ -1,17 +1,16 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 6.6.5.2
+version: 6.7.13.1
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.13.1: Parallélisation intra-appel Map-Reduce avec backpressure global (MAX_CONCURRENT_SEGMENTS), streaming PDF incrémental O(1) RAM, fail-fast, heartbeat agrégé et verrou FFmpeg loop-safe.  # noqa: E501
 # 6.6.5.2: Filtrage des pensées via extract_response_parts_and_text dans _call_apollo_with_heartbeat.  # noqa: E501
 # 6.6.5.1: Extension du paramètre workspace de show_image_to_user au domaine "browserviews".  # noqa: E501
 # 5.233.0.1: Unification du wrapper dans wrap_tool_output, décoration @echo_tool sur les 6 méthodes publiques et simplification des retours.
 # 5.232.5.1: Extension du paramètre workspace de show_image_to_user aux espaces "main", "plans", "generated" et "sandbox".  # noqa: E501
-# 5.231.59.2: Délégation factorisée du chargement Base64 d'image locale/distante à load_image_as_base64 (echo_http.py) dans show_image_to_user.  # noqa: E501
-# 5.231.53.1: Alignement PAS (Énonciation Impersonnelle, Haut SNR, opérateur ABSOLUMENT INTERDIT) des retours de show_image_to_user.  # noqa: E501
 
 import io
 import os
@@ -22,7 +21,8 @@ import shutil
 import base64
 import hashlib
 import asyncio
-from typing import AsyncGenerator, List, Any, Literal, Optional, Tuple, Union
+import contextlib
+from typing import AsyncGenerator, Dict, List, Any, Literal, Optional, Tuple, Union
 from pydantic import BaseModel, Field
 from fastapi.responses import HTMLResponse
 
@@ -40,6 +40,7 @@ from echo_ui import EchoUI  # noqa: E402
 from echo_constants import (  # noqa: E402
     ECHO_API_KEY_RETRIES,
     ECHO_API_MAX_RETRIES,
+    ECHO_MAX_CONCURRENT_MULTIMODAL_SEGMENTS,
     ECHO_MAX_CONTEXT_SIZE,
     ECHO_UPLOADS_TRANSIT_DIR,
     get_generation_config,
@@ -56,6 +57,10 @@ class Tools:
         MAX_READ_SIZE_KB: int = Field(default=16, description="Taille maximale (en Ko) pour la lecture brute (RAW).")
         MAX_MULTIMODAL_SIZE_KB: int = Field(default=30720, description="Taille maximale (en Ko) pour l'injection multimédia (défaut: 30 Mo).")
         MAX_CONCURRENT_TRANSCODES: int = Field(default=1, description="Nombre maximal de transcodages FFmpeg simultanés (anti-saturation CPU/RAM multi-chat).")
+        MAX_CONCURRENT_SEGMENTS: int = Field(
+            default=ECHO_MAX_CONCURRENT_MULTIMODAL_SEGMENTS,
+            description="Nombre maximal global de segments multimodaux (<= 30 Mo) analysés en parallèle vers Gemini.",
+        )
 
     def __init__(self):
         self.valves = self.Valves()
@@ -221,8 +226,23 @@ class Tools:
         )
 
     _FFMPEG_BIN: Optional[str] = None
-    _FFMPEG_SEMAPHORE: Optional[asyncio.Semaphore] = None
-    _FFMPEG_SEM_LIMIT: int = 0
+    _FFMPEG_SEMAPHORES: Dict[int, Tuple[int, asyncio.Semaphore]] = {}
+    _SEGMENT_SEMAPHORES: Dict[int, Tuple[int, asyncio.Semaphore]] = {}
+    _FFMPEG_INIT_LOCKS: Dict[int, asyncio.Lock] = {}
+
+    @staticmethod
+    def _get_loop_semaphore(
+        registry: Dict[int, Tuple[int, asyncio.Semaphore]], limit: int
+    ) -> asyncio.Semaphore:
+        """Retourne un sémaphore lié à la boucle événementielle courante, recréé si la limite change."""
+        safe_limit = max(1, int(limit))
+        loop_id = id(asyncio.get_running_loop())
+        entry = registry.get(loop_id)
+        if entry is None or entry[0] != safe_limit:
+            sem = asyncio.Semaphore(safe_limit)
+            registry[loop_id] = (safe_limit, sem)
+            return sem
+        return entry[1]
 
     def _get_ffmpeg_semaphore(self) -> asyncio.Semaphore:
         """
@@ -231,10 +251,65 @@ class Tools:
         en sérialisant les extractions lourdes à l'échelle du worker Open WebUI.
         """
         limit = max(1, int(getattr(self.valves, "MAX_CONCURRENT_TRANSCODES", 1)))
-        if Tools._FFMPEG_SEMAPHORE is None or Tools._FFMPEG_SEM_LIMIT != limit:
-            Tools._FFMPEG_SEMAPHORE = asyncio.Semaphore(limit)
-            Tools._FFMPEG_SEM_LIMIT = limit
-        return Tools._FFMPEG_SEMAPHORE
+        return self._get_loop_semaphore(Tools._FFMPEG_SEMAPHORES, limit)
+
+    def _get_segment_semaphore(self) -> asyncio.Semaphore:
+        """Retourne le sémaphore global de régulation des segments multimodaux analysés en parallèle."""
+        limit = max(
+            1,
+            int(getattr(self.valves, "MAX_CONCURRENT_SEGMENTS", ECHO_MAX_CONCURRENT_MULTIMODAL_SEGMENTS)),
+        )
+        return self._get_loop_semaphore(Tools._SEGMENT_SEMAPHORES, limit)
+
+    @classmethod
+    def _get_ffmpeg_init_lock(cls) -> asyncio.Lock:
+        """Retourne le verrou d'initialisation FFmpeg lié à la boucle événementielle courante."""
+        loop_id = id(asyncio.get_running_loop())
+        lock = cls._FFMPEG_INIT_LOCKS.get(loop_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            cls._FFMPEG_INIT_LOCKS[loop_id] = lock
+        return lock
+
+    @staticmethod
+    async def _acquire_or_abort(sem: asyncio.Semaphore, abort_event: asyncio.Event) -> bool:
+        """Tente d'acquérir `sem` tout en interrompant l'attente si `abort_event` est déclenché."""
+        if abort_event.is_set():
+            return False
+        acq_task = asyncio.create_task(sem.acquire())
+        abort_task = asyncio.create_task(abort_event.wait())
+        try:
+            _, pending = await asyncio.wait(
+                {acq_task, abort_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for p in pending:
+                p.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            if abort_event.is_set():
+                if (
+                    acq_task.done()
+                    and not acq_task.cancelled()
+                    and acq_task.exception() is None
+                    and acq_task.result()
+                ):
+                    sem.release()
+                return False
+            return True
+        except BaseException:
+            for t in (acq_task, abort_task):
+                if not t.done():
+                    t.cancel()
+            await asyncio.gather(acq_task, abort_task, return_exceptions=True)
+            if (
+                acq_task.done()
+                and not acq_task.cancelled()
+                and acq_task.exception() is None
+                and acq_task.result()
+            ):
+                sem.release()
+            raise
 
     @staticmethod
     def _lower_posix_priority() -> None:
@@ -265,37 +340,41 @@ class Tools:
         if Tools._FFMPEG_BIN and os.path.exists(Tools._FFMPEG_BIN):
             return Tools._FFMPEG_BIN
 
-        sys_ffmpeg = shutil.which("ffmpeg")
-        if sys_ffmpeg:
-            Tools._FFMPEG_BIN = sys_ffmpeg
-            return sys_ffmpeg
+        async with self._get_ffmpeg_init_lock():
+            if Tools._FFMPEG_BIN and os.path.exists(Tools._FFMPEG_BIN):
+                return Tools._FFMPEG_BIN
 
-        try:
-            import imageio_ffmpeg
-            exe = await asyncio.to_thread(imageio_ffmpeg.get_ffmpeg_exe)
-            if exe and os.path.exists(exe):
-                Tools._FFMPEG_BIN = exe
-                return exe
-        except ImportError:
+            sys_ffmpeg = shutil.which("ffmpeg")
+            if sys_ffmpeg:
+                Tools._FFMPEG_BIN = sys_ffmpeg
+                return sys_ffmpeg
+
             try:
-                proc = await asyncio.create_subprocess_exec(
-                    sys.executable, "-m", "pip", "install", "--quiet",
-                    "--break-system-packages", "imageio-ffmpeg",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                await asyncio.wait_for(proc.communicate(), timeout=60.0)
                 import imageio_ffmpeg
                 exe = await asyncio.to_thread(imageio_ffmpeg.get_ffmpeg_exe)
                 if exe and os.path.exists(exe):
                     Tools._FFMPEG_BIN = exe
                     return exe
+            except ImportError:
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        sys.executable, "-m", "pip", "install", "--quiet",
+                        "--break-system-packages", "imageio-ffmpeg",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    await asyncio.wait_for(proc.communicate(), timeout=60.0)
+                    import imageio_ffmpeg
+                    exe = await asyncio.to_thread(imageio_ffmpeg.get_ffmpeg_exe)
+                    if exe and os.path.exists(exe):
+                        Tools._FFMPEG_BIN = exe
+                        return exe
+                except Exception:
+                    pass
             except Exception:
                 pass
-        except Exception:
-            pass
 
-        return "ffmpeg"
+            return "ffmpeg"
 
     async def _probe_media_duration(self, fpath: str) -> Optional[float]:
         """Sonde la durée exacte (en secondes) d'un flux audio ou vidéo via ffprobe ou ffmpeg."""
@@ -527,53 +606,62 @@ class Tools:
 
     async def _iter_pdf_memory_segments(
         self, fpath: str, max_bytes: int
-    ) -> AsyncGenerator[Tuple[str, str, float, Optional[str]], None]:
-        """Segmente un PDF volumineux (> MAX_MULTIMODAL_SIZE_KB) par lots de pages 100% en mémoire (io.BytesIO)."""
-        def _extract_pdf_batches() -> List[Tuple[bytes, str]]:
-            try:
-                from pypdf import PdfReader, PdfWriter
-                reader = PdfReader(fpath)
-                total_pages = len(reader.pages)
-                if total_pages == 0:
-                    return []
-                batches: List[Tuple[bytes, str]] = []
-                writer = PdfWriter()
-                batch_start = 1
-                last_valid_bytes = b""
+    ) -> AsyncGenerator[Tuple[str, str, float, Optional[str], bool], None]:
+        """Segmente un PDF volumineux (> MAX_MULTIMODAL_SIZE_KB) par lots de pages en O(1) RAM (io.BytesIO)."""
+        fh = None
+        yielded_any = False
+        try:
+            def _open_pdf():
+                from pypdf import PdfReader
+                stream = open(fpath, "rb")
+                try:
+                    reader = PdfReader(stream)
+                    return stream, reader, len(reader.pages)
+                except Exception:
+                    stream.close()
+                    raise
 
-                for idx, page in enumerate(reader.pages, start=1):
-                    writer.add_page(page)
+            fh, reader, total_pages = await asyncio.to_thread(_open_pdf)
+            if total_pages == 0:
+                yield f"___ECHO_STREAM_FILE___{fpath}___", "application/pdf", 0.0, None, False
+                return
+
+            def _build_next_batch(start_idx: int) -> Tuple[bytes, str, int]:
+                from pypdf import PdfWriter
+                writer = PdfWriter()
+                last_valid_bytes = b""
+                for idx in range(start_idx, total_pages):
+                    writer.add_page(reader.pages[idx])
                     bio = io.BytesIO()
                     writer.write(bio)
                     cur_bytes = bio.getvalue()
                     if len(cur_bytes) > max_bytes and len(writer.pages) > 1:
-                        batches.append((last_valid_bytes, f"Pages {batch_start}-{idx - 1}/{total_pages}"))
-                        writer = PdfWriter()
-                        writer.add_page(page)
-                        bio = io.BytesIO()
-                        writer.write(bio)
-                        last_valid_bytes = bio.getvalue()
-                        batch_start = idx
-                    else:
-                        last_valid_bytes = cur_bytes
+                        return last_valid_bytes, f"Pages {start_idx + 1}-{idx}/{total_pages}", idx
+                    last_valid_bytes = cur_bytes
+                return last_valid_bytes, f"Pages {start_idx + 1}-{total_pages}/{total_pages}", total_pages
 
-                if len(writer.pages) > 0 and last_valid_bytes:
-                    batches.append((last_valid_bytes, f"Pages {batch_start}-{total_pages}/{total_pages}"))
-                return batches
-            except Exception:
-                return []
-
-        batches = await asyncio.to_thread(_extract_pdf_batches)
-        if not batches:
-            yield f"___ECHO_STREAM_FILE___{fpath}___", "application/pdf", 0.0, None
-            return
-        for raw_pdf, label in batches:
-            marker = EchoGeminiClient.register_memory_stream(raw_pdf)
-            yield marker, "application/pdf", 0.0, label
+            cur_idx = 0
+            while cur_idx < total_pages:
+                raw_pdf, label, cur_idx = await asyncio.to_thread(_build_next_batch, cur_idx)
+                has_more = cur_idx < total_pages
+                marker = EchoGeminiClient.register_memory_stream(raw_pdf)
+                yielded_any = True
+                yield marker, "application/pdf", 0.0, label, has_more
+        except Exception:
+            if not yielded_any:
+                yield f"___ECHO_STREAM_FILE___{fpath}___", "application/pdf", 0.0, None, False
+            else:
+                raise
+        finally:
+            if fh is not None:
+                try:
+                    fh.close()
+                except Exception:
+                    pass
 
     async def _iter_in_memory_segments(
         self, fpath: str, mime: str
-    ) -> AsyncGenerator[Tuple[str, str, float, Optional[str]], None]:
+    ) -> AsyncGenerator[Tuple[str, str, float, Optional[str], bool], None]:
         """
         Générateur JIT de segments multimodaux en mémoire vive :
         - Fast-Path Zéro-RAM sur fichier direct si Taille <= MAX_MULTIMODAL_SIZE_KB et Durée <= 45 min / 1M tokens.
@@ -588,13 +676,14 @@ class Tools:
 
         # 1. Fast-Path : Le fichier respecte à la fois le plafond d'octets (30 Mo) et le plafond temporel (45 min / 1M tokens)
         if file_size <= max_bytes and (duration is None or duration <= max_duration_sec):
-            yield f"___ECHO_STREAM_FILE___{fpath}___", mime, 0.0, None
+            yield f"___ECHO_STREAM_FILE___{fpath}___", mime, 0.0, None, False
             return
 
         # 2. Segmentation PDF en mémoire vive
         if mime == "application/pdf" and file_size > max_bytes:
-            async for seg in self._iter_pdf_memory_segments(fpath, max_bytes):
-                yield seg
+            async with contextlib.aclosing(self._iter_pdf_memory_segments(fpath, max_bytes)) as pdf_iter:
+                async for seg in pdf_iter:
+                    yield seg
             return
 
         # 3. Segmentation Audio/Vidéo en mémoire vive (sans recouvrement : overlap = 0)
@@ -642,17 +731,18 @@ class Tools:
                     effective_end = min(e_sec, s_sec + actual_dur) if actual_dur > 0 else e_sec
                     if can_split and (e_sec - effective_end) > 1.0:
                         queue.insert(0, (effective_end, e_sec))
-                    marker = EchoGeminiClient.register_memory_stream(raw_bytes)
                     is_full_single = (
                         (not unknown_dur)
                         and (s_sec == 0.0)
                         and (effective_end >= duration - 1.0)
                         and (len(queue) == 0)
                     )
-                    label = None if is_full_single else f"Segment [{self._format_hms(s_sec)} - {self._format_hms(effective_end)}]"
-                    yield marker, seg_mime, s_sec, label
                     if unknown_dur and not queue and len(raw_bytes) > 4096:
                         queue.append((effective_end, effective_end + step_sec))
+                    has_more = bool(queue)
+                    marker = EchoGeminiClient.register_memory_stream(raw_bytes)
+                    label = None if is_full_single else f"Segment [{self._format_hms(s_sec)} - {self._format_hms(effective_end)}]"
+                    yield marker, seg_mime, s_sec, label, has_more
             return
 
         # 4. Fallback de sécurité si un binaire non-segmentable dépasse MAX_MULTIMODAL_SIZE_KB
@@ -661,7 +751,7 @@ class Tools:
                 f"Max Size Exceeded : Le fichier ({file_size / (1024 * 1024):.1f} Mo) dépasse la limite autorisée "
                 f"de {self.valves.MAX_MULTIMODAL_SIZE_KB / 1024:.1f} Mo et son format ({mime}) ne supporte pas la segmentation."
             )
-        yield f"___ECHO_STREAM_FILE___{fpath}___", mime, 0.0, None
+        yield f"___ECHO_STREAM_FILE___{fpath}___", mime, 0.0, None, False
 
     async def _call_apollo_with_heartbeat(
         self,
@@ -670,10 +760,11 @@ class Tools:
         metadata: dict,
         events: EchoEvents,
         heartbeats: List[str],
+        emit_heartbeats: bool = True,
     ) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
         """
         Exécute de façon factorisée l'appel EchoGeminiClient.call_cascade sur MODEL_APOLLO
-        avec maintien des heartbeats UI toutes les 15s, gestion des timeouts et extraction des pensées.
+        avec maintien des heartbeats UI toutes les 15s (si emit_heartbeats=True), gestion des timeouts et extraction des pensées.
         Retourne (clean_text, thought_text, model_used, reason, error_msg).
         """
         cascade_task = asyncio.create_task(
@@ -690,16 +781,27 @@ class Tools:
             )
         )
 
-        step_idx = 0
-        while not cascade_task.done():
-            await events.status(heartbeats[step_idx % len(heartbeats)], False)
-            step_idx += 1
+        if not emit_heartbeats:
             try:
-                await asyncio.wait_for(asyncio.shield(cascade_task), timeout=15.0)
-            except asyncio.TimeoutError:
-                pass
-            except Exception:
-                break
+                await cascade_task
+            except asyncio.CancelledError:
+                if not cascade_task.done():
+                    cascade_task.cancel()
+                await asyncio.gather(cascade_task, return_exceptions=True)
+                raise
+            except Exception as e:
+                return None, None, None, None, str(e)
+        else:
+            step_idx = 0
+            while not cascade_task.done():
+                await events.status(heartbeats[step_idx % len(heartbeats)], False)
+                step_idx += 1
+                try:
+                    await asyncio.wait_for(asyncio.shield(cascade_task), timeout=15.0)
+                except asyncio.TimeoutError:
+                    pass
+                except Exception:
+                    break
 
         if cascade_task.exception():
             return None, None, None, None, str(cascade_task.exception())
@@ -754,11 +856,15 @@ class Tools:
             else SYS_EXPLORER_PROBE
         )
 
-        segment_outputs: List[Tuple[Optional[str], str]] = []
-        thoughts_acc: List[str] = []
-        last_model_used = "MODEL_APOLLO"
-        last_reason = None
-        seg_idx = 0
+        seg_sem = self._get_segment_semaphore()
+        abort_event = asyncio.Event()
+        first_error: Optional[str] = None
+        segment_results: Dict[int, dict] = {}
+        segment_tasks: List[asyncio.Task] = []
+        launched_count = 0
+        completed_count = 0
+        is_multi_segment = False
+        prefix_err = "❌ Erreur de l'agent sensoriel" if mode == "sensory" else "❌ Erreur Sonde"
 
         try:
             init_hb = (
@@ -768,71 +874,215 @@ class Tools:
             )
             await events.status(init_hb, False)
 
-            async for data_marker, seg_mime, start_offset_sec, seg_label in self._iter_in_memory_segments(fpath, mime):
-                seg_idx += 1
-                try:
-                    if seg_label:
-                        seg_prompt = (
-                            f"[CONTEXTE DE SEGMENTATION : {seg_label} du fichier '{safe_name}'. "
-                            f"Pour tout horodatage, partir de 00:00:00 au début de cet extrait ; le système recalera automatiquement l'offset.]\n\n"
-                            f"{user_prompt}"
-                        )
-                        hb_prefix = f"{safe_name} ({seg_label})"
+            async def _heartbeat_loop() -> None:
+                step_idx = 0
+                while not abort_event.is_set():
+                    try:
+                        await asyncio.wait_for(abort_event.wait(), timeout=15.0)
+                        break
+                    except asyncio.TimeoutError:
+                        pass
+                    if not is_multi_segment:
+                        if mode == "sensory":
+                            msg = [
+                                f"👁️ L'agent sensoriel visionne {safe_name}...",
+                                f"👁️ Analyse multimodale en cours ({safe_name})...",
+                                f"👁️ Extraction et synchronisation des détails ({safe_name})...",
+                            ][step_idx % 3]
+                        else:
+                            msg = [
+                                f"🤖 Analyse sémantique de {safe_name}...",
+                                f"🤖 Parcours des vecteurs sémantiques ({safe_name})...",
+                                f"🤖 Extraction chirurgicale des concepts ({safe_name})...",
+                            ][step_idx % 3]
                     else:
-                        seg_prompt = user_prompt
-                        hb_prefix = safe_name
+                        in_flight = max(0, launched_count - completed_count)
+                        if mode == "sensory":
+                            msg = (
+                                f"👁️ Analyse multimodale de {safe_name} "
+                                f"({completed_count}/{launched_count} segments terminés, {in_flight} en cours)..."
+                            )
+                        else:
+                            msg = (
+                                f"🤖 Sondage sémantique de {safe_name} "
+                                f"({completed_count}/{launched_count} segments terminés, {in_flight} en cours)..."
+                            )
+                    step_idx += 1
+                    await events.status(msg, False)
 
-                    if mode == "sensory":
-                        heartbeats = [
-                            f"👁️ L'agent sensoriel visionne {hb_prefix}...",
-                            f"👁️ Analyse multimodale en cours ({hb_prefix})...",
-                            f"👁️ Extraction et synchronisation des détails ({hb_prefix})...",
-                        ]
-                    else:
-                        heartbeats = [
-                            f"🤖 Analyse sémantique de {hb_prefix}...",
-                            f"🤖 Parcours des vecteurs sémantiques ({hb_prefix})...",
-                            f"🤖 Extraction chirurgicale des concepts ({hb_prefix})...",
-                        ]
+            hb_task = asyncio.create_task(_heartbeat_loop())
 
-                    payload = {
-                        "contents": [
-                            {
-                                "role": "user",
-                                "parts": [
-                                    {"text": seg_prompt},
-                                    {"inline_data": {"mime_type": seg_mime, "data": data_marker}},
-                                ],
-                            }
-                        ],
-                        "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="medium"),
-                        "systemInstruction": {"parts": [{"text": system_prompt}]},
-                    }
+            def _launch_segment_task(
+                cur_idx: int,
+                data_marker: str,
+                seg_mime: str,
+                start_offset_sec: float,
+                seg_label: Optional[str],
+                seg_prompt: str,
+            ) -> asyncio.Task:
+                released = False
 
-                    clean, thought, model_used, reason, err = await self._call_apollo_with_heartbeat(
-                        payload=payload,
-                        uid=uid,
-                        metadata=__metadata__,
-                        events=events,
-                        heartbeats=heartbeats,
-                    )
-                finally:
+                def _release_resources() -> None:
+                    nonlocal released
+                    if released:
+                        return
+                    released = True
                     if data_marker.startswith("___ECHO_STREAM_MEM___"):
                         EchoGeminiClient.release_memory_stream(data_marker)
+                    seg_sem.release()
 
-                if err:
-                    prefix_err = "❌ Erreur de l'agent sensoriel" if mode == "sensory" else "❌ Erreur Sonde"
-                    return f"{prefix_err} : {err}"
+                async def _process_segment() -> None:
+                    nonlocal first_error, completed_count
+                    try:
+                        payload = {
+                            "contents": [
+                                {
+                                    "role": "user",
+                                    "parts": [
+                                        {"text": seg_prompt},
+                                        {"inline_data": {"mime_type": seg_mime, "data": data_marker}},
+                                    ],
+                                }
+                            ],
+                            "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="medium"),
+                            "systemInstruction": {"parts": [{"text": system_prompt}]},
+                        }
+                        meta_copy = dict(__metadata__) if isinstance(__metadata__, dict) else __metadata__
+                        clean, thought, model_used, reason, err = await self._call_apollo_with_heartbeat(
+                            payload=payload,
+                            uid=uid,
+                            metadata=meta_copy,
+                            events=events,
+                            heartbeats=[],
+                            emit_heartbeats=False,
+                        )
+                        if err:
+                            if first_error is None:
+                                first_error = err
+                            abort_event.set()
+                            return
+                        segment_results[cur_idx] = {
+                            "label": seg_label,
+                            "clean": self._shift_timestamps(clean or "", start_offset_sec),
+                            "thought": thought,
+                            "model_used": model_used,
+                            "reason": reason,
+                        }
+                        completed_count += 1
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        if first_error is None:
+                            first_error = str(exc)
+                        abort_event.set()
+                    finally:
+                        _release_resources()
 
-                if model_used:
-                    last_model_used = model_used
-                if reason:
-                    last_reason = reason
-                if thought:
-                    thoughts_acc.append(f"[{seg_label}] {thought}" if seg_label else thought)
+                try:
+                    task = asyncio.create_task(_process_segment())
+                except BaseException:
+                    _release_resources()
+                    raise
+                task.add_done_callback(lambda _fut: _release_resources())
+                return task
 
-                shifted_clean = self._shift_timestamps(clean or "", start_offset_sec)
-                segment_outputs.append((seg_label, shifted_clean))
+            seg_iter = self._iter_in_memory_segments(fpath, mime).__aiter__()
+            try:
+                while True:
+                    acquired = await self._acquire_or_abort(seg_sem, abort_event)
+                    if not acquired:
+                        break
+                    try:
+                        data_marker, seg_mime, start_offset_sec, seg_label, has_more = await seg_iter.__anext__()
+                    except StopAsyncIteration:
+                        seg_sem.release()
+                        break
+                    except BaseException:
+                        seg_sem.release()
+                        raise
+
+                    if abort_event.is_set():
+                        if data_marker.startswith("___ECHO_STREAM_MEM___"):
+                            EchoGeminiClient.release_memory_stream(data_marker)
+                        seg_sem.release()
+                        break
+
+                    launched_count += 1
+                    if seg_label is not None or launched_count > 1:
+                        is_multi_segment = True
+
+                    seg_prompt = (
+                        f"[CONTEXTE DE SEGMENTATION : {seg_label} du fichier '{safe_name}'. "
+                        f"Pour tout horodatage, partir de 00:00:00 au début de cet extrait ; le système recalera automatiquement l'offset.]\n\n"
+                        f"{user_prompt}"
+                        if seg_label
+                        else user_prompt
+                    )
+                    task = _launch_segment_task(
+                        cur_idx=launched_count - 1,
+                        data_marker=data_marker,
+                        seg_mime=seg_mime,
+                        start_offset_sec=start_offset_sec,
+                        seg_label=seg_label,
+                        seg_prompt=seg_prompt,
+                    )
+                    segment_tasks.append(task)
+                    if not has_more:
+                        break
+
+                pending_set = {t for t in segment_tasks if not t.done()}
+                if pending_set and not abort_event.is_set():
+                    abort_waiter = asyncio.create_task(abort_event.wait())
+                    try:
+                        _, remaining_set = await asyncio.wait(
+                            pending_set | {abort_waiter},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        while not abort_event.is_set() and (remaining_set - {abort_waiter}):
+                            _, remaining_set = await asyncio.wait(
+                                remaining_set,
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                    finally:
+                        if not abort_waiter.done():
+                            abort_waiter.cancel()
+                        await asyncio.gather(abort_waiter, return_exceptions=True)
+
+                if abort_event.is_set():
+                    for t in segment_tasks:
+                        if not t.done():
+                            t.cancel()
+                if segment_tasks:
+                    await asyncio.gather(*segment_tasks, return_exceptions=True)
+            finally:
+                await seg_iter.aclose()
+                for t in segment_tasks:
+                    if not t.done():
+                        t.cancel()
+                if segment_tasks:
+                    await asyncio.gather(*segment_tasks, return_exceptions=True)
+                if not hb_task.done():
+                    hb_task.cancel()
+                await asyncio.gather(hb_task, return_exceptions=True)
+
+            if first_error:
+                await events.status(prefix_err, True)
+                return f"{prefix_err} : {first_error}"
+
+            segment_outputs: List[Tuple[Optional[str], str]] = []
+            thoughts_acc: List[str] = []
+            last_model_used = "MODEL_APOLLO"
+            last_reason = None
+            for idx in sorted(segment_results.keys()):
+                res = segment_results[idx]
+                lbl = res["label"]
+                segment_outputs.append((lbl, res["clean"]))
+                if res["thought"]:
+                    thoughts_acc.append(f"[{lbl}] {res['thought']}" if lbl else res["thought"])
+                if res["model_used"]:
+                    last_model_used = res["model_used"]
+                if res["reason"]:
+                    last_reason = res["reason"]
 
             if not segment_outputs:
                 return "❌ Aucun segment exploitable n'a pu être extrait du fichier."
@@ -877,6 +1127,7 @@ class Tools:
                         metadata=__metadata__,
                         events=events,
                         heartbeats=[f"🤖 Consolidation Map-Reduce des {len(segment_outputs)} segments de {safe_name}..."],
+                        emit_heartbeats=True,
                     )
                     if not red_err and red_clean:
                         final_text = red_clean
@@ -902,7 +1153,7 @@ class Tools:
                 reason=last_reason,
             )
         except Exception as e:
-            prefix_err = "❌ Erreur" if mode == "sensory" else "❌ Erreur Sonde"
+            await events.status(prefix_err, True)
             return f"{prefix_err} : {str(e)}"
 
     @echo_tool
