@@ -22,6 +22,7 @@
 	export let dismissible = false;
 	export let modal = false;
 	export let loading = false;
+	export let progress: number | null = null;
 
 	export let item: any = null;
 	export let edit = false;
@@ -162,7 +163,15 @@
 					{:else}
 						<span class=" capitalize line-clamp-1">{type}</span>
 					{/if}
-					{#if size}
+					{#if loading && progress !== null}
+						<span class="tabular-nums">
+							{#if size}
+								{formatFileSize(size)} • {progress}%
+							{:else}
+								{progress}%
+							{/if}
+						</span>
+					{:else if size}
 						<span class="capitalize">{formatFileSize(size)}</span>
 					{/if}
 				</div>
@@ -176,7 +185,11 @@
 				<div class="flex min-w-0 flex-1 items-center overflow-hidden">
 					<div class="flex min-w-0 flex-1 items-center justify-between dark:text-gray-100">
 						<div class="min-w-0 flex-1 truncate pr-1 font-normal">{decodeString(name)}</div>
-						{#if size}
+						{#if loading && progress !== null}
+							<div class="max-w-[35%] shrink-0 truncate text-[0.6875rem] tabular-nums text-gray-500">
+								{progress}%
+							</div>
+						{:else if size}
 							<div class="max-w-[35%] shrink-0 truncate text-[0.6875rem] capitalize text-gray-500">
 								{formatFileSize(size)}
 							</div>

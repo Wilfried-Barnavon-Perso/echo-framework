@@ -1,12 +1,13 @@
 """
 title: ECHO V6 Unified Vault Storage Provider
 author: Wilfried BARNAVON
-version: 6.5.3.1
+version: 6.7.8.1
 description: Écriture directe des uploads dans l'arborescence ECHO (/users/{uid}/chats/{cid}/files
              ou /users/{uid}/files) et indexation immédiate dans echo_resources.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.8.1: Streaming par blocs de 4 MiB et calcul SHA-256 optionnel (compute_hash=False par défaut) dans upload_file_streamed.
 # 6.5.3.1: Ajout de upload_file_streamed (streaming zéro-RAM par blocs de 1 MiB jusqu'à 4 Go avec hachage SHA-256 à la volée).
 # 6.1.0.1: Création de EchoStorageProvider unifiant l'écriture dans les Vaults ECHO et echo_resources.
 
@@ -216,12 +217,13 @@ class EchoStorageProvider:
         filename: str,
         tags: Dict[str, str],
         max_bytes: int = 4096 * 1024 * 1024,
-        chunk_size: int = 1024 * 1024,
+        chunk_size: int = 4 * 1024 * 1024,
+        compute_hash: bool = False,
     ) -> Tuple[int, str, str]:
-        """Écrit le flux par blocs avec SHA-256 à la volée et plafond."""
+        """Écrit le flux par blocs de 4 MiB avec SHA-256 optionnel à la volée et plafond."""
         ctx = _resolve_vault_context(filename, tags)
         primary_path = ctx["primary_path"]
-        hasher = hashlib.sha256()
+        hasher = hashlib.sha256() if compute_hash else None
         total_bytes = 0
 
         try:
@@ -233,7 +235,8 @@ class EchoStorageProvider:
                     if total_bytes + len(chunk) > max_bytes:
                         raise ValueError("FILE_TOO_LARGE")
                     f_out.write(chunk)
-                    hasher.update(chunk)
+                    if hasher is not None:
+                        hasher.update(chunk)
                     total_bytes += len(chunk)
         except Exception:
             _unlink_silent(primary_path)
@@ -244,7 +247,7 @@ class EchoStorageProvider:
             raise ValueError(ERROR_MESSAGES.EMPTY_CONTENT)
 
         _finalize_vault_mirrors_and_index(ctx)
-        return total_bytes, primary_path, hasher.hexdigest()
+        return total_bytes, primary_path, (hasher.hexdigest() if hasher is not None else "")
 
     @staticmethod
     def upload_file(

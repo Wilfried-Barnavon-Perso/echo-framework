@@ -1147,6 +1147,7 @@
 			name: file.name,
 			collection_name: '',
 			status: 'uploading',
+			progress: 0,
 			size: file.size,
 			error: '',
 			itemId: tempItemId,
@@ -1195,7 +1196,18 @@
 				}
 
 				// During the file upload, file content is automatically extracted.
-				const uploadedFile = await uploadFile(localStorage.token, file, metadata, process);
+				const uploadedFile = await uploadFile(
+					localStorage.token,
+					file,
+					metadata,
+					process,
+					true,
+					undefined,
+					(progress) => {
+						fileItem.progress = progress;
+						files = files;
+					}
+				);
 
 				if (uploadedFile) {
 					console.log('File upload completed:', {
@@ -1349,6 +1361,18 @@
 				};
 
 				const imageFile = isHeicImage(file) ? await convertHeicToJpeg(file) : file;
+
+				const needsImageCompression =
+					($settings?.imageCompression ?? false) ||
+					Boolean($config?.file?.image_compression?.width) ||
+					Boolean($config?.file?.image_compression?.height);
+
+				// [ECHO-V6-HOOK] Court-circuit Base64/FileReader si non temporaire et compression inactive
+				if (!isTemporary && !needsImageCompression) {
+					uploadFileHandler(imageFile, false);
+					return;
+				}
+
 				let reader = new FileReader();
 
 				reader.onload = async (event) => {
@@ -2339,6 +2363,7 @@
 												type={file.type}
 												size={file?.size}
 												loading={file.status === 'uploading'}
+												progress={file?.progress ?? null}
 												dismissible={true}
 												edit={true}
 												small={true}

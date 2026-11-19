@@ -557,20 +557,23 @@
 								/>
 							</div>
 						{/if}
-					{:else if isCode}
+					{:else if isCode && item?.file?.data?.content}
 						<div class="max-h-[60vh] overflow-scroll scrollbar-hidden text-sm relative">
 							<CodeBlock
-								code={item.file.data.content}
-								lang={item.name.split('.').pop()}
+								code={item?.file?.data?.content ?? ''}
+								lang={item?.name?.split('.').pop()}
 								token={null}
 								edit={false}
 								run={false}
 								save={false}
 							/>
 						</div>
-					{:else if isMarkdown}
+					{:else if isMarkdown && item?.file?.data?.content}
 						<div class="max-h-[60vh] overflow-scroll scrollbar-hidden">
-							<MarkdownDocument content={item.file.data.content} id="markdown-viewer" />
+							<MarkdownDocument
+								content={item?.file?.data?.content ?? ''}
+								id="markdown-viewer"
+							/>
 						</div>
 					{:else if isDocx}
 						{#if docxError}

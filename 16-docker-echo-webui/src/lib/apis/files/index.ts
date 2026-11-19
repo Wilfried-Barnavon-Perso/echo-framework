@@ -7,7 +7,8 @@ export const uploadFile = async (
 	metadata?: object | null,
 	process?: boolean | null,
 	stream: boolean = true,
-	onUploaded?: (uploadedFile: { id: string }) => void
+	onUploaded?: (uploadedFile: { id: string }) => void,
+	onProgress?: (progress: number) => void
 ) => {
 	const data = new FormData();
 	data.append('file', file);
@@ -28,23 +29,52 @@ export const uploadFile = async (
 
 	let error = null;
 
-	const res = await fetch(`${WEBUI_API_BASE_URL}/files/?${searchParams.toString()}`, {
-		method: 'POST',
-		headers: {
-			Accept: 'application/json',
-			authorization: `Bearer ${token}`
-		},
-		body: data
-	})
-		.then(async (res) => {
-			if (!res.ok) throw await res.json();
-			return res.json();
-		})
-		.catch((err) => {
-			error = err.detail || err.message;
-			console.error(err);
-			return null;
-		});
+	const res = await new Promise<any>((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		xhr.open('POST', `${WEBUI_API_BASE_URL}/files/?${searchParams.toString()}`);
+		xhr.setRequestHeader('Accept', 'application/json');
+		xhr.setRequestHeader('authorization', `Bearer ${token}`);
+
+		xhr.upload.onprogress = (event) => {
+			if (event.lengthComputable && event.total > 0) {
+				onProgress?.(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+			}
+		};
+
+		xhr.onload = () => {
+			if (xhr.status >= 200 && xhr.status < 300) {
+				try {
+					const parsed = JSON.parse(xhr.responseText);
+					onProgress?.(100);
+					resolve(parsed);
+				} catch (parseErr) {
+					reject(parseErr);
+				}
+			} else {
+				let errPayload: any;
+				try {
+					errPayload = JSON.parse(xhr.responseText);
+				} catch {
+					errPayload = { message: xhr.statusText || 'Error uploading file' };
+				}
+				reject(errPayload);
+			}
+		};
+
+		xhr.onerror = () => {
+			reject(new Error('Error uploading file'));
+		};
+
+		xhr.onabort = () => {
+			reject(new Error('Upload aborted'));
+		};
+
+		xhr.send(data);
+	}).catch((err) => {
+		error = err?.detail || err?.message || String(err);
+		console.error(err);
+		return null;
+	});
 
 	if (error) {
 		throw error;
@@ -54,7 +84,14 @@ export const uploadFile = async (
 		onUploaded?.(res);
 	}
 
-	if (res && stream) {
+	const needsStatusStream =
+		Boolean(res) &&
+		stream &&
+		process !== false &&
+		res?.data?.status !== 'completed' &&
+		Boolean(res?.data?.status);
+
+	if (needsStatusStream) {
 		const status = await getFileProcessStatus(token, res.id);
 
 		if (status && status.ok) {

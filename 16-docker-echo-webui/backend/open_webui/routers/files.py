@@ -422,6 +422,7 @@ async def upload_file_handler(
                         filename,
                         tags,
                         max_bytes,
+                        compute_hash=bool(knowledge_id),
                     )
                 except OSError as e:
                     if e.errno != errno.ENAMETOOLONG:
@@ -434,6 +435,7 @@ async def upload_file_handler(
                         filename,
                         tags,
                         max_bytes,
+                        compute_hash=bool(knowledge_id),
                     )
             else:
                 try:
@@ -477,7 +479,21 @@ async def upload_file_handler(
 
         # SHA-256 of raw uploaded bytes for incremental sync diffing.
         # If the client pre-computed and sent file_hash, use that.
-        file_hash = file_metadata.get('file_hash') or streamed_hash
+        file_hash = file_metadata.get('file_hash') or streamed_hash or None
+
+        # [ECHO-V6-HOOK] Court-circuit de l'extraction Open WebUI (loader.aload + webui.db)
+        # quand ECHO gère souverainement l'ingestion (rag.bypass_embedding_and_retrieval=True).
+        bypass_embedding = bool(await Config.get('rag.bypass_embedding_and_retrieval'))
+        stt_supported = [
+            s for s in (await Config.get('audio.stt.supported_content_types', []) or [])
+            if isinstance(s, str) and s.strip()
+        ]
+        is_stt_audio = bool(
+            stt_supported and file.content_type and strict_match_mime_type(stt_supported, file.content_type)
+        )
+        skip_owui_processing = bool(
+            process and bypass_embedding and not knowledge_id and not is_stt_audio
+        )
 
         file_item = await Files.insert_new_file(
             user.id,
@@ -486,9 +502,11 @@ async def upload_file_handler(
                     'id': id,
                     'filename': name,
                     'path': file_path,
-                    'data': {
-                        **({'status': 'pending'} if process else {}),
-                    },
+                    'data': (
+                        {'status': 'completed'}
+                        if skip_owui_processing
+                        else ({'status': 'pending'} if process else {})
+                    ),
                     'meta': {
                         'name': name,
                         'content_type': (file.content_type if isinstance(file.content_type, str) else None),
@@ -507,6 +525,8 @@ async def upload_file_handler(
                 await Channels.add_file_to_channel_by_id(channel.id, file_item.id, user.id, db=db)
 
         if process:
+            if skip_owui_processing:
+                return {'status': True, **file_item.model_dump()}
             if background_tasks and process_in_background:
                 background_tasks.add_task(
                     process_uploaded_file,

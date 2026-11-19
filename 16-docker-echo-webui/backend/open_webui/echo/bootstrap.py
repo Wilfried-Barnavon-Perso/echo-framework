@@ -1,16 +1,16 @@
 """
 title: ECHO V6 Declarative Lifespan Bootstrap
 author: Wilfried BARNAVON
-version: 6.6.3.1
+version: 6.7.8.1
 description: Provisioning déclaratif au démarrage FastAPI remplaçant intégralement config-owui.sh.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.8.1: Création et purge sécurisée au démarrage des résidus orphelins dans TMPDIR (.tmp_uploads) via _prepare_tmp_uploads_dir.
 # 6.6.3.1: Alignement des appels avatar par défaut avec le paramètre gender='X'.
 # 6.6.2.1: Alignement du provisioning lifespan avec la suppression des actions legacy (agent_monitor_action, echo_identity_vault_action, echo_codex_action, web_navigation_replay_action).
 # 6.5.3.2: Identité ECHO-UI, route avatar modèle echo_orchestrator et montage des routes audio /echo/v1/audio au démarrage.
 # 6.5.2.1: Correction de l'import initialize_runtime_config depuis open_webui.main.
-# 6.0.0.1: Provisioning déclaratif lifespan remplaçant config-owui.sh.
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ import base64
 import json
 import logging
 import os
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -322,9 +323,38 @@ async def _sync_global_configs(root: Path, app: FastAPI) -> int:
     return len(updates)
 
 
+def _prepare_tmp_uploads_dir() -> None:
+    """Crée et purge les résidus orphelins de TMPDIR s'il cible explicitement .tmp_uploads."""
+    tmp_dir = os.environ.get("TMPDIR", "").strip()
+    if not tmp_dir or os.path.basename(os.path.normpath(tmp_dir)) != ".tmp_uploads":
+        return
+
+    try:
+        os.makedirs(tmp_dir, exist_ok=True)
+        for entry in os.scandir(tmp_dir):
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    shutil.rmtree(entry.path)
+                else:
+                    os.unlink(entry.path)
+            except OSError as exc:
+                log.warning(
+                    "[ECHO-BOOTSTRAP] Purge résidu upload impossible (%s): %s",
+                    entry.path,
+                    exc,
+                )
+    except OSError as exc:
+        log.warning(
+            "[ECHO-BOOTSTRAP] Préparation TMPDIR impossible (%s): %s",
+            tmp_dir,
+            exc,
+        )
+
+
 async def bootstrap_echo_runtime(app: FastAPI) -> dict[str, Any]:
     """Point d'entrée unique exécuté dans le lifespan de FastAPI."""
     ensure_echo_sys_path()
+    _prepare_tmp_uploads_dir()
     try:
         from echo_audio import register_echo_audio_routes  # type: ignore
 
