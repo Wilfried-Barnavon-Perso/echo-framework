@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 6.7.11.1
+version: 6.12.0.1
 description: Permet au modèle de manipuler un espace virtuel (Codex) avec versioning Git invisible et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.12.0.1: Ajout create_codex_directory, move_codex, transfer_codex (Option A), list_codex(path, recursive), delete_codex(recursive), garde restore_codex anti-sandbox, recherche récursive et délégation sync_codex_registry_* vers echo_codex_git.
 # 6.7.11.1: Délégation du fenêtrage read_codex à paginate_lines_window et suppression des skip_truncation=True redondants.
 # 6.7.4.1: Alignement de get_generation_config sur CODEX_EDIT_MODEL dans edit_codex.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.2.1: Migration de open_codex_ui vers l'onglet natif echo-codex (EchoWindowManager.open_tab + CustomEvent('echo:open-tab')) sans echo_codex_action.
-# 5.239.17.1: Pagination bornée unifiée (HEAD et commits) de read_codex à ECHO_CODEX_MAX_READ_LINES (800 lignes) et ECHO_CODEX_MAX_READ_BYTES (46080 octets), indicateurs has_more/next_start_line et skip_truncation=True.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -19,7 +19,7 @@ import sys
 import hashlib
 import asyncio
 from pydantic import BaseModel, Field
-from typing import Optional, Any
+from typing import Optional, Any, Literal
 
 sys.path.append("/app/backend/echo_libs")
 from echo_core import echo_tool, paginate_lines_window, wrap_tool_output
@@ -31,26 +31,37 @@ import echo_constants
 from echo_constants import (
     CODEX_DEFAULT_WORKSPACE,
     CODEX_DIR_NAME,
+    CODEX_LIST_MAX_ENTRIES,
+    CODEX_TRANSFER_SOURCE_LITERAL,
     CODEX_WORKSPACE_GENERATED,
     CODEX_WORKSPACE_LITERAL,
     CODEX_WORKSPACE_MAIN,
     CODEX_WORKSPACE_PLANS,
+    CODEX_WRITABLE_WORKSPACE_LITERAL,
     ECHO_API_MAX_RETRIES,
     ECHO_CODEX_MAX_READ_BYTES,
     ECHO_CODEX_MAX_READ_LINES,
     ECHO_CODEX_WORKSPACES,
     ECHO_SYNC_EXCLUDE_LIST,
     ECHO_USERS_ROOT,
-    FILE_INGESTION_STATUS,
-    get_codex_workspace_resource_type,
     get_generation_config,
     is_codex_workspace_generic_writable,
     is_codex_workspace_indexed,
+    is_codex_workspace_versioned,
 )
 from echo_prompts import SYS_CODEX_EDIT, SYS_CODEX_SUMMARIZE
 from echo_window_manager import get_window_manager
-from echo_codex_git import CodexRepo
-from echo_paths import get_codex_lock, format_codex_storage_path
+from echo_codex_git import (
+    CodexDirectoryNotEmptyError,
+    CodexPathConflictError,
+    CodexQuotaExceededError,
+    CodexRepo,
+    sync_codex_registry_delete,
+    sync_codex_registry_relocate,
+    sync_codex_registry_save,
+    transfer_codex_entries,
+)
+from echo_paths import get_codex_lock
 
 
 class Tools:
@@ -226,21 +237,16 @@ class Tools:
 
     async def _update_registry(self, state, filename: str, lang: str, line_count: int, commit_hash: str, msg: str, workspace: str):
         """Synchronise la ressource dans la table SQLite echo_resources uniquement pour les espaces indexés (exclut la sandbox)."""
-        if is_codex_workspace_indexed(workspace):
-            res_type = get_codex_workspace_resource_type(workspace) or "codex"
-            await asyncio.to_thread(
-                state.save_resource,
-                id=filename,
-                name=filename,
-                resource_type=res_type,
-                status=FILE_INGESTION_STATUS["PUT_IN_CONTEXT"],
-                git_tracked=True,
-                language=lang,
-                lines=line_count,
-                last_commit=commit_hash[:12],
-                commit_msg=msg,
-                storage_path=format_codex_storage_path(filename, workspace),
-            )
+        await sync_codex_registry_save(
+            state.user_id,
+            state.chat_id,
+            workspace,
+            filename,
+            commit_hash,
+            msg,
+            language=lang,
+            lines=line_count,
+        )
 
     def _check_generic_writable(self, workspace: str, user_id: str, chat_id: Optional[str], metadata: Optional[dict]) -> Optional[dict]:
         """Vérifie si l'espace de travail accepte les écritures via les outils génériques Codex."""
@@ -286,26 +292,47 @@ class Tools:
         # Inscription déterministe de la directive URN sur la session active dès l'entrée
         self._emit_urn_directive(EchoStateManager(user_id=uid, chat_id=cid))
 
+        try:
+            safe_file = repo._secure_path(filename)
+        except ValueError as e:
+            return wrap_tool_output(
+                text=f"❌ {e}",
+                status={"status": "error", "error_code": "invalid_path", "filename": filename},
+            )
+
         async with get_codex_lock(uid, cid):
-            if await asyncio.to_thread(repo.read_file, filename):
-                return f"❌ Le fichier `{filename}` existe déjà dans l'espace `{workspace}`."
+            try:
+                if await asyncio.to_thread(repo.read_file, safe_file):
+                    return f"❌ Le fichier `{safe_file}` existe déjà dans l'espace `{workspace}`."
+            except ValueError as e:
+                return wrap_tool_output(
+                    text=f"❌ {e}",
+                    status={"status": "error", "error_code": "invalid_path", "filename": safe_file},
+                )
 
-            await events.status(f"📝 Création de {filename}...", done=False)
+            await events.status(f"📝 Création de {safe_file}...", done=False)
 
-            lang = language or CodexRepo.detect_language(filename)
-            msg = commit_message or f"Create {filename}"
+            lang = language or CodexRepo.detect_language(safe_file)
+            msg = commit_message or f"Create {safe_file}"
             line_count = content.count("\n") + 1
 
-            commit_hash = await asyncio.to_thread(repo.commit_file, filename, content, msg)
-            await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
+            try:
+                commit_hash = await asyncio.to_thread(repo.commit_file, safe_file, content, msg)
+            except CodexPathConflictError as e:
+                await events.status(f"❌ Conflit de chemin sur {safe_file}.", done=True)
+                return wrap_tool_output(
+                    text=f"❌ {e}",
+                    status={"status": "error", "error_code": "path_conflict", "filename": safe_file, "workspace": workspace},
+                )
+            await self._update_registry(state, safe_file, lang, line_count, commit_hash, msg, workspace)
 
-        urn_ref = f"[{filename}](codex:current:{workspace}/{filename})"
-        await events.status(f"✅ {filename} créé ({line_count} lignes, commit {commit_hash[:7]}).", done=True)
+        urn_ref = f"[{safe_file}](codex:current:{workspace}/{safe_file})"
+        await events.status(f"✅ {safe_file} créé ({line_count} lignes, commit {commit_hash[:7]}).", done=True)
         return wrap_tool_output(
-            text=f"Fichier `{filename}` créé avec succès dans l'espace `{workspace}`.\n- Langage : {lang}\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`\n- URN : {urn_ref}",
+            text=f"Fichier `{safe_file}` créé avec succès dans l'espace `{workspace}`.\n- Langage : {lang}\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`\n- URN : {urn_ref}",
             status={
                 "status": "success",
-                "filename": filename,
+                "filename": safe_file,
                 "workspace": workspace,
                 "language": lang,
                 "lines": line_count,
@@ -339,30 +366,51 @@ class Tools:
         # Inscription déterministe de la directive URN sur la session active dès l'entrée
         self._emit_urn_directive(EchoStateManager(user_id=uid, chat_id=cid))
 
+        try:
+            safe_file = repo._secure_path(filename)
+        except ValueError as e:
+            return wrap_tool_output(
+                text=f"❌ {e}",
+                status={"status": "error", "error_code": "invalid_path", "filename": filename},
+            )
+
         # Vérification existence
         async with get_codex_lock(uid, cid):
-            existing = await asyncio.to_thread(repo.read_file, filename)
+            try:
+                existing = await asyncio.to_thread(repo.read_file, safe_file)
+            except ValueError as e:
+                return wrap_tool_output(
+                    text=f"❌ {e}",
+                    status={"status": "error", "error_code": "invalid_path", "filename": safe_file},
+                )
         if not existing:
-            return f"❌ Fichier `{filename}` introuvable dans l'espace `{workspace}`."
+            return f"❌ Fichier `{safe_file}` introuvable dans l'espace `{workspace}`."
 
-        lang = CodexRepo.detect_language(filename)
+        lang = CodexRepo.detect_language(safe_file)
 
         # Mode 1 : Remplacement direct
         if new_content is not None:
-            msg = commit_message or f"Edit {filename}"
+            msg = commit_message or f"Edit {safe_file}"
             line_count = new_content.count("\n") + 1
             async with get_codex_lock(uid, cid):
-                commit_hash = await asyncio.to_thread(repo.commit_file, filename, new_content, msg)
-                await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
+                try:
+                    commit_hash = await asyncio.to_thread(repo.commit_file, safe_file, new_content, msg)
+                except CodexPathConflictError as e:
+                    await events.status(f"❌ Conflit de chemin sur {safe_file}.", done=True)
+                    return wrap_tool_output(
+                        text=f"❌ {e}",
+                        status={"status": "error", "error_code": "path_conflict", "filename": safe_file, "workspace": workspace},
+                    )
+                await self._update_registry(state, safe_file, lang, line_count, commit_hash, msg, workspace)
 
-            urn_ref = f"[{filename}](codex:current:{workspace}/{filename})"
-            await events.status(f"✅ {filename} modifié (commit {commit_hash[:7]}).", done=True)
+            urn_ref = f"[{safe_file}](codex:current:{workspace}/{safe_file})"
+            await events.status(f"✅ {safe_file} modifié (commit {commit_hash[:7]}).", done=True)
             return wrap_tool_output(
-                text=f"Fichier `{filename}` modifié avec succès dans l'espace `{workspace}`.\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`\n- URN : {urn_ref}",
+                text=f"Fichier `{safe_file}` modifié avec succès dans l'espace `{workspace}`.\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`\n- URN : {urn_ref}",
                 status={
                     "status": "success",
                     "mode": "direct_replacement",
-                    "filename": filename,
+                    "filename": safe_file,
                     "workspace": workspace,
                     "language": lang,
                     "lines": line_count,
@@ -374,11 +422,11 @@ class Tools:
         if instructions:
             if existing.get("is_binary"):
                 return wrap_tool_output(
-                    text=f"❌ Action refusée : Le fichier `{filename}` est un binaire. L'édition assistée par instructions n'est applicable qu'aux fichiers texte.",
-                    status={"status": "error", "error_code": "binary_edit_not_supported", "filename": filename}
+                    text=f"❌ Action refusée : Le fichier `{safe_file}` est un binaire. L'édition assistée par instructions n'est applicable qu'aux fichiers texte.",
+                    status={"status": "error", "error_code": "binary_edit_not_supported", "filename": safe_file}
                 )
 
-            await events.status(f"🧠 Édition assistée de {filename}...", done=False)
+            await events.status(f"🧠 Édition assistée de {safe_file}...", done=False)
 
             content = existing["content"]
             original_sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
@@ -389,7 +437,7 @@ class Tools:
                 "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
                 "generationConfig": get_generation_config(edit_model),
                 "systemInstruction": {
-                    "parts": [{"text": SYS_CODEX_EDIT.format(filename=filename, language=lang)}]
+                    "parts": [{"text": SYS_CODEX_EDIT.format(filename=safe_file, language=lang)}]
                 },
             }
 
@@ -417,26 +465,33 @@ class Tools:
             msg = commit_message or f"AI edit: {instructions[:60]}"
             line_count = modified.count("\n") + 1
             async with get_codex_lock(uid, cid):
-                current_doc = await asyncio.to_thread(repo.read_file, filename)
+                current_doc = await asyncio.to_thread(repo.read_file, safe_file)
                 if current_doc and hashlib.sha256(current_doc.get("content", "").encode("utf-8")).hexdigest() != original_sha:
                     await events.status("❌ Conflit d'édition concurrente détecté.", done=True)
                     return wrap_tool_output(
-                        text=f"❌ Conflit d'édition concurrente (OCC) : Le fichier `{filename}` a été modifié pendant l'édition assistée. Le Modèle DOIT relire le fichier avant de réappliquer les modifications.",
-                        status={"status": "error", "error_code": "concurrent_modification_conflict", "filename": filename}
+                        text=f"❌ Conflit d'édition concurrente (OCC) : Le fichier `{safe_file}` a été modifié pendant l'édition assistée. Le Modèle DOIT relire le fichier avant de réappliquer les modifications.",
+                        status={"status": "error", "error_code": "concurrent_modification_conflict", "filename": safe_file}
                     )
-                commit_hash = await asyncio.to_thread(repo.commit_file, filename, modified, msg)
-                await self._update_registry(state, filename, lang, line_count, commit_hash, msg, workspace)
+                try:
+                    commit_hash = await asyncio.to_thread(repo.commit_file, safe_file, modified, msg)
+                except CodexPathConflictError as e:
+                    await events.status(f"❌ Conflit de chemin sur {safe_file}.", done=True)
+                    return wrap_tool_output(
+                        text=f"❌ {e}",
+                        status={"status": "error", "error_code": "path_conflict", "filename": safe_file, "workspace": workspace},
+                    )
+                await self._update_registry(state, safe_file, lang, line_count, commit_hash, msg, workspace)
 
-            urn_ref = f"[{filename}](codex:current:{workspace}/{filename})"
+            urn_ref = f"[{safe_file}](codex:current:{workspace}/{safe_file})"
             await events.status(f"✅ Édition assistée terminée (commit {commit_hash[:7]}).", done=True)
             return wrap_tool_output(
-                text=f"Fichier `{filename}` modifié par agent éditeur dans l'espace `{workspace}`.\n- Instructions : {instructions}\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`\n- URN : {urn_ref}",
+                text=f"Fichier `{safe_file}` modifié par agent éditeur dans l'espace `{workspace}`.\n- Instructions : {instructions}\n- Lignes : {line_count}\n- Commit : `{commit_hash[:12]}`\n- URN : {urn_ref}",
                 model_requested=self.user_valves.CODEX_EDIT_MODEL,
                 model_used=model_key or "unknown",
                 status={
                     "status": "success",
                     "mode": "assisted_edition",
-                    "filename": filename,
+                    "filename": safe_file,
                     "workspace": workspace,
                     "language": lang,
                     "lines": line_count,
@@ -452,13 +507,14 @@ class Tools:
     async def delete_codex(
         self,
         filename: str,
-        workspace: CODEX_WORKSPACE_LITERAL = CODEX_DEFAULT_WORKSPACE,
+        workspace: CODEX_WRITABLE_WORKSPACE_LITERAL = CODEX_DEFAULT_WORKSPACE,
+        recursive: bool = False,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> dict:
-        """Supprime un fichier du Codex (`main` ou `sandbox`) et met à jour le Registre Unifié."""
+        """Supprime un fichier ou un dossier du Codex (`main` ou `sandbox`, avec `recursive=True` requis si dossier non vide)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         uid, cid, repo, state, _ = self._get_context(__user__, __metadata__, workspace)
         if not repo:
@@ -470,26 +526,60 @@ class Tools:
 
         async with get_codex_lock(uid, cid):
             try:
-                delete_result = await asyncio.to_thread(repo.delete_file, filename, f"Delete {filename}")
+                safe_target = repo._secure_path(filename)
             except ValueError as e:
-                return f"❌ {e}"
-            
+                return wrap_tool_output(
+                    text=f"❌ {e}",
+                    status={"status": "error", "error_code": "invalid_path", "filename": filename, "workspace": workspace},
+                )
+
+            is_dir = os.path.isdir(os.path.join(repo.repo_path, *safe_target.split("/")))
+            try:
+                delete_result = await asyncio.to_thread(repo.delete_file, safe_target, f"Delete {safe_target}", recursive)
+            except CodexDirectoryNotEmptyError as e:
+                return wrap_tool_output(
+                    text=f"❌ {e}",
+                    status={
+                        "status": "error",
+                        "error_code": "directory_not_empty",
+                        "filename": safe_target,
+                        "workspace": workspace,
+                        "entries_count": e.entries_count,
+                    },
+                )
+            except ValueError as e:
+                return wrap_tool_output(
+                    text=f"❌ {e}",
+                    status={"status": "error", "error_code": "invalid_path", "filename": safe_target, "workspace": workspace},
+                )
+
             if not delete_result:
-                return f"❌ Fichier/Dossier `{filename}` introuvable."
+                return wrap_tool_output(
+                    text=f"❌ Cible `{safe_target}` introuvable dans `{workspace}`.",
+                    status={"status": "error", "error_code": "not_found", "filename": safe_target, "workspace": workspace},
+                )
 
             commit_hash, paths_to_rm = delete_result
-            if is_codex_workspace_indexed(workspace):
-                for path in paths_to_rm:
-                    await asyncio.to_thread(state.delete_codex_resource, workspace, path)
-        await events.status(f"🗑️ {filename} supprimé (commit {commit_hash[:7]}).", done=True)
+            await sync_codex_registry_delete(
+                uid,
+                cid,
+                workspace,
+                paths_to_rm,
+                dir_rel_path=safe_target if is_dir else None,
+            )
+
+        target_type = "directory" if is_dir else "file"
+        await events.status(f"🗑️ {safe_target} supprimé (commit {commit_hash[:7]}).", done=True)
         return wrap_tool_output(
-            text=f"Fichier `{filename}` supprimé avec succès de l'espace `{workspace}`.\n- Commit : `{commit_hash[:12]}`",
+            text=f"Cible `{safe_target}` ({target_type}) supprimée avec succès de l'espace `{workspace}` ({len(paths_to_rm)} fichier(s)).\n- Commit : `{commit_hash[:12]}`",
             status={
                 "status": "success",
-                "filename": filename,
+                "filename": safe_target,
                 "workspace": workspace,
+                "target_type": target_type,
+                "deleted_count": len(paths_to_rm),
+                "deleted_paths": paths_to_rm[:50],
                 "commit": commit_hash[:12],
-                "deleted_paths": paths_to_rm
             }
         )
 
@@ -636,31 +726,54 @@ class Tools:
         if ro_err:
             return ro_err
 
-        async with get_codex_lock(uid, cid):
-            old_res = await asyncio.to_thread(repo.read_file_at_commit, filename, commit_hash)
-            if old_res is None:
-                return f"❌ Fichier `{filename}` introuvable au commit `{commit_hash}`."
-            old_content = old_res["content"]
-            
-            lang = CodexRepo.detect_language(filename)
-            msg = f"Restore {filename} from {commit_hash[:7]}"
-            new_commit_hash = await asyncio.to_thread(
-                repo.commit_file,
-                filename,
-                old_content,
-                msg,
-                is_binary=old_res.get("is_binary"),
+        if not is_codex_workspace_versioned(workspace):
+            return wrap_tool_output(
+                text=f"❌ Action refusée : L'espace `{workspace}` n'est pas versionné par Git.",
+                status={"status": "error", "error_code": "workspace_not_versioned", "workspace": workspace},
             )
+
+        try:
+            safe_file = repo._secure_path(filename)
+        except ValueError as e:
+            return wrap_tool_output(
+                text=f"❌ {e}",
+                status={"status": "error", "error_code": "invalid_path", "filename": filename, "workspace": workspace},
+            )
+
+        self._emit_urn_directive(state)
+
+        async with get_codex_lock(uid, cid):
+            old_res = await asyncio.to_thread(repo.read_file_at_commit, safe_file, commit_hash)
+            if old_res is None:
+                return f"❌ Fichier `{safe_file}` introuvable au commit `{commit_hash}`."
+            old_content = old_res["content"]
+
+            lang = CodexRepo.detect_language(safe_file)
+            msg = f"Restore {safe_file} from {commit_hash[:7]}"
+            try:
+                new_commit_hash = await asyncio.to_thread(
+                    repo.commit_file,
+                    safe_file,
+                    old_content,
+                    msg,
+                    is_binary=old_res.get("is_binary"),
+                )
+            except CodexPathConflictError as e:
+                return wrap_tool_output(
+                    text=f"❌ {e}",
+                    status={"status": "error", "error_code": "path_conflict", "filename": safe_file, "workspace": workspace},
+                )
             line_count = old_res.get("total_lines", old_content.count("\n") + 1)
-            
-            await self._update_registry(state, filename, lang, line_count, new_commit_hash, msg, workspace)
-            
-        await events.status(f"🔄 {filename} restauré depuis {commit_hash[:7]}.", done=True)
+
+            await self._update_registry(state, safe_file, lang, line_count, new_commit_hash, msg, workspace)
+
+        urn_ref = f"[{safe_file}](codex:current:{workspace}/{safe_file})"
+        await events.status(f"🔄 {safe_file} restauré depuis {commit_hash[:7]}.", done=True)
         return wrap_tool_output(
-            text=f"Fichier `{filename}` restauré avec succès depuis `{commit_hash[:7]}` dans l'espace `{workspace}`.\n- Nouveau Commit : `{new_commit_hash[:12]}`",
+            text=f"Fichier `{safe_file}` restauré avec succès depuis `{commit_hash[:7]}` dans l'espace `{workspace}`.\n- Nouveau Commit : `{new_commit_hash[:12]}`\n- URN : {urn_ref}",
             status={
                 "status": "success",
-                "filename": filename,
+                "filename": safe_file,
                 "workspace": workspace,
                 "restored_from": commit_hash[:12],
                 "new_commit": new_commit_hash[:12]
@@ -713,10 +826,11 @@ class Tools:
             
         else:
             # Mode Spatial (Grep) dans le Codex
-            raw_files = await asyncio.to_thread(repo.list_files)
+            raw_files = await asyncio.to_thread(repo.list_all_files)
             all_files = [f["filename"] for f in raw_files if f["type"] == "file"]
             if target_paths:
-                files_to_check = [f for f in all_files if any(f.startswith(p) for p in target_paths)]
+                norm_paths = [p.replace("\\", "/").strip("/") for p in target_paths if p]
+                files_to_check = [f for f in all_files if any(f.startswith(p) for p in norm_paths)]
             else:
                 files_to_check = all_files
 
@@ -845,21 +959,34 @@ class Tools:
             codex_base = os.path.join(users_root, safe_uid, "chats", target_cid, CODEX_DIR_NAME)
             for ws in ECHO_CODEX_WORKSPACES:
                 ws_path = os.path.join(codex_base, ws)
-                if os.path.exists(ws_path):
+                if os.path.exists(ws_path) and not os.path.islink(ws_path):
                     try:
-                        for entry in os.scandir(ws_path):
-                            if not entry.name.startswith(".") and entry.name not in ECHO_SYNC_EXCLUDE_LIST:
-                                if ws == CODEX_WORKSPACE_MAIN:
-                                    info["main_count"] += 1
-                                elif ws == CODEX_WORKSPACE_PLANS:
-                                    info["plans_count"] += 1
-                                elif ws == CODEX_WORKSPACE_GENERATED:
-                                    info["generated_count"] += 1
-                                else:
-                                    info["sandbox_count"] += 1
-                                _, ext = os.path.splitext(entry.name)
-                                if ext:
-                                    info["extensions"].add(ext.lower())
+                        for root, dirs, files in os.walk(ws_path, followlinks=False):
+                            dirs[:] = [
+                                d for d in dirs
+                                if not d.startswith(".")
+                                and d not in ECHO_SYNC_EXCLUDE_LIST
+                                and not os.path.islink(os.path.join(root, d))
+                            ]
+                            for fname in files:
+                                full_f = os.path.join(root, fname)
+                                if (
+                                    not fname.startswith(".")
+                                    and fname not in ECHO_SYNC_EXCLUDE_LIST
+                                    and not os.path.islink(full_f)
+                                    and os.path.isfile(full_f)
+                                ):
+                                    if ws == CODEX_WORKSPACE_MAIN:
+                                        info["main_count"] += 1
+                                    elif ws == CODEX_WORKSPACE_PLANS:
+                                        info["plans_count"] += 1
+                                    elif ws == CODEX_WORKSPACE_GENERATED:
+                                        info["generated_count"] += 1
+                                    else:
+                                        info["sandbox_count"] += 1
+                                    _, ext = os.path.splitext(fname)
+                                    if ext:
+                                        info["extensions"].add(ext.lower())
                     except Exception:
                         pass
             return info
@@ -905,13 +1032,15 @@ class Tools:
     async def list_codex(
         self,
         workspace: CODEX_WORKSPACE_LITERAL = CODEX_DEFAULT_WORKSPACE,
+        path: str = "",
+        recursive: bool = False,
         target_chat_id: Optional[str] = None,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> dict:
-        """Liste l'arborescence des fichiers du Codex (courante ou distante via target_chat_id)."""
+        """Liste les fichiers et dossiers du Codex (racine ou sous-dossier `path`, mode `recursive` optionnel, local ou `target_chat_id`)."""
         uid = __user__.get("id", "anonymous") if __user__ else "anonymous"
         cid = (__metadata__ or {}).get("chat_id")
         if not cid:
@@ -927,11 +1056,43 @@ class Tools:
         if not repo:
             return "❌ Contexte manquant (chat_id)."
 
-        files = await asyncio.to_thread(repo.list_files)
+        try:
+            clean_sub = repo._secure_path(path, allow_empty=True)
+        except ValueError as e:
+            return wrap_tool_output(
+                text=f"❌ {e}",
+                status={"status": "error", "error_code": "invalid_path", "path": path, "workspace": workspace},
+            )
+
+        raw_entries = await asyncio.to_thread(
+            repo.list_directory,
+            clean_sub,
+            recursive,
+            CODEX_LIST_MAX_ENTRIES + 1,
+        )
+        truncated = len(raw_entries) > CODEX_LIST_MAX_ENTRIES
+        files = raw_entries[:CODEX_LIST_MAX_ENTRIES] if truncated else raw_entries
+
         remote_badge = " 🔒 [Lecture Seule]" if is_remote else ""
         if not files:
-            msg = f"Le Codex de la conversation `{cid}` ({workspace}){remote_badge} est vide." if is_remote else f"Le Codex de cette conversation ({workspace}) est vide."
-            return wrap_tool_output(text=msg, status={"status": "success", "files_count": 0, "workspace": workspace, "is_remote": is_remote})
+            scope_desc = f"sous-dossier `{clean_sub}` de l'espace `{workspace}`" if clean_sub else f"Codex ({workspace})"
+            msg = (
+                f"Le {scope_desc} de la conversation `{cid}`{remote_badge} est vide."
+                if is_remote
+                else f"Le {scope_desc} de cette conversation est vide."
+            )
+            return wrap_tool_output(
+                text=msg,
+                status={
+                    "status": "success",
+                    "files_count": 0,
+                    "workspace": workspace,
+                    "path": clean_sub,
+                    "recursive": recursive,
+                    "truncated": False,
+                    "is_remote": is_remote,
+                },
+            )
 
         lines = [f"| Fichier | Type | Langage | Lignes | Taille |{remote_badge}"]
         lines.append("|---|---|---|---|---|")
@@ -947,6 +1108,8 @@ class Tools:
         footer = f"\n**{stats['total_files']} éléments au total**, {stats['total_commits']} commits"
         if stats["last_commit_message"]:
             footer += f", dernier commit : _{stats['last_commit_message']}_"
+        if truncated:
+            footer += f"\n\n⚠️ Résultat tronqué à {CODEX_LIST_MAX_ENTRIES} entrées (ciblez un sous-dossier via `path`)."
         if is_remote:
             footer += (
                 f"\n\n*(Session source distante : `{cid}` - Consultation en lecture seule)*\n"
@@ -956,7 +1119,16 @@ class Tools:
         files_meta = [{"name": f["filename"], "type": f.get("type", "file"), "size": f["size_bytes"], "lang": f["lang"]} for f in files]
         return wrap_tool_output(
             text="\n".join(lines) + footer,
-            status={"status": "success", "files_count": len(files), "workspace": workspace, "is_remote": is_remote, "files": files_meta}
+            status={
+                "status": "success",
+                "files_count": len(files),
+                "workspace": workspace,
+                "path": clean_sub,
+                "recursive": recursive,
+                "truncated": truncated,
+                "is_remote": is_remote,
+                "files": files_meta,
+            },
         )
 
     @echo_tool
@@ -1064,4 +1236,325 @@ class Tools:
                 "is_remote": is_remote,
                 "target_chat_id": effective_cid if is_remote else None,
             }
+        )
+
+    @echo_tool
+    async def create_codex_directory(
+        self,
+        path: str,
+        workspace: CODEX_WRITABLE_WORKSPACE_LITERAL = CODEX_DEFAULT_WORKSPACE,
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None,
+    ) -> dict:
+        """Crée un dossier (ou une arborescence de dossiers) dans le Codex (`main` ou `sandbox`)."""
+        uid, cid, repo, _, _ = self._get_context(__user__, __metadata__, workspace)
+        if not repo:
+            return wrap_tool_output(
+                text="❌ Contexte manquant (chat_id).",
+                status={"status": "error", "error_code": "missing_context"},
+            )
+
+        ro_err = self._check_generic_writable(workspace, uid, cid, __metadata__)
+        if ro_err:
+            return ro_err
+
+        async with get_codex_lock(uid, cid):
+            try:
+                safe_rel, created = await asyncio.to_thread(repo.create_directory, path)
+            except CodexPathConflictError as e:
+                return wrap_tool_output(
+                    text=f"❌ {e}",
+                    status={"status": "error", "error_code": "path_conflict", "path": path, "workspace": workspace},
+                )
+            except ValueError as e:
+                return wrap_tool_output(
+                    text=f"❌ {e}",
+                    status={"status": "error", "error_code": "invalid_path", "path": path, "workspace": workspace},
+                )
+
+        msg = (
+            f"Dossier `{safe_rel}` créé avec succès dans l'espace `{workspace}`."
+            if created
+            else f"Le dossier `{safe_rel}` existe déjà dans l'espace `{workspace}`."
+        )
+        return wrap_tool_output(
+            text=msg,
+            status={
+                "status": "success",
+                "path": safe_rel,
+                "workspace": workspace,
+                "created": created,
+                "already_existed": not created,
+            },
+        )
+
+    @echo_tool
+    async def move_codex(
+        self,
+        source_path: str,
+        destination_path: str,
+        workspace: CODEX_WRITABLE_WORKSPACE_LITERAL = CODEX_DEFAULT_WORKSPACE,
+        overwrite: bool = False,
+        commit_message: Optional[str] = None,
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None,
+    ) -> dict:
+        """Déplace ou renomme un fichier ou un dossier à l'intérieur d'un même espace Codex (`main` ou `sandbox`)."""
+        events = EchoEvents(__event_emitter__, __event_call__)
+        uid, cid, repo, state, _ = self._get_context(__user__, __metadata__, workspace)
+        if not repo:
+            return wrap_tool_output(
+                text="❌ Contexte manquant (chat_id).",
+                status={"status": "error", "error_code": "missing_context"},
+            )
+
+        ro_err = self._check_generic_writable(workspace, uid, cid, __metadata__)
+        if ro_err:
+            return ro_err
+
+        self._emit_urn_directive(state)
+        msg = commit_message or f"Move {source_path} -> {destination_path}"
+
+        async with get_codex_lock(uid, cid):
+            try:
+                mv_res = await asyncio.to_thread(
+                    repo.move_entry,
+                    source_path,
+                    destination_path,
+                    msg,
+                    "ECHO Codex",
+                    overwrite,
+                )
+            except CodexPathConflictError as e:
+                return wrap_tool_output(
+                    text=f"❌ {e}",
+                    status={
+                        "status": "error",
+                        "error_code": "path_conflict",
+                        "source_path": source_path,
+                        "destination_path": destination_path,
+                        "workspace": workspace,
+                    },
+                )
+            except ValueError as e:
+                return wrap_tool_output(
+                    text=f"❌ {e}",
+                    status={
+                        "status": "error",
+                        "error_code": "invalid_move",
+                        "source_path": source_path,
+                        "destination_path": destination_path,
+                        "workspace": workspace,
+                    },
+                )
+
+            if mv_res is None:
+                return wrap_tool_output(
+                    text=f"❌ Déplacement impossible de `{source_path}` vers `{destination_path}` dans `{workspace}`.",
+                    status={
+                        "status": "error",
+                        "error_code": "move_failed",
+                        "source_path": source_path,
+                        "destination_path": destination_path,
+                        "workspace": workspace,
+                    },
+                )
+
+            await sync_codex_registry_relocate(
+                uid,
+                cid,
+                workspace,
+                mv_res["moved_pairs"],
+                mv_res["commit_hash"],
+                msg,
+                overwrite=overwrite,
+                repo_base_dir=repo.repo_path,
+            )
+
+        old_p = mv_res["old_path"]
+        new_p = mv_res["new_path"]
+        target_type = mv_res["target_type"]
+        commit_hash = mv_res["commit_hash"]
+        moved_count = len(mv_res["moved_pairs"])
+        await events.status(f"📦 {old_p} déplacé vers {new_p}.", done=True)
+
+        text_lines = [
+            f"{'Fichier' if target_type == 'file' else 'Dossier'} déplacé avec succès dans l'espace `{workspace}`.",
+            f"- Source : `{old_p}`",
+            f"- Destination : `{new_p}`",
+            f"- Fichiers déplacés : {moved_count}",
+            f"- Commit : `{commit_hash[:12]}`",
+        ]
+        if target_type == "file":
+            text_lines.append(f"- URN : [{new_p}](codex:current:{workspace}/{new_p})")
+
+        return wrap_tool_output(
+            text="\n".join(text_lines),
+            status={
+                "status": "success",
+                "target_type": target_type,
+                "old_path": old_p,
+                "new_path": new_p,
+                "workspace": workspace,
+                "moved_files_count": moved_count,
+                "commit": commit_hash[:12],
+            },
+        )
+
+    @echo_tool
+    async def transfer_codex(
+        self,
+        source_path: str,
+        source_workspace: CODEX_TRANSFER_SOURCE_LITERAL,
+        destination_workspace: CODEX_WRITABLE_WORKSPACE_LITERAL,
+        destination_path: Optional[str] = None,
+        mode: Literal["copy", "move"] = "copy",
+        overwrite: bool = False,
+        commit_message: Optional[str] = None,
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None,
+    ) -> dict:
+        """Copie ou déplace un fichier ou dossier entre espaces autorisés (ex: `files`/`browserviews`/`main`/`plans`/`generated` vers `sandbox`, ou `sandbox` vers `main`)."""
+        events = EchoEvents(__event_emitter__, __event_call__)
+        uid = __user__.get("id", "anonymous") if __user__ else "anonymous"
+        cid = (__metadata__ or {}).get("chat_id")
+        if not cid:
+            return wrap_tool_output(
+                text="❌ Contexte manquant (chat_id).",
+                status={"status": "error", "error_code": "missing_context"},
+            )
+
+        src_ws = str(source_workspace or "").strip().lower()
+        dst_ws = str(destination_workspace or "").strip().lower()
+
+        ro_err = self._check_generic_writable(dst_ws, uid, cid, __metadata__)
+        if ro_err:
+            return ro_err
+
+        if src_ws == dst_ws:
+            return wrap_tool_output(
+                text=f"❌ Transfert intra-espace (`{src_ws}` -> `{dst_ws}`) interdit ; utilisez `move_codex`.",
+                status={
+                    "status": "error",
+                    "error_code": "intra_workspace_forbidden",
+                    "source_workspace": src_ws,
+                    "destination_workspace": dst_ws,
+                },
+            )
+
+        self._emit_urn_directive(EchoStateManager(user_id=uid, chat_id=cid))
+
+        async with get_codex_lock(uid, cid):
+            try:
+                tr = await asyncio.to_thread(
+                    transfer_codex_entries,
+                    uid,
+                    cid,
+                    source_path,
+                    src_ws,
+                    dst_ws,
+                    destination_path,
+                    mode,
+                    overwrite,
+                    commit_message,
+                )
+            except FileNotFoundError as e:
+                return wrap_tool_output(
+                    text=f"❌ {e}",
+                    status={
+                        "status": "error",
+                        "error_code": "source_not_found",
+                        "source_path": source_path,
+                        "source_workspace": src_ws,
+                    },
+                )
+            except CodexPathConflictError as e:
+                return wrap_tool_output(
+                    text=f"❌ {e}",
+                    status={
+                        "status": "error",
+                        "error_code": "destination_conflict",
+                        "destination_path": destination_path or source_path,
+                        "destination_workspace": dst_ws,
+                    },
+                )
+            except CodexQuotaExceededError as e:
+                return wrap_tool_output(
+                    text=f"❌ {e}",
+                    status={
+                        "status": "error",
+                        "error_code": "quota_exceeded",
+                        "source_workspace": src_ws,
+                        "destination_workspace": dst_ws,
+                    },
+                )
+            except ValueError as e:
+                return wrap_tool_output(
+                    text=f"❌ {e}",
+                    status={
+                        "status": "error",
+                        "error_code": "invalid_transfer",
+                        "source_workspace": src_ws,
+                        "destination_workspace": dst_ws,
+                    },
+                )
+
+            if is_codex_workspace_indexed(dst_ws) and tr.get("transferred_files"):
+                dst_repo = CodexRepo(uid, cid, workspace=dst_ws)
+                reg_msg = commit_message or (
+                    f"Transfer ({tr['mode']}) {src_ws}:{tr['source_path']} -> {dst_ws}:{tr['destination_path']}"
+                )
+                for rel_p in tr["transferred_files"]:
+                    await sync_codex_registry_save(
+                        uid,
+                        cid,
+                        dst_ws,
+                        rel_p,
+                        tr["commit_hash"],
+                        reg_msg,
+                        repo_base_dir=dst_repo.repo_path,
+                    )
+
+        transferred_files = tr.get("transferred_files") or []
+        skipped_entries = tr.get("skipped_entries") or []
+        dst_p = tr["destination_path"]
+        commit_hash = tr["commit_hash"]
+        await events.status(
+            f"🔁 Transfert {src_ws} -> {dst_ws} terminé ({len(transferred_files)} fichier(s)).",
+            done=True,
+        )
+
+        text_lines = [
+            f"Transfert (`{tr['mode']}`) effectué avec succès : `{src_ws}:{tr['source_path']}` -> `{dst_ws}:{dst_p}`.",
+            f"- Type : `{tr['target_type']}`",
+            f"- Fichiers transférés : {len(transferred_files)} ({tr['total_bytes']} octets)",
+            f"- Commit : `{commit_hash[:12]}`",
+        ]
+        if tr["target_type"] == "file":
+            text_lines.append(f"- URN : [{dst_p}](codex:current:{dst_ws}/{dst_p})")
+        if skipped_entries:
+            text_lines.append(f"- Entrées ignorées : {len(skipped_entries)}")
+
+        return wrap_tool_output(
+            text="\n".join(text_lines),
+            status={
+                "status": "success",
+                "target_type": tr["target_type"],
+                "source_workspace": tr["source_workspace"],
+                "source_path": tr["source_path"],
+                "destination_workspace": tr["destination_workspace"],
+                "destination_path": dst_p,
+                "mode": tr["mode"],
+                "transferred_count": len(transferred_files),
+                "transferred_files": transferred_files[:50],
+                "skipped_entries": skipped_entries,
+                "total_bytes": tr["total_bytes"],
+                "commit": commit_hash[:12],
+            },
         )

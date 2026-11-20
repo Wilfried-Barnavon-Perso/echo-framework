@@ -1,26 +1,30 @@
 """
 title: ECHO Universal MCP Tool
 author: ECHO
-version: 6.7.18.1
+version: 6.11.0.1
 description: Outil universel d'interrogation et d'exécution sur l'infrastructure MCP via routage dynamique.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.11.0.1: Ajout de upload_file_to_drive (streaming 256 KiB vers /upload_drive, resolve_user_exportable_file_path) et user_required_instructions.
 # 6.7.18.1: Filtre query et formatage 1-ligne/outil dans list_mcp_functions, et contrôle strict multi-comptes dans _fetch_credentials.
 # 5.239.12.1: Déduplication payloads MCP (_compact_mcp_payload) sans double sérialisation content/structuredContent.
 # 5.239.11.1: Retour dict normalisé (status="error", error=...) sur erreur MCP/HTTP pour ❌ Open WebUI et statut LLM.
 # 5.239.10.1: Factorisation RPC/erreurs, timeouts 90s/65s alignés Broker et clôture events.status sur erreur.
-# 5.233.0.1: Décoration @echo_tool sur les 2 méthodes publiques et simplification des retours wrap_tool_output.
+import os
 import sys
 import json
 import base64
+import asyncio
+import mimetypes
 import httpx
-from typing import Any, Optional
+from typing import Any, AsyncIterator, Literal, Optional
 from pydantic import BaseModel
 
 sys.path.append("/app/backend/echo_libs")
 from echo_core import echo_tool  # noqa: E402
 from echo_events import EchoEvents  # noqa: E402
+from echo_paths import extract_clean_filename, resolve_user_exportable_file_path  # noqa: E402
 
 
 class Tools:
@@ -32,6 +36,7 @@ class Tools:
         self.schemas_url = "http://echo-mcp-broker:8000/schemas"
         self.mcp_native_url = "http://echo-mcp-broker:8000/mcp"
         self.proxy_url = "http://echo-mcp-broker:8000/proxy_mcp"
+        self.upload_drive_url = "http://echo-mcp-broker:8000/upload_drive"
 
     async def _get_category(self, service: str) -> str:
         """Récupère dynamiquement la taxonomie d'un serveur pour déterminer son routage."""
@@ -186,7 +191,7 @@ class Tools:
                         except Exception:
                             msg = txt[:500]
                         break
-        return {
+        err_out = {
             "status": "error",
             "error": msg,
             "message": msg,
@@ -194,6 +199,9 @@ class Tools:
             "action": action_label,
             "details": Tools._compact_mcp_payload(data, unwrap_result=False),
         }
+        if isinstance(data, dict) and data.get("user_required_instructions"):
+            err_out["user_required_instructions"] = data["user_required_instructions"]
+        return err_out
 
     async def _execute_broker_rpc(
         self,
@@ -360,5 +368,129 @@ class Tools:
             return json.dumps(self._compact_mcp_payload(data), ensure_ascii=False)
         except Exception as e:
             err = self._format_transport_error(service, function_name, e)
+            await events.status(f"❌ Erreur sur '{service}' : {err['message']}", done=True)
+            return err
+
+    @staticmethod
+    async def _iter_local_file_chunks(file_path: str, chunk_size: int = 262144) -> AsyncIterator[bytes]:
+        fh = await asyncio.to_thread(open, file_path, "rb")
+        try:
+            while True:
+                chunk = await asyncio.to_thread(fh.read, chunk_size)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            await asyncio.to_thread(fh.close)
+
+    @echo_tool
+    async def upload_file_to_drive(
+        self,
+        service: Literal["google_workspace", "microsoft_365"],
+        file_ref: str,
+        workspace: Optional[Literal["main", "plans", "generated", "sandbox", "files", "browserviews"]] = None,
+        remote_folder_id: Optional[str] = None,
+        remote_filename: Optional[str] = None,
+        overwrite_file_id: Optional[str] = None,
+        convert_to_native: bool = False,
+        conflict_behavior: Literal["replace", "rename", "fail"] = "replace",
+        account_id: Optional[str] = None,
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None,
+    ) -> Any:
+        """Envoie en streaming un fichier local ECHO (Codex, /files, browserviews, registre) vers Google Drive ou OneDrive."""
+        uid = str((__user__ or {}).get("id") or "").strip()
+        if not __user__ or not uid or uid == "anonymous":
+            msg = "Erreur: Contexte utilisateur authentifié manquant."
+            return {
+                "status": "error",
+                "error": msg,
+                "message": msg,
+                "service": service,
+                "action": "upload_file_to_drive",
+            }
+
+        events = EchoEvents(__event_emitter__, __event_call__)
+        await events.status(f"☁️ Préparation de l'envoi vers '{service}'...")
+        chat_id = str((__metadata__ or {}).get("chat_id") or "")
+
+        local_path = resolve_user_exportable_file_path(
+            user_id=uid,
+            chat_id=chat_id,
+            target=file_ref,
+            workspace=workspace,
+        )
+        if not local_path:
+            msg = f"Fichier local introuvable ou non exportable : '{file_ref}'."
+            await events.status(f"⚠️ {msg}", done=True)
+            return {
+                "status": "error",
+                "error": msg,
+                "message": msg,
+                "service": service,
+                "action": "upload_file_to_drive",
+            }
+
+        total_size = os.path.getsize(local_path)
+        target_name = (remote_filename or "").strip() or extract_clean_filename(local_path) or os.path.basename(local_path)
+        guessed_mime = mimetypes.guess_type(target_name)[0] or "application/octet-stream"
+
+        credentials, cred_err = self._fetch_credentials(uid, service, account_id)
+        if cred_err is not None:
+            await events.status(f"⚠️ Accès à '{service}' : {cred_err['message'][:120]}", done=True)
+            return cred_err
+
+        meta_obj = {
+            "service": service,
+            "user_id": uid,
+            "chat_id": chat_id,
+            "filename": target_name,
+            "total_size": total_size,
+            "mime_type": guessed_mime,
+            "folder_id": remote_folder_id,
+            "overwrite_file_id": overwrite_file_id,
+            "convert_to_native": bool(convert_to_native),
+            "conflict_behavior": conflict_behavior,
+            "account_id": account_id,
+        }
+        b64_meta = base64.b64encode(json.dumps(meta_obj, ensure_ascii=False).encode("utf-8")).decode("ascii")
+        b64_creds = base64.b64encode(credentials.encode("utf-8")).decode("ascii") if credentials else ""
+
+        headers = {
+            "x-openwebui-user-id": uid,
+            "x-openwebui-chat-id": chat_id,
+            "x-echo-upload-meta": b64_meta,
+            "Content-Type": "application/octet-stream",
+            "Content-Length": str(total_size),
+        }
+        if b64_creds:
+            headers["x-echo-credentials"] = b64_creds
+
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=10.0)) as client:
+                resp = await client.post(
+                    self.upload_drive_url,
+                    content=self._iter_local_file_chunks(local_path),
+                    headers=headers,
+                )
+            try:
+                data = resp.json()
+            except Exception:
+                data = {"status": "error", "message": resp.text or f"HTTP {resp.status_code}"}
+
+            if resp.status_code >= 400 or (isinstance(data, dict) and data.get("status") == "error"):
+                err_dict = self._build_error_dict(service, "upload_file_to_drive", data)
+                await events.status(
+                    f"⚠️ Erreur sur '{service}' (upload_file_to_drive) : {err_dict['message'][:120]}",
+                    done=True,
+                )
+                return err_dict
+
+            await events.status(f"✅ Fichier '{target_name}' envoyé sur '{service}'.", done=True)
+            return json.dumps(data, ensure_ascii=False)
+        except Exception as e:
+            err = self._format_transport_error(service, "upload_file_to_drive", e)
             await events.status(f"❌ Erreur sur '{service}' : {err['message']}", done=True)
             return err

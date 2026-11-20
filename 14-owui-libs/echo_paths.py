@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Paths
 author: Wilfried BARNAVON
-version: 6.7.16.1
+version: 6.11.0.1
 description: Résolution des chemins absolus du système.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.11.0.1: Ajout de is_safe_user_exportable_path, resolve_user_exportable_file_path et support domaine 'files' sécurisé.
+# 6.10.0.1: Ajout de is_sandbox_internal_segment et resolve_confined_codex_path (confinement commonpath, rejet symlinks/IPC/.git), durcissement de normalize_codex_rel_path, check_codex_file_exists et resolve_extended_file_path.
 # 6.7.16.1: Repli sur le Vault global utilisateur et les Vaults de chats dans resolve_upload_file_path même lorsque chat_id est fourni.
 # 6.6.5.1: Support du domaine 'browserviews' et resource_type 'browserview' dans resolve_extended_file_path.
 # 5.235.5.2: Ajout de get_echo_identity_db_path, wait_for_chat_clone et sanctuarisation du schéma SQLite identité.
-# 5.234.1.1: Support de default en alias rétrocompatible de fallback dans sanitize_echo_id.
-# 5.232.5.1: Résolution étendue multi-workspaces (main, plans, generated, sandbox) et types ("codex", "plan", "generated") dans resolve_extended_file_path.
 import os
 import re
 import time
@@ -24,7 +24,12 @@ from echo_constants import (
     BROWSER_VIEWS_DIR_NAME,
     CODEX_DEFAULT_WORKSPACE,
     CODEX_DIR_NAME,
+    CODEX_FORBIDDEN_PATH_SEGMENTS,
+    CODEX_MAX_PATH_DEPTH,
+    CODEX_SANDBOX_INTERNAL_NAMES,
+    CODEX_SANDBOX_INTERNAL_PREFIXES,
     CODEX_WORKSPACE_MAIN,
+    CODEX_WORKSPACE_SANDBOX,
     ECHO_CODEX_WORKSPACES,
     ECHO_GLOBAL_DOMAINS,
     ECHO_SESSION_DOMAINS,
@@ -232,6 +237,9 @@ def resolve_extended_file_path(
         if safe_target.startswith(f"{BROWSER_VIEWS_DIR_NAME}/"):
             effective_ws = BROWSER_VIEWS_DIR_NAME
             rel_target = safe_target[len(f"{BROWSER_VIEWS_DIR_NAME}/"):]
+        elif safe_target.startswith("files/"):
+            effective_ws = "files"
+            rel_target = safe_target[len("files/"):]
         else:
             for ws_candidate in ECHO_CODEX_WORKSPACES:
                 if safe_target.startswith(f"{CODEX_DIR_NAME}/{ws_candidate}/"):
@@ -253,12 +261,31 @@ def resolve_extended_file_path(
         except Exception:
             state = None
 
+    def _resolve_codex_file(ws_name: str, rel_path: str) -> Optional[str]:
+        if not base_codex or ws_name not in ECHO_CODEX_WORKSPACES:
+            return None
+        ws_dir = os.path.join(base_codex, ws_name)
+        try:
+            _, cand = resolve_confined_codex_path(
+                ws_dir,
+                rel_path,
+                workspace=ws_name,
+                allow_empty=False,
+            )
+        except ValueError:
+            return None
+        if not os.path.islink(cand) and os.path.isfile(cand):
+            return cand
+        return None
+
     def _resolve_from_resource(res: dict) -> Optional[str]:
         if not res:
             return None
         sp = res.get("storage_path") or ""
-        if sp and os.path.isabs(sp) and os.path.isfile(sp):
-            return sp
+        if sp and os.path.isabs(sp) and not os.path.islink(sp) and os.path.isfile(sp):
+            if is_safe_user_exportable_path(user_id, sp, uploads_dir=uploads_dir, trusted_resource=True):
+                return os.path.realpath(sp)
+            return None
         if base_bv and (
             res.get("resource_type") == "browserview"
             or sp.startswith(f"{BROWSER_VIEWS_DIR_NAME}/")
@@ -277,11 +304,14 @@ def resolve_extended_file_path(
             for ws_c in ECHO_CODEX_WORKSPACES:
                 if sp.startswith(f"{CODEX_DIR_NAME}/{ws_c}/"):
                     rel_sp = sp[len(f"{CODEX_DIR_NAME}/{ws_c}/"):]
-                    cand = os.path.join(base_codex, ws_c, rel_sp)
-                    if os.path.isfile(cand):
+                    cand = _resolve_codex_file(ws_c, rel_sp)
+                    if cand:
                         return cand
-            cand_main = os.path.join(base_codex, CODEX_WORKSPACE_MAIN, res.get("name", ""))
-            if os.path.isfile(cand_main):
+            cand_main = _resolve_codex_file(
+                CODEX_WORKSPACE_MAIN,
+                res.get("name") or "",
+            )
+            if cand_main:
                 return cand_main
         up = resolve_upload_file_path(user_id, res.get("id", ""), uploads_dir, chat_id=chat_id)
         if up and os.path.isfile(up):
@@ -305,14 +335,20 @@ def resolve_extended_file_path(
             if resolved:
                 return resolved
 
+    # 0b. Si le domaine 'files' est explicitement ciblé
+    if effective_ws == "files" and user_id and user_id != "anonymous":
+        direct_up = resolve_upload_file_path(user_id, rel_target, uploads_dir="", chat_id=chat_id)
+        if direct_up and not os.path.islink(direct_up) and os.path.isfile(direct_up):
+            return direct_up
+        by_name = _resolve_upload_by_filename(user_id, rel_target, uploads_dir="", chat_id=chat_id)
+        if by_name and not os.path.islink(by_name) and os.path.isfile(by_name):
+            return by_name
+
     # 1. Si un workspace Codex explicite est demandé ('main' ou 'sandbox')
     if effective_ws in ECHO_CODEX_WORKSPACES and base_codex:
-        ws_dir = os.path.join(base_codex, effective_ws)
-        clean_rel = normalize_codex_rel_path(rel_target, workspace=effective_ws, repo_path=ws_dir)
-        if clean_rel:
-            cand = os.path.join(ws_dir, clean_rel)
-            if os.path.isfile(cand):
-                return cand
+        cand = _resolve_codex_file(effective_ws, rel_target)
+        if cand:
+            return cand
         if state:
             res = state.get_resource(rel_target) or state.get_resource(safe_target)
             resolved = _resolve_from_resource(res)
@@ -347,12 +383,9 @@ def resolve_extended_file_path(
     # 5. Résolution physique directe par Nom/Chemin relatif (tous les workspaces Codex -> Vault 'files')
     if base_codex:
         for ws_name in ECHO_CODEX_WORKSPACES:
-            ws_dir = os.path.join(base_codex, ws_name)
-            clean_rel = normalize_codex_rel_path(rel_target, workspace=ws_name, repo_path=ws_dir)
-            if clean_rel:
-                cand = os.path.join(ws_dir, clean_rel)
-                if os.path.isfile(cand):
-                    return cand
+            cand = _resolve_codex_file(ws_name, rel_target)
+            if cand:
+                return cand
 
     if base_bv:
         base_bv_real = os.path.realpath(base_bv)
@@ -383,16 +416,40 @@ def get_echo_version() -> str:
     return ""
 
 
+def is_sandbox_internal_segment(segment: str) -> bool:
+    """Retourne True si segment est un élément technique interne sandbox."""
+    if not segment:
+        return False
+    return (
+        segment in CODEX_SANDBOX_INTERNAL_NAMES
+        or any(
+            segment.startswith(prefix)
+            for prefix in CODEX_SANDBOX_INTERNAL_PREFIXES
+        )
+    )
+
+
 def normalize_codex_rel_path(
     relative_path: str,
     workspace: str = "",
     repo_path: str = "",
 ) -> Optional[str]:
-    """Normalise et sécurise un chemin relatif Codex (décodage URL défensif, retrait des préfixes redondants et anti-traversal)."""
-    clean_path = (relative_path or "").replace("\\", "/").strip("/")
-    if "%" in clean_path and (not repo_path or not os.path.exists(os.path.join(repo_path, clean_path))):
-        clean_path = unquote(clean_path).replace("\\", "/").strip("/")
-    if not clean_path or ".." in clean_path.split("/") or clean_path.startswith("/"):
+    """Normalise et sécurise un chemin relatif Codex (anti-traversal/IPC)."""
+    if not relative_path or "\x00" in relative_path:
+        return None
+    clean_path = relative_path.replace("\\", "/").strip("/")
+    for _ in range(2):
+        if "%" in clean_path and (
+            not repo_path
+            or not os.path.exists(os.path.join(repo_path, clean_path))
+        ):
+            decoded = unquote(clean_path)
+            if "\x00" in decoded:
+                return None
+            clean_path = decoded.replace("\\", "/").strip("/")
+        else:
+            break
+    if not clean_path:
         return None
     if workspace:
         prefix_full = f"{CODEX_DIR_NAME}/{workspace}/"
@@ -401,7 +458,101 @@ def normalize_codex_rel_path(
             clean_path = clean_path[len(prefix_full):]
         elif clean_path.startswith(prefix_ws):
             clean_path = clean_path[len(prefix_ws):]
-    return clean_path or None
+        if clean_path in ("", workspace, f"{CODEX_DIR_NAME}/{workspace}"):
+            return None
+    segments = clean_path.split("/")
+    if not segments or len(segments) > CODEX_MAX_PATH_DEPTH:
+        return None
+    for seg in segments:
+        if (
+            not seg
+            or seg in CODEX_FORBIDDEN_PATH_SEGMENTS
+            or seg.lower() == ".git"
+            or (
+                workspace == CODEX_WORKSPACE_SANDBOX
+                and is_sandbox_internal_segment(seg)
+            )
+        ):
+            return None
+    return "/".join(segments)
+
+
+def resolve_confined_codex_path(
+    base_dir: str,
+    relative_path: str,
+    *,
+    workspace: str = "",
+    allow_empty: bool = False,
+    allowed_symlink_roots: Optional[tuple[str, ...]] = None,
+) -> tuple[str, str]:
+    """Résout (clean_rel, target_abs) sous base_dir avec confinement strict."""
+    if not base_dir:
+        raise ValueError("Répertoire de base manquant.")
+    base_norm = os.path.normpath(base_dir)
+    if os.path.islink(base_norm) and not allowed_symlink_roots:
+        raise ValueError("Répertoire racine invalide (lien symbolique).")
+    real_base = os.path.realpath(base_dir)
+    valid_roots = [
+        os.path.realpath(r) for r in (allowed_symlink_roots or ()) if r
+    ]
+    if allowed_symlink_roots and real_base not in valid_roots:
+        valid_roots.append(real_base)
+
+    def _is_under(real_p: str, root_real: str) -> bool:
+        try:
+            return os.path.commonpath([root_real, real_p]) == root_real
+        except ValueError:
+            return False
+
+    if "\x00" in (relative_path or ""):
+        raise ValueError("Caractère nul interdit dans le chemin.")
+    raw = (relative_path or "").replace("\\", "/").strip("/")
+    is_root_empty = raw == "" or (
+        bool(workspace)
+        and raw in (workspace, f"{CODEX_DIR_NAME}/{workspace}")
+    )
+    if is_root_empty:
+        if allow_empty:
+            return ("", real_base)
+        raise ValueError("Chemin cible vide ou racine non autorisé.")
+
+    clean_rel = normalize_codex_rel_path(
+        relative_path,
+        workspace=workspace,
+        repo_path=base_dir,
+    )
+    if clean_rel is None:
+        raise ValueError(
+            "Chemin relatif invalide, protégé (.git / IPC) "
+            "ou path traversal non autorisé."
+        )
+
+    cur = base_dir
+    for seg in clean_rel.split("/"):
+        cur = os.path.join(cur, seg)
+        if os.path.lexists(cur) and os.path.islink(cur):
+            if not allowed_symlink_roots:
+                raise ValueError(
+                    "Lien symbolique non autorisé dans cet espace."
+                )
+            real_cur = os.path.realpath(cur)
+            if not any(_is_under(real_cur, r) for r in valid_roots):
+                raise ValueError(
+                    "Lien symbolique sortant du périmètre autorisé."
+                )
+
+    target_abs = os.path.abspath(
+        os.path.join(base_dir, *clean_rel.split("/"))
+    )
+    real_target = os.path.realpath(target_abs)
+    if not allowed_symlink_roots:
+        if not (
+            _is_under(real_target, real_base) and real_target != real_base
+        ):
+            raise ValueError("Sortie de confinement détectée.")
+    elif not any(_is_under(real_target, r) for r in valid_roots):
+        raise ValueError("Sortie de confinement détectée.")
+    return (clean_rel, target_abs)
 
 
 def format_codex_storage_path(relative_path: str, workspace: str = CODEX_DEFAULT_WORKSPACE) -> str:
@@ -417,15 +568,138 @@ def check_codex_file_exists(
     workspace: str,
     relative_path: str,
 ) -> bool:
-    """Vérifie l'existence physique d'un fichier Codex sur disque (agnostique à Git, compatible sandbox)."""
+    """Vérifie l'existence physique d'un fichier Codex sur disque."""
     try:
-        if not user_id or not chat_id or workspace not in ECHO_CODEX_WORKSPACES:
+        if (
+            not user_id
+            or not chat_id
+            or workspace not in ECHO_CODEX_WORKSPACES
+        ):
             return False
         base_codex = get_echo_session_path(user_id, chat_id, CODEX_DIR_NAME)
         ws_dir = os.path.join(base_codex, workspace)
-        clean_path = normalize_codex_rel_path(relative_path, workspace=workspace, repo_path=ws_dir)
-        if not clean_path:
+        try:
+            _, cand_abs = resolve_confined_codex_path(
+                ws_dir,
+                relative_path,
+                workspace=workspace,
+                allow_empty=False,
+            )
+        except ValueError:
             return False
-        return os.path.isfile(os.path.join(ws_dir, clean_path))
+        return not os.path.islink(cand_abs) and os.path.isfile(cand_abs)
     except Exception:
         return False
+
+
+_FORBIDDEN_EXPORT_FILENAMES = frozenset({"identity.db", "session.db", "webui.db"})
+_FORBIDDEN_EXPORT_SUFFIXES = (".sqlite", ".sqlite3", ".db-wal", ".db-shm", ".wal", ".shm")
+
+
+def is_safe_user_exportable_path(
+    user_id: str,
+    candidate_path: str,
+    uploads_dir: str = ECHO_UPLOADS_TRANSIT_DIR,
+    trusted_resource: bool = False,
+) -> bool:
+    """Vérifie qu'un chemin physique est confinable au périmètre utilisateur et non sensible pour l'export."""
+    if not user_id or user_id == "anonymous" or not candidate_path:
+        return False
+    if os.path.islink(candidate_path) or not os.path.isfile(candidate_path):
+        return False
+    safe_uid = sanitize_echo_id(user_id, fallback="")
+    if not safe_uid:
+        return False
+
+    real_cand = os.path.realpath(candidate_path)
+    base_name_l = os.path.basename(real_cand).lower()
+    if base_name_l in _FORBIDDEN_EXPORT_FILENAMES or base_name_l.endswith(_FORBIDDEN_EXPORT_SUFFIXES):
+        return False
+
+    def _has_forbidden_segments(parts: list[str]) -> bool:
+        for p in parts:
+            pl = p.lower()
+            if pl == ".env" or pl.startswith(".env.") or is_sandbox_internal_segment(p):
+                return True
+        return False
+
+    user_root_real = os.path.realpath(os.path.join(ECHO_USERS_ROOT, safe_uid))
+    try:
+        in_user_root = os.path.commonpath([user_root_real, real_cand]) == user_root_real and real_cand != user_root_real
+    except ValueError:
+        in_user_root = False
+
+    if in_user_root:
+        rel_parts = os.path.relpath(real_cand, user_root_real).replace("\\", "/").split("/")
+        if "db" in rel_parts or _has_forbidden_segments(rel_parts):
+            return False
+        return True
+
+    if uploads_dir:
+        uploads_real = os.path.realpath(uploads_dir)
+        try:
+            in_uploads = os.path.commonpath([uploads_real, real_cand]) == uploads_real and real_cand != uploads_real
+        except ValueError:
+            in_uploads = False
+        if in_uploads:
+            rel_parts = os.path.relpath(real_cand, uploads_real).replace("\\", "/").split("/")
+            if _has_forbidden_segments(rel_parts):
+                return False
+            return bool(trusted_resource or os.path.basename(real_cand).startswith(f"U_{safe_uid}_"))
+
+    return False
+
+
+def resolve_user_exportable_file_path(
+    user_id: str,
+    chat_id: Optional[str],
+    target: str,
+    workspace: Optional[str] = None,
+    uploads_dir: str = ECHO_UPLOADS_TRANSIT_DIR,
+) -> Optional[str]:
+    """Résout et confine un fichier local utilisateur exportable (hors bases SQLite, symlinks et fichiers tiers)."""
+    if not user_id or user_id == "anonymous" or not target:
+        return None
+
+    cand = resolve_extended_file_path(
+        user_id=user_id,
+        chat_id=chat_id,
+        target=target,
+        workspace=workspace,
+        uploads_dir="",
+    )
+    if cand and is_safe_user_exportable_path(user_id, cand, uploads_dir=uploads_dir, trusted_resource=False):
+        return os.path.realpath(cand)
+
+    if uploads_dir:
+        cand_transit = resolve_extended_file_path(
+            user_id=user_id,
+            chat_id=chat_id,
+            target=target,
+            workspace=workspace,
+            uploads_dir=uploads_dir,
+        )
+        if cand_transit:
+            raw_clean = unquote(str(target).strip()).replace("\\", "/").strip("/")
+            if raw_clean.startswith("files/"):
+                raw_clean = raw_clean[len("files/"):]
+            is_registered = False
+            if chat_id and raw_clean:
+                try:
+                    from echo_state_manager import EchoStateManager
+                    state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+                    if state.get_resource(raw_clean):
+                        is_registered = True
+                    else:
+                        base_search = os.path.basename(raw_clean)
+                        for r in (state.get_resources(search=base_search) or []):
+                            r_name = (r.get("name") or "").replace("\\", "/").strip("/")
+                            if r.get("id") == raw_clean or os.path.basename(r_name).lower() == base_search.lower():
+                                is_registered = True
+                                break
+                except Exception:
+                    is_registered = False
+            if is_safe_user_exportable_path(user_id, cand_transit, uploads_dir=uploads_dir, trusted_resource=is_registered):
+                return os.path.realpath(cand_transit)
+
+    return None

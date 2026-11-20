@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 6.7.20.1
+version: 6.10.0.1
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.10.0.1: Propagation de ECHO_AUTOMATION_CONTEXT avec reset finally dans @echo_tool (async et sync).
 # 6.7.20.1: Chargeur XML sous cache st_mtime_ns (load_echo_commands_registry, load_assembled_system_prompt) et extraction normalisée extract_leading_slash_commands.
 # 6.7.11.1: Factorisation de apply_tool_spillover et paginate_lines_window.
 # 6.7.10.2: Application des 3 régimes SSOT, préservation de _skip_truncation sous ECHO_SUBAGENT_CONTEXT/is_nested dans _apply_final_spillover et directive PAS 800 lignes.
 # 6.6.30.1: Verrou thread-safe _get_aec_drain_lock(chat_id) autour de _drain_tool_aec_events.
-# 5.239.17.1: Délestage automatique des sorties d'outils > 32 Ko dans tools_output/{output_id}.txt avec aperçu Head+Tail aligné sur les lignes et métadonnées JSON (truncate_and_spill_tool_output, skip_truncation).
 import os
 import re
 import copy
@@ -36,11 +36,13 @@ from echo_paths import get_echo_version
 from echo_constants import (
     CHARS_PER_TOKEN,
     AEC_REMINDERS,
+    ECHO_AUTOMATION_CONTEXT,
     ECHO_SUBAGENT_CONTEXT,
     ECHO_BASE_DATA_DIR,
     ECHO_PLUGIN_ROOT,
     ECHO_SYSTEM_PROMPT_FILENAME,
     ECHO_SYSTEM_COMMANDS_FILENAME,
+    is_automation_context,
 )
 
 logger = logging.getLogger("ECHO_CORE")
@@ -910,9 +912,15 @@ def echo_tool(func):
             call_kwargs, uid, cid, meta_dict = _prepare_call_kwargs(kwargs)
             is_nested = _ECHO_IN_TOOL_CALL.get()
             token = _ECHO_IN_TOOL_CALL.set(True)
+            auto_token = None
+            if is_automation_context(meta_dict):
+                auto_id = (meta_dict or {}).get("automation_id") or (((meta_dict or {}).get("user_message") or {}).get("meta") or {}).get("automation_id")
+                auto_token = ECHO_AUTOMATION_CONTEXT.set({"is_automation": True, "automation_id": auto_id})
             try:
                 res = await func(*args, **call_kwargs)
             finally:
+                if auto_token is not None:
+                    ECHO_AUTOMATION_CONTEXT.reset(auto_token)
                 _ECHO_IN_TOOL_CALL.reset(token)
             return _finalize_tool_result(res, uid=uid, cid=cid, meta_dict=meta_dict, is_nested=is_nested, tool_name=func.__name__)
     else:
@@ -921,9 +929,15 @@ def echo_tool(func):
             call_kwargs, uid, cid, meta_dict = _prepare_call_kwargs(kwargs)
             is_nested = _ECHO_IN_TOOL_CALL.get()
             token = _ECHO_IN_TOOL_CALL.set(True)
+            auto_token = None
+            if is_automation_context(meta_dict):
+                auto_id = (meta_dict or {}).get("automation_id") or (((meta_dict or {}).get("user_message") or {}).get("meta") or {}).get("automation_id")
+                auto_token = ECHO_AUTOMATION_CONTEXT.set({"is_automation": True, "automation_id": auto_id})
             try:
                 res = func(*args, **call_kwargs)
             finally:
+                if auto_token is not None:
+                    ECHO_AUTOMATION_CONTEXT.reset(auto_token)
                 _ECHO_IN_TOOL_CALL.reset(token)
             return _finalize_tool_result(res, uid=uid, cid=cid, meta_dict=meta_dict, is_nested=is_nested, tool_name=func.__name__)
 

@@ -1,16 +1,16 @@
 """
 title: ECHO Session Clone & Migration Engine
 author: Wilfried BARNAVON
-version: 6.6.5.1
+version: 6.10.0.1
 description: Moteur partagé de duplication atomique des conteneurs de session ECHO (Clone, Fork et Migration).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.10.0.1: Ré-insertion dans align_codex_git_to_cutoff des fichiers trackés restaurés par Git mais absents d'echo_resources (cas de fichiers renommés ou déplacés après cutoff_ts).
 # 6.6.5.1: Inclusion du domaine BROWSER_VIEWS_DIR_NAME ('browserviews') dans duplicate_session_domains et _prune_domain_files_to_cutoff.
 # 5.239.13.1: duplicate_session_rag fiabilisé : retries bornés (_qdrant_call : réseau, 429, 5xx), upsert par lots de 64, comptage de contrôle exact et retour structuré RagCloneReport.
 # 5.239.12.1: Purge de wm_state dans purge_conversational_state, ré-ancrage des ressources actives (_reanchor_resumed_resources) et des vecteurs conversationnels RAG (anchor_msg_id).
 # 5.237.20.3: Alignement généalogique strict de ancestor_msg_ids sur live_msg_ids dans prune_forked_history.
-# 5.237.20.2: Simplification de prune_forked_history et sync_cloned_session sur message_shadows v2 (support tuple/Row et lecture directe model_id).
 
 from contextlib import closing
 import asyncio
@@ -32,10 +32,13 @@ from echo_constants import (
     COLLECTION_SESSION_RAG,
     ECHO_CODEX_WORKSPACES,
     ECHO_QDRANT_URL,
+    FILE_INGESTION_STATUS,
     SESSION_RAG_CONVERSATION_SOURCE_ID,
+    get_codex_workspace_resource_type,
+    is_codex_workspace_indexed,
     is_codex_workspace_versioned,
 )
-from echo_paths import get_echo_session_path
+from echo_paths import format_codex_storage_path, get_echo_session_path
 from echo_session_gc import (
     compute_dead_set,
     extract_call_ids_from_json as _extract_call_ids_from_json,
@@ -591,12 +594,32 @@ def align_codex_git_to_cutoff(
             restored_sha = res.get("restored_commit")
             ws_short_sha[ws_name] = restored_sha[:12] if restored_sha else None
 
+        def _read_codex_text_stats(
+            fp_path: str, res_type: str
+        ) -> tuple[Optional[int], Optional[str]]:
+            if res_type not in ("codex", "plan"):
+                return (None, None)
+            with open(
+                fp_path, "r", encoding="utf-8", errors="replace"
+            ) as fh:
+                txt = fh.read()
+            cnt = txt.count("\n") + (
+                1 if txt and not txt.endswith("\n") else 0
+            )
+            st_match = (
+                re.search(r"^status:\s*(\S+)", txt, re.MULTILINE)
+                if res_type == "plan"
+                else None
+            )
+            return (cnt, st_match.group(1) if st_match else None)
+
         with closing(sqlite3.connect(new_db, timeout=15.0)) as conn:
             cur = conn.cursor()
             cur.execute(
                 "SELECT id, name, resource_type, storage_path FROM echo_resources "
                 "WHERE resource_type IN ('codex', 'plan', 'generated') AND git_tracked = 1"
             )
+            seen_tracked_by_ws: dict[str, set[str]] = {}
             for r_id, r_name, r_type, r_spath in cur.fetchall():
                 spath = str(r_spath or "")
                 target_ws = CODEX_WORKSPACE_MAIN
@@ -616,24 +639,20 @@ def align_codex_git_to_cutoff(
                 if rel_fn not in tracked_files:
                     cur.execute("DELETE FROM echo_resources WHERE id = ?", (r_id,))
                 else:
-                    fp = os.path.join(base_codex, target_ws, rel_fn)
+                    seen_tracked_by_ws.setdefault(target_ws, set()).add(rel_fn)
+                    fp = os.path.join(
+                        base_codex, target_ws, *rel_fn.split("/")
+                    )
                     if os.path.isfile(fp) and r_type in ("codex", "plan"):
                         try:
-                            with open(
-                                fp, "r", encoding="utf-8", errors="replace"
-                            ) as f:
-                                txt = f.read()
-                            line_cnt = txt.count("\n") + (1 if txt and not txt.endswith("\n") else 0)
-                            status_match = (
-                                re.search(r"^status:\s*(\S+)", txt, re.MULTILINE)
-                                if r_type == "plan"
-                                else None
+                            line_cnt, restored_status = _read_codex_text_stats(
+                                fp, r_type
                             )
-                            restored_status = status_match.group(1) if status_match else None
                             cur.execute(
                                 "UPDATE echo_resources SET lines = ?, "
                                 "status = COALESCE(?, status), "
-                                "last_commit = COALESCE(?, last_commit) WHERE id = ?",
+                                "last_commit = COALESCE(?, last_commit) "
+                                "WHERE id = ?",
                                 (line_cnt, restored_status, short_sha, r_id),
                             )
                         except Exception:
@@ -643,6 +662,63 @@ def align_codex_git_to_cutoff(
                             "UPDATE echo_resources SET last_commit = COALESCE(?, last_commit) WHERE id = ?",
                             (short_sha, r_id),
                         )
+
+            for ws_name, tracked_files in ws_tracked.items():
+                if not is_codex_workspace_indexed(ws_name):
+                    continue
+                missing_rels = tracked_files - seen_tracked_by_ws.get(
+                    ws_name, set()
+                )
+                res_type = (
+                    get_codex_workspace_resource_type(ws_name) or "codex"
+                )
+                short_sha = ws_short_sha.get(ws_name)
+                for missing_rel in sorted(missing_rels):
+                    fp = os.path.join(
+                        base_codex, ws_name, *missing_rel.split("/")
+                    )
+                    if not os.path.isfile(fp) or os.path.islink(fp):
+                        continue
+                    line_cnt = None
+                    status_val = FILE_INGESTION_STATUS["PUT_IN_CONTEXT"]
+                    if res_type in ("codex", "plan"):
+                        try:
+                            line_cnt, parsed_st = _read_codex_text_stats(
+                                fp, res_type
+                            )
+                            if res_type == "plan":
+                                status_val = parsed_st or "draft"
+                        except Exception:
+                            if res_type == "plan":
+                                status_val = "draft"
+                    lang = CodexRepo.detect_language(missing_rel)
+                    spath = format_codex_storage_path(missing_rel, ws_name)
+                    now_ts = time.time()
+                    meta_json = json.dumps({
+                        "language": lang,
+                        "lines": line_cnt,
+                        "last_commit": short_sha,
+                    })
+                    cur.execute(
+                        "INSERT OR IGNORE INTO echo_resources "
+                        "(id, name, resource_type, item_type, status, "
+                        "storage_path, git_tracked, language, lines, "
+                        "last_commit, metadata, created_at, updated_at) "
+                        "VALUES (?, ?, ?, 'file', ?, ?, 1, ?, ?, ?, ?, ?, ?)",
+                        (
+                            missing_rel,
+                            missing_rel,
+                            res_type,
+                            status_val,
+                            spath,
+                            lang,
+                            line_cnt,
+                            short_sha,
+                            meta_json,
+                            now_ts,
+                            now_ts,
+                        ),
+                    )
             conn.commit()
     except Exception as e:
         logger.warning(f"[ECHO-SESSION-CLONE] ⚠️ Alignement Git Codex ignoré : {e}")

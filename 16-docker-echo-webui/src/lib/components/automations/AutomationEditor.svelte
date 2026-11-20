@@ -10,7 +10,7 @@
 	import localizedFormat from 'dayjs/plugin/localizedFormat';
 	import type i18nType from '$lib/i18n';
 
-	import { WEBUI_NAME, channels, folders } from '$lib/stores';
+	import { WEBUI_NAME, channels, config, folders } from '$lib/stores';
 	import { getFolders } from '$lib/apis/folders';
 	import { getChannels } from '$lib/apis/channels';
 
@@ -90,7 +90,7 @@
 	};
 
 	const ensureChannels = async () => {
-		if (channelsLoaded || ($channels ?? []).length > 0) return;
+		if (!$config?.features?.enable_channels || channelsLoaded || ($channels ?? []).length > 0) return;
 		const res = await getChannels(localStorage.token).catch(() => null);
 		if (res) channels.set(res);
 		channelsLoaded = true;
@@ -295,9 +295,35 @@
 			<span class="w-24 shrink-0 text-[0.6875rem] text-gray-400 dark:text-gray-500">
 				{$i18n.t('Destination')}
 			</span>
-			<span class="min-w-0 truncate text-xs text-gray-700 dark:text-gray-300">
-				{getDestinationName()}
-			</span>
+			{#if automation.data.target?.type === 'existing_chat' || (automation.data.target?.type === 'persistent_chat' && automation.data.target?.chat_id)}
+				{#if automation.target_chat_exists === false}
+					<span
+						class="inline-flex items-center rounded-md bg-red-50 px-1.5 py-0.5 text-[0.6875rem] font-medium text-red-600 dark:bg-red-950/40 dark:text-red-400"
+					>
+						{$i18n.t('Target chat deleted')}
+					</span>
+				{:else}
+					<button
+						type="button"
+						class="min-w-0 truncate text-xs text-gray-700 hover:underline dark:text-gray-300"
+						on:click={() => goto(`/c/${automation.data.target?.chat_id}`)}
+					>
+						{automation.data.target?.type === 'persistent_chat'
+							? `${$i18n.t('Dedicated chat')}: `
+							: ''}{automation.target_chat_title || $i18n.t('Existing chat')}
+					</button>
+				{/if}
+			{:else if automation.data.target?.type === 'persistent_chat'}
+				<span class="min-w-0 truncate text-xs text-gray-700 dark:text-gray-300">
+					{$i18n.t('Dedicated chat (created on first run)')}{automation.folder_id
+						? ` · ${getFolderName(automation.folder_id)}`
+						: ''}
+				</span>
+			{:else}
+				<span class="min-w-0 truncate text-xs text-gray-700 dark:text-gray-300">
+					{getDestinationName()}
+				</span>
+			{/if}
 		</div>
 
 		<div class="flex h-7 items-center px-3">
@@ -360,11 +386,24 @@
 							class="flex h-7 items-center gap-2 text-xs"
 						>
 							<span
-								class="h-1.5 w-1.5 shrink-0 rounded-full {run.status === 'success'
-									? 'bg-emerald-500'
-									: 'bg-red-400'}"
+								class="h-1.5 w-1.5 shrink-0 rounded-full {run.status === 'queued'
+									? 'bg-amber-400'
+									: run.status === 'running'
+										? 'bg-sky-500 animate-pulse'
+										: run.status === 'success'
+											? 'bg-emerald-500'
+											: 'bg-red-400'}"
 							></span>
 							<span class="text-gray-500 dark:text-gray-400">{formatTime(run.created_at)}</span>
+							{#if run.status === 'queued'}
+								<span class="text-[0.6875rem] text-amber-600 dark:text-amber-400">
+									{$i18n.t('Queued')}
+								</span>
+							{:else if run.status === 'running'}
+								<span class="text-[0.6875rem] text-sky-600 dark:text-sky-400">
+									{$i18n.t('Running')}
+								</span>
+							{/if}
 							{#if run.chat_id}
 								<button
 									class="group flex items-center gap-1 text-[0.6875rem] text-gray-400"

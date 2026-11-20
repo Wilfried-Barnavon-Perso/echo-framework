@@ -434,6 +434,35 @@
 				<SubagentResultRow content={message.content} result={message.meta} />
 			{:else if message.content !== ''}
 				<div class="w-full">
+					{#if message?.meta?.automation_id}
+						<div
+							class="mb-1 flex {($settings?.chatBubble ?? true)
+								? isOwn
+									? 'justify-end'
+									: 'justify-start'
+								: 'justify-start'}"
+						>
+							<a
+								href={`/automations/${message.meta.automation_id}`}
+								class="inline-flex items-center gap-1 rounded-full border border-gray-200/80 bg-gray-50/80 px-2 py-0.5 text-[0.6875rem] text-gray-500 transition hover:border-gray-300 hover:text-gray-800 dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-400 dark:hover:border-gray-700 dark:hover:text-gray-200"
+							>
+								<svg
+									class="size-3 shrink-0"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<circle cx="12" cy="12" r="10" />
+									<polyline points="12 6 12 12 16 14" />
+								</svg>
+								<span class="truncate">{message.meta.automation_name || $i18n.t('Automation')}</span>
+							</a>
+						</div>
+					{/if}
 					<div
 						class="flex {($settings?.chatBubble ?? true)
 							? `${isOwn ? 'justify-end' : 'justify-start'} pb-1`

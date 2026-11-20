@@ -2,16 +2,16 @@
 """
 title: ECHO Echo State Manager
 author: Wilfried BARNAVON
-version: 6.7.18.1
+version: 6.10.0.1
 description: Gestionnaire d'état SQLite et RAG.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.10.0.1: Recherche étendue à storage_path dans get_resources, ajout de _detach_or_delete_codex_rows, delete_codex_prefix_resources et relocate_codex_resources (préservation des uploads Vault sur suppression/déplacement).
 # 6.7.18.1: Paramètre allow_single_fallback dans get_vault_credential (arrêt repli silencieux LIMIT 1 par défaut).
 # 6.7.0.1: Déduplication de thoughtSignature hors de content_json dans save_thread_step et réhydratation universelle (incluant inlineData) dans get_thread_history.
 # 6.6.30.1: Ajout du context manager _write_tx() (BEGIN IMMEDIATE) sur les transactions d'écriture et mixtes lecture/écriture.
 # 6.6.2.1: Câblage de bump_cognition_seq(self.chat_id) dans save_call_bridge et save_thread_step pour la réactivité SSE temps réel.
-# 5.239.11.1: Fallback compte par défaut dans get_vault_credential si account_id est un alias externe.
 import contextlib
 import functools
 import os
@@ -23,7 +23,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import orjson as json
 import orjson as std_json
 
-from echo_constants import ECHO_TURN_CONTEXT, ECHO_UPLOADS_TRANSIT_DIR, ECHO_USERS_ROOT
+from echo_constants import (
+    ECHO_TURN_CONTEXT,
+    ECHO_UPLOADS_TRANSIT_DIR,
+    ECHO_USERS_ROOT,
+    FILE_INGESTION_STATUS,
+    get_codex_workspace_resource_type,
+)
 from echo_db_schema import (
     DB_KIND_IDENTITY,
     DB_KIND_SESSION,
@@ -31,7 +37,13 @@ from echo_db_schema import (
     ensure_db,
     open_db,
 )
-from echo_paths import get_echo_identity_db_path, get_echo_session_path, resolve_upload_file_path, sanitize_echo_id
+from echo_paths import (
+    format_codex_storage_path,
+    get_echo_identity_db_path,
+    get_echo_session_path,
+    resolve_upload_file_path,
+    sanitize_echo_id,
+)
 
 
 def _session_scope(default_return: Any = None):
@@ -917,8 +929,8 @@ class EchoStateManager:
             conditions.append("status = ?")
             params.append(status)
         if search:
-            conditions.append("name LIKE ?")
-            params.append(f"%{search}%")
+            conditions.append("(name LIKE ? OR storage_path LIKE ?)")
+            params.extend([f"%{search}%", f"%{search}%"])
         if created_after is not None:
             conditions.append("created_at > ?")
             params.append(created_after)
@@ -959,21 +971,304 @@ class EchoStateManager:
         except Exception as e:
             print(f"[EchoStateManager] clear_resources_by_type error: {e}")
 
+    def _detach_or_delete_codex_rows(
+        self,
+        conn: sqlite3.Connection,
+        clean_ws: str,
+        rows: list,
+    ) -> None:
+        """Détache vers le Vault les uploads et supprime les lignes Codex."""
+        ws_prefix = f"codex/{clean_ws}/"
+        for r_id, r_spath in rows:
+            spath_str = str(r_spath or "")
+            if not spath_str.startswith(ws_prefix):
+                continue
+            rel_from_sp = spath_str[len(ws_prefix):]
+            if r_id != rel_from_sp and self.chat_id:
+                vault_fp = resolve_upload_file_path(
+                    self.user_id,
+                    r_id,
+                    chat_id=self.chat_id,
+                )
+                if vault_fp and os.path.isfile(vault_fp):
+                    conn.execute(
+                        "UPDATE echo_resources SET storage_path = ?, "
+                        "git_tracked = 0, updated_at = ? WHERE id = ?",
+                        (vault_fp, time.time(), r_id),
+                    )
+                    continue
+            conn.execute("DELETE FROM echo_resources WHERE id = ?", (r_id,))
+
     def delete_codex_resource(self, workspace: str, rel_path: str):
-        """Supprime une ressource Codex ciblée par son workspace et son chemin relatif."""
+        """Supprime une ressource Codex par workspace et chemin relatif."""
         clean_ws = str(workspace or "").strip().strip("/\\")
-        clean_rel = str(rel_path or "").strip().lstrip("/\\").replace("\\", "/")
+        clean_rel = (
+            str(rel_path or "").strip().lstrip("/\\").replace("\\", "/")
+        )
         storage_path = f"codex/{clean_ws}/{clean_rel}"
         try:
             with self._write_tx() as conn:
-                conn.execute(
-                    "DELETE FROM echo_resources WHERE storage_path = ? OR (id = ? AND storage_path LIKE ?)",
+                rows = conn.execute(
+                    "SELECT id, storage_path FROM echo_resources "
+                    "WHERE storage_path = ? "
+                    "OR (id = ? AND storage_path LIKE ?)",
                     (storage_path, clean_rel, f"codex/{clean_ws}/%"),
-                )
+                ).fetchall()
+                self._detach_or_delete_codex_rows(conn, clean_ws, rows)
         except EchoDbMissingError:
             pass
         except Exception as e:
             print(f"[EchoStateManager] delete_codex_resource error: {e}")
+
+    def delete_codex_prefix_resources(self, workspace: str, dir_rel_path: str):
+        """Supprime ou détache toutes les ressources Codex sous un dossier."""
+        clean_ws = str(workspace or "").strip().strip("/\\")
+        clean_dir = (
+            str(dir_rel_path or "").strip().strip("/\\").replace("\\", "/")
+        )
+        if not clean_ws or not clean_dir:
+            return
+        dir_prefix = f"codex/{clean_ws}/{clean_dir}/"
+        try:
+            with self._write_tx() as conn:
+                rows = conn.execute(
+                    "SELECT id, storage_path FROM echo_resources "
+                    "WHERE storage_path LIKE ?",
+                    (f"{dir_prefix}%",),
+                ).fetchall()
+                filtered = [
+                    r for r in rows if str(r[1] or "").startswith(dir_prefix)
+                ]
+                self._detach_or_delete_codex_rows(conn, clean_ws, filtered)
+        except EchoDbMissingError:
+            pass
+        except Exception as e:
+            print(
+                f"[EchoStateManager] delete_codex_prefix_resources error: {e}"
+            )
+
+    @staticmethod
+    def _count_text_file_lines(
+        repo_base_dir: Optional[str],
+        clean_rel: str,
+    ) -> Optional[int]:
+        """Compte prudemment les lignes d'un fichier texte non symlink."""
+        if not repo_base_dir or not clean_rel:
+            return None
+        fp = os.path.join(repo_base_dir, *clean_rel.split("/"))
+        if os.path.islink(fp) or not os.path.isfile(fp):
+            return None
+        try:
+            real_repo = os.path.realpath(repo_base_dir)
+            real_fp = os.path.realpath(fp)
+            if os.path.commonpath([real_repo, real_fp]) != real_repo:
+                return None
+            with open(fp, "rb") as f:
+                sample = f.read(8192)
+                if b"\x00" in sample:
+                    return None
+                raw = sample + f.read()
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                text = raw.decode("latin-1")
+            return len(text.splitlines())
+        except Exception:
+            return None
+
+    def relocate_codex_resources(
+        self,
+        workspace: str,
+        moved_pairs: List[Tuple[str, str]],
+        commit_hash: str,
+        commit_msg: str,
+        detect_lang_fn: Any = None,
+        overwrite: bool = False,
+        repo_base_dir: Optional[str] = None,
+    ) -> int:
+        """Relocalise en base les ressources Codex déplacées ou renommées."""
+        if not moved_pairs:
+            return 0
+        clean_ws = str(workspace or "").strip().strip("/\\")
+        if not clean_ws:
+            return 0
+        short_commit = (commit_hash or "")[:12]
+        ts = time.time()
+        turn_msg_id = None
+        if self.chat_id:
+            turn_ctx = ECHO_TURN_CONTEXT.get() or {}
+            if turn_ctx.get("chat_id") == self.chat_id:
+                turn_msg_id = (
+                    turn_ctx.get("assistant_message_id")
+                    or turn_ctx.get("user_message_id")
+                    or turn_ctx.get("message_id")
+                )
+
+        norm_pairs: List[Tuple[str, str]] = []
+        for old_p, new_p in moved_pairs:
+            clean_old = (
+                str(old_p or "").strip().strip("/\\").replace("\\", "/")
+            )
+            clean_new = (
+                str(new_p or "").strip().strip("/\\").replace("\\", "/")
+            )
+            if clean_old and clean_new:
+                norm_pairs.append((clean_old, clean_new))
+        if not norm_pairs:
+            return 0
+
+        ws_res_type = get_codex_workspace_resource_type(clean_ws) or "codex"
+        try:
+            with self._write_tx() as conn:
+                if overwrite:
+                    old_set = {o for o, _ in norm_pairs}
+                    for _, clean_new in norm_pairs:
+                        if clean_new in old_set:
+                            continue
+                        new_sp = format_codex_storage_path(clean_new, clean_ws)
+                        target_rows = conn.execute(
+                            "SELECT id, storage_path FROM echo_resources "
+                            "WHERE storage_path = ? "
+                            "OR (id = ? AND storage_path LIKE ?)",
+                            (new_sp, clean_new, f"codex/{clean_ws}/%"),
+                        ).fetchall()
+                        self._detach_or_delete_codex_rows(
+                            conn, clean_ws, target_rows
+                        )
+
+                pending_updates = []
+                pending_inserts = []
+                for idx, (clean_old, clean_new) in enumerate(norm_pairs):
+                    old_sp = format_codex_storage_path(clean_old, clean_ws)
+                    new_sp = format_codex_storage_path(clean_new, clean_ws)
+                    new_lang = (
+                        detect_lang_fn(clean_new)
+                        if callable(detect_lang_fn)
+                        else None
+                    )
+                    row = conn.execute(
+                        "SELECT id, metadata, storage_path "
+                        "FROM echo_resources "
+                        "WHERE storage_path = ? "
+                        "OR (id = ? AND storage_path LIKE ?) LIMIT 1",
+                        (old_sp, clean_old, f"codex/{clean_ws}/%"),
+                    ).fetchone()
+                    if row:
+                        raw_meta = row[1]
+                        meta_dict = {}
+                        if raw_meta:
+                            try:
+                                if isinstance(raw_meta, (str, bytes)):
+                                    meta_dict = json.loads(raw_meta)
+                                elif isinstance(raw_meta, dict):
+                                    meta_dict = dict(raw_meta)
+                            except Exception:
+                                meta_dict = {}
+                        if not isinstance(meta_dict, dict):
+                            meta_dict = {}
+                        meta_dict["last_commit"] = short_commit
+                        meta_dict["commit_msg"] = commit_msg
+                        if new_lang:
+                            meta_dict["language"] = new_lang
+                        meta_str = json.dumps(meta_dict).decode("utf-8")
+                        if row[0] == clean_old:
+                            tmp_id = f"__echo_reloc_{idx}_{int(ts * 1000)}__"
+                            conn.execute(
+                                "UPDATE echo_resources SET id = ? "
+                                "WHERE id = ?",
+                                (tmp_id, clean_old),
+                            )
+                            pending_updates.append((
+                                clean_new,
+                                clean_new,
+                                new_sp,
+                                new_lang,
+                                short_commit,
+                                commit_msg,
+                                meta_str,
+                                ts,
+                                tmp_id,
+                            ))
+                        else:
+                            pending_updates.append((
+                                row[0],
+                                clean_new,
+                                new_sp,
+                                new_lang,
+                                short_commit,
+                                commit_msg,
+                                meta_str,
+                                ts,
+                                row[0],
+                            ))
+                    else:
+                        up_row = conn.execute(
+                            "SELECT mime, message_id FROM echo_resources "
+                            "WHERE (name = ? OR name = ?) "
+                            "AND resource_type = 'codex' "
+                            "ORDER BY updated_at DESC LIMIT 1",
+                            (clean_old, os.path.basename(clean_old)),
+                        ).fetchone()
+                        inh_mime = up_row[0] if up_row else None
+                        inh_msg_id = (
+                            (up_row[1] if up_row and up_row[1] else None)
+                            or turn_msg_id
+                        )
+                        line_cnt = self._count_text_file_lines(
+                            repo_base_dir, clean_new
+                        )
+                        meta_dict = {
+                            "last_commit": short_commit,
+                            "commit_msg": commit_msg,
+                        }
+                        if new_lang:
+                            meta_dict["language"] = new_lang
+                        if inh_msg_id:
+                            meta_dict["message_id"] = inh_msg_id
+                        pending_inserts.append((
+                            clean_new,
+                            clean_new,
+                            ws_res_type,
+                            "file",
+                            FILE_INGESTION_STATUS["PUT_IN_CONTEXT"],
+                            inh_mime,
+                            json.dumps(meta_dict).decode("utf-8"),
+                            new_sp,
+                            1,
+                            inh_msg_id,
+                            new_lang,
+                            line_cnt,
+                            short_commit,
+                            commit_msg,
+                            ts,
+                            ts,
+                        ))
+
+                for upd in pending_updates:
+                    conn.execute(
+                        "UPDATE echo_resources SET id = ?, name = ?, "
+                        "storage_path = ?, language = COALESCE(?, language), "
+                        "last_commit = ?, commit_msg = ?, metadata = ?, "
+                        "updated_at = ? WHERE id = ?",
+                        upd,
+                    )
+                for ins in pending_inserts:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO echo_resources "
+                        "(id, name, resource_type, item_type, status, mime, "
+                        "metadata, storage_path, git_tracked, message_id, "
+                        "language, lines, last_commit, commit_msg, "
+                        "created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                        "?, ?, ?)",
+                        ins,
+                    )
+                return len(pending_updates) + len(pending_inserts)
+        except EchoDbMissingError:
+            return 0
+        except Exception as e:
+            print(f"[EchoStateManager] relocate_codex_resources error: {e}")
+            return 0
 
     def clear_codex_workspace_resources(self, workspace: str):
         """Purge toutes les ressources associées à un workspace Codex spécifique."""

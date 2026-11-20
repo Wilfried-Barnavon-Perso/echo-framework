@@ -4696,5 +4696,13 @@
 	"YouTube": "YouTube",
 	"YouTube video player": "Lecteur vidéo YouTube",
 	"Zoom in": "Zoom avant",
-	"Zoom out": "Zoom arrière"
+	"Zoom out": "Zoom arrière",
+	"Existing chat": "Discussion existante",
+	"Dedicated chat": "Discussion dédiée",
+	"Dedicated chat (created on first run)": "Discussion dédiée (créée à la première exécution)",
+	"Search chats": "Rechercher des discussions",
+	"Select a chat": "Sélectionner une discussion",
+	"Target chat deleted": "Discussion cible supprimée",
+	"Queued": "En attente",
+	"Schedule automation": "Planifier une automatisation"
 }

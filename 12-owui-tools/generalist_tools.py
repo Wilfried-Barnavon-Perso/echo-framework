@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 6.7.11.1
+version: 6.10.0.1
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.10.0.1: Support des 3 modes de destination (new_chat, existing_chat avec target_chat_id='current', persistent_chat) sur create/update_ui_automation et exposition target/folder_id dans list_ui_automations.
+# 6.8.2.2: Migration Svelte native de ask_user_input (request:user_input / AskUserCard), blocage headless/automation via get_headless_block_reason, et ajout de create_ui_tasks, update_ui_task, toggle_ui_automation, search_ui_chats et view_ui_chat.
 # 6.7.11.1: Délégation du fenêtrage read_tool_output à paginate_lines_window et suppression des 7 skip_truncation=True redondants.
 # 6.7.10.1: Alignement de la fenêtre par défaut de read_tool_output (end_line=None) sur ECHO_CODEX_MAX_READ_LINES (800 lignes).
 # 5.239.17.1: Ajout des outils dédiés read_tool_output (lecture paginée par lignes et recherche regex/motif) et delete_tool_output pour l'exploitation du domaine tools_output.
-# 5.233.0.1: Décoration @echo_tool sur les 16 méthodes publiques et simplification de safe_owui_call et des retours wrap_tool_output.
-# 5.231.20.1: Isolation multi-chat du HUD wait_timer (data-chat-id) et suppression des fuites de listeners document.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -21,7 +21,7 @@ import sys
 import json
 import inspect
 from pydantic import BaseModel, Field
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
@@ -30,11 +30,12 @@ from echo_events import EchoEvents
 from echo_constants import (
     ECHO_CODEX_MAX_READ_BYTES,
     ECHO_MAX_WAIT_TIMER,
+    ECHO_SUBAGENT_CONTEXT,
     get_generation_config,
+    get_headless_block_reason,
     OWUI_ORCHESTRATOR_MODEL,
 )
 from echo_paths import get_echo_session_path, sanitize_echo_id
-from echo_ui import EchoUI
 from echo_gemini_client import EchoGeminiClient
 from echo_prompts import SYS_ORCHESTRATOR_CONSULTANT
 from echo_tool_guides import EchoToolGuidesManager
@@ -46,7 +47,12 @@ from open_webui.tools.builtin import (
     delete_calendar_event as _owui_delete_cal,
     create_automation as _owui_create_auto,
     update_automation as _owui_update_auto,
+    toggle_automation as _owui_toggle_auto,
     delete_automation as _owui_delete_auto,
+    create_tasks as _owui_create_tasks,
+    update_task as _owui_update_task,
+    search_chats as _owui_search_chats,
+    view_chat as _owui_view_chat,
     _get_user_tz,
     _ns_to_dt,
 )
@@ -226,60 +232,164 @@ class Tools:
     @echo_tool
     async def ask_user_input(
         self,
-        question: str,
+        question: str = "",
         input_type: str = "text",
-        options: list[str] = None,
+        options: Optional[list[Any]] = None,
         timeout_seconds: int = 300,
+        questions: Optional[list[dict]] = None,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
-        __event_call__: Any = None
+        __event_call__: Any = None,
     ) -> dict:
-        """Affiche une boîte de dialogue interactive à l'Utilisateur pour demander une saisie texte (`input_type='text'`) ou une confirmation Oui/Non (`input_type='confirm'`)."""
+        """Affiche une carte interactive Svelte native à l'Utilisateur pour saisir une réponse (`text`), confirmer (`confirm`) ou répondre à un questionnaire multi-questions (`questions`)."""
         if not __user__:
-            return "Erreur : Contexte manquant."
-
-        from echo_constants import ECHO_SUBAGENT_CONTEXT
-        if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
-            return "Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de poser une question interactive à l'Utilisateur."
-
-        events = EchoEvents(__event_emitter__, __event_call__)
-        await events.status(f"En attente d'une saisie de l'utilisateur ({timeout_seconds}s)...")
-
-        # Échappement propre pour le code JS
-        question_escaped = json.dumps(question)
-        options_escaped = json.dumps(options if options else [])
-
-        # Lazy-Loading des définitions JS des Modales ECHO
-        modals_injection = EchoUI.get_custom_modals_js()
-
-        if input_type == "confirm":
-            js_code = f"""
-            {modals_injection}
-            return await new Promise((resolve) => {{
-                window.echoCustomConfirm({question_escaped}, (result) => resolve(result));
-            }});
-            """
-        else:
-            js_code = f"""
-            {modals_injection}
-            return await new Promise((resolve) => {{
-                window.echoCustomPrompt({question_escaped}, {timeout_seconds}, {options_escaped}, (result) => resolve(result));
-            }});
-            """
-
-        # __event_call__ lance le JS et attend la résolution de la promesse
-        user_input = await events.call_execute(js_code)
-
-        if user_input is None or user_input is False:
-            await events.status("Opération refusée, annulée ou délai expiré.", done=True)
             return wrap_tool_output(
-                text=json.dumps({"status": "cancelled", "message": "L'utilisateur a répondu Non, annulé la saisie ou le délai imparti est expiré.", "user_input": user_input}),
-                status={"status": "cancelled"}
+                text=json.dumps({"status": "error", "message": "Contexte utilisateur manquant."}, ensure_ascii=False),
+                status={"status": "error", "error_code": "missing_user"},
             )
 
-        await events.status("Saisie utilisateur reçue.", done=True)
-        return json.dumps({"status": "success", "user_input": user_input})
+        block_reason = get_headless_block_reason(__metadata__)
+        if block_reason:
+            return wrap_tool_output(
+                text=f"Erreur : {block_reason}",
+                status={"status": "error", "error_code": "headless_forbidden"},
+            )
+
+        if __event_call__ is None:
+            return wrap_tool_output(
+                text=json.dumps({"status": "error", "message": "Session navigateur interactive indisponible (__event_call__ manquant)."}, ensure_ascii=False),
+                status={"status": "error", "error_code": "no_browser_session"},
+            )
+
+        def _normalize_options(raw_opts: Optional[list[Any]]) -> list[dict]:
+            norm = []
+            for opt in raw_opts or []:
+                if isinstance(opt, str):
+                    lbl = opt.strip()
+                    if lbl:
+                        norm.append({"label": lbl, "description": ""})
+                elif isinstance(opt, dict):
+                    lbl = str(opt.get("label") or "").strip()
+                    if not lbl:
+                        continue
+                    item = {"label": lbl, "description": str(opt.get("description") or "").strip()}
+                    if isinstance(opt.get("recommended"), bool):
+                        item["recommended"] = opt["recommended"]
+                    norm.append(item)
+            return norm
+
+        if isinstance(questions, list) and len(questions) > 0:
+            normalized_questions = []
+            seen_ids = set()
+            for idx, q in enumerate(questions[:5]):
+                if not isinstance(q, dict):
+                    continue
+                q_text = str(q.get("question") or "").strip()
+                if not q_text:
+                    continue
+                qid = str(q.get("id") or f"q_{idx + 1}").strip()
+                if qid in seen_ids:
+                    qid = f"{qid}_{idx + 1}"
+                seen_ids.add(qid)
+                normalized_questions.append({
+                    "id": qid,
+                    "header": str(q.get("header") or f"Question {idx + 1}").strip(),
+                    "question": q_text,
+                    "options": _normalize_options(q.get("options")),
+                    "allow_other": bool(q.get("allow_other", True)),
+                    "show_recommended": bool(q.get("show_recommended", False)),
+                })
+            if not normalized_questions:
+                return wrap_tool_output(
+                    text=json.dumps({"status": "error", "message": "Aucune question valide fournie dans `questions`."}, ensure_ascii=False),
+                    status={"status": "error", "error_code": "invalid_questions"},
+                )
+            global_allow_other = True
+        else:
+            q_text = str(question or "").strip()
+            if not q_text:
+                return wrap_tool_output(
+                    text=json.dumps({"status": "error", "message": "Le paramètre `question` est requis."}, ensure_ascii=False),
+                    status={"status": "error", "error_code": "missing_question"},
+                )
+            if input_type == "confirm":
+                normalized_questions = [{
+                    "id": "confirm",
+                    "header": "Confirmation",
+                    "question": q_text,
+                    "options": [{"label": "Oui", "description": ""}, {"label": "Non", "description": ""}],
+                    "allow_other": False,
+                    "show_recommended": False,
+                }]
+                global_allow_other = False
+            else:
+                normalized_questions = [{
+                    "id": "answer",
+                    "header": "Question",
+                    "question": q_text,
+                    "options": _normalize_options(options),
+                    "allow_other": True,
+                    "show_recommended": False,
+                }]
+                global_allow_other = True
+
+        timeout_sec = max(10, min(int(timeout_seconds or 300), 600))
+        events = EchoEvents(__event_emitter__, __event_call__)
+        await events.status(f"En attente d'une réponse utilisateur ({timeout_sec}s)...")
+
+        response = await events.call(
+            "request:user_input",
+            {
+                "questions": normalized_questions,
+                "allow_other": global_allow_other,
+                "timeout_ms": timeout_sec * 1000,
+            },
+        )
+
+        if not isinstance(response, dict) or response.get("status") != "answered":
+            await events.status("Saisie annulée ou délai expiré.", done=True)
+            return wrap_tool_output(
+                text=json.dumps(
+                    {
+                        "status": "cancelled",
+                        "message": "L'utilisateur a annulé la saisie ou le délai imparti est expiré.",
+                        "user_input": False if (input_type == "confirm" and not questions) else None,
+                    },
+                    ensure_ascii=False,
+                ),
+                status={"status": "cancelled"},
+            )
+
+        answers = response.get("answers") or {}
+        extracted_map = {}
+        for qid, ans in answers.items():
+            if isinstance(ans, dict):
+                extracted_map[qid] = ans.get("text", "") if ans.get("type") == "other" else ans.get("label", "")
+
+        await events.status("Réponse utilisateur reçue.", done=True)
+
+        if questions:
+            return wrap_tool_output(
+                text=json.dumps({"status": "success", "answers": extracted_map}, ensure_ascii=False),
+                status={"status": "success"},
+            )
+
+        if input_type == "confirm":
+            if str(extracted_map.get("confirm", "")).strip().lower() in ("oui", "yes", "true", "1"):
+                return wrap_tool_output(
+                    text=json.dumps({"status": "success", "user_input": True}, ensure_ascii=False),
+                    status={"status": "success"},
+                )
+            return wrap_tool_output(
+                text=json.dumps({"status": "cancelled", "message": "L'utilisateur a répondu Non.", "user_input": False}, ensure_ascii=False),
+                status={"status": "cancelled"},
+            )
+
+        return wrap_tool_output(
+            text=json.dumps({"status": "success", "user_input": extracted_map.get("answer", "")}, ensure_ascii=False),
+            status={"status": "success"},
+        )
 
     @echo_tool
     async def search_ui_calendar_events(self, query: str = "", start: str = None, end: str = None, limit: int = 10, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
@@ -398,27 +508,66 @@ class Tools:
         return await safe_owui_call(_owui_delete_cal, event_id=event_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
 
     @echo_tool
-    async def create_ui_automation(self, name: str, prompt: str, rrule: str, target_folder_name: str = "Automations", __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
-        """Crée une tâche de fond planifiée (CRON au format iCalendar `rrule`) exécutant `prompt` dans `target_folder_name`."""
+    async def create_ui_automation(
+        self,
+        name: str,
+        prompt: str,
+        rrule: str,
+        target_folder_name: str = "Automations",
+        target_mode: Literal["new_chat", "existing_chat", "persistent_chat"] = "new_chat",
+        target_chat_id: Optional[str] = None,
+        __request__ = None,
+        __user__: dict = {},
+        __metadata__: dict = {}
+    ) -> str:
+        """Crée une tâche de fond planifiée (CRON au format iCalendar `rrule`) exécutant `prompt` selon `target_mode` (`new_chat`, `existing_chat`, `persistent_chat`)."""
         user_id = __user__.get("id")
         if not user_id:
             return json.dumps({"error": "User context missing"})
-            
-        folders = await Folders.get_folders_by_user_id(user_id) if hasattr(Folders, 'get_folders_by_user_id') else []
+
+        resolved_chat_id = target_chat_id
+        effective_type = "chat"
+
+        if target_chat_id == "current":
+            resolved_chat_id = (__metadata__ or {}).get("chat_id")
+            if not resolved_chat_id or str(resolved_chat_id).startswith("local:"):
+                err_msg = "Impossible de cibler la conversation courante : chat_id absent ou temporaire ('local:')."
+                return wrap_tool_output(
+                    text=json.dumps({"error": err_msg}, ensure_ascii=False),
+                    status={"status": "error", "message": err_msg},
+                )
+            effective_type = "persistent_chat" if target_mode == "persistent_chat" else "existing_chat"
+        elif target_mode == "existing_chat" or (target_chat_id and target_mode == "new_chat"):
+            effective_type = "existing_chat"
+        elif target_mode == "persistent_chat":
+            effective_type = "persistent_chat"
+
         folder_id = None
-        for f in folders:
-            if f.name == target_folder_name:
-                folder_id = f.id
-                break
-                
-        if not folder_id:
-            try:
-                new_folder = await Folders.insert_new_folder(user_id, FolderForm(name=target_folder_name))
-                folder_id = new_folder.id
-            except Exception as e:
-                log.error(f"ECHO: Failed to create target folder '{target_folder_name}' - {e}")
-                folder_id = None
-            
+        if effective_type == "existing_chat":
+            if not resolved_chat_id:
+                err_msg = "target_chat_id est requis lorsque target_mode='existing_chat'."
+                return wrap_tool_output(
+                    text=json.dumps({"error": err_msg}, ensure_ascii=False),
+                    status={"status": "error", "message": err_msg},
+                )
+        else:
+            if effective_type == "chat":
+                resolved_chat_id = None
+            if target_folder_name:
+                folders = await Folders.get_folders_by_user_id(user_id) if hasattr(Folders, 'get_folders_by_user_id') else []
+                for f in folders:
+                    if f.name == target_folder_name:
+                        folder_id = f.id
+                        break
+
+                if not folder_id:
+                    try:
+                        new_folder = await Folders.insert_new_folder(user_id, FolderForm(name=target_folder_name))
+                        folder_id = new_folder.id
+                    except Exception as e:
+                        log.error(f"ECHO: Failed to create target folder '{target_folder_name}' - {e}")
+                        folder_id = None
+
         call_metadata = dict(__metadata__ or {})
         call_metadata["model_id"] = OWUI_ORCHESTRATOR_MODEL
         if isinstance(call_metadata.get("model"), dict):
@@ -433,6 +582,8 @@ class Tools:
             rrule=rrule,
             folder_id=folder_id,
             model_id=OWUI_ORCHESTRATOR_MODEL,
+            target_type=effective_type,
+            target_chat_id=resolved_chat_id,
             __request__=__request__,
             __user__=__user__,
             __metadata__=call_metadata
@@ -446,17 +597,38 @@ class Tools:
         prompt: str = None,
         rrule: str = None,
         target_folder_name: str = None,
+        target_mode: Optional[Literal["new_chat", "existing_chat", "persistent_chat"]] = None,
+        target_chat_id: Optional[str] = None,
         __request__ = None,
         __user__: dict = {},
         __metadata__: dict = {}
     ) -> str:
-        """Modifie les paramètres (`name`, `prompt`, `rrule`, `target_folder_name`) d'une tâche planifiée existante (`automation_id`)."""
+        """Modifie les paramètres (`name`, `prompt`, `rrule`, `target_folder_name`, `target_mode`, `target_chat_id`) d'une tâche planifiée existante (`automation_id`)."""
         user_id = __user__.get("id")
         if not user_id:
             return json.dumps({"error": "User context missing"})
 
+        resolved_chat_id = target_chat_id
+        if target_chat_id == "current":
+            resolved_chat_id = (__metadata__ or {}).get("chat_id")
+            if not resolved_chat_id or str(resolved_chat_id).startswith("local:"):
+                err_msg = "Impossible de cibler la conversation courante : chat_id absent ou temporaire ('local:')."
+                return wrap_tool_output(
+                    text=json.dumps({"error": err_msg}, ensure_ascii=False),
+                    status={"status": "error", "message": err_msg},
+                )
+
+        mode_map = {
+            "new_chat": "chat",
+            "existing_chat": "existing_chat",
+            "persistent_chat": "persistent_chat",
+        }
+        mapped_target_type = mode_map.get(target_mode) if target_mode is not None else None
+        if target_chat_id == "current" and mapped_target_type is None:
+            mapped_target_type = "existing_chat"
+
         folder_id = ""
-        if target_folder_name is not None:
+        if target_folder_name is not None and mapped_target_type != "existing_chat":
             folders = await Folders.get_folders_by_user_id(user_id) if hasattr(Folders, 'get_folders_by_user_id') else []
             folder_match = next((f for f in folders if f.name == target_folder_name), None)
             if folder_match:
@@ -476,6 +648,12 @@ class Tools:
         else:
             call_metadata["model"] = {"id": OWUI_ORCHESTRATOR_MODEL}
 
+        extra_target_kwargs = {}
+        if mapped_target_type is not None:
+            extra_target_kwargs["target_type"] = mapped_target_type
+        if resolved_chat_id is not None:
+            extra_target_kwargs["target_chat_id"] = resolved_chat_id
+
         return await safe_owui_call(
             _owui_update_auto,
             automation_id=automation_id,
@@ -484,6 +662,7 @@ class Tools:
             rrule=rrule,
             model_id=OWUI_ORCHESTRATOR_MODEL,
             folder_id=folder_id,
+            **extra_target_kwargs,
             __request__=__request__,
             __user__=__user__,
             __metadata__=call_metadata
@@ -493,6 +672,11 @@ class Tools:
     async def delete_ui_automation(self, automation_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> str:
         """Supprime définitivement une tâche planifiée via son `automation_id`."""
         return await safe_owui_call(_owui_delete_auto, automation_id=automation_id, __request__=__request__, __user__=__user__, __metadata__=__metadata__)
+
+    @echo_tool
+    async def toggle_ui_automation(self, automation_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> dict:
+        """Met en pause ou réactive une tâche planifiée via son `automation_id`."""
+        return await safe_owui_call(_owui_toggle_auto, automation_id=automation_id, __request__=__request__, __user__=__user__)
 
     @echo_tool
     async def read_ui_automations(self, automation_ids: list[str], __user__: dict = {}, __metadata__: dict = {}) -> str:
@@ -563,7 +747,9 @@ class Tools:
                 items.append({
                     "id": item.id,
                     "name": item.name,
+                    "folder_id": item.folder_id,
                     "rrule": item.data.get("rrule", "") if item.data else "",
+                    "target": item.data.get("target") if item.data else None,
                     "is_active": item.is_active,
                     "next_run_at": item.next_run_at
                 })
@@ -616,6 +802,39 @@ class Tools:
             return json.dumps(data, ensure_ascii=False)
         except Exception as e:
             return {"error": str(e)}
+
+    @echo_tool
+    async def create_ui_tasks(self, tasks: list[dict], __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None) -> dict:
+        """Crée une liste de tâches visibles en temps réel dans l'interface du chat principal."""
+        if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
+            return wrap_tool_output(
+                text="Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de modifier la checklist UI du chat principal.",
+                status={"status": "error", "error_code": "headless_forbidden"},
+            )
+        chat_id = (__metadata__ or {}).get("chat_id")
+        return await safe_owui_call(_owui_create_tasks, tasks=tasks, __chat_id__=chat_id, __event_emitter__=__event_emitter__, __user__=__user__)
+
+    @echo_tool
+    async def update_ui_task(self, task_id: str, status: str = "completed", __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None) -> dict:
+        """Met à jour le statut d'une tâche dans la checklist UI du chat principal (`pending`, `in_progress`, `completed`, `cancelled`)."""
+        if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
+            return wrap_tool_output(
+                text="Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de modifier la checklist UI du chat principal.",
+                status={"status": "error", "error_code": "headless_forbidden"},
+            )
+        chat_id = (__metadata__ or {}).get("chat_id")
+        return await safe_owui_call(_owui_update_task, id=task_id, status=status, __chat_id__=chat_id, __event_emitter__=__event_emitter__, __user__=__user__)
+
+    @echo_tool
+    async def search_ui_chats(self, query: str, count: int = 5, start_timestamp: Optional[int] = None, end_timestamp: Optional[int] = None, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> dict:
+        """Recherche les conversations précédentes de l'Utilisateur par titre et contenu exact en base SQLite."""
+        chat_id = (__metadata__ or {}).get("chat_id")
+        return await safe_owui_call(_owui_search_chats, query=query, count=count, start_timestamp=start_timestamp, end_timestamp=end_timestamp, __request__=__request__, __user__=__user__, __chat_id__=chat_id)
+
+    @echo_tool
+    async def view_ui_chat(self, chat_id: str, __request__ = None, __user__: dict = {}, __metadata__: dict = {}) -> dict:
+        """Lit l'historique chronologique complet d'une conversation précédente identifiée par `chat_id`."""
+        return await safe_owui_call(_owui_view_chat, chat_id=chat_id, __request__=__request__, __user__=__user__)
 
     @echo_tool
     async def tool_advisor(

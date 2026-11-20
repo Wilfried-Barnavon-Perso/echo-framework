@@ -2,21 +2,26 @@
 """
 title: ECHO Echo Events
 author: Wilfried BARNAVON
-version: 6.6.9.1
+version: 6.10.0.1
 description: Gestionnaire des événements WebSocket et UI. Intègre le protocole UCTP (Universal Chunked Transfer Protocol).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.10.0.1: Court-circuit immédiat de call() et call_execute() en contexte d'automatisation planifiée.
 # 6.6.9.1: Suppression de l'import et de l'appel obsolète register_echo_wm_routes() dans EchoEvents.__init__.
 # 6.6.2.1: Suppression du fast-path mort echo_codex_action dans trigger_action.
 # 5.231.48.1: Marquage data-echo-scope="global", correction de window._uctp_<id> et watchdog d'auto-nettoyage DOM sur #uctp-loader-<id> dans _build_uctp_frames.
 # 5.231.46.1: Factorisation de _reassemble_uctp_payload post-FIRST_COMPLETED (double transport Socket.IO + SSE/RPC) et wrapping automatique echoWrapUctpPayload en mode call.
-# 5.231.39.1: Fallback SSE/RPC EchoWindowManager dans resolve_live_session lorsque SESSION_POOL Socket.IO ne répond pas et dé-minimisation _echoGeoCtrl.
 import asyncio
 from typing import Any, Optional
 import uuid
 import orjson as json
 from echo_constants import ECHO_UCTP_CHUNK_SIZE
+try:
+    from echo_constants import is_automation_context
+except ImportError:
+    def is_automation_context(metadata=None) -> bool:
+        return False
 try:
     from echo_window_manager import (
         get_window_manager,
@@ -60,7 +65,12 @@ class EchoEvents:
     async def toast(self, content: str, level: str = "info", title: str = "ECHO"):
         await self.emit("notification", {"type": level, "content": content})
 
+    def _is_automation_session(self) -> bool:
+        return bool(is_automation_context() or str(self.session_id or "").startswith("automation:"))
+
     async def call(self, event_type: str, data: dict) -> Any:
+        if self._is_automation_session():
+            return {"error": "Interaction bloquée : exécution automatisée sans opérateur interactif."}
         if self.caller:
             try:
                 return await self.caller({"type": event_type, "data": data})
@@ -268,6 +278,8 @@ class EchoEvents:
 
     async def call_execute(self, code_str: str, timeout: Optional[float] = None) -> Any:
         """ Émet du JS, attend un retour, gère la fragmentation Bidi UCTP et le double transport Socket.IO + SSE """
+        if self._is_automation_session():
+            return None
         if "return " not in code_str:
             code_str += "\nreturn true;"
 

@@ -1,7 +1,7 @@
 ---
 domain_id: code_and_files
-version: 6.7.13.1
-updated_at: 2026-11-19
+version: 6.12.0.1
+updated_at: 2026-11-20
 name: Registre Unifié, Explorateur de l'Espace Personnel & Sandbox d'Exécution de Code
 description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash), exécution isolée de scripts Codex sandbox (.py / .js / .sh) et exécution SSH distante (ssh_executor).
 tools: [query_registry, read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes, code_executor, control_sandbox_execution, kill_sandbox_execution, ssh_executor]
@@ -46,12 +46,16 @@ Tous les outils ci-dessous résolvent `file_id` (ou `target`) dans l'ordre : 1) 
 ### 3.1 Séparation CRUD Fichiers (`Codex`) et Exécution (`Sandbox`)
 Il est ABSOLUMENT INTERDIT de passer du code brut à `code_executor`. Toute manipulation de fichier dans `/sandbox` DOIT passer par les outils du Codex avec `workspace="sandbox"` :
 1. **Étape 1 — CRUD Fichiers (`workspace="sandbox"`)** :
-   - Créer / Écrire : `create_codex(filename="script.py", content="...", summary="...", workspace="sandbox")`.
+   - Créer / Écrire : `create_codex(filename="script.py", content="...", commit_message="...", workspace="sandbox")`.
+   - Importer depuis `files` / `main` / `plans` / `generated` / `browserviews` vers la Sandbox : `transfer_codex(source_path="...", source_workspace="...", destination_workspace="sandbox", mode="copy")`.
+   - Organiser l'arborescence Sandbox : `create_codex_directory(path="...", workspace="sandbox")` et `move_codex(source_path="...", destination_path="...", workspace="sandbox")`.
    - Lire : `read_codex(filename="script.py", workspace="sandbox")`.
    - Modifier : `edit_codex(filename="script.py", ..., workspace="sandbox")`.
-   - Supprimer : `delete_codex(filename="script.py", workspace="sandbox")`.
+   - Supprimer un fichier ou dossier : `delete_codex(filename="...", workspace="sandbox", recursive=True)` (`recursive=True` requis si dossier non vide).
 2. **Étape 2 — Exécuter le script** :
    - Appeler `code_executor(file_path="script.py", dependencies=None, timeout_sec=900, fetch_ui_payload=False, background=False)` (extensions supportées dans `workspace="sandbox"` : `.py`, `.js` et `.sh`).
+3. **Étape 3 — Promotion des livrables vers `main`** :
+   - Appeler `transfer_codex(source_path="...", source_workspace="sandbox", destination_workspace="main", mode="copy"|"move")` pour versionner sous Git et indexer dans `echo_resources` les sorties destinées à l'Utilisateur.
 
 ### 3.2 Environnement Système, Quotas & Pilotage des Processus (`run_id`)
 - **Montages Bubblewrap (`--ro-bind /proc, --die-with-parent`)** :

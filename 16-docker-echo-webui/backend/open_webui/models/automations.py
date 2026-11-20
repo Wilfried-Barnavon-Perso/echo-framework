@@ -9,6 +9,7 @@ from open_webui.utils.misc import json_text_variants
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import JSON, BigInteger, Boolean, Column, Index, String, Text, cast, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 log = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class AutomationRun(Base):
     id = Column(Text, primary_key=True)
     automation_id = Column(Text, nullable=False)
     chat_id = Column(Text, nullable=True)
-    status = Column(Text, nullable=False)  # success | error
+    status = Column(Text, nullable=False)  # queued | running | success | error
     error = Column(Text, nullable=True)
     created_at = Column(BigInteger, nullable=False)
 
@@ -63,8 +64,9 @@ class AutomationTerminalConfig(BaseModel):
 
 
 class AutomationTarget(BaseModel):
-    type: Literal['chat', 'channel'] = 'chat'
+    type: Literal['chat', 'existing_chat', 'persistent_chat', 'channel'] = 'chat'
     channel_id: Optional[str] = None
+    chat_id: Optional[str] = None
 
 
 class AutomationData(BaseModel):
@@ -114,6 +116,8 @@ class AutomationForm(BaseModel):
 class AutomationResponse(AutomationModel):
     last_run: Optional[AutomationRunModel] = None
     next_runs: Optional[list[int]] = None
+    target_chat_title: Optional[str] = None
+    target_chat_exists: Optional[bool] = None
 
 
 class AutomationListResponse(BaseModel):
@@ -281,6 +285,34 @@ class AutomationTable:
             await db.commit()
             return AutomationModel.model_validate(row)
 
+    async def pause_by_id(self, id: str, db: Optional[AsyncSession] = None) -> Optional[AutomationModel]:
+        async with get_async_db_context(db) as db:
+            row = await db.get(Automation, id)
+            if not row:
+                return None
+            row.is_active = False
+            row.next_run_at = None
+            row.updated_at = int(time.time_ns())
+            await db.commit()
+            return AutomationModel.model_validate(row)
+
+    async def set_target_chat_id(
+        self, id: str, chat_id: str, db: Optional[AsyncSession] = None
+    ) -> Optional[AutomationModel]:
+        async with get_async_db_context(db) as db:
+            row = await db.get(Automation, id)
+            if not row:
+                return None
+            data = dict(row.data or {})
+            target = dict(data.get('target') or {'type': 'persistent_chat'})
+            target['chat_id'] = chat_id
+            data['target'] = target
+            row.data = data
+            flag_modified(row, 'data')
+            row.updated_at = int(time.time_ns())
+            await db.commit()
+            return AutomationModel.model_validate(row)
+
     async def delete(self, id: str, db: Optional[AsyncSession] = None) -> bool:
         async with get_async_db_context(db) as db:
             row = await db.get(Automation, id)
@@ -352,6 +384,41 @@ class AutomationTable:
 
 
 class AutomationRunTable:
+    async def _build_and_consume_failed_event(
+        self,
+        db: AsyncSession,
+        row: AutomationRun,
+        automation_id: str,
+        chat_id: Optional[str],
+        error: Optional[str],
+        request=None,
+        event_actor=None,
+    ):
+        from open_webui.events import EVENTS, build_event
+        from open_webui.utils.inbox import consume_event
+
+        automation = await db.get(Automation, automation_id)
+        if not automation:
+            return None, set()
+
+        event = build_event(
+            request,
+            EVENTS.AUTOMATION_RUN_FAILED,
+            actor=event_actor,
+            subject_id=automation_id,
+            event_id=f'automation-run:{row.id}',
+            data={
+                'run_id': row.id,
+                'name': automation.name,
+                'error': error,
+                'user_id': automation.user_id,
+                'message': f'{automation.name}: {error}',
+                **({'chat_id': chat_id} if chat_id else {}),
+            },
+        )
+        recipients = await consume_event(event, db=db)
+        return event, recipients
+
     async def insert(
         self,
         automation_id: str,
@@ -377,34 +444,118 @@ class AutomationRunTable:
             event = None
             recipients = set()
             if status == 'error':
-                from open_webui.events import EVENTS, build_event, publish_event
-                from open_webui.utils.inbox import consume_event
-                from open_webui.models.notifications import emit_changes
-
-                automation = await db.get(Automation, automation_id)
-                if automation:
-                    event = build_event(
-                        request,
-                        EVENTS.AUTOMATION_RUN_FAILED,
-                        actor=event_actor,
-                        subject_id=automation_id,
-                        event_id=f'automation-run:{row.id}',
-                        data={
-                            'run_id': row.id,
-                            'name': automation.name,
-                            'error': error,
-                            'user_id': automation.user_id,
-                            'message': f'{automation.name}: {error}',
-                            **({'chat_id': chat_id} if chat_id else {}),
-                        },
-                    )
-                    recipients = await consume_event(event, db=db)
+                event, recipients = await self._build_and_consume_failed_event(
+                    db, row, automation_id, chat_id, error, request, event_actor
+                )
             await db.commit()
             if event is not None:
                 await emit_changes(recipients)
                 if request is not None:
+                    from open_webui.events import publish_event
+
                     await publish_event(request, event)
             return AutomationRunModel.model_validate(row)
+
+    async def has_inflight_run(self, automation_id: str, db: Optional[AsyncSession] = None) -> bool:
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                select(AutomationRun.id)
+                .where(
+                    AutomationRun.automation_id == automation_id,
+                    AutomationRun.status.in_(['queued', 'running']),
+                )
+                .limit(1)
+            )
+            return result.first() is not None
+
+    async def update_status(
+        self,
+        run_id: str,
+        status: str,
+        *,
+        chat_id: Optional[str] = None,
+        error: Optional[str] = None,
+        request=None,
+        event_actor=None,
+        db: Optional[AsyncSession] = None,
+    ) -> Optional[AutomationRunModel]:
+        async with get_async_db_context(db) as db:
+            row = await db.get(AutomationRun, run_id)
+            if not row:
+                return None
+            row.status = status
+            row.error = error
+            if chat_id is not None:
+                row.chat_id = chat_id
+            event = None
+            recipients = set()
+            if status == 'error':
+                event, recipients = await self._build_and_consume_failed_event(
+                    db, row, row.automation_id, row.chat_id, row.error, request, event_actor
+                )
+            await db.commit()
+            if event is not None:
+                await emit_changes(recipients)
+                if request is not None:
+                    from open_webui.events import publish_event
+
+                    await publish_event(request, event)
+            return AutomationRunModel.model_validate(row)
+
+    async def get_next_queued_for_chat(
+        self, chat_id: str, db: Optional[AsyncSession] = None
+    ) -> Optional[AutomationRunModel]:
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                select(AutomationRun)
+                .where(AutomationRun.chat_id == chat_id, AutomationRun.status == 'queued')
+                .order_by(AutomationRun.created_at.asc())
+                .limit(1)
+            )
+            row = result.scalars().first()
+            return AutomationRunModel.model_validate(row) if row else None
+
+    async def list_queued_chat_ids(self, limit: int = 50, db: Optional[AsyncSession] = None) -> list[str]:
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                select(AutomationRun.chat_id)
+                .where(AutomationRun.status == 'queued', AutomationRun.chat_id.isnot(None))
+                .distinct()
+                .limit(limit)
+            )
+            return list(result.scalars().all())
+
+    async def fail_stale_inflight_on_startup(self, db: Optional[AsyncSession] = None) -> int:
+        async with get_async_db_context(db) as db:
+            result = await db.execute(
+                update(AutomationRun)
+                .where(AutomationRun.status == 'running')
+                .values(status='error', error='Interrupted by server restart')
+            )
+            await db.commit()
+            return result.rowcount or 0
+
+    async def fail_queued_for_chat(
+        self,
+        chat_id: str,
+        error: str = 'Target chat was deleted.',
+        db: Optional[AsyncSession] = None,
+    ) -> list[str]:
+        async with get_async_db_context(db) as db:
+            aids_result = await db.execute(
+                select(AutomationRun.automation_id)
+                .where(AutomationRun.chat_id == chat_id, AutomationRun.status == 'queued')
+                .distinct()
+            )
+            automation_ids = list(aids_result.scalars().all())
+            if automation_ids:
+                await db.execute(
+                    update(AutomationRun)
+                    .where(AutomationRun.chat_id == chat_id, AutomationRun.status == 'queued')
+                    .values(status='error', error=error)
+                )
+                await db.commit()
+            return automation_ids
 
     async def get_latest(self, automation_id: str, db: Optional[AsyncSession] = None) -> Optional[AutomationRunModel]:
         async with get_async_db_context(db) as db:

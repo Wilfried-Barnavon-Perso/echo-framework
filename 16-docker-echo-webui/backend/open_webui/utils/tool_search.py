@@ -81,7 +81,11 @@ async def apply_tool_search(
     if not deferred:
         return set()
 
-    from open_webui.tools.builtin import search_tools
+    # [ECHO-V6-HOOK] Guard Level-1 pruning of builtin.search_tools
+    try:
+        from open_webui.tools.builtin import search_tools
+    except ImportError:
+        return set()
     from open_webui.utils.tools import (
         get_async_tool_function_and_apply_extra_params,
         get_builtin_function_introspection,

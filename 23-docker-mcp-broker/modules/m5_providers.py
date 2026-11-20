@@ -1,11 +1,11 @@
-# VERSION : 6.7.18.3
+# VERSION : 6.11.0.1
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.11.0.1: Moteur streaming résumable PPCM 5 MiB (_stream_resumable_put), upload_file_stream Google Drive & OneDrive, cache/lock OAuth2 Google.
 # 6.7.18.3: Socle factorisé (HTML/SafeLinks, compactage schémas, Download Broker structuredContent), fix Google account_id/email/staging, cloisonnement multi-tenants & Graph M365.
 # 5.239.12.1: Sémaphore MSA, client frais par retry, erreur list_mail_folders, fix KQL/OData et unified_search.
 # 5.239.11.2: Alignement Graph sur microsoft-mcp (Prefer conditionnel, omission $skip=0 et retry 5xx/429).
 # 5.239.11.1: Refresh MSAL async/fallback, transport Graph IPv4, URL quote, include_body=False et sync_credentials.
-# 5.239.10.1: Sans fallback Stdio list_emails, fix tenant_id MSAL, body_max_length et batch_get_emails parallèle.
 """
 ECHO MCP Broker - Adaptateurs de cycle de vie spécifiques aux fournisseurs MCP résidents.
 Isole la logique d'authentification et de préparation d'environnement (Microsoft 365 MSAL,
@@ -27,7 +27,7 @@ import urllib.parse
 import uuid
 from contextlib import AsyncExitStack
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional, Tuple, Union
+from typing import Any, AsyncIterator, Optional, Tuple, Union
 
 import httpx
 try:
@@ -40,6 +40,29 @@ logger = logging.getLogger(__name__)
 
 MCP_CACHE_ROOT = os.environ.get("ECHO_MCP_CACHE_DIR", "/app/mcp_cache")
 MCP_DOWNLOADS_ROOT = os.environ.get("ECHO_DOWNLOADS_DIR", "/app/downloads")
+RESUMABLE_UPLOAD_CHUNK_BYTES = 5 * 1024 * 1024  # 5 MiB (PPCM de 256 KiB Google et 320 KiB Microsoft Graph)
+MAX_DRIVE_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024  # 4 Go
+UPLOAD_CONCURRENCY_PER_ACCOUNT = 3
+
+_GOOGLE_NATIVE_CONVERSION_MAP: dict[str, tuple[str, str]] = {
+    ".md": ("text/markdown", "application/vnd.google-apps.document"),
+    ".markdown": ("text/markdown", "application/vnd.google-apps.document"),
+    ".txt": ("text/plain", "application/vnd.google-apps.document"),
+    ".html": ("text/html", "application/vnd.google-apps.document"),
+    ".htm": ("text/html", "application/vnd.google-apps.document"),
+    ".rtf": ("application/rtf", "application/vnd.google-apps.document"),
+    ".docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.google-apps.document"),
+    ".doc": ("application/msword", "application/vnd.google-apps.document"),
+    ".odt": ("application/vnd.oasis.opendocument.text", "application/vnd.google-apps.document"),
+    ".csv": ("text/csv", "application/vnd.google-apps.spreadsheet"),
+    ".tsv": ("text/tab-separated-values", "application/vnd.google-apps.spreadsheet"),
+    ".xlsx": ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.google-apps.spreadsheet"),
+    ".xls": ("application/vnd.ms-excel", "application/vnd.google-apps.spreadsheet"),
+    ".ods": ("application/vnd.oasis.opendocument.spreadsheet", "application/vnd.google-apps.spreadsheet"),
+    ".pptx": ("application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.google-apps.presentation"),
+    ".ppt": ("application/vnd.ms-powerpoint", "application/vnd.google-apps.presentation"),
+    ".odp": ("application/vnd.oasis.opendocument.presentation", "application/vnd.google-apps.presentation"),
+}
 
 _WORKSPACE_UUID_SUFFIX_RE = re.compile(
     r"_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?=\.[^.]+$|$)"
@@ -432,6 +455,211 @@ class MCPServiceProvider:
         """Hook exécuté après `session.call_tool(tool_name, args)` sur le résultat sérialisé."""
         return result
 
+    _UPLOAD_SEMAPHORES: dict[str, asyncio.Semaphore] = {}
+    _UPLOAD_TARGET_LOCKS: dict[str, asyncio.Lock] = {}
+
+    @classmethod
+    def _get_upload_semaphore(cls, service: str, user_id: str, account_sig: str) -> asyncio.Semaphore:
+        key = f"{id(asyncio.get_running_loop())}:{service}:{cls._sanitize_segment(user_id)}:{account_sig}"
+        sem = cls._UPLOAD_SEMAPHORES.get(key)
+        if sem is None:
+            sem = asyncio.Semaphore(UPLOAD_CONCURRENCY_PER_ACCOUNT)
+            cls._UPLOAD_SEMAPHORES[key] = sem
+        return sem
+
+    @classmethod
+    def _get_upload_target_lock(cls, service: str, user_id: str, account_sig: str, target_key: str) -> asyncio.Lock:
+        key = f"{id(asyncio.get_running_loop())}:{service}:{cls._sanitize_segment(user_id)}:{account_sig}:{target_key}"
+        lock = cls._UPLOAD_TARGET_LOCKS.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            cls._UPLOAD_TARGET_LOCKS[key] = lock
+        return lock
+
+    @classmethod
+    def _create_upload_http_client(cls, timeout_sec: float = 120.0) -> httpx.AsyncClient:
+        transport = httpx.AsyncHTTPTransport(local_address="0.0.0.0", retries=0)
+        timeout = httpx.Timeout(timeout_sec, connect=10.0)
+        return httpx.AsyncClient(timeout=timeout, transport=transport, follow_redirects=False)
+
+    @classmethod
+    def _build_drive_upload_payload(
+        cls,
+        service: str,
+        file_id: str,
+        name: str,
+        size: int,
+        mime_type: str,
+        folder_id: Optional[str] = None,
+        web_url: Optional[str] = None,
+        converted_from: Optional[str] = None,
+    ) -> dict:
+        payload: dict[str, Any] = {
+            "status": "uploaded",
+            "service": service,
+            "file_id": file_id,
+            "name": name,
+            "size": size,
+            "mime_type": mime_type,
+            "folder_id": folder_id,
+            "web_url": web_url,
+        }
+        if converted_from is not None:
+            payload["converted_from"] = converted_from
+        return payload
+
+    @classmethod
+    async def _abort_resumable_session(cls, upload_url: str) -> None:
+        if not upload_url:
+            return
+        try:
+            async with cls._create_upload_http_client(timeout_sec=10.0) as client:
+                await client.delete(upload_url)
+        except Exception:
+            pass
+
+    @classmethod
+    def _parse_retry_after(cls, resp: httpx.Response, attempt: int) -> float:
+        raw = resp.headers.get("Retry-After")
+        if raw:
+            try:
+                return max(0.5, min(float(raw), 15.0))
+            except Exception:
+                pass
+        return min(2.0 ** attempt, 15.0)
+
+    @classmethod
+    async def _send_resumable_put_chunk(
+        cls,
+        upload_url: str,
+        chunk: bytes,
+        headers: dict[str, str],
+        max_retries: int,
+    ) -> Optional[dict]:
+        last_err: Optional[Exception] = None
+        for attempt in range(max_retries):
+            try:
+                async with cls._create_upload_http_client(timeout_sec=120.0) as client:
+                    resp = await client.put(upload_url, content=chunk, headers=headers)
+                if resp.status_code in (200, 201):
+                    return resp.json() if resp.content else {}
+                if resp.status_code in (202, 308):
+                    return None
+                if resp.status_code == 429 or resp.status_code >= 500:
+                    if attempt + 1 < max_retries:
+                        await asyncio.sleep(cls._parse_retry_after(resp, attempt))
+                        continue
+                    await cls._abort_resumable_session(upload_url)
+                    raise RuntimeError(f"Échec upload résumable HTTP {resp.status_code}: {resp.text[:400]}")
+                if resp.status_code in (401, 403):
+                    low = resp.text.lower()
+                    if any(m in low for m in ("invalid", "expired", "unauthenticated", "insufficient", "scope", "permission")):
+                        await cls._abort_resumable_session(upload_url)
+                        raise AuthRequiredError(f"Authentification/permissions insuffisantes (HTTP {resp.status_code}): {resp.text[:300]}")
+                await cls._abort_resumable_session(upload_url)
+                raise RuntimeError(f"Erreur upload résumable HTTP {resp.status_code}: {resp.text[:400]}")
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                last_err = exc
+                if attempt + 1 < max_retries:
+                    await asyncio.sleep(min(2.0 ** attempt, 15.0))
+                    continue
+                await cls._abort_resumable_session(upload_url)
+                raise RuntimeError(f"Erreur réseau upload résumable : {exc}") from exc
+            except (AuthRequiredError, RuntimeError, ValueError):
+                raise
+            except Exception as exc:
+                await cls._abort_resumable_session(upload_url)
+                raise RuntimeError(f"Erreur inattendue upload résumable : {exc}") from exc
+        await cls._abort_resumable_session(upload_url)
+        raise RuntimeError(f"Échec upload résumable après {max_retries} tentatives: {last_err}")
+
+    @classmethod
+    async def _stream_resumable_put(
+        cls,
+        upload_url: str,
+        byte_stream: AsyncIterator[bytes],
+        total_size: int,
+        content_type: str,
+        chunk_size: int = RESUMABLE_UPLOAD_CHUNK_BYTES,
+        max_retries: int = 3,
+    ) -> dict:
+        if total_size == 0:
+            async for raw_chunk in byte_stream:
+                if raw_chunk:
+                    await cls._abort_resumable_session(upload_url)
+                    raise ValueError("Flux non vide reçu alors que total_size == 0.")
+            headers = {
+                "Content-Type": content_type,
+                "Content-Length": "0",
+                "Content-Range": "bytes */0",
+            }
+            res = await cls._send_resumable_put_chunk(upload_url, b"", headers, max_retries)
+            return res if isinstance(res, dict) else {}
+
+        buf = bytearray()
+        offset = 0
+        final_json: Optional[dict] = None
+
+        async for raw_chunk in byte_stream:
+            if not raw_chunk:
+                continue
+            buf.extend(raw_chunk)
+            while len(buf) >= chunk_size:
+                chunk = bytes(buf[:chunk_size])
+                del buf[:chunk_size]
+                if offset + len(chunk) > total_size:
+                    await cls._abort_resumable_session(upload_url)
+                    raise ValueError("Flux d'entrée supérieur à total_size déclaré.")
+                headers = {
+                    "Content-Type": content_type,
+                    "Content-Length": str(len(chunk)),
+                    "Content-Range": f"bytes {offset}-{offset + len(chunk) - 1}/{total_size}",
+                }
+                res = await cls._send_resumable_put_chunk(upload_url, chunk, headers, max_retries)
+                offset += len(chunk)
+                if res is not None:
+                    final_json = res
+
+        if buf:
+            chunk = bytes(buf)
+            if offset + len(chunk) > total_size:
+                await cls._abort_resumable_session(upload_url)
+                raise ValueError("Flux d'entrée supérieur à total_size déclaré.")
+            headers = {
+                "Content-Type": content_type,
+                "Content-Length": str(len(chunk)),
+                "Content-Range": f"bytes {offset}-{offset + len(chunk) - 1}/{total_size}",
+            }
+            res = await cls._send_resumable_put_chunk(upload_url, chunk, headers, max_retries)
+            offset += len(chunk)
+            if res is not None:
+                final_json = res
+
+        if offset != total_size:
+            await cls._abort_resumable_session(upload_url)
+            raise ValueError(f"Flux incomplet : {offset} octets envoyés sur {total_size} attendus.")
+        if final_json is None:
+            await cls._abort_resumable_session(upload_url)
+            raise RuntimeError("Aucune réponse finale 200/201 reçue après envoi de la dernière tranche.")
+        return final_json
+
+    async def upload_file_stream(
+        self,
+        user_id: str,
+        chat_id: str,
+        credentials: dict,
+        byte_stream: AsyncIterator[bytes],
+        filename: str,
+        total_size: int,
+        mime_type: str = "application/octet-stream",
+        folder_id: Optional[str] = None,
+        overwrite_file_id: Optional[str] = None,
+        convert_to_native: bool = False,
+        conflict_behavior: str = "replace",
+        account_id: Optional[str] = None,
+    ) -> dict:
+        raise ValueError("Upload Drive non supporté pour ce fournisseur MCP.")
+
 
 class GoogleWorkspaceProvider(MCPServiceProvider):
     """Adaptateur OAuth2 pour le serveur résident Google Workspace (`workspace-mcp`)."""
@@ -443,8 +671,112 @@ class GoogleWorkspaceProvider(MCPServiceProvider):
         "invalid_grant",
         "RefreshError",
         "Token has been expired or revoked",
+        "Permission required for",
+        "insufficient authentication scopes",
     )
     _SESSION_STAGING_DIRS: dict[str, str] = {}
+    _GOOGLE_TOKEN_CACHE: dict[str, dict] = {}
+    _GOOGLE_TOKEN_LOCKS: dict[str, asyncio.Lock] = {}
+
+    @classmethod
+    def _get_google_token_lock(cls, cache_id: str) -> asyncio.Lock:
+        lock = cls._GOOGLE_TOKEN_LOCKS.get(cache_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            cls._GOOGLE_TOKEN_LOCKS[cache_id] = lock
+        return lock
+
+    @classmethod
+    def _google_token_cache_id(cls, user_id: str, credentials: dict) -> str:
+        client_id = str((credentials or {}).get("GOOGLE_OAUTH_CLIENT_ID") or "")
+        refresh_token = str((credentials or {}).get("GOOGLE_OAUTH_REFRESH_TOKEN") or "")
+        sig = hashlib.md5(f"{client_id}:{refresh_token}".encode()).hexdigest()[:16]
+        return f"{id(asyncio.get_running_loop())}:{cls._sanitize_segment(user_id)}:{sig}"
+
+    async def _refresh_google_access_token(
+        self,
+        user_id: str,
+        credentials: dict,
+        required_any_scopes: Optional[set[str]] = None,
+    ) -> dict:
+        refresh_token = credentials.get("GOOGLE_OAUTH_REFRESH_TOKEN")
+        user_email = credentials.get("USER_GOOGLE_EMAIL")
+        if not (refresh_token and user_email):
+            raise AuthRequiredError(
+                "Identifiants Google Workspace incomplets (USER_GOOGLE_EMAIL ou GOOGLE_OAUTH_REFRESH_TOKEN manquant)."
+            )
+
+        client_id = credentials.get("GOOGLE_OAUTH_CLIENT_ID", "")
+        client_secret = credentials.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
+        cache_id = self._google_token_cache_id(user_id, credentials)
+
+        async with self._get_google_token_lock(cache_id):
+            cached = self._GOOGLE_TOKEN_CACHE.get(cache_id)
+            now = time.time()
+            if cached and now < float(cached.get("expires_at", 0.0)) - 60.0:
+                entry = cached
+            else:
+                try:
+                    async with httpx.AsyncClient() as client:
+                        token_resp = await client.post(
+                            "https://oauth2.googleapis.com/token",
+                            data={
+                                "client_id": client_id,
+                                "client_secret": client_secret,
+                                "refresh_token": refresh_token,
+                                "grant_type": "refresh_token",
+                            },
+                            timeout=10.0,
+                        )
+                except Exception as ex:
+                    logger.warning("Google OAuth refresh network exception: %s", ex)
+                    raise AuthRequiredError(
+                        f"Échec réseau lors du rafraîchissement du jeton OAuth2 Google Workspace : {ex}"
+                    ) from ex
+
+                if token_resp.status_code != 200:
+                    err_detail = f"HTTP {token_resp.status_code}"
+                    try:
+                        err_data = token_resp.json()
+                        err_code = err_data.get("error", "unknown_error")
+                        err_desc = err_data.get("error_description", "")
+                        err_detail = f"{err_code} ({err_desc})" if err_desc else str(err_code)
+                    except Exception:
+                        pass
+                    logger.warning("Google OAuth refresh failed: %s", err_detail)
+                    raise AuthRequiredError(
+                        f"Authentification Google Workspace invalide ou expirée ({err_detail}). "
+                        "Le rafraîchissement automatique OAuth2 a échoué. Les flux d'authentification "
+                        "interactive locale (localhost:8001) sont strictement proscrits en environnement conteneurisé."
+                    )
+
+                t_data = token_resp.json()
+                access_token = t_data.get("access_token")
+                if not access_token:
+                    raise AuthRequiredError(
+                        "Réponse OAuth2 Google invalide (aucun access_token retourné). "
+                        "Veuillez régénérer GOOGLE_OAUTH_REFRESH_TOKEN."
+                    )
+
+                scopes = t_data["scope"].split(" ") if "scope" in t_data and t_data["scope"] else []
+                expires_in = int(t_data.get("expires_in") or 3600)
+                expiry_dt = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+                entry = {
+                    "token": access_token,
+                    "scopes": scopes,
+                    "expires_in": expires_in,
+                    "expires_at": now + expires_in,
+                    "expiry": expiry_dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                    "cache_id": cache_id,
+                }
+                self._GOOGLE_TOKEN_CACHE[cache_id] = entry
+
+        if required_any_scopes and entry.get("scopes"):
+            if not (set(entry["scopes"]) & set(required_any_scopes)):
+                raise AuthRequiredError(
+                    "Le jeton Google Workspace ne possède pas le scope d'écriture Drive requis (drive ou drive.file)."
+                )
+        return entry
 
     async def prepare_env(
         self,
@@ -454,73 +786,18 @@ class GoogleWorkspaceProvider(MCPServiceProvider):
         env: dict,
         cache_key: Optional[str] = None,
     ) -> None:
-        refresh_token = credentials.get("GOOGLE_OAUTH_REFRESH_TOKEN")
-        user_email = credentials.get("USER_GOOGLE_EMAIL")
-
-        if not (refresh_token and user_email):
-            raise AuthRequiredError(
-                "Identifiants Google Workspace incomplets (USER_GOOGLE_EMAIL ou GOOGLE_OAUTH_REFRESH_TOKEN manquant)."
-            )
-
-        client_id = credentials.get("GOOGLE_OAUTH_CLIENT_ID", "")
-        client_secret = credentials.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
-
-        try:
-            async with httpx.AsyncClient() as client:
-                token_resp = await client.post(
-                    "https://oauth2.googleapis.com/token",
-                    data={
-                        "client_id": client_id,
-                        "client_secret": client_secret,
-                        "refresh_token": refresh_token,
-                        "grant_type": "refresh_token",
-                    },
-                    timeout=10.0,
-                )
-        except Exception as ex:
-            logger.warning("Google OAuth refresh network exception: %s", ex)
-            raise AuthRequiredError(
-                f"Échec réseau lors du rafraîchissement du jeton OAuth2 Google Workspace : {ex}"
-            ) from ex
-
-        if token_resp.status_code != 200:
-            err_detail = f"HTTP {token_resp.status_code}"
-            try:
-                err_data = token_resp.json()
-                err_code = err_data.get("error", "unknown_error")
-                err_desc = err_data.get("error_description", "")
-                err_detail = f"{err_code} ({err_desc})" if err_desc else str(err_code)
-            except Exception:
-                pass
-            logger.warning("Google OAuth refresh failed: %s", err_detail)
-            raise AuthRequiredError(
-                f"Authentification Google Workspace invalide ou expirée ({err_detail}). "
-                "Le rafraîchissement automatique OAuth2 a échoué. Les flux d'authentification "
-                "interactive locale (localhost:8001) sont strictement proscrits en environnement conteneurisé."
-            )
-
-        t_data = token_resp.json()
-        access_token = t_data.get("access_token")
-        if not access_token:
-            raise AuthRequiredError(
-                "Réponse OAuth2 Google invalide (aucun access_token retourné). "
-                "Veuillez régénérer GOOGLE_OAUTH_REFRESH_TOKEN."
-            )
-
+        t_info = await self._refresh_google_access_token(user_id, credentials)
+        user_email = credentials.get("USER_GOOGLE_EMAIL", "")
         token_data = {
-            "token": access_token,
-            "refresh_token": refresh_token,
+            "token": t_info["token"],
+            "refresh_token": credentials.get("GOOGLE_OAUTH_REFRESH_TOKEN"),
             "token_uri": "https://oauth2.googleapis.com/token",
-            "client_id": client_id,
-            "client_secret": client_secret,
+            "client_id": credentials.get("GOOGLE_OAUTH_CLIENT_ID", ""),
+            "client_secret": credentials.get("GOOGLE_OAUTH_CLIENT_SECRET", ""),
+            "expiry": t_info["expiry"],
         }
-        if "scope" in t_data:
-            token_data["scopes"] = t_data["scope"].split(" ")
-        if "expires_in" in t_data:
-            expiry_dt = datetime.now(timezone.utc) + timedelta(
-                seconds=int(t_data["expires_in"])
-            )
-            token_data["expiry"] = expiry_dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        if t_info.get("scopes"):
+            token_data["scopes"] = t_info["scopes"]
 
         temp_dir_path = stack.enter_context(tempfile.TemporaryDirectory())
         safe_email = urllib.parse.quote(user_email, safe="@._-")
@@ -639,6 +916,119 @@ class GoogleWorkspaceProvider(MCPServiceProvider):
             return self._rewrite_result_with_broker_downloads(result, moved_map)
 
         return result
+
+    async def upload_file_stream(
+        self,
+        user_id: str,
+        chat_id: str,
+        credentials: dict,
+        byte_stream: AsyncIterator[bytes],
+        filename: str,
+        total_size: int,
+        mime_type: str = "application/octet-stream",
+        folder_id: Optional[str] = None,
+        overwrite_file_id: Optional[str] = None,
+        convert_to_native: bool = False,
+        conflict_behavior: str = "replace",
+        account_id: Optional[str] = None,
+    ) -> dict:
+        if total_size < 0 or total_size > MAX_DRIVE_UPLOAD_BYTES:
+            raise ValueError(f"Taille de fichier invalide pour upload Google Drive : {total_size}")
+        safe_filename = self._sanitize_filename(filename)
+        t_info = await self._refresh_google_access_token(
+            user_id,
+            credentials,
+            required_any_scopes={
+                "https://www.googleapis.com/auth/drive",
+                "https://www.googleapis.com/auth/drive.file",
+            },
+        )
+        access_token = t_info["token"]
+        cache_id = t_info.get("cache_id") or self._google_token_cache_id(user_id, credentials)
+        account_sig = hashlib.md5(
+            f"{credentials.get('GOOGLE_OAUTH_CLIENT_ID', '')}:{credentials.get('USER_GOOGLE_EMAIL', '')}".encode()
+        ).hexdigest()[:12]
+
+        ext = os.path.splitext(safe_filename)[1].lower()
+        target_name = safe_filename
+        upload_mime = mime_type or "application/octet-stream"
+        meta_mime = upload_mime
+        if convert_to_native and ext in _GOOGLE_NATIVE_CONVERSION_MAP:
+            mapped_upload_mime, meta_mime = _GOOGLE_NATIVE_CONVERSION_MAP[ext]
+            upload_mime = mapped_upload_mime
+            if ext:
+                stem = safe_filename[:-len(ext)]
+                target_name = stem or safe_filename
+
+        target_key = overwrite_file_id or f"{folder_id or 'root'}:{target_name}"
+        async with self._get_upload_target_lock("google_workspace", user_id, account_sig, target_key):
+            async with self._get_upload_semaphore("google_workspace", user_id, account_sig):
+                if overwrite_file_id:
+                    method = "PATCH"
+                    init_url = (
+                        f"https://www.googleapis.com/upload/drive/v3/files/"
+                        f"{urllib.parse.quote(overwrite_file_id, safe='')}"
+                    )
+                    meta_body: dict[str, Any] = {"name": target_name}
+                    if convert_to_native:
+                        meta_body["mimeType"] = meta_mime
+                else:
+                    method = "POST"
+                    init_url = "https://www.googleapis.com/upload/drive/v3/files"
+                    meta_body = {
+                        "name": target_name,
+                        "mimeType": meta_mime,
+                        "parents": [folder_id or "root"],
+                    }
+
+                init_headers = {
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json; charset=UTF-8",
+                    "X-Upload-Content-Type": upload_mime,
+                    "X-Upload-Content-Length": str(total_size),
+                }
+                init_params = {
+                    "uploadType": "resumable",
+                    "supportsAllDrives": "true",
+                    "fields": "id,name,mimeType,size,parents,webViewLink",
+                }
+                async with self._create_upload_http_client(timeout_sec=30.0) as client:
+                    init_resp = await client.request(
+                        method, init_url, params=init_params, headers=init_headers, json=meta_body
+                    )
+
+                if init_resp.status_code >= 400:
+                    err_txt = init_resp.text[:500]
+                    if init_resp.status_code == 401 or (
+                        init_resp.status_code == 403
+                        and any(
+                            m in err_txt
+                            for m in ("insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT", "insufficient authentication scopes")
+                        )
+                    ):
+                        self._GOOGLE_TOKEN_CACHE.pop(cache_id, None)
+                        raise AuthRequiredError(f"Authentification ou scope Google Drive insuffisant : {err_txt}")
+                    if "accessNotConfigured" in err_txt or "API has not been used" in err_txt:
+                        raise RuntimeError(
+                            f"L'API Google Drive (drive.googleapis.com) doit être activée sur le projet GCP : {err_txt}"
+                        )
+                    raise RuntimeError(f"Échec initiation session Google Drive ({init_resp.status_code}): {err_txt}")
+
+                upload_url = init_resp.headers.get("location")
+                if not upload_url:
+                    raise RuntimeError("En-tête Location manquant dans la réponse de session résumable Google Drive.")
+
+                data = await self._stream_resumable_put(upload_url, byte_stream, total_size, upload_mime)
+                return self._build_drive_upload_payload(
+                    "google_workspace",
+                    file_id=data.get("id", ""),
+                    name=data.get("name", target_name),
+                    size=int(data.get("size") or total_size),
+                    mime_type=data.get("mimeType", meta_mime),
+                    folder_id=(data.get("parents") or [folder_id or "root"])[0],
+                    web_url=data.get("webViewLink"),
+                    converted_from=(upload_mime if convert_to_native and meta_mime != upload_mime else None),
+                )
 
 
 class Microsoft365Provider(MCPServiceProvider):
@@ -3178,6 +3568,109 @@ class Microsoft365Provider(MCPServiceProvider):
                     logger.warning("MS365: échec finalisation fichier Download Broker: %s", e)
 
         return result
+
+    async def upload_file_stream(
+        self,
+        user_id: str,
+        chat_id: str,
+        credentials: dict,
+        byte_stream: AsyncIterator[bytes],
+        filename: str,
+        total_size: int,
+        mime_type: str = "application/octet-stream",
+        folder_id: Optional[str] = None,
+        overwrite_file_id: Optional[str] = None,
+        convert_to_native: bool = False,
+        conflict_behavior: str = "replace",
+        account_id: Optional[str] = None,
+    ) -> dict:
+        if total_size < 0 or total_size > MAX_DRIVE_UPLOAD_BYTES:
+            raise ValueError(f"Taille de fichier invalide pour upload OneDrive : {total_size}")
+        safe_filename = self._sanitize_filename(filename)
+        await self.sync_credentials(user_id, credentials)
+        access_token = await self._get_access_token_async(
+            user_id, account_id=account_id, credentials=credentials
+        )
+        account_sig = self._compute_ms_sig(credentials) or self._sanitize_segment(account_id or "default")
+
+        if overwrite_file_id:
+            base_item = f"https://graph.microsoft.com/v1.0/me/drive/items/{self._quote_graph_id(overwrite_file_id)}"
+        elif folder_id and str(folder_id).strip().lower() != "root":
+            raw_f = str(folder_id).strip()
+            if "/" in raw_f:
+                clean_path = "/".join(urllib.parse.quote(seg, safe="") for seg in raw_f.strip("/").split("/") if seg)
+                base_item = (
+                    f"https://graph.microsoft.com/v1.0/me/drive/root:/{clean_path}/"
+                    f"{urllib.parse.quote(safe_filename, safe='')}:"
+                )
+            else:
+                base_item = (
+                    f"https://graph.microsoft.com/v1.0/me/drive/items/{self._quote_graph_id(raw_f)}:/"
+                    f"{urllib.parse.quote(safe_filename, safe='')}:"
+                )
+        else:
+            base_item = f"https://graph.microsoft.com/v1.0/me/drive/root:/{urllib.parse.quote(safe_filename, safe='')}:"
+
+        target_key = overwrite_file_id or f"{folder_id or 'root'}:{safe_filename}"
+        async with self._get_upload_target_lock("microsoft_365", user_id, account_sig, target_key):
+            async with self._get_upload_semaphore("microsoft_365", user_id, account_sig):
+                if total_size == 0:
+                    async for raw_chunk in byte_stream:
+                        if raw_chunk:
+                            raise ValueError("Flux non vide reçu alors que total_size == 0.")
+                    async with self._create_upload_http_client(timeout_sec=30.0) as client:
+                        resp = await client.put(
+                            f"{base_item}/content",
+                            headers={
+                                "Authorization": f"Bearer {access_token}",
+                                "Content-Type": mime_type or "application/octet-stream",
+                            },
+                            content=b"",
+                        )
+                    if resp.status_code == 401:
+                        raise AuthRequiredError(f"Jeton Microsoft Graph invalide (401): {resp.text[:300]}")
+                    if resp.status_code >= 400:
+                        raise RuntimeError(f"Échec upload fichier vide OneDrive ({resp.status_code}): {resp.text[:400]}")
+                    data = resp.json()
+                else:
+                    item_payload: dict[str, Any] = {"@microsoft.graph.conflictBehavior": conflict_behavior}
+                    if not overwrite_file_id:
+                        item_payload["name"] = safe_filename
+                    async with self._create_upload_http_client(timeout_sec=30.0) as client:
+                        sess_resp = await client.post(
+                            f"{base_item}/createUploadSession",
+                            headers={
+                                "Authorization": f"Bearer {access_token}",
+                                "Content-Type": "application/json",
+                            },
+                            json={"item": item_payload},
+                        )
+                    if sess_resp.status_code >= 400:
+                        err_txt = sess_resp.text[:500]
+                        low = err_txt.lower()
+                        if sess_resp.status_code == 401 or (
+                            sess_resp.status_code == 403
+                            and any(m in low for m in ("invalid", "expired", "unauthenticated", "scope", "permission"))
+                        ):
+                            raise AuthRequiredError(f"Authentification Microsoft Graph invalide : {err_txt}")
+                        raise RuntimeError(f"Échec createUploadSession OneDrive ({sess_resp.status_code}): {err_txt}")
+                    sess_data = sess_resp.json()
+                    upload_url = sess_data.get("uploadUrl")
+                    if not upload_url:
+                        raise RuntimeError("uploadUrl manquant dans la réponse createUploadSession OneDrive.")
+                    data = await self._stream_resumable_put(
+                        upload_url, byte_stream, total_size, mime_type or "application/octet-stream"
+                    )
+
+                return self._build_drive_upload_payload(
+                    "microsoft_365",
+                    file_id=data.get("id", ""),
+                    name=data.get("name", safe_filename),
+                    size=int(data.get("size") if data.get("size") is not None else total_size),
+                    mime_type=(data.get("file") or {}).get("mimeType") or mime_type,
+                    folder_id=(data.get("parentReference") or {}).get("id") or folder_id,
+                    web_url=data.get("webUrl"),
+                )
 
 
 _DEFAULT_PROVIDER = MCPServiceProvider()

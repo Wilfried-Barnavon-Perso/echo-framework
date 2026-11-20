@@ -1,42 +1,65 @@
 ---
 domain_id: codex_management
-version: 6.7.11.1
-updated_at: 2026-11-19
+version: 6.12.0.1
+updated_at: 2026-11-20
 name: Gestionnaire Documentaire & Versionnement Git (ECHO Codex)
-description: Création, édition directe ou assistée, lecture paginée/historique, recherche spatiale ou temporelle, navigation multi-chat et versionnement Git sur les espaces main, plans, generated et sandbox.
-tools: [create_codex, edit_codex, delete_codex, read_codex, restore_codex, search_codex, summarize_codex, list_codex, list_other_chats_ids, history_codex, open_codex_ui]
-keywords: [codex, document, fichier, git, commit, version, diff, edit_codex, create_codex, open_codex_ui, workspace, main, plans, generated, sandbox, multi_chat, target_chat_id, list_other_chats_ids, read_only, wrap_tool_output, urn, links, binary, is_binary, binary_content_omitted, pagination, has_more, next_start_line]
+description: Création, édition directe ou assistée, gestion d'arborescence (dossiers, déplacement/renommage), transferts inter-workspaces sécurisés, suppression contrôlée, lecture paginée/historique, recherche récursive/temporelle et versionnement Git sur main, plans, generated et sandbox.
+tools: [create_codex, edit_codex, create_codex_directory, move_codex, transfer_codex, delete_codex, read_codex, restore_codex, search_codex, summarize_codex, list_codex, list_other_chats_ids, history_codex, open_codex_ui]
+keywords: [codex, document, fichier, git, commit, version, diff, edit_codex, create_codex, open_codex_ui, workspace, main, plans, generated, sandbox, multi_chat, target_chat_id, list_other_chats_ids, read_only, wrap_tool_output, urn, links, binary, is_binary, binary_content_omitted, pagination, has_more, next_start_line, create_codex_directory, move_codex, transfer_codex, dossier, repertoire, mkdir, sous_dossier, rename, renommer, move, deplacer, copy, copier, transfer, promouvoir, recursive, overwrite, files, browserviews, skipped_entries]
 ---
 
 # MANUEL OPÉRATIONNEL : ECHO CODEX (`codex_management`)
 
 ## 1. ARCHITECTURE MULTI-WORKSPACES, SÉCURITÉ & REGISTRE
-Le Codex ECHO gère des fichiers texte, code et médias répartis en 4 espaces de travail et synchronisés avec le Registre Unifié :
+Le Codex ECHO gère des fichiers texte, code et médias répartis en 4 espaces de travail et synchronisés avec le Registre Unifié (`echo_resources`) :
 - **Séparation des Espaces (`workspace: Literal["main", "plans", "generated", "sandbox"] = "main"`)** :
-  - `"main"` (Défaut, versionné Git, écriture ouverte, `resource_type="codex"`) : Espace principal de la session pour les documents, architectures et livrables destinés à l'Utilisateur.
-  - `"plans"` (Versionné Git, **lecture seule directe**, `resource_type="plan"`) : Espace dédié aux plans stratégiques (`{plan_id}_{slug}.md`) et listes de tâches (`tasks_{plan_id}_{slug}.md`). L'écriture et la suppression passent exclusivement par `build_plan`, `update_plan`, `update_tasks`, `process_plan` et `delete_plan`.
-  - `"generated"` (Versionné Git, **lecture seule directe**, `resource_type="generated"`) : Espace dédié aux médias générés (images `<nom_court>.png` versionnées par essai et retouche via `generate_image`).
-  - `"sandbox"` (Non versionné, non indexé, écriture ouverte) : Espace de travail technique isolé utilisé pour écrire les scripts `.py` et `.js` exécutés par `code_executor`.
+  - `"main"` (Défaut, versionné Git, indexé dans `echo_resources`, écriture ouverte, `resource_type="codex"`) : Espace principal de la session pour les documents, architectures et livrables destinés à l'Utilisateur.
+  - `"plans"` (Versionné Git, indexé dans `echo_resources`, **lecture seule directe**, `resource_type="plan"`) : Espace dédié aux plans stratégiques (`{plan_id}_{slug}.md`) et listes de tâches (`tasks_{plan_id}_{slug}.md`). L'écriture et la suppression passent exclusivement par `build_plan`, `update_plan`, `update_tasks`, `process_plan` et `delete_plan`.
+  - `"generated"` (Versionné Git, indexé dans `echo_resources`, **lecture seule directe**, `resource_type="generated"`) : Espace dédié aux médias générés (images `<nom_court>.png` versionnées par essai et retouche via `generate_image`).
+  - `"sandbox"` (Non versionné, non indexé dans `echo_resources`, monté `rw` en exécution, écriture ouverte) : Espace de travail technique isolé utilisé pour écrire et exécuter les scripts `.py`, `.js` et `.sh` via `code_executor`.
+  - `"files"` et `"browserviews"` : Sources de session externes en lecture seule (fichiers Vault et captures navigateur), utilisables uniquement en copie vers `"sandbox"` via `transfer_codex`.
+- **Sécurité d'Arborescence** : Les chemins ciblant `.git`, les segments IPC internes de la sandbox (`.echo_*`, `.tmp`), les traversées `..`, les octets nuls et les liens symboliques hors Vault utilisateur sont strictement interdits.
 - **Navigation Transverse Multi-Chat (Lecture Seule)** :
   - Le Modèle peut explorer et lire les fichiers de n'importe quelle autre conversation du même utilisateur sans quitter la session active.
   - **Invariant Inviolable (Read-Only)** : Toute consultation d'une conversation distante (`target_chat_id != current_chat_id`) s'effectue strictement en lecture seule. Aucune action mutative n'est autorisée sur un dépôt distant et aucune ressource n'est injectée dans le Registre Unifié de la session active.
 
 ---
 
-## 2. CRÉATION, ÉDITION & OUVERTURE VISUELLE (`open_codex_ui`)
+## 2. CRÉATION, ÉDITION, ARBORESCENCE, TRANSFERTS & OUVERTURE VISUELLE
 
 ### 2.1 Création : `create_codex`
-- Crée un nouveau fichier versionné dans le Codex de la conversation courante.
-- **Contrainte d'unicité** : Si `filename` existe déjà dans le `workspace` cible, `create_codex` renvoie une erreur. Le Modèle **DOIT** alors utiliser `edit_codex`.
+- Crée un nouveau fichier (versionné sur `main`, disque seul sur `sandbox`) dans le Codex de la conversation courante.
+- **Contrainte d'unicité** : Si `filename` existe déjà dans le `workspace` cible, `create_codex` renvoie une erreur. Le Modèle **DOIT** alors utiliser `edit_codex`. En cas de collision avec un dossier existant, `error_code="path_conflict"` est retourné.
 - Validation préalable recommandée via `query_registry(resource_type="codex")` ou `list_codex(workspace=...)`.
 
 ### 2.2 Édition : `edit_codex`
 - **CONTRAINTE CRITIQUE D'EXCLUSIVITÉ MUTUELLE** : Les paramètres `new_content` et `instructions` sont **strictement mutuellement exclusifs**. Le Modèle DOIT fournir l'un **OU** l'autre, et ne **DOIT JAMAIS** fournir les deux simultanément :
-  1. **Mode Remplacement Direct (`new_content="..."`, `instructions=None`)** : Remplace immédiatement l'intégralité du fichier par `new_content` et crée un commit Git (latence nulle). Idéal pour les fichiers courts ou entièrement régénérés.
+  1. **Mode Remplacement Direct (`new_content="..."`, `instructions=None`)** : Remplace immédiatement l'intégralité du fichier par `new_content` et crée un commit Git sur `main` (latence nulle). Idéal pour les fichiers courts ou entièrement régénérés.
   2. **Mode Édition Assistée (`instructions="...", new_content=None`)** : Délègue la modification chirurgicale du fichier existant à un sous-agent éditeur (`MODEL_APOLLO`) qui applique les `instructions` sur le document complet et commite le résultat. Idéal pour modifier une section précise d'un long fichier sans réécrire tout le contenu.
 - **Restriction Binaire** : L'édition assistée par instructions est formellement refusée sur les fichiers binaires (`error_code="binary_edit_not_supported"`).
 
-### 2.3 Ouverture de l'Onglet Codex : `open_codex_ui`
+### 2.3 Arborescence & Réorganisation Intra-Workspace
+- **`create_codex_directory(path, workspace="main")`** :
+  - Crée un dossier et ses sous-dossiers parents manquants dans `main` ou `sandbox`.
+  - Opération idempotente : retourne `already_existed: True` si le dossier existe déjà, ou `error_code="path_conflict"` si un fichier occupe le chemin cible.
+  - Aucun fichier factice `.gitkeep`, aucun commit Git vide et aucune entrée factice dans `echo_resources` ne sont créés.
+- **`move_codex(source_path, destination_path, workspace="main", overwrite=False, commit_message=None)`** :
+  - Renomme ou déplace un fichier ou un dossier entier **exclusivement à l'intérieur d'un même espace (`main` ou `sandbox`)**.
+  - Crée automatiquement les dossiers parents manquants de `destination_path` et interdit l'auto-imbrication (`dir -> dir/sub`).
+  - Limite `overwrite=True` aux collisions `fichier -> fichier` (`error_code="path_conflict"` si un dossier est impliqué côté source ou destination).
+  - Génère 1 commit Git sur `main` (sauf pour un dossier vide) et met à jour atomiquement `echo_resources` en préservant `message_id`, `summary`, `mime` et les éventuelles lignes Vault d'uploads.
+
+### 2.4 Transferts Inter-Workspaces (`transfer_codex`)
+- **`transfer_codex(source_path, source_workspace, destination_workspace, destination_path=None, mode="copy", overwrite=False, commit_message=None)`** :
+  - **Strictement inter-workspaces** : un appel avec `source_workspace == destination_workspace` est refusé (`error_code="intra_workspace_forbidden"`). Le Modèle DOIT utiliser `move_codex`.
+  - **Promotion `sandbox -> main`** : autorise `mode="copy"` ou `mode="move"`.
+    - Filtre automatiquement les entrées exclues (`.git`, `.venv`, `node_modules`, `__pycache__`, fichiers cachés et segments IPC `.echo_*`, `.tmp`) qui sont restituées dans `skipped_entries`.
+    - En `mode="move"`, supprime de `sandbox` uniquement les fichiers effectivement transférés et les sous-dossiers devenus vides, en conservant les éléments ignorés dans `sandbox`.
+    - Quotas de destination `main` : maximum `200` fichiers, `25 Mo` par fichier et `100 Mo` cumulés (`error_code="quota_exceeded"` en cas de dépassement).
+  - **Import `{main, plans, generated, files, browserviews} -> sandbox`** : **`mode="copy"` uniquement** (`mode="move"` est refusé : la suppression dans `main` reste indépendante via `delete_codex` ; `plans`, `generated`, `files` et `browserviews` sont strictement en lecture seule).
+    - Pour `files` et `browserviews`, `source_path` accepte un chemin relatif ou l'`id`/`name` exact issu de `query_registry`.
+
+### 2.5 Ouverture de l'Onglet Codex : `open_codex_ui`
 - Déclenche l'ouverture asynchrone de l'onglet natif `Codex & Fichiers` (`echo-codex`) dans l'interface de l'Utilisateur sur le fichier `filename` du workspace local ou distant (`target_chat_id`).
 - Si `target_chat_id` est spécifié (`target_chat_id != current_chat_id`), l'onglet bascule sur la conversation distante en lecture seule.
 - Si `commit_hash` est fourni, l'onglet charge l'état historique exact du fichier à cette révision Git.
@@ -50,9 +73,8 @@ Le Codex ECHO gère des fichiers texte, code et médias répartis en 4 espaces d
 ### 3.1 Lecture, Synthèse et Inventaire Multi-Chat
 - `list_other_chats_ids` :
   - Découvre dynamiquement les autres conversations de l'Utilisateur disposant d'un espace Codex et retourne leur `chat_id` et leur titre (la conversation courante est exclue). Utilisé en amont de `list_codex(target_chat_id=...)` et `read_codex(target_chat_id=...)`.
-- `list_codex` :
-  - **Chat distant (`target_chat_id="..."`)** : Liste les fichiers du workspace d'une autre conversation en lecture seule.
-  - **Local (`target_chat_id=None`)** : Liste tous les fichiers du workspace courant (`Fichier`, `Langage`, `Lignes`, `Taille`) et les statistiques de commits.
+- `list_codex(workspace="main", path="", recursive=False, target_chat_id=None)` :
+  - **Local (`target_chat_id=None`)** ou **Chat distant (`target_chat_id="..."`, lecture seule)** : explore la racine ou un sous-dossier `path` avec option `recursive=True`. Chaque appel est plafonné à `200` entrées (`CODEX_LIST_MAX_ENTRIES`, indicateur `truncated` dans la sortie structurée).
 - `read_codex` :
   - Lit le contenu d'un fichier du workspace local ou d'un chat distant (`target_chat_id`).
   - Si `commit_hash` est fourni, lit l'état exact du fichier à ce commit sans impacter HEAD.
@@ -64,14 +86,17 @@ Le Codex ECHO gère des fichiers texte, code et médias répartis en 4 espaces d
 
 ### 3.2 Recherche Spatiale / Temporelle & Restauration
 - `search_codex` :
-  - **Mode Spatial (`trace_history=False`, défaut)** : Recherche `query` (chaîne ou regex si `is_regex=True`) dans les fichiers actuels (ou au commit `commit_hash`), avec filtrage optionnel par chemins `target_paths=["dossier/fichier.py"]`.
-  - **Mode Voyage Temporel / Pickaxe (`trace_history=True`)** : Parcourt l'historique Git (jusqu'à `history_depth` commits) et retourne tous les diffs (`+` / `-`) où le motif `query` a été ajouté ou supprimé.
+  - **Mode Spatial (`trace_history=False`, défaut)** : Parcourt récursivement tous les sous-dossiers (`list_all_files`) et recherche `query` (chaîne ou regex si `is_regex=True`) dans les fichiers actuels (ou au commit `commit_hash`), avec filtrage optionnel par chemins normalisés `target_paths=["dossier/fichier.py"]`.
+  - **Mode Voyage Temporel / Pickaxe (`trace_history=True`)** : Parcourt récursivement l'arborescence et l'historique Git (jusqu'à `history_depth` commits) et retourne tous les diffs (`+` / `-`) où le motif `query` a été ajouté ou supprimé.
 - `history_codex` :
   - Liste l'historique des commits Git (`hash`, message, date) globalement ou filtré sur `filename` (conseillé : `limit <= 100`).
 - `restore_codex` :
   - Restaure `filename` à l'état exact du commit `commit_hash` en créant un nouveau commit de restauration.
-- `delete_codex` :
-  - Supprime un fichier ou dossier du Codex et purge son entrée du Registre Unifié.
+  - **Exclusion des espaces non versionnés** : Tout appel sur un espace non versionné (ex: `sandbox`) est refusé avec `error_code="workspace_not_versioned"`.
+- `delete_codex(filename, workspace="main", recursive=False)` :
+  - Supprime un fichier ou un dossier vide dans `main` ou `sandbox`.
+  - Exige `recursive=True` pour supprimer un dossier non vide (`error_code="directory_not_empty"` sinon).
+  - Purge récursivement `echo_resources` dans `main` tout en préservant les éventuels fichiers uploadés liés au Vault.
 
 ---
 

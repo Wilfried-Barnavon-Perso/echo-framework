@@ -11,13 +11,15 @@
 	import DestinationDropdown from '$lib/components/automations/DestinationDropdown.svelte';
 	import { getFolders } from '$lib/apis/folders';
 	import { getChannels } from '$lib/apis/channels';
-	import { channels, folders } from '$lib/stores';
+	import { channels, config, folders, models } from '$lib/stores';
 
 	import {
 		createAutomation,
 		updateAutomationById,
 		type AutomationForm,
-		type AutomationResponse
+		type AutomationResponse,
+		type AutomationTarget,
+		type AutomationTargetType
 	} from '$lib/apis/automations';
 
 	const i18n = getContext('i18n');
@@ -26,13 +28,19 @@
 	export let show = false;
 	export let automation: AutomationResponse | null = null;
 	export let cloneFrom: AutomationResponse | null = null;
+	export let defaultTargetType: 'chat' | 'existing_chat' | 'persistent_chat' = 'chat';
+	export let defaultChatId = '';
+	export let defaultChatTitle = '';
 
 	let name = '';
 	let prompt = '';
 	let model_id = '';
 	let folder_id = '';
-	let target_type: 'chat' | 'channel' = 'chat';
+	let target_type: AutomationTargetType = 'chat';
 	let channel_id = '';
+	let chat_id = '';
+	let chat_title = '';
+	let chat_exists: boolean | null = null;
 	let is_active = true;
 
 	let loading = false;
@@ -51,6 +59,10 @@
 			toast.error($i18n.t('Channel is required'));
 			return;
 		}
+		if (target_type === 'existing_chat' && !chat_id) {
+			toast.error($i18n.t('Select a chat'));
+			return;
+		}
 		if (scheduleDropdown?.frequency === 'ONCE') {
 			const scheduled = new Date(`${scheduleDropdown.onceDate}T${scheduleDropdown.onceTime}`);
 			if (scheduled <= new Date()) {
@@ -60,14 +72,24 @@
 		}
 		loading = true;
 		try {
+			const target: AutomationTarget =
+				target_type === 'channel'
+					? { type: 'channel', channel_id }
+					: target_type === 'existing_chat'
+						? { type: 'existing_chat', chat_id }
+						: target_type === 'persistent_chat'
+							? { type: 'persistent_chat', chat_id: chat_id || null }
+							: { type: 'chat' };
+
 			const form: AutomationForm = {
 				name: name.trim(),
-				folder_id: target_type === 'channel' ? null : folder_id || null,
+				folder_id:
+					target_type === 'channel' || target_type === 'existing_chat' ? null : folder_id || null,
 				data: {
 					prompt: prompt.trim(),
 					model_id: model_id.trim(),
 					rrule: scheduleDropdown.buildRrule(),
-					target: target_type === 'channel' ? { type: 'channel', channel_id } : { type: 'chat' }
+					target
 				},
 				is_active
 			};
@@ -97,7 +119,7 @@
 			if (res) folders.set(res);
 			foldersLoaded = true;
 		}
-		if (!channelsLoaded && ($channels ?? []).length === 0) {
+		if ($config?.features?.enable_channels && !channelsLoaded && ($channels ?? []).length === 0) {
 			const res = await getChannels(localStorage.token).catch(() => null);
 			if (res) channels.set(res);
 			channelsLoaded = true;
@@ -108,8 +130,11 @@
 			prompt = automation.data.prompt;
 			model_id = automation.data.model_id;
 			folder_id = automation.folder_id ?? '';
-			target_type = automation.data.target?.type === 'channel' ? 'channel' : 'chat';
+			target_type = automation.data.target?.type ?? 'chat';
 			channel_id = automation.data.target?.channel_id ?? '';
+			chat_id = automation.data.target?.chat_id ?? '';
+			chat_title = automation.target_chat_title ?? '';
+			chat_exists = automation.target_chat_exists ?? null;
 			is_active = automation.is_active;
 			if (scheduleDropdown) {
 				scheduleDropdown.parseRrule(automation.data.rrule);
@@ -121,12 +146,21 @@
 			folder_id = ($folders ?? []).some((folder) => folder.id === cloneFrom.folder_id)
 				? (cloneFrom.folder_id ?? '')
 				: '';
-			target_type = cloneFrom.data.target?.type === 'channel' ? 'channel' : 'chat';
+			target_type = cloneFrom.data.target?.type ?? 'chat';
 			channel_id = ($channels ?? []).some(
 				(channel) => channel.id === cloneFrom.data.target?.channel_id
 			)
 				? (cloneFrom.data.target?.channel_id ?? '')
 				: '';
+			if (target_type === 'persistent_chat') {
+				chat_id = '';
+				chat_title = '';
+				chat_exists = null;
+			} else {
+				chat_id = cloneFrom.data.target?.chat_id ?? '';
+				chat_title = cloneFrom.target_chat_title ?? '';
+				chat_exists = cloneFrom.target_chat_exists ?? null;
+			}
 			is_active = true;
 			if (scheduleDropdown) {
 				scheduleDropdown.parseRrule(cloneFrom.data.rrule);
@@ -136,9 +170,25 @@
 			prompt = '';
 			model_id = '';
 			folder_id = '';
-			target_type = 'chat';
+			target_type = defaultTargetType;
 			channel_id = '';
+			chat_id = defaultTargetType === 'existing_chat' ? defaultChatId : '';
+			chat_title = defaultTargetType === 'existing_chat' ? defaultChatTitle : '';
+			chat_exists = defaultTargetType === 'existing_chat' && defaultChatId ? true : null;
 			is_active = true;
+
+			if (!model_id) {
+				const allModels = $models ?? [];
+				const echoModel = allModels.find((m) => m.id === 'echo_orchestrator');
+				if (echoModel) {
+					model_id = echoModel.id;
+				} else {
+					const visibleModels = allModels.filter((m) => !(m?.info?.meta?.hidden ?? false));
+					if (visibleModels.length === 1) {
+						model_id = visibleModels[0].id;
+					}
+				}
+			}
 		}
 	};
 
@@ -194,6 +244,9 @@
 					bind:target_type
 					bind:channel_id
 					bind:folder_id
+					bind:chat_id
+					bind:chat_title
+					bind:chat_exists
 					folders={$folders}
 					channels={$channels}
 					side="top"

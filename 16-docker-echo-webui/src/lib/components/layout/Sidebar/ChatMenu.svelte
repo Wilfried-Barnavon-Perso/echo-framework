@@ -14,7 +14,7 @@
 		getChatPinnedStatusById,
 		toggleChatPinnedStatusById
 	} from '$lib/apis/chats';
-	import { chats, folders, settings, theme, user, visibleControls } from '$lib/stores';
+	import { chats, config, folders, settings, theme, user, visibleControls } from '$lib/stores';
 	import { createMessagesList } from '$lib/utils';
 	import { getOutputText } from '$lib/components/chat/Messages/structuredOutput';
 	import ArchiveBoxIcon from '$lib/components/icons/ArchiveBox.svelte';
@@ -38,6 +38,7 @@
 	export let archiveChatHandler: Function;
 	export let renameHandler: Function;
 	export let deleteHandler: Function;
+	export let scheduleAutomationHandler: (() => void) | null = null;
 	export let onOpen: () => void = () => {};
 	export let onClose: Function;
 	export let markUnreadHandler: Function = () => {};
@@ -352,6 +353,33 @@
 
 	<div slot="content">
 		<DropdownMenu className="select-none min-w-[12.5rem] transition">
+			{#if !readonly && scheduleAutomationHandler && chatId && !chatId.startsWith('local:') && ($config?.features as any)?.enable_automations && ($user?.role === 'admin' || ($user?.permissions?.features?.automations ?? false))}
+				<button
+					role="menuitem"
+					draggable="false"
+					class="flex h-[1.6875rem] gap-2 items-center rounded-xl px-2 text-[0.8125rem] cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900 w-full"
+					on:click={() => {
+						show = false;
+						scheduleAutomationHandler?.();
+					}}
+				>
+					<svg
+						class="size-3.5 shrink-0"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<circle cx="12" cy="12" r="10" />
+						<polyline points="12 6 12 12 16 14" />
+					</svg>
+					<div class="flex items-center">{$i18n.t('Schedule automation')}</div>
+				</button>
+			{/if}
+
 			{#if !readonly && ($user?.role === 'admin' || ($user.permissions?.chat?.share ?? true))}
 				<button
 					role="menuitem"

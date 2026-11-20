@@ -2,16 +2,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 6.7.20.1
+version: 6.10.0.1
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.10.0.1: Détection automation_id, neutralisation du salut /help en 1er tour automatisé et injection de directive AEC autonome.
 # 6.7.20.1: Détection déterministe des commandes / ECHO en tête de requête, émission de AEC_commande (Priorité 4) et alignement de la directive d'accueil sur /help.
 # 6.7.16.1: Réutilisation inter-chats zéro-LLM des résumés VECTORIZED_SUM_UP d'identity.db avec clonage des points Qdrant vers la session cible.
 # 6.7.5.1: Préservation intacte de content: None dans outlet et lectures None-safe dans inlet.
 # 6.6.3.1: Lecture de canonical_gender (identity.db) et transmission à AEC_identite lorsque ENABLE_USER_NAME est actif.
-# 6.1.0.1: Prise en charge des fichiers pré-positionnés par EchoStorageProvider (pending_ingestion) et déduplication.
 
 
 from pydantic import BaseModel, Field
@@ -381,6 +381,9 @@ class Filter:
                 rich_parts.append({"text": EchoAEC.render_location_context(final_loc)})
 
                 # === AEC : Directive d'Initialisation de Session ou Montée de Version ===
+                user_msg_meta = ((meta.get("user_message") or {}).get("meta") or {}) if isinstance(meta, dict) else {}
+                automation_id = (meta.get("automation_id") if isinstance(meta, dict) else None) or user_msg_meta.get("automation_id")
+                automation_name = user_msg_meta.get("automation_name") or ""
                 directive_to_inject = None
                 if idx == len(msgs) - 1:
                     if chat_id and state_manager:
@@ -393,12 +396,13 @@ class Filter:
                         )
 
                         if is_new_session:
-                            directive_to_inject = EchoAEC.render_directive(
-                                "Directive d'Initialisation de Session : Saluer l'Utilisateur et présenter "
-                                f"le Framework (nom vernaculaire Écho, nom technique ECHO, version active {version}, "
-                                "missions fondamentales), consulter silencieusement les Méta-Artéfacts si pertinent, "
-                                "recommander la commande /help, puis répondre à la requête de l'Utilisateur."
-                            )
+                            if not automation_id:
+                                directive_to_inject = EchoAEC.render_directive(
+                                    "Directive d'Initialisation de Session : Saluer l'Utilisateur et présenter "
+                                    f"le Framework (nom vernaculaire Écho, nom technique ECHO, version active {version}, "
+                                    "missions fondamentales), consulter silencieusement les Méta-Artéfacts si pertinent, "
+                                    "recommander la commande /help, puis répondre à la requête de l'Utilisateur."
+                                )
                             if version != "##ECHO_VERSION##":
                                 state_manager.save_session_setting("last_framework_version", version)
                         elif is_upgrade:
@@ -407,7 +411,7 @@ class Filter:
                                 "Notifier succinctement la mise à jour de l'ancienne version à la nouvelle avant de traiter la requête de l'Utilisateur."
                             )
                             state_manager.save_session_setting("last_framework_version", version)
-                    elif tour_conversation == 1:
+                    elif tour_conversation == 1 and not automation_id:
                         directive_to_inject = EchoAEC.render_directive(
                             "Directive d'Initialisation de Session : Saluer l'Utilisateur et présenter "
                             f"le Framework (nom vernaculaire Écho, nom technique ECHO, version active {version}, "
@@ -417,6 +421,14 @@ class Filter:
 
                 if directive_to_inject:
                     rich_parts.append({"text": directive_to_inject})
+
+                if idx == len(msgs) - 1 and automation_id:
+                    auto_label = f" « {automation_name} »" if automation_name else ""
+                    rich_parts.append({
+                        "text": EchoAEC.render_directive(
+                            f"Exécution autonome d'automatisation planifiée{auto_label} (id: {automation_id}) : l'Utilisateur n'est pas présent en interactif. Exécuter intégralement la consigne de façon autonome, ne pas saluer ni invoquer d'outil interactif bloquant (ask_user_input, confirmations modales), et produire un compte-rendu direct et exploitable."
+                        )
+                    })
 
                 if idx == len(msgs) - 1 and user_raw_texts:
                     from echo_core import extract_leading_slash_commands

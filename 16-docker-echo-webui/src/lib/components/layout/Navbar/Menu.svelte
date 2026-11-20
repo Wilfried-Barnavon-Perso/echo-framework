@@ -16,6 +16,7 @@
 		temporaryChatEnabled,
 		theme,
 		user,
+		config,
 		settings,
 		folders,
 		showEmbeds,
@@ -50,6 +51,7 @@
 
 	export let archiveChatHandler: Function;
 	export let deleteChatHandler: Function;
+	export let scheduleAutomationHandler: (() => void) | null = null;
 
 	// export let tagHandler: Function;
 
@@ -406,6 +408,32 @@
 
 			{#if scrollToTop}
 				<hr class="border-gray-50/30 dark:border-gray-800/30 mx-1 my-0.5" />
+			{/if}
+
+			{#if !readOnly && !$temporaryChatEnabled && scheduleAutomationHandler && chat?.id && !chat.id.startsWith('local:') && ($config?.features as any)?.enable_automations && ($user?.role === 'admin' || ($user?.permissions?.features?.automations ?? false))}
+				<button
+					draggable="false"
+					class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[0.8125rem] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+					on:click={() => {
+						show = false;
+						scheduleAutomationHandler?.();
+					}}
+				>
+					<svg
+						class="size-3.5 shrink-0"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="1.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						aria-hidden="true"
+					>
+						<circle cx="12" cy="12" r="10" />
+						<polyline points="12 6 12 12 16 14" />
+					</svg>
+					<div class="flex items-center">{$i18n.t('Schedule automation')}</div>
+				</button>
 			{/if}
 
 			{#if !readOnly && !$temporaryChatEnabled && ($user?.role === 'admin' || ($user.permissions?.chat?.share ?? true))}

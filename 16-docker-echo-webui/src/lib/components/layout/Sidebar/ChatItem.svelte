@@ -53,6 +53,7 @@
 	import ChatMenu from './ChatMenu.svelte';
 	import DeleteConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
 	import ShareChatModal from '$lib/components/chat/ShareChatModal.svelte';
+	import AutomationModal from '$lib/components/AutomationModal.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import DragGhost from '$lib/components/common/DragGhost.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
@@ -246,6 +247,7 @@
 	};
 
 	let showShareChatModal = false;
+	let showAutomationModal = false;
 	let confirmEdit = false;
 	let menuButtonElement: HTMLButtonElement;
 
@@ -651,6 +653,15 @@
 
 <ShareChatModal bind:show={showShareChatModal} chatId={id} />
 
+{#if showAutomationModal}
+	<AutomationModal
+		bind:show={showAutomationModal}
+		defaultTargetType="existing_chat"
+		defaultChatId={id}
+		defaultChatTitle={title}
+	/>
+{/if}
+
 <DeleteConfirmDialog
 	bind:show={showDeleteConfirm}
 	title={$i18n.t('Delete chat?')}
@@ -898,6 +909,9 @@
 						{renameHandler}
 						deleteHandler={() => {
 							showDeleteConfirm = true;
+						}}
+						scheduleAutomationHandler={() => {
+							showAutomationModal = true;
 						}}
 						{markUnreadHandler}
 						onOpen={() => {

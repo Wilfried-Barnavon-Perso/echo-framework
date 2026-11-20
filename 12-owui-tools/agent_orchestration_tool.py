@@ -1,16 +1,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 6.7.7.1
+version: 6.10.0.1
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.10.0.1: Mutualisation du blocage headless/automatisation via get_headless_block_reason dans delete_user_skill.
 # 6.7.7.1: Migration vers le découpage en tours d'outils (COUNCIL_EXPERT_MAX_TOOL_TURNS_PER_ROUND = 3 [0..6], ECHO_COUNCIL_ROUND_TIMEOUT_SEC = 120, ECHO_AUTONOMOUS_MAX_TURNS = 15, ECHO_AUTONOMOUS_TIMEOUT_SEC = 300).
 # 6.7.1.2: Câblage run_cognitive_step sur synthèse/critique/consolidation, role_order déterministe, normalisation _normalize_workers_input et fail-fast Phase 1.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Câblage de consult_council et consult_supervised_workers sur EchoSubagentController et suppression de list_councils, close_council, list_supervised_tasks et close_supervised_task.
-# 6.6.2.1: Persistance save_subagent_meta et save_thread_step pour la synthèse consult_council et les phases critique/consolidation de consult_supervised_workers.
 
 import sys
 import orjson as json
@@ -37,6 +37,7 @@ from echo_constants import (
     ECHO_COUNCIL_ROUND_TIMEOUT_SEC,
     ECHO_LLM_CALL_TIMEOUT,
     get_generation_config,
+    get_headless_block_reason,
 )
 from echo_skills import get_all_skills, get_skill_content, save_skill, parse_skill_metadata, delete_skill
 from echo_paths import sanitize_echo_id, get_user_skill_lock
@@ -271,9 +272,9 @@ class Tools:
         if __event_emitter__:
             await events.status(f"Validation requise pour supprimer le skill {skill_id}...", done=False)
 
-        from echo_constants import ECHO_SUBAGENT_CONTEXT
-        if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
-            return "Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de requérir une confirmation de suppression."
+        block_reason = get_headless_block_reason(__metadata__)
+        if block_reason:
+            return f"Erreur : {block_reason}"
 
         user_confirmed = await events.call_execute(js_code)
 

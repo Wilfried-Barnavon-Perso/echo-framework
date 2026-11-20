@@ -1,18 +1,18 @@
 """
 ================================================================================
 MODULE : ECHO MCP BROKER
-VERSION : 6.6.21.1
+VERSION : 6.11.0.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-11-16
+DATE MAJ : 2026-11-20
 ===============================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.11.0.1: Ajout route streaming POST /upload_drive, factorisation _build_broker_exception_response et précision Google People API [Contacts].
 # 6.6.21.1: Ajout du schéma 'ssh' dans SERVICE_SCHEMAS pour l'Identity Vault et ssh_executor.
 # 5.239.12.1: Directives microsoft_365 MAJ (Contacts.ReadWrite optionnel, complete_authentication sans flow_cache).
 # 5.231.37.1: Extraction de x-openwebui-chat-id dans WebUIUserMiddleware (chat_id_var) et compatibilité FastMCP.
 # 5.231.20.1: Extraction et décodage de l'en-tête x-echo-credentials dans WebUIUserMiddleware (credentials_var).
-# 5.228.9.2: Schéma jobs_omnisearch enrichi avec directives APEC (DataDome), LinkedIn (li_at) et WTTJ.
 import base64
 import json
 import logging
@@ -26,7 +26,8 @@ except ImportError:
 from mcp.server.transport_security import TransportSecuritySettings
 
 from core.security import user_id_var, chat_id_var, credentials_var
-from modules.m5_proxy_mcp import proxy_mcp_request, AuthRequiredError
+from modules.m5_proxy_mcp import proxy_mcp_request, AuthRequiredError, _parse_and_validate_credentials
+from modules.m5_providers import get_service_provider
 from modules.m2_jobs_omnisearch import setup_jobs_omnisearch_mcp
 from modules.m3_corporate import register_corporate_tools
 from modules.m4_academic import register_academic_tools
@@ -166,7 +167,7 @@ SERVICE_SCHEMAS = {
             "de l'Utilisateur.\n"
             "2. PRÉREQUIS GOOGLE CLOUD CONSOLE (SI PREMIÈRE CONFIGURATION) :\n"
             "   a. L'Utilisateur DOIT créer un projet sur Google Cloud Console et activer les APIs requises "
-            "(Calendar, Gmail, Drive, Contacts, Sheets, Docs, Slides, Tasks).\n"
+            "(Calendar, Gmail, Drive, Google People API [Contacts], Sheets, Docs, Slides, Tasks).\n"
             "   b. Dans 'Identifiants', créer un ID client OAuth de type 'Application Web' et déclarer "
             "impérativement l'URI de redirection autorisée : https://developers.google.com/oauthplayground\n"
             "3. PÉRENNITÉ DU JETON (ANTI-EXPIRATION 7 JOURS) :\n"
@@ -440,47 +441,101 @@ app.add_middleware(WebUIUserMiddleware)
 # Nouveau routeur pour proxy_mcp
 
 
-async def proxy_mcp_route(request: Request):
-    payload = {}
-    try:
-        payload = await request.json()
-        result = await proxy_mcp_request(payload)
-        return JSONResponse(result)
-    except AuthRequiredError as ae:
-        logger.warning(f"Erreur de prérequis Proxy MCP : {ae}")
-        service_name = payload.get("service", "")
+def _build_broker_exception_response(exc: Exception, service_name: str = "") -> JSONResponse:
+    if isinstance(exc, AuthRequiredError):
+        logger.warning(f"Erreur de prérequis Proxy MCP : {exc}")
         schema_def = SERVICE_SCHEMAS.get(service_name, {})
         instructions = schema_def.get("user_required_instructions", "")
         return JSONResponse({
             "status": "error",
             "source": "auth_required",
             "service": service_name,
-            "message": str(ae),
-            "user_required_instructions": instructions
+            "message": str(exc),
+            "user_required_instructions": instructions,
         }, status_code=400)
+
+    if isinstance(exc, ValueError):
+        return JSONResponse({
+            "status": "error",
+            "source": "validation_error",
+            "service": service_name,
+            "message": str(exc),
+        }, status_code=400)
+
+    logger.exception("Erreur Proxy MCP globale :")
+    status_code = 500
+    message = repr(exc) if not str(exc).strip() else str(exc)
+    error_payload = {"status": "error", "source": "broker_internal", "message": message}
+
+    if type(exc).__name__ == "HTTPStatusError":
+        status_code = 502
+        remote_status = getattr(exc.response, "status_code", "Inconnu") if hasattr(exc, "response") else "Inconnu"
+        remote_url = getattr(exc.request, "url", "Inconnue") if hasattr(exc, "request") else "Inconnue"
+        message = f"La cible distante ({remote_url}) a rejeté la requête avec le code {remote_status}."
+        error_payload = {
+            "status": "error",
+            "source": "remote_server",
+            "http_code": remote_status,
+            "message": message,
+        }
+
+    return JSONResponse(error_payload, status_code=status_code)
+
+
+async def proxy_mcp_route(request: Request):
+    payload = {}
+    try:
+        payload = await request.json()
+        result = await proxy_mcp_request(payload)
+        return JSONResponse(result)
     except Exception as e:
-        logger.exception("Erreur Proxy MCP globale :")
+        return _build_broker_exception_response(e, service_name=payload.get("service", ""))
 
-        status_code = 500
-        message = repr(e) if not str(e).strip() else str(e)
-        error_payload = {"status": "error", "source": "broker_internal", "message": message}
 
-        # Interception dynamique de l'erreur httpx/httpx2 (HTTPStatusError)
-        if type(e).__name__ == 'HTTPStatusError':
-            status_code = 502  # Bad Gateway
-            remote_status = getattr(e.response, "status_code", "Inconnu") if hasattr(e, "response") else "Inconnu"
-            remote_url = getattr(e.request, "url", "Inconnue") if hasattr(e, "request") else "Inconnue"
-            message = f"La cible distante ({remote_url}) a rejeté la requête avec le code {remote_status}."
-            error_payload = {
-                "status": "error",
-                "source": "remote_server",
-                "http_code": remote_status,
-                "message": message
-            }
+async def upload_drive_route(request: Request):
+    service_name = ""
+    try:
+        raw_meta = request.headers.get("x-echo-upload-meta", "").strip()
+        if not raw_meta:
+            raise ValueError("En-tête x-echo-upload-meta manquant.")
+        meta = json.loads(base64.b64decode(raw_meta).decode("utf-8"))
+        if not isinstance(meta, dict):
+            raise ValueError("Métadonnées x-echo-upload-meta invalides.")
 
-        return JSONResponse(error_payload, status_code=status_code)
+        user_id = str(meta.get("user_id") or user_id_var.get() or "").strip()
+        if not user_id or user_id == "anonymous":
+            raise ValueError("user_id obligatoire et authentifié pour l'upload Drive.")
+
+        service_name = str(meta.get("service") or "").strip()
+        if service_name not in ("google_workspace", "microsoft_365"):
+            raise ValueError(f"Service non supporté pour /upload_drive : {service_name}")
+
+        creds_hdr = request.headers.get("x-echo-credentials", "").strip()
+        creds_str = base64.b64decode(creds_hdr).decode("utf-8") if creds_hdr else (credentials_var.get() or "")
+        _, credentials = _parse_and_validate_credentials(service_name, creds_str)
+
+        provider = get_service_provider(service_name)
+        result = await provider.upload_file_stream(
+            user_id=user_id,
+            chat_id=str(meta.get("chat_id") or chat_id_var.get() or ""),
+            credentials=credentials,
+            byte_stream=request.stream(),
+            filename=str(meta.get("filename") or ""),
+            total_size=int(meta.get("total_size") or 0),
+            mime_type=str(meta.get("mime_type") or "application/octet-stream"),
+            folder_id=meta.get("folder_id"),
+            overwrite_file_id=meta.get("overwrite_file_id"),
+            convert_to_native=bool(meta.get("convert_to_native", False)),
+            conflict_behavior=str(meta.get("conflict_behavior") or "replace"),
+            account_id=meta.get("account_id"),
+        )
+        return JSONResponse(result)
+    except Exception as e:
+        return _build_broker_exception_response(e, service_name=service_name)
+
 
 app.add_route("/proxy_mcp", proxy_mcp_route, methods=["POST"])
+app.add_route("/upload_drive", upload_drive_route, methods=["POST"])
 
 if __name__ == "__main__":
     # Démarrage du serveur sur le port 8000

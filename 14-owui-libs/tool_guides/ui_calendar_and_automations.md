@@ -1,11 +1,11 @@
 ---
 domain_id: ui_calendar_and_automations
-version: 6.7.10.1
-updated_at: 2026-11-19
-name: Agenda de l'Interface Utilisateur, Automatisations CRON (RRULE), Dossiers UI, Étiquettes, Saisie Interactive & Lecture des Sorties Délestées
-description: Gestion complète du calendrier de l'Interface Utilisateur, programmation de tâches de fond CRON (syntaxe RRULE iCalendar), dossiers UI, exploration des étiquettes (tags), ask_user_input, wait_timer et exploitation paginée/purge des sorties d'outils délestées (read_tool_output, delete_tool_output).
-tools: [search_ui_calendar_events, list_ui_calendar_events, read_ui_calendar_events, create_ui_calendar_event, update_ui_calendar_event, delete_ui_calendar_event, create_ui_automation, update_ui_automation, delete_ui_automation, read_ui_automations, list_ui_automations, list_ui_folders, list_ui_tags, ask_user_input, wait_timer, read_tool_output, delete_tool_output]
-keywords: [calendrier, agenda, événement, rendez-vous, calendar, automation, cron, rrule, dtstart, ask_user_input, wait_timer, dossier, folder, tag, etiquette, tools_output, output_id, truncated, read_tool_output, delete_tool_output]
+version: 6.10.0.1
+updated_at: 2026-11-20
+name: Agenda de l'Interface Utilisateur, Automatisations CRON (RRULE), Dossiers UI, Étiquettes, Saisie Interactive, Tâches UI, Historique Chats & Lecture des Sorties Délestées
+description: Gestion complète du calendrier de l'Interface Utilisateur, programmation de tâches de fond CRON (syntaxe RRULE iCalendar), dossiers UI, exploration des étiquettes (tags), ask_user_input, wait_timer, checklist UI (create_ui_tasks, update_ui_task), recherche/lecture SQLite de conversations (search_ui_chats, view_ui_chat) et exploitation paginée/purge des sorties d'outils délestées (read_tool_output, delete_tool_output).
+tools: [search_ui_calendar_events, list_ui_calendar_events, read_ui_calendar_events, create_ui_calendar_event, update_ui_calendar_event, delete_ui_calendar_event, create_ui_automation, update_ui_automation, toggle_ui_automation, delete_ui_automation, read_ui_automations, list_ui_automations, list_ui_folders, list_ui_tags, ask_user_input, wait_timer, create_ui_tasks, update_ui_task, search_ui_chats, view_ui_chat, read_tool_output, delete_tool_output]
+keywords: [calendrier, agenda, événement, rendez-vous, calendar, automation, cron, rrule, dtstart, toggle_ui_automation, ask_user_input, wait_timer, create_ui_tasks, update_ui_task, search_ui_chats, view_ui_chat, dossier, folder, tag, etiquette, tools_output, output_id, truncated, read_tool_output, delete_tool_output]
 ---
 
 # MANUEL OPÉRATIONNEL : AGENDA UI, AUTOMATISATIONS CRON & INTERACTIONS (`ui_calendar_and_automations`)
@@ -31,7 +31,13 @@ Toutes les dates doivent être alignées sur la référence temporelle `<artifac
 ---
 
 ## 2. AUTOMATISATIONS & TÂCHES DE FOND CRON (`*_ui_automation*`)
-Les automatisations programment l'exécution autonome d'un `prompt` par l'Orchestrateur, chaque déclenchement générant un nouveau chat dans le dossier `target_folder_name` (créé automatiquement s'il n'existe pas).
+Les automatisations programment l'exécution autonome d'un `prompt` par l'Orchestrateur sans opérateur interactif (`ask_user_input` et modales bloquées). Trois modes de ciblage (`target_mode`) sont disponibles :
+- **`new_chat`** *(défaut)* : Chaque déclenchement crée un nouveau chat dans `target_folder_name` (créé automatiquement s'il n'existe pas).
+- **`existing_chat`** : Exécute les déclenchements dans une conversation existante (`target_chat_id`, ou `"current"` pour cibler la conversation active hors chat temporaire `local:`). Aucun dossier n'est créé. Si le chat cible est supprimé, l'automatisation est automatiquement mise en pause (`is_active=False`).
+- **`persistent_chat`** : Crée un chat unique lors du premier déclenchement (dans `target_folder_name`) puis réutilise ce même chat pour tous les déclenchements suivants. En cas de suppression ultérieure du chat cible, l'automatisation est mise en pause.
+
+### 2.0 File d'attente, Coalescing & Résilience
+- **Coalescing par `automation_id`** : Un déclenchement ne s'exécute pas en parallèle de lui-même. Si un run est déjà en cours, les déclenchements suivants sont mis en file d'attente et fusionnés (coalescing) jusqu'à `ECHO_AUTOMATION_QUEUE_MAX_WAIT_SEC` (`10800s` / 3 heures) avant expiration.
 
 ### 2.1 Règles Strictes de Syntaxe `rrule` (iCalendar RFC 5545)
 L'argument `rrule` dans `create_ui_automation` et `update_ui_automation` **DOIT IMPÉRATIVEMENT** être une chaîne iCalendar valide (et **NON** une expression cron Unix à 5 étoiles) :
@@ -43,10 +49,11 @@ L'argument `rrule` dans `create_ui_automation` et `update_ui_automation` **DOIT 
   - Toutes les heures : `"RRULE:FREQ=HOURLY;INTERVAL=1"`
 
 ### 2.2 Spécifications des Fonctions d'Automatisation, Dossiers & Étiquettes
-- `create_ui_automation` : Crée la tâche planifiée (`name`, `prompt`, `rrule`, `target_folder_name="Automations"`).
-- `list_ui_automations` : Liste les automatisations existantes (`id`, `name`, `rrule`, `is_active`, `next_run_at`).
-- `read_ui_automations` : Inspecte la configuration intégrale (`prompt` complet, `folder_id`) d'une liste d'`automation_ids` avant modification.
-- `update_ui_automation` : Met à jour uniquement les champs fournis.
+- `create_ui_automation` : Crée la tâche planifiée (`name`, `prompt`, `rrule`, `target_folder_name="Automations"`, `target_mode="new_chat"`, `target_chat_id=None`).
+- `list_ui_automations` : Liste les automatisations existantes (`id`, `name`, `folder_id`, `rrule`, `target`, `is_active`, `next_run_at`).
+- `read_ui_automations` : Inspecte la configuration intégrale (`prompt` complet, `folder_id`, `target`) d'une liste d'`automation_ids` avant modification.
+- `update_ui_automation` : Met à jour uniquement les champs fournis (`name`, `prompt`, `rrule`, `target_folder_name`, `target_mode`, `target_chat_id`).
+- `toggle_ui_automation(automation_id)` : Met en pause ou réactive une automatisation existante (`is_active`) tout en recalculant la prochaine exécution (`next_run_ns`).
 - `delete_ui_automation` : Supprime la tâche planifiée.
 - `list_ui_folders` : Retourne tous les dossiers de l'Interface Utilisateur (`[{"id": "...", "name": "..."}]`).
 - `list_ui_tags(global_scope=False, chat_id=None)` :
@@ -58,10 +65,11 @@ L'argument `rrule` dans `create_ui_automation` et `update_ui_automation` **DOIT 
 ---
 
 ## 3. INTERACTION DIRECTE & TEMPORISATION (`ask_user_input`, `wait_timer`)
-- `ask_user_input(question, input_type="text", options=None, timeout_seconds=300)` :
-  - Interroge l'Utilisateur via modale interactive (**interdit depuis un sous-agent headless**).
-  - `input_type="text"` : Saisie libre (avec suggestions rapides si `options=["Choix A", "Choix B"]` est fourni).
-  - `input_type="confirm"` : Approbation binaire (`Oui` / `Non`).
+- `ask_user_input(question="", input_type="text", options=None, timeout_seconds=300, questions=None)` :
+  - Affiche le composant Svelte natif `AskUserCard` dans l'interface du chat principal (**strictement interdit depuis un sous-agent headless**).
+  - Mode `input_type="text"` : Saisie libre pleine largeur (avec suggestions rapides si `options=["Choix A", "Choix B"]` ou `[{"label": "...", "description": "...", "recommended": true}]` est fourni).
+  - Mode `input_type="confirm"` : Approbation binaire (`Oui` / `Non`, sans saisie libre).
+  - Mode `questions=[...]` : Questionnaire multi-étapes (1 à 5 questions structurées avec `id`, `header`, `question`, `options`, `allow_other`, `show_recommended`). Retourne `{"status": "success", "answers": {id: valeur}}`.
 - `wait_timer(seconds)` :
   - Met en pause l'exécution de `1` à `300` secondes. **Strictement limité à 1 seul appel par boucle agentique**.
 
@@ -73,3 +81,13 @@ L'argument `rrule` dans `create_ui_automation` et `update_ui_automation` **DOIT 
   - Restitue `has_more` et `next_start_line` pour l'enchaînement paginé.
 - `delete_tool_output(output_id)` :
   - Supprime un fichier `tools_output/{output_id}.txt` spécifique après exploitation, ou purge l'intégralité du répertoire `tools_output/` de la session courante si `output_id="all"` ou `"*"`.
+
+---
+
+## 5. CHECKLIST UI TEMPS RÉEL & HISTORIQUE DES CONVERSATIONS (`*_ui_task*`, `*_ui_chat*`)
+- **Checklist UI (`create_ui_tasks`, `update_ui_task`)** :
+  - Réservée à l'Orchestrateur du chat principal (**interdite aux sous-agents headless**).
+  - Usage : suivi visuel léger des étapes d'une tâche courante dans l'interface (`pending`, `in_progress`, `completed`, `cancelled`), distinct de `strategic_planner` (planification/exécution persistée complexe).
+- **Recherche & Lecture SQLite des Chats (`search_ui_chats`, `view_ui_chat`)** :
+  - `search_ui_chats(query, count=5, start_timestamp=None, end_timestamp=None)` : Recherche exacte par titre et contenu en base SQLite (exclut le chat courant). Complémentaire à `search_sessions_context` (recherche sémantique Qdrant).
+  - `view_ui_chat(chat_id)` : Restitue l'historique chronologique complet d'une conversation précédente identifiée par `search_ui_chats`.

@@ -1867,6 +1867,17 @@ class ChatTable:
             result = await session.execute(select(Chat.id, Chat.user_id).filter(Chat.id.in_(chat_ids)))
             return dict(result.all())
 
+    async def get_chat_titles_by_ids_and_user_id(
+        self, chat_ids: list[str], user_id: str, db: AsyncSession | None = None
+    ) -> dict[str, str]:
+        if not chat_ids:
+            return {}
+        async with get_async_db_context(db) as session:
+            result = await session.execute(
+                select(Chat.id, Chat.title).filter(Chat.id.in_(chat_ids), Chat.user_id == user_id)
+            )
+            return {cid: (title or '') for cid, title in result.all()}
+
     async def get_chats_by_model_id(
         self,
         model_id: str,
@@ -2846,6 +2857,11 @@ class ChatTable:
     async def delete_chat_by_id(self, id: str, db: AsyncSession | None = None) -> bool:
         try:
             async with get_async_db_context(db) as session:
+                await session.execute(
+                    update(AutomationRun)
+                    .filter_by(chat_id=id, status='queued')
+                    .values(status='error', error='Target chat was deleted.')
+                )
                 await session.execute(update(AutomationRun).filter_by(chat_id=id).values(chat_id=None))
                 await session.execute(delete(ChatMessage).filter_by(chat_id=id))
                 recipients = await delete_resource_comments('chat', select(Chat.id).filter_by(id=id), db=session)
@@ -2863,6 +2879,11 @@ class ChatTable:
     async def delete_chat_by_id_and_user_id(self, id: str, user_id: str, db: AsyncSession | None = None) -> bool:
         try:
             async with get_async_db_context(db) as session:
+                await session.execute(
+                    update(AutomationRun)
+                    .filter_by(chat_id=id, status='queued')
+                    .values(status='error', error='Target chat was deleted.')
+                )
                 await session.execute(update(AutomationRun).filter_by(chat_id=id).values(chat_id=None))
                 await session.execute(delete(ChatMessage).filter_by(chat_id=id))
                 recipients = await delete_resource_comments(
@@ -2887,6 +2908,14 @@ class ChatTable:
                 await self.delete_shared_chats_by_user_id(user_id, db=session)
 
                 chat_id_subquery = select(Chat.id).filter_by(user_id=user_id).scalar_subquery()
+                await session.execute(
+                    update(AutomationRun)
+                    .filter(
+                        AutomationRun.chat_id.in_(select(Chat.id).filter_by(user_id=user_id)),
+                        AutomationRun.status == 'queued',
+                    )
+                    .values(status='error', error='Target chat was deleted.')
+                )
                 await session.execute(
                     update(AutomationRun)
                     .filter(AutomationRun.chat_id.in_(select(Chat.id).filter_by(user_id=user_id)))
@@ -2917,6 +2946,11 @@ class ChatTable:
         try:
             async with get_async_db_context(db) as session:
                 chat_ids_stmt = select(Chat.id).filter_by(user_id=user_id, folder_id=folder_id)
+                await session.execute(
+                    update(AutomationRun)
+                    .filter(AutomationRun.chat_id.in_(chat_ids_stmt), AutomationRun.status == 'queued')
+                    .values(status='error', error='Target chat was deleted.')
+                )
                 await session.execute(
                     update(AutomationRun).filter(AutomationRun.chat_id.in_(chat_ids_stmt)).values(chat_id=None)
                 )

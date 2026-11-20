@@ -1,16 +1,16 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 6.7.1.1
+version: 6.10.0.1
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.10.0.1: Mutualisation du blocage headless/automatisation via get_headless_block_reason dans process_plan.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 5.233.0.1: Unification du wrapper dans wrap_tool_output, décoration @echo_tool sur les 7 méthodes publiques et simplification des retours.
 # 5.232.5.1: Isolement et versionnement Git des plans et listes de tâches dans le workspace dédié CODEX_WORKSPACE_PLANS ("plans") avec synchronisation de last_commit dans echo_resources.
 # 5.232.1.1: Harmonisation des notifications UI (events.status) avec emojis distinctifs pour le cycle de vie du plan et des tâches.
-# 5.231.29.1: Alignement sur la constante SSOT CODEX_WORKSPACE_MAIN lors de l'indexation des plans dans echo_resources.
 
 import sys
 import uuid
@@ -42,6 +42,7 @@ from echo_constants import (
     PLANNER_MODEL_BUILD,
     PLANNER_MODEL_UPDATE,
     get_generation_config,
+    get_headless_block_reason,
 )
 
 
@@ -554,9 +555,8 @@ class Tools:
             return f"Erreur : Le plan doit être au statut 'proposed' pour être exécuté. Statut actuel: {current_status}"
 
         # 2. Modale de confirmation (Si non validé précédemment)
-        from echo_constants import ECHO_SUBAGENT_CONTEXT
-        is_subagent = ECHO_SUBAGENT_CONTEXT.get().get("is_subagent", False)
-        if not user_already_validated and not is_subagent:
+        block_reason = get_headless_block_reason(__metadata__)
+        if not user_already_validated and block_reason is None:
             msg_html = f'''
             <div style="margin-bottom:15px; font-size:15px; font-weight:600;">
                 Lancement du Plan : Confirmez-vous l'exécution de <b>{plan_id}</b> ?

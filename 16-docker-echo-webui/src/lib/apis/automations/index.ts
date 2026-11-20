@@ -5,9 +5,12 @@ export type AutomationTerminalConfig = {
 	cwd?: string;
 };
 
+export type AutomationTargetType = 'chat' | 'existing_chat' | 'persistent_chat' | 'channel';
+
 export type AutomationTarget = {
-	type: 'chat' | 'channel';
+	type: AutomationTargetType;
 	channel_id?: string | null;
+	chat_id?: string | null;
 };
 
 export type AutomationData = {
@@ -55,6 +58,8 @@ export type AutomationResponse = {
 	updated_at: number;
 	last_run: AutomationRunModel | null;
 	next_runs: number[] | null;
+	target_chat_title?: string | null;
+	target_chat_exists?: boolean | null;
 };
 
 export const getAutomationItems = async (

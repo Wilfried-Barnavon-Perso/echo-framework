@@ -22,6 +22,7 @@
 	import { goto } from '$app/navigation';
 
 	import ShareChatModal from '../chat/ShareChatModal.svelte';
+	import AutomationModal from '$lib/components/AutomationModal.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
 	import Menu from '$lib/components/layout/Navbar/Menu.svelte';
 	import AdjustmentsHorizontal from '../icons/AdjustmentsHorizontal.svelte';
@@ -83,6 +84,7 @@
 
 	let showShareChatModal = false;
 	let showDownloadChatModal = false;
+	let showAutomationModal = false;
 
 	let confirmEdit = false;
 	let chatTitle = '';
@@ -293,6 +295,9 @@
 			deleteChatHandler={() => {
 				deleteChatHandler(chat.id);
 			}}
+			scheduleAutomationHandler={() => {
+				showAutomationModal = true;
+			}}
 			{moveChatHandler}
 		>
 			<button
@@ -309,6 +314,15 @@
 {/snippet}
 
 <ShareChatModal bind:show={showShareChatModal} chatId={$chatId} />
+
+{#if showAutomationModal}
+	<AutomationModal
+		bind:show={showAutomationModal}
+		defaultTargetType="existing_chat"
+		defaultChatId={chat?.id ?? ''}
+		defaultChatTitle={title || chat?.chat?.title || ''}
+	/>
+{/if}
 
 <button
 	id="new-chat-button"

@@ -17,10 +17,12 @@ from open_webui.models.automations import (
 )
 from open_webui.models.access_grants import AccessGrants, has_public_write_access_grant
 from open_webui.models.channels import Channels
+from open_webui.models.chats import Chats, is_internal_chat
 from open_webui.models.config import Config
 from open_webui.models.folders import Folders
 from open_webui.utils.access_control import has_permission
 from open_webui.utils.auth import get_admin_user, get_verified_user
+from open_webui.utils.chat_id import is_saved_chat_id
 from open_webui.utils.automations import (
     execute_automation,
     next_n_runs_ns,
@@ -142,13 +144,85 @@ async def check_automation_channel_access(form_data: AutomationForm, user, db: A
         )
 
 
-async def enrich_automation(automation: AutomationModel, db: AsyncSession, tz: str = None) -> AutomationResponse:
+async def check_automation_chat_access(form_data: AutomationForm, user, db: AsyncSession):
+    target = form_data.data.target
+    if not target:
+        return
+
+    if target.type == 'chat':
+        target.chat_id = None
+        return
+
+    if target.type == 'channel':
+        return
+
+    if target.type == 'existing_chat':
+        if not target.chat_id or not is_saved_chat_id(target.chat_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=ERROR_MESSAGES.NOT_FOUND,
+            )
+        chat = await Chats.get_chat_by_id_and_user_id(target.chat_id, user.id, db=db)
+        if not chat or is_internal_chat(chat.meta):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=ERROR_MESSAGES.NOT_FOUND,
+            )
+        form_data.folder_id = None
+        return
+
+    if target.type == 'persistent_chat':
+        if target.chat_id:
+            if not is_saved_chat_id(target.chat_id):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=ERROR_MESSAGES.NOT_FOUND,
+                )
+            chat = await Chats.get_chat_by_id_and_user_id(target.chat_id, user.id, db=db)
+            if not chat or is_internal_chat(chat.meta):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=ERROR_MESSAGES.NOT_FOUND,
+                )
+        else:
+            target.chat_id = None
+
+
+def _resolve_target_chat_info(
+    automation: AutomationModel, chat_titles: Optional[dict[str, str]]
+) -> tuple[Optional[str], Optional[bool]]:
+    target = (automation.data or {}).get('target') or {}
+    target_type = target.get('type') if isinstance(target, dict) else None
+    target_chat_id = target.get('chat_id') if isinstance(target, dict) else None
+    if target_type not in ('existing_chat', 'persistent_chat') or not target_chat_id:
+        return None, None
+    if chat_titles is None:
+        return None, None
+    if target_chat_id in chat_titles:
+        return chat_titles[target_chat_id], True
+    return None, False
+
+
+async def enrich_automation(
+    automation: AutomationModel,
+    db: AsyncSession,
+    tz: str = None,
+    chat_titles: Optional[dict[str, str]] = None,
+) -> AutomationResponse:
     """Full enrichment for single-item views (includes next_runs computation)."""
     last_run = await AutomationRuns.get_latest(automation.id, db=db)
+    target = (automation.data or {}).get('target') or {}
+    target_type = target.get('type') if isinstance(target, dict) else None
+    target_chat_id = target.get('chat_id') if isinstance(target, dict) else None
+    if chat_titles is None and target_type in ('existing_chat', 'persistent_chat') and target_chat_id:
+        chat_titles = await Chats.get_chat_titles_by_ids_and_user_id([target_chat_id], automation.user_id, db=db)
+    target_chat_title, target_chat_exists = _resolve_target_chat_info(automation, chat_titles)
     return AutomationResponse(
         **automation.model_dump(),
         last_run=last_run,
         next_runs=await next_n_runs_ns(automation.data['rrule'], tz=tz),
+        target_chat_title=target_chat_title,
+        target_chat_exists=target_chat_exists,
     )
 
 
@@ -180,18 +254,36 @@ async def get_automation_items(
         db=db,
     )
 
-    # Batch-fetch latest runs in a single query instead of N+1
+    # Batch-fetch latest runs and target chat titles in single queries instead of N+1
     ids = [item.id for item in result.items]
     latest_runs = await AutomationRuns.get_latest_batch(ids, db=db) if ids else {}
+    target_chat_ids = list({
+        (item.data or {}).get('target', {}).get('chat_id')
+        for item in result.items
+        if isinstance((item.data or {}).get('target'), dict)
+        and item.data['target'].get('type') in ('existing_chat', 'persistent_chat')
+        and item.data['target'].get('chat_id')
+    })
+    chat_titles = (
+        await Chats.get_chat_titles_by_ids_and_user_id(target_chat_ids, user.id, db=db)
+        if target_chat_ids
+        else {}
+    )
 
-    return {
-        'items': [
+    items = []
+    for item in result.items:
+        target_chat_title, target_chat_exists = _resolve_target_chat_info(item, chat_titles)
+        items.append(
             AutomationResponse(
                 **item.model_dump(),
                 last_run=latest_runs.get(item.id),
+                target_chat_title=target_chat_title,
+                target_chat_exists=target_chat_exists,
             )
-            for item in result.items
-        ],
+        )
+
+    return {
+        'items': items,
         'total': result.total,
     }
 
@@ -207,6 +299,7 @@ async def create_new_automation(
     db: AsyncSession = Depends(get_async_session),
 ):
     await check_automations_permission(request, user)
+    await check_automation_chat_access(form_data, user, db)
     await check_automation_folder_access(form_data.folder_id, user, db)
     await check_automation_channel_access(form_data, user, db)
     try:
@@ -262,6 +355,7 @@ async def update_automation_by_id(
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
     check_automation_access(automation, user)
+    await check_automation_chat_access(form_data, user, db)
     await check_automation_folder_access(form_data.folder_id, user, db)
     await check_automation_channel_access(form_data, user, db)
 
@@ -327,6 +421,11 @@ async def run_automation_by_id(
     await check_automations_permission(request, user)
     automation = await Automations.get_by_id(id, db=db)
     check_automation_access(automation, user)
+    if await AutomationRuns.has_inflight_run(automation.id, db=db):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Automation is already queued or running',
+        )
     automation = await Automations.update_last_run_at(automation.id, db=db)
     asyncio.create_task(execute_automation(request.app, automation))
     await publish_event(

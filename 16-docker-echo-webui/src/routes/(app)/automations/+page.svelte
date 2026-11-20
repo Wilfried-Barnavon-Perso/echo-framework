@@ -9,6 +9,7 @@
 	import { WEBUI_NAME, user, config, channels, folders } from '$lib/stores';
 	import { getFolders } from '$lib/apis/folders';
 	import { getChannels } from '$lib/apis/channels';
+	import { getChatById } from '$lib/apis/chats';
 
 	import {
 		createAutomation,
@@ -159,7 +160,7 @@
 	};
 
 	const ensureChannels = async () => {
-		if (channelsLoaded || ($channels ?? []).length > 0) return;
+		if (!$config?.features?.enable_channels || channelsLoaded || ($channels ?? []).length > 0) return;
 		const res = await getChannels(localStorage.token).catch(() => null);
 		if (res) channels.set(res);
 		channelsLoaded = true;
@@ -235,11 +236,20 @@
 	};
 
 	const formatDestination = (automation: AutomationResponse): string => {
-		if (automation.data.target?.type === 'channel') {
-			const channel = ($channels ?? []).find(
-				(channel) => channel.id === automation.data.target?.channel_id
-			);
+		const target = automation.data.target;
+		if (target?.type === 'channel') {
+			const channel = ($channels ?? []).find((channel) => channel.id === target.channel_id);
 			return channel?.name ? `#${channel.name}` : $i18n.t('Channel');
+		}
+		if (target?.type === 'existing_chat') {
+			return automation.target_chat_exists === false
+				? $i18n.t('Target chat deleted')
+				: automation.target_chat_title || $i18n.t('Existing chat');
+		}
+		if (target?.type === 'persistent_chat') {
+			return automation.target_chat_title
+				? `${$i18n.t('Dedicated chat')}: ${automation.target_chat_title}`
+				: $i18n.t('Dedicated chat');
 		}
 		return automation.folder_id ? $i18n.t('Folder') : $i18n.t('New chat');
 	};
@@ -299,12 +309,30 @@
 		const validFolderIds = new Set(($folders ?? []).map((folder) => folder.id));
 
 		for (const automation of automationItems) {
+			const data = automation?.data ? { ...automation.data } : automation?.data;
+			let isActive = automation.is_active ?? true;
+
+			if (data?.target?.type === 'persistent_chat') {
+				data.target = { ...data.target, chat_id: null };
+			} else if (data?.target?.type === 'existing_chat') {
+				const chatId = data.target.chat_id;
+				const existingChat = chatId
+					? await getChatById(localStorage.token, chatId).catch(() => null)
+					: null;
+				if (!existingChat) {
+					isActive = false;
+					toast.warning(
+						`${automation.name || $i18n.t('Automation')}: ${$i18n.t('Target chat deleted')}`
+					);
+				}
+			}
+
 			await createAutomation(localStorage.token, {
 				name: automation.name,
 				folder_id: validFolderIds.has(automation.folder_id) ? automation.folder_id : null,
-				data: automation.data,
+				data,
 				meta: automation.meta ?? undefined,
-				is_active: automation.is_active ?? true
+				is_active: isActive
 			});
 		}
 

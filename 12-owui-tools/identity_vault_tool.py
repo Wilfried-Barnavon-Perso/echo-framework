@@ -1,16 +1,16 @@
 """
 title: ECHO Identity Vault Tool
 author: ECHO
-version: 5.233.0.1
+version: 6.10.0.1
 description: Outil permettant à l'Agent de gérer le Identity Vault (ajout/suppression de serveurs distants ou N8N).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.10.0.1: Mutualisation du blocage headless/automatisation via get_headless_block_reason dans manage_identity.
 # 5.233.0.1: Généralisation de l'encapsulation @echo_tool sur les 3 outils et typage du schéma de sortie IdentityServicesCatalogOutput.
 # 5.231.21.2: Délégation CRUD chiffré à EchoStateManager, masquage des secrets bruts dans list_identities, schéma n8n_workflows et échappement HTML.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.9: Remplacement de auth_failure_instructions par user_required_instructions et correction Flake8.
 import sys
 import html
 import json
@@ -22,6 +22,7 @@ from echo_core import echo_tool  # noqa: E402
 from echo_state_manager import EchoStateManager  # noqa: E402
 from echo_ui import EchoUI  # noqa: E402
 from echo_events import EchoEvents  # noqa: E402
+from echo_constants import get_headless_block_reason  # noqa: E402
 
 
 class IdentityServicesCatalogOutput(BaseModel):
@@ -135,15 +136,16 @@ class Tools:
         account_id: str,
         credentials_json: str = "",
         __user__: dict = None,
+        __metadata__: dict = None,
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
         """Ajoute (`add`), met à jour (`update`) ou supprime (`delete`) une identité dans l'Identity Vault après accord utilisateur."""
         if not __user__:
             return "Erreur: Contexte OWUI manquant."
-        from echo_constants import ECHO_SUBAGENT_CONTEXT
-        if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
-            return "Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de gérer les identités."
+        block_reason = get_headless_block_reason(__metadata__)
+        if block_reason:
+            return f"Erreur : {block_reason}"
 
         events = EchoEvents(__event_emitter__, __event_call__)
 

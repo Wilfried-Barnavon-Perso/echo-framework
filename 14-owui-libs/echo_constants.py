@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.7.20.1
+version: 6.10.0.2
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.10.0.2: Ajout de ECHO_AUTOMATION_CONTEXT, ECHO_AUTOMATION_QUEUE_MAX_WAIT_SEC (10800s), is_automation_context et get_headless_block_reason.
+# 6.10.0.1: Ajout des constantes SSOT Codex d'écriture/transfert (CODEX_WRITABLE_WORKSPACES, CODEX_FILES_DOMAIN_NAME, CODEX_TRANSFER_*, CODEX_FORBIDDEN_PATH_SEGMENTS, CODEX_SANDBOX_INTERNAL_*, CODEX_MAX_PATH_DEPTH, CODEX_LIST_MAX_ENTRIES et types Literal).
+# 6.8.2.2: Ajout de create_ui_tasks et update_ui_task dans DELEGATE_AGENT_BLACKLIST (et constantes/gardes headless/automation/Codex).
 # 6.7.20.1: Ajout des constantes SSOT de chemins XML (ECHO_PLUGIN_ROOT, ECHO_CONFIG_DIR, system-prompt.xml, system-commands.xml).
 # 6.7.13.1: Ajout de ECHO_MAX_CONCURRENT_MULTIMODAL_SEGMENTS = 3 pour la régulation globale des segments multimodaux en parallèle.
-# 6.7.12.1: Passage du thinkingLevel par défaut de MODEL_ZEPHYR à high dans ECHO_MODELS_REGISTRY.
-# 6.7.10.1: Gouvernance SSOT à 3 régimes de troncature (ECHO_COGNITIVE_OUTPUT_PREVIEW_CHARS=524288, ECHO_PAGINATED_READER_TOOLS, ECHO_COGNITIVE_DISTILLATION_TOOLS, get_tool_truncation_limit).
-# 6.7.7.1: Migration du découpage des sous-agents vers les tours d'outils (ECHO_SUBAGENT_CHECKPOINT_TURNS=8, ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC=120, ECHO_AUTONOMOUS_MAX_TURNS=15, ECHO_AUTONOMOUS_TIMEOUT_SEC=300, ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND=3, ECHO_COUNCIL_ROUND_TIMEOUT_SEC=120) et ajout de default_slice_timeout_sec dans ECHO_SUBAGENT_ENGINES_REGISTRY.
 
 import os
 import contextvars
@@ -26,6 +26,39 @@ ECHO_SUBAGENT_CONTEXT: contextvars.ContextVar = contextvars.ContextVar("ECHO_SUB
 # Contexte du tour courant (posé par l'orchestrateur) : provenance des productions
 # {"chat_id": str, "user_message_id": str | None, "assistant_message_id": str | None}
 ECHO_TURN_CONTEXT: contextvars.ContextVar = contextvars.ContextVar("ECHO_TURN_CONTEXT", default={})
+
+# Contexte d'automatisation planifiée (posé par @echo_tool ou le runtime)
+# {"is_automation": bool, "automation_id": str | None}
+ECHO_AUTOMATION_CONTEXT: contextvars.ContextVar = contextvars.ContextVar("ECHO_AUTOMATION_CONTEXT", default={})
+
+ECHO_AUTOMATION_QUEUE_MAX_WAIT_SEC = 10800
+
+
+def is_automation_context(metadata: Optional[dict] = None) -> bool:
+    """Retourne True si l'exécution courante appartient à une automatisation planifiée."""
+    if (ECHO_AUTOMATION_CONTEXT.get() or {}).get("is_automation"):
+        return True
+    if not isinstance(metadata, dict):
+        return False
+    if metadata.get("automation_id"):
+        return True
+    if str(metadata.get("session_id") or "").startswith("automation:"):
+        return True
+    user_msg = metadata.get("user_message")
+    if isinstance(user_msg, dict):
+        msg_meta = user_msg.get("meta")
+        if isinstance(msg_meta, dict) and msg_meta.get("automation_id"):
+            return True
+    return False
+
+
+def get_headless_block_reason(metadata: Optional[dict] = None) -> Optional[str]:
+    """Retourne le motif de blocage d'une interaction UI en contexte headless ou automatisé, sinon None."""
+    if (ECHO_SUBAGENT_CONTEXT.get() or {}).get("is_subagent"):
+        return "Action interactive interdite en contexte sous-agent autonome (Headless)."
+    if is_automation_context(metadata):
+        return "Action interactive interdite lors d'une automatisation planifiée sans opérateur interactif."
+    return None
 
 try:
     import pybase64 as base64
@@ -928,6 +961,8 @@ DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
     "generate_image",               # Sous-agent d'imagerie avec Iframe HTMLResponse réservé au flux principal
     "close_image_session",          # Fermeture de session d'imagerie réservée au flux principal
     "ask_user_input",               # Modale interactive bloquée en mode Headless
+    "create_ui_tasks",              # Checklist UI du chat principal réservée à l'Orchestrateur
+    "update_ui_task",               # Mise à jour checklist UI réservée à l'Orchestrateur
     "delete_user_skill",            # Modale de confirmation bloquée en mode Headless
     "manage_identity",              # Gestion d'identités bloquée en mode Headless
     "open_codex_ui",                # Déclenchement UI HUD réservé au flux principal
@@ -1121,8 +1156,21 @@ CODEX_INDEXED_WORKSPACES: frozenset[str] = frozenset(
     if isinstance(spec, dict) and spec.get("indexed") == "yes"
 )
 
-# Type Literal dynamique SSOT pour le schéma OpenAPI Pydantic des outils Codex
+# Sous-ensemble strict des espaces Codex ouverts aux écritures génériques ('main', 'sandbox').
+CODEX_WRITABLE_WORKSPACES: tuple[str, ...] = tuple(
+    ws for ws, spec in ECHO_CODEX_WORKSPACES.items()
+    if isinstance(spec, dict) and spec.get("generic_writable") == "yes"
+)
+
+# Domaines de session additionnels autorisés uniquement en lecture seule comme source vers 'sandbox'.
+CODEX_FILES_DOMAIN_NAME: str = "files"
+CODEX_TRANSFER_EXTRA_SOURCES: tuple[str, ...] = (CODEX_FILES_DOMAIN_NAME, BROWSER_VIEWS_DIR_NAME)
+CODEX_TRANSFER_SOURCES: tuple[str, ...] = tuple(ECHO_CODEX_WORKSPACES.keys()) + CODEX_TRANSFER_EXTRA_SOURCES
+
+# Types Literal dynamiques SSOT pour les schémas OpenAPI Pydantic des outils Codex
 CODEX_WORKSPACE_LITERAL = Literal[tuple(ECHO_CODEX_WORKSPACES.keys())]
+CODEX_WRITABLE_WORKSPACE_LITERAL = Literal[CODEX_WRITABLE_WORKSPACES]
+CODEX_TRANSFER_SOURCE_LITERAL = Literal[CODEX_TRANSFER_SOURCES]
 
 
 def is_codex_workspace_indexed(workspace: str) -> bool:
@@ -1173,6 +1221,24 @@ def get_codex_workspaces_ui_map() -> dict[str, str]:
 # de parcourir des dossiers de dépendances massifs, évitant ainsi le gel (Layout Thrashing) du moteur 
 # de rendu JavaScript lors de la génération de la treeMap.
 ECHO_SYNC_EXCLUDE_LIST = [".venv", "node_modules", "__pycache__", ".git", ".pytest_cache", "venv"]
+
+# Sécurité d'arborescence & Quotas de transfert Codex
+CODEX_FORBIDDEN_PATH_SEGMENTS: frozenset[str] = frozenset({".git", ".", ".."})
+CODEX_SANDBOX_INTERNAL_PREFIXES: tuple[str, ...] = (
+    ".echo_monitor_",
+    ".echo_ui_payload_",
+    ".echo_ui_inbox_",
+)
+CODEX_SANDBOX_INTERNAL_NAMES: frozenset[str] = frozenset({".tmp"})
+CODEX_MAX_PATH_DEPTH: int = 16
+CODEX_LIST_MAX_ENTRIES: int = 200
+CODEX_TRANSFER_CHUNK_BYTES: int = 1024 * 1024
+CODEX_TRANSFER_MAX_FILES_MAIN: int = 200
+CODEX_TRANSFER_MAX_FILE_BYTES_MAIN: int = 25 * 1024 * 1024
+CODEX_TRANSFER_MAX_TOTAL_BYTES_MAIN: int = 100 * 1024 * 1024
+CODEX_TRANSFER_MAX_FILES_SANDBOX: int = 500
+CODEX_TRANSFER_MAX_FILE_BYTES_SANDBOX: int = 512 * 1024 * 1024
+CODEX_TRANSFER_MAX_TOTAL_BYTES_SANDBOX: int = 1024 * 1024 * 1024
 
 # ECHO_CODING_WORKER_URL : Utilisée pour isoler l'exécution de code (Python, JS, etc.).
 ECHO_CODING_WORKER_URL = "http://echo-coding-worker:5000/execute"

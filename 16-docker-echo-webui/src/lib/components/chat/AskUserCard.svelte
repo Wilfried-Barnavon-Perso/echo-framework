@@ -11,7 +11,8 @@
 
 	type AskUserOption = {
 		label: string;
-		description: string;
+		description?: string;
+		recommended?: boolean;
 	};
 
 	type AskUserQuestion = {
@@ -20,6 +21,7 @@
 		question: string;
 		options: AskUserOption[];
 		allow_other?: boolean;
+		show_recommended?: boolean;
 	};
 
 	type DraftAnswer =
@@ -43,12 +45,19 @@
 	let questionIndex = 0;
 	let wasOpen = false;
 	let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+	let remainingSeconds: number | null = null;
+	let countdownHandle: ReturnType<typeof setInterval> | null = null;
 
 	const clearAutoCancel = () => {
 		if (timeoutHandle) {
 			clearTimeout(timeoutHandle);
 			timeoutHandle = null;
 		}
+		if (countdownHandle) {
+			clearInterval(countdownHandle);
+			countdownHandle = null;
+		}
+		remainingSeconds = null;
 	};
 
 	const cancel = () => {
@@ -63,6 +72,11 @@
 		wasOpen = true;
 		clearAutoCancel();
 		if (typeof timeoutMs === 'number' && timeoutMs > 0) {
+			remainingSeconds = Math.ceil(timeoutMs / 1000);
+			countdownHandle = setInterval(() => {
+				remainingSeconds =
+					remainingSeconds !== null && remainingSeconds > 0 ? remainingSeconds - 1 : 0;
+			}, 1000);
 			timeoutHandle = setTimeout(() => {
 				cancel();
 			}, timeoutMs);
@@ -77,6 +91,18 @@
 	onDestroy(clearAutoCancel);
 
 	const questionAllowsOther = (question: AskUserQuestion) => question.allow_other ?? allowOther;
+	const hasOptions = (q: AskUserQuestion) => Array.isArray(q.options) && q.options.length > 0;
+	const isRecommendedOption = (q: AskUserQuestion, opt: AskUserOption, idx: number) =>
+		opt.recommended ?? (q.show_recommended !== false && idx === 0);
+
+	const focusInput = (node: HTMLInputElement, active: boolean) => {
+		if (active) setTimeout(() => node.focus(), 0);
+		return {
+			update(next: boolean) {
+				if (next) setTimeout(() => node.focus(), 0);
+			}
+		};
+	};
 
 	$: question = questions[questionIndex];
 	$: selectedAnswer = question ? answers[question.id] : undefined;
@@ -130,7 +156,7 @@
 				type: 'option',
 				option_index: index,
 				label: option.label,
-				description: option.description
+				description: option.description ?? ''
 			}
 		};
 		answers = selected;
@@ -185,11 +211,16 @@
 								<div class="text-sm font-medium text-gray-900 dark:text-gray-100">
 									{question.header}
 								</div>
-								{#if questions.length > 1}
+								{#if questions.length > 1 || remainingSeconds !== null}
 									<div
-										class="shrink-0 text-right text-[0.6875rem] text-gray-500 dark:text-gray-400"
+										class="flex shrink-0 items-center gap-2 text-right text-[0.6875rem] text-gray-500 dark:text-gray-400"
 									>
-										{questionIndex + 1}/{questions.length}
+										{#if remainingSeconds !== null}
+											<span class="tabular-nums opacity-80">{remainingSeconds}s</span>
+										{/if}
+										{#if questions.length > 1}
+											<span>{questionIndex + 1}/{questions.length}</span>
+										{/if}
 									</div>
 								{/if}
 							</div>
@@ -212,19 +243,21 @@
 										on:click={() => selectOption(question, option, optionIndex)}
 									>
 										<span class="min-w-0 shrink-0 text-xs">{option.label}</span>
-										<Tooltip
-											as="span"
-											className="min-w-0 flex-1"
-											content={option.description}
-											placement="top-start"
-										>
-											<span
-												class="block truncate text-xs leading-relaxed text-gray-500 transition-colors group-hover:text-gray-700 dark:text-gray-400 dark:group-hover:text-gray-300"
+										{#if option.description && option.description.trim() !== ''}
+											<Tooltip
+												as="span"
+												className="min-w-0 flex-1"
+												content={option.description}
+												placement="top-start"
 											>
-												{option.description}
-											</span>
-										</Tooltip>
-										{#if optionIndex === 0}
+												<span
+													class="block truncate text-xs leading-relaxed text-gray-500 transition-colors group-hover:text-gray-700 dark:text-gray-400 dark:group-hover:text-gray-300"
+												>
+													{option.description}
+												</span>
+											</Tooltip>
+										{/if}
+										{#if isRecommendedOption(question, option, optionIndex)}
 											<span
 												class="shrink-0 rounded-full bg-gray-200/70 px-1.5 py-0.5 text-[0.625rem] text-gray-500 dark:bg-white/[0.08] dark:text-gray-400"
 											>
@@ -236,31 +269,53 @@
 							</div>
 
 							{#if questionAllowsOther(question)}
-								<div class="flex min-w-0 items-baseline gap-2 rounded-lg py-1.5">
-									<div
-										class="shrink-0 text-xs {isSelectedOther(question)
-											? 'text-gray-950 dark:text-white'
-											: 'text-gray-700 dark:text-gray-300'}"
-									>
-										{$i18n.t('Other')}
+								{#if hasOptions(question)}
+									<div class="flex min-w-0 items-baseline gap-2 rounded-lg py-1.5">
+										<div
+											class="shrink-0 text-xs {isSelectedOther(question)
+												? 'text-gray-950 dark:text-white'
+												: 'text-gray-700 dark:text-gray-300'}"
+										>
+											{$i18n.t('Other')}
+										</div>
+										<input
+											aria-label={$i18n.t('Other')}
+											dir={$settings?.chatDirection ?? 'auto'}
+											class="min-w-0 flex-1 bg-transparent text-xs text-gray-800 outline-hidden placeholder:text-gray-400 dark:text-gray-100 dark:placeholder:text-gray-500"
+											placeholder={$i18n.t('Type your answer')}
+											value={otherText(question)}
+											on:focus={() => selectOther(question)}
+											on:input={(event) =>
+												updateOther(question, (event.currentTarget as HTMLInputElement).value)}
+											on:keydown={(event) => {
+												if (event.key === 'Enter') {
+													event.preventDefault();
+													advance();
+												}
+											}}
+										/>
 									</div>
-									<input
-										aria-label={$i18n.t('Other')}
-										dir={$settings?.chatDirection ?? 'auto'}
-										class="min-w-0 flex-1 bg-transparent text-xs text-gray-800 outline-hidden placeholder:text-gray-400 dark:text-gray-100 dark:placeholder:text-gray-500"
-										placeholder={$i18n.t('Type your answer')}
-										value={otherText(question)}
-										on:focus={() => selectOther(question)}
-										on:input={(event) =>
-											updateOther(question, (event.currentTarget as HTMLInputElement).value)}
-										on:keydown={(event) => {
-											if (event.key === 'Enter') {
-												event.preventDefault();
-												advance();
-											}
-										}}
-									/>
-								</div>
+								{:else}
+									<div class="py-1">
+										<input
+											aria-label={question.question}
+											dir={$settings?.chatDirection ?? 'auto'}
+											class="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2.5 py-1.5 text-xs text-gray-800 outline-hidden placeholder:text-gray-400 dark:text-gray-100 dark:placeholder:text-gray-500"
+											placeholder={$i18n.t('Type your answer')}
+											value={otherText(question)}
+											use:focusInput={!hasOptions(question)}
+											on:focus={() => selectOther(question)}
+											on:input={(event) =>
+												updateOther(question, (event.currentTarget as HTMLInputElement).value)}
+											on:keydown={(event) => {
+												if (event.key === 'Enter') {
+													event.preventDefault();
+													advance();
+												}
+											}}
+										/>
+									</div>
+								{/if}
 							{/if}
 						</div>
 					</div>
@@ -276,14 +331,16 @@
 					>
 						{$i18n.t('Cancel')}
 					</button>
-					<button
-						type="button"
-						class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal transition disabled:opacity-60 text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"
-						disabled={questionIndex === 0}
-						on:click={() => (questionIndex -= 1)}
-					>
-						{$i18n.t('Previous')}
-					</button>
+					{#if questions.length > 1}
+						<button
+							type="button"
+							class="flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2.5 text-xs font-normal transition disabled:opacity-60 text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"
+							disabled={questionIndex === 0}
+							on:click={() => (questionIndex -= 1)}
+						>
+							{$i18n.t('Previous')}
+						</button>
+					{/if}
 				</div>
 				{#if questionIndex < questions.length - 1}
 					<button
@@ -300,7 +357,7 @@
 						disabled={!complete}
 						on:click={() => submit()}
 					>
-						{$i18n.t('Submit answers')}
+						{questions.length > 1 ? $i18n.t('Submit answers') : $i18n.t('Submit')}
 					</button>
 				{/if}
 			</div>

@@ -383,7 +383,7 @@
 	<!-- Modale Ajout Secret / Configuration Connecteur -->
 	{#if showAddModal}
 		<div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-150">
-			<div class="w-full max-w-md bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-2xl p-5 space-y-4 text-xs">
+			<div class="w-full {activeSchema?.user_required_instructions ? 'max-w-lg' : 'max-w-md'} max-h-[90vh] overflow-y-auto bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-2xl shadow-2xl p-5 space-y-4 text-xs">
 				<div class="flex justify-between items-center pb-2 border-b border-gray-200 dark:border-gray-800">
 					<h3 class="font-bold text-sm text-gray-900 dark:text-white">
 						{activeSchema ? `Configurer ${activeSchema.name || selectedSchemaKey}` : 'Nouveau secret personnalisé'}
@@ -396,6 +396,15 @@
 						✕
 					</button>
 				</div>
+
+				{#if activeSchema?.user_required_instructions}
+					<details class="rounded-lg border border-amber-300/70 dark:border-amber-700/60 bg-amber-50/70 dark:bg-amber-950/30 p-3 text-amber-900 dark:text-amber-200">
+						<summary class="cursor-pointer font-semibold select-none">
+							Prérequis &amp; Directives d'autorisation (API / Scopes OAuth)
+						</summary>
+						<pre class="mt-2 whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-gray-800 dark:text-gray-200 max-h-56 overflow-y-auto">{activeSchema.user_required_instructions}</pre>
+					</details>
+				{/if}
 
 				<div class="space-y-3">
 					{#if !selectedSchemaKey}

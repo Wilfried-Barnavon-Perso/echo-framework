@@ -1,16 +1,16 @@
 """
 title: ECHO Delegate to Data Broker
 author: ECHO
-version: 6.7.7.1
+version: 6.11.0.1
 description: Délégation de collecte de données externes structurées au Data Broker autonome.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.11.0.1: Exposition de upload_file_to_drive dans la liste allowed du Data Broker.
 # 6.7.7.1: Passage de ask_data_broker sur ECHO_SUBAGENT_CHECKPOINT_TURNS (8) et ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC (120).
 # 6.7.1.1: Délégation directe de ask_data_broker via EchoSubagentController.run_or_resume (engine="data_broker").
 # 5.233.0.1: Généralisation de l'encapsulation @echo_tool sur ask_data_broker.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 from pydantic import BaseModel, Field
 from typing import Any
 import sys
@@ -59,7 +59,7 @@ class Tools:
         # Outils autorisés pour le Data Broker (noms dans _TOOLS_CACHE unifié)
         allowed = [
             "list_identities_services", "list_identities",
-            "list_mcp_functions", "call_mcp_function",
+            "list_mcp_functions", "call_mcp_function", "upload_file_to_drive",
             "search_web", "search_instant_answer",
         ]
 

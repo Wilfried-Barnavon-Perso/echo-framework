@@ -1,8 +1,11 @@
 <script lang="ts">
-	import { getContext } from 'svelte';
+	import { getContext, onDestroy } from 'svelte';
 	import { fly } from 'svelte/transition';
 
 	import { decodeString } from '$lib/utils';
+	import { config } from '$lib/stores';
+	import { getChatList, getChatListBySearchText } from '$lib/apis/chats';
+	import type { AutomationTargetType } from '$lib/apis/automations';
 
 	import Dropdown from '$lib/components/common/Dropdown.svelte';
 	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
@@ -17,9 +20,12 @@
 
 	const i18n = getContext('i18n');
 
-	export let target_type: 'chat' | 'channel' = 'chat';
+	export let target_type: AutomationTargetType = 'chat';
 	export let channel_id = '';
 	export let folder_id = '';
+	export let chat_id = '';
+	export let chat_title = '';
+	export let chat_exists: boolean | null = null;
 	export let folders: any[] = [];
 	export let channels: any[] = [];
 	export let side: 'top' | 'bottom' = 'top';
@@ -27,9 +33,19 @@
 	export let onChange: () => void = () => {};
 
 	let show = false;
-	let tab: '' | 'folders' | 'channels' = '';
+	let tab: '' | 'folders' | 'chats' | 'channels' = '';
 	let folderSearch = '';
 	let channelSearch = '';
+	let chatSearch = '';
+	let chatsList: any[] = [];
+	let chatsLoading = false;
+	let chatSearchTimer: ReturnType<typeof setTimeout> | null = null;
+
+	onDestroy(() => {
+		if (chatSearchTimer) {
+			clearTimeout(chatSearchTimer);
+		}
+	});
 
 	const folderName = (folder: any) => decodeString(folder?.name ?? $i18n.t('Folder'));
 	const channelName = (channel: any) => channel?.name || $i18n.t('Channel');
@@ -65,9 +81,17 @@
 			? selectedChannel
 				? `#${channelName(selectedChannel)}`
 				: $i18n.t('Choose channel')
-			: selectedFolder
-				? folderName(selectedFolder)
-				: $i18n.t('New chat');
+			: target_type === 'existing_chat'
+				? chat_title || $i18n.t('Existing chat')
+				: target_type === 'persistent_chat'
+					? chat_title
+						? `${$i18n.t('Dedicated chat')} · ${chat_title}`
+						: selectedFolder
+							? `${$i18n.t('Dedicated chat')} · ${folderName(selectedFolder)}`
+							: $i18n.t('Dedicated chat')
+					: selectedFolder
+						? folderName(selectedFolder)
+						: $i18n.t('New chat');
 	$: normalizedFolderSearch = folderSearch.trim().toLowerCase();
 	$: filteredFolderOptions = normalizedFolderSearch
 		? folderOptions.filter((folder) =>
@@ -81,17 +105,82 @@
 			)
 		: channelOptions;
 
+	const loadChats = async (query = '') => {
+		chatsLoading = true;
+		try {
+			const trimmed = query.trim();
+			const res = trimmed
+				? await getChatListBySearchText(localStorage.token, trimmed, 1)
+				: await getChatList(localStorage.token, 1, true, true);
+			chatsList = Array.isArray(res) ? res : [];
+		} catch {
+			chatsList = [];
+		} finally {
+			chatsLoading = false;
+		}
+	};
+
+	const openChatsTab = () => {
+		tab = 'chats';
+		if (chatsList.length === 0 || !chatSearch.trim()) {
+			loadChats(chatSearch);
+		}
+	};
+
+	const handleChatSearchInput = () => {
+		if (chatSearchTimer) {
+			clearTimeout(chatSearchTimer);
+		}
+		chatSearchTimer = setTimeout(() => {
+			loadChats(chatSearch);
+		}, 250);
+	};
+
 	const selectChat = () => {
 		target_type = 'chat';
 		channel_id = '';
 		folder_id = '';
+		chat_id = '';
+		chat_title = '';
+		chat_exists = null;
 		show = false;
 		tab = '';
 		onChange();
 	};
 
+	const selectPersistentChat = () => {
+		target_type = 'persistent_chat';
+		channel_id = '';
+		if (chat_exists === false) {
+			chat_id = '';
+			chat_title = '';
+			chat_exists = null;
+		}
+		show = false;
+		tab = '';
+		onChange();
+	};
+
+	const selectExistingChat = (chat: any) => {
+		target_type = 'existing_chat';
+		chat_id = chat.id;
+		chat_title = chat.title || $i18n.t('New chat');
+		chat_exists = true;
+		folder_id = '';
+		channel_id = '';
+		show = false;
+		tab = '';
+		chatSearch = '';
+		onChange();
+	};
+
 	const selectFolder = (id: string) => {
-		target_type = 'chat';
+		if (target_type !== 'persistent_chat') {
+			target_type = 'chat';
+			chat_id = '';
+			chat_title = '';
+			chat_exists = null;
+		}
 		channel_id = '';
 		folder_id = id;
 		show = false;
@@ -104,6 +193,9 @@
 		target_type = 'channel';
 		channel_id = id;
 		folder_id = '';
+		chat_id = '';
+		chat_title = '';
+		chat_exists = null;
 		show = false;
 		tab = '';
 		channelSearch = '';
@@ -120,6 +212,11 @@
 			tab = '';
 			folderSearch = '';
 			channelSearch = '';
+			chatSearch = '';
+			if (chatSearchTimer) {
+				clearTimeout(chatSearchTimer);
+				chatSearchTimer = null;
+			}
 		}
 	}}
 >
@@ -129,7 +226,7 @@
 	>
 		{#if target_type === 'channel'}
 			<Hashtag className="size-3.5 shrink-0" />
-		{:else if folder_id}
+		{:else if target_type === 'chat' && folder_id}
 			<Folder className="size-3.5 shrink-0" />
 		{:else}
 			<ChatBubble className="size-3.5 shrink-0" />
@@ -165,7 +262,26 @@
 					<button
 						type="button"
 						class="flex h-[1.6875rem] w-full cursor-pointer items-center justify-between gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem] hover:bg-gray-50/40 hover:text-gray-900 dark:hover:bg-gray-800/40 dark:hover:text-gray-100 {target_type ===
-							'chat' && folder_id
+						'persistent_chat'
+							? 'text-gray-900 dark:text-gray-100'
+							: 'text-gray-700 dark:text-gray-300'}"
+						on:click={selectPersistentChat}
+					>
+						<div class="flex min-w-0 items-center gap-1.5">
+							<ChatBubble className="size-3.5 shrink-0" />
+							<span class="min-w-0 truncate">{$i18n.t('Dedicated chat')}</span>
+						</div>
+						{#if target_type === 'persistent_chat'}
+							<Check className="size-3.5 shrink-0" strokeWidth="2" />
+						{/if}
+					</button>
+
+					<button
+						type="button"
+						class="flex h-[1.6875rem] w-full cursor-pointer items-center justify-between gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem] hover:bg-gray-50/40 hover:text-gray-900 dark:hover:bg-gray-800/40 dark:hover:text-gray-100 {(target_type ===
+							'chat' ||
+							target_type === 'persistent_chat') &&
+						folder_id
 							? 'text-gray-900 dark:text-gray-100'
 							: 'text-gray-700 dark:text-gray-300'}"
 						on:click={() => (tab = 'folders')}
@@ -177,7 +293,7 @@
 							</span>
 						</div>
 						<div class="flex shrink-0 items-center gap-1 text-gray-500">
-							{#if target_type === 'chat' && folder_id}
+							{#if (target_type === 'chat' || target_type === 'persistent_chat') && folder_id}
 								<Check className="size-3.5" strokeWidth="2" />
 							{/if}
 							<ChevronRight />
@@ -187,24 +303,50 @@
 					<button
 						type="button"
 						class="flex h-[1.6875rem] w-full cursor-pointer items-center justify-between gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem] hover:bg-gray-50/40 hover:text-gray-900 dark:hover:bg-gray-800/40 dark:hover:text-gray-100 {target_type ===
-						'channel'
+						'existing_chat'
 							? 'text-gray-900 dark:text-gray-100'
 							: 'text-gray-700 dark:text-gray-300'}"
-						on:click={() => (tab = 'channels')}
+						on:click={openChatsTab}
 					>
 						<div class="flex min-w-0 items-center gap-1.5">
-							<Hashtag className="size-3.5 shrink-0" />
+							<ChatBubble className="size-3.5 shrink-0" />
 							<span class="min-w-0 truncate">
-								{selectedChannel ? channelName(selectedChannel) : $i18n.t('Channel')}
+								{target_type === 'existing_chat' && chat_title
+									? chat_title
+									: $i18n.t('Existing chat')}
 							</span>
 						</div>
 						<div class="flex shrink-0 items-center gap-1 text-gray-500">
-							{#if target_type === 'channel'}
+							{#if target_type === 'existing_chat'}
 								<Check className="size-3.5" strokeWidth="2" />
 							{/if}
 							<ChevronRight />
 						</div>
 					</button>
+
+					{#if $config?.features?.enable_channels}
+						<button
+							type="button"
+							class="flex h-[1.6875rem] w-full cursor-pointer items-center justify-between gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem] hover:bg-gray-50/40 hover:text-gray-900 dark:hover:bg-gray-800/40 dark:hover:text-gray-100 {target_type ===
+							'channel'
+								? 'text-gray-900 dark:text-gray-100'
+								: 'text-gray-700 dark:text-gray-300'}"
+							on:click={() => (tab = 'channels')}
+						>
+							<div class="flex min-w-0 items-center gap-1.5">
+								<Hashtag className="size-3.5 shrink-0" />
+								<span class="min-w-0 truncate">
+									{selectedChannel ? channelName(selectedChannel) : $i18n.t('Channel')}
+								</span>
+							</div>
+							<div class="flex shrink-0 items-center gap-1 text-gray-500">
+								{#if target_type === 'channel'}
+									<Check className="size-3.5" strokeWidth="2" />
+								{/if}
+								<ChevronRight />
+							</div>
+						</button>
+					{/if}
 				</div>
 			{:else if tab === 'folders'}
 				<div class="flex max-h-72 flex-col overflow-hidden" in:fly={{ x: 20, duration: 150 }}>
@@ -233,8 +375,10 @@
 							{@const path = folderPath(folder)}
 							<button
 								type="button"
-								class="flex h-[1.6875rem] w-full cursor-pointer items-center justify-between gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem] hover:bg-gray-50/40 hover:text-gray-900 dark:hover:bg-gray-800/40 dark:hover:text-gray-100 {target_type ===
-									'chat' && folder_id === folder.id
+								class="flex h-[1.6875rem] w-full cursor-pointer items-center justify-between gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem] hover:bg-gray-50/40 hover:text-gray-900 dark:hover:bg-gray-800/40 dark:hover:text-gray-100 {(target_type ===
+									'chat' ||
+									target_type === 'persistent_chat') &&
+								folder_id === folder.id
 									? 'text-gray-900 dark:text-gray-100'
 									: 'text-gray-700 dark:text-gray-300'}"
 								title={path ? `${path} / ${folderName(folder)}` : folderName(folder)}
@@ -251,7 +395,7 @@
 										</span>
 									{/if}
 								</div>
-								{#if target_type === 'chat' && folder_id === folder.id}
+								{#if (target_type === 'chat' || target_type === 'persistent_chat') && folder_id === folder.id}
 									<Check className="size-3.5 shrink-0" strokeWidth="2" />
 								{/if}
 							</button>
@@ -260,6 +404,60 @@
 								{folderOptions.length > 0 ? $i18n.t('No results found') : $i18n.t('No folders')}
 							</div>
 						{/each}
+					</div>
+				</div>
+			{:else if tab === 'chats'}
+				<div class="flex max-h-72 flex-col overflow-hidden" in:fly={{ x: 20, duration: 150 }}>
+					<button
+						type="button"
+						class="flex h-[1.6875rem] w-full shrink-0 cursor-pointer items-center gap-2 rounded-xl px-2 text-[0.8125rem] hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+						on:click={() => (tab = '')}
+					>
+						<ChevronLeft />
+						<span>{$i18n.t('Existing chat')}</span>
+					</button>
+
+					<div class="flex shrink-0 items-center gap-1.5 px-2 py-1">
+						<Search className="size-3.5 shrink-0" strokeWidth="2.5" />
+						<input
+							bind:value={chatSearch}
+							on:input={handleChatSearchInput}
+							class="w-full bg-transparent text-[0.8125rem] outline-hidden"
+							placeholder={$i18n.t('Search chats')}
+							autocomplete="off"
+							on:click|stopPropagation
+						/>
+					</div>
+
+					<div class="overflow-y-auto scrollbar-thin">
+						{#if chatsLoading}
+							<div class="px-2 py-1 text-[0.6875rem] text-gray-500 dark:text-gray-400">
+								{$i18n.t('Loading...')}
+							</div>
+						{:else}
+							{#each chatsList as chat (chat.id)}
+								<button
+									type="button"
+									class="flex h-[1.6875rem] w-full cursor-pointer items-center justify-between gap-2 rounded-xl bg-transparent px-2 text-[0.8125rem] hover:bg-gray-50/40 hover:text-gray-900 dark:hover:bg-gray-800/40 dark:hover:text-gray-100 {target_type ===
+										'existing_chat' && chat_id === chat.id
+										? 'text-gray-900 dark:text-gray-100'
+										: 'text-gray-700 dark:text-gray-300'}"
+									on:click={() => selectExistingChat(chat)}
+								>
+									<div class="flex min-w-0 items-center gap-1.5">
+										<ChatBubble className="size-3.5 shrink-0" />
+										<span class="min-w-0 truncate">{chat.title || $i18n.t('New chat')}</span>
+									</div>
+									{#if target_type === 'existing_chat' && chat_id === chat.id}
+										<Check className="size-3.5 shrink-0" strokeWidth="2" />
+									{/if}
+								</button>
+							{:else}
+								<div class="px-2 py-1 text-[0.6875rem] text-gray-500 dark:text-gray-400">
+									{$i18n.t('No chats found')}
+								</div>
+							{/each}
+						{/if}
 					</div>
 				</div>
 			{:else if tab === 'channels'}

@@ -1,10 +1,10 @@
 ---
 domain_id: identity_and_api_mcp
-version: 6.7.18.1
+version: 6.11.0.1
 updated_at: 2026-11-20
 name: Coffre-Fort d'Identités (Identity Vault), Client API HTTP & Protocole MCP
 description: Découverte et gestion des secrets/comptes chiffrés et sécurisés (Identity Vault), requêtes HTTP universelles (call_api), instanciation/exécution sur les serveurs MCP (echo_mcp_tool) et stratégies par service.
-tools: [list_identities_services, list_identities, manage_identity, call_api, list_mcp_functions, call_mcp_function]
+tools: [list_identities_services, list_identities, manage_identity, call_api, list_mcp_functions, call_mcp_function, upload_file_to_drive]
 keywords: [vault, secret, clé_api, token, identité, credentials, api, http, rest, mcp, serveur_mcp, broker, m365, workspace, contacts, google_contacts, carnet_adresses, jobs, academic, uvx, npx, sse, ssh, serveur_ssh]
 ---
 
@@ -49,6 +49,18 @@ L'outil MCP route dynamiquement les requêtes vers les serveurs (`mcp_native`, `
    - Si le statut retourné indique qu'une configuration est requise, configurer d'abord les identifiants du service via `manage_identity`.
 2. **Appel d'une Fonction (`call_mcp_function`)** :
    - `call_mcp_function(service="...", function_name="...", arguments={...}, account_id=None)` : Exécute la méthode `function_name` sur le serveur `service` avec le dictionnaire `arguments` (`account_id` sélectionne le compte dans l'Identity Vault sans être transmis dans `arguments`).
+3. **Envoi Sécurisé de Fichiers Locaux vers le Cloud (`upload_file_to_drive`)** :
+   - `upload_file_to_drive(service, file_ref, workspace=None, remote_folder_id=None, remote_filename=None, overwrite_file_id=None, convert_to_native=False, conflict_behavior="replace", account_id=None)` :
+     - `service` : `"google_workspace"` ou `"microsoft_365"`.
+     - `file_ref` : `file_id` (8 caractères hexadécimaux du Registre Unifié), chemin Codex (`main`, `plans`, `generated`, `sandbox`), `files/...`, `browserviews/...` ou URN `codex:...`.
+     - `workspace` : `"main"`, `"plans"`, `"generated"`, `"sandbox"`, `"files"` ou `"browserviews"` (optionnel).
+     - `remote_folder_id` : ID ou chemin du dossier distant (optionnel, défaut racine).
+     - `remote_filename` : nom de destination distant (optionnel, défaut nom nettoyé local).
+     - `overwrite_file_id` : ID du fichier distant à écraser/mettre à jour (optionnel).
+     - `convert_to_native` : booléen (Google Drive uniquement ; convertit Markdown/Word/CSV/Excel/PPTX en Google Docs/Sheets/Slides natifs).
+     - `conflict_behavior` : `"replace"`, `"rename"` ou `"fail"` (OneDrive uniquement, défaut `"replace"`).
+     - `account_id` : compte cible dans l'Identity Vault (optionnel).
+   - **Streaming Zéro-RAM & Règle Impérative** : Transfère le fichier en streaming résilient par tranches de 5 MiB (jusqu'à 4 Go). **INTERDICTION STRICTE** d'encoder des fichiers locaux en Base64 dans `call_mcp_function` : utiliser exclusivement `upload_file_to_drive`.
 
 ---
 
@@ -91,7 +103,7 @@ L'outil MCP route dynamiquement les requêtes vers les serveurs (`mcp_native`, `
   4. `batch_trash_emails(email_ids=[...])`.
 - **Téléchargement OneDrive & Pièces Jointes (`get_file`, `get_attachment`)** :
   - Les fichiers téléchargés via `get_file(file_id="...")` et `get_attachment(email_id="...", attachment_id="...")` sont automatiquement ingérés dans le Registre Unifié (`query_registry`) et retournent directement leur `file_id` ECHO (8 caractères hexadécimaux). `download_path` et `save_path` sont optionnels (seul un nom de fichier peut être suggéré).
-- **Autres Capacités & Support Universel MSA / Entra ID** : Agenda (`list_events`, `search_events`, `create_event`, `respond_event`), OneDrive (`list_files`, `search_files`, `create_file`, `update_file`, `delete_file`) et recherche transversale (`unified_search`). `unified_search`, `search_files` et `search_events` fonctionnent nativement sur comptes personnels MSA (`@live.fr`/`@outlook.com`) comme Entra ID via Graph v1.0. Le scope délégué optionnel `Contacts.ReadWrite` est requis sur l'application Azure si l'accès à `list_contacts`/`search_contacts` est utilisé.
+- **Autres Capacités & Support Universel MSA / Entra ID** : Agenda (`list_events`, `search_events`, `create_event`, `respond_event`), OneDrive (`list_files`, `search_files`, `create_file`, `update_file`, `delete_file` — utiliser `upload_file_to_drive(service="microsoft_365", ...)` pour pousser tout fichier local ECHO vers OneDrive, création et mise à jour via `overwrite_file_id`) et recherche transversale (`unified_search`). `unified_search`, `search_files` et `search_events` fonctionnent nativement sur comptes personnels MSA (`@live.fr`/`@outlook.com`) comme Entra ID via Graph v1.0. Le scope délégué optionnel `Contacts.ReadWrite` est requis sur l'application Azure si l'accès à `list_contacts`/`search_contacts` est utilisé.
 
 ### 3.2 Google Workspace (`google_workspace`)
 - **Configuration Vault** : Clés requises : `USER_GOOGLE_EMAIL`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REFRESH_TOKEN` (écran de consentement GCP sur *"In production"*). Si `user_google_email` est omis dans les arguments d'un outil, il est auto-injecté depuis `USER_GOOGLE_EMAIL` du Vault.
@@ -111,7 +123,7 @@ L'outil MCP route dynamiquement les requêtes vers les serveurs (`mcp_native`, `
     - `manage_contact` : `action="create"` (avec `given_name`, `family_name`, `email`, `phone`), `action="update"` (avec `contact_id` et champs modifiés), ou `action="delete"` (`contact_id`).
     - `manage_contact_group` : `action="create"` (avec `name`), `action="update"` (avec `group_id`, `name`), `action="delete"` (`group_id`), ou `action="modify_members"` (avec `group_id`, `resource_names_to_add`/`resource_names_to_remove`).
     - `manage_contacts_batch` : Opérations par lots avec `action="create"` (`contacts=[...]`), `action="update"` (`updates=[...]`), ou `action="delete"` (`contact_ids=[...]`).
-- **Outils Disponibles** : Gmail (`list_messages`, `get_message`, `send_message`), Drive (`search_files`, `download_file`), Calendar (`list_calendars`, `get_events`, `create_event`), Contacts (`list_contacts`, `list_contact_groups`, `get_contact`, `get_contact_group`, `manage_contact`, `manage_contact_group`, `manage_contacts_batch`), Docs, Sheets, Tasks.
+- **Outils Disponibles** : Gmail (`list_messages`, `get_message`, `send_message`), Drive (`search_drive_files`, `list_drive_items`, `get_drive_file_content`, `get_drive_file_download_url`, `create_drive_folder`, `create_drive_file`, `update_drive_file`, `import_to_google_doc`, `import_to_google_sheets`, `import_to_google_slides`, `manage_drive_access` — utiliser `upload_file_to_drive(service="google_workspace", ...)` avec `convert_to_native=True` optionnel pour pousser tout fichier local ECHO vers Google Drive), Calendar (`list_calendars`, `get_events`, `create_event`), Contacts (`list_contacts`, `list_contact_groups`, `get_contact`, `get_contact_group`, `manage_contact`, `manage_contact_group`, `manage_contacts_batch`), Docs, Sheets, Tasks.
 
 ### 3.3 Agrégateur d'Emploi (`jobs_omnisearch`)
 - **Arguments Clés** :

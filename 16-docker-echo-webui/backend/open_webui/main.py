@@ -1604,7 +1604,11 @@ async def chat_completion(
                             raise HTTPException(status_code=400, detail='Invalid response ID.')
                         metadata['user_message_id'] = message.get('parentId')
                     else:
-                        turn = await Chats.insert_chat_turn(chat_id, user, user_message, message_ids)
+                        from open_webui.utils.subagents import _parent_locks
+
+                        lock = _parent_locks.setdefault(chat_id, asyncio.Lock())
+                        async with lock:
+                            turn = await Chats.insert_chat_turn(chat_id, user, user_message, message_ids)
                         event_emitter = await get_event_emitter(
                             {**metadata, 'message_id': turn['currentId']}, update_db=False
                         )
@@ -1613,6 +1617,16 @@ async def chat_completion(
                             for mid, message in turn['messages'].items()
                         }
                         await event_emitter({'type': 'chat:messages', 'data': turn})
+                        if metadata.get('automation_id'):
+                            await sio.emit(
+                                'events',
+                                {
+                                    'chat_id': chat_id,
+                                    'message_id': turn['currentId'],
+                                    'data': {'type': 'chat:reload'},
+                                },
+                                room=f'user:{user.id}',
+                            )
                         user_message_id = user_message.get('id')
                         await emit_chat_list_event({**metadata, 'message_id': user_message_id}, chat_id)
                         for message_id, message in turn['messages'].items():
@@ -1628,6 +1642,7 @@ async def chat_completion(
                         if user_message_id and not (
                             getattr(request.state, 'internal', False)
                             or (user_message.get('meta') or {}).get('internal')
+                            or metadata.get('automation_id')
                         ):
                             try:
                                 from open_webui.utils.timers import cancel_timers_for_chat
@@ -1863,6 +1878,19 @@ async def chat_completion(
                     )
             except Exception:
                 log.exception('Failed to process pending internal messages for chat %s', metadata.get('chat_id'))
+
+            try:
+                chat_id = metadata.get('chat_id')
+                if (
+                    chat_id
+                    and is_saved_chat_id(chat_id)
+                    and not await has_active_tasks(request.app.state.redis, chat_id)
+                ):
+                    from open_webui.utils.automations import drain_queued_automations_for_chat
+
+                    asyncio.create_task(drain_queued_automations_for_chat(request.app, chat_id))
+            except Exception:
+                log.exception('Failed to trigger queued automations drain for chat %s', metadata.get('chat_id'))
 
     # Fan out: one task per model
     if metadata.get('session_id') and metadata.get('chat_id'):
