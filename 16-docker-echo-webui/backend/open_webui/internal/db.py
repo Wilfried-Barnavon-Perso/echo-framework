@@ -271,6 +271,15 @@ def _create_async_engine(*args, **kwargs):
     return create_async_engine(*args, **_json_codec_kwargs(kwargs))
 
 
+# [ECHO-V6-HOOK] Align SQLite DBAPI connect timeout with DATABASE_SQLITE_PRAGMA_BUSY_TIMEOUT
+def _sqlite_connect_timeout() -> float:
+    try:
+        ms = int(DATABASE_SQLITE_PRAGMA_BUSY_TIMEOUT) if DATABASE_SQLITE_PRAGMA_BUSY_TIMEOUT else 30000
+    except (TypeError, ValueError):
+        ms = 30000
+    return max(5.0, ms / 1000.0)
+
+
 # Sync engine (used only for: startup migrations, config loading,
 #              Alembic, peewee migration, health checks)
 
@@ -319,7 +328,11 @@ if SQLALCHEMY_DATABASE_URL.startswith('sqlite+sqlcipher://'):
     log.info('Connected to encrypted SQLite database using SQLCipher')
 
 elif 'sqlite' in SQLALCHEMY_DATABASE_URL:
-    engine = _create_engine(SQLALCHEMY_DATABASE_URL, connect_args={'check_same_thread': False})
+    # [ECHO-V6-HOOK] Align SQLite connect timeout with busy_timeout
+    engine = _create_engine(
+        SQLALCHEMY_DATABASE_URL,
+        connect_args={'check_same_thread': False, 'timeout': _sqlite_connect_timeout()},
+    )
 
     def _apply_sqlite_pragmas(dbapi_connection):
         """Apply all configured SQLite PRAGMAs to a raw DBAPI connection."""
@@ -454,7 +467,7 @@ if 'sqlite' in ASYNC_SQLALCHEMY_DATABASE_URL:
     _sqlite_pool_size = DATABASE_POOL_SIZE if isinstance(DATABASE_POOL_SIZE, int) and DATABASE_POOL_SIZE > 0 else 512
     async_engine = _create_async_engine(
         ASYNC_SQLALCHEMY_DATABASE_URL,
-        connect_args={'check_same_thread': False},
+        connect_args={'check_same_thread': False, 'timeout': _sqlite_connect_timeout()},  # [ECHO-V6-HOOK]
         pool_size=_sqlite_pool_size,
         pool_timeout=DATABASE_POOL_TIMEOUT,
         pool_recycle=DATABASE_POOL_RECYCLE,

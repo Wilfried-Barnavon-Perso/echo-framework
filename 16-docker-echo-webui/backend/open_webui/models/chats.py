@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, nullcontext
 from copy import deepcopy
 import logging
 import re
@@ -15,7 +16,7 @@ from open_webui.models.chat_views import ChatViewState
 from open_webui.models.notifications import emit_changes
 from open_webui.env import ENABLE_ADMIN_CHAT_ACCESS
 from open_webui.models.comments import delete_resource_comments
-from open_webui.internal.db import Base, JSONField, get_async_db, get_async_db_context
+from open_webui.internal.db import Base, JSONField, async_engine, get_async_db, get_async_db_context
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.automations import AutomationRun
 from open_webui.models.chat_messages import ChatMessage, ChatMessages
@@ -447,15 +448,29 @@ class ChatStatsExport(BaseModel):
 
 
 class ChatTable:
+    # [ECHO-V6-HOOK] Serialize intra-process SQLite BEGIN IMMEDIATE writes per event loop
+    _sqlite_write_locks: dict[int, asyncio.Lock] = {}
+
+    def _get_sqlite_write_lock(self) -> asyncio.Lock:
+        loop_id = id(asyncio.get_running_loop())
+        lock = self._sqlite_write_locks.get(loop_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._sqlite_write_locks[loop_id] = lock
+        return lock
+
     @asynccontextmanager
     async def _chat_transaction(self, id: str):
         # Own the transaction; callers may already have a read session.
-        async with get_async_db() as session:
-            if session.bind.dialect.name == 'sqlite':
-                await session.execute(text('BEGIN IMMEDIATE'))
-            chat = await session.get(Chat, id, with_for_update=True)
-            yield session, chat
-            await session.commit()
+        # [ECHO-V6-HOOK] Acquire per-loop write lock before opening a SQLite session
+        write_lock = self._get_sqlite_write_lock() if async_engine.dialect.name == 'sqlite' else nullcontext()
+        async with write_lock:
+            async with get_async_db() as session:
+                if session.bind.dialect.name == 'sqlite':
+                    await session.execute(text('BEGIN IMMEDIATE'))
+                chat = await session.get(Chat, id, with_for_update=True)
+                yield session, chat
+                await session.commit()
 
     @asynccontextmanager
     async def edit_message_output(self, chat_id: str, message_id: str):
@@ -575,6 +590,32 @@ class ChatTable:
         child_ids.append(child_id)
         return True
 
+    # [ECHO-V6-HOOK] Detect orphan assistant leaves without valid parent in chat history
+    @staticmethod
+    def _is_orphan_assistant_leaf(messages: dict, message: Any) -> bool:
+        if not isinstance(message, dict) or len(messages) <= 1:
+            return False
+        children_ids = message.get('childrenIds') if isinstance(message.get('childrenIds'), list) else []
+        if children_ids:
+            return False
+        parent_id = message.get('parentId')
+        if parent_id is not None and parent_id in messages:
+            return False
+        output = message.get('output') or []
+        output_role = next(
+            (item.get('role') for item in output if isinstance(item, dict) and item.get('role')),
+            None,
+        )
+        role = message.get('role') or output_role
+        if role != 'assistant':
+            return False
+        return any(
+            isinstance(other, dict)
+            and other is not message
+            and (other.get('role') == 'user' or other.get('childrenIds'))
+            for other in messages.values()
+        )
+
     def _repair_chat_current_id(self, chat: dict) -> bool:
         history = chat.get('history')
         if not isinstance(history, dict):
@@ -592,21 +633,8 @@ class ChatTable:
 
         current_id = history.get('currentId')
         current_message = messages.get(current_id)
-        output = []
-        if isinstance(current_message, dict):
-            output = current_message.get('output') or []
-
-        output_role = next(
-            (item.get('role') for item in output if isinstance(item, dict) and item.get('role')),
-            None,
-        )
-        current_is_bad_leaf = (
-            isinstance(current_message, dict)
-            and output_role == 'assistant'
-            and current_message.get('parentId') is None
-            and not current_message.get('timestamp')
-            and len(messages) > 1
-        )
+        # [ECHO-V6-HOOK] Use orphan assistant leaf predicate
+        current_is_bad_leaf = self._is_orphan_assistant_leaf(messages, current_message)
         if (
             isinstance(current_message, dict)
             and current_message.get('id')
@@ -623,7 +651,8 @@ class ChatTable:
         latest_leaf_id = None
         latest_timestamp = -1
         for message_id, message in messages.items():
-            if not isinstance(message, dict) or not message.get('role'):
+            # [ECHO-V6-HOOK] Skip orphan assistant leaves when selecting fallback currentId
+            if not isinstance(message, dict) or not message.get('role') or self._is_orphan_assistant_leaf(messages, message):
                 continue
 
             children_ids = message.get('childrenIds') if isinstance(message.get('childrenIds'), list) else []
@@ -1169,6 +1198,13 @@ class ChatTable:
                             **incoming_meta,
                         },
                     }
+            # [ECHO-V6-HOOK] Do not overwrite an existing non-None parentId with None
+            if (
+                'parentId' in message
+                and message.get('parentId') is None
+                and messages[message_id].get('parentId') is not None
+            ):
+                message = {k: v for k, v in message.items() if k != 'parentId'}
             messages[message_id] = {
                 **messages[message_id],
                 **message,
@@ -1403,7 +1439,13 @@ class ChatTable:
             return {'messages': turn, 'currentId': history['currentId']}
 
     async def upsert_message_to_chat_by_id_and_message_id(
-        self, id: str, message_id: str, message: dict, *, touch: bool = True
+        self,
+        id: str,
+        message_id: str,
+        message: dict,
+        *,
+        touch: bool = True,
+        create_if_missing: bool = False,  # [ECHO-V6-HOOK]
     ) -> ChatModel | None:
         if not message.get('content'):
             output_text = get_output_text(message.get('output'))
@@ -1419,6 +1461,22 @@ class ChatTable:
                     return None
 
                 chat = chat_item.chat or {}
+                # [ECHO-V6-HOOK] Anti-resurrection guard for deleted/missing messages
+                history = chat.get('history', {})
+                messages = history.get('messages') or {}
+                if not create_if_missing and message_id not in messages:
+                    log.debug('Skipping upsert for deleted/missing message %s in chat %s', message_id, id)
+                    return None
+                parent_id = message.get('parentId')
+                if message_id not in messages and parent_id is not None and parent_id not in messages:
+                    log.debug(
+                        'Skipping upsert for message %s with missing parent %s in chat %s',
+                        message_id,
+                        parent_id,
+                        id,
+                    )
+                    return None
+
                 self._repair_chat_current_id(chat)
 
                 history = chat.get('history', {})
@@ -1438,7 +1496,10 @@ class ChatTable:
                 updated_chat = ChatModel.model_validate(chat_item)
 
             return updated_chat
-        except Exception:
+        except Exception as e:
+            log.warning(
+                'upsert_message_to_chat_by_id_and_message_id failed for chat=%s message=%s: %s', id, message_id, e
+            )
             return None
 
     async def delete_message_from_chat_by_id_and_message_id(self, id: str, message_id: str) -> ChatModel | None:
@@ -1478,7 +1539,10 @@ class ChatTable:
                 updated_chat = ChatModel.model_validate(chat_item)
 
             return updated_chat
-        except Exception:
+        except Exception as e:
+            log.warning(
+                'delete_message_from_chat_by_id_and_message_id failed for chat=%s message=%s: %s', id, message_id, e
+            )
             return None
 
     async def add_message_status_to_chat_by_id_and_message_id(

@@ -1616,6 +1616,9 @@ async def update_chat_message_by_id(
     if not updates:
         raise HTTPException(400, 'No message changes supplied')
     chat = await Chats.upsert_message_to_chat_by_id_and_message_id(id, message_id, updates)
+    # [ECHO-V6-HOOK] Return 404 if target message was deleted or missing
+    if not chat:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=ERROR_MESSAGES.NOT_FOUND)
 
     event_emitter = await get_event_emitter(
         {

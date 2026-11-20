@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 6.14.0.1
+# VERSION : 6.14.1.1
 # ==============================================================================
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
@@ -26,11 +26,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.14.1.1: Ajout de DATABASE_SQLITE_PRAGMA_BUSY_TIMEOUT=30000 sur echo-webui pour résorber la contention SQLite sur conversations volumineuses.
 # 6.14.0.1: Augmentation de la tolérance de démarrage du healthcheck echo-searxng (start_period: 60s, retries: 10) sous contention CPU.
 # 6.7.8.1: Passage de REVERSE_PROXY_REQUEST_BUFFERING=no (retrait client_body_buffer_size 100m) et isolation TMPDIR=/app/backend/data/.tmp_uploads sur echo-webui.
 # 6.6.27.1: Suppression de l'exposition hôte 8000:8000 sur echo-mcp-broker (accès interne Docker uniquement).
 # 6.5.3.1: Renommage du service et de l'image echo-open-webui en echo-webui (ECHO-UI).
-# 6.5.2.1: Ajout explicite de QDRANT_URI=http://echo-qdrant:6333 dans echo-open-webui.
 
 name: echo
 
@@ -78,6 +78,7 @@ services:
 
       - DATA_DIR=/app/backend/data
       - TMPDIR=/app/backend/data/.tmp_uploads
+      - DATABASE_SQLITE_PRAGMA_BUSY_TIMEOUT=30000
       # Désactivation RAG natif au boot
       - VECTOR_DB=qdrant
       - QDRANT_URI=http://echo-qdrant:6333
