@@ -1,11 +1,11 @@
-# VERSION : 5.239.12.1
+# VERSION : 6.7.18.3
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.18.3: Socle factorisé (HTML/SafeLinks, compactage schémas, Download Broker structuredContent), fix Google account_id/email/staging, cloisonnement multi-tenants & Graph M365.
 # 5.239.12.1: Sémaphore MSA, client frais par retry, erreur list_mail_folders, fix KQL/OData et unified_search.
 # 5.239.11.2: Alignement Graph sur microsoft-mcp (Prefer conditionnel, omission $skip=0 et retry 5xx/429).
 # 5.239.11.1: Refresh MSAL async/fallback, transport Graph IPv4, URL quote, include_body=False et sync_credentials.
 # 5.239.10.1: Sans fallback Stdio list_emails, fix tenant_id MSAL, body_max_length et batch_get_emails parallèle.
-# 5.231.37.1: Routage atomique des téléchargements M365 et Google Workspace vers le Download Broker (/mcp/).
 """
 ECHO MCP Broker - Adaptateurs de cycle de vie spécifiques aux fournisseurs MCP résidents.
 Isole la logique d'authentification et de préparation d'environnement (Microsoft 365 MSAL,
@@ -30,6 +30,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Tuple, Union
 
 import httpx
+try:
+    from bs4 import BeautifulSoup
+except ImportError:  # pragma: no cover
+    BeautifulSoup = None
 from core.security import chat_id_var
 
 logger = logging.getLogger(__name__)
@@ -153,6 +157,229 @@ class MCPServiceProvider:
         os.replace(part_path, final_path)
         return fid, safe_name, final_path
 
+    @staticmethod
+    def unwrap_tracking_url(url: str) -> str:
+        """Décode les wrappers de tracking connus (ex: Outlook SafeLinks)."""
+        raw = str(url or "").strip()
+        if not raw:
+            return ""
+        try:
+            parsed = urllib.parse.urlparse(raw)
+            if "safelinks.protection.outlook.com" in (parsed.netloc or "").lower():
+                qs = urllib.parse.parse_qs(parsed.query)
+                target = (qs.get("url") or [None])[0]
+                if target:
+                    target_str = str(target).strip()
+                    if target_str.lower().startswith(("http://", "https://")):
+                        return target_str
+        except Exception:
+            pass
+        return raw
+
+    @staticmethod
+    def clean_html_to_text(html_text: str) -> str:
+        """Convertit un HTML en texte brut dense tout en préservant les liens et boutons."""
+        if not html_text or not isinstance(html_text, str):
+            return ""
+        if "<" not in html_text or ">" not in html_text:
+            return html.unescape(html_text).strip()
+
+        if BeautifulSoup is not None:
+            soup = BeautifulSoup(html_text, "html.parser")
+            for tag in soup(["style", "script", "head", "noscript", "meta", "link"]):
+                tag.decompose()
+            for a_tag in soup.find_all("a", href=True):
+                clean_href = MCPServiceProvider.unwrap_tracking_url(a_tag.get("href", ""))
+                if clean_href.lower().startswith(("http://", "https://", "mailto:")):
+                    label = " ".join(a_tag.get_text(" ", strip=True).split())
+                    if not label:
+                        img = a_tag.find("img", alt=True)
+                        if img is not None:
+                            label = " ".join(str(img.get("alt") or "").split())
+                    if label and clean_href not in label:
+                        replacement = f"{label} ({clean_href})"
+                    else:
+                        replacement = clean_href or label
+                    a_tag.replace_with(f" {replacement} ")
+            for br in soup.find_all("br"):
+                br.replace_with("\n")
+            for block in soup.find_all(
+                [
+                    "p",
+                    "div",
+                    "tr",
+                    "li",
+                    "h1",
+                    "h2",
+                    "h3",
+                    "h4",
+                    "h5",
+                    "h6",
+                    "section",
+                    "article",
+                    "blockquote",
+                ]
+            ):
+                block.insert_before("\n")
+                block.insert_after("\n")
+            raw_text = html.unescape(soup.get_text())
+        else:
+            text = re.sub(r"(?is)<style.*?>.*?</style>", "", html_text)
+            text = re.sub(r"(?is)<script.*?>.*?</script>", "", text)
+            text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+            text = re.sub(r"(?i)</(?:p|div|tr|li|h[1-6]|section|article|blockquote)>", "\n", text)
+            text = re.sub(r"<[^>]+>", "", text)
+            raw_text = html.unescape(text)
+
+        lines: list[str] = []
+        prev_empty = True
+        for raw_line in raw_text.splitlines():
+            line = " ".join(raw_line.split())
+            if not line:
+                if not prev_empty:
+                    lines.append("")
+                    prev_empty = True
+            else:
+                lines.append(line)
+                prev_empty = False
+        while lines and not lines[-1]:
+            lines.pop()
+        return "\n".join(lines)
+
+    @classmethod
+    def _compact_tools_catalog(
+        cls,
+        result: dict,
+        optional_props: Optional[set[str]] = None,
+        prop_descriptions: Optional[dict[str, str]] = None,
+        strip_defaults: Optional[set[str]] = None,
+        max_desc_len: int = 280,
+    ) -> dict:
+        """Compacte le catalogue `tools` (descriptions, outputSchema, inputSchema)."""
+        if not isinstance(result, dict) or not isinstance(result.get("tools"), list):
+            return result
+        opt_props = optional_props or set()
+        desc_map = prop_descriptions or {}
+        no_def = strip_defaults or set()
+
+        def _truncate_desc(raw_desc: Any, limit: int) -> str:
+            first_block = " ".join(str(raw_desc or "").strip().split("\n\n", 1)[0].split())
+            if len(first_block) > limit:
+                cut = first_block[: max(limit - 3, 1)].rstrip()
+                if " " in cut:
+                    cut = cut.rsplit(" ", 1)[0]
+                return f"{cut}..."
+            return first_block
+
+        compacted_tools = []
+        for tool in result["tools"]:
+            if not isinstance(tool, dict):
+                compacted_tools.append(tool)
+                continue
+            t_copy = dict(tool)
+            t_copy.pop("outputSchema", None)
+            if t_copy.get("description"):
+                t_copy["description"] = _truncate_desc(t_copy["description"], max_desc_len)
+            schema = t_copy.get("inputSchema")
+            if isinstance(schema, dict):
+                clean_schema = dict(schema)
+                props = clean_schema.get("properties")
+                if isinstance(props, dict):
+                    clean_props = {}
+                    for p_name, p_def in props.items():
+                        if isinstance(p_def, dict):
+                            p_copy = {k: v for k, v in p_def.items() if k != "title"}
+                            if p_name in desc_map:
+                                p_copy["description"] = desc_map[p_name]
+                            if p_copy.get("description"):
+                                p_copy["description"] = _truncate_desc(p_copy["description"], 140)
+                            if p_name in no_def:
+                                p_copy.pop("default", None)
+                            clean_props[p_name] = p_copy
+                        else:
+                            clean_props[p_name] = p_def
+                    clean_schema["properties"] = clean_props
+                req = clean_schema.get("required")
+                if isinstance(req, list) and opt_props:
+                    clean_schema["required"] = [r for r in req if r not in opt_props]
+                t_copy["inputSchema"] = clean_schema
+            compacted_tools.append(t_copy)
+        out = dict(result)
+        out["tools"] = compacted_tools
+        return out
+
+    @classmethod
+    def _build_broker_download_payload(
+        cls,
+        fid: str,
+        safe_name: str,
+        original_name: str,
+        final_path: str,
+        size_bytes: int,
+        content_type: str = "application/octet-stream",
+    ) -> dict:
+        """Construit le payload unifié d'un fichier déposé dans le Download Broker."""
+        return {
+            "status": "downloaded_to_broker",
+            "file_id": fid,
+            "name": safe_name,
+            "original_name": original_name,
+            "path": final_path,
+            "saved_to": final_path,
+            "content_type": content_type,
+            "mime_type": content_type,
+            "size": size_bytes,
+            "size_mb": round(size_bytes / (1024 * 1024), 2),
+        }
+
+    @classmethod
+    def _rewrite_result_with_broker_downloads(
+        cls,
+        result: dict,
+        moved_map: dict[str, Tuple[str, str, str]],
+    ) -> dict:
+        """Réécrit `content` et `structuredContent` après routage vers le Download Broker."""
+        if not isinstance(result, dict) or not moved_map:
+            return result
+        summary_lines = "".join(
+            f"\n📦 ECHO Download Broker: file_id='{fid}', name='{safe_name}', path='{new_path}'"
+            for fid, safe_name, new_path in moved_map.values()
+        )
+
+        def _rewrite_text(txt: str) -> str:
+            for old_path, (_fid, safe_name, new_path) in moved_map.items():
+                txt = txt.replace(old_path, new_path)
+                old_fname = os.path.basename(old_path)
+                if old_fname != safe_name:
+                    txt = txt.replace(old_fname, safe_name)
+            return txt + summary_lines
+
+        out = dict(result)
+        content_list = out.get("content")
+        if isinstance(content_list, list):
+            new_content = []
+            for item in content_list:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    new_item = dict(item)
+                    new_item["text"] = _rewrite_text(item.get("text", ""))
+                    new_content.append(new_item)
+                else:
+                    new_content.append(item)
+            out["content"] = new_content
+
+        sc = out.get("structuredContent")
+        if isinstance(sc, dict):
+            sc_copy = dict(sc)
+            if isinstance(sc_copy.get("result"), str):
+                sc_copy["result"] = _rewrite_text(sc_copy["result"])
+            else:
+                sc_copy["echo_downloads"] = [
+                    {"file_id": fid, "name": safe_name, "path": new_path}
+                    for fid, safe_name, new_path in moved_map.values()
+                ]
+            out["structuredContent"] = sc_copy
+        return out
+
     async def sync_credentials(self, user_id: str, credentials: dict) -> Optional[str]:
         """Synchronise la configuration d'identifiants du service avant appel d'outil ou lancement Stdio."""
         return None
@@ -163,6 +390,7 @@ class MCPServiceProvider:
         user_id: str,
         credentials: dict,
         env: dict,
+        cache_key: Optional[str] = None,
     ) -> None:
         """Prépare le système de fichiers et les variables d'environnement avant lancement Stdio."""
         return None
@@ -171,6 +399,7 @@ class MCPServiceProvider:
         self,
         user_id: str,
         result: dict,
+        credentials: Optional[dict] = None,
     ) -> dict:
         """Hook exécuté après `session.list_tools()` sur le dictionnaire sérialisé."""
         return result
@@ -182,6 +411,7 @@ class MCPServiceProvider:
         args: dict,
         chat_id: Optional[str] = None,
         credentials: Optional[dict] = None,
+        account_id: Optional[str] = None,
     ) -> Tuple[dict, Optional[dict]]:
         """
         Hook exécuté avant `session.call_tool(tool_name, args)`.
@@ -196,6 +426,8 @@ class MCPServiceProvider:
         tool_name: str,
         result: dict,
         chat_id: Optional[str] = None,
+        credentials: Optional[dict] = None,
+        cache_key: Optional[str] = None,
     ) -> dict:
         """Hook exécuté après `session.call_tool(tool_name, args)` sur le résultat sérialisé."""
         return result
@@ -212,7 +444,7 @@ class GoogleWorkspaceProvider(MCPServiceProvider):
         "RefreshError",
         "Token has been expired or revoked",
     )
-    _USER_STAGING_DIRS: dict[str, set[str]] = {}
+    _SESSION_STAGING_DIRS: dict[str, str] = {}
 
     async def prepare_env(
         self,
@@ -220,6 +452,7 @@ class GoogleWorkspaceProvider(MCPServiceProvider):
         user_id: str,
         credentials: dict,
         env: dict,
+        cache_key: Optional[str] = None,
     ) -> None:
         refresh_token = credentials.get("GOOGLE_OAUTH_REFRESH_TOKEN")
         user_email = credentials.get("USER_GOOGLE_EMAIL")
@@ -300,8 +533,40 @@ class GoogleWorkspaceProvider(MCPServiceProvider):
         attachments_staging = os.path.join(temp_dir_path, "attachments")
         os.makedirs(attachments_staging, exist_ok=True)
         env["WORKSPACE_ATTACHMENT_DIR"] = attachments_staging
-        safe_uid = self._sanitize_segment(user_id)
-        self._USER_STAGING_DIRS.setdefault(safe_uid, set()).add(attachments_staging)
+        session_key = cache_key or f"{self._sanitize_segment(user_id)}_default"
+        self._SESSION_STAGING_DIRS[session_key] = attachments_staging
+        stack.callback(self._SESSION_STAGING_DIRS.pop, session_key, None)
+
+    async def after_list_tools(
+        self,
+        user_id: str,
+        result: dict,
+        credentials: Optional[dict] = None,
+    ) -> dict:
+        return self._compact_tools_catalog(
+            result,
+            optional_props={"user_google_email"},
+            prop_descriptions={
+                "user_google_email": "Auto-injected.",
+            },
+            strip_defaults={"user_google_email"},
+            max_desc_len=115,
+        )
+
+    async def before_tool_call(
+        self,
+        user_id: str,
+        tool_name: str,
+        args: dict,
+        chat_id: Optional[str] = None,
+        credentials: Optional[dict] = None,
+        account_id: Optional[str] = None,
+    ) -> Tuple[dict, Optional[dict]]:
+        args = dict(args or {})
+        args.pop("account_id", None)
+        if not args.get("user_google_email") and (credentials or {}).get("USER_GOOGLE_EMAIL"):
+            args["user_google_email"] = str(credentials["USER_GOOGLE_EMAIL"]).strip()
+        return args, None
 
     async def after_tool_call(
         self,
@@ -309,6 +574,8 @@ class GoogleWorkspaceProvider(MCPServiceProvider):
         tool_name: str,
         result: dict,
         chat_id: Optional[str] = None,
+        credentials: Optional[dict] = None,
+        cache_key: Optional[str] = None,
     ) -> dict:
         """
         Bouclier anti-pollution : intercepte toute tentative de `workspace-mcp` d'exposer
@@ -352,12 +619,9 @@ class GoogleWorkspaceProvider(MCPServiceProvider):
                                 "Échec transfert fichier Google Workspace vers Download Broker: %s", e
                             )
 
-        safe_uid = self._sanitize_segment(user_id)
-        staging_dirs = self._USER_STAGING_DIRS.get(safe_uid, set())
-        for staging_dir in list(staging_dirs):
-            if not os.path.isdir(staging_dir):
-                staging_dirs.discard(staging_dir)
-                continue
+        session_key = cache_key or f"{self._sanitize_segment(user_id)}_default"
+        staging_dir = self._SESSION_STAGING_DIRS.get(session_key)
+        if staging_dir and os.path.isdir(staging_dir):
             for fname in os.listdir(staging_dir):
                 fpath = os.path.join(staging_dir, fname)
                 if os.path.isfile(fpath) and fpath not in moved_map:
@@ -371,27 +635,8 @@ class GoogleWorkspaceProvider(MCPServiceProvider):
                             "Échec transfert reliquat staging Google Workspace: %s", e
                         )
 
-        if moved_map and isinstance(content_list, list):
-            result = dict(result)
-            new_content = []
-            for item in content_list:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    new_text = item.get("text", "")
-                    for old_path, (_fid, safe_name, new_path) in moved_map.items():
-                        new_text = new_text.replace(old_path, new_path)
-                        old_fname = os.path.basename(old_path)
-                        if old_fname != safe_name:
-                            new_text = new_text.replace(old_fname, safe_name)
-                    summary_lines = [
-                        f"\n📦 ECHO Download Broker: file_id='{fid}', name='{safe_name}', path='{new_path}'"
-                        for fid, safe_name, new_path in moved_map.values()
-                    ]
-                    new_item = dict(item)
-                    new_item["text"] = new_text + "".join(summary_lines)
-                    new_content.append(new_item)
-                else:
-                    new_content.append(item)
-            result["content"] = new_content
+        if moved_map:
+            return self._rewrite_result_with_broker_downloads(result, moved_map)
 
         return result
 
@@ -482,42 +727,27 @@ class Microsoft365Provider(MCPServiceProvider):
 
     @staticmethod
     def _clean_html_to_text(html_text: str) -> str:
-        """
-        Nettoie et convertit un contenu HTML en texte brut dense à haut SNR :
-        1. Supprime les balises <style> et <script> et leur contenu.
-        2. Remplace les sauts de ligne HTML (<br>, </p>, </div>, </tr>, </li>) par des retours chariot.
-        3. Supprime toutes les autres balises HTML.
-        4. Décode les entités HTML standard (&nbsp;, &amp;, &lt;, &gt;, &quot;, &#39;).
-        5. Normalise les espaces blancs consécutifs.
-        """
-        if not html_text or not isinstance(html_text, str):
-            return ""
-        if "<" not in html_text or ">" not in html_text:
-            return html_text.strip()
-
-        # Supprimer styles et scripts
-        text = re.sub(r"(?is)<style.*?>.*?</style>", "", html_text)
-        text = re.sub(r"(?is)<script.*?>.*?</script>", "", text)
-
-        # Remplacer les sauts de lignes structurels
-        text = re.sub(r"(?i)<br\s*/?>", "\n", text)
-        text = re.sub(r"(?i)</(?:p|div|tr|li|h[1-6])>", "\n", text)
-
-        # Supprimer les balises HTML restantes
-        text = re.sub(r"<[^>]+>", "", text)
-
-        # Décoder les entités HTML
-        text = html.unescape(text)
-
-        # Normaliser les espaces et sauts de ligne
-        lines = [line.strip() for line in text.splitlines()]
-        text = "\n".join(line for line in lines if line)
-        return text
+        """Délègue la conversion HTML -> texte brut dense avec préservation des liens à MCPServiceProvider."""
+        return MCPServiceProvider.clean_html_to_text(html_text)
 
     @staticmethod
     def _format_exception(exc: Exception) -> str:
         detail = str(exc).strip()
         return f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+
+    def _handle_tool_exception(self, action_name: str, exc: Exception) -> dict:
+        if isinstance(exc, AuthRequiredError):
+            return self._make_tool_response(
+                {"status": "auth_required", "message": str(exc)},
+                is_error=True,
+            )
+        return self._make_tool_response(
+            {
+                "status": "error",
+                "message": f"Exception lors de {action_name}: {self._format_exception(exc)}",
+            },
+            is_error=True,
+        )
 
     @staticmethod
     def _parse_bool(val: Any, default: bool = False) -> bool:
@@ -557,31 +787,24 @@ class Microsoft365Provider(MCPServiceProvider):
         headers: dict,
         params: Optional[dict] = None,
         json_data: Optional[dict] = None,
+        json_body: Any = None,
         timeout_sec: float = 14.0,
         max_retries: int = 2,
         mailbox_key: Optional[str] = None,
+        follow_redirects: bool = False,
     ) -> httpx.Response:
         """
         Exécute une requête Microsoft Graph v1.0 avec client HTTP frais par tentative,
         sémaphore par boîte mail et politique de retry sur timeouts, erreurs réseau, 429 et 5xx.
         """
         base_headers = dict(headers)
-        if method.upper() == "GET" and "Prefer" not in base_headers:
-            select_tokens = [
-                f.strip()
-                for f in str((params or {}).get("$select", "")).split(",")
-                if f.strip()
-            ]
-            if "$search" in (params or {}) or "body" in select_tokens:
-                base_headers["Prefer"] = 'outlook.body-content-type="text"'
-
+        payload_json = json_body if json_body is not None else json_data
         sem = self._get_mailbox_semaphore(mailbox_key) if mailbox_key else None
 
         for attempt in range(max_retries + 1):
             req_headers = dict(base_headers)
             req_params = dict(params) if params is not None else None
             if attempt >= 1 and method.upper() == "GET":
-                req_headers.pop("Prefer", None)
                 if req_params and req_params.get("$skip") == "0":
                     req_params.pop("$skip", None)
                 if req_params and "$select" in req_params:
@@ -603,7 +826,9 @@ class Microsoft365Provider(MCPServiceProvider):
                             )
 
             try:
-                async with self._create_graph_client(timeout_sec) as client:
+                async with self._create_graph_client(
+                    timeout_sec, follow_redirects=follow_redirects
+                ) as client:
                     if sem is not None:
                         async with sem:
                             res = await client.request(
@@ -611,7 +836,7 @@ class Microsoft365Provider(MCPServiceProvider):
                                 url=url,
                                 headers=req_headers,
                                 params=req_params,
-                                json=json_data,
+                                json=payload_json,
                             )
                     else:
                         res = await client.request(
@@ -619,7 +844,7 @@ class Microsoft365Provider(MCPServiceProvider):
                             url=url,
                             headers=req_headers,
                             params=req_params,
-                            json=json_data,
+                            json=payload_json,
                         )
             except (httpx.TimeoutException, httpx.NetworkError):
                 if attempt < max_retries:
@@ -677,24 +902,55 @@ class Microsoft365Provider(MCPServiceProvider):
         return msg
 
     @staticmethod
-    def _user_cache_dir(user_id: str) -> str:
-        safe_uid = "".join(
-            c for c in str(user_id or "anonymous") if c.isalnum() or c in ("-", "_", ".")
+    def _compute_ms_sig(credentials: Optional[dict]) -> Optional[str]:
+        if isinstance(credentials, dict) and credentials.get("MICROSOFT_MCP_CLIENT_ID"):
+            cid = str(credentials.get("MICROSOFT_MCP_CLIENT_ID") or "").strip()
+            tid = str(credentials.get("MICROSOFT_MCP_TENANT_ID") or "").strip()
+            return hashlib.md5(f"{cid}:{tid}".encode()).hexdigest()[:12]
+        return None
+
+    @classmethod
+    def _user_cache_dir(
+        cls,
+        user_id: str,
+        credentials: Optional[dict] = None,
+    ) -> str:
+        safe_uid = cls._sanitize_segment(user_id, "anonymous")
+        ms_sig = cls._compute_ms_sig(credentials)
+        if ms_sig:
+            return os.path.join(MCP_CACHE_ROOT, "microsoft_365", safe_uid, ms_sig)
+        return os.path.join(MCP_CACHE_ROOT, "microsoft_365", safe_uid)
+
+    @classmethod
+    def _token_cache_path(
+        cls,
+        user_id: str,
+        credentials: Optional[dict] = None,
+    ) -> str:
+        return os.path.join(
+            cls._user_cache_dir(user_id, credentials),
+            ".microsoft_mcp_token_cache.json",
         )
-        return os.path.join(MCP_CACHE_ROOT, "microsoft_365", safe_uid or "anonymous")
 
     @classmethod
-    def _token_cache_path(cls, user_id: str) -> str:
-        return os.path.join(cls._user_cache_dir(user_id), ".microsoft_mcp_token_cache.json")
+    def _flow_cache_path(
+        cls,
+        user_id: str,
+        credentials: Optional[dict] = None,
+    ) -> str:
+        return os.path.join(
+            cls._user_cache_dir(user_id, credentials),
+            ".microsoft_mcp_device_flow.json",
+        )
 
     @classmethod
-    def _flow_cache_path(cls, user_id: str) -> str:
-        return os.path.join(cls._user_cache_dir(user_id), ".microsoft_mcp_device_flow.json")
-
-    @classmethod
-    def _load_cached_accounts(cls, user_id: str) -> list[dict]:
+    def _load_cached_accounts(
+        cls,
+        user_id: str,
+        credentials: Optional[dict] = None,
+    ) -> list[dict]:
         """Lit les comptes MSAL persistés dans `.microsoft_mcp_token_cache.json`."""
-        cache_path = cls._token_cache_path(user_id)
+        cache_path = cls._token_cache_path(user_id, credentials)
         if not os.path.exists(cache_path):
             return []
         try:
@@ -718,38 +974,54 @@ class Microsoft365Provider(MCPServiceProvider):
             return []
 
     async def sync_credentials(self, user_id: str, credentials: dict) -> str:
-        cache_dir = self._user_cache_dir(user_id)
+        cache_dir = self._user_cache_dir(user_id, credentials)
         os.makedirs(cache_dir, exist_ok=True)
-        if isinstance(credentials, dict) and credentials.get("MICROSOFT_MCP_CLIENT_ID"):
+        ms_sig = self._compute_ms_sig(credentials)
+        if ms_sig:
             cid = str(credentials.get("MICROSOFT_MCP_CLIENT_ID") or "").strip()
             tid = str(credentials.get("MICROSOFT_MCP_TENANT_ID") or "").strip()
-            ms_sig = hashlib.md5(f"{cid}:{tid}".encode()).hexdigest()
-            sig_file = os.path.join(cache_dir, ".cred_hash")
-            token_cache_file = self._token_cache_path(user_id)
-            flow_cache_file = self._flow_cache_path(user_id)
+            full_md5 = hashlib.md5(f"{cid}:{tid}".encode()).hexdigest()
 
-            old_sig = None
-            if os.path.exists(sig_file):
-                try:
-                    with open(sig_file, "r", encoding="utf-8") as sf_in:
-                        old_sig = sf_in.read().strip()
-                except Exception:
-                    old_sig = None
-
-            if old_sig and old_sig != ms_sig:
-                for stale_file in (token_cache_file, flow_cache_file):
-                    if os.path.exists(stale_file):
-                        try:
-                            os.remove(stale_file)
-                        except Exception:
-                            pass
-
-            if old_sig != ms_sig:
-                try:
-                    with open(sig_file, "w", encoding="utf-8") as sf_out:
-                        sf_out.write(ms_sig)
-                except Exception:
-                    pass
+            scoped_token_cache = self._token_cache_path(user_id, credentials)
+            scoped_flow_cache = self._flow_cache_path(user_id, credentials)
+            if not os.path.exists(scoped_token_cache):
+                legacy_dir = self._user_cache_dir(user_id, None)
+                legacy_token_cache = os.path.join(
+                    legacy_dir, ".microsoft_mcp_token_cache.json"
+                )
+                legacy_flow_cache = os.path.join(
+                    legacy_dir, ".microsoft_mcp_device_flow.json"
+                )
+                legacy_sig_file = os.path.join(legacy_dir, ".cred_hash")
+                should_migrate = os.path.exists(legacy_token_cache)
+                if should_migrate and os.path.exists(legacy_sig_file):
+                    try:
+                        with open(legacy_sig_file, "r", encoding="utf-8") as sf_in:
+                            legacy_sig = sf_in.read().strip()
+                        if legacy_sig and not (
+                            legacy_sig == full_md5 or legacy_sig.startswith(ms_sig)
+                        ):
+                            should_migrate = False
+                    except Exception:
+                        should_migrate = False
+                if should_migrate:
+                    try:
+                        tmp_tok = f"{scoped_token_cache}.tmp"
+                        shutil.copy2(legacy_token_cache, tmp_tok)
+                        os.replace(tmp_tok, scoped_token_cache)
+                        if (
+                            os.path.exists(legacy_flow_cache)
+                            and not os.path.exists(scoped_flow_cache)
+                        ):
+                            tmp_flw = f"{scoped_flow_cache}.tmp"
+                            shutil.copy2(legacy_flow_cache, tmp_flw)
+                            os.replace(tmp_flw, scoped_flow_cache)
+                    except Exception as mig_err:
+                        logger.warning(
+                            "MS365: échec migration cache MSAL vers %s: %s",
+                            cache_dir,
+                            mig_err,
+                        )
 
             cfg_file = os.path.join(cache_dir, ".cred_config.json")
             try:
@@ -772,6 +1044,7 @@ class Microsoft365Provider(MCPServiceProvider):
         user_id: str,
         credentials: dict,
         env: dict,
+        cache_key: Optional[str] = None,
     ) -> None:
         cache_dir = await self.sync_credentials(user_id, credentials)
         env["HOME"] = cache_dir
@@ -788,27 +1061,22 @@ class Microsoft365Provider(MCPServiceProvider):
         Tente d'abord une lecture directe du jeton actif, sinon rafraîchit
         silencieusement via MSAL SerializableTokenCache ou renvoie une exception.
         """
-        cache_path = cls._token_cache_path(user_id)
+        cache_path = cls._token_cache_path(user_id, credentials)
         if not os.path.exists(cache_path):
-            raise ValueError(f"Cache MSAL introuvable dans {cache_path}")
+            raise AuthRequiredError(f"Cache MSAL introuvable dans {cache_path}")
 
         try:
             with open(cache_path, "r", encoding="utf-8") as f:
                 raw_cache = f.read()
             data = json.loads(raw_cache)
         except Exception as e:
-            raise ValueError(f"Lecture du cache MSAL impossible: {e}")
+            raise AuthRequiredError(f"Lecture du cache MSAL impossible: {e}")
 
         now = int(datetime.now(timezone.utc).timestamp())
 
         # 1. Recherche d'un AccessToken non expiré dans le cache sérialisé MSAL
         access_tokens = data.get("AccessToken", {})
         accounts_map = data.get("Account", {})
-        single_account_fallback = (
-            (isinstance(accounts_map, dict) and len(accounts_map) == 1)
-            or (isinstance(access_tokens, dict) and len(access_tokens) == 1)
-        )
-        fallback_secret = None
         if isinstance(access_tokens, dict):
             for item in access_tokens.values():
                 if not isinstance(item, dict):
@@ -821,20 +1089,16 @@ class Microsoft365Provider(MCPServiceProvider):
                     item_hid = str(item.get("home_account_id") or "").casefold()
                     if item_hid == account_id.casefold():
                         return secret
-                    if single_account_fallback and fallback_secret is None:
-                        fallback_secret = secret
                 else:
                     return secret
-        if fallback_secret:
-            return fallback_secret
 
         # 2. Rafraîchissement silencieux via MSAL
         try:
             import msal
         except ImportError:
-            raise ValueError("Module 'msal' indisponible pour rafraîchir le jeton.")
+            raise AuthRequiredError("Module 'msal' indisponible pour rafraîchir le jeton.")
 
-        cache_dir = cls._user_cache_dir(user_id)
+        cache_dir = cls._user_cache_dir(user_id, credentials)
         saved_cfg: dict = {}
         cfg_path = os.path.join(cache_dir, ".cred_config.json")
         if os.path.exists(cfg_path):
@@ -864,7 +1128,7 @@ class Microsoft365Provider(MCPServiceProvider):
                     break
 
         if not client_id:
-            raise ValueError("MICROSOFT_MCP_CLIENT_ID manquant pour rafraîchir le jeton.")
+            raise AuthRequiredError("MICROSOFT_MCP_CLIENT_ID manquant pour rafraîchir le jeton.")
 
         raw_tenants = [
             creds_dict.get("MICROSOFT_MCP_TENANT_ID"),
@@ -895,7 +1159,7 @@ class Microsoft365Provider(MCPServiceProvider):
                     ):
                         rt_secret = str(rt["secret"])
                         break
-            if not rt_secret and len(rt_map) == 1:
+            elif len(rt_map) == 1:
                 only_rt = next(iter(rt_map.values()))
                 if isinstance(only_rt, dict) and only_rt.get("secret"):
                     rt_secret = str(only_rt["secret"])
@@ -920,11 +1184,18 @@ class Microsoft365Provider(MCPServiceProvider):
                     ),
                     None,
                 )
-            if account is None and accounts:
+            elif not account_id and accounts:
                 account = accounts[0]
 
-            res = app.acquire_token_silent(
-                ["https://graph.microsoft.com/.default"], account=account
+            if account_id and account is None and not rt_secret:
+                continue
+
+            res = (
+                app.acquire_token_silent(
+                    ["https://graph.microsoft.com/.default"], account=account
+                )
+                if (account is not None or not account_id)
+                else None
             )
             if (not res or "access_token" not in res) and rt_secret:
                 res = app.acquire_token_by_refresh_token(
@@ -939,7 +1210,7 @@ class Microsoft365Provider(MCPServiceProvider):
                         logger.warning("Échec sauvegarde cache MSAL après rafraîchissement: %s", e)
                 return res["access_token"]
 
-        raise ValueError("Impossible d'obtenir un jeton Graph valide silencieusement.")
+        raise AuthRequiredError("Impossible d'obtenir un jeton Graph valide silencieusement.")
 
     async def _get_access_token_async(
         self,
@@ -974,21 +1245,43 @@ class Microsoft365Provider(MCPServiceProvider):
         )
         mailbox_key = f"{user_id}:{account_id}"
 
-        resp = await self._graph_request(
-            "GET",
-            "https://graph.microsoft.com/v1.0/me/mailFolders",
-            headers=headers,
-            params={"$top": "100", "$select": fields},
-            timeout_sec=14.0,
-            max_retries=2,
-            mailbox_key=mailbox_key,
-        )
-        if resp.status_code != 200:
-            raise RuntimeError(
-                f"Échec Graph mailFolders ({resp.status_code}): {resp.text[:300]}"
-            )
+        async def _fetch_paged_folders(
+            url: str,
+            params: Optional[dict],
+            raise_on_4xx: bool = True,
+        ) -> list[dict]:
+            collected: list[dict] = []
+            next_url: Optional[str] = url
+            next_params: Optional[dict] = params
+            for _ in range(10):
+                if not next_url:
+                    break
+                resp = await self._graph_request(
+                    "GET",
+                    next_url,
+                    headers=headers,
+                    params=next_params,
+                    timeout_sec=14.0,
+                    max_retries=2,
+                    mailbox_key=mailbox_key,
+                )
+                if resp.status_code >= 500 or (raise_on_4xx and resp.status_code != 200):
+                    raise RuntimeError(
+                        f"Échec Graph folders ({resp.status_code}): {resp.text[:300]}"
+                    )
+                if resp.status_code != 200:
+                    break
+                data = resp.json()
+                collected.extend(data.get("value", []))
+                next_url = data.get("@odata.nextLink")
+                next_params = None
+            return collected
 
-        root_folders = resp.json().get("value", [])
+        root_folders = await _fetch_paged_folders(
+            "https://graph.microsoft.com/v1.0/me/mailFolders",
+            params={"$top": "100", "$select": fields},
+            raise_on_4xx=True,
+        )
 
         async def _fetch_children(
             parent_id: str, parent_path: str, depth: int = 1
@@ -999,33 +1292,24 @@ class Microsoft365Provider(MCPServiceProvider):
             child_url_base = (
                 f"https://graph.microsoft.com/v1.0/me/mailFolders/{q_pid}/childFolders"
             )
-            c_resp = await self._graph_request(
-                "GET",
+            children = await _fetch_paged_folders(
                 child_url_base,
-                headers=headers,
                 params={"$top": "100", "$select": fields},
-                timeout_sec=14.0,
-                max_retries=2,
-                mailbox_key=mailbox_key,
+                raise_on_4xx=False,
             )
-            if c_resp.status_code >= 500:
-                raise RuntimeError(
-                    f"Échec Graph childFolders ({c_resp.status_code}): {c_resp.text[:300]}"
-                )
-            if c_resp.status_code == 200:
-                sub_tasks = []
-                for child in c_resp.json().get("value", []):
-                    c_name = child.get("displayName", "")
-                    c_path = f"{parent_path}/{c_name}" if parent_path else c_name
-                    child_entry = dict(child)
-                    child_entry["path"] = c_path
-                    all_folders.append(child_entry)
-                    if child_entry.get("childFolderCount", 0) > 0:
-                        sub_tasks.append(
-                            _fetch_children(child_entry["id"], c_path, depth + 1)
-                        )
-                if sub_tasks:
-                    await asyncio.gather(*sub_tasks)
+            sub_tasks = []
+            for child in children:
+                c_name = child.get("displayName", "")
+                c_path = f"{parent_path}/{c_name}" if parent_path else c_name
+                child_entry = dict(child)
+                child_entry["path"] = c_path
+                all_folders.append(child_entry)
+                if child_entry.get("childFolderCount", 0) > 0:
+                    sub_tasks.append(
+                        _fetch_children(child_entry["id"], c_path, depth + 1)
+                    )
+            if sub_tasks:
+                await asyncio.gather(*sub_tasks)
 
         root_tasks = []
         for folder in root_folders:
@@ -1087,7 +1371,11 @@ class Microsoft365Provider(MCPServiceProvider):
                 self._FOLDERS_INFLIGHT.pop(inflight_key, None)
 
     async def _resolve_folder_id(
-        self, user_id: str, account_id: str, folder_name: str
+        self,
+        user_id: str,
+        account_id: str,
+        folder_name: str,
+        credentials: Optional[dict] = None,
     ) -> Optional[str]:
         """
         Résout un libellé ou chemin de dossier en Graph ID immuable.
@@ -1103,7 +1391,9 @@ class Microsoft365Provider(MCPServiceProvider):
         if cleaned.startswith(("AQMk", "AAMk")) or (len(cleaned) >= 50 and "=" in cleaned):
             return folder_name
 
-        folders = await self._get_cached_folders(user_id, account_id)
+        folders = await self._get_cached_folders(
+            user_id, account_id, credentials=credentials
+        )
         target = cleaned.lower()
 
         # 1. Correspondance exacte sur displayName ou chemin complet
@@ -1121,7 +1411,7 @@ class Microsoft365Provider(MCPServiceProvider):
 
         # 3. Forcer un rafraîchissement au cas où le dossier vient d'être créé
         refreshed = await self._get_cached_folders(
-            user_id, account_id, force_refresh=True
+            user_id, account_id, force_refresh=True, credentials=credentials
         )
         for f in refreshed:
             d_name = (f.get("displayName") or "").lower()
@@ -1228,6 +1518,22 @@ class Microsoft365Provider(MCPServiceProvider):
                 "$select": select_fields,
                 "$orderby": "start/dateTime asc",
             }
+        elif iso_start:
+            url = "https://graph.microsoft.com/v1.0/me/events"
+            params = {
+                "$top": str(fetch_top),
+                "$select": select_fields,
+                "$filter": f"start/dateTime ge '{iso_start}'",
+                "$orderby": "start/dateTime asc",
+            }
+        elif iso_end:
+            url = "https://graph.microsoft.com/v1.0/me/events"
+            params = {
+                "$top": str(fetch_top),
+                "$select": select_fields,
+                "$filter": f"end/dateTime le '{iso_end}'",
+                "$orderby": "start/dateTime desc",
+            }
         else:
             url = "https://graph.microsoft.com/v1.0/me/events"
             params = {
@@ -1312,6 +1618,7 @@ class Microsoft365Provider(MCPServiceProvider):
         self,
         user_id: str,
         result: dict,
+        credentials: Optional[dict] = None,
     ) -> dict:
         """Retire `flow_cache` du schéma exposé au LLM pour `complete_authentication`."""
         tools = result.get("tools")
@@ -1449,6 +1756,13 @@ class Microsoft365Provider(MCPServiceProvider):
                             "use batch_get_emails for deep reading)."
                         ),
                     },
+                    "body_max_length": {
+                        "type": "integer",
+                        "default": 5000,
+                        "description": (
+                            "Maximum characters for body content per email when include_body is true (default: 5000)."
+                        ),
+                    },
                     "account_id": {
                         "type": "string",
                         "description": "Optional account ID or email address. Auto-resolved if omitted.",
@@ -1459,6 +1773,20 @@ class Microsoft365Provider(MCPServiceProvider):
                     "properties": props,
                     "required": [],
                 }
+                patched_tools.append(t_copy)
+            elif t_name == "get_email":
+                t_copy = dict(tool)
+                schema = dict(t_copy.get("inputSchema", {}))
+                props = dict(schema.get("properties", {}))
+                props["body_max_length"] = {
+                    "type": "integer",
+                    "default": 50000,
+                    "description": (
+                        "Maximum characters for body content when include_body is true (default: 50000)."
+                    ),
+                }
+                schema["properties"] = props
+                t_copy["inputSchema"] = schema
                 patched_tools.append(t_copy)
             elif t_name == "delete_email":
                 t_copy = dict(tool)
@@ -1660,7 +1988,11 @@ class Microsoft365Provider(MCPServiceProvider):
             )
 
         result["tools"] = patched_tools
-        return result
+        return self._compact_tools_catalog(
+            result,
+            optional_props={"account_id"},
+            max_desc_len=280,
+        )
 
     async def before_tool_call(
         self,
@@ -1669,6 +2001,7 @@ class Microsoft365Provider(MCPServiceProvider):
         args: dict,
         chat_id: Optional[str] = None,
         credentials: Optional[dict] = None,
+        account_id: Optional[str] = None,
     ) -> Tuple[dict, Optional[dict]]:
         args = dict(args or {})
         if credentials:
@@ -1676,7 +2009,7 @@ class Microsoft365Provider(MCPServiceProvider):
 
         # Cas 1 : Finalisation Device Code Flow -> restauration du flow exact + single-poll
         if tool_name == "complete_authentication":
-            flow_path = self._flow_cache_path(user_id)
+            flow_path = self._flow_cache_path(user_id, credentials)
             raw_flow = None
             if os.path.exists(flow_path):
                 try:
@@ -1720,7 +2053,7 @@ class Microsoft365Provider(MCPServiceProvider):
             return args, None
 
         # Cas 3 : Outils métiers -> vérification et résolution déterministe de account_id
-        accounts = self._load_cached_accounts(user_id)
+        accounts = self._load_cached_accounts(user_id, credentials)
         if not accounts:
             return args, self._make_tool_response(
                 {
@@ -1734,7 +2067,8 @@ class Microsoft365Provider(MCPServiceProvider):
                 is_error=True,
             )
 
-        provided_id = str(args.get("account_id") or "").strip()
+        explicit_arg_id = str(args.get("account_id") or "").strip()
+        vault_acc_id = str(account_id or "").strip()
         by_id = {a["account_id"]: a["account_id"] for a in accounts}
         by_username = {
             a["username"].lower(): a["account_id"]
@@ -1743,17 +2077,24 @@ class Microsoft365Provider(MCPServiceProvider):
         }
 
         resolved_account = None
-        if provided_id in by_id:
-            resolved_account = provided_id
-        elif provided_id and provided_id.lower() in by_username:
-            resolved_account = by_username[provided_id.lower()]
-            logger.info("MS365: account_id '%s' résolu vers '%s'", provided_id, resolved_account)
+        if explicit_arg_id in by_id:
+            resolved_account = explicit_arg_id
+        elif explicit_arg_id and explicit_arg_id.lower() in by_username:
+            resolved_account = by_username[explicit_arg_id.lower()]
+            logger.info("MS365: account_id '%s' résolu vers '%s'", explicit_arg_id, resolved_account)
             args["account_id"] = resolved_account
-        elif len(accounts) == 1:
+        elif not explicit_arg_id and len(accounts) == 1:
             resolved_account = accounts[0]["account_id"]
             logger.info(
-                "MS365: account_id '%s' auto-résolu vers le compte unique '%s'",
-                provided_id,
+                "MS365: account_id absent, auto-résolu vers le compte unique '%s'",
+                resolved_account,
+            )
+            args["account_id"] = resolved_account
+        elif explicit_arg_id and explicit_arg_id == vault_acc_id and len(accounts) == 1:
+            resolved_account = accounts[0]["account_id"]
+            logger.info(
+                "MS365: alias Vault '%s' auto-résolu vers le compte unique '%s'",
+                explicit_arg_id,
                 resolved_account,
             )
             args["account_id"] = resolved_account
@@ -1762,13 +2103,15 @@ class Microsoft365Provider(MCPServiceProvider):
                 {
                     "status": "invalid_account_id",
                     "message": (
-                        f"Le paramètre account_id='{provided_id}' ne correspond à aucun compte MSAL "
+                        f"Le paramètre account_id='{explicit_arg_id}' ne correspond à aucun compte MSAL "
                         "en cache. Utilisez l'un des identifiants `account_id` ci-dessous."
                     ),
                     "available_accounts": accounts,
                 },
                 is_error=True,
             )
+
+        mailbox_key = f"{user_id}:{resolved_account}"
 
         # Cas 4 : Outil virtuel list_mail_folders -> court-circuit direct
         if tool_name == "list_mail_folders":
@@ -1793,13 +2136,7 @@ class Microsoft365Provider(MCPServiceProvider):
                 ]
                 return args, self._make_tool_response(formatted)
             except Exception as e:
-                return args, self._make_tool_response(
-                    {
-                        "status": "error",
-                        "message": f"Échec lors de list_mail_folders: {self._format_exception(e)}",
-                    },
-                    is_error=True,
-                )
+                return args, self._handle_tool_exception("list_mail_folders", e)
 
         # Cas 5 : Outil virtuel trash_email -> mise à la corbeille réversible (Soft Delete)
         if tool_name == "trash_email":
@@ -1811,39 +2148,38 @@ class Microsoft365Provider(MCPServiceProvider):
             try:
                 token = await self._get_access_token_async(user_id, resolved_account, credentials)
                 q_eid = self._quote_graph_id(email_id)
-                async with self._create_graph_client(15.0) as client:
-                    res = await client.post(
-                        f"https://graph.microsoft.com/v1.0/me/messages/{q_eid}/move",
-                        headers={
-                            "Authorization": f"Bearer {token}",
-                            "Content-Type": "application/json",
-                        },
-                        json={"destinationId": "deleteditems"},
-                    )
-                    if res.status_code in (200, 201):
-                        res_json = res.json() if res.content else {}
-                        new_id = res_json.get("id", email_id)
-                        return args, self._make_tool_response(
-                            {
-                                "status": "trashed",
-                                "message_id": email_id,
-                                "old_id": email_id,
-                                "new_id": new_id,
-                                "folder": "deleteditems",
-                            }
-                        )
+                res = await self._graph_request(
+                    "POST",
+                    f"https://graph.microsoft.com/v1.0/me/messages/{q_eid}/move",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    },
+                    json_body={"destinationId": "deleteditems"},
+                    timeout_sec=15.0,
+                    mailbox_key=mailbox_key,
+                )
+                if res.status_code in (200, 201):
+                    res_json = res.json() if res.content else {}
+                    new_id = res_json.get("id", email_id)
                     return args, self._make_tool_response(
                         {
-                            "status": "error",
-                            "message": f"Échec de mise à la corbeille Graph: {res.text}",
-                        },
-                        is_error=True,
+                            "status": "trashed",
+                            "message_id": email_id,
+                            "old_id": email_id,
+                            "new_id": new_id,
+                            "folder": "deleteditems",
+                        }
                     )
-            except Exception as e:
                 return args, self._make_tool_response(
-                    {"status": "error", "message": f"Exception lors de trash_email: {e}"},
+                    {
+                        "status": "error",
+                        "message": f"Échec de mise à la corbeille Graph: {res.text}",
+                    },
                     is_error=True,
                 )
+            except Exception as e:
+                return args, self._handle_tool_exception("trash_email", e)
 
         # Cas 6 : Outil virtuel batch_trash_emails -> suppression par lot via Graph $batch
         if tool_name == "batch_trash_emails":
@@ -1869,39 +2205,41 @@ class Microsoft365Provider(MCPServiceProvider):
                 chunks = [
                     email_ids[i:i + 20] for i in range(0, len(email_ids), 20)
                 ]
-                async with self._create_graph_client(30.0) as client:
-                    for chunk in chunks:
-                        sub_requests = [
-                            {
-                                "id": str(idx),
-                                "method": "POST",
-                                "url": f"/me/messages/{self._quote_graph_id(eid)}/move",
-                                "headers": {"Content-Type": "application/json"},
-                                "body": {"destinationId": "deleteditems"},
-                            }
-                            for idx, eid in enumerate(chunk)
-                        ]
-                        batch_res = await client.post(
-                            "https://graph.microsoft.com/v1.0/$batch",
-                            headers=headers,
-                            json={"requests": sub_requests},
-                        )
-                        if batch_res.status_code == 200:
-                            b_data = batch_res.json()
-                            for r in b_data.get("responses", []):
-                                idx_req = int(r.get("id", -1))
-                                if r.get("status") in (200, 201):
-                                    trashed_count += 1
-                                    if 0 <= idx_req < len(chunk):
-                                        orig_id = chunk[idx_req]
-                                        res_b = r.get("body", {})
-                                        new_id = res_b.get("id", orig_id) if isinstance(res_b, dict) else orig_id
-                                        id_mapping[orig_id] = new_id
-                                else:
-                                    if 0 <= idx_req < len(chunk):
-                                        failed_ids.append(chunk[idx_req])
-                        else:
-                            failed_ids.extend(chunk)
+                for chunk in chunks:
+                    sub_requests = [
+                        {
+                            "id": str(idx),
+                            "method": "POST",
+                            "url": f"/me/messages/{self._quote_graph_id(eid)}/move",
+                            "headers": {"Content-Type": "application/json"},
+                            "body": {"destinationId": "deleteditems"},
+                        }
+                        for idx, eid in enumerate(chunk)
+                    ]
+                    batch_res = await self._graph_request(
+                        "POST",
+                        "https://graph.microsoft.com/v1.0/$batch",
+                        headers=headers,
+                        json_body={"requests": sub_requests},
+                        timeout_sec=30.0,
+                        mailbox_key=mailbox_key,
+                    )
+                    if batch_res.status_code == 200:
+                        b_data = batch_res.json()
+                        for r in b_data.get("responses", []):
+                            idx_req = int(r.get("id", -1))
+                            if r.get("status") in (200, 201):
+                                trashed_count += 1
+                                if 0 <= idx_req < len(chunk):
+                                    orig_id = chunk[idx_req]
+                                    res_b = r.get("body", {})
+                                    new_id = res_b.get("id", orig_id) if isinstance(res_b, dict) else orig_id
+                                    id_mapping[orig_id] = new_id
+                            else:
+                                if 0 <= idx_req < len(chunk):
+                                    failed_ids.append(chunk[idx_req])
+                    else:
+                        failed_ids.extend(chunk)
 
                 return args, self._make_tool_response(
                     {
@@ -1914,15 +2252,9 @@ class Microsoft365Provider(MCPServiceProvider):
                     }
                 )
             except Exception as e:
-                return args, self._make_tool_response(
-                    {
-                        "status": "error",
-                        "message": f"Exception lors de batch_trash_emails: {e}",
-                    },
-                    is_error=True,
-                )
+                return args, self._handle_tool_exception("batch_trash_emails", e)
 
-        # Cas 7 : get_email -> interception Graph directe avec Prefer text et nettoyage HTML
+        # Cas 7 : get_email -> interception Graph directe avec nettoyage HTML et préservation des liens
         if tool_name == "get_email":
             email_id = args.get("email_id")
             if not email_id:
@@ -1937,7 +2269,7 @@ class Microsoft365Provider(MCPServiceProvider):
 
             params = {"$select": select_fields}
             if include_attachments:
-                params["$expand"] = "attachments($select=id,name,size,contentType)"
+                params["$expand"] = "attachments($select=id,name,size,contentType,isInline)"
 
             try:
                 token = await self._get_access_token_async(user_id, resolved_account, credentials)
@@ -1952,6 +2284,7 @@ class Microsoft365Provider(MCPServiceProvider):
                     headers=headers,
                     params=params,
                     timeout_sec=20.0,
+                    mailbox_key=mailbox_key,
                 )
                 if res.status_code == 200:
                     msg = self._normalize_email_message(
@@ -1966,13 +2299,7 @@ class Microsoft365Provider(MCPServiceProvider):
                     is_error=True,
                 )
             except Exception as e:
-                return args, self._make_tool_response(
-                    {
-                        "status": "error",
-                        "message": f"Exception lors de get_email: {self._format_exception(e)}",
-                    },
-                    is_error=True,
-                )
+                return args, self._handle_tool_exception("get_email", e)
 
         # Cas 8 : Outil virtuel batch_get_emails -> lecture par lot via Graph $batch
         if tool_name == "batch_get_emails":
@@ -1994,7 +2321,7 @@ class Microsoft365Provider(MCPServiceProvider):
             select_fields = self._get_email_select_fields(include_body)
 
             expand_clause = (
-                "&$expand=attachments($select=id,name,size,contentType)"
+                "&$expand=attachments($select=id,name,size,contentType,isInline)"
                 if include_attachments
                 else ""
             )
@@ -2012,83 +2339,80 @@ class Microsoft365Provider(MCPServiceProvider):
                 chunks = [
                     email_ids[i:i + 20] for i in range(0, len(email_ids), 20)
                 ]
-                sem = asyncio.Semaphore(3)
-                sub_headers = (
-                    {"Prefer": 'outlook.body-content-type="text"'}
-                    if include_body
-                    else {}
-                )
-                async with self._create_graph_client(30.0) as client:
-                    async def _fetch_chunk(chunk: list[str]):
-                        c_emails = []
-                        c_failed_ids = []
-                        c_failed_details: list[dict] = []
-                        sub_requests = [
-                            {
-                                "id": str(idx),
-                                "method": "GET",
-                                "url": (
-                                    f"/me/messages/{self._quote_graph_id(eid)}"
-                                    f"?$select={select_fields}{expand_clause}"
-                                ),
-                                "headers": sub_headers,
-                            }
-                            for idx, eid in enumerate(chunk)
-                        ]
-                        async with sem:
-                            batch_res = await client.post(
-                                "https://graph.microsoft.com/v1.0/$batch",
-                                headers=headers,
-                                json={"requests": sub_requests},
-                            )
-                        if batch_res.status_code == 200:
-                            b_data = batch_res.json()
-                            for r in b_data.get("responses", []):
-                                idx_req = int(r.get("id", -1))
-                                if r.get("status") == 200:
-                                    msg = self._normalize_email_message(
-                                        r.get("body", {}), include_body, body_max_length
-                                    )
-                                    c_emails.append(msg)
-                                else:
-                                    if 0 <= idx_req < len(chunk):
-                                        eid = chunk[idx_req]
-                                        c_failed_ids.append(eid)
-                                        err_body = r.get("body")
-                                        err_msg = ""
-                                        if isinstance(err_body, dict):
-                                            err_obj = err_body.get("error")
-                                            if isinstance(err_obj, dict) and err_obj.get("message"):
-                                                err_msg = str(err_obj["message"])
-                                            elif err_body:
-                                                err_msg = str(err_body)[:300]
+                sub_headers: dict[str, str] = {}
+
+                async def _fetch_chunk(chunk: list[str]):
+                    c_emails = []
+                    c_failed_ids = []
+                    c_failed_details: list[dict] = []
+                    sub_requests = [
+                        {
+                            "id": str(idx),
+                            "method": "GET",
+                            "url": (
+                                f"/me/messages/{self._quote_graph_id(eid)}"
+                                f"?$select={select_fields}{expand_clause}"
+                            ),
+                            "headers": sub_headers,
+                        }
+                        for idx, eid in enumerate(chunk)
+                    ]
+                    batch_res = await self._graph_request(
+                        "POST",
+                        "https://graph.microsoft.com/v1.0/$batch",
+                        headers=headers,
+                        json_body={"requests": sub_requests},
+                        timeout_sec=30.0,
+                        mailbox_key=mailbox_key,
+                    )
+                    if batch_res.status_code == 200:
+                        b_data = batch_res.json()
+                        for r in b_data.get("responses", []):
+                            idx_req = int(r.get("id", -1))
+                            if r.get("status") == 200:
+                                msg = self._normalize_email_message(
+                                    r.get("body", {}), include_body, body_max_length
+                                )
+                                c_emails.append(msg)
+                            else:
+                                if 0 <= idx_req < len(chunk):
+                                    eid = chunk[idx_req]
+                                    c_failed_ids.append(eid)
+                                    err_body = r.get("body")
+                                    err_msg = ""
+                                    if isinstance(err_body, dict):
+                                        err_obj = err_body.get("error")
+                                        if isinstance(err_obj, dict) and err_obj.get("message"):
+                                            err_msg = str(err_obj["message"])
                                         elif err_body:
                                             err_msg = str(err_body)[:300]
-                                        c_failed_details.append(
-                                            {
-                                                "id": eid,
-                                                "status": r.get("status"),
-                                                "error": err_msg,
-                                            }
-                                        )
-                        else:
-                            err_text = batch_res.text[:300]
-                            c_failed_ids.extend(chunk)
-                            for eid in chunk:
-                                c_failed_details.append(
-                                    {
-                                        "id": eid,
-                                        "status": batch_res.status_code,
-                                        "error": err_text,
-                                    }
-                                )
-                        return c_emails, c_failed_ids, c_failed_details
+                                    elif err_body:
+                                        err_msg = str(err_body)[:300]
+                                    c_failed_details.append(
+                                        {
+                                            "id": eid,
+                                            "status": r.get("status"),
+                                            "error": err_msg,
+                                        }
+                                    )
+                    else:
+                        err_text = batch_res.text[:300]
+                        c_failed_ids.extend(chunk)
+                        for eid in chunk:
+                            c_failed_details.append(
+                                {
+                                    "id": eid,
+                                    "status": batch_res.status_code,
+                                    "error": err_text,
+                                }
+                            )
+                    return c_emails, c_failed_ids, c_failed_details
 
-                    chunk_results = await asyncio.gather(*[_fetch_chunk(c) for c in chunks])
-                    for c_emails, c_failed_ids, c_failed_details in chunk_results:
-                        retrieved_emails.extend(c_emails)
-                        failed_ids.extend(c_failed_ids)
-                        failed_details.extend(c_failed_details)
+                chunk_results = await asyncio.gather(*[_fetch_chunk(c) for c in chunks])
+                for c_emails, c_failed_ids, c_failed_details in chunk_results:
+                    retrieved_emails.extend(c_emails)
+                    failed_ids.extend(c_failed_ids)
+                    failed_details.extend(c_failed_details)
 
                 return args, self._make_tool_response(
                     {
@@ -2102,13 +2426,7 @@ class Microsoft365Provider(MCPServiceProvider):
                     }
                 )
             except Exception as e:
-                return args, self._make_tool_response(
-                    {
-                        "status": "error",
-                        "message": f"Exception lors de batch_get_emails: {self._format_exception(e)}",
-                    },
-                    is_error=True,
-                )
+                return args, self._handle_tool_exception("batch_get_emails", e)
 
         # Cas 9 : list_emails -> exécution Graph directe (supporte skip, order_by, auto-résolution et repli)
         if tool_name == "list_emails":
@@ -2120,10 +2438,12 @@ class Microsoft365Provider(MCPServiceProvider):
             body_max_length = max(int(args.get("body_max_length", 5000) or 5000), 100)
 
             resolved_fid = await self._resolve_folder_id(
-                user_id, resolved_account, folder_arg
+                user_id, resolved_account, folder_arg, credentials=credentials
             )
             if not resolved_fid:
-                folders = await self._get_cached_folders(user_id, resolved_account)
+                folders = await self._get_cached_folders(
+                    user_id, resolved_account, credentials=credentials
+                )
                 available = [
                     f.get("path") or f.get("displayName") for f in folders
                 ]
@@ -2143,7 +2463,6 @@ class Microsoft365Provider(MCPServiceProvider):
                 resolved_fid.casefold(), resolved_fid
             )
             select_fields = self._get_email_select_fields(include_body)
-            mailbox_key = f"{user_id}:{resolved_account}"
 
             try:
                 token = await self._get_access_token_async(user_id, resolved_account, credentials)
@@ -2190,6 +2509,7 @@ class Microsoft365Provider(MCPServiceProvider):
                     if imm_id:
                         fb_params = {
                             "$top": str(limit),
+                            "$orderby": order_by,
                             "$select": select_fields,
                             "$filter": (
                                 f"receivedDateTime ge 1900-01-01T00:00:00Z "
@@ -2207,6 +2527,21 @@ class Microsoft365Provider(MCPServiceProvider):
                             max_retries=2,
                             mailbox_key=mailbox_key,
                         )
+                        if (
+                            fb_res.status_code == 400
+                            and "InefficientFilter" in fb_res.text
+                            and "$orderby" in fb_params
+                        ):
+                            fb_params.pop("$orderby", None)
+                            fb_res = await self._graph_request(
+                                "GET",
+                                "https://graph.microsoft.com/v1.0/me/messages",
+                                headers=headers,
+                                params=fb_params,
+                                timeout_sec=15.0,
+                                max_retries=2,
+                                mailbox_key=mailbox_key,
+                            )
                         if fb_res.status_code == 200:
                             messages = [
                                 self._normalize_email_message(m, include_body, body_max_length)
@@ -2228,13 +2563,7 @@ class Microsoft365Provider(MCPServiceProvider):
                     is_error=True,
                 )
             except Exception as e:
-                return args, self._make_tool_response(
-                    {
-                        "status": "error",
-                        "message": f"Exception lors de list_emails: {self._format_exception(e)}",
-                    },
-                    is_error=True,
-                )
+                return args, self._handle_tool_exception("list_emails", e)
 
         # Cas 10 : search_emails -> recherche multi-axes (mots-clés, temporalité, expéditeur, dossier, statut)
         if tool_name == "search_emails":
@@ -2256,13 +2585,16 @@ class Microsoft365Provider(MCPServiceProvider):
             order_by = str(args.get("order_by") or "receivedDateTime desc").strip()
             limit = min(max(int(args.get("limit", 50) or 50), 1), 100)
             include_body = self._parse_bool(args.get("include_body"), False)
+            body_max_length = max(int(args.get("body_max_length", 5000) or 5000), 100)
 
             if folder_arg:
                 resolved_fid = await self._resolve_folder_id(
-                    user_id, resolved_account, folder_arg
+                    user_id, resolved_account, folder_arg, credentials=credentials
                 )
                 if not resolved_fid:
-                    folders = await self._get_cached_folders(user_id, resolved_account)
+                    folders = await self._get_cached_folders(
+                        user_id, resolved_account, credentials=credentials
+                    )
                     available = [
                         f.get("path") or f.get("displayName") for f in folders
                     ]
@@ -2289,12 +2621,13 @@ class Microsoft365Provider(MCPServiceProvider):
             iso_after, short_after = self._normalize_iso_date(received_after, is_end_of_day=False)
             iso_before, short_before = self._normalize_iso_date(received_before, is_end_of_day=True)
 
+            use_kql = bool(query) or (bool(sender) and "@" not in sender)
+            fetch_top = min(limit * 2, 100) if use_kql else limit
             params = {
-                "$top": str(limit),
+                "$top": str(fetch_top),
                 "$select": select_fields,
             }
 
-            use_kql = bool(query) or (bool(sender) and "@" not in sender)
             if use_kql:
                 kql_terms = []
                 clean_query = query.replace('"', "").strip()
@@ -2343,7 +2676,6 @@ class Microsoft365Provider(MCPServiceProvider):
                 }
                 if use_kql:
                     headers["ConsistencyLevel"] = "eventual"
-                mailbox_key = f"{user_id}:{resolved_account}"
                 res = await self._graph_request(
                     "GET",
                     base_url,
@@ -2375,13 +2707,30 @@ class Microsoft365Provider(MCPServiceProvider):
                 if res.status_code == 200:
                     messages = [
                         self._normalize_email_message(
-                            m, include_body, body_max_length=5000
+                            m, include_body, body_max_length=body_max_length
                         )
                         for m in res.json().get("value", [])
                     ]
+                    if use_kql and (
+                        "T" in received_after
+                        or ":" in received_after
+                        or "T" in received_before
+                        or ":" in received_before
+                    ):
+                        filtered_msgs = []
+                        for m in messages:
+                            m_iso, _ = self._normalize_iso_date(
+                                str(m.get("receivedDateTime") or "")
+                            )
+                            if iso_after and m_iso and m_iso < iso_after:
+                                continue
+                            if iso_before and m_iso and m_iso > iso_before:
+                                continue
+                            filtered_msgs.append(m)
+                        messages = filtered_msgs
                     if needs_python_sort:
                         messages = self._sort_email_messages(messages, order_by)
-                    return args, self._make_tool_response(messages)
+                    return args, self._make_tool_response(messages[:limit])
                 return args, self._make_tool_response(
                     {
                         "status": "error",
@@ -2390,13 +2739,7 @@ class Microsoft365Provider(MCPServiceProvider):
                     is_error=True,
                 )
             except Exception as e:
-                return args, self._make_tool_response(
-                    {
-                        "status": "error",
-                        "message": f"Exception lors de search_emails: {self._format_exception(e)}",
-                    },
-                    is_error=True,
-                )
+                return args, self._handle_tool_exception("search_emails", e)
 
         # Cas 10b : search_files -> recherche universelle OneDrive (MSA & Entra ID)
         if tool_name == "search_files":
@@ -2413,13 +2756,7 @@ class Microsoft365Provider(MCPServiceProvider):
                 )
                 return args, self._make_tool_response(files)
             except Exception as e:
-                return args, self._make_tool_response(
-                    {
-                        "status": "error",
-                        "message": f"Exception lors de search_files: {self._format_exception(e)}",
-                    },
-                    is_error=True,
-                )
+                return args, self._handle_tool_exception("search_files", e)
 
         # Cas 10c : search_events -> recherche universelle calendrier (MSA & Entra ID)
         if tool_name == "search_events":
@@ -2439,13 +2776,7 @@ class Microsoft365Provider(MCPServiceProvider):
                 )
                 return args, self._make_tool_response(events)
             except Exception as e:
-                return args, self._make_tool_response(
-                    {
-                        "status": "error",
-                        "message": f"Exception lors de search_events: {self._format_exception(e)}",
-                    },
-                    is_error=True,
-                )
+                return args, self._handle_tool_exception("search_events", e)
 
         # Cas 10d : unified_search -> recherche multi-ressources universelle (MSA & Entra ID)
         if tool_name == "unified_search":
@@ -2464,32 +2795,37 @@ class Microsoft365Provider(MCPServiceProvider):
             errors: dict[str, str] = {}
             has_unsupported_type = False
 
-            for raw_t in raw_types:
-                t_norm = "driveItem" if raw_t == "drive" else str(raw_t)
-                if t_norm in ("site", "list", "listItem"):
-                    has_unsupported_type = True
-                    errors[t_norm] = (
-                        f"Le type '{t_norm}' n'est pas supporté sur les comptes Microsoft personnels (MSA)."
-                    )
-                    continue
-                try:
-                    if t_norm == "message":
-                        results["message"] = await self._search_messages_kql(
-                            user_id, resolved_account, query, limit=limit, credentials=credentials
-                        )
-                    elif t_norm == "driveItem":
-                        results["driveItem"] = await self._search_onedrive_files(
-                            user_id, resolved_account, query, limit=limit, credentials=credentials
-                        )
-                    elif t_norm == "event":
-                        results["event"] = await self._search_calendar_events(
-                            user_id, resolved_account, query=query, limit=limit, credentials=credentials
-                        )
-                    else:
+            try:
+                for raw_t in raw_types:
+                    t_norm = "driveItem" if raw_t == "drive" else str(raw_t)
+                    if t_norm in ("site", "list", "listItem"):
                         has_unsupported_type = True
-                        errors[t_norm] = f"Type d'entité non supporté: '{t_norm}'."
-                except Exception as e:
-                    errors[t_norm] = self._format_exception(e)
+                        errors[t_norm] = (
+                            f"Le type '{t_norm}' n'est pas supporté sur les comptes Microsoft personnels (MSA)."
+                        )
+                        continue
+                    try:
+                        if t_norm == "message":
+                            results["message"] = await self._search_messages_kql(
+                                user_id, resolved_account, query, limit=limit, credentials=credentials
+                            )
+                        elif t_norm == "driveItem":
+                            results["driveItem"] = await self._search_onedrive_files(
+                                user_id, resolved_account, query, limit=limit, credentials=credentials
+                            )
+                        elif t_norm == "event":
+                            results["event"] = await self._search_calendar_events(
+                                user_id, resolved_account, query=query, limit=limit, credentials=credentials
+                            )
+                        else:
+                            has_unsupported_type = True
+                            errors[t_norm] = f"Type d'entité non supporté: '{t_norm}'."
+                    except AuthRequiredError:
+                        raise
+                    except Exception as e:
+                        errors[t_norm] = self._format_exception(e)
+            except Exception as e:
+                return args, self._handle_tool_exception("unified_search", e)
 
             if has_unsupported_type or (errors and not results):
                 return args, self._make_tool_response(
@@ -2511,10 +2847,12 @@ class Microsoft365Provider(MCPServiceProvider):
             email_id = args.get("email_id")
             if dest_arg and email_id:
                 resolved_fid = await self._resolve_folder_id(
-                    user_id, resolved_account, dest_arg
+                    user_id, resolved_account, dest_arg, credentials=credentials
                 )
                 if not resolved_fid:
-                    folders = await self._get_cached_folders(user_id, resolved_account)
+                    folders = await self._get_cached_folders(
+                        user_id, resolved_account, credentials=credentials
+                    )
                     available = [
                         f.get("path") or f.get("displayName") for f in folders
                     ]
@@ -2531,40 +2869,36 @@ class Microsoft365Provider(MCPServiceProvider):
                 try:
                     token = await self._get_access_token_async(user_id, resolved_account, credentials)
                     q_eid = self._quote_graph_id(email_id)
-                    async with self._create_graph_client(15.0) as client:
-                        move_res = await client.post(
-                            f"https://graph.microsoft.com/v1.0/me/messages/{q_eid}/move",
-                            headers={
-                                "Authorization": f"Bearer {token}",
-                                "Content-Type": "application/json",
-                            },
-                            json={"destinationId": resolved_fid},
-                        )
-                        if move_res.status_code in (200, 201):
-                            res_json = move_res.json() if move_res.content else {}
-                            return args, self._make_tool_response(
-                                {
-                                    "status": "moved",
-                                    "old_id": email_id,
-                                    "new_id": res_json.get("id"),
-                                    "destination_folder": dest_arg,
-                                }
-                            )
+                    move_res = await self._graph_request(
+                        "POST",
+                        f"https://graph.microsoft.com/v1.0/me/messages/{q_eid}/move",
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Content-Type": "application/json",
+                        },
+                        json_body={"destinationId": resolved_fid},
+                        timeout_sec=15.0,
+                        mailbox_key=mailbox_key,
+                    )
+                    if move_res.status_code in (200, 201):
+                        res_json = move_res.json() if move_res.content else {}
                         return args, self._make_tool_response(
                             {
-                                "status": "error",
-                                "message": f"Échec Graph move_email: {move_res.text}",
-                            },
-                            is_error=True,
+                                "status": "moved",
+                                "old_id": email_id,
+                                "new_id": res_json.get("id"),
+                                "destination_folder": dest_arg,
+                            }
                         )
-                except Exception as e:
                     return args, self._make_tool_response(
                         {
                             "status": "error",
-                            "message": f"Exception lors de move_email: {self._format_exception(e)}",
+                            "message": f"Échec Graph move_email: {move_res.text}",
                         },
                         is_error=True,
                     )
+                except Exception as e:
+                    return args, self._handle_tool_exception("move_email", e)
 
         # Cas 12 : get_file (OneDrive) -> téléchargement et routage forcé vers le Download Broker
         if tool_name == "get_file":
@@ -2581,62 +2915,62 @@ class Microsoft365Provider(MCPServiceProvider):
             try:
                 token = await self._get_access_token_async(user_id, resolved_account, credentials)
                 q_fid = self._quote_graph_id(file_id)
-                async with self._create_graph_client(60.0, follow_redirects=True) as client:
-                    meta_res = await client.get(
-                        f"https://graph.microsoft.com/v1.0/me/drive/items/{q_fid}",
-                        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                meta_res = await self._graph_request(
+                    "GET",
+                    f"https://graph.microsoft.com/v1.0/me/drive/items/{q_fid}",
+                    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                    timeout_sec=60.0,
+                    mailbox_key=mailbox_key,
+                    follow_redirects=True,
+                )
+                if meta_res.status_code != 200:
+                    return args, self._make_tool_response(
+                        {
+                            "status": "error",
+                            "message": f"Échec Graph get_file metadata ({meta_res.status_code}): {meta_res.text}",
+                        },
+                        is_error=True,
                     )
-                    if meta_res.status_code != 200:
-                        return args, self._make_tool_response(
-                            {
-                                "status": "error",
-                                "message": f"Échec Graph get_file metadata ({meta_res.status_code}): {meta_res.text}",
-                            },
-                            is_error=True,
-                        )
-                    metadata = meta_res.json()
-                    download_url = metadata.get("@microsoft.graph.downloadUrl")
-                    if not download_url:
-                        return args, self._make_tool_response(
-                            {"status": "error", "message": "Aucune downloadUrl disponible pour ce fichier OneDrive."},
-                            is_error=True,
-                        )
-                    remote_name = self._sanitize_filename(metadata.get("name"), "")
-                    chosen_name = remote_name or req_name or f"onedrive_{safe_fid_seg}"
-                    drop_dir = self._get_mcp_drop_dir(user_id, chat_id)
-                    safe_name = f"{fid}_{chosen_name}"
-                    final_path = os.path.join(drop_dir, safe_name)
-                    part_path = f"{final_path}.part"
+                metadata = meta_res.json()
+                download_url = metadata.get("@microsoft.graph.downloadUrl")
+                if not download_url:
+                    return args, self._make_tool_response(
+                        {"status": "error", "message": "Aucune downloadUrl disponible pour ce fichier OneDrive."},
+                        is_error=True,
+                    )
+                remote_name = self._sanitize_filename(metadata.get("name"), "")
+                chosen_name = remote_name or req_name or f"onedrive_{safe_fid_seg}"
+                drop_dir = self._get_mcp_drop_dir(user_id, chat_id)
+                safe_name = f"{fid}_{chosen_name}"
+                final_path = os.path.join(drop_dir, safe_name)
+                part_path = f"{final_path}.part"
 
+                async with self._create_graph_client(60.0, follow_redirects=True) as client:
                     async with client.stream("GET", download_url) as dl_stream:
                         dl_stream.raise_for_status()
                         with open(part_path, "wb") as f_out:
                             async for chunk in dl_stream.aiter_bytes(chunk_size=65536):
                                 f_out.write(chunk)
 
-                    _, safe_name, final_path = self._publish_file_to_broker(
-                        part_path, user_id, chat_id, chosen_name, fid=fid
-                    )
-                    size_bytes = metadata.get("size") or os.path.getsize(final_path)
-                    return args, self._make_tool_response(
-                        {
-                            "status": "downloaded_to_broker",
-                            "file_id": fid,
-                            "name": safe_name,
-                            "original_name": metadata.get("name", chosen_name),
-                            "path": final_path,
-                            "size_mb": round(size_bytes / (1024 * 1024), 2),
-                            "mime_type": (metadata.get("file") or {}).get("mimeType"),
-                        }
-                    )
-            except Exception as e:
-                return args, self._make_tool_response(
-                    {
-                        "status": "error",
-                        "message": f"Exception lors de get_file: {self._format_exception(e)}",
-                    },
-                    is_error=True,
+                _, safe_name, final_path = self._publish_file_to_broker(
+                    part_path, user_id, chat_id, chosen_name, fid=fid
                 )
+                size_bytes = int(metadata.get("size") or os.path.getsize(final_path))
+                mime_type = str(
+                    (metadata.get("file") or {}).get("mimeType") or "application/octet-stream"
+                )
+                return args, self._make_tool_response(
+                    self._build_broker_download_payload(
+                        fid=fid,
+                        safe_name=safe_name,
+                        original_name=metadata.get("name", chosen_name),
+                        final_path=final_path,
+                        size_bytes=size_bytes,
+                        content_type=mime_type,
+                    )
+                )
+            except Exception as e:
+                return args, self._handle_tool_exception("get_file", e)
 
         # Cas 13 : get_attachment (Outlook) -> téléchargement et routage forcé vers le Download Broker
         if tool_name == "get_attachment":
@@ -2656,51 +2990,87 @@ class Microsoft365Provider(MCPServiceProvider):
                 token = await self._get_access_token_async(user_id, resolved_account, credentials)
                 q_eid = self._quote_graph_id(email_id)
                 q_aid = self._quote_graph_id(attachment_id)
-                async with self._create_graph_client(60.0) as client:
-                    att_res = await client.get(
-                        f"https://graph.microsoft.com/v1.0/me/messages/{q_eid}/attachments/{q_aid}",
-                        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                att_res = await self._graph_request(
+                    "GET",
+                    f"https://graph.microsoft.com/v1.0/me/messages/{q_eid}/attachments/{q_aid}",
+                    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                    timeout_sec=60.0,
+                    mailbox_key=mailbox_key,
+                )
+                if att_res.status_code != 200:
+                    return args, self._make_tool_response(
+                        {
+                            "status": "error",
+                            "message": f"Échec Graph get_attachment ({att_res.status_code}): {att_res.text}",
+                        },
+                        is_error=True,
                     )
-                    if att_res.status_code != 200:
+                att_data = att_res.json()
+                remote_name = self._sanitize_filename(att_data.get("name"), "")
+                chosen_name = remote_name or req_name or f"attachment_{safe_att_seg}"
+                content_b64 = att_data.get("contentBytes")
+                if content_b64:
+                    content_bytes = base64.b64decode(content_b64)
+                else:
+                    odata_type = str(att_data.get("@odata.type") or "")
+                    if odata_type.endswith("itemAttachment"):
+                        val_res = await self._graph_request(
+                            "GET",
+                            f"https://graph.microsoft.com/v1.0/me/messages/{q_eid}/attachments/{q_aid}/$value",
+                            headers={"Authorization": f"Bearer {token}"},
+                            timeout_sec=60.0,
+                            mailbox_key=mailbox_key,
+                        )
+                        if val_res.status_code != 200:
+                            return args, self._make_tool_response(
+                                {
+                                    "status": "error",
+                                    "message": (
+                                        f"Échec Graph get_attachment/$value ({val_res.status_code}): "
+                                        f"{val_res.text}"
+                                    ),
+                                },
+                                is_error=True,
+                            )
+                        content_bytes = val_res.content
+                        if not os.path.splitext(chosen_name)[1]:
+                            chosen_name = f"{chosen_name}.eml"
+                    elif odata_type.endswith("referenceAttachment"):
+                        src_url = att_data.get("sourceUrl")
                         return args, self._make_tool_response(
                             {
                                 "status": "error",
-                                "message": f"Échec Graph get_attachment ({att_res.status_code}): {att_res.text}",
+                                "message": (
+                                    "Pièce jointe referenceAttachment (lien externe sans contenu binaire) : "
+                                    f"{src_url or 'sourceUrl indisponible'}"
+                                ),
+                                "sourceUrl": src_url,
                             },
                             is_error=True,
                         )
-                    att_data = att_res.json()
-                    content_b64 = att_data.get("contentBytes")
-                    if not content_b64:
+                    else:
                         return args, self._make_tool_response(
                             {"status": "error", "message": "Contenu binaire (contentBytes) indisponible."},
                             is_error=True,
                         )
-                    remote_name = self._sanitize_filename(att_data.get("name"), "")
-                    chosen_name = remote_name or req_name or f"attachment_{safe_att_seg}"
-                    content_bytes = base64.b64decode(content_b64)
-                    _, safe_name, final_path = self._publish_file_to_broker(
-                        content_bytes, user_id, chat_id, chosen_name, fid=fid
-                    )
-                    return args, self._make_tool_response(
-                        {
-                            "status": "downloaded_to_broker",
-                            "file_id": fid,
-                            "name": safe_name,
-                            "original_name": att_data.get("name", chosen_name),
-                            "saved_to": final_path,
-                            "content_type": att_data.get("contentType", "application/octet-stream"),
-                            "size": att_data.get("size", len(content_bytes)),
-                        }
-                    )
-            except Exception as e:
-                return args, self._make_tool_response(
-                    {
-                        "status": "error",
-                        "message": f"Exception lors de get_attachment: {self._format_exception(e)}",
-                    },
-                    is_error=True,
+
+                _, safe_name, final_path = self._publish_file_to_broker(
+                    content_bytes, user_id, chat_id, chosen_name, fid=fid
                 )
+                size_bytes = int(att_data.get("size") or len(content_bytes))
+                ctype = str(att_data.get("contentType") or "application/octet-stream")
+                return args, self._make_tool_response(
+                    self._build_broker_download_payload(
+                        fid=fid,
+                        safe_name=safe_name,
+                        original_name=att_data.get("name", chosen_name),
+                        final_path=final_path,
+                        size_bytes=size_bytes,
+                        content_type=ctype,
+                    )
+                )
+            except Exception as e:
+                return args, self._handle_tool_exception("get_attachment", e)
 
         return args, None
 
@@ -2710,6 +3080,8 @@ class Microsoft365Provider(MCPServiceProvider):
         tool_name: str,
         result: dict,
         chat_id: Optional[str] = None,
+        credentials: Optional[dict] = None,
+        cache_key: Optional[str] = None,
     ) -> dict:
         if tool_name not in (
             "authenticate_account",
@@ -2736,7 +3108,7 @@ class Microsoft365Provider(MCPServiceProvider):
         if not isinstance(payload, dict):
             return result
 
-        flow_path = self._flow_cache_path(user_id)
+        flow_path = self._flow_cache_path(user_id, credentials)
         if tool_name == "authenticate_account" and payload.get("_flow_cache"):
             try:
                 os.makedirs(os.path.dirname(flow_path), exist_ok=True)
@@ -2785,17 +3157,23 @@ class Microsoft365Provider(MCPServiceProvider):
                     fid, safe_name, final_path = self._publish_file_to_broker(
                         raw_path, user_id, chat_id, target_name, fid=fid
                     )
-                    updated = dict(payload)
-                    updated["status"] = "downloaded_to_broker"
-                    updated["file_id"] = fid
-                    updated["name"] = safe_name
-                    if orig_name:
-                        updated["original_name"] = orig_name
-                    if "path" in updated:
-                        updated["path"] = final_path
-                    if "saved_to" in updated:
-                        updated["saved_to"] = final_path
-                    return self._make_tool_response(updated, is_error=bool(result.get("isError")))
+                    size_bytes = int(payload.get("size") or os.path.getsize(final_path))
+                    ctype = str(
+                        payload.get("content_type")
+                        or payload.get("mime_type")
+                        or "application/octet-stream"
+                    )
+                    return self._make_tool_response(
+                        self._build_broker_download_payload(
+                            fid=fid,
+                            safe_name=safe_name,
+                            original_name=orig_name or safe_name,
+                            final_path=final_path,
+                            size_bytes=size_bytes,
+                            content_type=ctype,
+                        ),
+                        is_error=bool(result.get("isError")),
+                    )
                 except Exception as e:
                     logger.warning("MS365: échec finalisation fichier Download Broker: %s", e)
 

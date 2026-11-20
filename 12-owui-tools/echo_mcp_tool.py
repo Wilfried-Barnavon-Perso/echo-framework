@@ -1,16 +1,16 @@
 """
 title: ECHO Universal MCP Tool
 author: ECHO
-version: 5.239.12.1
+version: 6.7.18.1
 description: Outil universel d'interrogation et d'exécution sur l'infrastructure MCP via routage dynamique.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.18.1: Filtre query et formatage 1-ligne/outil dans list_mcp_functions, et contrôle strict multi-comptes dans _fetch_credentials.
 # 5.239.12.1: Déduplication payloads MCP (_compact_mcp_payload) sans double sérialisation content/structuredContent.
 # 5.239.11.1: Retour dict normalisé (status="error", error=...) sur erreur MCP/HTTP pour ❌ Open WebUI et statut LLM.
 # 5.239.10.1: Factorisation RPC/erreurs, timeouts 90s/65s alignés Broker et clôture events.status sur erreur.
 # 5.233.0.1: Décoration @echo_tool sur les 2 méthodes publiques et simplification des retours wrap_tool_output.
-# 5.231.37.1: Propagation de chat_id (en-tête x-openwebui-chat-id et payload proxy_mcp) pour le Download Broker.
 import sys
 import json
 import base64
@@ -43,13 +43,37 @@ class Tools:
         except Exception:
             return "uncategorized"
 
-    def _fetch_credentials(self, user_id: str, service: str, account_id: Optional[str] = None) -> str:
+    def _fetch_credentials(
+        self,
+        user_id: str,
+        service: str,
+        account_id: Optional[str] = None,
+    ) -> tuple[str, Optional[dict]]:
         """Extrait les credentials de l'Identity Vault pour l'utilisateur et le compte spécifiés."""
         try:
             from echo_state_manager import EchoStateManager
-            return EchoStateManager(user_id=user_id).get_vault_credential(service, account_id)
+            state = EchoStateManager(user_id=user_id)
+            creds = state.get_vault_credential(
+                service, account_id, allow_single_fallback=True
+            )
+            if creds or not account_id:
+                return creds, None
+            available = [acc for acc, _ in state.list_vault_credentials(service)]
+            if available:
+                msg = (
+                    f"Compte '{account_id}' introuvable pour '{service}' "
+                    f"(comptes disponibles : {', '.join(available)})."
+                )
+                return "", {
+                    "status": "error",
+                    "error": msg,
+                    "message": msg,
+                    "service": service,
+                    "available_accounts": available,
+                }
+            return "", None
         except Exception:
-            return ""
+            return "", None
 
     @staticmethod
     def _format_transport_error(service: str, action_label: str, exc: Exception) -> dict:
@@ -93,6 +117,51 @@ class Tools:
                 compacted.pop("resultType", None)
                 return compacted
         return data
+
+    @staticmethod
+    def _format_tools_catalog(data: Any, query: Optional[str] = None) -> str:
+        if not isinstance(data, dict) or not isinstance(data.get("tools"), list):
+            return json.dumps(data, ensure_ascii=False)
+        raw_tools = data["tools"]
+        q_tokens = [t for t in str(query or "").casefold().split() if t]
+        formatted_lines = []
+        for tool in raw_tools:
+            if not isinstance(tool, dict):
+                continue
+            t_name = str(tool.get("name") or "")
+            t_desc = str(tool.get("description") or "")
+            if q_tokens:
+                haystack = f"{t_name} {t_desc}".casefold()
+                if not all(tok in haystack for tok in q_tokens):
+                    continue
+            compact_tool: dict[str, Any] = {"name": t_name}
+            if t_desc:
+                compact_tool["description"] = t_desc
+            schema = tool.get("inputSchema")
+            if isinstance(schema, dict):
+                clean_schema: dict[str, Any] = {}
+                if "type" in schema:
+                    clean_schema["type"] = schema["type"]
+                props = schema.get("properties")
+                if isinstance(props, dict):
+                    clean_props = {}
+                    for prop_name, prop_def in props.items():
+                        if isinstance(prop_def, dict):
+                            clean_props[prop_name] = {
+                                k: v for k, v in prop_def.items() if k != "title"
+                            }
+                        else:
+                            clean_props[prop_name] = prop_def
+                    clean_schema["properties"] = clean_props
+                if "required" in schema:
+                    clean_schema["required"] = schema["required"]
+                compact_tool["inputSchema"] = clean_schema
+            formatted_lines.append(
+                json.dumps(compact_tool, ensure_ascii=False, separators=(",", ":"))
+            )
+        inner = ",\n".join(formatted_lines)
+        tools_block = f"[\n{inner}\n]" if inner else "[]"
+        return f'{{"service_tools_count":{len(raw_tools)},"tools":{tools_block}}}'
 
     @staticmethod
     def _build_error_dict(service: str, action_label: str, data: Any) -> dict:
@@ -197,6 +266,7 @@ class Tools:
         self,
         service: str,
         account_id: Optional[str] = None,
+        query: Optional[str] = None,
         __user__: dict = {},
         __metadata__: dict = {},
         __event_emitter__: Any = None,
@@ -210,7 +280,10 @@ class Tools:
         await events.status(f"🌐 Routage dynamique pour l'interrogation de '{service}'...")
 
         chat_id = str((__metadata__ or {}).get("chat_id") or "")
-        credentials = self._fetch_credentials(__user__["id"], service, account_id)
+        credentials, cred_err = self._fetch_credentials(__user__["id"], service, account_id)
+        if cred_err is not None:
+            await events.status(f"⚠️ Accès à '{service}' : {cred_err['message'][:120]}", done=True)
+            return cred_err
         rpc = {"jsonrpc": "2.0", "method": "tools/list", "id": 1}
 
         try:
@@ -228,7 +301,7 @@ class Tools:
                 await events.status(f"⚠️ Accès à '{service}' : {err_dict['message'][:120]}", done=True)
                 return err_dict
             await events.status(f"✅ Schémas récupérés pour '{service}'.", done=True)
-            return json.dumps(data, ensure_ascii=False)
+            return self._format_tools_catalog(data, query=query)
         except Exception as e:
             err = self._format_transport_error(service, "tools/list", e)
             await events.status(f"❌ Erreur sur '{service}' : {err['message']}", done=True)
@@ -255,7 +328,10 @@ class Tools:
 
         arguments = arguments or {}
         chat_id = str((__metadata__ or {}).get("chat_id") or "")
-        credentials = self._fetch_credentials(__user__["id"], service, account_id)
+        credentials, cred_err = self._fetch_credentials(__user__["id"], service, account_id)
+        if cred_err is not None:
+            await events.status(f"⚠️ Accès à '{service}' : {cred_err['message'][:120]}", done=True)
+            return cred_err
         rpc = {
             "jsonrpc": "2.0",
             "method": "tools/call",

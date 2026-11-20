@@ -2,16 +2,16 @@
 """
 title: ECHO Echo State Manager
 author: Wilfried BARNAVON
-version: 6.7.0.1
+version: 6.7.18.1
 description: Gestionnaire d'état SQLite et RAG.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.18.1: Paramètre allow_single_fallback dans get_vault_credential (arrêt repli silencieux LIMIT 1 par défaut).
 # 6.7.0.1: Déduplication de thoughtSignature hors de content_json dans save_thread_step et réhydratation universelle (incluant inlineData) dans get_thread_history.
 # 6.6.30.1: Ajout du context manager _write_tx() (BEGIN IMMEDIATE) sur les transactions d'écriture et mixtes lecture/écriture.
 # 6.6.2.1: Câblage de bump_cognition_seq(self.chat_id) dans save_call_bridge et save_thread_step pour la réactivité SSE temps réel.
 # 5.239.11.1: Fallback compte par défaut dans get_vault_credential si account_id est un alias externe.
-# 5.237.20.1: Persistance model_id dans message_shadows, lecture get_signature_by_id depuis les Shadows et suppression des méthodes de hachage cumulatif.
 import contextlib
 import functools
 import os
@@ -328,8 +328,13 @@ class EchoStateManager:
         except Exception as e:
             print(f"[EchoStateManager] save_vault_credential error: {e}")
 
-    def get_vault_credential(self, service: str, account_id: Optional[str] = None) -> str:
-        """Récupère et déchiffre une identité depuis identity_vault (repli sur le compte du service)."""
+    def get_vault_credential(
+        self,
+        service: str,
+        account_id: Optional[str] = None,
+        allow_single_fallback: bool = False,
+    ) -> str:
+        """Récupère et déchiffre une identité depuis identity_vault."""
         try:
             with self._get_identity_connection(readonly=True) as conn:
                 row = None
@@ -338,7 +343,14 @@ class EchoStateManager:
                         "SELECT account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ? AND account_id = ? LIMIT 1",
                         (self.user_id, service, account_id),
                     ).fetchone()
-                if not row:
+                    if not row and allow_single_fallback:
+                        rows = conn.execute(
+                            "SELECT account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ? LIMIT 2",
+                            (self.user_id, service),
+                        ).fetchall()
+                        if len(rows) == 1:
+                            row = rows[0]
+                else:
                     row = conn.execute(
                         "SELECT account_id, credentials FROM identity_vault WHERE user_id = ? AND service = ? LIMIT 1",
                         (self.user_id, service),

@@ -1,11 +1,11 @@
-# VERSION : 5.239.11.1
+# VERSION : 6.7.18.1
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.18.1: Suppression injection aveugle account_id dans args et propagation account_id/credentials/cache_key aux hooks provider.
 # 5.239.11.1: before_tool_call/sync_credentials avant _get_or_create_session (Graph Zéro-Stdio) et account_id.
 # 5.239.10.1: Timeout MCP_TOOL_CALL_TIMEOUT (55s) avec éviction, verrous par cache_key et clé indexée sur cred_hash.
 # 5.231.37.1: Propagation de chat_id aux hooks before_tool_call et after_tool_call de MCPServiceProvider.
 # 5.231.20.1: Isolation des sessions MCP actives par compte optionnel (cache_key incluant account_id).
-# 5.228.0.1: Import partagé de AuthRequiredError depuis m5_providers et déduplication du message d'erreur.
 
 import asyncio
 import json
@@ -14,6 +14,7 @@ import os
 import hashlib
 import logging
 from contextlib import AsyncExitStack
+from typing import Optional
 from mcp.client.stdio import stdio_client, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
@@ -168,7 +169,13 @@ def _parse_and_validate_credentials(service: str, credentials_str: str) -> tuple
     return schema_def, credentials
 
 
-async def _open_transport(stack: AsyncExitStack, user_id: str, service: str, credentials_str: str):
+async def _open_transport(
+    stack: AsyncExitStack,
+    user_id: str,
+    service: str,
+    credentials_str: str,
+    cache_key: Optional[str] = None,
+):
     """Ouvre le transport MCP (stdio résident/éphémère, SSE, streamable HTTP) dans `stack`.
 
     Retourne (read_stream, write_stream). Corps identique à la v1.14 (déplacé, non modifié).
@@ -187,7 +194,7 @@ async def _open_transport(stack: AsyncExitStack, user_id: str, service: str, cre
             env.update({str(k): str(v) for k, v in credentials.items()})
 
             provider = get_service_provider(service)
-            await provider.prepare_env(stack, user_id, credentials, env)
+            await provider.prepare_env(stack, user_id, credentials, env, cache_key=cache_key)
         else:  # mcp_ephemeral
             command = credentials.get("command")
             if not command:
@@ -264,7 +271,10 @@ async def _get_or_create_session(
             _SESSIONS.pop(cache_key, None)
 
         holder = _SessionHolder(
-            lambda stack: _open_transport(stack, user_id, service, credentials_str), cred_hash
+            lambda stack: _open_transport(
+                stack, user_id, service, credentials_str, cache_key=cache_key
+            ),
+            cred_hash,
         )
         await holder.start()
         _SESSIONS[cache_key] = holder
@@ -302,16 +312,20 @@ async def proxy_mcp_request(payload: dict) -> dict:
         raise ValueError("Paramètres 'service' ou 'rpc_request.method' manquants.")
 
     _, credentials_dict = _parse_and_validate_credentials(service, credentials)
+    cache_key_preview, _ = _build_cache_key(user_id, service, credentials)
     provider = get_service_provider(service)
     await provider.sync_credentials(user_id, credentials_dict)
 
     if method == "tools/call":
         name = params.get("name")
         args = dict(params.get("arguments") or {})
-        if account_id and not args.get("account_id"):
-            args["account_id"] = account_id
         args, short_circuit = await provider.before_tool_call(
-            user_id, name, args, chat_id=chat_id, credentials=credentials_dict
+            user_id,
+            name,
+            args,
+            chat_id=chat_id,
+            credentials=credentials_dict,
+            account_id=account_id,
         )
         if short_circuit is not None:
             return short_circuit
@@ -334,7 +348,9 @@ async def proxy_mcp_request(payload: dict) -> dict:
                     "La session MCP est réinitialisée."
                 ) from te
             dumped_tools = _dump(tools_res)
-            return await provider.after_list_tools(user_id, dumped_tools)
+            return await provider.after_list_tools(
+                user_id, dumped_tools, credentials=credentials_dict
+            )
 
         try:
             call_res = await asyncio.wait_for(
@@ -347,7 +363,12 @@ async def proxy_mcp_request(payload: dict) -> dict:
             ) from te
         dumped = _dump(call_res)
         return await provider.after_tool_call(
-            user_id, name, dumped, chat_id=chat_id
+            user_id,
+            name,
+            dumped,
+            chat_id=chat_id,
+            credentials=credentials_dict,
+            cache_key=cache_key or cache_key_preview,
         )
     except BaseException:
         async with _get_session_lock(cache_key):
