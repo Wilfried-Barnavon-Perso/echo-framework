@@ -1,18 +1,18 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.6.12.1
+# VERSION : 6.8.0.1
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.8.0.1: Arrêt gracieux temporaire de echo-watchtower (trap EXIT) avant build/up et purge des conteneurs temporaires Compose en état Created.
 # 6.6.12.1: Factorisation COMPOSE_ARGS et pré-construction isolée de echo-webui (protection RAM V8 6 Go).
 # 6.5.3.1: Renommage de l'image et du conteneur echo-open-webui vers echo-webui.
 # 6.5.1.2: Ajout de ensure_swap_and_vm_tuning (filet swap 4 Go et vm.swappiness=25).
 # 6.0.0.1: Retrait de l'appel à config-owui.sh au profit du bootstrap déclaratif lifespan ECHO V6.
-# 5.231.39.1: Alignement du cron quotidien sur echo-clean (/etc/cron.daily/echo-clean) et de l'aide sur echo-show-admin.
 
 set -e # Arrêt en cas d'erreur critique
 
@@ -186,6 +186,38 @@ ensure_swap_and_vm_tuning() {
     echo "vm.swappiness=25" > /etc/sysctl.d/99-echo-vm.conf
 }
 
+WATCHTOWER_WAS_RUNNING=0
+
+# Restaure echo-watchtower si le script s'interrompt avant docker compose up -d
+restore_watchtower_on_exit() {
+    if [ "${WATCHTOWER_WAS_RUNNING:-0}" -eq 1 ]; then
+        if ! docker ps -q --filter "name=^echo-watchtower$" | grep -q .; then
+            echo "▶️  Relance de echo-watchtower..."
+            docker start echo-watchtower >/dev/null 2>&1 || true
+        fi
+        WATCHTOWER_WAS_RUNNING=0
+    fi
+}
+
+# Stoppe gracieusement echo-watchtower pour éviter toute race condition sur echo-searxng pendant build/up
+stop_watchtower_for_upgrade() {
+    if docker ps -q --filter "name=^echo-watchtower$" | grep -q .; then
+        WATCHTOWER_WAS_RUNNING=1
+        echo "⏸️  Arrêt temporaire de echo-watchtower pendant le build/déploiement..."
+        docker stop echo-watchtower >/dev/null 2>&1 || true
+    fi
+}
+
+# Purge les conteneurs temporaires Compose (<12hex>_echo-*) laissés en état Created après un run avorté
+cleanup_compose_staging_containers() {
+    local orphan_containers
+    orphan_containers=$(docker ps -a --filter "status=created" --format "{{.Names}}" 2>/dev/null | grep -E '^[0-9a-f]{12}_echo-' || true)
+    if [ -n "$orphan_containers" ]; then
+        echo "🧹 Nettoyage des conteneurs temporaires Compose en état Created..."
+        echo "$orphan_containers" | xargs -r docker rm -f >/dev/null 2>&1 || true
+    fi
+}
+
 # --- 1. PRE-FLIGHT CHECKS ---
 wait_for_docker
 ensure_swap_and_vm_tuning
@@ -286,6 +318,9 @@ echo "   ✅ Origines IP  : $ECHO_DETECTED_ORIGINS"
 mkdir -p "$ECHO_ROOT/models"
 
 # --- 2.5 Pré-construction de l'Image de Base ---
+trap restore_watchtower_on_exit EXIT
+stop_watchtower_for_upgrade
+
 echo "🏗️ Construction de l'image de base partagée (echo-python-base)..."
 docker build -t echo-python-base:latest "$ECHO_ROOT/docker-python-base"
 
@@ -312,10 +347,13 @@ fi
 echo "🎨 Pré-construction isolée de echo-webui (protection mémoire V8 6 Go)..."
 $DOCKER_COMPOSE_CMD "${COMPOSE_ARGS[@]}" build $PULL_FLAG echo-webui
 $DOCKER_COMPOSE_CMD "${COMPOSE_ARGS[@]}" build $PULL_FLAG
+cleanup_compose_staging_containers
 $DOCKER_COMPOSE_CMD "${COMPOSE_ARGS[@]}" up -d --remove-orphans
 
 if [ $? -eq 0 ]; then
     echo "✅ Stack Docker Compose active."
+    WATCHTOWER_WAS_RUNNING=0
+    trap - EXIT
 else
     echo "❌ Erreur lors du lancement Docker Compose."
     exit 1

@@ -9,7 +9,8 @@ Ce dossier contient l'intégralité de l'outillage Bash d'infrastructure (Script
 ## 2. Cartographie des Fichiers et Algorithmes
 
 ### `install-stack.sh`
-**Rôle** : Déploiement central de l'architecture Docker (v6.6.12.1, image et conteneur `echo-webui`).
+**Rôle** : Déploiement central de l'architecture Docker (v6.8.0.1, image et conteneur `echo-webui`).
+- **Protection contre les collisions Watchtower & Conteneurs Temporaires (`stop_watchtower_for_upgrade` / `restore_watchtower_on_exit` / `cleanup_compose_staging_containers`)** : Arrête gracieusement `echo-watchtower` avant le `build`/`up` avec un `trap EXIT` de secours garantissant sa relance en cas d'échec, et purge avant `docker compose up -d` les éventuels conteneurs temporaires Compose (`^[0-9a-f]{12}_echo-`) laissés en état `Created`.
 - **Orchestration & Pré-construction Isolée (`COMPOSE_ARGS`)** : Factorise les arguments Docker Compose (`--env-file`, mode `SECURE EDGE` avec `bunkerweb-stack.yml` ou mode `STANDARD`) dans le tableau `COMPOSE_ARGS` et pré-construit isolément `echo-webui` en amont du `build` parallèle (`COMPOSE_PARALLEL_LIMIT=2`) des autres services afin de protéger la compilation Vite/Node (`--max-old-space-size=6144`) contre la concurrence mémoire.
 - **`ensure_swap_and_vm_tuning()`** : Garantit un filet de sécurité Swap de 4 Go (`/swapfile` persisté dans `/etc/fstab` si aucun swap actif) et configure `vm.swappiness=25` (`/etc/sysctl.d/99-echo-vm.conf`) pour prévenir les blocages OOM lors des builds Docker.
 - **`ensure_docker_autosafety()`** : Configure de manière globale le démon Docker (`/etc/docker/daemon.json`) pour imposer une limite de taille des logs (max 10Mo, 3 fichiers) et injecte un cron quotidien (`/etc/cron.daily/echo-clean`) appelant `echo-clean.sh`, évitant ainsi la saturation du disque de la VM.
