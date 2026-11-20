@@ -1,13 +1,14 @@
 #!/bin/bash
 # ==============================================================================
 # SCRIPT : echo-upgrade.sh
-# VERSION : 5.231.39.1
+# VERSION : 6.8.1.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.8.1.1: Propagation du code d'échec de install-stack.sh (|| exit 1) afin de ne pas afficher 'UPGRADE TERMINÉ' en cas d'erreur.
 # 5.231.39.1: Renommage en echo-upgrade.sh, commande destructrice echo-rebuild et ciblage de echo-sync.sh.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 6.10: Implémentation d'une double vérification biométrique/stricte pour la commande destructrice rebuild-echo.
@@ -108,6 +109,6 @@ fi
 # --- 2. DELEGATION AU LAUNCHER ---
 # --- 3. REBUILD / RELAUNCH ---
 echo "🚀 [UPGRADE] Relance de la stack (via install-stack.sh)..."
-/bin/bash "$ECHO_SCRIPTS/install-stack.sh"
+/bin/bash "$ECHO_SCRIPTS/install-stack.sh" || { echo "❌ ÉCHEC DE L'UPGRADE."; exit 1; }
 
 echo "✨ UPGRADE TERMINÉ."
