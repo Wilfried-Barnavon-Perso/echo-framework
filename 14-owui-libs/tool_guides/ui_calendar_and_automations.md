@@ -1,7 +1,7 @@
 ---
 domain_id: ui_calendar_and_automations
-version: 6.13.2.1
-updated_at: 2026-11-20
+version: 6.15.0.1
+updated_at: 2026-11-21
 name: Agenda de l'Interface Utilisateur, Automatisations CRON (RRULE), Dossiers UI, Étiquettes, Saisie Interactive, Tâches UI, Historique Chats & Lecture des Sorties Délestées
 description: Gestion complète du calendrier de l'Interface Utilisateur, programmation de tâches de fond CRON (syntaxe RRULE iCalendar), dossiers UI, exploration des étiquettes (tags), ask_user_input, wait_timer, checklist UI (create_ui_tasks, update_ui_task), recherche/lecture exacte de conversations (search_ui_chats, view_ui_chat) et exploitation paginée/purge des sorties d'outils délestées (read_tool_output, delete_tool_output).
 tools: [search_ui_calendar_events, list_ui_calendar_events, read_ui_calendar_events, create_ui_calendar_event, update_ui_calendar_event, delete_ui_calendar_event, create_ui_automation, update_ui_automation, toggle_ui_automation, delete_ui_automation, read_ui_automations, list_ui_automations, list_ui_folders, list_ui_tags, ask_user_input, wait_timer, create_ui_tasks, update_ui_task, search_ui_chats, view_ui_chat, read_tool_output, delete_tool_output]
@@ -88,6 +88,7 @@ L'argument `rrule` dans `create_ui_automation` et `update_ui_automation` **DOIT 
 - **Checklist UI (`create_ui_tasks`, `update_ui_task`)** :
   - Réservée au Modèle principal (**ABSOLUMENT INTERDITE aux Sous-Agents headless**).
   - Usage : suivi visuel léger des étapes d'une tâche courante dans l'interface (`pending`, `in_progress`, `completed`, `cancelled`), distinct de `strategic_planner` (planification/exécution persistée complexe).
+  - Contrat `create_ui_tasks(tasks=[{"content": "...", "status": "pending", "id": "..."}])` : clé `content` requise (non vide), `status` optionnel parmi `pending`, `in_progress`, `completed`, `cancelled` (défaut `pending`), `id` optionnel (auto-généré si omis).
 - **Recherche & Lecture Exacte des Chats (`search_ui_chats`, `view_ui_chat`)** :
   - `search_ui_chats(query, count=5, start_timestamp=None, end_timestamp=None)` : Recherche exacte par titre et contenu dans l'historique des conversations (exclut le chat courant). Complémentaire à `search_sessions_context` (recherche sémantique).
   - `view_ui_chat(chat_id)` : Restitue l'historique chronologique complet d'une conversation précédente identifiée par `search_ui_chats`.

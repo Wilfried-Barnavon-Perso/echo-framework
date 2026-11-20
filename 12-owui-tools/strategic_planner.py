@@ -1,16 +1,16 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 6.10.0.1
+version: 6.15.0.1
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.15.0.1: Ajout de close_plan (PAS, zéro LLM, états terminaux success/partial/failed/abandoned + ## Synthèse d'exécution), Gatekeeper 1 pré-LLM dans update_plan, garde terminal dans update_tasks et parsing/remplacement borné du frontmatter YAML.
 # 6.10.0.1: Mutualisation du blocage headless/automatisation via get_headless_block_reason dans process_plan.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 5.233.0.1: Unification du wrapper dans wrap_tool_output, décoration @echo_tool sur les 7 méthodes publiques et simplification des retours.
 # 5.232.5.1: Isolement et versionnement Git des plans et listes de tâches dans le workspace dédié CODEX_WORKSPACE_PLANS ("plans") avec synchronisation de last_commit dans echo_resources.
-# 5.232.1.1: Harmonisation des notifications UI (events.status) avec emojis distinctifs pour le cycle de vie du plan et des tâches.
 
 import sys
 import uuid
@@ -21,7 +21,7 @@ import time
 import unicodedata
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
-from typing import Optional, Any
+from typing import Optional, Any, Literal
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
@@ -38,7 +38,6 @@ from echo_paths import get_codex_lock, format_codex_storage_path
 from echo_ui import EchoUI
 from echo_constants import (
     CODEX_WORKSPACE_PLANS,
-    PLAN_STATUS,
     PLANNER_MODEL_BUILD,
     PLANNER_MODEL_UPDATE,
     get_generation_config,
@@ -122,11 +121,42 @@ class Tools:
             lines.append(f"- `{func_name}` — {short_desc}")
         return "\n".join(lines) if lines else "Aucun outil disponible."
 
-    @staticmethod
-    def _extract_frontmatter_status(content: str) -> Optional[str]:
+    _PLAN_TERMINAL_STATUSES = frozenset({"success", "partial", "failed", "abandoned"})
+    _FRONTMATTER_RE = re.compile(r"^(---\r?\n)(.*?)(\r?\n---(?:\r?\n|$))", re.DOTALL)
+    _SYNTHESIS_SECTION_RE = re.compile(r"(?:\r?\n){1,}##\s+Synthèse d'exécution\b.*", re.DOTALL)
+
+    @classmethod
+    def _extract_frontmatter_status(cls, content: str) -> Optional[str]:
         """Extrait le champ status: du frontmatter YAML d'un plan."""
-        match = re.search(r"^status:\s*(\w+)", content, re.MULTILINE)
-        return match.group(1) if match else None
+        fm_match = cls._FRONTMATTER_RE.match(content or "")
+        search_block = fm_match.group(2) if fm_match else (content or "")
+        match = re.search(r"^status:\s*['\"]?([a-zA-Z0-9_-]+)['\"]?\s*$", search_block, re.MULTILINE)
+        return match.group(1).strip().lower() if match else None
+
+    @classmethod
+    def _replace_frontmatter_status(cls, content: str, new_status: str) -> str:
+        """Remplace ou insère le champ status: dans le frontmatter YAML d'un plan."""
+        fm_match = cls._FRONTMATTER_RE.match(content or "")
+        if not fm_match:
+            return re.sub(
+                r"^status:\s*['\"]?[a-zA-Z0-9_-]+['\"]?\s*$",
+                f"status: {new_status}",
+                content or "",
+                count=1,
+                flags=re.MULTILINE,
+            )
+        prefix, body, suffix = fm_match.group(1), fm_match.group(2), fm_match.group(3)
+        if re.search(r"^status:\s*.*$", body, re.MULTILINE):
+            new_body = re.sub(
+                r"^status:\s*.*$",
+                f"status: {new_status}",
+                body,
+                count=1,
+                flags=re.MULTILINE,
+            )
+        else:
+            new_body = f"{body.rstrip()}\nstatus: {new_status}"
+        return f"{prefix}{new_body}{suffix}{(content or '')[fm_match.end():]}"
 
     @staticmethod
     def _extract_llm_text(res_json: dict) -> Optional[str]:
@@ -318,7 +348,7 @@ class Tools:
         __event_emitter__: Optional[Any] = None,
         __event_call__: Optional[Any] = None,
     ) -> Any:
-        """Modifie la stratégie d'un plan d'action existant (autorisé uniquement au statut `proposed`)."""
+        """Révise exclusivement la stratégie d'un plan d'action au statut `proposed` (utiliser `process_plan` pour démarrer et `close_plan` pour clôturer)."""
         events = EchoEvents(__event_emitter__, __event_call__)
         user_id = __user__.get("id", "system") if __user__ else "system"
         chat_id = (__metadata__ or {}).get("chat_id")
@@ -330,9 +360,22 @@ class Tools:
         if not result:
             return f"❌ Plan `{plan_id}` introuvable dans le Codex."
 
-        # 1. Lecture du plan actuel
+        # 1. Lecture du plan actuel et Gatekeeper 1 AVANT appel LLM
         current_content = result["content"]
         plan_filename = result["filename"]
+        current_status = self._extract_frontmatter_status(current_content)
+        if current_status != "proposed":
+            await events.status("⚠️ Action refusée : Le plan est verrouillé.", done=True)
+            if current_status == "executing":
+                return (
+                    f"Action refusée : Le plan `{plan_id}` est verrouillé stratégiquement en cours d'exécution "
+                    f"(statut `'executing'`). Le Modèle DOIT utiliser `update_tasks` pour pointer l'avancement "
+                    f"et `close_plan` pour clôturer le plan."
+                )
+            return (
+                f"Action refusée : Le plan `{plan_id}` au statut `'{current_status}'` est verrouillé définitivement. "
+                f"Le Modèle NE PEUT réviser que les plans au statut `'proposed'`."
+            )
 
         await events.status(f"📝 Modification du plan `{plan_id}`...")
 
@@ -369,32 +412,32 @@ class Tools:
             await events.status("❌ Réponse vide du planificateur.", done=True)
             return "Erreur : le planificateur n'a produit aucun contenu."
 
-        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-        current_status = self._extract_frontmatter_status(current_content)
         new_status = self._extract_frontmatter_status(new_content)
 
-        # Gatekeeper 1 : Verrouillage strict dès que le plan n'est plus "proposed"
-        if current_status != 'proposed':
-            await events.status("⚠️ Action refusée : Le plan est verrouillé.", done=True)
-            return f"Action refusée : Un plan au statut '{current_status}' est verrouillé stratégiquement. Le Modèle ne PEUT modifier qu'un plan au statut 'proposed'."
-
-        # Gatekeeper 2 : Interdiction absolue de bypass process_plan
-        if new_status == 'executing':
+        # Gatekeeper 2 : Interdiction absolue de bypass process_plan ou close_plan
+        if new_status == "executing":
             await events.status("⛔ ERREUR : Tentative de démarrage illicite bloquée.", done=True)
             return "ACTION INTERDITE : Le passage au statut 'executing' est verrouillé pour des raisons de sécurité. Le Modèle n'a pas l'autorisation d'utiliser `update_plan` pour cela. Le Modèle DOIT obligatoirement invoquer l'outil `process_plan` pour démarrer l'exécution d'un plan."
+
+        if new_status != "proposed":
+            await events.status("⛔ ERREUR : Changement de statut non autorisé bloqué.", done=True)
+            return (
+                f"ACTION INTERDITE : La modification du statut vers '{new_status}' via `update_plan` est "
+                f"ABSOLUMENT INTERDITE. Le Modèle DOIT conserver le statut 'proposed' lors d'une révision "
+                f"et utiliser `close_plan` pour clôturer ou abandonner un plan."
+            )
 
         # Application silencieuse de la modification
         async with get_codex_lock(user_id, chat_id):
             repo = CodexRepo(user_id, chat_id, CODEX_WORKSPACE_PLANS)
             upd_commit_sha = await asyncio.to_thread(repo.commit_file, plan_filename, new_content, f"Update plan {plan_id}")
-        if new_status and new_status in PLAN_STATUS:
-            state.update_resource_status(plan_id, new_status)
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
         existing_res = state.get_resource(plan_id) or {}
         state.save_resource(
             id=plan_id,
             name=existing_res.get("name") or plan_filename,
             resource_type="plan",
-            status=new_status if (new_status and new_status in PLAN_STATUS) else (existing_res.get("status") or "proposed"),
+            status="proposed",
             mime="text/markdown",
             plan_goal=existing_res.get("plan_goal") or "",
             author_model=model_key_used,
@@ -413,7 +456,7 @@ class Tools:
             await events.status(f"✅ Plan {plan_id} mis à jour.", done=True)
 
         return wrap_tool_output(
-            text=f"### Tentative de mise à jour du plan `{plan_id}`\n\n"
+            text=f"### Plan `{plan_id}` mis à jour\n\n"
                  f"**Décision Utilisateur :** {user_decision}\n"
                  f"**Modèle :** {model_key_used}\n"
                  f"**Fichier :** [{plan_filename}](codex:current:{CODEX_WORKSPACE_PLANS}/{plan_filename})\n\n"
@@ -445,7 +488,15 @@ class Tools:
         result = await self._read_plan_from_codex_async(user_id, chat_id, plan_id)
         if not result:
             return f"Plan `{plan_id}` introuvable dans le Codex."
-        
+
+        current_status = self._extract_frontmatter_status(result["content"])
+        if current_status in self._PLAN_TERMINAL_STATUSES:
+            await events.status("⚠️ Action refusée : Le plan est clôturé.", done=True)
+            return (
+                f"ACTION REFUSÉE : Le plan `{plan_id}` est clôturé au statut '{current_status}'. "
+                f"La modification des tâches est ABSOLUMENT INTERDITE."
+            )
+
         plan_filename = result["filename"]
         tasks_filename = "tasks_" + plan_filename
 
@@ -498,7 +549,7 @@ class Tools:
                 id=plan_id,
                 name=existing_res.get("name") or plan_filename,
                 resource_type="plan",
-                status=existing_res.get("status") or "executing",
+                status=current_status or existing_res.get("status") or "proposed",
                 mime="text/markdown",
                 plan_goal=existing_res.get("plan_goal") or "",
                 author_model=existing_res.get("author_model") or model_key_used,
@@ -579,7 +630,7 @@ class Tools:
                 return "Refus : L'Utilisateur a refusé de lancer l'exécution du plan. Le Modèle DOIT attendre les consignes de L'Utilisateur."
 
         # 3. Remplacement du statut dans le frontmatter (proposed -> executing)
-        new_plan_content = re.sub(r"^status:\s*(\w+)", "status: executing", plan_content, flags=re.MULTILINE)
+        new_plan_content = self._replace_frontmatter_status(plan_content, "executing")
         
         async with get_codex_lock(user_id, chat_id):
             repo = CodexRepo(user_id, chat_id, CODEX_WORKSPACE_PLANS)
@@ -589,22 +640,20 @@ class Tools:
 
         # 4. Mise à jour de l'état SQLite
         state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-        state.update_resource_status(plan_id, 'executing')
         existing_res = state.get_resource(plan_id) or {}
-        if existing_res:
-            state.save_resource(
-                id=plan_id,
-                name=existing_res.get("name") or plan_filename,
-                resource_type="plan",
-                status="executing",
-                mime="text/markdown",
-                plan_goal=existing_res.get("plan_goal") or "",
-                author_model=existing_res.get("author_model") or "",
-                git_tracked=True,
-                last_commit=(exec_commit_sha or "")[:12],
-                commit_msg=f"Start execution {plan_id}",
-                storage_path=format_codex_storage_path(plan_filename, CODEX_WORKSPACE_PLANS),
-            )
+        state.save_resource(
+            id=plan_id,
+            name=existing_res.get("name") or plan_filename,
+            resource_type="plan",
+            status="executing",
+            mime="text/markdown",
+            plan_goal=existing_res.get("plan_goal") or "",
+            author_model=existing_res.get("author_model") or "",
+            git_tracked=True,
+            last_commit=(exec_commit_sha or "")[:12],
+            commit_msg=f"Start execution {plan_id}",
+            storage_path=format_codex_storage_path(plan_filename, CODEX_WORKSPACE_PLANS),
+        )
 
         tasks_text = tasks_result["content"] if tasks_result else "- [ ] Fichier de tâches introuvable."
 
@@ -624,9 +673,114 @@ Le plan `{plan_id}` est officiellement EN COURS D'EXÉCUTION.
 1. SÉQUENTIALITÉ : Le Modèle DOIT exécuter les tâches strictement dans l'ordre de la liste ci-dessus.
 2. POINTAGE OBLIGATOIRE : Après CHAQUE tâche accomplie (ou échouée), le Modèle a l'OBLIGATION ABSOLUE d'utiliser l'outil `update_tasks` pour mettre à jour la liste.
 3. ENDURANCE : Le Modèle DOIT POURSUIVRE l'exécution ininterrompue des tâches jusqu'à la finalisation intégrale du plan.
-4. CLÔTURE : Une fois la dernière tâche terminée, le Modèle DOIT utiliser `update_plan` pour modifier le statut du plan en `success` (ou `failed`) ET ajouter une section `## Synthèse d'exécution` résumant les actions menées.
+4. CLÔTURE : Une fois la dernière tâche terminée, Le Modèle DOIT invoquer `close_plan(plan_id, final_status, execution_summary)` pour basculer le statut du plan en `success`, `partial`, `failed` ou `abandoned` ET consigner la section `## Synthèse d'exécution`.
 """
         return directive
+
+    @echo_tool
+    async def close_plan(
+        self,
+        plan_id: str,
+        final_status: Literal["success", "partial", "failed", "abandoned"],
+        execution_summary: str,
+        __user__: Optional[dict] = None,
+        __metadata__: Optional[dict] = None,
+        __event_emitter__: Optional[Any] = None,
+        __event_call__: Optional[Any] = None,
+    ) -> Any:
+        """Clôture formellement un plan stratégique existant (`plan_id`) vers un statut terminal (`success`, `partial`, `failed`, `abandoned`) et consigne `## Synthèse d'exécution`."""
+        events = EchoEvents(__event_emitter__, __event_call__)
+        user_id = __user__.get("id", "system") if __user__ else "system"
+        chat_id = (__metadata__ or {}).get("chat_id")
+
+        if not chat_id:
+            return "Erreur : Aucun chat_id détecté."
+
+        final_status_norm = str(final_status or "").strip().lower()
+        if final_status_norm not in self._PLAN_TERMINAL_STATUSES:
+            return (
+                f"ACTION REFUSÉE : Le statut final `{final_status}` est invalide. "
+                f"Le Modèle DOIT fournir un statut parmi : `success`, `partial`, `failed`, `abandoned`."
+            )
+
+        summary_clean = str(execution_summary or "").strip()
+        if not summary_clean:
+            return (
+                "ACTION REFUSÉE : Le paramètre `execution_summary` DOIT être une synthèse non vide "
+                "des résultats et actions menées."
+            )
+
+        result = await self._read_plan_from_codex_async(user_id, chat_id, plan_id)
+        if not result:
+            return f"Erreur : Plan `{plan_id}` introuvable dans le Codex."
+
+        plan_content = result["content"]
+        plan_filename = result["filename"]
+        current_status = self._extract_frontmatter_status(plan_content)
+
+        if current_status in self._PLAN_TERMINAL_STATUSES:
+            await events.status("⚠️ Action refusée : Le plan est déjà clôturé.", done=True)
+            return (
+                f"ACTION REFUSÉE : Le plan `{plan_id}` est déjà clôturé au statut '{current_status}'. "
+                f"Toute nouvelle clôture est ABSOLUMENT INTERDITE."
+            )
+
+        if current_status == "proposed" and final_status_norm != "abandoned":
+            await events.status("⚠️ Action interdite : Exécution non amorcée.", done=True)
+            return (
+                f"ACTION INTERDITE : Un plan au statut 'proposed' NE PEUT PAS être clôturé au statut "
+                f"'{final_status_norm}' sans exécution préalable. Le Modèle DOIT invoquer `process_plan` "
+                f"pour démarrer l'exécution, ou `close_plan` avec `final_status='abandoned'` pour l'abandonner."
+            )
+
+        if current_status not in ("executing", "proposed"):
+            await events.status("⚠️ Action refusée : Statut source invalide.", done=True)
+            return f"ACTION REFUSÉE : Transition impossible depuis le statut '{current_status}'."
+
+        updated_content = self._replace_frontmatter_status(plan_content, final_status_norm)
+        base_body = self._SYNTHESIS_SECTION_RE.sub("", updated_content).rstrip()
+        closed_content = f"{base_body}\n\n## Synthèse d'exécution\n\n{summary_clean}\n"
+
+        async with get_codex_lock(user_id, chat_id):
+            repo = CodexRepo(user_id, chat_id, CODEX_WORKSPACE_PLANS)
+            close_commit_sha = await asyncio.to_thread(
+                repo.commit_file,
+                plan_filename,
+                closed_content,
+                f"Close plan {plan_id} ({final_status_norm})",
+            )
+
+        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        existing_res = state.get_resource(plan_id) or {}
+        state.save_resource(
+            id=plan_id,
+            name=existing_res.get("name") or plan_filename,
+            resource_type="plan",
+            status=final_status_norm,
+            mime="text/markdown",
+            plan_goal=existing_res.get("plan_goal") or "",
+            author_model=existing_res.get("author_model") or "",
+            git_tracked=True,
+            last_commit=(close_commit_sha or "")[:12],
+            commit_msg=f"Close plan {plan_id} ({final_status_norm})",
+            storage_path=format_codex_storage_path(plan_filename, CODEX_WORKSPACE_PLANS),
+        )
+
+        await events.status(f"🏁 Plan {plan_id} clôturé ({final_status_norm}).", done=True)
+
+        return wrap_tool_output(
+            text=(
+                f"Le plan `{plan_id}` est clôturé au statut `{final_status_norm}`.\n\n"
+                f"**Fichier :** [{plan_filename}](codex:current:{CODEX_WORKSPACE_PLANS}/{plan_filename})\n"
+                f"**Commit :** `{(close_commit_sha or '')[:12]}`"
+            ),
+            status={
+                "status": "success",
+                "plan_id": plan_id,
+                "final_status": final_status_norm,
+                "commit": (close_commit_sha or "")[:12],
+            },
+        )
 
     @echo_tool
     async def delete_plan(

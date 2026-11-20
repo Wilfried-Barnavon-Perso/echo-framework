@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 6.13.2.1
+version: 6.15.0.1
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.15.0.1: Typage UiTaskItem et normalisation tolérante (title/label/text/name/description -> content) + garde invalid_tasks_payload dans create_ui_tasks.
 # 6.13.2.1: Extension de la description et de la docstring de tool_advisor à l'assistance ECHO-UI (echo_ui_guide).
 # 6.10.0.1: Support des 3 modes de destination (new_chat, existing_chat avec target_chat_id='current', persistent_chat) sur create/update_ui_automation et exposition target/folder_id dans list_ui_automations.
 # 6.8.2.2: Migration Svelte native de ask_user_input (request:user_input / AskUserCard), blocage headless/automation via get_headless_block_reason, et ajout de create_ui_tasks, update_ui_task, toggle_ui_automation, search_ui_chats et view_ui_chat.
 # 6.7.11.1: Délégation du fenêtrage read_tool_output à paginate_lines_window et suppression des 7 skip_truncation=True redondants.
-# 6.7.10.1: Alignement de la fenêtre par défaut de read_tool_output (end_line=None) sur ECHO_CODEX_MAX_READ_LINES (800 lignes).
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -49,6 +49,7 @@ from open_webui.tools.builtin import (
     update_automation as _owui_update_auto,
     toggle_automation as _owui_toggle_auto,
     delete_automation as _owui_delete_auto,
+    TaskItem as UiTaskItem,
     create_tasks as _owui_create_tasks,
     update_task as _owui_update_task,
     search_chats as _owui_search_chats,
@@ -804,15 +805,42 @@ class Tools:
             return {"error": str(e)}
 
     @echo_tool
-    async def create_ui_tasks(self, tasks: list[dict], __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None) -> dict:
-        """Crée une liste de tâches visibles en temps réel dans l'interface du chat principal."""
+    async def create_ui_tasks(self, tasks: list[UiTaskItem], __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None) -> dict:
+        """Crée une liste de tâches visibles en temps réel dans l'interface du chat principal.
+
+        :param tasks: Liste d'objets tâche. Chaque objet DOIT contenir `content` (str, requis), et optionnellement `status` (`pending`|`in_progress`|`completed`|`cancelled`, défaut `pending`) et `id` (str, auto-généré si omis).
+        """
         if ECHO_SUBAGENT_CONTEXT.get().get("is_subagent"):
             return wrap_tool_output(
                 text="Erreur : L'environnement d'exécution (Headless/Sous-agent) ne permet pas de modifier la checklist UI du chat principal.",
                 status={"status": "error", "error_code": "headless_forbidden"},
             )
+        normalized_tasks = []
+        for item in tasks or []:
+            if hasattr(item, "model_dump"):
+                d = item.model_dump(exclude_none=True)
+            elif isinstance(item, str):
+                d = {"content": item}
+            elif isinstance(item, dict):
+                d = dict(item)
+            else:
+                continue
+            content = str(d.get("content") or d.get("title") or d.get("label") or d.get("text") or d.get("name") or d.get("description") or "").strip()
+            if not content:
+                continue
+            norm_item = {"content": content}
+            if d.get("id") is not None and str(d.get("id")).strip():
+                norm_item["id"] = str(d["id"]).strip()
+            if d.get("status"):
+                norm_item["status"] = str(d["status"]).strip().lower()
+            normalized_tasks.append(norm_item)
+        if bool(tasks) and not normalized_tasks:
+            return wrap_tool_output(
+                text="Erreur : Aucun item valide dans `tasks`. Chaque objet DOIT contenir une clé `content` non vide (ex: `[{\"content\": \"Étape 1\", \"status\": \"pending\"}]`).",
+                status={"status": "error", "error_code": "invalid_tasks_payload"},
+            )
         chat_id = (__metadata__ or {}).get("chat_id")
-        return await safe_owui_call(_owui_create_tasks, tasks=tasks, __chat_id__=chat_id, __event_emitter__=__event_emitter__, __user__=__user__)
+        return await safe_owui_call(_owui_create_tasks, tasks=normalized_tasks, __chat_id__=chat_id, __event_emitter__=__event_emitter__, __user__=__user__)
 
     @echo_tool
     async def update_ui_task(self, task_id: str, status: str = "completed", __user__: dict = {}, __metadata__: dict = {}, __event_emitter__: Any = None) -> dict:

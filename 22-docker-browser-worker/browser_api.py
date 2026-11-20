@@ -1,19 +1,19 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 6.13.1.1
+VERSION : 6.15.0.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-11-20
+DATE MAJ : 2026-11-21
 
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.15.0.1: Capture et exposition du statut HTTP (page_http_status, listener main-frame, _goto_resilient, navigate/refresh/tab_new/inspect_page) et normalisation _norm_echo_id dans GET /sessions.
 # 6.13.1.1: Découplage live CDP SSE (/screencast/stream), curseur JSON léger, encodage clip MP4 H.264 (curseur incrusté, filtre pair) sur /screencast/stop et correction fuites CDPSession.
 # 6.7.5.1: Ajout de _goto_resilient (wait_until="domcontentloaded", repli gracieux sur PlaywrightTimeoutError hors about:blank) pour navigate, tab_new et refresh.
 # 6.6.5.1: Ajout de l'endpoint GET /sessions pour lister les sessions Playwright actives par user_id/chat_id.
 # 5.236.4.1: Durcissement furtivité anti-bot (Client Hints, prototypes safe, WebGL Linux/Android), élimination du tatouage DOM (Zéro-Trace) et incrustation active du curseur hors-DOM via Pillow sur le screencast.
-# 5.232.1.1: Élimination du FastAPIDeprecationWarning (retrait d'ORJSONResponse obsolète) et typage strict des retours routes (dict[str, Any]) pour sérialisation directe Pydantic v2.
 
 import asyncio
 from collections import deque
@@ -546,11 +546,16 @@ async def wait_for_settle(page, quiet_ms: int = 400, timeout_ms: int = 3000):
             pass
 
 
-async def _goto_resilient(page, url: str, timeout_ms: int = 25000) -> Optional[str]:
+async def _goto_resilient(page, url: str, timeout_ms: int = 25000) -> tuple[Optional[str], Optional[int], str]:
     """Navigue en attendant domcontentloaded + stabilisation légère, avec repli gracieux sur les portails à flux continu."""
     warning_msg: Optional[str] = None
+    http_status: Optional[int] = None
+    http_status_text: str = ""
     try:
-        await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+        resp = await page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+        if resp is not None:
+            http_status = getattr(resp, "status", None)
+            http_status_text = getattr(resp, "status_text", "") or ""
     except PlaywrightTimeoutError as te:
         cur_url = getattr(page, "url", "") or ""
         if cur_url and cur_url != "about:blank":
@@ -558,7 +563,7 @@ async def _goto_resilient(page, url: str, timeout_ms: int = 25000) -> Optional[s
         else:
             raise te
     await wait_for_settle(page, quiet_ms=400, timeout_ms=3000)
-    return warning_msg
+    return warning_msg, http_status, http_status_text
 
 
 def pick_lru_victim():
@@ -793,9 +798,59 @@ class BrowserSession:
         self._clip_start_ts = 0.0
         self._last_clip_sample_ts = 0.0
         self.latest_url = ""
+        self.page_http_status: dict[int, dict[str, Any]] = {}
+
+    def record_page_http_status(self, page, status: Optional[int], status_text: str = "", url: str = "") -> None:
+        if page is None:
+            return
+        pid = id(page)
+        cur_url = url or getattr(page, "url", "") or ""
+        prev = self.page_http_status.get(pid)
+        if status is None and prev and prev.get("url") == cur_url:
+            return
+        self.page_http_status[pid] = {
+            "http_status": status,
+            "http_status_text": status_text or "",
+            "url": cur_url,
+        }
+
+    def get_page_http_status(self, page) -> dict[str, Any]:
+        if page is None:
+            return {}
+        info = self.page_http_status.get(id(page))
+        if not info or info.get("http_status") is None:
+            return {}
+        return {
+            "http_status": info["http_status"],
+            "http_status_text": info.get("http_status_text", ""),
+        }
+
+    def attach_page_response_listener(self, page) -> None:
+        if page is None or getattr(page, "_echo_resp_tracked", False):
+            return
+        setattr(page, "_echo_resp_tracked", True)
+
+        def _on_response(resp):
+            try:
+                if resp.request.is_navigation_request() and resp.frame == page.main_frame:
+                    self.record_page_http_status(
+                        page,
+                        resp.status,
+                        getattr(resp, "status_text", "") or "",
+                        resp.url,
+                    )
+            except Exception:
+                pass
+
+        def _on_close(_closed_page=None):
+            self.page_http_status.pop(id(page), None)
+
+        page.on("response", _on_response)
+        page.on("close", _on_close)
 
     def attach_page_tracking(self):
         def _on_page(new_page):
+            self.attach_page_response_listener(new_page)
             if new_page not in self.pages:
                 self.pages.append(new_page)
             self.active_page_index = self.pages.index(new_page)
@@ -806,6 +861,7 @@ class BrowserSession:
         self.last_activity = time.time()
         if not self.pages:
             p = await self.context.new_page()
+            self.attach_page_response_listener(p)
             if p not in self.pages:
                 self.pages.append(p)
         if self.active_page_index >= len(self.pages):
@@ -814,6 +870,7 @@ class BrowserSession:
         if target.is_closed():
             self.pages.pop(self.active_page_index)
             return await self.get_active_page()
+        self.attach_page_response_listener(target)
         return target
 
     def _get_viewport_dims(self) -> tuple[int, int]:
@@ -1115,15 +1172,29 @@ async def session_cleanup_loop():
                     await s._detach_cdp()
 
 
+def _norm_echo_id(raw: Optional[str]) -> str:
+    return "".join(x for x in str(raw or "") if x.isalnum() or x in "-_")
+
+
 @app.get("/sessions")
 async def list_active_sessions(user_id: Optional[str] = None, chat_id: Optional[str] = None) -> dict[str, Any]:
     """Retourne les identifiants des sessions Playwright actives (filtrés optionnellement par user_id/chat_id)."""
     active_sids: list[str] = []
+    req_uid_norm = _norm_echo_id(user_id) if user_id else ""
+    req_cid_norm = _norm_echo_id(chat_id) if chat_id else ""
     async with SESSIONS_LOCK:
         for sid, s in SESSIONS.items():
-            if user_id and getattr(s, "user_id", None) not in (user_id, "anonymous", None):
+            s_uid = getattr(s, "user_id", None)
+            if user_id and s_uid not in (user_id, "anonymous", None) and _norm_echo_id(s_uid) != req_uid_norm:
                 continue
-            if chat_id and getattr(s, "chat_id", None) != chat_id and sid != chat_id:
+            s_cid = getattr(s, "chat_id", None)
+            if (
+                chat_id
+                and s_cid != chat_id
+                and sid != chat_id
+                and _norm_echo_id(s_cid) != req_cid_norm
+                and _norm_echo_id(sid) != req_cid_norm
+            ):
                 continue
             active_sids.append(sid)
     return {"status": "success", "active_sessions": active_sids}
@@ -1750,6 +1821,10 @@ async def browser_action(request: Request) -> dict[str, Any]:
                     if vision_grid or zoom_box:
                         result["clean_b64"] = clean_b64
 
+                http_info = session.get_page_http_status(page)
+                if http_info:
+                    result.update(http_info)
+
             elif action == "browser_control":
                 cmd = params.get("command")
                 val = params.get("value")
@@ -1758,10 +1833,21 @@ async def browser_action(request: Request) -> dict[str, Any]:
                 if cmd == "navigate":
                     if not val:
                         return {"status": "error", "message": "URL manquante."}
-                    nav_warn = await _goto_resilient(page, val, timeout_ms=25000)
+                    session.attach_page_response_listener(page)
+                    nav_warn, http_status, http_status_text = await _goto_resilient(page, val, timeout_ms=25000)
+                    session.record_page_http_status(page, http_status, http_status_text, page.url)
+                    if http_status is None:
+                        info = session.get_page_http_status(page)
+                        http_status = info.get("http_status")
+                        http_status_text = info.get("http_status_text", "")
                     result["title"], result["url"] = await page.title(), page.url
+                    if http_status is not None:
+                        result["http_status"] = http_status
+                        result["http_status_text"] = http_status_text
                     if nav_warn:
                         result["warning"] = nav_warn
+                    elif http_status is not None and http_status >= 400:
+                        result["warning"] = f"Réponse HTTP {http_status} {http_status_text}".strip()
                 elif cmd == "scroll":
                     if val in ("down", "up"):
                         before = await page.evaluate("() => window.scrollY")
@@ -1784,13 +1870,27 @@ async def browser_action(request: Request) -> dict[str, Any]:
                     await asyncio.sleep(float(val or 2))
                     result["url"] = page.url
                 elif cmd == "refresh":
+                    session.attach_page_response_listener(page)
+                    resp = None
                     try:
-                        await page.reload(wait_until="domcontentloaded", timeout=20000)
+                        resp = await page.reload(wait_until="domcontentloaded", timeout=20000)
                     except PlaywrightTimeoutError:
                         if not page.url or page.url == "about:blank":
                             raise
                     await wait_for_settle(page, quiet_ms=400, timeout_ms=3000)
+                    http_status = getattr(resp, "status", None) if resp is not None else None
+                    http_status_text = (getattr(resp, "status_text", "") or "") if resp is not None else ""
+                    session.record_page_http_status(page, http_status, http_status_text, page.url)
+                    if http_status is None:
+                        info = session.get_page_http_status(page)
+                        http_status = info.get("http_status")
+                        http_status_text = info.get("http_status_text", "")
                     result["url"] = page.url
+                    if http_status is not None:
+                        result["http_status"] = http_status
+                        result["http_status_text"] = http_status_text
+                        if http_status >= 400 and "warning" not in result:
+                            result["warning"] = f"Réponse HTTP {http_status} {http_status_text}".strip()
                 elif cmd == "reset":
                     async with SESSIONS_LOCK:
                         if sid in SESSIONS:
@@ -1799,13 +1899,25 @@ async def browser_action(request: Request) -> dict[str, Any]:
                     result["message"] = "Session réinitialisée."
                 elif cmd == "tab_new":
                     new_p = await session.context.new_page()
-                    nav_warn = await _goto_resilient(new_p, val or "about:blank", timeout_ms=25000)
+                    session.attach_page_response_listener(new_p)
+                    nav_warn, http_status, http_status_text = await _goto_resilient(new_p, val or "about:blank", timeout_ms=25000)
+                    session.record_page_http_status(new_p, http_status, http_status_text, new_p.url)
+                    if http_status is None:
+                        info = session.get_page_http_status(new_p)
+                        http_status = info.get("http_status")
+                        http_status_text = info.get("http_status_text", "")
                     if new_p not in session.pages:
                         session.pages.append(new_p)
                     session.active_page_index = len(session.pages) - 1
+                    result["url"] = new_p.url
                     result["message"] = f"Nouvel onglet ouvert (Index: {session.active_page_index})"
+                    if http_status is not None:
+                        result["http_status"] = http_status
+                        result["http_status_text"] = http_status_text
                     if nav_warn:
                         result["warning"] = nav_warn
+                    elif http_status is not None and http_status >= 400:
+                        result["warning"] = f"Réponse HTTP {http_status} {http_status_text}".strip()
                 elif cmd == "tab_switch":
                     idx = int(val or 0)
                     if 0 <= idx < len(session.pages):

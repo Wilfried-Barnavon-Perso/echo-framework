@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 6.12.0.1
+version: 6.15.0.1
 description: Permet au modèle de manipuler un espace virtuel (Codex) avec versioning Git invisible et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.15.0.1: Ajout de process_plan et close_plan dans l'indication _check_generic_writable du workspace 'plans'.
 # 6.12.0.1: Ajout create_codex_directory, move_codex, transfer_codex (Option A), list_codex(path, recursive), delete_codex(recursive), garde restore_codex anti-sandbox, recherche récursive et délégation sync_codex_registry_* vers echo_codex_git.
 # 6.7.11.1: Délégation du fenêtrage read_codex à paginate_lines_window et suppression des skip_truncation=True redondants.
 # 6.7.4.1: Alignement de get_generation_config sur CODEX_EDIT_MODEL dans edit_codex.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
-# 6.6.2.1: Migration de open_codex_ui vers l'onglet natif echo-codex (EchoWindowManager.open_tab + CustomEvent('echo:open-tab')) sans echo_codex_action.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -252,7 +252,7 @@ class Tools:
         """Vérifie si l'espace de travail accepte les écritures via les outils génériques Codex."""
         if not is_codex_workspace_generic_writable(workspace):
             hint = (
-                "Le Modèle DOIT utiliser les outils dédiés `build_plan`, `update_plan`, `update_tasks` ou `delete_plan`."
+                "Le Modèle DOIT utiliser les outils dédiés `build_plan`, `update_plan`, `update_tasks`, `process_plan`, `close_plan` ou `delete_plan`."
                 if workspace == CODEX_WORKSPACE_PLANS
                 else "Le Modèle DOIT utiliser l'outil dédié `generate_image`."
             )

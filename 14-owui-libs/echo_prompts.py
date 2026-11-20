@@ -1,16 +1,16 @@
 """
 title: ECHO Prompts Library
 author: Wilfried BARNAVON
-version: 6.13.2.1
+version: 6.15.0.1
 description: Système de Registre Cognitif ECHO (Prompts Library).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.15.0.1: Verrouillage du statut 'proposed' dans SYS_PLANNER_UPDATE (démarrage via process_plan, clôture via close_plan).
 # 6.13.2.1: Extension de SYS_ORCHESTRATOR_CONSULTANT à l'assistance interface ECHO-UI (echo_ui_guide) et au format de sortie associé.
 # 6.7.7.1: Suppression de SYS_ORCHESTRATOR_APPENDIX et de max_iterations=20 dans SYS_SEARCH_STATIC, et alignement de SYS_ORCHESTRATOR_COUNCIL_EXPERT sur les tours d'outils (max_tool_turns).
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Échappement des accolades JSON du bloc <example> dans SYS_ORCHESTRATOR_CRITIC pour compatibilité str.format().
-# 6.5.3.1: Distinction explicite des balises XML <REQUETE_ORCHESTRATEUR> et <REQUETE_UTILISATEUR> dans ECHO_FOUNDATION_KERNEL pour les sous-agents hybrides.
 
 # ==============================================================================
 # Système de Registre Cognitif ECHO (Prompts Library)
@@ -300,7 +300,7 @@ Le Modèle DOIT modifier le plan d'action stratégique existant selon les instru
 
 <rules>
 1. SCOPE STRATÉGIQUE : Le Modèle DOIT appliquer UNIQUEMENT les modifications demandées sur la stratégie. Il a l'INTERDICTION de manipuler ou de lister des tâches avec cet outil (il DOIT utiliser l'outil `update_tasks` pour cela).
-2. STATUT : Si les instructions impliquent un changement de statut, Le Modèle DOIT mettre à jour le champ `status:` du frontmatter YAML.
+2. STATUT IMMUABLE : Le Modèle DOIT conserver `status: proposed` dans le frontmatter YAML. Toute modification de statut (démarrage via `process_plan`, clôture via `close_plan`) est ABSOLUMENT INTERDITE avec cet outil.
 </rules>
 
 <output_format>

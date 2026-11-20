@@ -2,16 +2,16 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - SEMANTIC PRUNING & GC
-VERSION : 6.6.5.1
+VERSION : 6.15.0.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.15.0.1: Correction de l'URL de recensement des sessions navigateur vers NAVIGATION_ENGINE_URL / http://echo-browser-worker:5002/sessions.
 # 6.6.5.1: Purge des captures browserviews éphémères (non retained) dont la session Playwright est absente de GET http://echo-browser:5001/sessions.
 # 5.237.4.1: Validation stricte par couple propriétaire (user_id, chat_id) via user_valid_chats et suppression du filtre len > 30 sur les dossiers orphelins.
 # 5.235.5.1: Purge des branches mortes dans session.db (gc_session_db) et du RAG Qdrant (_delete_rag_points) sous carence 900s.
 # 5.235.2.1: Décompte explicite des session.db purgées, couverture des utilisateurs orphelins dans purge_orphaned_chats et validation post-rmtree.
-# 5.231.42.1: Ajout de echo_resources.id à la liste blanche N8N lors du Garbage Collection des Drop-Zones pour préserver les dossiers des démons actifs.
 from contextlib import closing
 import datetime
 import html
@@ -722,7 +722,8 @@ def _run_semantic_pruning(silent=False):
                 try:
                     active_bv_sessions = None
                     try:
-                        bv_resp = httpx.get("http://echo-browser:5001/sessions", timeout=5)
+                        nav_base = os.environ.get("NAVIGATION_ENGINE_URL", "http://echo-browser-worker:5002").rstrip("/")
+                        bv_resp = httpx.get(f"{nav_base}/sessions", timeout=5)
                         if bv_resp.status_code == 200:
                             bv_data = bv_resp.json()
                             if isinstance(bv_data, dict) and bv_data.get("status") == "success":

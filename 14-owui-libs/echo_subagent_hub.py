@@ -2,16 +2,16 @@
 """
 title: ECHO Subagent Hub
 author: Wilfried BARNAVON
-version: 6.13.1.1
+version: 6.15.0.1
 description: Contrôleur exécutif unifié des sous-agents, tranches supervisées, ToolDispatcher et file FIFO hybride.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.15.0.1: Propagation et télémétrie HTTP (http_status, http_status_text, navigation_statuses) dans BrowserToolDispatcher/EchoAgentRunner/deploy_browser_navigation_monitor, grâce passive min_age_sec=300.0 et isolation de enforce_transient_clip_budget.
 # 6.13.1.1: Découplage live SSE (/screencast/stream + live_state/live_cursor), persistance et broadcast sans Base64 des clips MP4 dans deploy_browser_navigation_monitor, garde finally stop_screencast et fix mimeType image/jpeg.
 # 6.7.11.1: Délégation du délestage dans StandardToolDispatcher._invoke_single_tool à apply_tool_spillover (echo_core).
 # 6.7.10.1: Alignement de StandardToolDispatcher._invoke_single_tool sur get_tool_truncation_limit et respect de _skip_truncation (suppression de la re-troncature à 32 Ko).
 # 6.7.7.1: Découpage des tranches par tours d'outils et timeout (slice_max_turns, slice_timeout_sec, autonomous_slice), suppression de la troncature zéro-batch dans execute_tool_calls et de la limite préalable de mission dans build_subagent_system_appendix.
-# 6.7.5.1: Unification du flux navigator sous verrou EchoSubagentController (step 0 2 parts, carte DOM à la reprise, sémaphore dès ensure_engine_ready, format_browser_dom_view et statuts pré-LLM).
 
 from __future__ import annotations
 
@@ -939,6 +939,9 @@ class ToolDispatcher(Protocol):
     async def on_cleanup(self) -> None:
         ...
 
+    def get_telemetry_metadata(self) -> dict:
+        ...
+
 
 def _is_tool_response_error(result: Any) -> bool:
     if isinstance(result, dict):
@@ -1005,6 +1008,9 @@ class StandardToolDispatcher:
 
     async def on_cleanup(self) -> None:
         pass
+
+    def get_telemetry_metadata(self) -> dict:
+        return {}
 
     async def _invoke_single_tool(
         self, fn_name: str, fn_args: dict, fn_id: Optional[str]
@@ -1276,6 +1282,16 @@ def format_browser_dom_view(res_view: dict) -> str:
     )
     url = res_view.get("url") or ""
     url_text = f"\nURL active : {url}" if url else ""
+    http_status = res_view.get("http_status")
+    http_status_text = (res_view.get("http_status_text") or "").strip()
+    http_line = ""
+    if http_status is not None:
+        status_str = f"{http_status} {http_status_text}".strip()
+        http_line = (
+            f"\n⚠️ Statut HTTP : {status_str}"
+            if int(http_status) >= 400
+            else f"\nStatut HTTP : {status_str}"
+        )
     nav_error = res_view.get("nav_error")
     nav_warning = res_view.get("nav_warning")
     alert_lines = ""
@@ -1285,7 +1301,7 @@ def format_browser_dom_view(res_view: dict) -> str:
         alert_lines += f"\n⚠️ Avertissement de navigation : {nav_warning}"
     return (
         f"Voici les éléments interactifs actuels (Carte DOM) :"
-        f"{url_text}{alert_lines}{vp_text}\n{dom_text}"
+        f"{url_text}{http_line}{alert_lines}{vp_text}\n{dom_text}"
     )
 
 
@@ -1356,6 +1372,8 @@ async def deploy_browser_navigation_monitor(
                     "session_id": eff_session_id,
                     "url": res_view.get("url", ""),
                     "action": res_view.get("action", ""),
+                    "http_status": res_view.get("http_status"),
+                    "http_status_text": res_view.get("http_status_text") or "",
                     "timestamp": ts_now,
                     "retained": False,
                     "clip_filename": clip_filename or None,
@@ -1364,10 +1382,14 @@ async def deploy_browser_navigation_monitor(
                     "clip_size_bytes": clip_size_bytes if clip_filename else 0,
                 },
             )
-            await asyncio.to_thread(enforce_transient_clip_budget, uid, chat_id)
-        except Exception:
+        except Exception as e:
+            print(f"[BrowserMonitor] Échec persistance capture ({uid}/{chat_id}): {e}")
             file_id = ""
             clip_filename = ""
+        try:
+            await asyncio.to_thread(enforce_transient_clip_budget, uid, chat_id)
+        except Exception as e:
+            print(f"[BrowserMonitor] Échec purge quota clips ({uid}/{chat_id}): {e}")
 
     if not show_browser_hud:
         return
@@ -1390,6 +1412,8 @@ async def deploy_browser_navigation_monitor(
             "filename": filename,
             "url": res_view.get("url", ""),
             "action": res_view.get("action", ""),
+            "http_status": res_view.get("http_status"),
+            "http_status_text": res_view.get("http_status_text") or "",
             "timestamp": ts_now,
             "status": BROWSER_VIEW_STATUS["TRANSIENT"],
             "retained": False,
@@ -1463,6 +1487,10 @@ class BrowserToolDispatcher:
         self._sem_acquired = False
         self._stop_streaming = asyncio.Event()
         self._proxy_task: Optional[asyncio.Task] = None
+        self.last_url: str = ""
+        self.last_http_status: Optional[int] = None
+        self.last_http_status_text: str = ""
+        self.navigation_statuses: List[dict] = []
 
         schema_extensions = [
             {
@@ -1489,6 +1517,41 @@ class BrowserToolDispatcher:
 
     def get_tool_declarations(self) -> List[dict]:
         return self._fn_decls
+
+    def _record_http_telemetry(self, payload: Optional[dict]) -> None:
+        if not isinstance(payload, dict):
+            return
+        url = str(payload.get("url") or "").strip()
+        code = payload.get("http_status")
+        text = str(payload.get("http_status_text") or "").strip()
+        if url:
+            self.last_url = url
+        if code is not None:
+            self.last_http_status = code
+            self.last_http_status_text = text
+            entry = {
+                "url": url or self.last_url,
+                "http_status": code,
+                "http_status_text": text,
+            }
+            if not self.navigation_statuses or self.navigation_statuses[-1] != entry:
+                self.navigation_statuses.append(entry)
+                if len(self.navigation_statuses) > 25:
+                    self.navigation_statuses = self.navigation_statuses[-25:]
+
+    def get_telemetry_metadata(self) -> dict:
+        if (
+            not self.last_url
+            and self.last_http_status is None
+            and not self.navigation_statuses
+        ):
+            return {}
+        return {
+            "final_url": self.last_url,
+            "http_status": self.last_http_status,
+            "http_status_text": self.last_http_status_text,
+            "navigation_statuses": list(self.navigation_statuses),
+        }
 
     def get_thinking_override(
         self, is_slice_exhausted: bool, last_fn_name: str
@@ -1552,7 +1615,7 @@ class BrowserToolDispatcher:
             if start_res.get("status") != "success":
                 return None
 
-        await cleanup_expired_browserviews(self.user_id, self.chat_id)
+        await cleanup_expired_browserviews(self.user_id, self.chat_id, min_age_sec=300.0)
         nav_res: Optional[dict] = None
         if start_url:
             if self.events:
@@ -1572,6 +1635,14 @@ class BrowserToolDispatcher:
                 res_view["nav_error"] = nav_res.get("message")
             if nav_res.get("warning"):
                 res_view["nav_warning"] = nav_res.get("warning")
+            if res_view.get("http_status") is None and nav_res.get("http_status") is not None:
+                res_view["http_status"] = nav_res.get("http_status")
+                res_view["http_status_text"] = nav_res.get("http_status_text") or ""
+        if isinstance(res_view, dict) and res_view.get("http_status") is not None:
+            self._record_http_telemetry(res_view)
+        else:
+            self._record_http_telemetry(nav_res)
+            self._record_http_telemetry(res_view)
         self.last_view = res_view
         await deploy_browser_navigation_monitor(
             res_view,
@@ -1770,6 +1841,14 @@ class BrowserToolDispatcher:
                 if sc_res.get(k):
                     target_view[k] = sc_res[k]
 
+        def _propagate_http_fields(target_view: Any, src_res: Any) -> None:
+            if isinstance(target_view, dict) and isinstance(src_res, dict):
+                if target_view.get("http_status") is None and src_res.get("http_status") is not None:
+                    target_view["http_status"] = src_res.get("http_status")
+                    target_view["http_status_text"] = src_res.get("http_status_text") or ""
+                if not target_view.get("url") and src_res.get("url"):
+                    target_view["url"] = src_res.get("url")
+
         try:
             for index, fc in enumerate(allowed_calls):
                 fn_name = fc.get("name", "")
@@ -1831,6 +1910,9 @@ class BrowserToolDispatcher:
                             hud_view = (
                                 await self.browser.highlight() if grid else last_view
                             )
+                            _propagate_http_fields(last_view, action_res)
+                            if hud_view is not last_view:
+                                _propagate_http_fields(hud_view, action_res)
                             if is_last_tool:
                                 sc_res = await _stop_and_collect_clip()
                                 _attach_clip_fields(hud_view, sc_res)
@@ -1841,6 +1923,7 @@ class BrowserToolDispatcher:
                                 show_browser_hud=self.show_browser_hud,
                                 browser_session_id=self.browser_session_id,
                             )
+                            self._record_http_telemetry(hud_view or last_view)
                             last_fn_name = fn_name
                         elif action_res.get("status") != "error":
                             if fn_name in (
@@ -1858,6 +1941,7 @@ class BrowserToolDispatcher:
                                     last_view = action_res
                                 else:
                                     last_view = await self.browser.highlight()
+                                _propagate_http_fields(last_view, action_res)
                                 sc_res = await _stop_and_collect_clip()
                                 _attach_clip_fields(last_view, sc_res)
                                 await deploy_browser_navigation_monitor(
@@ -1876,6 +1960,23 @@ class BrowserToolDispatcher:
                                     "status": "success",
                                     "message": "Action exécutée avec succès.",
                                 }
+                            primary = last_view if (is_last_tool and isinstance(last_view, dict)) else {}
+                            url_val = primary.get("url") or action_res.get("url")
+                            if url_val:
+                                _resp["url"] = url_val
+                            http_code = primary.get("http_status")
+                            http_text = primary.get("http_status_text") or ""
+                            if http_code is None:
+                                http_code = action_res.get("http_status")
+                                http_text = action_res.get("http_status_text") or ""
+                            if http_code is not None:
+                                _resp["http_status"] = http_code
+                                _resp["http_status_text"] = http_text
+                            warn_val = primary.get("warning") or action_res.get("warning")
+                            if warn_val:
+                                _resp["warning"] = warn_val
+                            self._record_http_telemetry(last_view if is_last_tool else action_res)
+                            self._record_http_telemetry(action_res)
                             if action_res.get("status") == "downloading":
                                 _resp["message"] = (
                                     f"📥 Téléchargement asynchrone démarré. Identifiant : {fn_args.get('download_file_id')}."
@@ -2122,6 +2223,13 @@ class EchoAgentRunner:
             consecutive_errors=0,
             checkpoint_reason=None,
         )
+
+        def _merge_telemetry(status_dict: dict) -> dict:
+            tele = dispatcher.get_telemetry_metadata()
+            if isinstance(tele, dict):
+                for k, v in tele.items():
+                    status_dict.setdefault(k, v)
+            return status_dict
 
         await dispatcher.on_before_slice()
         final_status_for_hook = "idle"
@@ -2483,7 +2591,7 @@ class EchoAgentRunner:
                         )
                         return wrap_tool_output(
                             text=header + final_text,
-                            status={
+                            status=_merge_telemetry({
                                 "status": "suspended_checkpoint",
                                 "sid": sid,
                                 "sub_sid": sid,
@@ -2499,7 +2607,7 @@ class EchoAgentRunner:
                                 "slice_calls_limit": eff_max_turns,
                                 "calls_remaining": 0,
                                 "model_used": current_model_key,
-                            },
+                            }),
                         )
 
                     # Fin nominale de la mission (avant épuisement de la tranche, ou en mode autonomous_slice)
@@ -2548,7 +2656,7 @@ class EchoAgentRunner:
                     if is_real_exhaustion:
                         status_payload["warning"] = "budget_exhausted"
                     return wrap_tool_output(
-                        text=final_text, status=status_payload
+                        text=final_text, status=_merge_telemetry(status_payload)
                     )
 
                 # CAS C : Garde-fou hallucination — functionCall émis alors que mode="NONE" (tranche épuisée)
@@ -2692,7 +2800,7 @@ class EchoAgentRunner:
                         c_status_payload["warning"] = "budget_exhausted"
                     return wrap_tool_output(
                         text=final_text,
-                        status=c_status_payload,
+                        status=_merge_telemetry(c_status_payload),
                     )
 
                 # CAS D : Exécution des appels d'outils via le ToolDispatcher

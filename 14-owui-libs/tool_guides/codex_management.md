@@ -1,7 +1,7 @@
 ---
 domain_id: codex_management
-version: 6.13.2.1
-updated_at: 2026-11-20
+version: 6.15.0.1
+updated_at: 2026-11-21
 name: Gestionnaire Documentaire & Versionnement Git (ECHO Codex)
 description: Création, édition directe ou assistée, gestion d'arborescence (dossiers, déplacement/renommage), transferts inter-workspaces sécurisés, suppression contrôlée, lecture paginée/historique, recherche récursive/temporelle et versionnement Git sur main, plans, generated et sandbox.
 tools: [create_codex, edit_codex, create_codex_directory, move_codex, transfer_codex, delete_codex, read_codex, restore_codex, search_codex, summarize_codex, list_codex, list_other_chats_ids, history_codex, open_codex_ui]
@@ -14,7 +14,7 @@ keywords: [codex, document, fichier, git, commit, version, diff, edit_codex, cre
 Le Codex ECHO gère des fichiers texte, code et médias répartis en 4 espaces de travail et synchronisés avec le Registre Unifié :
 - **Séparation des Espaces (`workspace: Literal["main", "plans", "generated", "sandbox"] = "main"`)** :
   - `"main"` (Défaut, versionné Git, indexé dans le Registre Unifié, écriture ouverte, `resource_type="codex"`) : Espace principal de la session pour les documents, architectures et livrables destinés à L'Utilisateur.
-  - `"plans"` (Versionné Git, indexé dans le Registre Unifié, **lecture seule directe**, `resource_type="plan"`) : Espace dédié aux plans stratégiques (`{plan_id}_{slug}.md`) et listes de tâches (`tasks_{plan_id}_{slug}.md`). L'écriture et la suppression passent exclusivement par `build_plan`, `update_plan`, `update_tasks`, `process_plan` et `delete_plan`.
+  - `"plans"` (Versionné Git, indexé dans le Registre Unifié, **lecture seule directe**, `resource_type="plan"`) : Espace dédié aux plans stratégiques (`{plan_id}_{slug}.md`) et listes de tâches (`tasks_{plan_id}_{slug}.md`). L'écriture et la suppression passent exclusivement par `build_plan`, `update_plan`, `update_tasks`, `process_plan`, `close_plan` et `delete_plan`.
   - `"generated"` (Versionné Git, indexé dans le Registre Unifié, **lecture seule directe**, `resource_type="generated"`) : Espace dédié aux médias générés (images `<nom_court>.png` versionnées par essai et retouche via `generate_image`).
   - `"sandbox"` (Non versionné, non indexé dans le Registre Unifié, monté `rw` en exécution, écriture ouverte) : Espace de travail technique isolé utilisé pour écrire et exécuter les scripts `.py`, `.js` et `.sh` via `code_executor`.
   - `"files"` et `"browserviews"` : Sources de session externes en lecture seule (fichiers Vault et captures navigateur), utilisables uniquement en copie vers `"sandbox"` via `transfer_codex`.

@@ -1,16 +1,16 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 6.13.1.1
+version: 6.15.0.1
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.15.0.1: Remontée du code HTTP dans analyze_web_page et archive_web_page ; passage de get_browser_frames_history en lecture seule non destructive avec contrôle disque et métadonnées (session_id, url, http_status, action).
 # 6.13.1.1: Suppression du code mort _deploy_navigation_monitor, ajout de has_clip dans get_browser_frames_history et synchronisation SSE dans retain_browser_frame.
 # 6.7.7.1: Alignement de delegate_web_browsing sur ECHO_SUBAGENT_CHECKPOINT_TURNS (8) et ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC (120).
 # 6.7.5.1: Délégation directe de delegate_web_browsing à EchoSubagentController.run_or_resume (avec start_url et custom_dispatcher).
 # 6.7.4.1: Évaluation de clamp_model en amont de get_generation_config dans analyze_web_page.
-# 6.6.30.2: Filtrage des pensées via extract_response_parts_and_text dans analyze_web_page.
 
 import os
 import time
@@ -38,6 +38,7 @@ from echo_browser_lib import (
     cleanup_expired_browserviews,
 )
 from echo_constants import (
+    BROWSER_VIEWS_DIR_NAME,
     BROWSER_VIEW_STATUS,
     FILE_INGESTION_STATUS,
     PRUNE_CONTENT_THRESHOLD,
@@ -167,9 +168,10 @@ class Tools:
             return "Erreur critique : Session perdue."
 
         browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, ephem_session_id, uid, chat_id=chat_id)
+        nav_res: Any = None
         try:
             await events.status(f"🌐 Navigation vers {url}...")
-            await browser.action_browser_control(command="navigate", value=url)
+            nav_res = await browser.action_browser_control(command="navigate", value=url)
             
             await events.status("🧠 Extraction sémantique Markdown...")
             res_action = await browser.action_inspect_page(target="read_text")
@@ -179,7 +181,12 @@ class Tools:
                 await browser.reset_session()
             except Exception:
                 pass
-        
+
+        http_status = nav_res.get("http_status") if isinstance(nav_res, dict) else None
+        http_status_text = (nav_res.get("http_status_text") or "").strip() if isinstance(nav_res, dict) else ""
+        http_status_label = f"{http_status} {http_status_text}".strip() if http_status is not None else ""
+        http_line = f"\nStatut HTTP reçu : {http_status_label}" if http_status is not None else ""
+
         vault_dir = get_echo_session_path(uid, chat_id, "files")
         os.makedirs(vault_dir, exist_ok=True)
         tmp_path = os.path.join(vault_dir, f"tmp_stream_{uuid.uuid4().hex[:8]}.txt")
@@ -194,7 +201,7 @@ class Tools:
         analyse_model = clamp_model("MODEL_APOLLO", __metadata__, user_id=uid)
         payload = {
             "contents": [{"role": "user", "parts": [
-                {"text": f"<instruction>\nLe Modèle doit analyser ce document Web pour accomplir cette tâche : {query}\nLa réponse doit être factuelle, précise et issue du texte.\n</instruction>"},
+                {"text": f"<instruction>\nLe Modèle doit analyser ce document Web pour accomplir cette tâche : {query}{http_line}\nLa réponse doit être factuelle, précise et issue du texte.\n</instruction>"},
                 {"inlineData": {"mimeType": "text/plain", "data": f"___ECHO_STREAM_FILE___{tmp_path}___"}}
             ]}],
             "systemInstruction": {"parts": [{"text": SYS_NAV_BROWSER}]},
@@ -210,7 +217,8 @@ class Tools:
         if os.path.exists(tmp_path): os.remove(tmp_path)
 
         _, distillate = extract_response_parts_and_text(data)
-        return f"Résultat de l'analyse pour '{query}' :\n{distillate}"
+        prefix = f"[HTTP {http_status_label}] " if http_status is not None and int(http_status) >= 400 else ""
+        return f"{prefix}Résultat de l'analyse pour '{query}' :\n{distillate}"
 
     @echo_tool
     async def archive_web_page(self, url: str, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None, __event_call__: Any = None, __event_emitter__: Any = None) -> dict:
@@ -228,9 +236,10 @@ class Tools:
             return "Erreur critique : Session perdue."
 
         browser = EchoBrowserLib(self.valves.HTTP_TIMEOUT, ephem_session_id, uid, chat_id=chat_id)
+        nav_res: Any = None
         try:
             await events.status(f"🌐 Navigation vers {url}...")
-            await browser.action_browser_control(command="navigate", value=url)
+            nav_res = await browser.action_browser_control(command="navigate", value=url)
             
             await events.status("🧠 Extraction sémantique (Markdown)...")
             res_action = await browser.action_inspect_page(target="read_text")
@@ -240,8 +249,14 @@ class Tools:
                 await browser.reset_session()
             except Exception:
                 pass
-        
+
+        http_status = nav_res.get("http_status") if isinstance(nav_res, dict) else None
+        http_status_text = (nav_res.get("http_status_text") or "").strip() if isinstance(nav_res, dict) else ""
+        http_status_label = f"{http_status} {http_status_text}".strip() if http_status is not None else ""
+
         if not markdown_text:
+            if http_status is not None:
+                return f"Erreur : Échec de l'extraction du texte (HTTP {http_status_label})."
             return "Erreur : Échec de l'extraction du texte."
             
         domain = urllib.parse.urlparse(url).netloc.replace(".", "_") or "web_page"
@@ -253,8 +268,9 @@ class Tools:
         os.makedirs(vault_dir, exist_ok=True)
         filepath = os.path.join(vault_dir, filename)
         
+        http_header = f"Statut HTTP : {http_status_label}\n\n" if http_status is not None else ""
         with open(filepath, "w", encoding="utf-8") as f:
-            f.write(f"# Archive Web : {url}\n\n{markdown_text}")
+            f.write(f"# Archive Web : {url}\n\n{http_header}{markdown_text}")
             
         state_manager = EchoStateManager(user_id=uid, chat_id=chat_id)
         state_manager.save_resource(
@@ -283,10 +299,12 @@ class Tools:
     async def get_browser_frames_history(self, depth: Optional[int] = 10, __user__: Optional[dict] = None, __metadata__: Optional[dict] = None) -> dict:
         """Consulte l'historique des captures d'écran de navigation de la session."""
         import orjson as json
-        chat_id = (__metadata__ or {}).get("chat_id")
-        uid = __user__.get("id", "anonymous")
-        await cleanup_expired_browserviews(uid, chat_id)
+        chat_id = (__metadata__ or {}).get("chat_id") or "default_session"
+        uid = (__user__ or {}).get("id", "anonymous")
         state_manager = EchoStateManager(user_id=uid, chat_id=chat_id)
+        bv_dir = get_echo_session_path(uid, chat_id, BROWSER_VIEWS_DIR_NAME)
+        files_dir = get_echo_session_path(uid, chat_id, "files")
+        eff_depth = max(1, int(depth or 10))
         try:
             bv_resources = state_manager.get_resources(resource_type='browserview') or []
             legacy_media = [
@@ -296,10 +314,24 @@ class Tools:
             seen_ids = {r['id'] for r in bv_resources}
             nav_resources = bv_resources + [r for r in legacy_media if r['id'] not in seen_ids]
             nav_resources.sort(key=lambda r: r.get('created_at', 0), reverse=True)
-            nav_resources = nav_resources[:depth]
 
             history, nouveaux = [], []
             for r in nav_resources:
+                cand_names = {
+                    n
+                    for n in (
+                        os.path.basename(str(r.get("name") or "")),
+                        os.path.basename(str(r.get("storage_path") or "")),
+                        f"{sanitize_echo_id(r['id'])}_frame.jpg",
+                    )
+                    if n
+                }
+                if not any(
+                    os.path.isfile(os.path.join(base_d, cname))
+                    for base_d in (bv_dir, files_dir)
+                    for cname in cand_names
+                ):
+                    continue
                 dt = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r.get('created_at', 0)))
                 st = r.get('status', 'transient')
                 raw_meta = r.get("metadata")
@@ -314,14 +346,20 @@ class Tools:
                     except Exception:
                         meta = {}
                 history.append({
-                    "file_id": r['id'],
+                    "file_id": r["id"],
                     "date": dt,
-                    "frame": r['name'],
+                    "frame": r["name"],
+                    "session_id": meta.get("session_id", ""),
+                    "url": meta.get("url", ""),
+                    "http_status": meta.get("http_status"),
+                    "action": meta.get("action", ""),
                     "status": st,
                     "retained": st == BROWSER_VIEW_STATUS["RETAINED"],
                     "has_clip": bool(meta.get("clip_filename")),
                 })
                 nouveaux.append({"nom": r['name'], "id": r['id'], "mime": r.get('mime') or 'image/jpeg', "statut": st})
+                if len(history) >= eff_depth:
+                    break
 
             return wrap_tool_output(
                 text=json.dumps(history, option=json.OPT_INDENT_2).decode('utf-8'),
