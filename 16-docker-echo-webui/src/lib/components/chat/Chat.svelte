@@ -43,8 +43,6 @@
 		mobile,
 		chatTitle,
 		tools,
-		skills,
-		terminalSkills,
 		toolServers,
 		terminalServers,
 		functions,
@@ -106,7 +104,6 @@
 	} from '$lib/apis/chats';
 	import { resolveTerminalConnection, setCwd, type FilesystemFile } from '$lib/apis/terminal';
 	import { generateOpenAIChatCompletion, getErrorMessage } from '$lib/apis/openai';
-	import { processUrl, processWebSearch } from '$lib/apis/retrieval';
 	import {
 		getAndUpdateUserLocation,
 		getUserInfoById,
@@ -124,7 +121,6 @@
 		getTaskIdsByChatId
 	} from '$lib/apis';
 	import { getTools } from '$lib/apis/tools';
-	import { getSkills } from '$lib/apis/skills';
 	import { uploadFile } from '$lib/apis/files';
 	import { createOpenAITextStream } from '$lib/apis/streaming';
 	import { getFunctions } from '$lib/apis/functions';
@@ -360,7 +356,6 @@
 	$: embeddedHeaderTitle = embeddedTitle || $chatTitle || $i18n.t('Chat');
 
 	let selectedToolIds: string[] = [];
-	let selectedSkillIds: string[] = [];
 	let selectedFilterIds: string[] = [];
 	let pendingOAuthTools: { id: string; name: string; serverId: string; authType: string | null }[] =
 		[];
@@ -834,7 +829,6 @@
 			messageInput?.setText(prompt);
 			files = input.files ?? [];
 			selectedToolIds = input.selectedToolIds ?? [];
-			selectedSkillIds = input.selectedSkillIds ?? [];
 			selectedFilterIds = input.selectedFilterIds ?? [];
 			webSearchEnabled = input.webSearchEnabled ?? false;
 			imageGenerationEnabled = input.imageGenerationEnabled ?? false;
@@ -919,7 +913,6 @@
 
 		files = [];
 		selectedToolIds = [];
-		selectedSkillIds = [];
 		selectedFilterIds = [];
 		webSearchEnabled = false;
 		imageGenerationEnabled = false;
@@ -961,7 +954,6 @@
 		chatFiles = [];
 		files = [];
 		selectedToolIds = [];
-		selectedSkillIds = [];
 		selectedFilterIds = [];
 		webSearchEnabled = false;
 		imageGenerationEnabled = false;
@@ -1031,7 +1023,6 @@
 		// Let the $: update finish first, or webSearchActive misses the default-feature writes
 		await tick();
 		selectedToolIds = [];
-		selectedSkillIds = [];
 		selectedFilterIds = [];
 		pendingOAuthTools = [];
 		webSearchEnabled = false;
@@ -1069,7 +1060,7 @@
 		selectedTerminalId.set(null);
 	}
 
-	let lastTerminalSkillSelector: string | null = null;
+	let lastTerminalSelector: string | null = null;
 	let agentDiscovery = 0;
 	const refreshAgentModels = async () => {
 		const generation = ++agentDiscovery;
@@ -1092,11 +1083,9 @@
 			console.error('Agent model discovery failed', error);
 		}
 	};
-	$: if ($selectedTerminalId !== lastTerminalSkillSelector) {
+	$: if ($selectedTerminalId !== lastTerminalSelector) {
 		if (terminalContext?.terminalId !== $selectedTerminalId) terminalContext = null;
-		selectedSkillIds = selectedSkillIds.filter((id) => !id.startsWith('terminal:'));
-		terminalSkills.set([]);
-		lastTerminalSkillSelector = $selectedTerminalId;
+		lastTerminalSelector = $selectedTerminalId;
 		void refreshAgentModels();
 	}
 
@@ -1125,10 +1114,9 @@
 				!$tools ? getTools(localStorage.token).then((res) => tools.set(res)) : Promise.resolve(),
 				!$functions
 					? getFunctions(localStorage.token).then((res) => functions.set(res))
-					: Promise.resolve(),
-				!$skills ? getSkills(localStorage.token).then((res) => skills.set(res)) : Promise.resolve()
+					: Promise.resolve()
 			]);
-			if ($tools === null || $functions === null || $skills === null) return;
+			if ($tools === null || $functions === null) return;
 			if (
 				id !== $chatId ||
 				!equal(modelIds, atSelectedModel ? [atSelectedModel.id] : selectedModels)
@@ -1165,13 +1153,6 @@
 						)
 					)
 				],
-				selectedSkillIds: [
-					...new Set(currentModels.flatMap((model) => model.info?.meta?.skillIds ?? []))
-				].filter(
-					(id) =>
-						selectedSkillIds.includes(id) ||
-						$skills.some((skill) => skill.id === id && skill.is_active)
-				),
 				selectedFilterIds: [
 					...new Set(currentModels.flatMap((model) => model.info?.meta?.defaultFilterIds ?? []))
 				],
@@ -1190,7 +1171,6 @@
 			if (preserveSelections) {
 				const current: Record<string, any> = {
 					selectedToolIds: [...selectedToolIds, ...pendingOAuthTools.map((tool) => tool.id)],
-					selectedSkillIds,
 					selectedFilterIds,
 					webSearchEnabled,
 					imageGenerationEnabled,
@@ -1244,7 +1224,6 @@
 			defaultsModelIds = modelIds;
 			({
 				selectedToolIds,
-				selectedSkillIds,
 				selectedFilterIds,
 				webSearchEnabled,
 				imageGenerationEnabled,
@@ -2043,7 +2022,6 @@
 
 				files = [];
 				selectedToolIds = [];
-				selectedSkillIds = [];
 				selectedFilterIds = [];
 				webSearchEnabled = false;
 				imageGenerationEnabled = false;
@@ -2221,82 +2199,9 @@
 		}
 	};
 
-	const uploadWeb = async (urls) => {
-		if ($user?.role !== 'admin' && !($user?.permissions?.chat?.web_upload ?? true)) {
-			toast.error($i18n.t('You do not have permission to upload web content.'));
-			return;
-		}
-
-		if (!Array.isArray(urls)) {
-			urls = [urls];
-		}
-
-		// Create file items first
-		const fileItems = urls.map((url) => ({
-			type: 'text',
-			name: url,
-			collection_name: '',
-			status: 'uploading',
-			context: 'full',
-			url,
-			error: ''
-		}));
-
-		// Display all items at once
-		files = [...files, ...fileItems];
-
-		for (const fileItem of fileItems) {
-			try {
-				const res = await processUrl(localStorage.token, fileItem.url);
-
-				if (res) {
-					const uploadedFile = res.file;
-					fileItem.status = 'uploaded';
-					fileItem.name = res.name ?? fileItem.name;
-					fileItem.collection_name = res.collection_name;
-
-					if (res.type === 'image' && uploadedFile) {
-						fileItem.type = 'image';
-						fileItem.file = uploadedFile;
-						fileItem.id = uploadedFile.id;
-						fileItem.url = `${uploadedFile.id}`;
-						fileItem.content_type = uploadedFile.meta?.content_type;
-						fileItem.size = uploadedFile.meta?.size;
-					} else if (res.type === 'file' && uploadedFile) {
-						fileItem.type = 'file';
-						fileItem.file = uploadedFile;
-						fileItem.id = uploadedFile.id;
-						fileItem.url = `${uploadedFile.id}`;
-						fileItem.content_type = uploadedFile.meta?.content_type;
-						fileItem.size = uploadedFile.meta?.size;
-						fileItem.collection_name =
-							res.collection_name ??
-							uploadedFile.meta?.collection_name ??
-							uploadedFile.collection_name;
-					} else {
-						fileItem.type = 'text';
-						fileItem.file = {
-							data: {
-								content: res.content
-							},
-							meta: {
-								name: res.name ?? fileItem.name,
-								source: res.url ?? fileItem.url
-							}
-						};
-					}
-				}
-
-				files = [...files];
-			} catch (e) {
-				fileItem.status = 'error';
-				fileItem.error = `${e}`;
-				files = files.filter((f) => f.name !== fileItem.name);
-				toast.error(`${e}`);
-			}
-		}
-
-		await onUpdate();
+	// [ECHO-V6-HOOK] Scraping web côté echo-webui désactivé (couvert en isolation par echo-browser-worker)
+	const uploadWeb = async (_urls?: unknown) => {
+		return;
 	};
 
 	const onUpdate = async ({ file }: { file?: any } = {}) => {
@@ -4516,10 +4421,6 @@
 			}
 		}
 
-		// The backend applies the skill loading setting to menu-selected skills.
-		// Keep mentions in the message so the backend can resolve them.
-		const skillIds = [...selectedSkillIds];
-
 		// Only send terminal_id if the model has terminal capability enabled
 		const terminalEnabled =
 			$config?.features?.enable_tool_servers && (model.info?.meta?.capabilities?.terminal ?? true);
@@ -4555,7 +4456,6 @@
 						? $config?.features?.enable_tool_servers
 						: $config?.features?.enable_tools
 				),
-				skill_ids: skillIds.length > 0 ? skillIds : undefined,
 				terminal_id: terminalEnabled && requestTerminalId ? requestTerminalId : null,
 				terminal_cwd:
 					!_chatId && terminalContext?.terminalId === requestTerminalId
@@ -5043,7 +4943,6 @@
 				access_grants: undefined
 			})),
 		selectedToolIds,
-		selectedSkillIds,
 		selectedFilterIds,
 		imageGenerationEnabled,
 		webSearchEnabled,
@@ -5562,7 +5461,6 @@
 										bind:prompt
 										bind:autoScroll
 										bind:selectedToolIds
-										bind:selectedSkillIds
 										bind:selectedFilterIds
 										bind:imageGenerationEnabled
 										bind:codeInterpreterEnabled
@@ -5664,7 +5562,6 @@
 										bind:prompt
 										bind:autoScroll
 										bind:selectedToolIds
-										bind:selectedSkillIds
 										bind:selectedFilterIds
 										bind:imageGenerationEnabled
 										bind:codeInterpreterEnabled
@@ -5733,7 +5630,6 @@
 									bind:prompt
 									bind:autoScroll
 									bind:selectedToolIds
-									bind:selectedSkillIds
 									bind:selectedFilterIds
 									bind:imageGenerationEnabled
 									bind:codeInterpreterEnabled

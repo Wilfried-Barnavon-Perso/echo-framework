@@ -1,30 +1,15 @@
 <script lang="ts">
-	import { resolveLocalizedResource } from '$lib/utils/localizedContent';
 	import { getContext, onDestroy } from 'svelte';
 	import { getPrompts } from '$lib/apis/prompts';
-	import { getSkillItems } from '$lib/apis/skills';
 	import {
-		listTerminalSkills,
-		resolveTerminalConnection,
-		type TerminalSkill
-	} from '$lib/apis/terminal';
-	import {
-		user,
-		chatId,
-		selectedTerminalId,
-		settings,
-		terminalServers,
-		terminalSkills,
 		visibleControls
 	} from '$lib/stores';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import ChatBubbleDotted from '$lib/components/icons/ChatBubbleDotted.svelte';
 	import ChatBubbleDottedChecked from '$lib/components/icons/ChatBubbleDottedChecked.svelte';
-	import Cube from '$lib/components/icons/Cube.svelte';
 	import Knobs from '$lib/components/icons/Knobs.svelte';
 	import Annotation from '$lib/components/icons/Annotation.svelte';
 	import Icon from '$lib/components/chat/FileNav/Icon.svelte';
-	import Plus from '$lib/components/icons/Plus.svelte';
 	import Sparkles from '$lib/components/icons/Sparkles.svelte';
 
 	const i18n: any = getContext('i18n');
@@ -42,7 +27,6 @@
 	export let canTemporary = false;
 	export let temporaryEnabled = false;
 	export let hasChatContent = false;
-	export let canCreateSkill: boolean = false;
 	export let contextPercent = 0;
 	export let contextHasThreshold = false;
 
@@ -50,7 +34,6 @@
 	export let filteredItems = [];
 
 	let prompts = [];
-	let skills = [];
 	let searchDebounceTimer: ReturnType<typeof setTimeout>;
 
 	$: contextCirclePercent = contextHasThreshold
@@ -85,12 +68,6 @@
 			: []),
 		...(canCompare && $visibleControls['chat.compare'] && 'compare'.startsWith(query.toLowerCase())
 			? [{ type: 'command', data: { id: 'compare' } }]
-			: []),
-		...(hasChatContent &&
-		canCreateSkill &&
-		($user?.role === 'admin' || $user?.permissions?.workspace?.skills) &&
-		'skills:create'.startsWith(query.toLowerCase())
-			? [{ type: 'command', data: { id: 'skills:create' } }]
 			: [])
 	];
 
@@ -100,8 +77,7 @@
 
 	$: filteredItems = [
 		...commandItems,
-		...filteredPrompts.map((data) => ({ type: 'prompt', data })),
-		...skills.map((data) => ({ type: 'skill', data }))
+		...filteredPrompts.map((data) => ({ type: 'prompt', data }))
 	];
 
 	$: if (query) {
@@ -121,33 +97,12 @@
 		clearTimeout(searchDebounceTimer);
 	});
 
-	const getTerminalItems = async (query = ''): Promise<TerminalSkill[]> => {
-		const connection = resolveTerminalConnection(
-			$selectedTerminalId,
-			$terminalServers ?? [],
-			$settings?.terminalServers ?? [],
-			localStorage.token
-		);
-		const items = await listTerminalSkills(connection, $chatId || null).catch(() => []);
-		terminalSkills.set(items);
-		const q = query.trim().toLowerCase();
-		return q
-			? items.filter((skill) => `${skill.name} ${skill.description}`.toLowerCase().includes(q))
-			: items;
-	};
-
 	const getItems = async () => {
-		const [promptRes, skillRes, terminalItems] = await Promise.all([
-			getPrompts(localStorage.token).catch(() => null),
-			getSkillItems(localStorage.token, query).catch(() => null),
-			getTerminalItems(query)
-		]);
+		const promptRes = await getPrompts(localStorage.token).catch(() => null);
 
 		if (promptRes) {
 			prompts = promptRes;
 		}
-
-		skills = [...(skillRes?.items ?? []), ...terminalItems];
 	};
 
 	export const selectUp = () => {
@@ -169,25 +124,6 @@
 		if (item) {
 			onSelect(item);
 		}
-	};
-
-	const escapeTooltipText = (value = '') =>
-		String(value)
-			.replaceAll('&', '&amp;')
-			.replaceAll('<', '&lt;')
-			.replaceAll('>', '&gt;')
-			.replaceAll('"', '&quot;')
-			.replaceAll("'", '&#39;');
-
-	const getSkillTooltipContent = (skill) => {
-		const name = escapeTooltipText(resolveLocalizedResource(skill, $i18n.language));
-		const description = escapeTooltipText(
-			resolveLocalizedResource(skill, $i18n.language, 'description')
-		);
-
-		return `<div class="max-w-80 whitespace-normal text-left leading-snug">
-			<span class="break-words font-normal">${name}</span>${description ? `: <span class="break-words opacity-80">${description}</span>` : ''}
-		</div>`;
 	};
 </script>
 
@@ -462,35 +398,6 @@
 					<span class="app-muted max-w-24 shrink-0 truncate text-[0.625rem]">/compare</span>
 				</span>
 			</button>
-		{:else if item.data.id === 'skills:create'}
-			<Tooltip
-				content={$i18n.t('Create a reusable terminal skill from this chat.')}
-				placement="top"
-			>
-				<button
-					type="button"
-					aria-label={$i18n.t('Create skill: create a reusable terminal skill from this chat.')}
-					class="slash-command-row flex items-center gap-2 w-full h-6 px-2 rounded-xl text-[0.8125rem] text-left transition-colors duration-75 hover:bg-gray-50/40 dark:hover:bg-gray-800/40
-						{commandIdx === selectedIdx ? 'app-interactive-active selected-command-option-button' : ''}"
-					on:mousedown={(e) => e.preventDefault()}
-					on:click={() => {
-						onSelect(item);
-					}}
-					on:mouseenter={() => {
-						selectedIdx = commandIdx;
-					}}
-					on:focus={() => {}}
-					data-selected={commandIdx === selectedIdx}
-				>
-					<span class="app-icon-muted flex items-center justify-center w-4 shrink-0">
-						<Plus className="size-3.5" />
-					</span>
-					<span class="flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
-						<span class="min-w-0 flex-1 truncate">{$i18n.t('Create skill')}</span>
-						<span class="app-muted max-w-24 shrink-0 truncate text-[0.625rem]">/skills:create</span>
-					</span>
-				</button>
-			</Tooltip>
 		{:else if item.data.id === 'settings'}
 			<Tooltip content={$i18n.t('Open settings.')} placement="top">
 				<button
@@ -551,50 +458,6 @@
 				<span class="app-muted max-w-24 shrink-0 truncate text-[0.625rem]">
 					{promptItem.name}
 				</span>
-			</button>
-		</Tooltip>
-	{/each}
-{/if}
-
-{#if skills.length > 0}
-	<div class="app-muted mb-0.5 px-2 pt-1 pb-0.5 text-[0.625rem] leading-none">
-		{$i18n.t('Skills')}
-	</div>
-
-	{#each skills as skill, skillIdx}
-		{@const itemIdx = commandItems.length + filteredPrompts.length + skillIdx}
-		<Tooltip
-			content={getSkillTooltipContent(skill)}
-			allowHTML={true}
-			placement="top-start"
-			tippyOptions={{ maxWidth: '20rem' }}
-		>
-			<button
-				class="flex h-6 w-full items-center rounded-xl px-2 text-left text-[0.8125rem] transition-colors duration-75 hover:bg-gray-50/40 dark:hover:bg-gray-800/40 {itemIdx ===
-				selectedIdx
-					? 'app-interactive-active selected-command-option-button'
-					: ''}"
-				type="button"
-				on:click={() => {
-					onSelect({ type: 'skill', data: skill });
-				}}
-				on:mousemove={() => {
-					selectedIdx = itemIdx;
-				}}
-				on:focus={() => {}}
-				data-selected={itemIdx === selectedIdx}
-			>
-				<div class="flex w-full min-w-0 items-center gap-2">
-					<div class="app-icon-muted flex w-4 shrink-0 items-center justify-center">
-						<Cube className="size-3.5" />
-					</div>
-					<div class="truncate min-w-0 flex-1">
-						{resolveLocalizedResource(skill, $i18n.language)}
-					</div>
-					<div class="app-muted max-w-24 shrink-0 truncate text-[0.625rem]">
-						{skill.source === 'terminal' ? $i18n.t('Terminal') : skill.id}
-					</div>
-				</div>
 			</button>
 		</Tooltip>
 	{/each}

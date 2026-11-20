@@ -16,7 +16,6 @@ import {
 
 	import { getBackendConfig, getModels, getToolServersData } from '$lib/apis';
 	import { getTools } from '$lib/apis/tools';
-	import { getSkills } from '$lib/apis/skills';
 	import { getSessionUser } from '$lib/apis/auths';
 	import { getBanners } from '$lib/apis/configs';
 	import { getTerminalServers } from '$lib/apis/terminal';
@@ -32,7 +31,6 @@ import {
 		models,
 		knowledge,
 		tools,
-		skills,
 		socket,
 		functions,
 		tags,
@@ -196,8 +194,7 @@ import {
 				getBackendConfig().then((value) => config.set(value)),
 				setModels(),
 				setTools(),
-				setToolServers(),
-				getSkills(localStorage.token).then((value) => skills.set(value))
+				setToolServers()
 			]);
 			for (const result of results) {
 				if (result.status === 'rejected') console.error('Unable to refresh access', result.reason);

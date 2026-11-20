@@ -1,16 +1,16 @@
 """
 title: ECHO V6 Declarative Lifespan Bootstrap
 author: Wilfried BARNAVON
-version: 6.7.8.1
+version: 6.7.16.1
 description: Provisioning déclaratif au démarrage FastAPI remplaçant intégralement config-owui.sh.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.16.1: Création idempotente au démarrage des 4 index SQLite composites sur la table file et purge one-shot echo.file_content_hygiene_v1 hors knowledge_file.
 # 6.7.8.1: Création et purge sécurisée au démarrage des résidus orphelins dans TMPDIR (.tmp_uploads) via _prepare_tmp_uploads_dir.
 # 6.6.3.1: Alignement des appels avatar par défaut avec le paramètre gender='X'.
 # 6.6.2.1: Alignement du provisioning lifespan avec la suppression des actions legacy (agent_monitor_action, echo_identity_vault_action, echo_codex_action, web_navigation_replay_action).
 # 6.5.3.2: Identité ECHO-UI, route avatar modèle echo_orchestrator et montage des routes audio /echo/v1/audio au démarrage.
-# 6.5.2.1: Correction de l'import initialize_runtime_config depuis open_webui.main.
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
+from sqlalchemy import text
 
 from open_webui.echo.identity_bridge import (
     ensure_user_default_avatar,
@@ -38,6 +39,7 @@ from open_webui.echo.runtime import (
     load_echo_function_from_disk,
     load_echo_tool_from_disk,
 )
+from open_webui.internal.db import async_engine
 from open_webui.models.access_grants import AccessGrants
 from open_webui.models.auths import Auths
 from open_webui.models.config import Config
@@ -351,6 +353,60 @@ def _prepare_tmp_uploads_dir() -> None:
         )
 
 
+_FILE_HYGIENE_CONFIG_KEY = "echo.file_content_hygiene_v1"
+_FILE_TABLE_INDEX_DDL = (
+    "CREATE INDEX IF NOT EXISTS ix_file_created_at_id ON file (created_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_file_user_id_created_at_id ON file (user_id, created_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_file_updated_at_id ON file (updated_at DESC, id DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_file_user_id_updated_at_id ON file (user_id, updated_at DESC, id DESC)",
+)
+
+
+async def _ensure_file_table_indexes_and_hygiene(run_hygiene: bool = True) -> dict[str, Any]:
+    """Crée les index composites sur la table file et purge data.content en mode bypass RAG."""
+    stats: dict[str, Any] = {"indexes_ok": False, "hygiene_applied": False, "rows_cleaned": 0}
+    try:
+        async with async_engine.begin() as conn:
+            for ddl in _FILE_TABLE_INDEX_DDL:
+                await conn.execute(text(ddl))
+        stats["indexes_ok"] = True
+    except Exception as exc:
+        log.warning("[ECHO-BOOTSTRAP] Création index table file ignorée: %s", exc)
+
+    if not run_hygiene or async_engine.dialect.name != "sqlite":
+        return stats
+
+    try:
+        if await Config.get(_FILE_HYGIENE_CONFIG_KEY):
+            return stats
+        if not bool(await Config.get("rag.bypass_embedding_and_retrieval")):
+            return stats
+
+        async with async_engine.begin() as conn:
+            has_kf = await conn.scalar(
+                text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_file'")
+            )
+            sql = (
+                "UPDATE file SET data = json_remove(data, '$.content') "
+                "WHERE data IS NOT NULL AND json_valid(data) AND json_type(data, '$.content') IS NOT NULL"
+            )
+            if has_kf:
+                sql += " AND id NOT IN (SELECT file_id FROM knowledge_file WHERE file_id IS NOT NULL)"
+            res = await conn.execute(text(sql))
+            stats["rows_cleaned"] = int(res.rowcount or 0)
+
+        await Config.upsert({_FILE_HYGIENE_CONFIG_KEY: True})
+        stats["hygiene_applied"] = True
+        log.info(
+            "[ECHO-BOOTSTRAP] Hygiène file.data.content terminée (%d lignes nettoyées).",
+            stats["rows_cleaned"],
+        )
+    except Exception as exc:
+        log.warning("[ECHO-BOOTSTRAP] Hygiène file.data.content ignorée: %s", exc)
+
+    return stats
+
+
 async def bootstrap_echo_runtime(app: FastAPI) -> dict[str, Any]:
     """Point d'entrée unique exécuté dans le lifespan de FastAPI."""
     ensure_echo_sys_path()
@@ -366,6 +422,7 @@ async def bootstrap_echo_runtime(app: FastAPI) -> dict[str, Any]:
         )
     root = get_echo_plugin_root()
     if not root.is_dir():
+        await _ensure_file_table_indexes_and_hygiene(run_hygiene=False)
         log.info("[ECHO-BOOTSTRAP] Racine %s absente (mode test/hors conteneur), bootstrap ignoré.", root)
         return {"skipped": True, "root": str(root)}
 
@@ -374,6 +431,7 @@ async def bootstrap_echo_runtime(app: FastAPI) -> dict[str, Any]:
     by_type = await _sync_functions(root, owner_id)
     model_id = await _sync_master_model(root, owner_id, tool_ids, by_type)
     cfg_count = await _sync_global_configs(root, app)
+    file_db_stats = await _ensure_file_table_indexes_and_hygiene(run_hygiene=True)
 
     summary = {
         "skipped": False,
@@ -382,6 +440,7 @@ async def bootstrap_echo_runtime(app: FastAPI) -> dict[str, Any]:
         "functions_by_type": {k: len(v) for k, v in by_type.items()},
         "model_id": model_id,
         "config_keys_synced": cfg_count,
+        "file_db": file_db_stats,
     }
     app.state.echo_bootstrap_summary = summary
     log.info("[ECHO-BOOTSTRAP] Provisioning déclaratif terminé : %s", summary)

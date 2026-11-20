@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Gemini Client
 author: Wilfried BARNAVON
-version: 5.239.17.1
+version: 6.7.16.1
 description: Client API LLM principal.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.16.1: Factorisation de ensure_session_rag_collection (4 index payload keyword), clone_file_rag_points_to_chat et delete_file_rag_points_sync.
 # 5.239.17.1: Timeouts HTTP/2 granulaires via build_httpx_timeout (600s Non-Stream / 300s Stream) et extraction du délai serveur Retry-After / google.rpc.RetryInfo (_extract_server_retry_delay) sur congestion 429/503.
 # 5.239.16.1: Garde anti-ping-pong tried_urls sur Fast-Failover OAuth2 dans call et stream, résolution de _get_global_client intra-boucle et alignement sur ECHO_LLM_CALL_TIMEOUT (240s).
 # 5.237.11.1: Prise en charge du paramètre override_thinking dans call_distillation.
 # 5.236.0.2: Activation inconditionnelle et fallback SSOT des crédits Google One AI en OAuth2.
-# 5.235.5.1: Indexation Session RAG factorisée via build_session_rag_point_id et injection systématique de message_id pour source conversation.
 import copy
 import re
 import time
@@ -32,12 +32,181 @@ from echo_state_manager import EchoStateManager
 from echo_http import _get_global_client, FatalAPIError
 from echo_core import clamp_model, split_thought_process
 from echo_protocol import get_ca_model_id, build_ca_generation_config, normalize_generation_config, normalize_response_schema
-from echo_constants import AUTH_DATA_PROJECT_ID, AUTH_METHOD_OAUTH2, ECHO_AGY_USER_AGENT, ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN, ECHO_GLOBAL_TENANT_PROJECT_ID, ECHO_LLM_CALL_TIMEOUT, ECHO_LLM_STREAM_TIMEOUT, ECHO_RETRY_BASE_DELAY, ECHO_RETRY_JITTER_MAX, ECHO_RETRY_JITTER_MIN, ECHO_RETRY_MULTIPLIER, ECHO_RETRY_SERVER_MAX_WAIT_SEC, ECHO_SAFETY_SETTINGS, ECHO_USER_AGENT, GOOGLE_API_BASE_URL, GOOGLE_OAUTH_TOKEN_LIFETIME, build_httpx_timeout, get_descending_cascade, get_generation_config
+from echo_constants import AUTH_DATA_PROJECT_ID, AUTH_METHOD_OAUTH2, COLLECTION_SESSION_RAG, ECHO_AGY_USER_AGENT, ECHO_API_KEY_RETRIES, ECHO_API_MAX_RETRIES, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN, ECHO_GLOBAL_TENANT_PROJECT_ID, ECHO_LLM_CALL_TIMEOUT, ECHO_LLM_STREAM_TIMEOUT, ECHO_QDRANT_URL, ECHO_RETRY_BASE_DELAY, ECHO_RETRY_JITTER_MAX, ECHO_RETRY_JITTER_MIN, ECHO_RETRY_MULTIPLIER, ECHO_RETRY_SERVER_MAX_WAIT_SEC, ECHO_SAFETY_SETTINGS, ECHO_USER_AGENT, EMBEDDING_DIM, GOOGLE_API_BASE_URL, GOOGLE_OAUTH_TOKEN_LIFETIME, build_httpx_timeout, get_descending_cascade, get_generation_config
+
+_SESSION_RAG_ENSURED_BASES: set[str] = set()
+_SESSION_RAG_INDEX_FIELDS: tuple[str, ...] = ("user_id", "chat_id", "source_id", "message_id")
+
 
 class EchoGeminiClient:
     """Moteur factorisé pour les appels API Gemini avec Architecture Symétrique (AI Studio & Code Assist)."""
 
     _MEM_STREAM_BUFFERS: Dict[str, bytes] = {}
+
+    @staticmethod
+    async def ensure_session_rag_collection(
+        client: httpx.AsyncClient,
+        qdrant_base: Optional[str] = None,
+    ) -> tuple[bool, str]:
+        """Garantit l'existence de la collection Session RAG et de ses index payload keyword."""
+        base = (qdrant_base or ECHO_QDRANT_URL).rstrip("/")
+        if base in _SESSION_RAG_ENSURED_BASES:
+            return True, ""
+
+        try:
+            coll_check = await client.get(f"{base}/collections/{COLLECTION_SESSION_RAG}")
+            if coll_check.status_code == 404:
+                cr = await client.put(
+                    f"{base}/collections/{COLLECTION_SESSION_RAG}",
+                    json={"vectors": {"size": EMBEDDING_DIM, "distance": "Cosine"}},
+                )
+                if cr.status_code not in (200, 201):
+                    return False, f"Échec création collection Qdrant : HTTP {cr.status_code}"
+            elif coll_check.status_code != 200:
+                return False, f"Échec vérification collection Qdrant : HTTP {coll_check.status_code}"
+
+            for field_name in _SESSION_RAG_INDEX_FIELDS:
+                idx_resp = await client.put(
+                    f"{base}/collections/{COLLECTION_SESSION_RAG}/index?wait=true",
+                    json={"field_name": field_name, "field_schema": "keyword"},
+                )
+                if idx_resp.status_code not in (200, 201):
+                    return False, f"Échec création index Qdrant ({field_name}) : HTTP {idx_resp.status_code}"
+
+            _SESSION_RAG_ENSURED_BASES.add(base)
+            return True, ""
+        except Exception as exc:
+            return False, str(exc)
+
+    @staticmethod
+    async def clone_file_rag_points_to_chat(
+        user_id: str,
+        file_id: str,
+        target_chat_id: str,
+        qdrant_base: Optional[str] = None,
+    ) -> int:
+        """Clone les points Qdrant d'un fichier déjà vectorisé vers un nouveau chat_id sans ré-embedding."""
+        if not user_id or not file_id or not target_chat_id:
+            return 0
+        base = (qdrant_base or ECHO_QDRANT_URL).rstrip("/")
+        seen_chunks: set = set()
+        cloned_points: List[dict] = []
+        next_offset = None
+        now_ts = int(time.time())
+        scroll_filter = {
+            "must": [
+                {"key": "user_id", "match": {"value": user_id}},
+                {"key": "source_id", "match": {"value": file_id}},
+            ]
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                while True:
+                    scroll_payload: Dict[str, Any] = {
+                        "filter": scroll_filter,
+                        "limit": 64,
+                        "with_payload": True,
+                        "with_vector": True,
+                    }
+                    if next_offset is not None:
+                        scroll_payload["offset"] = next_offset
+
+                    resp = await client.post(
+                        f"{base}/collections/{COLLECTION_SESSION_RAG}/points/scroll",
+                        json=scroll_payload,
+                    )
+                    if resp.status_code == 404 or resp.status_code != 200:
+                        return 0
+
+                    result = resp.json().get("result") or {}
+                    records = result.get("points") or []
+                    for rec in records:
+                        vector = rec.get("vector")
+                        if not vector:
+                            continue
+                        pl = rec.get("payload") or {}
+                        if pl.get("chunk_index") is not None:
+                            idx_or_key = str(pl.get("chunk_index"))
+                            chunk_key: Any = ("idx", idx_or_key)
+                        else:
+                            lines_range = pl.get("lines_range")
+                            lr_key = tuple(lines_range) if isinstance(lines_range, list) else lines_range
+                            chunk_key = ("txt", lr_key, pl.get("text"))
+                            idx_or_key = f"seq_{len(seen_chunks)}"
+                        if chunk_key in seen_chunks:
+                            continue
+                        seen_chunks.add(chunk_key)
+
+                        point_id = str(
+                            uuid.uuid5(uuid.NAMESPACE_DNS, f"{user_id}_{target_chat_id}_{file_id}_{idx_or_key}")
+                        )
+                        payload = {
+                            **pl,
+                            "user_id": user_id,
+                            "chat_id": target_chat_id,
+                            "source_id": file_id,
+                            "timestamp": now_ts,
+                        }
+                        cloned_points.append({
+                            "id": point_id,
+                            "vector": vector,
+                            "payload": payload,
+                        })
+
+                    next_offset = result.get("next_page_offset")
+                    if next_offset is None or not records:
+                        break
+
+                if not cloned_points:
+                    return 0
+
+                ok, _ = await EchoGeminiClient.ensure_session_rag_collection(client, base)
+                if not ok:
+                    return 0
+
+                total_cloned = 0
+                for i in range(0, len(cloned_points), 64):
+                    batch = cloned_points[i:i + 64]
+                    up_resp = await client.put(
+                        f"{base}/collections/{COLLECTION_SESSION_RAG}/points?wait=true",
+                        json={"points": batch},
+                    )
+                    if up_resp.status_code not in (200, 206):
+                        if up_resp.status_code == 404:
+                            _SESSION_RAG_ENSURED_BASES.discard(base)
+                        return total_cloned
+                    total_cloned += len(batch)
+                return total_cloned
+        except Exception:
+            return 0
+
+    @staticmethod
+    def delete_file_rag_points_sync(
+        user_id: str,
+        file_id: str,
+        qdrant_base: Optional[str] = None,
+    ) -> bool:
+        """Supprime de manière synchrone tous les points Qdrant associés à un fichier utilisateur."""
+        if not user_id or not file_id:
+            return False
+        base = (qdrant_base or ECHO_QDRANT_URL).rstrip("/")
+        try:
+            resp = httpx.post(
+                f"{base}/collections/{COLLECTION_SESSION_RAG}/points/delete?wait=true",
+                json={
+                    "filter": {
+                        "must": [
+                            {"key": "user_id", "match": {"value": user_id}},
+                            {"key": "source_id", "match": {"value": file_id}},
+                        ]
+                    }
+                },
+                timeout=5.0,
+            )
+            return resp.status_code in (200, 404)
+        except Exception:
+            return False
 
     @staticmethod
     def _extract_server_retry_delay(headers: Any = None, error_text: str = "") -> Optional[float]:
@@ -537,9 +706,6 @@ class EchoGeminiClient:
         0 points indique un échec total (embedding worker indisponible ou Qdrant KO).
         """
         from echo_constants import (
-            COLLECTION_SESSION_RAG,
-            EMBEDDING_DIM,
-            ECHO_QDRANT_URL,
             ECHO_SESSION_RAG_CHUNK_SIZE,
             SESSION_RAG_CONVERSATION_SOURCE_ID,
         )
@@ -598,14 +764,9 @@ class EchoGeminiClient:
         points = []
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
-                coll_check = await client.get(f"{qdrant_base}/collections/{COLLECTION_SESSION_RAG}")
-                if coll_check.status_code == 404:
-                    cr = await client.put(
-                        f"{qdrant_base}/collections/{COLLECTION_SESSION_RAG}",
-                        json={"vectors": {"size": EMBEDDING_DIM, "distance": "Cosine"}}
-                    )
-                    if cr.status_code not in (200, 201):
-                        return 0, f"Échec création collection Qdrant : HTTP {cr.status_code}"
+                ok, err = await EchoGeminiClient.ensure_session_rag_collection(client, qdrant_base)
+                if not ok:
+                    return 0, err
 
                 # --- 4. GÉNÉRATION DES EMBEDDINGS ET CONSTRUCTION DES POINTS ---
                 from echo_constants import ECHO_SUBAGENT_CONTEXT
@@ -652,6 +813,8 @@ class EchoGeminiClient:
                     json={"points": points}
                 )
                 if upsert_resp.status_code not in (200, 206):
+                    if upsert_resp.status_code == 404:
+                        _SESSION_RAG_ENSURED_BASES.discard(qdrant_base.rstrip("/"))
                     return 0, f"Erreur Qdrant upsert : HTTP {upsert_resp.status_code} — {upsert_resp.text[:100]}"
 
         except Exception as e:

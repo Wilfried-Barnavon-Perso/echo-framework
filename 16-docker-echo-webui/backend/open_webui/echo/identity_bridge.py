@@ -1,17 +1,19 @@
 """
 title: ECHO V6 Canonical Identity Bridge
 author: Wilfried BARNAVON
-version: 6.6.3.1
+version: 6.7.16.1
 description: Pont déterministe Email SSO (X-Webui-User) <-> User UUID (webui.db) <-> identity.db (Schéma v2).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.16.1: Ajout du cache mémoire _CANONICAL_GENDER_CACHE et déport asyncio.to_thread sur cache miss dans resolve_canonical_user.
 # 6.6.3.1: Résolution X-Webui-Gender, persistance canonical_gender et bascule dynamique d'avatar M/F/X sans écraser les avatars personnalisés.
 # 6.6.2.1: Stabilisation de la résolution identitaire SSO et synchronisation identity.db.
 # 6.1.0.1: Création du pont d'identité canonique X-Webui-User <-> webui.db UUID <-> identity.db (Schéma v2).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import os
@@ -25,6 +27,7 @@ log = logging.getLogger(__name__)
 
 # Cache mémoire (user_id -> (email, name, gender)) évitant de réécrire identity.db à chaque requête HTTP
 _IDENTITY_SYNC_CACHE: dict[str, tuple[str, str, str]] = {}
+_CANONICAL_GENDER_CACHE: dict[str, str] = {}
 _DEFAULT_USER_AVATAR_CACHE: dict[str, str] = {}
 _AVATAR_CHECKED_USERS: dict[str, str] = {}
 
@@ -154,6 +157,7 @@ def ensure_user_identity_db(user_id: str, email: str = "", name: str = "", gende
 
     cached = _IDENTITY_SYNC_CACHE.get(safe_uid)
     if cached == (norm_email, norm_name, norm_gender) and os.path.isfile(id_db_path):
+        _CANONICAL_GENDER_CACHE[safe_uid] = norm_gender
         return id_db_path
 
     os.makedirs(os.path.dirname(id_db_path), exist_ok=True)
@@ -178,6 +182,7 @@ def ensure_user_identity_db(user_id: str, email: str = "", name: str = "", gende
         log.warning("[ECHO-IDENTITY] Échec écriture echo_settings dans identity.db pour %s: %s", safe_uid, exc)
 
     _IDENTITY_SYNC_CACHE[safe_uid] = (norm_email, norm_name, norm_gender)
+    _CANONICAL_GENDER_CACHE[safe_uid] = norm_gender
     return id_db_path
 
 
@@ -210,21 +215,40 @@ async def resolve_canonical_user(request: Any, user: Any) -> EchoIdentityContext
             or ""
         ).strip()
 
-    if not raw_gender:
-        try:
-            ensure_echo_sys_path()
-            from echo_paths import sanitize_echo_id
-            from echo_state_manager import EchoStateManager
+    ensure_echo_sys_path()
+    from echo_paths import get_echo_identity_db_path, sanitize_echo_id
 
-            raw_gender = EchoStateManager(
-                user_id=sanitize_echo_id(uid), chat_id=None
-            ).get_setting("canonical_gender") or "X"
-        except Exception as exc:
-            log.debug("[ECHO-IDENTITY] Lecture canonical_gender ignorée pour %s: %s", uid, exc)
-            raw_gender = "X"
+    safe_uid = sanitize_echo_id(uid)
+
+    if not raw_gender:
+        cached_gender = _CANONICAL_GENDER_CACHE.get(safe_uid)
+        if cached_gender:
+            raw_gender = cached_gender
+        else:
+            try:
+                from echo_state_manager import EchoStateManager
+
+                def _read_canonical_gender() -> str:
+                    return (
+                        EchoStateManager(user_id=safe_uid, chat_id=None).get_setting("canonical_gender")
+                        or "X"
+                    )
+
+                raw_gender = await asyncio.to_thread(_read_canonical_gender)
+                _CANONICAL_GENDER_CACHE[safe_uid] = normalize_gender(raw_gender)
+            except Exception as exc:
+                log.debug("[ECHO-IDENTITY] Lecture canonical_gender ignorée pour %s: %s", uid, exc)
+                raw_gender = "X"
 
     norm_gender = normalize_gender(raw_gender)
-    id_db_path = ensure_user_identity_db(uid, email=email, name=name, gender=norm_gender)
+    norm_name = name.strip()
+    id_db_path = get_echo_identity_db_path(safe_uid)
+    if _IDENTITY_SYNC_CACHE.get(safe_uid) == (email, norm_name, norm_gender) and os.path.isfile(id_db_path):
+        _CANONICAL_GENDER_CACHE[safe_uid] = norm_gender
+    else:
+        id_db_path = await asyncio.to_thread(
+            ensure_user_identity_db, uid, email=email, name=name, gender=norm_gender
+        )
     await ensure_user_default_avatar(user, gender=norm_gender)
     ctx = EchoIdentityContext(
         user_id=uid,
@@ -242,4 +266,5 @@ async def resolve_canonical_user(request: Any, user: Any) -> EchoIdentityContext
 def clear_identity_sync_cache() -> None:
     """Réinitialise le cache mémoire d'identité (tests unitaires)."""
     _IDENTITY_SYNC_CACHE.clear()
+    _CANONICAL_GENDER_CACHE.clear()
     _AVATAR_CHECKED_USERS.clear()

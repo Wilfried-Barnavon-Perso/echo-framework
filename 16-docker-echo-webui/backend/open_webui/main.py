@@ -179,7 +179,6 @@ from open_webui.routers import (
     retrieval,
     scim,
     search,
-    skills,
     tasks,
     terminals,
     tools,
@@ -831,7 +830,8 @@ app.include_router(tasks.router, prefix='/api/v1/tasks', tags=['tasks'])
 app.include_router(images.router, prefix='/api/v1/images', tags=['images'])
 
 app.include_router(audio.router, prefix='/api/v1/audio', tags=['audio'])
-app.include_router(retrieval.router, prefix='/api/v1/retrieval', tags=['retrieval'])
+# [ECHO-V6-HOOK] Désactivation du routeur HTTP retrieval (scraping hors sandbox & RAG natif désactivés)
+# app.include_router(retrieval.router, prefix='/api/v1/retrieval', tags=['retrieval'])
 
 app.include_router(configs.router, prefix='/api/v1/configs', tags=['configs'])
 
@@ -1854,7 +1854,6 @@ async def chat_completion(
                             'model_id': metadata.get('model_id') or form_data.get('model'),
                             'session_id': metadata.get('session_id'),
                             'tool_ids': metadata.get('tool_ids') or [],
-                            'skill_ids': metadata.get('skill_ids') or [],
                             'chat_context': metadata.get('chat_context'),
                             'filter_ids': metadata.get('filter_ids') or [],
                             'terminal_id': metadata.get('terminal_id'),

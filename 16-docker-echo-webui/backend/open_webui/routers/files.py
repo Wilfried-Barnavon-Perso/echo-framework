@@ -634,26 +634,14 @@ async def list_files(
     skip = (page - 1) * PAGE_SIZE
     user_id = None if (user.role == 'admin' and BYPASS_ADMIN_ACCESS_CONTROL) else user.id
 
-    result = await Files.get_file_list(user_id=user_id, skip=skip, limit=PAGE_SIZE, db=db)
-
-    if not content:
-        for file in result.items:
-            if file.data and 'content' in file.data:
-                del file.data['content']
-
-    return result
+    return await Files.get_file_list(user_id=user_id, skip=skip, limit=PAGE_SIZE, db=db, content=content)  # [ECHO-V6-HOOK]
 
 
 # Search Files
 
 
 async def _search_files(filename: str, content: bool, skip: int, limit: int, user_id: str | None, db: AsyncSession):
-    files = await Files.search_files(user_id=user_id, filename=filename, skip=skip, limit=limit, db=db)
-    if not content:
-        for file in files:
-            if file.data and 'content' in file.data:
-                del file.data['content']
-    return files
+    return await Files.search_files(user_id=user_id, filename=filename, skip=skip, limit=limit, db=db, content=content)  # [ECHO-V6-HOOK]
 
 
 @router.get('/search', response_model=list[FileModelResponse])

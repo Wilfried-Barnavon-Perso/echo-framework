@@ -267,7 +267,6 @@ async def build_tool_approval_resume_payload(chat_id: str, message_id: str, chat
         'files': message_meta.get('files') if 'files' in message_meta else chat_data.get('files'),
         'filter_ids': message_meta.get('filter_ids') or None,
         'tool_ids': message_meta.get('tool_ids') or None,
-        'skill_ids': message_meta.get('skill_ids') or None,
         'terminal_id': message_meta.get('terminal_id') or None,
         'tool_servers': message_meta.get('tool_servers') or None,
         'features': message_meta.get('features') or {},

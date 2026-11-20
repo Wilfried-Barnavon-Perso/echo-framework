@@ -13,13 +13,11 @@
 		toolServers,
 		terminalServers,
 		tools,
-		skills,
 		selectedTerminalId,
 		type Model
 	} from '$lib/stores';
 	import { createTemporaryChatId } from '$lib/utils/chatId';
 	import { getTools } from '$lib/apis/tools';
-	import { getSkills } from '$lib/apis/skills';
 	import { generateOpenAIChatCompletion, getErrorMessage } from '$lib/apis/openai';
 	import { getTaskIdsByChatId, resumeTemporaryChat, stopTasksByChatId } from '$lib/apis';
 	import {
@@ -112,7 +110,6 @@
 	let files: any[] = initialView?.files ?? [];
 	let params: Record<string, any> = { ...$settings.params };
 	let selectedToolIds: string[] = [];
-	let selectedSkillIds: string[] = [];
 	let selectedFilterIds: string[] = [];
 	let webSearchEnabled = false;
 	let imageGenerationEnabled = false;
@@ -120,9 +117,8 @@
 
 	const applyModelDefaults = async (selectedModelId: string) => {
 		if (!$tools) tools.set(await getTools(localStorage.token));
-		if (!$skills) skills.set(await getSkills(localStorage.token));
 		const selectedModel = $models.find((model) => model.id === selectedModelId);
-		if (!selectedModel || $tools === null || $skills === null) return;
+		if (!selectedModel || $tools === null) return;
 		if (id || selectedModelId !== sideModelId) return;
 		const meta = selectedModel.info?.meta;
 		const defaultFeature = (feature: 'web_search' | 'image_generation' | 'code_interpreter') =>
@@ -136,9 +132,6 @@
 			) ??
 			$settings?.tools ??
 			[];
-		selectedSkillIds = (meta?.skillIds ?? []).filter((skillId: string) =>
-			($skills as any[]).some((skill) => skill.id === skillId && skill.is_active)
-		);
 		selectedFilterIds = (meta?.defaultFilterIds ?? []).filter((filterId: string) =>
 			selectedModel.filters?.some((filter: { id: string }) => filter.id === filterId)
 		);
@@ -513,7 +506,6 @@
 				params: { ...params, tool_approval_mode: toolApprovalMode },
 				files: requestFiles,
 				tool_ids: selectedToolIds.filter((id) => !id.startsWith('direct_server:')),
-				skill_ids: selectedSkillIds,
 				filter_ids: selectedFilterIds,
 				terminal_id: $config?.features?.enable_tool_servers ? $selectedTerminalId : undefined,
 				tool_servers: $config?.features?.enable_tool_servers
@@ -678,7 +670,6 @@
 				bind:files
 				bind:params
 				bind:selectedToolIds
-				bind:selectedSkillIds
 				bind:selectedFilterIds
 				bind:webSearchEnabled
 				bind:imageGenerationEnabled

@@ -4,19 +4,15 @@
 
 	import {
 		chatId as activeChatId,
-		folders,
 		models,
 		selectedTerminalId,
 		settings,
 		terminalServers,
-		temporaryChatEnabled,
-		user
+		temporaryChatEnabled
 	} from '$lib/stores';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
-	import { getFolders } from '$lib/apis/folders';
-	import { searchKnowledgeBases, searchKnowledgeFiles } from '$lib/apis/knowledge';
 	import { searchFiles, filesystemFile } from '$lib/apis/terminal';
-	import { decodeString, isValidHttpUrl, isYoutubeUrl } from '$lib/utils';
+	import { decodeString } from '$lib/utils';
 	import {
 		resolveLocalizedModelDescription,
 		resolveLocalizedModelName
@@ -24,12 +20,8 @@
 	import { isTemporaryChatId } from '$lib/utils/chatId';
 
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
-	import Database from '$lib/components/icons/Database.svelte';
 	import DocumentPage from '$lib/components/icons/DocumentPage.svelte';
 	import Folder from '$lib/components/icons/Folder.svelte';
-	import GlobeAlt from '$lib/components/icons/GlobeAlt.svelte';
-	import Youtube from '$lib/components/icons/Youtube.svelte';
-	import { toast } from 'svelte-sonner';
 
 	const i18n = getContext<any>('i18n');
 
@@ -43,8 +35,6 @@
 	let searchController: AbortController;
 
 	let filesystemItems: any[] = [];
-	let knowledgeItems: any[] = [];
-	let fileItems: any[] = [];
 	let modelItems: any[] = [];
 	let filteredModels: any[] = [];
 	let knowledgeResults: any[] = [];
@@ -64,21 +54,8 @@
 	});
 
 	$: filteredModels = query ? fuse.search(query).map((e) => e.item) : modelItems;
-	let webUploadEnabled: boolean = true;
-	$: webUploadEnabled = $user?.role === 'admin' || ($user?.permissions?.chat?.web_upload ?? true);
-	$: knowledgeResults = [
-		...filesystemItems,
-		...(query.startsWith('http')
-			? isYoutubeUrl(query)
-				? [{ type: 'youtube', name: query, description: query }]
-				: [{ type: 'web', name: query, description: query }]
-			: []),
-		...folderItems,
-		...knowledgeItems,
-		...fileItems
-	].filter((item) =>
-		['youtube', 'web'].includes(item.type) ? webUploadEnabled : fileUploadEnabled
-	);
+	// [ECHO-V6-HOOK] Suppression des injections URL/Knowledge/Folders fantômes sur @
+	$: knowledgeResults = fileUploadEnabled ? filesystemItems : [];
 
 	$: filteredItems = [
 		...knowledgeResults.map((data) => ({ type: data.type, data })),
@@ -93,8 +70,6 @@
 
 	const handleSearchInput = () => {
 		searchController?.abort();
-		knowledgeItems = [];
-		fileItems = [];
 		filesystemItems = [];
 		clearTimeout(searchDebounceTimer);
 		searchDebounceTimer = setTimeout(() => {
@@ -117,8 +92,6 @@
 		const { signal } = searchController;
 		const terminal = getSelectedTerminal();
 		getFilesystemItems(terminal, signal);
-		getKnowledgeItems(signal);
-		getKnowledgeFileItems(signal);
 	};
 
 	const getFilesystemItems = async (
@@ -180,75 +153,10 @@
 		return directTerminal?.url ? { url: directTerminal.url, key: directTerminal.key ?? '' } : null;
 	};
 
-	$: folderItems = (($folders ?? []) as any[])
-		.map((folder) => ({
-			...folder,
-			type: 'folder',
-			description: $i18n.t('Folder'),
-			title: folder.name
-		}))
-		.filter((folder: any) => folder.name.toLowerCase().includes(query.toLowerCase()));
-
-	const getKnowledgeItems = async (signal: AbortSignal) => {
-		const res = await searchKnowledgeBases(
-			localStorage.token,
-			query,
-			null,
-			null,
-			null,
-			null,
-			null,
-			signal
-		).catch(() => null);
-
-		if (res && !signal.aborted) {
-			knowledgeItems = res.items.map((item: any) => ({
-				...item,
-				type: 'collection'
-			}));
-		}
-	};
-
-	const getKnowledgeFileItems = async (signal: AbortSignal) => {
-		const res = await searchKnowledgeFiles(
-			localStorage.token,
-			query,
-			null,
-			null,
-			null,
-			1,
-			false,
-			signal
-		).catch(() => null);
-
-		if (res && !signal.aborted) {
-			fileItems = res.items.map((item: any) => ({
-				...item,
-				type: 'file',
-				name: item.filename,
-				description: item.collection ? item.collection.name : ''
-			}));
-		}
-	};
-
 	const selectKnowledgeItem = (item: any) => {
 		if (item.type === 'filesystem') {
 			onSelect({ type: 'filesystem', data: item });
-			return;
 		}
-
-		if (['youtube', 'web'].includes(item.type)) {
-			if (isValidHttpUrl(query)) {
-				onSelect({ type: 'web', data: query });
-			} else {
-				toast.error(
-					$i18n.t('Oops! Looks like the URL is invalid. Please double-check and try again.')
-				);
-			}
-			return;
-		}
-
-		onSelect({ type: 'knowledge', data: item });
 	};
 
 	export const selectUp = () => {
@@ -271,26 +179,16 @@
 	};
 
 	onMount(async () => {
-		if ($folders === null) {
-			await folders.set(await getFolders(localStorage.token));
-		}
-
 		await tick();
 	});
 </script>
 
-{#if knowledgeResults.length > 0 || query.startsWith('http')}
+{#if knowledgeResults.length > 0}
 	{#each knowledgeResults as item, idx}
 		{@const itemIdx = idx}
 		{#if idx === 0 || item?.type !== knowledgeResults[idx - 1]?.type}
 			<div class="app-muted mb-0.5 px-2 pt-1 pb-0.5 text-[0.625rem] leading-none">
-				{#if item?.type === 'folder'}
-					{$i18n.t('Folders')}
-				{:else if item?.type === 'collection'}
-					{$i18n.t('Collections')}
-				{:else if item?.type === 'file'}
-					{$i18n.t('Files')}
-				{:else if item?.type === 'filesystem'}
+				{#if item?.type === 'filesystem'}
 					{$i18n.t('Filesystem')}
 				{/if}
 			</div>
@@ -313,29 +211,11 @@
 			<div class="flex w-full min-w-0 items-center gap-2 overflow-hidden">
 				<Tooltip
 					className="app-icon-muted flex w-4 shrink-0 items-center justify-center"
-					content={item?.legacy
-						? $i18n.t('Legacy')
-						: item?.type === 'filesystem'
-							? item?.path
-							: item?.type === 'file'
-								? `${item?.collection?.name} > ${$i18n.t('File')}`
-								: item?.type === 'collection'
-									? $i18n.t('Collection')
-									: item?.type === 'youtube'
-										? $i18n.t('YouTube')
-										: item?.type === 'web'
-											? $i18n.t('Web')
-											: ''}
+					content={item?.type === 'filesystem' ? (item?.path ?? '') : ''}
 					placement="top"
 				>
-					{#if item?.type === 'collection'}
-						<Database className="size-3.5" />
-					{:else if item?.type === 'folder' || item?.filesystem_type === 'directory'}
+					{#if item?.filesystem_type === 'directory'}
 						<Folder className="size-3.5" />
-					{:else if item?.type === 'youtube'}
-						<Youtube className="size-3.5" />
-					{:else if item?.type === 'web'}
-						<GlobeAlt className="size-3.5" />
 					{:else}
 						<DocumentPage className="size-3.5" />
 					{/if}

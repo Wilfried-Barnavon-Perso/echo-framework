@@ -4,7 +4,7 @@
 	import { toast } from 'svelte-sonner';
 	import { copyToClipboard } from '$lib/utils';
 	import { equalEditorJSON } from '$lib/utils/editorJson';
-	import { showCallOverlay, skills, terminalSkills } from '$lib/stores';
+	import { showCallOverlay } from '$lib/stores';
 
 	marked.use({
 		breaks: true,
@@ -120,8 +120,7 @@
 			const id = node.getAttribute('data-id') || '';
 			// TipTap stores the trigger char in data-mention-suggestion-char (usually "@")
 			const ch = node.getAttribute('data-mention-suggestion-char') || '@';
-			const mentionChar = ch === '/' ? '$' : ch;
-			return `<${mentionChar}${id}>`;
+			return `<${ch}${id}>`;
 		}
 	});
 
@@ -370,8 +369,7 @@
 		const id = node.attrs.id ?? '';
 		const label = node.attrs.label ?? id;
 		const ch = node.attrs.mentionSuggestionChar ?? suggestion?.char ?? '@';
-		const char = ch === '/' ? '$' : ch;
-		return `${char}${label}`;
+		return `${ch}${label}`;
 	};
 
 	// Plain-text mode still preserves mention identities from the clipboard's HTML.
@@ -648,25 +646,11 @@
 					const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 					// Now replace the escaped mention patterns back into real spans
 					const withMentions = escaped.replace(
-						/&lt;([@#$])([^|&\s]+)(?:\|([^&]*?))?&gt;|&lt;\/([\w.\-:/]+)\|([^&]*?)&gt;/g,
-						(match, ch, id, label, slashSkillId, slashSkillLabel) => {
-							const mentionChar = ch || '$';
-							const mentionId = id || slashSkillId;
-							if (
-								mentionChar === '$' &&
-								![...($skills ?? []), ...($terminalSkills ?? [])].some(
-									(skill) => skill.id === mentionId && skill.is_active
-								)
-							) {
-								return match;
-							}
-							const display = (label || slashSkillLabel)?.length
-								? label || slashSkillLabel
-								: mentionId;
-							const dataId = (label || slashSkillLabel)?.length
-								? `${mentionId}|${display}`
-								: mentionId;
-							return `<span class="mention" data-type="mention" data-id="${dataId}" data-label="${display}" data-mention-suggestion-char="${mentionChar}">${mentionChar}${display}</span>`;
+						/&lt;([@#])([^|&\s]+)(?:\|([^&]*?))?&gt;/g,
+						(_match, ch, id, label) => {
+							const display = label?.length ? label : id;
+							const dataId = label?.length ? `${id}|${display}` : id;
+							return `<span class="mention" data-type="mention" data-id="${dataId}" data-label="${display}" data-mention-suggestion-char="${ch}">${ch}${display}</span>`;
 						}
 					);
 					return `<p>${withMentions}</p>`;

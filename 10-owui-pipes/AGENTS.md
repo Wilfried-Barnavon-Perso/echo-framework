@@ -8,10 +8,10 @@ Ce dossier contient le **Système Nerveux Central** (le Cortex) de l'intégratio
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `echo_orchestrator.py` (v6.7.5.1)
+### `echo_orchestrator.py` (v6.7.16.1)
 
 #### A. Classe `UserDataManager` (Le Tisserand de Mémoire)
-**Rôle** : Gestionnaire de l'état asynchrone SQLite (proxy vers `EchoStateManager`). Il reconstruit l'historique exact de la conversation.
+**Rôle** : Gestionnaire de l'état asynchrone SQLite (proxy vers `EchoStateManager`). Il reconstruit l'historique exact de la conversation et synchronise en fin de tour le statut final et le résumé `VECTORIZED_SUM_UP` des ressources de session vers `identity.db`.
 - **Réhydratation & Fusion User+User** : Réhydrate systématiquement les métadonnées de messages (`rehydrate_messages_metadata`), résout les auto-parentés circulaires et fusionne de manière déterministe les messages `user` consécutifs (`merge_consecutive_user_parts`) lorsqu'un message assistant intermédiaire a été supprimé par l'Utilisateur. Pose le `ECHO_TURN_CONTEXT` dès le début du tour pour gouverner la provenance des ressources produites.
 - **Shadow Suture par Tour Logique, Auto-Guérison & Synchronisation In-Place** (`save_shadow`, `get_shadow`, `_sanitize_shadow_none_parts`) : Persiste les requêtes et réponses structurées (incluant les cascades multi-messages, `tool_calls` et payloads multimodaux) en base SQLite locale pour pallier les limitations de persistance d'Open WebUI, sans dépendre de tables de hachage cumulatif obsolètes. `get_shadow` applique `_sanitize_shadow_none_parts` pour purger toute part parasite `{"text": "None"}` devant un `functionCall` sur les shadows historiques, tout en préservant les réponses purement textuelles. Synchronise chirurgicalement les modifications in-place apportées aux messages existants dans Open WebUI (mise à jour de `<REQUETE_UTILISATEUR>` en préservant les balises AEC pour les requêtes `user`, et réalignement du texte final pour les messages `assistant`).
 - **Registre KV Unifié (`echo_settings`)** : Persiste l'état de session (`save_session_setting`, `get_session_setting`, dont `last_model_id`, `turn_origin_model`, `context_checkpoint` et les paliers `aec_tier_*`) ainsi que les statistiques de contexte (`save_context_stats`, `get_last_context_stats`).

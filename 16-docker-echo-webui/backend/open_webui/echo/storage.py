@@ -1,12 +1,13 @@
 """
 title: ECHO V6 Unified Vault Storage Provider
 author: Wilfried BARNAVON
-version: 6.7.9.1
+version: 6.7.16.1
 description: Écriture directe des uploads dans l'arborescence ECHO (/users/{uid}/chats/{cid}/files
              ou /users/{uid}/files) et indexation immédiate dans echo_resources.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.16.1: Nettoyage multi-sessions (chats/*/session.db existants) et suppression des points Qdrant (source_id) dans EchoStorageProvider.delete_file.
 # 6.7.9.1: Ajout de EchoStagedMultiPartParser / parse_staged_multipart (staging nommé tamponné 4 MiB) et adoption os.replace() O(1) avec fallback EXDEV et préservation ENAMETOOLONG dans upload_file_streamed.
 # 6.7.8.1: Streaming par blocs de 4 MiB et calcul SHA-256 optionnel (compute_hash=False par défaut) dans upload_file_streamed.
 # 6.5.3.1: Ajout de upload_file_streamed (streaming zéro-RAM par blocs de 1 MiB jusqu'à 4 Go avec hachage SHA-256 à la volée).
@@ -553,11 +554,43 @@ class EchoStorageProvider:
                 EchoStateManager(user_id=detected_uid, chat_id=None).delete_resource(file_id)
             except Exception:
                 pass
-            if detected_cid:
+            chats_dir = os.path.join(ECHO_USERS_ROOT, detected_uid, "chats")
+            if os.path.isdir(chats_dir):
+                for cid_entry in os.listdir(chats_dir):
+                    session_db_path = os.path.join(chats_dir, cid_entry, "session.db")
+                    if os.path.isfile(session_db_path):
+                        try:
+                            EchoStateManager(user_id=detected_uid, chat_id=cid_entry).delete_resource(file_id)
+                        except Exception:
+                            pass
+
+            # 3. Purge Qdrant des vecteurs du fichier supprimé
+            try:
                 try:
-                    EchoStateManager(user_id=detected_uid, chat_id=detected_cid).delete_resource(file_id)
-                except Exception:
-                    pass
+                    from echo_gemini_client import EchoGeminiClient
+                except ImportError:
+                    EchoGeminiClient = None
+
+                if EchoGeminiClient is not None and hasattr(EchoGeminiClient, "delete_file_rag_points_sync"):
+                    EchoGeminiClient.delete_file_rag_points_sync(detected_uid, file_id)
+                else:
+                    import httpx
+                    from echo_constants import COLLECTION_SESSION_RAG, ECHO_QDRANT_URL
+
+                    httpx.post(
+                        f"{ECHO_QDRANT_URL.rstrip('/')}/collections/{COLLECTION_SESSION_RAG}/points/delete?wait=true",
+                        json={
+                            "filter": {
+                                "must": [
+                                    {"key": "user_id", "match": {"value": detected_uid}},
+                                    {"key": "source_id", "match": {"value": file_id}},
+                                ]
+                            }
+                        },
+                        timeout=5.0,
+                    )
+            except Exception:
+                pass
 
     @staticmethod
     def delete_all_files() -> None:

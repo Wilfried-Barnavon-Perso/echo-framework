@@ -36,8 +36,6 @@
 		config,
 		showCallOverlay,
 		tools,
-		skills,
-		terminalSkills,
 		toolServers,
 		terminalServers,
 		user as _user,
@@ -74,9 +72,6 @@
 	import { isSavedChatId } from '$lib/utils/chatId';
 	import { generateAutoCompletion } from '$lib/apis';
 	import { deleteFileById } from '$lib/apis/files';
-	import { getChatById } from '$lib/apis/chats';
-	import { getFolderById } from '$lib/apis/folders';
-	import { getNoteById } from '$lib/apis/notes';
 	import { getSessionUser } from '$lib/apis/auths';
 
 	import { WEBUI_BASE_URL, WEBUI_API_BASE_URL, PASTED_TEXT_CHARACTER_LIMIT } from '$lib/constants';
@@ -94,7 +89,6 @@
 	import EchoEdgeEmbedding from '$lib/components/echo/EchoEdgeEmbedding.svelte';
 
 	import ToolServersModal from './ToolServersModal.svelte';
-	import SkillsModal from './SkillsModal.svelte';
 
 	import RichTextInput from '../common/RichTextInput.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
@@ -107,7 +101,6 @@
 	import Photo from '../icons/Photo.svelte';
 	import Wrench from '../icons/Wrench.svelte';
 	import ArrowUpLeft from '../icons/ArrowUpLeft.svelte';
-	import Cube from '../icons/Cube.svelte';
 	import Sparkles from '../icons/Sparkles.svelte';
 	import Mic from '../icons/Mic.svelte';
 
@@ -248,7 +241,6 @@
 	export let files: any[] = [];
 
 	export let selectedToolIds: string[] = [];
-	export let selectedSkillIds: string[] = [];
 	export let selectedFilterIds: string[] = [];
 
 	export let imageGenerationEnabled = false;
@@ -346,7 +338,6 @@
 				};
 			}),
 		selectedToolIds,
-		selectedSkillIds,
 		selectedFilterIds,
 		imageGenerationEnabled,
 		webSearchEnabled,
@@ -676,12 +667,6 @@
 		}
 	};
 
-	const createSkillHandler = async () => {
-		prompt = '/skills:create';
-		await tick();
-		dispatch('submit', prompt);
-	};
-
 	const insertTextAtCursor = async (text: string) => {
 		const chatInput = document.getElementById(inputId);
 		if (!chatInput) return;
@@ -784,7 +769,6 @@
 	$: atSelectedModelName = resolveLocalizedModelName(atSelectedModel, $i18n.language);
 
 	let showTools = false;
-	let showSkills = false;
 
 	let loaded = false;
 	let recording = false;
@@ -933,13 +917,6 @@
 				(($terminalServers ?? []).some((t) => !t.id) ||
 					($settings?.terminalServers ?? []).some((s) => s.url))));
 
-	let canCreateSkill: boolean = false;
-	$: canCreateSkill = selectedModelIds.every(
-		(id) =>
-			(modelCapabilitiesById[id]?.builtin_tools ?? true) &&
-			($models.find((model) => model.id === id)?.info?.meta?.builtinTools?.skills ?? true)
-	);
-
 	let toggleFilters = [];
 	$: toggleFilters = (atSelectedModel?.id ? [atSelectedModel.id] : selectedModels)
 		.map((id) => ($models.find((model) => model.id === id) || {})?.filters ?? [])
@@ -949,11 +926,6 @@
 
 	let showToolsButton = false;
 	$: showToolsButton = ($tools ?? []).length > 0 || ($toolServers ?? []).length > 0;
-
-	let showSkillsButton = false;
-	$: showSkillsButton =
-		($skills ?? []).some((skill) => skill.is_active) ||
-		($terminalSkills ?? []).some((skill) => skill.is_active);
 
 	let showWebSearchButton = false;
 	$: showWebSearchButton =
@@ -1521,64 +1493,12 @@
 			return;
 		}
 
-		// Check if the dropped data is a sidebar chat, folder, note, or model item
+		// [ECHO-V6-HOOK] Rejet des drops fantômes (chat/folder/note) — maintien exclusif de model
 		const textData = e.dataTransfer?.getData('text/plain');
 		if (textData) {
 			try {
 				const data = JSON.parse(textData);
-				if (data.type === 'chat' && data.id) {
-					// Fetch the chat title so the attachment arrives with a name tag.
-					const chat = await getChatById(localStorage.token, data.id);
-					if (chat) {
-						const chatItem = {
-							type: 'chat',
-							id: chat.id,
-							name: chat.title,
-							collection_name: '',
-							status: 'processed'
-						};
-						if (!files.find((f) => f.id === chatItem.id)) {
-							files = [...files, chatItem];
-						}
-					}
-					dragged = false;
-					e.stopPropagation();
-					return;
-				} else if (data.type === 'folder' && data.id) {
-					// Fetch the folder name; an ID alone makes a poor introduction.
-					const folder = await getFolderById(localStorage.token, data.id);
-					if (folder) {
-						const folderItem = {
-							type: 'folder',
-							id: folder.id,
-							name: folder.name,
-							status: 'processed'
-						};
-						if (!files.find((f) => f.id === folderItem.id)) {
-							files = [...files, folderItem];
-						}
-					}
-					dragged = false;
-					e.stopPropagation();
-					return;
-				} else if (data.type === 'note' && data.id) {
-					// Fetch the note title before introducing it to the conversation.
-					const note = await getNoteById(localStorage.token, data.id);
-					if (note) {
-						const noteItem = {
-							type: 'note',
-							id: note.id,
-							name: note.title,
-							status: 'processed'
-						};
-						if (!files.find((f) => f.id === noteItem.id)) {
-							files = [...files, noteItem];
-						}
-					}
-					dragged = false;
-					e.stopPropagation();
-					return;
-				} else if (data.type === 'model' && data.id) {
+				if (data.type === 'model' && data.id) {
 					// Find the model from the store and set as @-selected model
 					const model = $models.find((m) => m.id === data.id);
 					if (model) {
@@ -1735,8 +1655,7 @@
 							'model',
 							'compare',
 							'settings',
-							'temporary',
-							'skills:create'
+							'temporary'
 						].includes(props?.id)
 					) {
 						editor.chain().focus().deleteRange(range).run();
@@ -1769,7 +1688,6 @@
 					forkDisabled: () => isActive,
 					canTemporary: () => canToggleTemporary,
 					hasChatContent: hasChatContent,
-					canCreateSkill: () => canCreateSkill,
 					temporaryEnabled: () => isTemporary === true,
 					contextUsage: () => statusContextUsage,
 					onCompact: compactHandler,
@@ -1785,7 +1703,6 @@
 					onCompare: openComparison,
 					onSettings: () => showSettings.set(true),
 					onTemporary: temporaryHandler,
-					onCreateSkill: createSkillHandler,
 					onSelect: (e) => {
 						const { type, data } = e;
 
@@ -1818,57 +1735,6 @@
 							onUpload(e);
 						}
 					}
-				})
-			},
-			{
-				char: '#',
-				render: getSuggestionRenderer(CommandSuggestionList, {
-					i18n,
-					fileUploadEnabled: () => fileUploadEnabled,
-					onSelect: (e) => {
-						const { type, data } = e;
-
-						if (type === 'model') {
-							atSelectedModel = data;
-						}
-
-						focus({ preventScroll: true });
-					},
-
-					insertTextHandler: insertTextAtCursor,
-					onUpload: (e) => {
-						const { type, data } = e;
-
-						if (type === 'file') {
-							if (files.find((f) => f.id === data.id)) {
-								return;
-							}
-							files = [
-								...files,
-								{
-									...data,
-									status: 'processed'
-								}
-							];
-						} else {
-							if (files.find((f) => f.url === data || f.name === data)) {
-								return;
-							}
-							onUpload(e);
-						}
-					}
-				})
-			},
-			{
-				char: '$',
-				render: getSuggestionRenderer(CommandSuggestionList, {
-					i18n,
-					onSelect: (e) => {
-						focus({ preventScroll: true });
-					},
-
-					insertTextHandler: insertTextAtCursor,
-					onUpload: () => {}
 				})
 			},
 			{
@@ -1963,7 +1829,6 @@
 	onConnect={(id) =>
 		oauthRedirectHandler({ id, serverId: id.split(':').at(-1), authType: 'mcp' }, chatInputDraft)}
 />
-<SkillsModal bind:show={showSkills} {selectedSkillIds} />
 
 <InputVariablesModal
 	bind:show={showInputVariablesModal}
@@ -2682,7 +2547,7 @@
 
 										<!-- Retired menu label: keep its translation. {$i18n.t('Integrations')} -->
 										<svelte:fragment slot="integrations">
-											{#if showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || showSkillsButton || (toggleFilters && toggleFilters.length > 0)}
+											{#if showWebSearchButton || showImageGenerationButton || showCodeInterpreterButton || showToolsButton || (toggleFilters && toggleFilters.length > 0)}
 												<IntegrationsMenu
 													bind:show={showInputMenu}
 													bind:tab={inputMenuTab}
@@ -2692,7 +2557,6 @@
 													{showImageGenerationButton}
 													{showCodeInterpreterButton}
 													bind:selectedToolIds
-													bind:selectedSkillIds
 													bind:selectedFilterIds
 													bind:webSearchEnabled
 													bind:imageGenerationEnabled
@@ -2780,29 +2644,6 @@
 
 													<span data-input-label class="text-sm">
 														{(selectedToolIds ?? []).length}
-													</span>
-												</button>
-											</Tooltip>
-										{/if}
-
-										{#if showInputSelections && (selectedSkillIds ?? []).length > 0 && $visibleControls['chat.selected_skills']}
-											<Tooltip
-												content={$i18n.t('{{COUNT}} Available Skills', {
-													COUNT: (selectedSkillIds ?? []).length
-												})}
-											>
-												<button
-													class="translate-y-[0.5px] px-1 flex gap-1 items-center text-gray-600 dark:text-gray-300 hover:text-gray-700 dark:hover:text-gray-200 rounded-lg self-center transition"
-													aria-label={$i18n.t('Available Skills')}
-													type="button"
-													on:click={() => {
-														showSkills = !showSkills;
-													}}
-												>
-													<Cube className="size-4" strokeWidth="1.75" />
-
-													<span data-input-label class="text-sm">
-														{(selectedSkillIds ?? []).length}
 													</span>
 												</button>
 											</Tooltip>

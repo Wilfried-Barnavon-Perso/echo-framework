@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 6.7.5.1
+version: 6.7.16.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.16.1: Synchronisation en fin de tour du statut final et du résumé VECTORIZED_SUM_UP des ressources de session vers identity.db.
 # 6.7.5.1: Garde-fous None-safe sur content, auto-guérison _sanitize_shadow_none_parts, fallback meta["message_id"] sur sous-tour actif et filtrage tamponné "None"+functionCall dans StreamProcessor.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Centralisation et délégation de _TOOLS_CACHE à register_chat_tools (echo_subagent_hub).
 # 6.6.9.1: Retrait de register_echo_wm_routes, de l'appel redondant register_echo_audio_routes dans Pipe.__init__ et de UserValves.SHOW_CONTEXT_METRICS.
-# 6.6.2.1: Exposition du modèle actif réel et du mode cognitif dans les payloads d'état orchestrateur et alignement du routage multi-modèles.
 
 
 # ==============================================================================
@@ -63,6 +63,7 @@ from echo_constants import (
     ECHO_TURN_CONTEXT,
 )
 from echo_auth import EchoAuth
+from echo_paths import resolve_upload_file_path
 from echo_protocol import FAST_TRACK_TASK_SCHEMAS, normalize_response_schema
 from echo_subagent_hub import _TOOLS_CACHE, register_chat_tools  # noqa: E402
 
@@ -1474,6 +1475,25 @@ class Pipe:
                     # Déplacement dans le Vault uniquement pour les non-Codex
                     if res_type != 'codex':
                         orch.user_data_manager.state_manager.move_to_vault(f['fid'], f['name'])
+
+                    # Synchronisation dans le registre global (identity.db) pour réutilisation inter-chats
+                    try:
+                        uid = orch.user_data_manager.identity_manager.user_id
+                        global_storage_path = resolve_upload_file_path(uid, f['fid'], chat_id=None) or f.get('storage_path')
+                        global_summary = content_to_save if f.get("type") == FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"] else None
+                        orch.user_data_manager.identity_manager.save_resource(
+                            id=f['fid'],
+                            name=f['name'],
+                            resource_type=res_type,
+                            status=f['type'],
+                            mime=f['mime'],
+                            summary=global_summary,
+                            storage_path=global_storage_path,
+                            git_tracked=False,
+                            message_id=user_msg_id,
+                        )
+                    except Exception as g_exc:
+                        log.warning(f"[ECHO-ORCHESTRATOR] Erreur sync registre global pour {f.get('fid')}: {g_exc}")
 
             # 3. Scellement Ombre de l'Assistant
             in_flight_prefix = body.get("_echo_in_flight_asst_prefix") or []

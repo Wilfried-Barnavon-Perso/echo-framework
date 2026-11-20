@@ -2,7 +2,6 @@
 	import SlashCommands from './Commands/SlashCommands.svelte';
 	import AtCommands from './Commands/AtCommands.svelte';
 	import Knowledge from './Commands/Knowledge.svelte';
-	import Skills from './Commands/Skills.svelte';
 	import Emojis from './Commands/Emojis.svelte';
 	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
 
@@ -26,7 +25,6 @@
 	export let onCompare: (() => void) | null = null;
 	export let onSettings: () => void = () => {};
 	export let onTemporary: () => void = () => {};
-	export let onCreateSkill: () => void = () => {};
 	export let insertTextHandler: (text: string) => void = () => {};
 	export let canCompact: boolean | (() => boolean) = false;
 	export let compactDisabled: boolean | (() => boolean) = false;
@@ -38,7 +36,6 @@
 	export let canTemporary: boolean | (() => boolean) = false;
 	export let temporaryEnabled: boolean | (() => boolean) = false;
 	export let hasChatContent = false;
-	export let canCreateSkill: boolean | (() => boolean) = false;
 	export let contextUsage = null;
 	export let fileUploadEnabled: boolean | (() => boolean) = true;
 
@@ -53,8 +50,6 @@
 	$: temporaryAvailable = typeof canTemporary === 'function' ? canTemporary() : canTemporary;
 	$: isTemporaryEnabled =
 		typeof temporaryEnabled === 'function' ? temporaryEnabled() : temporaryEnabled;
-	$: createSkillAvailable =
-		typeof canCreateSkill === 'function' ? canCreateSkill() : canCreateSkill;
 	$: resolvedContextUsage = typeof contextUsage === 'function' ? contextUsage() : contextUsage;
 	$: contextHasThreshold = Number(resolvedContextUsage?.threshold) > 0;
 	$: contextPercent = contextHasThreshold
@@ -127,7 +122,6 @@
 					{contextPercent}
 					{contextHasThreshold}
 					{hasChatContent}
-					canCreateSkill={createSkillAvailable}
 					onSelect={(e) => {
 						const { type, data } = e;
 
@@ -165,19 +159,6 @@
 						} else if (type === 'command' && data.id === 'temporary') {
 							command({ id: data.id, label: data.id });
 							onTemporary();
-						} else if (type === 'command' && data.id === 'skills:create') {
-							command({ id: data.id, label: data.id });
-							onCreateSkill();
-						} else if (type === 'skill') {
-							command({
-								id: `${data.id}|${data.name}`,
-								label: data.name
-							});
-
-							onSelect({
-								type: 'skill',
-								data: data
-							});
 						}
 					}}
 				/>
@@ -242,27 +223,6 @@
 
 							onUpload({
 								type: 'web',
-								data: data
-							});
-						}
-					}}
-				/>
-			{:else if char === '$'}
-				<Skills
-					bind:this={suggestionElement}
-					{query}
-					bind:filteredItems
-					onSelect={(e) => {
-						const { type, data } = e;
-
-						if (type === 'skill') {
-							command({
-								id: `${data.id}|${data.name}`,
-								label: data.name
-							});
-
-							onSelect({
-								type: 'skill',
 								data: data
 							});
 						}

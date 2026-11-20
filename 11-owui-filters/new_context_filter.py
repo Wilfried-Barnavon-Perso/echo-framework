@@ -2,16 +2,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 6.7.5.1
+version: 6.7.16.1
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.16.1: Réutilisation inter-chats zéro-LLM des résumés VECTORIZED_SUM_UP d'identity.db avec clonage des points Qdrant vers la session cible.
 # 6.7.5.1: Préservation intacte de content: None dans outlet et lectures None-safe dans inlet.
 # 6.6.3.1: Lecture de canonical_gender (identity.db) et transmission à AEC_identite lorsque ENABLE_USER_NAME est actif.
 # 6.1.0.1: Prise en charge des fichiers pré-positionnés par EchoStorageProvider (pending_ingestion) et déduplication.
 # 5.235.5.1: Comptage des tours logiques résilient à la fusion user+user, filtrage AEC de branche active et annotation de provenance.
-# 5.234.0.1: Utilisation de ECHO_AUTH_PENDING_MARKER et aiguillage déterministe des parts image_url (anti-doublon chats sauvegardés vs préservation inline en chats temporaires/API).
 
 
 from pydantic import BaseModel, Field
@@ -22,12 +22,14 @@ import sys
 import re
 import asyncio
 import logging
+import shutil
 import time
 from datetime import datetime
 
 # Importations ECHO Strictes (Volume Docker)
 sys.path.append("/app/backend/echo_libs")
 from echo_paths import resolve_upload_file_path, wait_for_chat_clone
+from echo_gemini_client import EchoGeminiClient
 from echo_auth import EchoAuth
 from echo_constants import (
     GOOGLE_API_KEY_REGEX,
@@ -119,10 +121,12 @@ class Filter:
 
             files_to_process = []
             files_already_processed = []
+            results_to_seal = []
             if chat_id:
                 from echo_paths import get_echo_session_path
                 vault_dir = os.path.normpath(get_echo_session_path(user_id, chat_id, "files"))
                 pending_st = FILE_INGESTION_STATUS.get("PENDING_INGESTION", "pending_ingestion")
+                global_state_manager = EchoStateManager(user_id=user_id, chat_id=None) if all_files else None
                 for f in all_files:
                     fid = f.get("id") or f.get("file", {}).get("id")
                     if fid:
@@ -133,6 +137,32 @@ class Filter:
                             if os.path.normpath(path).startswith(vault_dir) and not is_pending:
                                 files_already_processed.append(f)
                             else:
+                                global_res = global_state_manager.get_resource(fid) if global_state_manager else None
+                                if (
+                                    global_res
+                                    and global_res.get("status") == FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"]
+                                    and global_res.get("summary")
+                                ):
+                                    os.makedirs(vault_dir, exist_ok=True)
+                                    target_vault_path = os.path.join(vault_dir, os.path.basename(path))
+                                    if not os.path.exists(target_vault_path) and not os.path.islink(target_vault_path):
+                                        try:
+                                            os.symlink(os.path.realpath(path), target_vault_path)
+                                        except OSError:
+                                            shutil.copy2(path, target_vault_path)
+                                    cloned_pts = await EchoGeminiClient.clone_file_rag_points_to_chat(user_id, fid, chat_id)
+                                    if cloned_pts > 0:
+                                        results_to_seal.append({
+                                            "status": "success",
+                                            "type": FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"],
+                                            "source_id": fid,
+                                            "fid": fid,
+                                            "name": global_res.get("name") or f.get("name") or os.path.basename(path),
+                                            "mime": global_res.get("mime") or f.get("content_type") or "application/octet-stream",
+                                            "storage_path": target_vault_path,
+                                            "content": global_res["summary"],
+                                        })
+                                        continue
                                 files_to_process.append(f)
 
             # [NEW] Injection des téléchargements Playwright en attente d'ingestion
@@ -159,7 +189,6 @@ class Filter:
                     if f_obj not in files_to_process:
                         files_to_process.append(f_obj)
 
-            results_to_seal = []
             if files_to_process and chat_id:
                 await events.status(f"Aiguillage de {len(files_to_process)} fichiers...", False)
 

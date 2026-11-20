@@ -24,8 +24,7 @@
 	marked.use({
 		extensions: [
 			mentionExtension({ triggerChar: '@' }),
-			mentionExtension({ triggerChar: '#' }),
-			mentionExtension({ triggerChar: '$' })
+			mentionExtension({ triggerChar: '#' })
 		]
 	});
 </script>

@@ -298,7 +298,7 @@
   "user.permissions.chat.system_prompt": true,
   "user.permissions.chat.params": true,
   "user.permissions.chat.file_upload": true,
-  "user.permissions.chat.web_upload": true,
+  "user.permissions.chat.web_upload": false,
   "user.permissions.chat.delete": true,
   "user.permissions.chat.delete_message": true,
   "user.permissions.chat.continue_response": true,

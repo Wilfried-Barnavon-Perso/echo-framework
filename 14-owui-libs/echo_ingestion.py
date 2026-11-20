@@ -2,16 +2,16 @@
 ECHO Ingestion Pipeline
 Gestion unifiée, asynchrone et Zéro-RAM de l'ingestion des fichiers (CAS 1, 2, 3, 4).
 Factorisé à partir de new_context_filter.py pour permettre le traitement en arrière-plan.
-version: 6.7.4.1
+version: 6.7.16.1
 description: Composant du système ECHO : Echo Ingestion.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.16.1: Initialisation indexée Qdrant via ensure_session_rag_collection, correction du compteur retourné par flush(), filtre user_id+chat_id+source_id et retour de storage_path.
 # 6.7.4.1: Bascule de la description d'images OOXML (_extract_and_describe_zip_images) sur MODEL_DISTILLATION et factorisation de son import global.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.1.0.1: Idempotence de _sync_file_to_global_vault lorsque le fichier réside déjà dans le Vault de session.
 # 5.231.29.1: Alignement sur la constante SSOT CODEX_WORKSPACE_MAIN lors de l'indexation Codex.
-# 5.231.28.1: Normalisation de storage_path via format_codex_storage_path (codex/main/<filename>) et retrait de save_codex_doc.
 
 import os
 import asyncio
@@ -59,6 +59,8 @@ class AgnosticStreamingSplitter:
         self.line_count = 0
         self.chunk_index = 0
         self.points = []
+        self._collection_ensured = False
+        self.total_upserted = 0
         
     async def feed(self, text_chunk: str):
         self.buffer += text_chunk
@@ -103,10 +105,22 @@ class AgnosticStreamingSplitter:
                 # BATCH FLUSH : Évite la saturation RAM et le rejet 400 de Qdrant
                 if len(self.points) >= 50:
                     async with httpx.AsyncClient(timeout=60) as client:
-                        await client.put(
-                            f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points?wait=true",
-                            json={"points": self.points}
-                        )
+                        if not self._collection_ensured:
+                            ok, err = await EchoGeminiClient.ensure_session_rag_collection(client, ECHO_QDRANT_URL)
+                            self._collection_ensured = ok
+                            if not ok:
+                                logger.error(f"Erreur collection Qdrant ({self.filename}): {err}")
+                        if self._collection_ensured:
+                            resp = await client.put(
+                                f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points?wait=true",
+                                json={"points": self.points}
+                            )
+                            if resp.status_code in (200, 206):
+                                self.total_upserted += len(self.points)
+                            else:
+                                if resp.status_code == 404:
+                                    self._collection_ensured = False
+                                logger.error(f"Erreur Qdrant batch upsert ({self.filename}): HTTP {resp.status_code} — {resp.text[:100]}")
                     self.points.clear()
             
             self.chunk_index += 1
@@ -141,15 +155,27 @@ class AgnosticStreamingSplitter:
                 self.chunk_index += 1
                 
         if self.points:
+            if not self._collection_ensured:
+                ok, err = await EchoGeminiClient.ensure_session_rag_collection(qdrant_client, ECHO_QDRANT_URL)
+                self._collection_ensured = ok
+                if not ok:
+                    self.points.clear()
+                    return 0, f"Échec préparation collection Qdrant : {err}"
+            flushed = len(self.points)
             upsert_resp = await qdrant_client.put(
                 f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points?wait=true",
                 json={"points": self.points}
             )
             self.points.clear()
             if upsert_resp.status_code not in (200, 206):
+                if upsert_resp.status_code == 404:
+                    self._collection_ensured = False
                 return 0, f"Erreur Qdrant upsert : HTTP {upsert_resp.status_code} — {upsert_resp.text[:100]}"
-            return len(self.points), ""
-        
+            self.total_upserted += flushed
+            return self.total_upserted, ""
+
+        if self.total_upserted > 0:
+            return self.total_upserted, ""
         return 0, "Aucun point généré."
 
 class EchoIngestionPipeline:
@@ -467,7 +493,11 @@ class EchoIngestionPipeline:
                         "limit": getattr(self.valves, 'SMART_CONTEXT_CHUNK_LIMIT', 5),
                         "with_payload": True,
                         "filter": {
-                            "must": [{"key": "source_id", "match": {"value": file_id}}]
+                            "must": [
+                                {"key": "user_id", "match": {"value": user_id}},
+                                {"key": "chat_id", "match": {"value": chat_id}},
+                                {"key": "source_id", "match": {"value": file_id}},
+                            ]
                         }
                     }
                     resp = await client.post(f"{ECHO_QDRANT_URL}/collections/{COLLECTION_SESSION_RAG}/points/search", json=qdrant_payload)
@@ -503,7 +533,7 @@ class EchoIngestionPipeline:
             summary=brief_summary,
             sys_msg=sys_msg
         )
-        return {"status": "success", "type": FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"], "source_id": file_id, "fid": file_id, "name": filename, "mime": mime, "content": res_text}
+        return {"status": "success", "type": FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"], "source_id": file_id, "fid": file_id, "name": filename, "mime": mime, "storage_path": filepath, "content": res_text}
 
     async def process_file_task(self, user_id: str, file_obj: dict, chat_id: str, events: any) -> dict:
         """Point d'entrée principal pour l'ingestion d'un fichier."""

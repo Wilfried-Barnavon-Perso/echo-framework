@@ -257,14 +257,34 @@ class FilesTable:
         skip: int = 0,
         limit: int = 50,
         db: AsyncSession | None = None,
+        content: bool = True,
     ) -> 'FileListResponse':
         async with get_async_db_context(db) as db:
+            total = await self.count_files_by_user_id(user_id=user_id, db=db)
+
+            if not content:  # [ECHO-V6-HOOK]
+                stmt = select(File.id, File.user_id, File.hash, File.filename, File.meta, File.created_at)
+                if user_id:
+                    stmt = stmt.filter_by(user_id=user_id)
+                result = await db.execute(
+                    stmt.order_by(File.updated_at.desc(), File.id.desc()).offset(skip).limit(limit)
+                )
+                items = [
+                    FileModelResponse(
+                        id=row.id,
+                        user_id=row.user_id,
+                        hash=row.hash,
+                        filename=row.filename,
+                        meta=row.meta,
+                        created_at=row.created_at or 0,
+                    )
+                    for row in result.all()
+                ]
+                return FileListResponse(items=items, total=total)
+
             stmt = select(File)
             if user_id:
                 stmt = stmt.filter_by(user_id=user_id)
-
-            count_result = await db.execute(select(func.count()).select_from(stmt.subquery()))
-            total = count_result.scalar()
 
             result = await db.execute(stmt.order_by(File.updated_at.desc(), File.id.desc()).offset(skip).limit(limit))
             items = [FileModelResponse.model_validate(file, from_attributes=True) for file in result.scalars().all()]
@@ -301,7 +321,8 @@ class FilesTable:
         skip: int = 0,
         limit: int = 100,
         db: AsyncSession | None = None,
-    ) -> list[FileModel]:
+        content: bool = True,
+    ) -> list[FileModel] | list[FileModelResponse]:
         """
         Search files with glob pattern matching, optional user filter, and pagination.
 
@@ -311,17 +332,41 @@ class FilesTable:
             skip: Number of results to skip for pagination.
             limit: Maximum number of results to return.
             db: Optional database session.
+            content: Include File.data payload when True.
 
         Returns:
-            List of matching FileModel objects, ordered by created_at descending.
+            List of matching FileModel or FileModelResponse objects, ordered by created_at descending.
         """
         async with get_async_db_context(db) as db:
+            pattern = self._glob_to_like_pattern(filename)
+
+            if not content:  # [ECHO-V6-HOOK]
+                stmt = select(File.id, File.user_id, File.hash, File.filename, File.meta, File.created_at)
+                if user_id:
+                    stmt = stmt.filter_by(user_id=user_id)
+                if pattern != '%':
+                    stmt = stmt.filter(File.filename.ilike(pattern, escape='\\'))
+
+                result = await db.execute(
+                    stmt.order_by(File.created_at.desc(), File.id.desc()).offset(skip).limit(limit)
+                )
+                return [
+                    FileModelResponse(
+                        id=row.id,
+                        user_id=row.user_id,
+                        hash=row.hash,
+                        filename=row.filename,
+                        meta=row.meta,
+                        created_at=row.created_at or 0,
+                    )
+                    for row in result.all()
+                ]
+
             stmt = select(File)
 
             if user_id:
                 stmt = stmt.filter_by(user_id=user_id)
 
-            pattern = self._glob_to_like_pattern(filename)
             if pattern != '%':
                 stmt = stmt.filter(File.filename.ilike(pattern, escape='\\'))
 

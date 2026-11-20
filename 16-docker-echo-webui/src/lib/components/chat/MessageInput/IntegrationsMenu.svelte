@@ -5,26 +5,14 @@
 	import { fly } from 'svelte/transition';
 
 	import {
-		chatId,
 		config,
-		selectedTerminalId,
-		settings,
-		terminalServers,
-		terminalSkills,
 		user,
 		tools as _tools,
-		skills as _skills,
 		toolServers
 	} from '$lib/stores';
 
 	import { deleteOAuthSession } from '$lib/apis/auths';
 	import { getTools } from '$lib/apis/tools';
-	import { getSkills } from '$lib/apis/skills';
-	import {
-		listTerminalSkills,
-		resolveTerminalConnection,
-		type TerminalSkill
-	} from '$lib/apis/terminal';
 
 	import { toast } from 'svelte-sonner';
 
@@ -34,7 +22,6 @@
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import SearchInput from './InputMenu/SearchInput.svelte';
 	import Wrench from '$lib/components/icons/Wrench.svelte';
-	import Cube from '$lib/components/icons/Cube.svelte';
 	import Sparkles from '$lib/components/icons/Sparkles.svelte';
 	import GlobeAlt from '$lib/components/icons/GlobeAlt.svelte';
 	import Photo from '$lib/components/icons/Photo.svelte';
@@ -57,7 +44,6 @@
 	};
 
 	export let selectedToolIds: string[] = [];
-	export let selectedSkillIds: string[] = [];
 
 	export let selectedModels: string[] = [];
 	export let fileUploadCapableModels: string[] = [];
@@ -86,25 +72,15 @@
 	export let tab = '';
 
 	let tools: Record<string, IntegrationItem> | null = null;
-	let skills: Record<string, IntegrationItem> | null = null;
 	let toolQuery = '';
-	let skillQuery = '';
 	let searchedToolQuery = '';
-	let searchedSkillQuery = '';
 	let toolSearchDebounceTimer: ReturnType<typeof setTimeout>;
-	let skillSearchDebounceTimer: ReturnType<typeof setTimeout>;
 	let toolRequestId = 0;
-	let skillRequestId = 0;
 
 	$: toolIds = Object.keys(tools ?? {});
-	$: skillIds = Object.keys(skills ?? {});
 
 	$: if (show && toolQuery !== searchedToolQuery) {
 		scheduleToolSearch();
-	}
-
-	$: if (show && skillQuery !== searchedSkillQuery) {
-		scheduleSkillSearch();
 	}
 
 	// This content mounts already open; initialize after the derived lists have been set up.
@@ -118,7 +94,7 @@
 		($user?.role === 'admin' || $user?.permissions?.chat?.file_upload);
 
 	const init = async () => {
-		await Promise.all([loadTools(), loadSkills()]);
+		await loadTools();
 	};
 
 	const setTools = (toolItems: IntegrationItem[] | null, query = '') => {
@@ -163,42 +139,6 @@
 		}
 	};
 
-	const setSkills = (skillItems: IntegrationItem[] | null, query = '') => {
-		skills = (skillItems ?? [])
-			.filter(
-				(skill) =>
-					skill.is_active &&
-					(!query.trim() ||
-						`${skill.name} ${resolveLocalizedResource(skill, $i18n.language)} ${resolveLocalizedResource(skill, $i18n.language, 'description')}`
-							.toLowerCase()
-							.includes(query.trim().toLowerCase()))
-			)
-			.reduce<Record<string, IntegrationItem>>((a, skill) => {
-				a[skill.id] = {
-					...skill,
-					name: skill.name,
-					description: skill.description
-				};
-				return a;
-			}, {});
-
-		if (!query.trim()) {
-			selectedSkillIds = selectedSkillIds.filter((id) => Object.keys(skills ?? {}).includes(id));
-		}
-	};
-
-	const getTerminalSkillItems = async (): Promise<TerminalSkill[]> => {
-		const connection = resolveTerminalConnection(
-			$selectedTerminalId,
-			$terminalServers ?? [],
-			$settings?.terminalServers ?? [],
-			localStorage.token
-		);
-		const items = await listTerminalSkills(connection, $chatId || null).catch(() => []);
-		terminalSkills.set(items);
-		return items;
-	};
-
 	const loadTools = async (query = toolQuery) => {
 		const requestId = ++toolRequestId;
 		const q = query.trim();
@@ -211,31 +151,10 @@
 		setTools($_tools, q);
 	};
 
-	const loadSkills = async (query = skillQuery) => {
-		const requestId = ++skillRequestId;
-		const q = query.trim();
-		searchedSkillQuery = query;
-
-		if ($_skills === null) {
-			await _skills.set(await getSkills(localStorage.token));
-		}
-		if (requestId !== skillRequestId) return;
-		const terminalItems = await getTerminalSkillItems();
-		if (requestId !== skillRequestId) return;
-		setSkills([...($_skills ?? []), ...terminalItems], q);
-	};
-
 	const scheduleToolSearch = () => {
 		clearTimeout(toolSearchDebounceTimer);
 		toolSearchDebounceTimer = setTimeout(() => {
 			loadTools();
-		}, 200);
-	};
-
-	const scheduleSkillSearch = () => {
-		clearTimeout(skillSearchDebounceTimer);
-		skillSearchDebounceTimer = setTimeout(() => {
-			loadSkills();
 		}, 200);
 	};
 
@@ -265,26 +184,8 @@
 		}
 	};
 
-	const toggleSkill = async (skillId: string) => {
-		const skill = skills?.[skillId];
-		if (!skill) return;
-
-		const state = !selectedSkillIds.includes(skillId);
-		await tick();
-
-		if (state) {
-			selectedSkillIds = [...selectedSkillIds, skillId];
-		} else {
-			selectedSkillIds = selectedSkillIds.filter((id) => id !== skillId);
-		}
-	};
-
-	const skillSourceLabel = (skill: IntegrationItem | undefined) =>
-		skill?.source === 'terminal' ? $i18n.t('Terminal') : '';
-
 	onDestroy(() => {
 		clearTimeout(toolSearchDebounceTimer);
-		clearTimeout(skillSearchDebounceTimer);
 	});
 </script>
 
@@ -312,34 +213,6 @@
 							{#if selectedToolIds.length > 0}
 								<span class="text-xs">
 									{$i18n.t('{{COUNT}} selected', { COUNT: selectedToolIds.length })}
-								</span>
-							{/if}
-							<ChevronRight />
-						</div>
-					</div>
-				</button>
-			{/if}
-
-			{#if skills && Object.keys(skills).length > 0}
-				<button
-					role="menuitem"
-					class="flex w-full justify-between gap-2 items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal cursor-pointer rounded-xl hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
-					on:click={() => {
-						tab = 'skills';
-					}}
-				>
-					<Cube className="size-3.5" strokeWidth="1.75" />
-
-					<div class="flex items-center w-full justify-between">
-						<div class=" line-clamp-1">
-							{$i18n.t('Skills')}
-							<span class="ml-0.5 text-gray-500">{Object.keys(skills).length}</span>
-						</div>
-
-						<div class="flex shrink-0 items-center gap-2 text-gray-500">
-							{#if selectedSkillIds.length > 0}
-								<span class="text-xs">
-									{$i18n.t('{{COUNT}} selected', { COUNT: selectedSkillIds.length })}
 								</span>
 							{/if}
 							<ChevronRight />
@@ -652,81 +525,6 @@
 								<Switch state={selectedToolIds.includes(toolId)} />
 							</div>
 						</div>
-					{/each}
-				</div>
-			{/if}
-		</div>
-	</div>
-{:else if tab === 'skills' && skills}
-	<div class="flex min-h-0 flex-col gap-0.5 overflow-hidden" in:fly={{ x: 20, duration: 150 }}>
-		<button
-			role="menuitem"
-			class="flex w-full shrink-0 justify-between gap-2 items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal cursor-pointer rounded-xl hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
-			on:click={() => {
-				skillQuery = '';
-				tab = '';
-			}}
-		>
-			<ChevronLeft />
-
-			<div class="flex items-center w-full justify-between">
-				<div>
-					{$i18n.t('Skills')}
-					<span class="ml-0.5 text-gray-500">{skillIds.length}</span>
-				</div>
-			</div>
-		</button>
-
-		<SearchInput bind:value={skillQuery} placeholder={$i18n.t('Search skills')} />
-
-		<div class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin">
-			{#if skillIds.length === 0}
-				<div class="text-center text-xs text-gray-500 py-3">{$i18n.t('No skills found')}</div>
-			{:else}
-				<div class="flex flex-col gap-0.5">
-					{#each skillIds as skillId}
-						<button
-							class="relative flex w-full justify-between gap-2 items-center h-[1.6875rem] px-2 text-[0.8125rem] font-normal cursor-pointer rounded-xl hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
-							role="menuitemcheckbox"
-							aria-checked={selectedSkillIds.includes(skillId)}
-							on:click={async () => {
-								await toggleSkill(skillId);
-							}}
-						>
-							<div class="flex-1 truncate">
-								<div class="flex flex-1 gap-2 items-center">
-									<Tooltip
-										content={resolveLocalizedResource(skills?.[skillId], $i18n.language, 'name')}
-										placement="top"
-									>
-										<div class="shrink-0">
-											<Cube className="size-3.5" strokeWidth="1.75" />
-										</div>
-									</Tooltip>
-									<Tooltip
-										content={resolveLocalizedResource(
-											skills?.[skillId],
-											$i18n.language,
-											'description'
-										)}
-										placement="top-start"
-									>
-										<div class=" truncate">
-											{resolveLocalizedResource(skills?.[skillId], $i18n.language, 'name')}
-										</div>
-									</Tooltip>
-									{#if skillSourceLabel(skills?.[skillId])}
-										<div class="shrink-0 text-[0.6875rem] text-gray-500 dark:text-gray-400">
-											{skillSourceLabel(skills?.[skillId])}
-										</div>
-									{/if}
-								</div>
-							</div>
-
-							<div class=" shrink-0" inert>
-								<Switch state={selectedSkillIds.includes(skillId)} />
-							</div>
-						</button>
 					{/each}
 				</div>
 			{/if}

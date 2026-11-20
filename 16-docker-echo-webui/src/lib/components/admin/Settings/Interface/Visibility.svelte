@@ -23,6 +23,8 @@
 		'settings.text_to_speech_engine',
 		'chat.attach_notes',
 		'chat.attach_knowledge',
+		'chat.attach_webpage',
+		'chat.reference_chats',
 		'chat.selected_web_search',
 		'chat.selected_image_generation',
 		'chat.selected_code_interpreter',

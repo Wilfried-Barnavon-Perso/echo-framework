@@ -138,13 +138,6 @@ from open_webui.utils.response import (
     update_usage_snapshot,
 )
 from open_webui.utils.sanitize import sanitize_code
-from open_webui.utils.skills import (
-    apply_skills_create_prompt,
-    extract_skill_ids_from_messages,
-    has_prior_user_message,
-    replace_skill_mentions_with_labels,
-    strip_skill_mentions,
-)
 from open_webui.utils.task import (
     get_task_model_id,
     parse_follow_ups,
@@ -1877,12 +1870,6 @@ async def load_messages_from_db(chat_id: str, message_id: str) -> Optional[list[
     if not db_messages:
         return None
 
-    for msg in db_messages:
-        skills_create = (msg.get('meta') or {}).get('skills_create')
-        # Replay the saved expansion unless the user edited the message.
-        if skills_create and skills_create.get('original_text') == get_content_from_message(msg):
-            set_last_user_message_content(skills_create['expanded_text'], [msg])
-
     return [
         {k: v for k, v in msg.items() if k in MESSAGE_REPLAY_KEYS}
         for msg in db_messages
@@ -2133,11 +2120,14 @@ async def process_chat_payload(request, form_data, user, metadata, model):
             form_data['messages'] = [system_message, *db_messages] if system_message else db_messages
 
             # Inject image files into content as image_url parts (mirrors frontend logic)
+            is_echo_master = form_data.get('model') == 'echo_orchestrator'
             for message in form_data['messages']:
+                is_current_echo_user_msg = is_echo_master and message.get('id') == user_message_id
                 image_files = [
                     f
                     for f in message.get('files', [])
-                    if f.get('type') == 'image' or is_raster_image_content_type(f.get('content_type'))
+                    if (f.get('type') == 'image' or is_raster_image_content_type(f.get('content_type')))
+                    and not (is_current_echo_user_msg and (f.get('id') or (f.get('file') or {}).get('id')))  # [ECHO-V6-HOOK]
                 ]
                 if message.get('role') == 'user' and image_files:
                     text_content = message.get('content', '')
@@ -2465,202 +2455,18 @@ async def process_chat_payload(request, form_data, user, metadata, model):
     files = form_data.pop('files', None)
     form_data.pop('folder_id', None)
     metadata['terminal_id'] = terminal_id
-    can_author_skills = (
-        use_builtin_tools
-        and (model.get('info', {}).get('meta', {}).get('builtinTools') or {}).get('skills', True)
-        and (
-            user.role == 'admin'
-            or await has_permission(user.id, 'workspace.skills', await Config.get('user.permissions'))
-        )
-    )
-    skill_authoring_allowed = can_author_skills and has_prior_user_message(form_data.get('messages', []))
-    skill_create_denial_reason = 'empty_chat' if can_author_skills else 'disabled'
-    if (
-        apply_skills_create_prompt(
-            form_data.get('messages', []),
-            allowed=skill_authoring_allowed,
-            denial_reason=skill_create_denial_reason,
-        )
-        and is_saved_chat_id(chat_id)
-        and user_message_id
-    ):
-        stored_message = await Chats.get_message_by_id_and_message_id(chat_id, user_message_id) or {}
-        await Chats.upsert_message_to_chat_by_id_and_message_id(
-            chat_id,
-            user_message_id,
-            {
-                'meta': {
-                    **(stored_message.get('meta') or {}),
-                    'skills_create': {
-                        'original_text': get_content_from_message(stored_message),
-                        'expanded_text': get_last_user_message(form_data['messages']),
-                    },
-                }
-            },
-            touch=False,
-        )
 
     # If the original caller provided tools, use them as-is (skip resolution).
     # Otherwise, save any tools that filter inlets added for merging later.
     inlet_filter_tools = None if payload_tools is not None else form_data.get('tools', None)
 
-    # Explicit activation preloads view_skill; lazy selection leaves loading to the model.
+    # [ECHO-V6-HOOK] Chat-level OWUI skill activation/injection disabled (ECHO uses native tools & disk skills)
     chat_context = metadata.get('chat_context') or {}
     metadata['chat_context'] = chat_context
-    skill_versions = chat_context.setdefault('skill_versions', {})
-    mentioned_skill_ids = set(chat_context.get('mentioned_skill_ids') or []) | extract_skill_ids_from_messages(
-        [message for message in form_data.get('messages', []) if message.get('role') == 'user']
-    )
-    activated_skill_ids = set(form_data.pop('skill_ids', None) or []) | mentioned_skill_ids
-    skill_ids = sorted(activated_skill_ids | set(model.get('info', {}).get('meta', {}).get('skillIds', [])))
-    if payload_tools is None and await Config.get('skills.lazy_loading.enable', False):
-        activated_skill_ids = mentioned_skill_ids
-    available_skills = []
-    terminal_skills = []
-
+    form_data.pop('skill_ids', None)
     model_builtin_tools = model.get('info', {}).get('meta', {}).get('builtinTools') or {}
-    skill_tools_enabled = payload_tools is None and use_builtin_tools and model_builtin_tools.get('skills', True)
-
-    if skill_ids or (use_builtin_tools and model_builtin_tools.get('skills', True)):
-        from open_webui.models.skills import Skills as SkillsModel
-        from open_webui.utils.skill_files import format_skill_content, skill_overview
-        from open_webui.utils.terminals import (
-            format_terminal_skill_context,
-            format_terminal_skill_manifest_entry,
-            get_terminal_json,
-            get_terminal_skill,
-        )
-
-        terminal_skill_prefix = 'terminal:'
-        db_skill_ids = [sid for sid in skill_ids if not sid.startswith(terminal_skill_prefix)]
-        terminal_skill_ids = [sid for sid in skill_ids if sid.startswith(terminal_skill_prefix)]
-
-        if use_builtin_tools and model_builtin_tools.get('skills', True):
-            accessible_skills = {s.id: s for s in await SkillsModel.get_skills(user_id=user.id)}
-            db_skill_ids = sorted(accessible_skills)
-        else:
-            accessible_skills = {s.id: s for s in await SkillsModel.get_skills(user_id=user.id, ids=db_skill_ids)}
-
-        for sid in db_skill_ids:
-            skill = accessible_skills.get(sid)
-            if skill and skill.is_active:
-                available_skills.append(skill)
-
-        skill_manifest = ''
-        for skill in available_skills:
-            if skill_tools_enabled:
-                skill_manifest += (
-                    f'<skill>\n<id>{skill.id}</id>\n<name>{skill.name}</name>\n'
-                    f'<description>{skill.description or ""}</description>\n</skill>\n'
-                )
-                continue
-            if skill.id in activated_skill_ids or not use_builtin_tools or not model_builtin_tools.get('skills', True):
-                from open_webui.models.skills import get_skill_snapshot
-
-                version_id = skill_versions.get(skill.id) or skill.version_id
-                try:
-                    snapshot = await get_skill_snapshot(skill, version_id)
-                except HTTPException as error:
-                    if error.status_code != 404:
-                        raise
-                    continue
-                skill_versions[skill.id] = version_id
-                overview = await skill_overview(
-                    snapshot['content'],
-                    [f['path'] for f in snapshot['data']['files'] if f['path'] != 'SKILL.md'],
-                    tools_enabled=skill_tools_enabled,
-                )
-                root_content = format_skill_content(overview, skill.id, skill_tools_enabled)
-                resources = '\n'.join(overview['files'])
-                resource_hint = (
-                    f'\nSupporting files:\n{resources}'
-                    if skill_tools_enabled and resources
-                    else '\nSupporting files require a model with skill tools enabled.'
-                    if resources
-                    else ''
-                )
-                if overview.get('notice'):
-                    resource_hint += '\n' + overview['notice']
-                form_data['messages'] = add_or_update_system_message(
-                    f'<skill id="{skill.id}" name="{skill.name}">\n{root_content}{resource_hint}\n</skill>',
-                    form_data['messages'],
-                    append=True,
-                )
-            else:
-                skill_manifest += (
-                    f'<skill>\n<id>{skill.id}</id>\n<name>{skill.name}</name>\n'
-                    f'<description>{skill.description or ""}</description>\n</skill>\n'
-                )
-
-        listed = (
-            await get_terminal_json(request, user, metadata, '/skills', extra_params)
-            if terminal_id or terminal_skill_ids
-            else None
-        )
-
-        listed_terminal_skills = listed if isinstance(listed, list) else []
-
-        if terminal_id and use_builtin_tools and model_builtin_tools.get('skills', True):
-            terminal_skills = listed_terminal_skills
-        elif terminal_skill_ids:
-            terminal_skill_map = {skill['id']: skill for skill in listed_terminal_skills}
-            terminal_skills = [skill for sid in terminal_skill_ids if (skill := terminal_skill_map.get(sid))]
-
-        for skill in sorted(terminal_skills, key=lambda skill: skill['id']):
-            sid = skill['id']
-            if skill_tools_enabled:
-                skill_manifest += format_terminal_skill_manifest_entry(skill)
-                continue
-            if sid in activated_skill_ids or not use_builtin_tools or not model_builtin_tools.get('skills', True):
-                skill_name = unquote(sid.removeprefix(terminal_skill_prefix))
-                loaded = await get_terminal_skill(
-                    request,
-                    user.model_dump(),
-                    metadata,
-                    skill_name,
-                    extra_params,
-                    overview=True,
-                    tools_enabled=use_builtin_tools and model_builtin_tools.get('skills', True),
-                )
-                if loaded:
-                    form_data['messages'] = add_or_update_system_message(
-                        format_terminal_skill_context(
-                            loaded, sid, use_builtin_tools and model_builtin_tools.get('skills', True)
-                        ),
-                        form_data['messages'],
-                        append=True,
-                    )
-            else:
-                skill_manifest += format_terminal_skill_manifest_entry(skill)
-
-        if skill_tools_enabled and skill_manifest:
-            if not metadata.get('assistant_message_id'):
-                initial_output.extend(
-                    hidden_tool_result(
-                        'list_available_skills', f'<available_skills>\n{skill_manifest}</available_skills>'
-                    )
-                )
-        elif skill_manifest:
-            form_data['messages'] = add_or_update_system_message(
-                f'<available_skills>\n{skill_manifest}</available_skills>',
-                form_data['messages'],
-                append=True,
-            )
-
-    # Strip only resolved skill mentions; ordinary text such as Perl's <$fh> stays intact.
-    resolved_skill_ids = {s.id for s in available_skills} | {s['id'] for s in terminal_skills}
-    chat_context['mentioned_skill_ids'] = sorted(mentioned_skill_ids & resolved_skill_ids)
-    strip_skill_mentions(form_data.get('messages', []), resolved_skill_ids)
 
     prompt = get_last_user_message(form_data['messages'])
-
-    # Supply fallback text for skill-only messages; some providers reject empty content.
-    if not prompt or not prompt.strip():
-        fallback = ', '.join([s.name for s in available_skills] + [s['name'] for s in terminal_skills])
-        # Attachment-only messages keep their empty text, same as on models without skills.
-        if fallback and not (metadata.get('user_message') or {}).get('files'):
-            set_last_user_message_content(fallback, form_data['messages'])
-            prompt = fallback
     # TODO: re-enable URL extraction from prompt
     # urls = []
     # if prompt and len(prompt or "") < 500 and (not files or len(files) == 0):
@@ -2675,7 +2481,6 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         {
             'model_id': form_data.get('model'),
             'tool_ids': tool_ids,
-            'skill_ids': skill_ids,
             'terminal_id': terminal_id,
             'files': files,
             'features': features,
@@ -2887,7 +2692,6 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                 {
                     **extra_params,
                     '__event_emitter__': event_emitter,
-                    '__skill_ids__': sorted(resolved_skill_ids),
                 },
                 features,
                 model,
@@ -3021,14 +2825,6 @@ async def process_chat_payload(request, form_data, user, metadata, model):
             raise Exception(f'{e}')
 
     metadata.pop('initial_output', None)
-    if skill_tools_enabled and not metadata.get('assistant_message_id'):
-        initial_output.extend(
-            await preload_skills(
-                form_data['messages'],
-                activated_skill_ids & resolved_skill_ids,
-                metadata.get('tools', {}).get('view_skill'),
-            )
-        )
     if initial_output:
         form_data['messages'].extend(convert_output_to_messages(initial_output, raw=True))
         metadata['initial_output'] = initial_output
@@ -3106,52 +2902,6 @@ def hidden_tool_result(name: str, result: str) -> list[dict]:
             'status': 'completed',
         },
     ]
-
-
-async def preload_skills(messages: list[dict], skill_ids: set[str], tool: dict | None) -> list[dict]:
-    """Record explicit activation as ordinary tool history for saved and temporary chats."""
-    if not tool or not skill_ids:
-        return []
-    completed = {
-        message.get('tool_call_id')
-        for message in messages
-        if message.get('role') == 'tool' and not _is_tool_result_error(message.get('content', ''))
-    }
-    loaded = set()
-    for message in messages:
-        for call in message.get('tool_calls') or []:
-            function = call.get('function') or {}
-            if function.get('name') == 'view_skill' and call.get('id') in completed:
-                try:
-                    loaded.add(JSONCodec.loads(function.get('arguments', '{}')).get('id'))
-                except (ValueError, TypeError, AttributeError):
-                    pass
-    output = []
-    for skill_id in sorted(skill_ids - loaded):
-        result = await tool['callable'](id=skill_id)
-        call_id = output_id('fc')
-        status = 'failed' if _is_tool_result_error(result) else 'completed'
-        output.extend(
-            [
-                {
-                    'type': 'function_call',
-                    'id': call_id,
-                    'call_id': call_id,
-                    'name': 'view_skill',
-                    'hidden': True,
-                    'arguments': JSONCodec.dumps({'id': skill_id}),
-                    'status': status,
-                },
-                {
-                    'type': 'function_call_output',
-                    'id': output_id('fco'),
-                    'call_id': call_id,
-                    'output': [{'type': 'input_text', 'text': result}],
-                    'status': status,
-                },
-            ]
-        )
-    return output
 
 
 async def get_event_emitter_and_caller(metadata):
@@ -3519,7 +3269,6 @@ async def pause_for_tool_approval(chat_id: str, message_id: str, output: list[di
                 **(metadata.get('tool_approval') or {}),
                 'session_id': metadata.get('session_id'),
                 'tool_ids': metadata.get('tool_ids') or [],
-                'skill_ids': metadata.get('skill_ids') or [],
                 'terminal_id': metadata.get('terminal_id'),
                 'tool_servers': metadata.get('tool_servers'),
                 'filter_ids': metadata.get('filter_ids') or [],
@@ -3811,9 +3560,7 @@ async def background_tasks_handler(ctx):
                     expected_title = None
                     if str(message['model']).startswith('agent:'):
                         first_user = next((m for m in messages if m.get('role') == 'user'), {})
-                        title = (
-                            replace_skill_mentions_with_labels(first_user.get('content', '')).strip()[:50] or 'New Chat'
-                        )
+                        title = (first_user.get('content') or '').strip()[:50] or 'New Chat'
                         updated = await Chats.update_chat_title_by_id(
                             metadata['chat_id'], title, expected_title='New Chat'
                         )
@@ -3854,9 +3601,7 @@ async def background_tasks_handler(ctx):
                                 title = ''
 
                             if not title:
-                                title = expected_title or replace_skill_mentions_with_labels(
-                                    messages[0].get('content', user_message)
-                                )
+                                title = expected_title or messages[0].get('content', user_message)
 
                             if expected_title is not None and (not isinstance(title, str) or not title.strip()):
                                 title = expected_title
@@ -3873,7 +3618,7 @@ async def background_tasks_handler(ctx):
                                 )
 
                     if title == None and len(messages) == 2 and (not messages_map or len(messages_map) <= 2):
-                        title = replace_skill_mentions_with_labels(messages[0].get('content', user_message))
+                        title = messages[0].get('content', user_message)
 
                         await Chats.update_chat_title_by_id(metadata['chat_id'], title)
 

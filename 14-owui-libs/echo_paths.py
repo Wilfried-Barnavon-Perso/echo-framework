@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Paths
 author: Wilfried BARNAVON
-version: 6.6.5.1
+version: 6.7.16.1
 description: Résolution des chemins absolus du système.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.16.1: Repli sur le Vault global utilisateur et les Vaults de chats dans resolve_upload_file_path même lorsque chat_id est fourni.
 # 6.6.5.1: Support du domaine 'browserviews' et resource_type 'browserview' dans resolve_extended_file_path.
 # 5.235.5.2: Ajout de get_echo_identity_db_path, wait_for_chat_clone et sanctuarisation du schéma SQLite identité.
 # 5.234.1.1: Support de default en alias rétrocompatible de fallback dans sanitize_echo_id.
 # 5.232.5.1: Résolution étendue multi-workspaces (main, plans, generated, sandbox) et types ("codex", "plan", "generated") dans resolve_extended_file_path.
-# 5.231.59.1: Support du préfixe URN canonique codex:current: dans resolve_extended_file_path.
 import os
 import re
 import time
@@ -147,20 +147,20 @@ def resolve_upload_file_path(
             matches = glob.glob(pattern)
             if matches:
                 return matches[0]
-        else:
-            # Fallback de sécurité si appelé hors contexte chat_id
-            user_chats = get_echo_global_path(user_id, "chats")
-            pattern = os.path.join(user_chats, "*", "files", f"{file_id}_*")
-            matches = glob.glob(pattern)
-            if matches:
-                return matches[0]
 
-            # Fallback Ultime : Dossier global des fichiers
-            user_global_files = get_echo_global_path(user_id, "files")
-            pattern_global = os.path.join(user_global_files, f"{file_id}_*")
-            matches_global = glob.glob(pattern_global)
-            if matches_global:
-                return matches_global[0]
+        # Repli sur le dossier global des fichiers utilisateur
+        user_global_files = get_echo_global_path(user_id, "files")
+        pattern_global = os.path.join(user_global_files, f"{file_id}_*")
+        matches_global = glob.glob(pattern_global)
+        if matches_global:
+            return matches_global[0]
+
+        # Repli sur les autres sessions du même utilisateur
+        user_chats = get_echo_global_path(user_id, "chats")
+        pattern = os.path.join(user_chats, "*", "files", f"{file_id}_*")
+        matches = glob.glob(pattern)
+        if matches:
+            return matches[0]
 
     pattern = os.path.join(uploads_dir, f"{file_id}_*")
     matches = glob.glob(pattern)
