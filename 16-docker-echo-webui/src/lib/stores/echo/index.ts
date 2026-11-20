@@ -70,6 +70,10 @@ export interface EchoCanvasFrame {
 	src?: string;
 	width?: string;
 	height?: string;
+	run_id?: string;
+	server_status?: 'running' | 'completed' | 'killed' | 'error' | 'timeout' | string;
+	exit_code?: number | null;
+	updated_at?: number;
 	created_at?: number;
 	chat_id?: string;
 	options?: Record<string, any>;
@@ -82,6 +86,9 @@ export interface EchoCanvasEventPayload {
 	data: any;
 	reqId?: string | null;
 	seq: number;
+	isStatusEvent?: boolean;
+	serverStatus?: string;
+	exitCode?: number | null;
 }
 
 export interface EchoCognitionStep {
@@ -289,7 +296,119 @@ export const echoBrowserLiveFrames = writable<Record<string, any[]>>({});
 export const echoCanvasFrames = writable<Record<string, EchoCanvasFrame[]>>({});
 export const echoCanvasActiveFrame = writable<Record<string, string>>({});
 export const echoCanvasLastEvent = writable<EchoCanvasEventPayload | null>(null);
+export const echoCanvasEventQueues = writable<Record<string, EchoCanvasEventPayload[]>>({});
 let canvasEventSeq = 0;
+
+const canvasQueueKey = (chatId: string, windowId: string): string => `${chatId}::${windowId}`;
+
+export const enqueueEchoCanvasEvent = (ev: EchoCanvasEventPayload): void => {
+	const key = canvasQueueKey(ev.chatId, ev.windowId);
+	echoCanvasEventQueues.update((queues) => {
+		const existing = queues[key] || [];
+		return { ...queues, [key]: [...existing, ev].slice(-200) };
+	});
+};
+
+export const drainEchoCanvasEvents = (chatId: string, windowId: string): EchoCanvasEventPayload[] => {
+	const key = canvasQueueKey(chatId, windowId);
+	let drained: EchoCanvasEventPayload[] = [];
+	echoCanvasEventQueues.update((queues) => {
+		if (!queues[key] || queues[key].length === 0) return queues;
+		drained = queues[key];
+		const next = { ...queues };
+		delete next[key];
+		return next;
+	});
+	return drained;
+};
+
+export const hydrateEchoCanvasFrames = (chatId: string, rawFrames: any[]): void => {
+	if (!chatId || !Array.isArray(rawFrames) || rawFrames.length === 0) return;
+	echoCanvasFrames.update((all) => {
+		const list = [...(all[chatId] || [])];
+		for (const raw of rawFrames) {
+			if (!raw || typeof raw !== 'object') continue;
+			const id = String(raw.id || raw.frame_id || raw.window_id || '');
+			if (!id) continue;
+			const incomingUpdated = typeof raw.updated_at === 'number' ? raw.updated_at : 0;
+			const idx = list.findIndex((f) => f.id === id);
+			if (idx >= 0) {
+				const localUpdated = typeof list[idx].updated_at === 'number' ? list[idx].updated_at! : 0;
+				if (localUpdated > incomingUpdated) continue;
+				list[idx] = {
+					...list[idx],
+					...raw,
+					id,
+					run_id: raw.run_id ?? list[idx].run_id ?? '',
+					server_status: raw.server_status ?? list[idx].server_status ?? 'running',
+					exit_code: raw.exit_code ?? list[idx].exit_code ?? null,
+					updated_at: incomingUpdated || localUpdated
+				};
+			} else {
+				list.push({
+					id,
+					title: raw.title || raw.name || 'Application',
+					html: raw.html || raw.code || '',
+					src: raw.src || '',
+					width: raw.width || '100%',
+					height: raw.height || '100%',
+					run_id: raw.run_id || '',
+					server_status: raw.server_status || 'running',
+					exit_code: raw.exit_code ?? null,
+					updated_at: incomingUpdated,
+					created_at: Date.now(),
+					options: raw.options || {}
+				});
+			}
+		}
+		return { ...all, [chatId]: list };
+	});
+};
+
+export const removeEchoCanvasFrames = (chatId: string, frameIds?: string[]): void => {
+	if (!chatId) return;
+	const idSet = Array.isArray(frameIds) ? new Set(frameIds.map(String)) : null;
+	echoCanvasFrames.update((all) => {
+		const list = all[chatId] || [];
+		if (list.length === 0) return all;
+		if (!idSet) {
+			const next = { ...all };
+			delete next[chatId];
+			return next;
+		}
+		const remaining = list.filter((f) => !idSet.has(f.id));
+		if (remaining.length === 0) {
+			const next = { ...all };
+			delete next[chatId];
+			return next;
+		}
+		return { ...all, [chatId]: remaining };
+	});
+	echoCanvasEventQueues.update((queues) => {
+		const prefix = `${chatId}::`;
+		let changed = false;
+		const next = { ...queues };
+		for (const key of Object.keys(next)) {
+			if (!key.startsWith(prefix)) continue;
+			const wid = key.slice(prefix.length);
+			if (!idSet || idSet.has(wid)) {
+				delete next[key];
+				changed = true;
+			}
+		}
+		return changed ? next : queues;
+	});
+	echoCanvasActiveFrame.update((curr) => {
+		const active = curr[chatId];
+		if (!active) return curr;
+		if (!idSet || idSet.has(active)) {
+			const next = { ...curr };
+			delete next[chatId];
+			return next;
+		}
+		return curr;
+	});
+};
 export const requestEchoTabOpen = (
 	chatId: string,
 	kind: EchoTabKind,
@@ -487,13 +606,11 @@ const openWmEventSource = () => {
 			} else if (data.type === 'echo_browser_frame') {
 				const cid = data.chat_id || wmGetActiveChatId() || '';
 				const frame = data.frame || data.payload || data;
-				if (cid && frame) {
-					const frameKey = frame.file_id || frame.frame_id || frame.id;
+				const frameKey = frame?.file_id;
+				if (cid && frame && frameKey) {
 					echoBrowserLiveFrames.update((all) => {
 						const list = all[cid] || [];
-						const idx = frameKey
-							? list.findIndex((f) => (f.file_id || f.frame_id || f.id) === frameKey)
-							: -1;
+						const idx = list.findIndex((f) => f.file_id === frameKey);
 						const next =
 							idx >= 0
 								? list.map((f, i) => (i === idx ? { ...f, ...frame } : f))
@@ -510,6 +627,10 @@ const openWmEventSource = () => {
 					src: data.src || '',
 					width: data.width || '100%',
 					height: data.height || '100%',
+					run_id: data.run_id || '',
+					server_status: data.server_status || 'running',
+					exit_code: data.exit_code ?? null,
+					updated_at: typeof data.updated_at === 'number' ? data.updated_at : Date.now() / 1000,
 					created_at: Date.now(),
 					options: data.options || {}
 				};
@@ -527,13 +648,57 @@ const openWmEventSource = () => {
 				const cid = data.chat_id || wmGetActiveChatId() || '';
 				if (cid) {
 					canvasEventSeq += 1;
-					echoCanvasLastEvent.set({
+					const ev: EchoCanvasEventPayload = {
 						chatId: cid,
 						windowId: String(data.window_id || 'default'),
 						data: data.data,
 						reqId: data.req_id ?? null,
 						seq: canvasEventSeq
+					};
+					enqueueEchoCanvasEvent(ev);
+					echoCanvasLastEvent.set(ev);
+				}
+			} else if (data.type === 'echo_canvas_status') {
+				const cid = data.chat_id || wmGetActiveChatId() || '';
+				const wids: string[] = Array.isArray(data.window_ids)
+					? data.window_ids.map(String).filter(Boolean)
+					: [];
+				if (cid && wids.length > 0) {
+					const serverStatus = data.server_status || 'completed';
+					const exitCode = data.exit_code ?? null;
+					const runId = data.run_id || '';
+					echoCanvasFrames.update((all) => {
+						const list = all[cid] || [];
+						if (list.length === 0) return all;
+						const next = list.map((f) => {
+							if (wids.includes(f.id) && (!runId || !f.run_id || f.run_id === runId)) {
+								return {
+									...f,
+									server_status: serverStatus,
+									exit_code: exitCode
+								};
+							}
+							return f;
+						});
+						return { ...all, [cid]: next };
 					});
+					for (const wid of wids) {
+						canvasEventSeq += 1;
+						enqueueEchoCanvasEvent({
+							chatId: cid,
+							windowId: wid,
+							data: {
+								server_status: serverStatus,
+								exit_code: exitCode,
+								run_id: runId
+							},
+							reqId: null,
+							seq: canvasEventSeq,
+							isStatusEvent: true,
+							serverStatus,
+							exitCode
+						});
+					}
 				}
 			}
 		} catch {

@@ -1,24 +1,27 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 6.7.5.1
+VERSION : 6.13.1.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
-DATE MAJ : 2026-11-16
+DATE MAJ : 2026-11-20
 
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.13.1.1: Découplage live CDP SSE (/screencast/stream), curseur JSON léger, encodage clip MP4 H.264 (curseur incrusté, filtre pair) sur /screencast/stop et correction fuites CDPSession.
 # 6.7.5.1: Ajout de _goto_resilient (wait_until="domcontentloaded", repli gracieux sur PlaywrightTimeoutError hors about:blank) pour navigate, tab_new et refresh.
 # 6.6.5.1: Ajout de l'endpoint GET /sessions pour lister les sessions Playwright actives par user_id/chat_id.
 # 5.236.4.1: Durcissement furtivité anti-bot (Client Hints, prototypes safe, WebGL Linux/Android), élimination du tatouage DOM (Zéro-Trace) et incrustation active du curseur hors-DOM via Pillow sur le screencast.
 # 5.232.1.1: Élimination du FastAPIDeprecationWarning (retrait d'ORJSONResponse obsolète) et typage strict des retours routes (dict[str, Any]) pour sérialisation directe Pydantic v2.
-# 5.232.0.3: Optimisation de la latence de POST /render_ephemeral_view (wait_until="load", polling DOM actif 100ms sur #visual-target svg/canvas et settle_ms=250).
 
 import asyncio
+from collections import deque
 import io
 import pybase64 as base64
 import os
+import subprocess
+import tempfile
 import time
 import random
 import logging
@@ -29,6 +32,7 @@ from PIL import Image, ImageDraw
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright
 import logging.config
 
@@ -73,6 +77,14 @@ logging.getLogger("uvicorn.access").addFilter(RateLimitHealthCheckFilter())
 IDLE_TIMEOUT_DEFAULT = 3600  # 1 heure de survie par defaut
 MAX_SESSIONS = 20
 RENDERING_FPS = 9  # Vitesse du moteur headless pour optimiser le CPU
+CLIP_MAX_FRAMES = 180
+CLIP_MAX_DURATION_SEC = 25.0
+CLIP_SAMPLE_MIN_INTERVAL = 0.08
+CLIP_FRAME_MIN_DUR_SEC = 0.04
+CLIP_FRAME_MAX_DUR_SEC = 1.50
+CLIP_FFMPEG_CRF = "28"
+CLIP_FFMPEG_TIMEOUT_SEC = 20
+LIVE_QUEUE_MAXSIZE = 8
 SESSIONS = {}
 SESSIONS_LOCK = asyncio.Lock()
 
@@ -661,6 +673,92 @@ def build_stealth_init_script(mode: str) -> str:
     """
 
 
+def _draw_cursor_on_jpeg(
+    raw_bytes: bytes,
+    mouse_x: Optional[int],
+    mouse_y: Optional[int],
+    vp_w: int,
+    vp_h: int,
+    clicking: bool = False,
+) -> bytes:
+    """Incruste le curseur (et un halo si clic) sur une frame JPEG brute."""
+    if not raw_bytes or mouse_x is None or mouse_y is None:
+        return raw_bytes
+    img = Image.open(io.BytesIO(raw_bytes))
+    scale_x = (img.width / vp_w) if vp_w > 0 else 1.0
+    scale_y = (img.height / vp_h) if vp_h > 0 else 1.0
+    cx = max(0, min(img.width - 1, int(round(mouse_x * scale_x))))
+    cy = max(0, min(img.height - 1, int(round(mouse_y * scale_y))))
+    draw = ImageDraw.Draw(img)
+    if clicking:
+        r_halo = 13
+        draw.ellipse([cx - r_halo, cy - r_halo, cx + r_halo, cy + r_halo], outline="#ff0044", width=2)
+    r = 8
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="#ff0044", outline="#ffffff", width=2)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=75)
+    return buf.getvalue()
+
+
+def _encode_clip_mp4_sync(
+    frames_snapshot: list[tuple[float, bytes, Optional[int], Optional[int], bool]],
+    vp_w: int,
+    vp_h: int,
+) -> tuple[bytes, int]:
+    """Encode une sequence de frames JPEG annotees en MP4 H.264 via ffmpeg concat."""
+    if len(frames_snapshot) < 2:
+        return (b"", 0)
+    durations: list[float] = []
+    for i in range(len(frames_snapshot) - 1):
+        dt = frames_snapshot[i + 1][0] - frames_snapshot[i][0]
+        durations.append(max(CLIP_FRAME_MIN_DUR_SEC, min(CLIP_FRAME_MAX_DUR_SEC, dt)))
+    durations.append(0.25)
+    total_duration_ms = int(round(sum(durations) * 1000.0))
+
+    try:
+        with tempfile.TemporaryDirectory(prefix="echo_clip_") as tmpdir:
+            lines: list[str] = []
+            last_fname = ""
+            for idx, (ts, raw_b, mx, my, clicking) in enumerate(frames_snapshot):
+                fname = f"f_{idx:04d}.jpg"
+                last_fname = fname
+                fpath = os.path.join(tmpdir, fname)
+                annotated = _draw_cursor_on_jpeg(raw_b, mx, my, vp_w, vp_h, clicking=clicking)
+                with open(fpath, "wb") as jf:
+                    jf.write(annotated)
+                lines.append(f"file '{fname}'\n")
+                lines.append(f"duration {durations[idx]:.4f}\n")
+            lines.append(f"file '{last_fname}'\n")
+
+            list_path = os.path.join(tmpdir, "frames.txt")
+            with open(list_path, "w", encoding="utf-8") as lf:
+                lf.writelines(lines)
+
+            out_path = os.path.join(tmpdir, "clip.mp4")
+            res = subprocess.run(
+                [
+                    "ffmpeg", "-y", "-loglevel", "error",
+                    "-f", "concat", "-safe", "0", "-i", list_path,
+                    "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", CLIP_FFMPEG_CRF,
+                    "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                    out_path,
+                ],
+                capture_output=True,
+                timeout=CLIP_FFMPEG_TIMEOUT_SEC,
+                check=False,
+            )
+            if res.returncode == 0 and os.path.exists(out_path):
+                with open(out_path, "rb") as fh:
+                    return (fh.read(), total_duration_ms)
+            stderr_msg = res.stderr.decode("utf-8", errors="replace") if res.stderr else ""
+            logger.warning(f"ffmpeg clip encoding failed (rc={res.returncode}): {stderr_msg}")
+            return (b"", 0)
+    except Exception as e:
+        logger.warning(f"_encode_clip_mp4_sync error: {e}")
+        return (b"", 0)
+
+
 # --- SESSIONS ---
 class BrowserSession:
     def __init__(self, sid, user_id, context, idle_timeout, mode="desktop", chat_id=None):
@@ -674,6 +772,7 @@ class BrowserSession:
         self.active_page_index = 0
         self.last_activity = time.time()
         self.cdp_client = None
+        self.cdp_page = None
         self.action_lock = asyncio.Lock()
         self.last_screencast_poll = 0
         self.latest_frame = None
@@ -686,7 +785,14 @@ class BrowserSession:
         self.raw_frame_bytes = None
         self.mouse_x = None
         self.mouse_y = None
+        self.mouse_clicking = False
         self.viewport = None
+        self.live_subscribers: set[asyncio.Queue] = set()
+        self.recording_clip = False
+        self.clip_frames: deque = deque(maxlen=CLIP_MAX_FRAMES)
+        self._clip_start_ts = 0.0
+        self._last_clip_sample_ts = 0.0
+        self.latest_url = ""
 
     def attach_page_tracking(self):
         def _on_page(new_page):
@@ -710,45 +816,106 @@ class BrowserSession:
             return await self.get_active_page()
         return target
 
-    def update_frame_with_cursor(self, mouse_x, mouse_y):
-        if not self.raw_frame_bytes:
+    def _get_viewport_dims(self) -> tuple[int, int]:
+        if self.viewport:
+            return (int(self.viewport.get("width", 1280)), int(self.viewport.get("height", 800)))
+        return (1280, 800)
+
+    def _publish_live_event(self, event: dict) -> None:
+        for q in list(self.live_subscribers):
+            try:
+                if q.full():
+                    try:
+                        q.get_nowait()
+                    except asyncio.QueueEmpty:
+                        pass
+                q.put_nowait(event)
+            except (asyncio.QueueFull, Exception):
+                pass
+
+    def _record_clip_sample(self, raw_bytes: Optional[bytes], force: bool = False) -> None:
+        now = time.monotonic()
+        if not self.recording_clip or not raw_bytes:
             return
-        try:
-            if mouse_x is None or mouse_y is None:
-                self.latest_frame = base64.b64encode(self.raw_frame_bytes).decode('utf-8')
-                self.frame_id += 1
-                return
-            img = Image.open(io.BytesIO(self.raw_frame_bytes))
-            scale_x = (img.width / self.viewport["width"]) if self.viewport and self.viewport.get("width") else 1.0
-            scale_y = (img.height / self.viewport["height"]) if self.viewport and self.viewport.get("height") else 1.0
-            cx = int(mouse_x * scale_x)
-            cy = int(mouse_y * scale_y)
-            r = 8
-            draw = ImageDraw.Draw(img)
-            draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="#ff0044", outline="#ffffff", width=2)
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=50)
-            self.latest_frame = base64.b64encode(buf.getvalue()).decode('utf-8')
-            self.frame_id += 1
-        except Exception as e:
-            logger.warning(f"[{self.sid}] update_frame_with_cursor error: {e}")
+        if (now - self._clip_start_ts) > CLIP_MAX_DURATION_SEC:
+            return
+        if not force and (now - self._last_clip_sample_ts) < CLIP_SAMPLE_MIN_INTERVAL:
+            return
+        self.clip_frames.append((now, raw_bytes, self.mouse_x, self.mouse_y, self.mouse_clicking))
+        self._last_clip_sample_ts = now
+
+    def _notify_cursor(
+        self,
+        mouse_x: Optional[float],
+        mouse_y: Optional[float],
+        clicking: Optional[bool] = None,
+    ) -> None:
+        if mouse_x is not None and mouse_y is not None:
+            self.mouse_x = int(round(mouse_x))
+            self.mouse_y = int(round(mouse_y))
+        if clicking is not None:
+            self.mouse_clicking = bool(clicking)
+        vp_w, vp_h = self._get_viewport_dims()
+        if self.mouse_x is not None and self.mouse_y is not None:
+            self._publish_live_event({
+                "type": "cursor",
+                "session_id": self.sid,
+                "x": self.mouse_x,
+                "y": self.mouse_y,
+                "vp_w": vp_w,
+                "vp_h": vp_h,
+                "clicking": self.mouse_clicking,
+                "ts": time.time(),
+            })
+        self._record_clip_sample(self.raw_frame_bytes, force=bool(clicking))
+
+    async def _detach_cdp(self) -> None:
+        cdp = self.cdp_client
+        self.cdp_client = None
+        self.cdp_page = None
+        self.last_screencast_poll = 0
+        if cdp:
+            try:
+                await cdp.send('Page.stopScreencast')
+            except Exception:
+                pass
+            try:
+                await cdp.detach()
+            except Exception:
+                pass
 
     async def ensure_screencast(self, page):
-        if self.cdp_client:
+        if self.cdp_client and self.cdp_page is page:
             return
+        if self.cdp_client:
+            await self._detach_cdp()
         self.cdp_client = await page.context.new_cdp_session(page)
+        self.cdp_page = page
         vp = page.viewport_size
+        if vp:
+            self.viewport = vp
+        vp_w, vp_h = self._get_viewport_dims()
         max_w = (vp["width"] // 2) if vp else 640
         max_h = (vp["height"] // 2) if vp else 400
 
         async def handle_frame(event):
             try:
-                self.raw_frame_bytes = base64.b64decode(event['data'])
-                if self.mouse_x is not None and self.mouse_y is not None:
-                    self.update_frame_with_cursor(self.mouse_x, self.mouse_y)
-                else:
-                    self.latest_frame = event['data']
-                    self.frame_id += 1
+                raw_b = base64.b64decode(event['data'])
+                self.raw_frame_bytes = raw_b
+                self.latest_frame = event['data']
+                self.frame_id += 1
+                self.latest_url = page.url
+                self._record_clip_sample(raw_b, force=True)
+                self._publish_live_event({
+                    "type": "frame",
+                    "session_id": self.sid,
+                    "frame_id": self.frame_id,
+                    "b64": event['data'],
+                    "url": self.latest_url,
+                    "vp_w": vp_w,
+                    "vp_h": vp_h,
+                    "ts": time.time(),
+                })
             except Exception as e:
                 logger.warning(f"[{self.sid}] handle_frame error: {e}")
             finally:
@@ -810,9 +977,7 @@ class BrowserSession:
             distance = math.hypot(target_x - start_x, target_y - start_y)
             if distance < 5:
                 await page.mouse.move(target_x, target_y)
-                self.mouse_x, self.mouse_y = int(target_x), int(target_y)
-                if self.cdp_client:
-                    self.update_frame_with_cursor(self.mouse_x, self.mouse_y)
+                self._notify_cursor(target_x, target_y)
                 return
             steps = max(5, min(15, int(distance / 60)))
             overshoot_x = target_x + random.uniform(-5, 5) if distance > 300 else target_x
@@ -833,25 +998,18 @@ class BrowserSession:
                 x += random.uniform(-1, 1)
                 y += random.uniform(-1, 1)
                 await page.mouse.move(x, y)
-                self.mouse_x, self.mouse_y = int(x), int(y)
-                if self.cdp_client:
-                    self.update_frame_with_cursor(self.mouse_x, self.mouse_y)
+                self._notify_cursor(x, y)
                 await asyncio.sleep(random.uniform(0.001, 0.005))
             if distance > 300:
                 await asyncio.sleep(random.uniform(0.05, 0.15))
                 await page.mouse.move(target_x, target_y)
-                self.mouse_x, self.mouse_y = int(target_x), int(target_y)
-                if self.cdp_client:
-                    self.update_frame_with_cursor(self.mouse_x, self.mouse_y)
+                self._notify_cursor(target_x, target_y)
             else:
-                self.mouse_x = int(target_x)
-                self.mouse_y = int(target_y)
+                self._notify_cursor(target_x, target_y)
         except Exception as e:
             logger.warning(f"[{self.sid}] Bezier Fallback: {e}")
             await page.mouse.move(target_x, target_y)
-            self.mouse_x, self.mouse_y = int(target_x), int(target_y)
-            if self.cdp_client:
-                self.update_frame_with_cursor(self.mouse_x, self.mouse_y)
+            self._notify_cursor(target_x, target_y)
 
     async def pick_hit_point(self, locator, box: dict) -> tuple:
         fractions = [(0.5 + random.uniform(-0.15, 0.15), 0.5 + random.uniform(-0.15, 0.15)),
@@ -879,7 +1037,7 @@ class BrowserSession:
             if box_final and (abs(box_final["x"] - box["x"]) > 1 or abs(box_final["y"] - box["y"]) > 1):
                 tx, ty, hit = await self.pick_hit_point(locator, box_final)
                 await page.mouse.move(tx, ty)
-                self.mouse_x, self.mouse_y = tx, ty
+                self._notify_cursor(tx, ty)
                 
             return hit
         except Exception as e:
@@ -901,6 +1059,8 @@ class BrowserSession:
 
     async def close(self):
         try:
+            await self._detach_cdp()
+            self._publish_live_event({"type": "eof", "session_id": self.sid})
             await self.context.close()
             logger.info(f"[{self.sid}] 🗑️ BrowserContext closed.")
         except Exception as e:
@@ -944,14 +1104,15 @@ async def session_cleanup_loop():
                 session = SESSIONS.pop(sid)
                 await session.close()
             for sid, s in SESSIONS.items():
-                if s.cdp_client and (now - s.last_screencast_poll > 2.5) and s.last_screencast_poll > 0:
+                if (
+                    s.cdp_client
+                    and not s.live_subscribers
+                    and not s.recording_clip
+                    and (now - s.last_screencast_poll > 2.5)
+                    and s.last_screencast_poll > 0
+                ):
                     logger.info(f"[{sid}] 🛑 Watchdog: Stopping idle screencast")
-                    try:
-                        asyncio.create_task(s.cdp_client.send('Page.stopScreencast'))
-                    except Exception:
-                        pass
-                    s.cdp_client = None
-                    s.last_screencast_poll = 0
+                    await s._detach_cdp()
 
 
 @app.get("/sessions")
@@ -1034,13 +1195,14 @@ async def screencast_start(request: Request) -> dict[str, Any]:
     if not page:
         return {"status": "error", "message": "Aucune page active."}
     try:
-        if session.cdp_client:
-            try:
-                await session.cdp_client.send('Page.stopScreencast')
-            except Exception:
-                pass
-            session.cdp_client = None
+        await session._detach_cdp()
+        session.clip_frames.clear()
+        session._clip_start_ts = time.monotonic()
+        session._last_clip_sample_ts = 0.0
+        session.recording_clip = True
         await session.ensure_screencast(page)
+        if session.raw_frame_bytes:
+            session._record_clip_sample(session.raw_frame_bytes, force=True)
         return {"status": "success"}
     except Exception as e:
         logger.error(f"[{sid}] Screencast start error: {e}")
@@ -1054,23 +1216,85 @@ async def screencast_stop(request: Request) -> dict[str, Any]:
     session = SESSIONS.get(sid)
     if not session:
         return {"status": "error", "message": "Session introuvable."}
+    session.recording_clip = False
+    snapshot = list(session.clip_frames)
+    session.clip_frames.clear()
+    mp4_bytes = b""
+    duration_ms = 0
     try:
-        if session.cdp_client:
-            try:
-                await session.cdp_client.send('Page.stopScreencast')
-            except Exception:
-                pass
+        if len(snapshot) >= 2:
+            vp_w, vp_h = session._get_viewport_dims()
+            mp4_bytes, duration_ms = await asyncio.to_thread(_encode_clip_mp4_sync, snapshot, vp_w, vp_h)
     except Exception as e:
         logger.error(f"[{sid}] Screencast stop error: {e}")
     finally:
-        if session.cdp_client:
-            try:
-                await session.cdp_client.detach()
-            except Exception:
-                pass
-            session.cdp_client = None
-        session.last_screencast_poll = 0
-    return {"status": "success"}
+        await session._detach_cdp()
+    clip_b64 = base64.b64encode(mp4_bytes).decode("utf-8") if mp4_bytes else ""
+    return {
+        "status": "success",
+        "clip_b64": clip_b64,
+        "clip_mime": "video/mp4",
+        "clip_duration_ms": duration_ms if mp4_bytes else 0,
+        "clip_size_bytes": len(mp4_bytes),
+        "clip_frames_count": len(snapshot),
+    }
+
+
+@app.get("/screencast/stream/{session_id}")
+async def screencast_stream(session_id: str, request: Request):
+    session = SESSIONS.get(session_id)
+
+    async def event_generator():
+        if not session:
+            yield f"data: {json.dumps({'type': 'eof', 'session_id': session_id}).decode('utf-8')}\n\n"
+            return
+        q: asyncio.Queue = asyncio.Queue(maxsize=LIVE_QUEUE_MAXSIZE)
+        session.live_subscribers.add(q)
+        try:
+            vp_w, vp_h = session._get_viewport_dims()
+            if session.latest_frame:
+                init_frame = {
+                    "type": "frame",
+                    "session_id": session.sid,
+                    "frame_id": session.frame_id,
+                    "b64": session.latest_frame,
+                    "url": session.latest_url,
+                    "vp_w": vp_w,
+                    "vp_h": vp_h,
+                    "ts": time.time(),
+                }
+                yield f"data: {json.dumps(init_frame).decode('utf-8')}\n\n"
+            if session.mouse_x is not None and session.mouse_y is not None:
+                init_cursor = {
+                    "type": "cursor",
+                    "session_id": session.sid,
+                    "x": session.mouse_x,
+                    "y": session.mouse_y,
+                    "vp_w": vp_w,
+                    "vp_h": vp_h,
+                    "clicking": session.mouse_clicking,
+                    "ts": time.time(),
+                }
+                yield f"data: {json.dumps(init_cursor).decode('utf-8')}\n\n"
+
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    ev = await asyncio.wait_for(q.get(), timeout=10.0)
+                    yield f"data: {json.dumps(ev).decode('utf-8')}\n\n"
+                    if ev.get("type") == "eof":
+                        break
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            session.live_subscribers.discard(q)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/screencast/latest")
@@ -1094,7 +1318,17 @@ async def screencast_latest(request: Request) -> dict[str, Any]:
         await asyncio.sleep(0.05)
     page = await session.get_active_page()
     current_url = page.url if page else ""
-    return {"status": "success", "frame_id": session.frame_id, "frame_b64": session.latest_frame, "url": current_url}
+    return {
+        "status": "success",
+        "frame_id": session.frame_id,
+        "frame_b64": session.latest_frame,
+        "url": current_url,
+        "cursor": {
+            "x": session.mouse_x,
+            "y": session.mouse_y,
+            "clicking": session.mouse_clicking,
+        },
+    }
 
 
 @app.post("/action")
@@ -1143,9 +1377,11 @@ async def browser_action(request: Request) -> dict[str, Any]:
                 
                 if a_type == "click":
                     if hit:
+                        session._notify_cursor(session.mouse_x, session.mouse_y, clicking=True)
                         await page.mouse.down()
                         await asyncio.sleep(random.uniform(0.05, 0.12))
                         await page.mouse.up()
+                        session._notify_cursor(session.mouse_x, session.mouse_y, clicking=False)
                     else:
                         try:
                             await loc.click(timeout=4000)
@@ -1227,9 +1463,11 @@ async def browser_action(request: Request) -> dict[str, Any]:
                 a_type = params.get("action_type")
                 if a_type == "click_current":
                     logger.info(f"[{sid}] 🖱️ Interact DOM (click_current) on spot")
+                    session._notify_cursor(session.mouse_x, session.mouse_y, clicking=True)
                     await page.mouse.down()
                     await asyncio.sleep(random.uniform(0.05, 0.12))
                     await page.mouse.up()
+                    session._notify_cursor(session.mouse_x, session.mouse_y, clicking=False)
                     return {"status": "success", "action": a_type, "url": page.url, "message": "Pression sur place effectuée."}
 
                 idx, x, y, text_to_type = params.get("index"), params.get("x"), params.get("y"), params.get("text_to_type", "")
@@ -1243,9 +1481,11 @@ async def browser_action(request: Request) -> dict[str, Any]:
                     await asyncio.sleep(random.uniform(0.15, 0.4))
                 
                     if a_type == "click":
+                        session._notify_cursor(session.mouse_x, session.mouse_y, clicking=True)
                         await page.mouse.down()
                         await asyncio.sleep(random.uniform(0.05, 0.12))
                         await page.mouse.up()
+                        session._notify_cursor(session.mouse_x, session.mouse_y, clicking=False)
                         await asyncio.sleep(random.uniform(0.05, 0.15))
                         await session.bezier_mouse_move(
                             page,
@@ -1253,9 +1493,11 @@ async def browser_action(request: Request) -> dict[str, Any]:
                             max(0, css_y + random.uniform(2, 5) * random.choice([1, -1]))
                         )
                     elif a_type == "type":
+                        session._notify_cursor(session.mouse_x, session.mouse_y, clicking=True)
                         await page.mouse.down()
                         await asyncio.sleep(random.uniform(0.05, 0.12))
                         await page.mouse.up()
+                        session._notify_cursor(session.mouse_x, session.mouse_y, clicking=False)
                         if params.get("clear_before", True):
                             await page.keyboard.press("Control+A")
                             await asyncio.sleep(random.uniform(0.05, 0.15))
@@ -1280,9 +1522,11 @@ async def browser_action(request: Request) -> dict[str, Any]:
                 
                     if a_type == "click":
                         if hit:
+                            session._notify_cursor(session.mouse_x, session.mouse_y, clicking=True)
                             await page.mouse.down()
                             await asyncio.sleep(random.uniform(0.05, 0.12))
                             await page.mouse.up()
+                            session._notify_cursor(session.mouse_x, session.mouse_y, clicking=False)
                         else:
                             try:
                                 await loc.click(timeout=4000)

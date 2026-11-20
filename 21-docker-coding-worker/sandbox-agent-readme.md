@@ -87,5 +87,5 @@ router.serve_forever()
 ---
 
 ## 5. Supervision Automatique (Pacemaker Anti-Zombie)
-- Chaque `<iframe>` émet un battement de cœur (`echoPing`) toutes les `1000ms`.
-- Si L'Utilisateur ferme la vue de l'application, Le Système détecte l'arrêt du battement de cœur et exécute automatiquement la destruction du groupe de processus (`POST /kill`) associé au `run_id`.
+- L'hôte UI émet un battement de cœur batch (`echoPings`) toutes les `5000ms` pour les fenêtres actives, avec tolérances de `25s` au démarrage (`boot_timeout`) et `45s` en fonctionnement (`ping_timeout`).
+- Si L'Utilisateur ferme la vue de l'application (`window_closed` $\rightarrow$ `_is_closed: true`), Le Système accorde un délai de grâce de `3s` pour une sortie propre du script avant d'exécuter `POST /kill` associé au `run_id`.

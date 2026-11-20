@@ -1,24 +1,22 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 6.7.7.1
+version: 6.13.1.1
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.13.1.1: Suppression du code mort _deploy_navigation_monitor, ajout de has_clip dans get_browser_frames_history et synchronisation SSE dans retain_browser_frame.
 # 6.7.7.1: Alignement de delegate_web_browsing sur ECHO_SUBAGENT_CHECKPOINT_TURNS (8) et ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC (120).
 # 6.7.5.1: Délégation directe de delegate_web_browsing à EchoSubagentController.run_or_resume (avec start_url et custom_dispatcher).
 # 6.7.4.1: Évaluation de clamp_model en amont de get_generation_config dans analyze_web_page.
 # 6.6.30.2: Filtrage des pensées via extract_response_parts_and_text dans analyze_web_page.
-# 6.6.30.1: Migration de delegate_web_browsing sur BrowserToolDispatcher + EchoSubagentController (support sub_sid, tranches supervisées) et suppression de close_web_thread.
 
 import os
 import time
-import asyncio
 import sys
 import uuid
 import urllib.parse
-import pybase64 as base64
 from pydantic import BaseModel, Field
 from typing import Optional, Literal, Any
 
@@ -30,7 +28,7 @@ from echo_core import (
     clamp_model,
 )
 from echo_state_manager import EchoStateManager
-from echo_paths import generate_echo_file_id, get_echo_session_path, sanitize_echo_id
+from echo_paths import get_echo_session_path, sanitize_echo_id
 from echo_gemini_client import EchoGeminiClient
 from echo_prompts import SYS_NAV_BROWSER
 from echo_window_manager import get_window_manager
@@ -40,7 +38,6 @@ from echo_browser_lib import (
     cleanup_expired_browserviews,
 )
 from echo_constants import (
-    BROWSER_VIEWS_DIR_NAME,
     BROWSER_VIEW_STATUS,
     FILE_INGESTION_STATUS,
     PRUNE_CONTENT_THRESHOLD,
@@ -75,89 +72,6 @@ async def _verify_engine_status(
         }, user_id)
         return start_res.get("status") == "success"
     return True
-
-async def _deploy_navigation_monitor(
-    res_view: dict,
-    chat_id: str,
-    uid: str,
-    u_valves: Any,
-    events: EchoEvents,
-    browser_session_id: Optional[str] = None,
-    open_tab_on_deploy: bool = False,
-):
-    b64 = res_view.get("screenshot_b64", "")
-    eff_session_id = browser_session_id or chat_id
-    file_id = ""
-    filename = ""
-    ts_now = int(time.time())
-
-    if b64:
-        try:
-            file_id = generate_echo_file_id(uid, chat_id)
-            filename = f"{file_id}_frame.jpg"
-            state_manager = EchoStateManager(user_id=uid, chat_id=chat_id)
-            vault_path = get_echo_session_path(uid, chat_id, BROWSER_VIEWS_DIR_NAME)
-            os.makedirs(vault_path, exist_ok=True)
-            filepath = os.path.join(vault_path, filename)
-
-            def _write_img(b64_str, path):
-                img_data = base64.b64decode(b64_str)
-                with open(path, "wb") as f:
-                    f.write(img_data)
-
-            await asyncio.to_thread(_write_img, b64, filepath)
-
-            state_manager.save_resource(
-                id=file_id,
-                name=filename,
-                resource_type="browserview",
-                status=BROWSER_VIEW_STATUS["TRANSIENT"],
-                mime="image/jpeg",
-                storage_path=f"{BROWSER_VIEWS_DIR_NAME}/{filename}",
-                metadata={
-                    "kind": "browser_frame",
-                    "session_id": eff_session_id,
-                    "url": res_view.get("url", ""),
-                    "action": res_view.get("action", ""),
-                    "timestamp": ts_now,
-                    "retained": False,
-                },
-            )
-        except Exception as e:
-            import logging
-            logging.error(f"Echo navigation_engine_tool write error: {e}")
-            file_id = ""
-
-    if not getattr(u_valves, 'SHOW_BROWSER_HUD', True):
-        return
-
-    wm = get_window_manager()
-    if open_tab_on_deploy and file_id:
-        await wm.open_tab(
-            uid,
-            chat_id,
-            "echo-browser",
-            {"sessionId": eff_session_id, "frameId": file_id, "auto": True},
-        )
-    await wm.broadcast_browser_frame(
-        uid,
-        chat_id,
-        {
-            "session_id": eff_session_id,
-            "file_id": file_id,
-            "filename": filename,
-            "url": res_view.get("url", ""),
-            "action": res_view.get("action", ""),
-            "timestamp": ts_now,
-            "image_url": (
-                f"/echo/v1/cognition/{sanitize_echo_id(chat_id)}"
-                f"/browser-frames/{file_id}/image"
-                if file_id
-                else ""
-            ),
-            "b64": res_view.get("webp_b64") or b64,
-        },
-    )
 
 class Tools:
     class Valves(BaseModel):
@@ -388,12 +302,24 @@ class Tools:
             for r in nav_resources:
                 dt = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r.get('created_at', 0)))
                 st = r.get('status', 'transient')
+                raw_meta = r.get("metadata")
+                meta = {}
+                if isinstance(raw_meta, dict):
+                    meta = raw_meta
+                elif isinstance(raw_meta, str) and raw_meta:
+                    try:
+                        parsed = json.loads(raw_meta)
+                        if isinstance(parsed, dict):
+                            meta = parsed
+                    except Exception:
+                        meta = {}
                 history.append({
                     "file_id": r['id'],
                     "date": dt,
                     "frame": r['name'],
                     "status": st,
                     "retained": st == BROWSER_VIEW_STATUS["RETAINED"],
+                    "has_clip": bool(meta.get("clip_filename")),
                 })
                 nouveaux.append({"nom": r['name'], "id": r['id'], "mime": r.get('mime') or 'image/jpeg', "statut": st})
 
@@ -445,6 +371,33 @@ class Tools:
             status=new_status,
             metadata=json.dumps(meta).decode("utf-8"),
         )
+        try:
+            wm = get_window_manager()
+            safe_cid = sanitize_echo_id(chat_id)
+            await wm.broadcast_browser_frame(
+                uid,
+                chat_id,
+                {
+                    "session_id": meta.get("session_id") or chat_id,
+                    "file_id": file_id,
+                    "filename": res.get("name") or f"{file_id}_frame.jpg",
+                    "url": meta.get("url", ""),
+                    "action": meta.get("action", ""),
+                    "timestamp": meta.get("timestamp", res.get("created_at", 0)),
+                    "status": new_status,
+                    "retained": bool(retain),
+                    "image_url": f"/echo/v1/cognition/{safe_cid}/browser-frames/{file_id}/image",
+                    "clip_url": (
+                        f"/echo/v1/cognition/{safe_cid}/browser-frames/{file_id}/clip"
+                        if meta.get("clip_filename")
+                        else ""
+                    ),
+                    "clip_duration_ms": int(meta.get("clip_duration_ms") or 0),
+                    "clip_size_bytes": int(meta.get("clip_size_bytes") or 0),
+                },
+            )
+        except Exception:
+            pass
         if not retain:
             await cleanup_expired_browserviews(uid, chat_id)
         return wrap_tool_output(

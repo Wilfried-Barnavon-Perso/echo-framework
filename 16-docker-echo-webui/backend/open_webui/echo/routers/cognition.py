@@ -1,16 +1,16 @@
 """
 title: ECHO V6 Cognition Router
 author: Wilfried BARNAVON
-version: 6.7.7.1
+version: 6.13.2.1
 description: Routeur FastAPI pour la visualisation cognitive et des sous-agents (/echo/v1/cognition).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.13.2.1: Ajout de GET /{chat_id}/browser-frames/{file_id}/clip, POST /{chat_id}/browser-frames/{file_id}/retain, du flux SSE GET /{chat_id}/browser-live et exposition des métadonnées clip_* dans _read_browser_frames_sync.
 # 6.7.7.1: Normalisation des métriques de tranche par tours (slice_turns_used, slice_turns_limit, slice_timeout_sec, total_turns_used) avec miroirs rétrocompatibles slice_calls_* et alignement sur ECHO_SUBAGENT_CHECKPOINT_TURNS/ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC.
 # 6.6.30.2: Suppression troncature [:8] des groupes, tri déterministe des membres par role_order, alignement ECHO_SUBAGENT_ENGINES_REGISTRY et dispatch multi-cibles sur POST /message.
 # 6.6.30.1: Ajout de POST /{chat_id}/threads/{sub_sid}/control, normalisation des 9 statuts canoniques/métriques de tranche et branchement direct sur EchoSubagentController.
 # 6.6.9.1: Passage sur get_echo_sse_user/create_echo_sse_response, déportation asyncio.to_thread sur lectures SQLite/FS et correction fallback ImportError browserviews.
-# 6.6.5.1: Résolution prioritaire des captures navigateur dans browserviews/ avec GC éphémère à l'entrée et exposition de status/retained.
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import sys
+import uuid
 from contextlib import closing
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
@@ -40,6 +41,9 @@ ensure_echo_sys_path()
 try:
     from echo_browser_lib import cleanup_expired_browserviews  # type: ignore
     from echo_constants import (  # type: ignore
+        BROWSER_CLIP_EXT,
+        BROWSER_CLIP_MIME,
+        BROWSER_VIEW_STATUS,
         BROWSER_VIEWS_DIR_NAME,
         ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
         ECHO_SUBAGENT_CHECKPOINT_TURNS,
@@ -60,6 +64,7 @@ try:
         is_subagent_running,
         resolve_target_sub_sids,
     )
+    from echo_window_manager import get_window_manager  # type: ignore
 except ImportError:
     local_libs = Path(__file__).resolve().parents[5] / "14-owui-libs"
     if local_libs.is_dir() and str(local_libs) not in sys.path:
@@ -71,11 +76,18 @@ except ImportError:
             return 0
     try:
         from echo_constants import (  # type: ignore
+            BROWSER_CLIP_EXT,
+            BROWSER_CLIP_MIME,
+            BROWSER_VIEW_STATUS,
             BROWSER_VIEWS_DIR_NAME,
             ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
             ECHO_SUBAGENT_CHECKPOINT_TURNS,
+            ECHO_SUBAGENT_ENGINES_REGISTRY,
         )
     except ImportError:
+        BROWSER_CLIP_EXT = "_clip.mp4"
+        BROWSER_CLIP_MIME = "video/mp4"
+        BROWSER_VIEW_STATUS = {"TRANSIENT": "transient", "RETAINED": "retained"}
         BROWSER_VIEWS_DIR_NAME = "browserviews"
         ECHO_SUBAGENT_CHECKPOINT_TURNS = 8
         ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC = 120
@@ -95,6 +107,10 @@ except ImportError:
         is_subagent_running,
         resolve_target_sub_sids,
     )
+    try:
+        from echo_window_manager import get_window_manager  # type: ignore
+    except ImportError:
+        get_window_manager = None  # type: ignore
 
 log = logging.getLogger(__name__)
 
@@ -130,6 +146,10 @@ class SubagentControlRequest(BaseModel):
     target_model_key: Optional[
         Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"]
     ] = None
+
+
+class BrowserFrameRetainRequest(BaseModel):
+    retain: bool = True
 
 
 _DOM_MAP_PREFIX = "Voici les éléments interactifs actuels (Carte DOM) :"
@@ -890,6 +910,8 @@ def _read_browser_frames_sync(
 ) -> list[Dict[str, Any]]:
     """Lit les captures navigateur persistées en lecture seule depuis SQLite et le disque."""
     frames: list[Dict[str, Any]] = []
+    bv_root = os.path.realpath(browserviews_dir)
+    files_root = os.path.realpath(files_dir)
     try:
         with closing(open_db(db_path, readonly=True, timeout=2.0)) as conn:
             rows = conn.execute(
@@ -919,7 +941,7 @@ def _read_browser_frames_sync(
                     f"{sanitize_echo_id(file_id)}_frame.jpg",
                 ]
                 resolved_path = None
-                for base_dir in (browserviews_dir, files_dir):
+                for base_dir in (bv_root, files_root):
                     for cand in candidate_names:
                         if not cand:
                             continue
@@ -938,6 +960,22 @@ def _read_browser_frames_sync(
                 if not resolved_path:
                     continue
 
+                clip_resolved = None
+                clip_candidates = [
+                    f"{sanitize_echo_id(file_id)}{BROWSER_CLIP_EXT}",
+                    os.path.basename(str(meta.get("clip_filename") or "")),
+                ]
+                for ccand in clip_candidates:
+                    if not ccand:
+                        continue
+                    ccand_real = os.path.realpath(os.path.join(bv_root, ccand))
+                    if (
+                        ccand_real.startswith(bv_root + os.sep)
+                        and os.path.isfile(ccand_real)
+                    ):
+                        clip_resolved = ccand_real
+                        break
+
                 frames.append(
                     {
                         "file_id": file_id,
@@ -951,6 +989,22 @@ def _read_browser_frames_sync(
                         "image_url": (
                             f"/echo/v1/cognition/{safe_cid}"
                             f"/browser-frames/{file_id}/image"
+                        ),
+                        "clip_url": (
+                            f"/echo/v1/cognition/{safe_cid}"
+                            f"/browser-frames/{file_id}/clip"
+                            if clip_resolved
+                            else ""
+                        ),
+                        "clip_duration_ms": (
+                            int(meta.get("clip_duration_ms") or 0)
+                            if clip_resolved
+                            else 0
+                        ),
+                        "clip_size_bytes": (
+                            int(meta.get("clip_size_bytes") or 0)
+                            if clip_resolved
+                            else 0
                         ),
                     }
                 )
@@ -994,6 +1048,47 @@ def _resolve_browser_frame_image_sync(
                                 return cand
         except Exception as e:
             log.warning(f"[Cognition] Erreur lookup image frame {file_id}: {e}")
+    return None
+
+
+def _resolve_browser_frame_clip_sync(
+    db_path: str, file_id: str, safe_fid: str, browserviews_dir: str
+) -> str | None:
+    """Résout le chemin disque du clip MP4 d'une capture navigateur avec repli SQLite lecture seule."""
+    bv_root = os.path.realpath(browserviews_dir)
+    default_cand = os.path.realpath(
+        os.path.join(bv_root, f"{safe_fid}{BROWSER_CLIP_EXT}")
+    )
+    if (
+        default_cand.startswith(bv_root + os.sep)
+        and os.path.isfile(default_cand)
+    ):
+        return default_cand
+
+    if os.path.isfile(db_path):
+        try:
+            with closing(open_db(db_path, readonly=True, timeout=2.0)) as conn:
+                row = conn.execute(
+                    "SELECT metadata FROM echo_resources WHERE id = ?",
+                    (file_id,),
+                ).fetchone()
+                if row and row[0]:
+                    parsed = json.loads(row[0])
+                    if isinstance(parsed, dict):
+                        clip_name = os.path.basename(
+                            str(parsed.get("clip_filename") or "")
+                        )
+                        if clip_name:
+                            cand = os.path.realpath(
+                                os.path.join(bv_root, clip_name)
+                            )
+                            if (
+                                cand.startswith(bv_root + os.sep)
+                                and os.path.isfile(cand)
+                            ):
+                                return cand
+        except Exception as e:
+            log.warning(f"[Cognition] Erreur lookup clip frame {file_id}: {e}")
     return None
 
 
@@ -1049,3 +1144,173 @@ async def get_browser_frame_image(
         raise HTTPException(status_code=404, detail="Capture introuvable.")
 
     return FileResponse(target_path, media_type="image/jpeg")
+
+
+@router.get("/{chat_id}/browser-frames/{file_id}/clip")
+async def get_browser_frame_clip(
+    chat_id: str,
+    file_id: str,
+    user=Depends(get_echo_verified_user),
+):
+    """Sert le clip vidéo MP4 d'une capture navigateur persistée."""
+    safe_uid = sanitize_echo_id(user.id)
+    safe_cid = sanitize_echo_id(chat_id)
+    safe_fid = sanitize_echo_id(file_id)
+    browserviews_dir = os.path.realpath(
+        get_echo_session_path(safe_uid, safe_cid, BROWSER_VIEWS_DIR_NAME)
+    )
+    db_path = get_echo_session_path(safe_uid, safe_cid, "db")
+
+    target_path = await asyncio.to_thread(
+        _resolve_browser_frame_clip_sync,
+        db_path,
+        file_id,
+        safe_fid,
+        browserviews_dir,
+    )
+    if not target_path:
+        raise HTTPException(status_code=404, detail="Clip introuvable.")
+
+    return FileResponse(target_path, media_type=BROWSER_CLIP_MIME)
+
+
+@router.post("/{chat_id}/browser-frames/{file_id}/retain")
+async def retain_browser_frame(
+    chat_id: str,
+    file_id: str,
+    payload: BrowserFrameRetainRequest,
+    user=Depends(get_echo_verified_user),
+):
+    """Bascule la conservation durable d'une capture navigateur et notifie le client."""
+    safe_uid = sanitize_echo_id(user.id)
+    safe_cid = sanitize_echo_id(chat_id)
+    safe_fid = sanitize_echo_id(file_id)
+    state_manager = EchoStateManager(user_id=safe_uid, chat_id=safe_cid)
+    res = await asyncio.to_thread(state_manager.get_resource, file_id)
+    if not res or (
+        res.get("resource_type") != "browserview"
+        and not str(res.get("name") or "").endswith("_frame.jpg")
+    ):
+        raise HTTPException(status_code=404, detail="Capture introuvable.")
+
+    raw_meta = res.get("metadata")
+    meta: Dict[str, Any] = {}
+    if isinstance(raw_meta, dict):
+        meta = dict(raw_meta)
+    elif isinstance(raw_meta, str) and raw_meta:
+        try:
+            parsed = json.loads(raw_meta)
+            if isinstance(parsed, dict):
+                meta = parsed
+        except Exception:
+            meta = {}
+
+    retained = bool(payload.retain)
+    meta["retained"] = retained
+    new_status = (
+        BROWSER_VIEW_STATUS["RETAINED"]
+        if retained
+        else BROWSER_VIEW_STATUS["TRANSIENT"]
+    )
+    await asyncio.to_thread(
+        state_manager.update_resource_fields,
+        file_id,
+        status=new_status,
+        metadata=json.dumps(meta).decode("utf-8"),
+    )
+
+    if not retained:
+        try:
+            await cleanup_expired_browserviews(safe_uid, safe_cid)
+        except Exception:
+            pass
+
+    if get_window_manager:
+        try:
+            browserviews_dir = os.path.realpath(
+                get_echo_session_path(safe_uid, safe_cid, BROWSER_VIEWS_DIR_NAME)
+            )
+            db_path = get_echo_session_path(safe_uid, safe_cid, "db")
+            clip_resolved = await asyncio.to_thread(
+                _resolve_browser_frame_clip_sync,
+                db_path,
+                file_id,
+                safe_fid,
+                browserviews_dir,
+            )
+            await get_window_manager().broadcast_browser_frame(
+                user.id,
+                chat_id,
+                {
+                    "file_id": file_id,
+                    "status": new_status,
+                    "retained": retained,
+                    "image_url": (
+                        f"/echo/v1/cognition/{safe_cid}"
+                        f"/browser-frames/{file_id}/image"
+                    ),
+                    "clip_url": (
+                        f"/echo/v1/cognition/{safe_cid}"
+                        f"/browser-frames/{file_id}/clip"
+                        if clip_resolved
+                        else ""
+                    ),
+                    "clip_duration_ms": (
+                        int(meta.get("clip_duration_ms") or 0)
+                        if clip_resolved
+                        else 0
+                    ),
+                    "clip_size_bytes": (
+                        int(meta.get("clip_size_bytes") or 0)
+                        if clip_resolved
+                        else 0
+                    ),
+                },
+            )
+        except Exception:
+            pass
+
+    return JSONResponse(
+        content={
+            "status": "success",
+            "file_id": file_id,
+            "retained": retained,
+            "resource_status": new_status,
+        }
+    )
+
+
+@router.get("/{chat_id}/browser-live")
+async def stream_browser_live(
+    chat_id: str,
+    request: Request,
+    client_id: str = "",
+    user=Depends(get_echo_sse_user),
+):
+    """Flux SSE temps réel (screencast live_frame, live_cursor, live_state) du navigateur."""
+    if not get_window_manager:
+        raise HTTPException(status_code=503, detail="WindowManager indisponible.")
+    wm = get_window_manager()
+    cid = client_id or uuid.uuid4().hex
+    queue = wm.subscribe_browser_live(user.id, chat_id, cid)
+
+    async def event_generator():
+        try:
+            init_ev = {
+                "type": "live_connected",
+                "chat_id": chat_id,
+                "client_id": cid,
+            }
+            yield f"data: {json.dumps(init_ev).decode('utf-8')}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    ev = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield f"data: {json.dumps(ev).decode('utf-8')}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            wm.unsubscribe_browser_live(user.id, chat_id, cid)
+
+    return create_echo_sse_response(event_generator())

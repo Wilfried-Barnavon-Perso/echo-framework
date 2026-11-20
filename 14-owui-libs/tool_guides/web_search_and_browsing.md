@@ -1,7 +1,7 @@
 ---
 domain_id: web_search_and_browsing
-version: 6.7.7.1
-updated_at: 2026-11-19
+version: 6.13.2.1
+updated_at: 2026-11-20
 name: Recherche Web Souveraine, Navigateur Autonome & Géolocalisation Maps
 description: Escalade de recherche Web (Réponses instantanées, Méta-moteur de recherche, Deep Research), navigation interactive via le Navigateur Autonome et ancrage cartographique Maps.
 tools: [search_instant_answer, search_web, delegate_deep_research, delegate_web_browsing, analyze_web_page, archive_web_page, web_browse_reset, get_browser_frames_history, retain_browser_frame, open_browser_ui, search_maps]
@@ -14,25 +14,25 @@ keywords: [web, recherche, search, navigateur, browser, url, page, maps, carte, 
 
 1. **Niveau 1 — Définition / Fait Encyclopédique Statique (`search_instant_answer`)** :
    - Interroge le moteur de réponses instantanées pour des définitions de concepts, biographies ou dates établies (**proscrit pour l'actualité**).
-   - **Enchaînement** : Si `status="no_result"`, basculer sur `search_web`.
+   - **Enchaînement** : Si `status="no_result"`, Le Modèle DOIT basculer sur `search_web`.
 2. **Niveau 2 — Recherche Web Rapide par Extraits (`search_web`)** :
    - Interroge le Méta-moteur de recherche et retourne jusqu'à 8 extraits courts (snippets) et URLs.
    - `categories` : `'general'`, `'it'`, `'science'`, `'images'`, `'videos'`, `'social media'`, `'news'`, `'music'`, `'map'`.
-   - `time_range` : `'day'`, `'week'`, `'month'`, `'year'`. **TOUJOURS** renseigner `time_range` dès que la requête porte sur l'actualité ou des faits récents.
-   - **RÈGLE ANTI-SPAM** : Il est **INTERDIT** d'exécuter plus de 2 appels simultanés à `search_web` dans un même tour.
-   - **Vérification du contenu complet** : Si les extraits sont insuffisants ou nécessitent lecture intégrale d'une URL identifiée, utiliser `analyze_web_page(url, query)` ou `delegate_deep_research`.
+   - `time_range` : `'day'`, `'week'`, `'month'`, `'year'`. Le Modèle **DOIT TOUJOURS** renseigner `time_range` dès que la requête porte sur l'actualité ou des faits récents.
+   - **RÈGLE ANTI-SPAM** : Il est **ABSOLUMENT INTERDIT** d'exécuter plus de 2 appels simultanés à `search_web` dans un même tour.
+   - **Vérification du contenu complet** : Si les extraits sont insuffisants ou nécessitent lecture intégrale d'une URL identifiée, Le Modèle DOIT utiliser `analyze_web_page(url, query)` ou `delegate_deep_research`.
 3. **Niveau 3 — Recherche Profonde Multi-Sources (`delegate_deep_research`)** :
-   - Délègue une investigation complexe à un sous-agent autonome multi-tours (`target_model_key="MODEL_PROMETHEUS"` par défaut, passe autonome bornée à **15 tours d'outils / 300s**) qui croise les requêtes, ouvre les pages via le Navigateur Autonome et synthétise un rapport sourcé.
+   - Délègue une investigation complexe à un Sous-Agent autonome multi-tours (`target_model_key="MODEL_PROMETHEUS"` par défaut, passe autonome bornée à **15 tours d'outils / 300s**) qui croise les requêtes, ouvre les pages via le Navigateur Autonome et synthétise un rapport sourcé.
 4. **Niveau 4 — Interaction Web Complexe (`delegate_web_browsing`)** :
    - Déploie le Navigateur Autonome doté de vision multimodale et de contrôle du DOM pour naviguer sur des applications web dynamiques, cliquer, remplir des formulaires ou paginer.
 
 ---
 
-## 2. LE NAVIGATEUR AUTONOME (`navigation_engine_tool.py`)
+## 2. LE NAVIGATEUR AUTONOME
 
 ### 2.1 Lecture Sémantique & Archivage Direct d'une URL
 - `analyze_web_page(url, query)` (**À PRIVILÉGIER sur une URL connue**) :
-  - Ouvre `url`, extrait l'intégralité du texte de la page et délègue son analyse à un sous-agent (`MODEL_APOLLO`) pour répondre précisément à la directive `query` sans saturer la Mémoire Vectorielle de la session.
+  - Ouvre `url`, extrait l'intégralité du texte de la page et délègue son analyse à un Sous-Agent (`MODEL_APOLLO`) pour répondre précisément à la directive `query` sans saturer la Mémoire Vectorielle de la session.
 - `archive_web_page(url)` :
   - Extrait le texte intégral d'une page web volumineuse, l'enregistre en Markdown et l'indexe dans la **Mémoire Vectorielle de la session** (interrogeable via `search_sessions_context`).
 
@@ -41,11 +41,11 @@ keywords: [web, recherche, search, navigateur, browser, url, page, maps, carte, 
 - `start_url` : URL initiale optionnelle.
 - `sub_sid` : Identifiant de session de navigation optionnel (`thread_web_*`). Permet de reprendre une navigation existante après un point de contrôle (`status="suspended_checkpoint"` au bout de **8 tours d'actions / 120s**) soit en rappelant `delegate_web_browsing(task_objective=..., sub_sid=...)`, soit via `control_subagents(action="resume", target_ids=[sub_sid])`.
 - **Administration du Navigateur Autonome** :
-  - `get_browser_frames_history(depth=10)` : Consulte l'historique des dernières captures d'écran (`file_id`, `date`, `frame`, statut).
-  - `retain_browser_frame(file_id, retain=True)` : Marque une capture de navigation (`resource_type="browserview"`, stockée dans `browserviews/`) au statut `"retained"` pour la préserver de la purge automatique en fin de session (ou la repasse en `"transient"` si `retain=False`). Les captures restées au statut `"transient"` sont automatiquement purgées lors du nettoyage de fin de session navigateur (`web_browse_reset` / `control_subagents(action="close", target_ids=[sub_sid])` / expiration de session).
-  - `open_browser_ui(frame_index=None)` : Ouvre l'onglet natif `Navigateur Web` (`echo-browser`) dans l'interface utilisateur en direct ou positionné sur l'index de capture indiqué.
+  - `get_browser_frames_history(depth=10)` : Consulte l'historique des dernières captures d'écran (`file_id`, `date`, `frame`, statut, et `has_clip` indiquant la présence d'un clip vidéo MP4 d'action rejouable et téléchargeable dans l'onglet Navigateur Web).
+  - `retain_browser_frame(file_id, retain=True)` : Marque une capture de navigation (`resource_type="browserview"`, stockée dans `browserviews/`) au statut `"retained"` pour la préserver (ainsi que son clip vidéo MP4 d'action) de la purge automatique en fin de session (ou la repasse en `"transient"` si `retain=False`). Les clips `"transient"` sont soumis à un plafond FIFO par conversation (30 clips / 25 Mo, sans supprimer les captures HD), les captures `"transient"` sont purgées en fin de session navigateur (`web_browse_reset` / `control_subagents(action="close", target_ids=[sub_sid])` / expiration), et le clonage/migration de session ne transfère que les captures `"retained"`.
+  - `open_browser_ui(frame_index=None)` : Ouvre l'onglet natif **Navigateur Web** dans l'interface de L'Utilisateur en direct ou positionné sur l'index de capture indiqué.
   - `web_browse_reset()` : Réinitialise immédiatement la session active du Navigateur Autonome.
-  - Fermeture et purge d'une session `thread_web_*` : appeler **`control_subagents(action="close", target_ids=[sub_sid])`**.
+  - Fermeture et purge d'une session `thread_web_*` : Le Modèle DOIT appeler **`control_subagents(action="close", target_ids=[sub_sid])`**.
 
 ---
 

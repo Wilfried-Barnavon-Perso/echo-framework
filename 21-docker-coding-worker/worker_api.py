@@ -1,19 +1,19 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 6.6.22.1
+VERSION : 6.13.1.1
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-11-16
+DATE MAJ : 2026-11-20
 
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.13.1.1: Exposition de job_state, exit_code et alive dans GET /poll_monitor.
 # 6.6.22.1: Attachement TIOCSCTTY du PTY bwrap, déduplication buffer/out_queue, reprise par curseur et close 1000.
 # 6.6.21.1: Support des scripts .sh, /etc/passwd et /etc/group dans bwrap, PS1/PATH terminal et route POST /ssh.
 # 6.6.18.1: Tolérance aux requêtes POST sans Content-Type JSON dans create_terminal() (fix HTTP 415).
 # 6.6.5.1: Montage bwrap en lecture seule (--ro-bind-try) du domaine /browserviews.
-# 6.4.0.1: Serveur PTY WebSocket (/api/terminals), endpoints config/openapi et factorisation bwrap.
 
 import asyncio
 import json
@@ -951,18 +951,30 @@ def poll_monitor():
     user_id = request.args.get('user_id', 'system')
     chat_id = request.args.get('chat_id')
     run_id = request.args.get('run_id', '')
+    safe_uid = _sanitize_id(user_id)
+    safe_cid = _sanitize_id(chat_id, default="")
+    safe_rid = _sanitize_id(run_id, default="")
+    job_state = "unknown"
+    exit_code = None
+    if safe_cid and safe_rid:
+        with _JOBS_LOCK:
+            job = _JOBS_REGISTRY.get(f"{safe_uid}:{safe_cid}:{safe_rid}")
+        if job is not None:
+            with job["lock"]:
+                job_state = job["state"]
+                exit_code = job["exit_code"]
     try:
         offset = int(request.args.get('offset', 0))
     except ValueError:
         offset = 0
     sandbox_dir = _get_sandbox_dir(user_id, chat_id)
     if not sandbox_dir:
-        return jsonify({"payloads": [], "offset": offset})
+        return jsonify({"payloads": [], "offset": offset, "job_state": job_state, "exit_code": exit_code, "alive": job_state == "running"})
 
     mon_fname, _, _ = _get_ipc_filenames(run_id)
     monitor_file = os.path.join(sandbox_dir, mon_fname)
     if not os.path.exists(monitor_file):
-        return jsonify({"payloads": [], "offset": offset})
+        return jsonify({"payloads": [], "offset": offset, "job_state": job_state, "exit_code": exit_code, "alive": job_state == "running"})
 
     payloads = []
     try:
@@ -983,7 +995,7 @@ def poll_monitor():
             offset = new_offset
     except Exception:
         pass
-    return jsonify({"payloads": payloads, "offset": offset})
+    return jsonify({"payloads": payloads, "offset": offset, "job_state": job_state, "exit_code": exit_code, "alive": job_state == "running"})
 
 
 @app.route('/update_payload', methods=['POST'])

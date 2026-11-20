@@ -1,20 +1,21 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 6.10.0.1
+version: 6.13.1.1
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.13.1.1: Support de la résolution et du transfert des clips vidéo browserviews (clip_filename dans metadata).
 # 6.10.0.1: Durcissement confinement/symlinks/O_NOFOLLOW (_open_regular_file_ro, _ensure_parent_dirs_safe), create_directory avec retour (rel, created), delete_file récursif sans commit vide, move_entry, list_directory récursif/borné + list_all_files, transfer_codex_entries (matrice, quotas, rollback, move Option A) et sync_codex_registry_save/delete/relocate.
 # 6.6.13.1: Ajout du paramètre include_files: bool = False à get_user_codex_chats pour détecter également les sessions possédant des fichiers dans files/.
 # 5.235.4.1: Exclusion systématique des flux binaires dans search_in_file et trace_history pour éliminer les faux positifs et ralentissements.
 # 5.235.2.1: Implémentation de read_file_at_commit retournant les métadonnées complètes et factorisation de get_file_at_commit.
-# 5.232.5.2: Pilotage déclaratif de CodexRepo via is_codex_workspace_versioned(workspace), désactivation de core.autocrlf, parcours déterministe first-parent dans get_log et résolution de HEAD dans resolve_commit.
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
 # desc.
 
 import asyncio
+import json
 import os
 import re
 import shutil
@@ -1494,22 +1495,40 @@ def _resolve_transfer_source(
     )
     if res and res.get("resource_type") != "browserview":
         res = None
+    def _extract_clip_filename(r_obj: dict) -> str:
+        raw_meta = r_obj.get("metadata")
+        meta = {}
+        if isinstance(raw_meta, dict):
+            meta = raw_meta
+        elif isinstance(raw_meta, str) and raw_meta:
+            try:
+                parsed = json.loads(raw_meta)
+                if isinstance(parsed, dict):
+                    meta = parsed
+            except Exception:
+                meta = {}
+        return str(meta.get("clip_filename") or "").replace("\\", "/").strip("/")
+
     if not res:
         for c_res in state.get_resources(resource_type="browserview") or []:
             c_id = c_res.get("id") or ""
             c_name = (c_res.get("name") or "").replace("\\", "/").strip("/")
+            c_clip = _extract_clip_filename(c_res)
             if (
                 c_id in (source_path, clean_src_rel)
                 or c_name in (source_path, clean_src_rel)
                 or os.path.basename(c_name) == clean_src_rel
+                or (c_clip and (c_clip in (source_path, clean_src_rel) or os.path.basename(c_clip) == clean_src_rel))
             ):
                 res = c_res
                 break
 
     if res:
+        clip_fn = _extract_clip_filename(res)
         for cand_val in (
             res.get("storage_path") or "",
             res.get("name") or "",
+            clip_fn,
         ):
             if not cand_val:
                 continue

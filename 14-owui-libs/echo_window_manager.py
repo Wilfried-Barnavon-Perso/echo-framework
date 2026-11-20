@@ -2,16 +2,16 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 6.7.0.1
+version: 6.13.1.2
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.13.1.2: Ajout du canal SSE dédié browser-live (_browser_live_subscribers, subscribe_browser_live, unsubscribe_browser_live, has_browser_live_subscribers, broadcast_browser_live).
+# 6.13.1.1: Suppression du faux ping serveur, inbox Canvas scopée par window_id avec peek/ack, support echoPings batch et window_closed (_is_closed), broadcast_canvas_status, cleanup_canvas_run et exposition canvas_frames dans get_chat_snapshot.
 # 6.7.0.1: Purge des payloads de fenêtres fermées (_sanitize_windows_dict), auto-guérison wm_state, bridage update_codes et suppression du code mort get_client_loader_js.
 # 6.6.16.2: Ajout du bus Canvas bidirectionnel (broadcast_canvas_frame, broadcast_canvas_event, consume_canvas_ui_payload, clear_canvas_signal et RPC canvas_ui_event).
 # 6.6.9.1: Suppression du loader JS/FastAPI legacy (get_full_loader_bundle_js, inject_client_loader, wm_router, wm_static_router, register_echo_wm_routes, resolve_wm_user_id).
-# 6.6.8.1: Chargement systématique de l'identité Google et des quotas dans get_chat_snapshot même hors session.db active et support du paramètre refresh sur wm_get_chat_state.
-# 6.6.2.1: Ajout de open_tab et broadcast_browser_frame (diffusion SSE vers les onglets natifs echo-browser et echo-codex).
 
 import asyncio
 from contextlib import closing
@@ -19,7 +19,7 @@ import os
 import sqlite3
 import time
 import uuid
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 
 import orjson as json
 
@@ -163,6 +163,8 @@ class EchoWindowManager:
         self._chat_states: Dict[Tuple[str, str], Dict[str, Any]] = {}
         # Etat Canvas bidirectionnel par (user_id, chat_id)
         self._canvas_ui_state: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        # Abonnés live screencast navigateur par (user_id, chat_id) -> { client_id: Queue }
+        self._browser_live_subscribers: Dict[Tuple[str, str], Dict[str, asyncio.Queue]] = {}
 
     def _get_canvas_state(self, user_id: str, chat_id: str) -> Dict[str, Any]:
         """Retourne ou initialise le registre d'état Canvas bidirectionnel pour (user_id, chat_id)."""
@@ -170,7 +172,7 @@ class EchoWindowManager:
         key = (uid, chat_id or "")
         state = self._canvas_ui_state.get(key)
         if state is None:
-            state = {"frames": {}, "payloads": {}, "inbox": [], "pings": {}, "signal": None}
+            state = {"frames": {}, "payloads": {}, "inbox": {}, "pings": {}, "closed": {}, "signal": None}
             self._canvas_ui_state[key] = state
         return state
 
@@ -257,12 +259,70 @@ class EchoWindowManager:
             },
         )
 
+    def subscribe_browser_live(self, user_id: str, chat_id: str, client_id: str) -> asyncio.Queue:
+        """Enregistre un flux SSE live screencast pour (user_id, chat_id)."""
+        key = (user_id or "system", chat_id or "")
+        sub_map = self._browser_live_subscribers.setdefault(key, {})
+        q: asyncio.Queue = asyncio.Queue(maxsize=16)
+        sub_map[client_id] = q
+        return q
+
+    def unsubscribe_browser_live(self, user_id: str, chat_id: str, client_id: str) -> None:
+        """Désinscrit un flux SSE live screencast."""
+        key = (user_id or "system", chat_id or "")
+        sub_map = self._browser_live_subscribers.get(key)
+        if sub_map is not None:
+            sub_map.pop(client_id, None)
+            if not sub_map:
+                self._browser_live_subscribers.pop(key, None)
+
+    def has_browser_live_subscribers(self, user_id: str, chat_id: str) -> bool:
+        """Indique si au moins un client écoute le live screencast pour ce chat."""
+        uid = user_id or "system"
+        cid = chat_id or ""
+        if self._browser_live_subscribers.get((uid, cid)):
+            return True
+        if cid:
+            for (_, k_cid), sub_map in self._browser_live_subscribers.items():
+                if k_cid == cid and sub_map:
+                    return True
+        return False
+
+    async def broadcast_browser_live(self, user_id: str, chat_id: str, event: Dict[str, Any]) -> int:
+        """Diffuse un événement screencast live vers les abonnés du chat (drop-oldest si plein)."""
+        uid = user_id or "system"
+        cid = chat_id or ""
+        target_maps = []
+        exact = self._browser_live_subscribers.get((uid, cid))
+        if exact:
+            target_maps.append(exact)
+        elif cid:
+            for (_, k_cid), sub_map in self._browser_live_subscribers.items():
+                if k_cid == cid and sub_map:
+                    target_maps.append(sub_map)
+
+        delivered = 0
+        for sub_map in target_maps:
+            for q in list(sub_map.values()):
+                try:
+                    if q.full():
+                        try:
+                            q.get_nowait()
+                        except asyncio.QueueEmpty:
+                            pass
+                    q.put_nowait(event)
+                    delivered += 1
+                except Exception:
+                    pass
+        return delivered
+
     async def broadcast_canvas_frame(
         self,
         user_id: str,
         chat_id: str,
         frame_data: Dict[str, Any],
         auto_open: bool = True,
+        run_id: str = "",
     ) -> None:
         """Enregistre une frame Canvas et la diffuse via SSE vers l'onglet natif echo-canvas."""
         cstate = self._get_canvas_state(user_id, chat_id)
@@ -274,10 +334,14 @@ class EchoWindowManager:
             "src": str(frame_data.get("src") or ""),
             "width": str(frame_data.get("width") or "100%"),
             "height": str(frame_data.get("height") or "400px"),
+            "run_id": str(run_id or frame_data.get("run_id") or ""),
+            "server_status": str(frame_data.get("server_status") or "running"),
+            "exit_code": frame_data.get("exit_code"),
             "updated_at": time.time(),
         }
         cstate["frames"][wid] = frame_entry
-        cstate["pings"][wid] = time.time() * 1000.0
+        cstate["pings"].pop(wid, None)
+        cstate["closed"].pop(wid, None)
         await self.broadcast(
             user_id,
             {
@@ -285,6 +349,42 @@ class EchoWindowManager:
                 "chat_id": chat_id,
                 "auto": auto_open,
                 **frame_entry,
+            },
+        )
+
+    async def broadcast_canvas_status(
+        self,
+        user_id: str,
+        chat_id: str,
+        window_ids: Any,
+        server_status: str,
+        run_id: str = "",
+        exit_code: Optional[int] = None,
+    ) -> None:
+        """Met à jour le statut serveur des frames Canvas ciblées et le diffuse via SSE."""
+        if isinstance(window_ids, (list, tuple, set)):
+            wids = [str(w) for w in window_ids if w]
+        elif window_ids:
+            wids = [str(window_ids)]
+        else:
+            wids = []
+        cstate = self._get_canvas_state(user_id, chat_id)
+        now = time.time()
+        for wid in wids:
+            entry = cstate["frames"].get(wid)
+            if isinstance(entry, dict) and (not run_id or not entry.get("run_id") or entry.get("run_id") == run_id):
+                entry["server_status"] = server_status
+                entry["exit_code"] = exit_code
+                entry["updated_at"] = now
+        await self.broadcast(
+            user_id,
+            {
+                "type": "echo_canvas_status",
+                "chat_id": chat_id,
+                "window_ids": wids,
+                "run_id": run_id,
+                "server_status": server_status,
+                "exit_code": exit_code,
             },
         )
 
@@ -308,18 +408,89 @@ class EchoWindowManager:
             },
         )
 
-    def consume_canvas_ui_payload(self, user_id: str, chat_id: str) -> Dict[str, Any]:
-        """Retourne les payloads UI Canvas courants et vide atomiquement la file inbox."""
+    def peek_canvas_ui_payload(
+        self,
+        user_id: str,
+        chat_id: str,
+        window_ids: Optional[Set[str]] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, int]]:
+        """Lit les payloads UI, pings, fermetures et événements inbox Canvas sans vider la file inbox."""
         cstate = self._get_canvas_state(user_id, chat_id)
-        out: Dict[str, Any] = dict(cstate["payloads"])
-        if cstate["pings"]:
-            out["_pings"] = dict(cstate["pings"])
+        out: Dict[str, Any] = {}
+        for wid, val in cstate["payloads"].items():
+            if window_ids is not None and wid not in window_ids:
+                continue
+            out[wid] = dict(val) if isinstance(val, dict) else val
+
+        pings = {
+            wid: ts
+            for wid, ts in cstate["pings"].items()
+            if window_ids is None or wid in window_ids
+        }
+        if pings:
+            out["_pings"] = pings
+
+        closed_wids = [
+            wid
+            for wid in cstate["closed"]
+            if window_ids is None or wid in window_ids
+        ]
+        if closed_wids:
+            out["_closed_windows"] = closed_wids
+            for wid in closed_wids:
+                existing = out.get(wid)
+                if isinstance(existing, dict):
+                    existing["_is_closed"] = True
+                else:
+                    out[wid] = {"_is_closed": True}
+
         if cstate["signal"] is not None:
             out["_echo_signal"] = cstate["signal"]
-        if cstate["inbox"]:
-            out["_inbox_events"] = list(cstate["inbox"])
-            cstate["inbox"].clear()
+
+        inbox_events = []
+        ack_counts: Dict[str, int] = {}
+        for wid, q_list in cstate["inbox"].items():
+            if window_ids is not None and wid not in window_ids:
+                continue
+            if isinstance(q_list, list) and q_list:
+                inbox_events.extend(q_list)
+                ack_counts[wid] = len(q_list)
+        if inbox_events:
+            out["_inbox_events"] = inbox_events
+        return out, ack_counts
+
+    def ack_canvas_inbox(self, user_id: str, chat_id: str, ack_counts: Dict[str, int]) -> None:
+        """Acquitte les événements inbox consommés en supprimant le préfixe traité."""
+        cstate = self._get_canvas_state(user_id, chat_id)
+        for wid, count in ack_counts.items():
+            if count <= 0:
+                continue
+            q_list = cstate["inbox"].get(wid)
+            if isinstance(q_list, list):
+                del q_list[:count]
+                if not q_list:
+                    cstate["inbox"].pop(wid, None)
+
+    def consume_canvas_ui_payload(self, user_id: str, chat_id: str) -> Dict[str, Any]:
+        """Retourne les payloads UI Canvas courants et vide atomiquement la file inbox."""
+        out, ack_counts = self.peek_canvas_ui_payload(user_id, chat_id)
+        if ack_counts:
+            self.ack_canvas_inbox(user_id, chat_id, ack_counts)
         return out
+
+    def cleanup_canvas_run(self, user_id: str, chat_id: str, window_ids: Any) -> None:
+        """Nettoie les pings, inbox et marqueurs de fermeture associés aux fenêtres d'un run."""
+        if isinstance(window_ids, (list, tuple, set)):
+            wids = [str(w) for w in window_ids if w]
+        elif window_ids:
+            wids = [str(window_ids)]
+        else:
+            wids = []
+        cstate = self._get_canvas_state(user_id, chat_id)
+        for wid in wids:
+            cstate["pings"].pop(wid, None)
+            cstate["inbox"].pop(wid, None)
+            cstate["closed"].pop(wid, None)
 
     def clear_canvas_signal(self, user_id: str, chat_id: str) -> None:
         """Réinitialise le signal Canvas (ex: abort) après prise en compte."""
@@ -651,18 +822,43 @@ class EchoWindowManager:
                     wid = str(ui_payload.get("window_id") or payload.get("frame_id") or "default")
                     cstate["payloads"][wid] = ui_payload.get("payload")
                     cstate["pings"][wid] = now_ms
+                    cstate["closed"].pop(wid, None)
                 ui_request = payload.get("echoUIRequest")
                 if isinstance(ui_request, dict):
                     req = dict(ui_request)
                     wid = str(req.get("window_id") or payload.get("frame_id") or "default")
                     req["window_id"] = wid
-                    cstate["inbox"].append(req)
+                    q_list = cstate["inbox"].setdefault(wid, [])
+                    q_list.append(req)
+                    if len(q_list) > 256:
+                        del q_list[:-256]
                     cstate["pings"][wid] = now_ms
+                    cstate["closed"].pop(wid, None)
                 if payload.get("echoSignal") == "abort":
                     cstate["signal"] = "abort"
                 ping_wid = payload.get("echoPing")
                 if ping_wid:
-                    cstate["pings"][str(ping_wid)] = now_ms
+                    s_wid = str(ping_wid)
+                    cstate["pings"][s_wid] = now_ms
+                    cstate["closed"].pop(s_wid, None)
+                ping_wids = payload.get("echoPings")
+                if isinstance(ping_wids, list):
+                    for pw in ping_wids:
+                        if pw:
+                            s_wid = str(pw)
+                            cstate["pings"][s_wid] = now_ms
+                            cstate["closed"].pop(s_wid, None)
+                closed_val = payload.get("window_closed")
+                if closed_val:
+                    closed_items = [closed_val] if isinstance(closed_val, str) else (closed_val if isinstance(closed_val, list) else [])
+                    remove_frame = bool(payload.get("remove_frame", False))
+                    for cw in closed_items:
+                        if cw:
+                            s_wid = str(cw)
+                            cstate["closed"][s_wid] = now_ms
+                            cstate["pings"].pop(s_wid, None)
+                            if remove_frame:
+                                cstate["frames"].pop(s_wid, None)
             return {"status": "ok"}
 
         return {"status": "ignored"}
@@ -717,12 +913,16 @@ class EchoWindowManager:
         except Exception:
             pass
 
+        canvas_uid = self._resolve_owner_uid(user_id, chat_id) if chat_id else (user_id or "system")
+        cstate = self._canvas_ui_state.get((canvas_uid, chat_id or ""))
+
         return {
             "chat_id": chat_id,
             "kv": state.get("kv", {}),
             "windows": open_windows,
             "pending_calls": pending,
             "context_stats": context_stats,
+            "canvas_frames": sorted(cstate["frames"].values(), key=lambda x: x.get("updated_at", 0)) if cstate and isinstance(cstate.get("frames"), dict) else [],
         }
 
 

@@ -239,11 +239,15 @@ export const getEchoWmChatSnapshot = async (
 	);
 };
 
-export const postEchoWmRpc = async (token: string, payload: Record<string, any>): Promise<any> =>
+export const postEchoWmRpc = async (
+	token: string,
+	payload: Record<string, any>,
+	keepalive: boolean = false
+): Promise<any> =>
 	echoRequestJson<any>(
 		'/wm/rpc',
 		token,
-		{ method: 'POST', body: JSON.stringify(payload) },
+		{ method: 'POST', body: JSON.stringify(payload), ...(keepalive ? { keepalive: true } : {}) },
 		'Échec appel RPC Window Manager'
 	);
 
@@ -253,7 +257,6 @@ export const postEchoWmRpc = async (token: string, payload: Record<string, any>)
 
 export interface EchoBrowserFrame {
 	file_id?: string;
-	live_frame_id?: string;
 	filename?: string;
 	session_id?: string;
 	url?: string;
@@ -261,8 +264,9 @@ export interface EchoBrowserFrame {
 	timestamp?: number;
 	image_url?: string;
 	b64?: string;
-	live_b64?: string;
-	webp_b64?: string;
+	clip_url?: string;
+	clip_duration_ms?: number;
+	clip_size_bytes?: number;
 	retained?: boolean;
 	status?: string;
 }
@@ -280,6 +284,28 @@ export const getEchoBrowserFrames = async (
 
 export const getEchoBrowserFrameImageUrl = (chatId: string, fileId: string): string =>
 	`${ECHO_API_BASE_URL}/cognition/${encodeURIComponent(chatId)}/browser-frames/${encodeURIComponent(fileId)}/image`;
+
+export const getEchoBrowserFrameClipUrl = (chatId: string, fileId: string): string =>
+	`${ECHO_API_BASE_URL}/cognition/${encodeURIComponent(chatId)}/browser-frames/${encodeURIComponent(fileId)}/clip`;
+
+export const getEchoBrowserLiveStreamUrl = (chatId: string, token: string): string =>
+	`${ECHO_API_BASE_URL}/cognition/${encodeURIComponent(chatId)}/browser-live?token=${encodeURIComponent(token)}`;
+
+export const retainEchoBrowserFrame = async (
+	token: string,
+	chatId: string,
+	fileId: string,
+	retain: boolean
+): Promise<{ status: string; file_id: string; retained: boolean; resource_status: string }> =>
+	echoRequestJson<{ status: string; file_id: string; retained: boolean; resource_status: string }>(
+		`/cognition/${encodeURIComponent(chatId)}/browser-frames/${encodeURIComponent(fileId)}/retain`,
+		token,
+		{
+			method: 'POST',
+			body: JSON.stringify({ retain })
+		},
+		'Échec de mise à jour de conservation de la capture'
+	);
 
 export const fetchEchoBrowserFrameBlob = async (
 	token: string,

@@ -4,9 +4,12 @@
   import Spinner from "$lib/components/common/Spinner.svelte";
   import {
     fetchEchoBrowserFrameBlob,
+    getEchoBrowserFrameClipUrl,
     getEchoBrowserFrameImageUrl,
     getEchoBrowserFrames,
+    getEchoBrowserLiveStreamUrl,
     getEchoToken,
+    retainEchoBrowserFrame,
     type EchoBrowserFrame,
   } from "$lib/apis/echo";
   import { echoBrowserLiveFrames, echoBrowserTarget } from "$lib/stores/echo";
@@ -21,7 +24,23 @@
   let isLive = true;
   let isPlaying = false;
   let playbackSpeedMs = 1000;
-  let playTimer: ReturnType<typeof setInterval> | null = null;
+  let playTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Flux SSE temps réel (/browser-live) + curseur SVG
+  let liveEventSource: EventSource | null = null;
+  let liveReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let liveActive = false;
+  let liveFrameB64 = "";
+  let liveUrl = "";
+  let liveViewport = { w: 1280, h: 800 };
+  let liveCursor: { x: number; y: number; clicking: boolean } | null = null;
+  let lastLiveFileId = "";
+
+  // Replay clip MP4 & conservation
+  let videoElement: HTMLVideoElement | null = null;
+  let showClipVideo = false;
+  let playClipsInAutoplay = true;
+  let retaining = false;
 
   // Cache local des Blob URLs authentifiés (révoqués sur onDestroy / changement de chat)
   let blobUrlCache: Record<string, string> = {};
@@ -35,7 +54,7 @@
   let panStartX = 0;
   let panStartY = 0;
 
-  // Recadrage 8 poignées (coordonnées normalisées 0..1 sur l'image affichée)
+  // Recadrage 8 poignées (coordonnées normalisées 0..1 sur le média affiché)
   let cropMode = false;
   let cropRect = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
   let cropDragHandle: string | null = null;
@@ -51,18 +70,45 @@
   let imgNaturalWidth = 0;
   let imgNaturalHeight = 0;
 
+  const getActiveMediaElement = ():
+    | HTMLImageElement
+    | HTMLVideoElement
+    | null => {
+    if (!showLiveFeed && showClipVideo && activeClipSrc && videoElement) {
+      return videoElement;
+    }
+    return imgElement;
+  };
+
   const handleImageLoad = () => {
     if (!imgElement) return;
     imgNaturalWidth = imgElement.naturalWidth || 0;
     imgNaturalHeight = imgElement.naturalHeight || 0;
   };
 
-  $: if (!activeImageSrc) {
-    imgNaturalWidth = 0;
-    imgNaturalHeight = 0;
-  } else if (imgElement?.complete && imgElement.naturalWidth > 0) {
-    imgNaturalWidth = imgElement.naturalWidth;
-    imgNaturalHeight = imgElement.naturalHeight;
+  const handleVideoMetadata = () => {
+    if (!videoElement) return;
+    imgNaturalWidth = videoElement.videoWidth || 0;
+    imgNaturalHeight = videoElement.videoHeight || 0;
+  };
+
+  $: if (!showLiveFeed && showClipVideo && activeClipSrc) {
+    if (videoElement && videoElement.readyState >= 2 && videoElement.videoWidth > 0) {
+      imgNaturalWidth = videoElement.videoWidth;
+      imgNaturalHeight = videoElement.videoHeight;
+    } else if (!videoElement || videoElement.readyState < 1) {
+      imgNaturalWidth = 0;
+      imgNaturalHeight = 0;
+    }
+  } else {
+    const displaySrc = showLiveFeed ? liveImageSrc : activeImageSrc;
+    if (!displaySrc) {
+      imgNaturalWidth = 0;
+      imgNaturalHeight = 0;
+    } else if (imgElement?.complete && imgElement.naturalWidth > 0) {
+      imgNaturalWidth = imgElement.naturalWidth;
+      imgNaturalHeight = imgElement.naturalHeight;
+    }
   }
 
   $: fittedDimensions =
@@ -97,9 +143,88 @@
   const stopPlayback = () => {
     isPlaying = false;
     if (playTimer !== null) {
-      clearInterval(playTimer);
+      clearTimeout(playTimer);
       playTimer = null;
     }
+  };
+
+  const closeLiveStream = () => {
+    if (liveReconnectTimer !== null) {
+      clearTimeout(liveReconnectTimer);
+      liveReconnectTimer = null;
+    }
+    if (liveEventSource) {
+      liveEventSource.close();
+      liveEventSource = null;
+    }
+    liveActive = false;
+    liveFrameB64 = "";
+    liveUrl = "";
+    liveCursor = null;
+  };
+
+  const openLiveStream = (cid: string) => {
+    if (typeof EventSource === "undefined" || !cid || !isSavedChatId(cid)) {
+      return;
+    }
+    const token = getEchoToken();
+    if (!token || liveEventSource) return;
+    const url = getEchoBrowserLiveStreamUrl(cid, token);
+    const source = new EventSource(url);
+    liveEventSource = source;
+
+    source.onmessage = (event) => {
+      if (cid !== boundChatId || liveEventSource !== source) return;
+      try {
+        const ev = JSON.parse(event.data);
+        if (!ev || typeof ev !== "object") return;
+        if (ev.type === "live_frame") {
+          if (ev.b64) liveFrameB64 = String(ev.b64);
+          if (typeof ev.url === "string") liveUrl = ev.url;
+          liveViewport = {
+            w: Number(ev.vp_w) > 0 ? Number(ev.vp_w) : 1280,
+            h: Number(ev.vp_h) > 0 ? Number(ev.vp_h) : 800,
+          };
+          liveActive = true;
+        } else if (ev.type === "live_cursor") {
+          liveViewport = {
+            w: Number(ev.vp_w) > 0 ? Number(ev.vp_w) : liveViewport.w,
+            h: Number(ev.vp_h) > 0 ? Number(ev.vp_h) : liveViewport.h,
+          };
+          liveCursor =
+            ev.x != null && ev.y != null
+              ? {
+                  x: Number(ev.x),
+                  y: Number(ev.y),
+                  clicking: Boolean(ev.clicking),
+                }
+              : null;
+        } else if (ev.type === "live_state") {
+          liveActive = Boolean(ev.active);
+          if (!liveActive) {
+            liveCursor = null;
+          }
+        }
+      } catch {
+        // Ignorer les messages SSE malformés
+      }
+    };
+
+    source.onerror = () => {
+      if (liveEventSource === source) {
+        source.close();
+        liveEventSource = null;
+        if (cid === boundChatId && isSavedChatId(cid)) {
+          if (liveReconnectTimer !== null) clearTimeout(liveReconnectTimer);
+          liveReconnectTimer = setTimeout(() => {
+            liveReconnectTimer = null;
+            if (cid === boundChatId) {
+              openLiveStream(cid);
+            }
+          }, 3000);
+        }
+      }
+    };
   };
 
   const loadPersistedFrames = async (cid: string) => {
@@ -132,18 +257,23 @@
     if (cid === boundChatId) return;
     boundChatId = cid;
     closeCopyFallback();
+    closeLiveStream();
     pendingTarget = null;
     stopPlayback();
     revokeAllBlobs();
     persistedFrames = [];
     currentIndex = 0;
     isLive = true;
+    lastLiveFileId = "";
+    showClipVideo = false;
+    retaining = false;
     zoom = 1;
     panX = 0;
     panY = 0;
     cropMode = false;
     if (cid) {
       void loadPersistedFrames(cid);
+      openLiveStream(cid);
     }
   };
 
@@ -152,9 +282,19 @@
   });
 
   $: syncChat(chatId);
+  $: if (
+    typeof window !== "undefined" &&
+    boundChatId &&
+    isSavedChatId(boundChatId) &&
+    !liveEventSource &&
+    liveReconnectTimer === null
+  ) {
+    openLiveStream(boundChatId);
+  }
 
   onDestroy(() => {
     closeCopyFallback();
+    closeLiveStream();
     stopPlayback();
     revokeAllBlobs();
   });
@@ -165,8 +305,7 @@
     const map = new Map<string, EchoBrowserFrame>();
     const ordered: EchoBrowserFrame[] = [];
     const pushFrame = (f: EchoBrowserFrame, idx: number) => {
-      const key =
-        f.file_id || f.live_frame_id || `idx_${idx}_${f.timestamp ?? 0}`;
+      const key = f.file_id || `idx_${idx}_${f.timestamp ?? 0}`;
       const existing = map.get(key);
       if (existing) {
         Object.assign(existing, f);
@@ -180,6 +319,20 @@
     liveFrames.forEach((f, i) => pushFrame(f, persistedFrames.length + i));
     return ordered;
   })();
+
+  // Bascule fluide du slot live vers l'image HD dès réception d'une nouvelle frame persistée
+  $: {
+    const latestFrame = frames.length > 0 ? frames[frames.length - 1] : null;
+    const latestId = latestFrame?.file_id || "";
+    if (latestId && latestId !== lastLiveFileId) {
+      lastLiveFileId = latestId;
+      if (isLive) {
+        liveActive = false;
+        liveCursor = null;
+        showClipVideo = false;
+      }
+    }
+  }
 
   // Suivi automatique en mode EN DIRECT
   $: if (frames.length > 0) {
@@ -216,15 +369,14 @@
       );
       currentIndex = clamped;
       isLive = clamped === frames.length - 1;
+      showClipVideo = false;
       stopPlayback();
     } else if (target.frameId) {
-      const idx = frames.findIndex(
-        (f) =>
-          f.file_id === target.frameId || f.live_frame_id === target.frameId,
-      );
+      const idx = frames.findIndex((f) => f.file_id === target.frameId);
       if (idx >= 0) {
         currentIndex = idx;
         isLive = idx === frames.length - 1;
+        showClipVideo = false;
         stopPlayback();
       }
     } else if (target.sessionId) {
@@ -238,6 +390,7 @@
       if (idx >= 0) {
         currentIndex = idx;
         isLive = idx === frames.length - 1;
+        showClipVideo = false;
         stopPlayback();
       }
     }
@@ -272,14 +425,10 @@
     cache: Record<string, string>,
   ): string => {
     if (!frame) return "";
-    const rawB64 = frame.live_b64 || frame.b64 || frame.webp_b64;
-    if (rawB64) {
-      if (rawB64.startsWith("data:")) return rawB64;
-      const mime =
-        frame.webp_b64 && !frame.b64 && !frame.live_b64
-          ? "image/webp"
-          : "image/jpeg";
-      return `data:${mime};base64,${rawB64}`;
+    if (frame.b64) {
+      return frame.b64.startsWith("data:")
+        ? frame.b64
+        : `data:image/jpeg;base64,${frame.b64}`;
     }
     const remoteUrl =
       frame.image_url ||
@@ -292,22 +441,103 @@
     return "";
   };
 
+  const getFrameClipSrc = (
+    frame: EchoBrowserFrame | null,
+    cache: Record<string, string>,
+  ): string => {
+    if (!frame) return "";
+    const remoteUrl =
+      frame.clip_url ||
+      (frame.file_id &&
+      chatId &&
+      (Number(frame.clip_duration_ms) > 0 || Number(frame.clip_size_bytes) > 0)
+        ? getEchoBrowserFrameClipUrl(chatId, frame.file_id)
+        : "");
+    if (!remoteUrl) return "";
+    if (cache[remoteUrl]) return cache[remoteUrl];
+    void fetchAuthenticatedBlob(remoteUrl);
+    return "";
+  };
+
   $: activeImageSrc = getFrameImageSrc(activeFrame, blobUrlCache);
+  $: activeClipSrc = getFrameClipSrc(activeFrame, blobUrlCache);
+  $: if (!activeFrame?.clip_url && showClipVideo) {
+    showClipVideo = false;
+  }
   $: isOnLatestLive =
-    isLive && frames.length > 0 && currentIndex === frames.length - 1;
+    isLive && (frames.length === 0 || currentIndex === frames.length - 1);
+  $: showLiveFeed = isOnLatestLive && liveActive && Boolean(liveFrameB64);
+  $: liveImageSrc = liveFrameB64
+    ? liveFrameB64.startsWith("data:")
+      ? liveFrameB64
+      : `data:image/jpeg;base64,${liveFrameB64}`
+    : "";
+  $: activeMediaAvailable = showLiveFeed
+    ? Boolean(liveImageSrc)
+    : showClipVideo
+      ? Boolean(activeClipSrc)
+      : Boolean(activeImageSrc);
 
   const goToIndex = (idx: number) => {
     if (frames.length === 0) return;
     const clamped = Math.max(0, Math.min(frames.length - 1, idx));
     currentIndex = clamped;
+    showClipVideo = false;
     isLive = clamped === frames.length - 1 && !isPlaying;
   };
 
   const returnToLive = () => {
     stopPlayback();
     isLive = true;
+    showClipVideo = false;
     if (frames.length > 0) {
       currentIndex = frames.length - 1;
+    }
+  };
+
+  const scheduleNextStep = () => {
+    if (playTimer !== null) {
+      clearTimeout(playTimer);
+      playTimer = null;
+    }
+    if (!isPlaying) return;
+    playTimer = setTimeout(() => {
+      playTimer = null;
+      if (!isPlaying) return;
+      if (currentIndex < frames.length - 1) {
+        startStepPlayback(currentIndex + 1);
+      } else {
+        stopPlayback();
+      }
+    }, playbackSpeedMs);
+  };
+
+  const startStepPlayback = (idx: number) => {
+    if (idx < 0 || idx >= frames.length) {
+      stopPlayback();
+      return;
+    }
+    currentIndex = idx;
+    const frame = frames[idx];
+    if (playClipsInAutoplay && frame?.clip_url) {
+      showClipVideo = true;
+    } else {
+      showClipVideo = false;
+      scheduleNextStep();
+    }
+  };
+
+  const handleVideoEnded = () => {
+    if (isPlaying) {
+      showClipVideo = false;
+      scheduleNextStep();
+    }
+  };
+
+  const handleVideoError = () => {
+    if (isPlaying) {
+      showClipVideo = false;
+      scheduleNextStep();
     }
   };
 
@@ -319,22 +549,14 @@
     }
     isLive = false;
     isPlaying = true;
-    if (currentIndex >= frames.length - 1) {
-      currentIndex = 0;
-    }
-    playTimer = setInterval(() => {
-      if (currentIndex < frames.length - 1) {
-        currentIndex += 1;
-      } else {
-        stopPlayback();
-      }
-    }, playbackSpeedMs);
+    cropMode = false;
+    const startIdx = currentIndex >= frames.length - 1 ? 0 : currentIndex;
+    startStepPlayback(startIdx);
   };
 
   const onSpeedChange = () => {
-    if (isPlaying) {
-      stopPlayback();
-      togglePlayback();
+    if (isPlaying && !showClipVideo) {
+      scheduleNextStep();
     }
   };
 
@@ -356,7 +578,7 @@
   };
 
   const handleMouseDown = (e: MouseEvent) => {
-    if (cropMode || e.button !== 0 || !activeImageSrc) return;
+    if (cropMode || e.button !== 0 || !activeMediaAvailable) return;
     isPanning = true;
     panStartX = e.clientX - panX;
     panStartY = e.clientY - panY;
@@ -368,8 +590,9 @@
       panY = e.clientY - panStartY;
       return;
     }
-    if (cropDragHandle && imgElement) {
-      const bounds = imgElement.getBoundingClientRect();
+    const mediaEl = getActiveMediaElement();
+    if (cropDragHandle && mediaEl) {
+      const bounds = mediaEl.getBoundingClientRect();
       if (bounds.width <= 0 || bounds.height <= 0) return;
       const dx = (e.clientX - cropDragStart.clientX) / bounds.width;
       const dy = (e.clientY - cropDragStart.clientY) / bounds.height;
@@ -418,7 +641,10 @@
   };
 
   const toggleCropMode = () => {
-    if (!activeImageSrc) return;
+    if (!activeMediaAvailable) return;
+    if (!cropMode && showClipVideo && videoElement) {
+      videoElement.pause();
+    }
     cropMode = !cropMode;
     if (cropMode) {
       cropRect = { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
@@ -426,10 +652,19 @@
   };
 
   const renderToPngBlob = async (useCrop = false): Promise<Blob | null> => {
-    if (!imgElement || !imgElement.complete || imgElement.naturalWidth === 0)
-      return null;
-    const nw = imgElement.naturalWidth;
-    const nh = imgElement.naturalHeight;
+    const mediaEl = getActiveMediaElement();
+    if (!mediaEl) return null;
+    let nw = 0;
+    let nh = 0;
+    if (mediaEl instanceof HTMLVideoElement) {
+      if (mediaEl.readyState < 2 || mediaEl.videoWidth === 0) return null;
+      nw = mediaEl.videoWidth;
+      nh = mediaEl.videoHeight;
+    } else {
+      if (!mediaEl.complete || mediaEl.naturalWidth === 0) return null;
+      nw = mediaEl.naturalWidth;
+      nh = mediaEl.naturalHeight;
+    }
     const sx = useCrop ? Math.round(cropRect.x * nw) : 0;
     const sy = useCrop ? Math.round(cropRect.y * nh) : 0;
     const sw = useCrop ? Math.max(1, Math.round(cropRect.w * nw)) : nw;
@@ -440,7 +675,7 @@
     canvas.height = sh;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
-    ctx.drawImage(imgElement, sx, sy, sw, sh, 0, 0, sw, sh);
+    ctx.drawImage(mediaEl, sx, sy, sw, sh, 0, 0, sw, sh);
     return new Promise((resolve) =>
       canvas.toBlob((blob) => resolve(blob), "image/png"),
     );
@@ -469,7 +704,12 @@
   };
 
   const copyImage = async (useCrop = false) => {
-    if (!imgElement || !imgElement.complete || imgElement.naturalWidth === 0) {
+    const mediaEl = getActiveMediaElement();
+    const mediaReady =
+      mediaEl instanceof HTMLVideoElement
+        ? mediaEl.readyState >= 2 && mediaEl.videoWidth > 0
+        : Boolean(mediaEl && mediaEl.complete && mediaEl.naturalWidth > 0);
+    if (!mediaReady) {
       toast.error("Image indisponible pour la copie.");
       return;
     }
@@ -560,6 +800,77 @@
     cropMode = false;
   };
 
+  const downloadClipMp4 = async () => {
+    if (!activeFrame?.clip_url || !boundChatId) return;
+    let blobUrl = blobUrlCache[activeFrame.clip_url];
+    if (!blobUrl) {
+      await fetchAuthenticatedBlob(activeFrame.clip_url);
+      blobUrl = blobUrlCache[activeFrame.clip_url];
+    }
+    if (!blobUrl) {
+      toast.error("Clip vidéo indisponible pour le téléchargement.");
+      return;
+    }
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    const ts = activeFrame?.timestamp ?? Math.floor(Date.now() / 1000);
+    a.download = `echo-browser-clip-${ts}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast.success("Clip vidéo MP4 téléchargé.");
+  };
+
+  const toggleRetainFrame = async () => {
+    if (!activeFrame?.file_id || !boundChatId || retaining) return;
+    const token = getEchoToken();
+    if (!token) return;
+    const targetCid = boundChatId;
+    const targetFid = activeFrame.file_id;
+    const nextRetain = !(
+      activeFrame.retained || activeFrame.status === "retained"
+    );
+    retaining = true;
+    try {
+      const res = await retainEchoBrowserFrame(
+        token,
+        targetCid,
+        targetFid,
+        nextRetain,
+      );
+      if (targetCid !== boundChatId) return;
+      const updatedFields = {
+        retained: Boolean(res.retained),
+        status:
+          res.resource_status || (res.retained ? "retained" : "transient"),
+      };
+      persistedFrames = persistedFrames.map((f) =>
+        f.file_id === targetFid ? { ...f, ...updatedFields } : f,
+      );
+      echoBrowserLiveFrames.update((all) => {
+        const list = all[targetCid];
+        if (!list) return all;
+        return {
+          ...all,
+          [targetCid]: list.map((f) =>
+            f.file_id === targetFid ? { ...f, ...updatedFields } : f,
+          ),
+        };
+      });
+      toast.success(
+        res.retained
+          ? "Capture conservée durablement."
+          : "Capture repassée en mode éphémère.",
+      );
+    } catch (err: any) {
+      toast.error(
+        err?.message || "Impossible de modifier la conservation de la capture.",
+      );
+    } finally {
+      retaining = false;
+    }
+  };
+
   const formatTimestamp = (ts?: number): string => {
     if (!ts) return "";
     const d = new Date(ts > 1e12 ? ts : ts * 1000);
@@ -604,7 +915,14 @@
         </span>
       {/if}
 
-      {#if activeFrame?.url}
+      {#if showLiveFeed && liveUrl}
+        <span
+          class="text-xs font-mono text-gray-600 dark:text-gray-300 truncate bg-white dark:bg-gray-900 px-2 py-0.5 rounded border border-gray-200 dark:border-gray-700"
+          title={liveUrl}
+        >
+          {liveUrl}
+        </span>
+      {:else if activeFrame?.url}
         <span
           class="text-xs font-mono text-gray-600 dark:text-gray-300 truncate bg-white dark:bg-gray-900 px-2 py-0.5 rounded border border-gray-200 dark:border-gray-700"
           title={activeFrame.url}
@@ -615,29 +933,67 @@
         <span class="text-xs text-gray-400 truncate">Navigateur Web ECHO</span>
       {/if}
 
-      {#if activeFrame?.timestamp}
+      {#if activeFrame?.timestamp && !showLiveFeed}
         <span class="text-[11px] font-mono text-gray-400 shrink-0">
           {formatTimestamp(activeFrame.timestamp)}
         </span>
       {/if}
 
-      {#if activeFrame?.retained || activeFrame?.status === "retained"}
-        <span
-          class="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 shrink-0"
+      {#if !showLiveFeed && activeFrame?.file_id}
+        {@const isRetained = Boolean(
+          activeFrame.retained || activeFrame.status === "retained",
+        )}
+        <button
+          type="button"
+          disabled={retaining}
+          on:click={() => void toggleRetainFrame()}
+          class="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full border transition shrink-0 disabled:opacity-50 {isRetained
+            ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/25'
+            : 'bg-gray-200/70 dark:bg-gray-800 text-gray-600 dark:text-gray-300 border-gray-300 dark:border-gray-700 hover:bg-gray-300/70 dark:hover:bg-gray-700'}"
+          title={isRetained
+            ? "Cliquer pour repasser en mode éphémère"
+            : "Cliquer pour conserver durablement cette capture"}
         >
-          📌 Conservée
-        </span>
+          {isRetained ? "📌 Conservée" : "📌 Conserver"}
+        </button>
       {/if}
     </div>
 
     <div class="flex items-center gap-1 shrink-0">
-      {#if !isOnLatestLive && frames.length > 0}
+      {#if !isOnLatestLive && (frames.length > 0 || liveActive)}
         <button
           type="button"
           on:click={returnToLive}
           class="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-red-600 hover:bg-red-700 text-white shadow-xs transition mr-1"
         >
           🔴 Retour au temps réel
+        </button>
+      {/if}
+
+      {#if !showLiveFeed && activeFrame?.clip_url}
+        <button
+          type="button"
+          on:click={() => {
+            stopPlayback();
+            showClipVideo = !showClipVideo;
+            cropMode = false;
+          }}
+          class="px-2 py-1 rounded-lg text-xs font-medium border transition {showClipVideo
+            ? 'bg-indigo-600 text-white border-indigo-600'
+            : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700'}"
+          title={showClipVideo
+            ? "Afficher la capture image HD"
+            : "Voir le clip vidéo de l'action"}
+        >
+          {showClipVideo ? "🖼️ Image HD" : "🎬 Voir l'action"}
+        </button>
+        <button
+          type="button"
+          on:click={() => void downloadClipMp4()}
+          class="px-2 py-1 rounded-lg text-xs font-medium bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 transition"
+          title="Télécharger le clip vidéo MP4"
+        >
+          ⬇️ MP4
         </button>
       {/if}
 
@@ -667,7 +1023,7 @@
 
       <button
         type="button"
-        disabled={!activeImageSrc}
+        disabled={!activeMediaAvailable}
         on:click={toggleCropMode}
         class="px-2 py-1 rounded-lg text-xs font-medium border transition disabled:opacity-40 {cropMode
           ? 'bg-sky-600 text-white border-sky-600'
@@ -678,7 +1034,7 @@
       </button>
       <button
         type="button"
-        disabled={!activeImageSrc}
+        disabled={!activeMediaAvailable}
         on:click={() => void copyImage(false)}
         class="px-2 py-1 rounded-lg text-xs font-medium bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 transition disabled:opacity-40"
         title="Copier l'image PNG"
@@ -687,7 +1043,7 @@
       </button>
       <button
         type="button"
-        disabled={!activeImageSrc}
+        disabled={!activeMediaAvailable}
         on:click={() => void exportPng(false)}
         class="px-2 py-1 rounded-lg text-xs font-medium bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 transition disabled:opacity-40"
         title="Exporter en PNG"
@@ -724,7 +1080,7 @@
     </div>
   {/if}
 
-  <!-- Zone d'affichage de la capture -->
+  <!-- Zone d'affichage de la capture / flux live / clip vidéo -->
   <div
     bind:clientWidth={viewportWidth}
     bind:clientHeight={viewportHeight}
@@ -738,7 +1094,69 @@
     role="region"
     aria-label="Visionneuse Navigateur Web ECHO"
   >
-    {#if loading && frames.length === 0}
+    {#if showLiveFeed}
+      <div
+        class="relative {fittedDimensions
+          ? 'shrink-0'
+          : 'inline-block max-w-full max-h-full'}"
+        style="{fittedDimensions
+          ? `width: ${fittedDimensions.width}px; height: ${fittedDimensions.height}px; `
+          : ''}transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: center center;"
+      >
+        <img
+          bind:this={imgElement}
+          src={liveImageSrc}
+          alt={liveUrl || "Flux navigateur en direct"}
+          on:load={handleImageLoad}
+          class="{fittedDimensions
+            ? 'w-full h-full block'
+            : 'max-w-full max-h-full'} object-contain pointer-events-none select-none shadow-2xl"
+          draggable="false"
+        />
+
+        {#if liveCursor}
+          <div
+            class="absolute pointer-events-none -translate-x-1/2 -translate-y-1/2 transition-all duration-75"
+            style="left: {(liveCursor.x / liveViewport.w) * 100}%; top: {(liveCursor.y / liveViewport.h) * 100}%;"
+          >
+            {#if liveCursor.clicking}
+              <span
+                class="absolute inset-0 -m-2 rounded-full border-2 border-[#ff0044] animate-ping opacity-75"
+              ></span>
+            {/if}
+            <svg width="20" height="20" viewBox="0 0 20 20" class="drop-shadow">
+              <circle
+                cx="10"
+                cy="10"
+                r={liveCursor.clicking ? 6 : 5}
+                fill="#ff0044"
+                stroke="#ffffff"
+                stroke-width="2"
+              />
+            </svg>
+          </div>
+        {/if}
+
+        {#if cropMode}
+          <!-- Overlay de recadrage 8 poignées -->
+          <div
+            class="absolute border-2 border-sky-400 bg-sky-400/10 shadow-[0_0_0_9999px_rgba(0,0,0,0.55)] cursor-move"
+            style="left: {cropRect.x * 100}%; top: {cropRect.y *
+              100}%; width: {cropRect.w * 100}%; height: {cropRect.h * 100}%;"
+            on:mousedown={(e) => startCropDrag("move", e)}
+            role="presentation"
+          >
+            {#each [{ id: "nw", cls: "-top-1.5 -left-1.5 cursor-nwse-resize" }, { id: "n", cls: "-top-1.5 left-1/2 -translate-x-1/2 cursor-ns-resize" }, { id: "ne", cls: "-top-1.5 -right-1.5 cursor-nesw-resize" }, { id: "e", cls: "top-1/2 -right-1.5 -translate-y-1/2 cursor-ew-resize" }, { id: "se", cls: "-bottom-1.5 -right-1.5 cursor-nwse-resize" }, { id: "s", cls: "-bottom-1.5 left-1/2 -translate-x-1/2 cursor-ns-resize" }, { id: "sw", cls: "-bottom-1.5 -left-1.5 cursor-nesw-resize" }, { id: "w", cls: "top-1/2 -left-1.5 -translate-y-1/2 cursor-ew-resize" }] as handle (handle.id)}
+              <div
+                class="absolute w-3 h-3 bg-white border-2 border-sky-500 rounded-xs {handle.cls}"
+                on:mousedown={(e) => startCropDrag(handle.id, e)}
+                role="presentation"
+              ></div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {:else if loading && frames.length === 0}
       <Spinner className="w-7 h-7 text-sky-400" />
     {:else if frames.length === 0}
       <div class="text-center p-6 text-gray-400 text-xs space-y-1.5">
@@ -751,6 +1169,58 @@
           démarrera.
         </div>
       </div>
+    {:else if showClipVideo}
+      {#if !activeClipSrc}
+        <Spinner className="w-6 h-6 text-sky-400" />
+      {:else}
+        <div
+          class="relative {fittedDimensions
+            ? 'shrink-0'
+            : 'inline-block max-w-full max-h-full'}"
+          style="{fittedDimensions
+            ? `width: ${fittedDimensions.width}px; height: ${fittedDimensions.height}px; `
+            : ''}transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: center center;"
+        >
+          <video
+            bind:this={videoElement}
+            src={activeClipSrc}
+            autoplay
+            playsinline
+            muted
+            controls={!isPlaying && !cropMode}
+            on:loadedmetadata={handleVideoMetadata}
+            on:loadeddata={handleVideoMetadata}
+            on:ended={handleVideoEnded}
+            on:error={handleVideoError}
+            class="{fittedDimensions
+              ? 'w-full h-full block'
+              : 'max-w-full max-h-full'} object-contain select-none shadow-2xl {cropMode
+              ? 'pointer-events-none'
+              : ''}"
+          >
+            <track kind="captions" />
+          </video>
+
+          {#if cropMode}
+            <!-- Overlay de recadrage 8 poignées -->
+            <div
+              class="absolute border-2 border-sky-400 bg-sky-400/10 shadow-[0_0_0_9999px_rgba(0,0,0,0.55)] cursor-move"
+              style="left: {cropRect.x * 100}%; top: {cropRect.y *
+                100}%; width: {cropRect.w * 100}%; height: {cropRect.h * 100}%;"
+              on:mousedown={(e) => startCropDrag("move", e)}
+              role="presentation"
+            >
+              {#each [{ id: "nw", cls: "-top-1.5 -left-1.5 cursor-nwse-resize" }, { id: "n", cls: "-top-1.5 left-1/2 -translate-x-1/2 cursor-ns-resize" }, { id: "ne", cls: "-top-1.5 -right-1.5 cursor-nesw-resize" }, { id: "e", cls: "top-1/2 -right-1.5 -translate-y-1/2 cursor-ew-resize" }, { id: "se", cls: "-bottom-1.5 -right-1.5 cursor-nwse-resize" }, { id: "s", cls: "-bottom-1.5 left-1/2 -translate-x-1/2 cursor-ns-resize" }, { id: "sw", cls: "-bottom-1.5 -left-1.5 cursor-nesw-resize" }, { id: "w", cls: "top-1/2 -left-1.5 -translate-y-1/2 cursor-ew-resize" }] as handle (handle.id)}
+                <div
+                  class="absolute w-3 h-3 bg-white border-2 border-sky-500 rounded-xs {handle.cls}"
+                  on:mousedown={(e) => startCropDrag(handle.id, e)}
+                  role="presentation"
+                ></div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
     {:else if !activeImageSrc}
       <Spinner className="w-6 h-6 text-sky-400" />
     {:else}
@@ -842,6 +1312,17 @@
         <option value={5000}>5s</option>
         <option value={10000}>10s</option>
       </select>
+
+      <button
+        type="button"
+        on:click={() => (playClipsInAutoplay = !playClipsInAutoplay)}
+        class="px-2 py-1 rounded border text-[11px] font-medium transition {playClipsInAutoplay
+          ? 'bg-indigo-600/15 text-indigo-700 dark:text-indigo-300 border-indigo-500/40'
+          : 'bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700'}"
+        title="Lire automatiquement les clips vidéo pendant la lecture continue"
+      >
+        🎬 Clips
+      </button>
 
       <button
         type="button"

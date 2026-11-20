@@ -1,16 +1,16 @@
 """
 title: ECHO Session Clone & Migration Engine
 author: Wilfried BARNAVON
-version: 6.10.0.1
+version: 6.13.1.1
 description: Moteur partagé de duplication atomique des conteneurs de session ECHO (Clone, Fork et Migration).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.13.1.1: Réécriture de echo_resources.metadata dans reassign_session_ids et ajout de _prune_transient_browserviews_on_clone (transfert retained uniquement lors du clone/resume).
 # 6.10.0.1: Ré-insertion dans align_codex_git_to_cutoff des fichiers trackés restaurés par Git mais absents d'echo_resources (cas de fichiers renommés ou déplacés après cutoff_ts).
 # 6.6.5.1: Inclusion du domaine BROWSER_VIEWS_DIR_NAME ('browserviews') dans duplicate_session_domains et _prune_domain_files_to_cutoff.
 # 5.239.13.1: duplicate_session_rag fiabilisé : retries bornés (_qdrant_call : réseau, 429, 5xx), upsert par lots de 64, comptage de contrôle exact et retour structuré RagCloneReport.
 # 5.239.12.1: Purge de wm_state dans purge_conversational_state, ré-ancrage des ressources actives (_reanchor_resumed_resources) et des vecteurs conversationnels RAG (anchor_msg_id).
-# 5.237.20.3: Alignement généalogique strict de ancestor_msg_ids sur live_msg_ids dans prune_forked_history.
 
 from contextlib import closing
 import asyncio
@@ -38,7 +38,7 @@ from echo_constants import (
     is_codex_workspace_indexed,
     is_codex_workspace_versioned,
 )
-from echo_paths import format_codex_storage_path, get_echo_session_path
+from echo_paths import format_codex_storage_path, get_echo_session_path, sanitize_echo_id
 from echo_session_gc import (
     compute_dead_set,
     extract_call_ids_from_json as _extract_call_ids_from_json,
@@ -106,6 +106,10 @@ def reassign_session_ids(cur: sqlite3.Cursor, orig_cid: str, new_cid: str) -> No
             "UPDATE echo_resources SET summary = REPLACE(summary, ?, ?) WHERE summary LIKE ?",
             (orig_id_marker, new_id_marker, f"%{orig_id_marker}%"),
         )
+        cur.execute(
+            "UPDATE echo_resources SET metadata = REPLACE(metadata, ?, ?) WHERE metadata LIKE ?",
+            (orig_id_marker, new_id_marker, f"%{orig_id_marker}%"),
+        )
     except Exception:
         pass
 
@@ -160,6 +164,86 @@ def reassign_session_ids(cur: sqlite3.Cursor, orig_cid: str, new_cid: str) -> No
         )
     except Exception:
         pass
+
+
+def _prune_transient_browserviews_on_clone(
+    cur: Optional[sqlite3.Cursor], user_id: str, new_cid: str
+) -> int:
+    """Purge les captures et clips browserviews non-retained lors d'un clonage ou reprise."""
+    bv_dir = get_echo_session_path(user_id, new_cid, BROWSER_VIEWS_DIR_NAME)
+    kept_files: Set[str] = set()
+    pruned = 0
+
+    if cur is not None:
+        try:
+            rows = cur.execute(
+                "SELECT id, name, storage_path, status, metadata FROM echo_resources "
+                "WHERE resource_type = 'browserview' OR name LIKE '%_frame.jpg'"
+            ).fetchall()
+        except Exception:
+            rows = []
+
+        for row in rows:
+            rid, name, storage_path, status, raw_meta = row[0], row[1], row[2], row[3], row[4]
+            meta: dict = {}
+            if isinstance(raw_meta, dict):
+                meta = raw_meta
+            elif isinstance(raw_meta, str) and raw_meta:
+                try:
+                    parsed = json.loads(raw_meta)
+                    if isinstance(parsed, dict):
+                        meta = parsed
+                except Exception:
+                    meta = {}
+
+            is_retained = (status == "retained") or (meta.get("retained") is True)
+            s_rid = sanitize_echo_id(str(rid))
+            cand_names = [
+                os.path.basename(str(name or "")),
+                os.path.basename(str(storage_path or "")),
+                f"{rid}_frame.jpg",
+                os.path.basename(str(meta.get("clip_filename") or "")),
+                f"{rid}_clip.mp4",
+                f"{s_rid}_frame.jpg",
+                f"{s_rid}_clip.mp4",
+            ]
+            if is_retained:
+                for cn in cand_names:
+                    if cn:
+                        kept_files.add(cn)
+            else:
+                try:
+                    cur.execute("DELETE FROM echo_resources WHERE id = ?", (rid,))
+                except Exception:
+                    pass
+                if os.path.isdir(bv_dir):
+                    for cn in cand_names:
+                        if not cn:
+                            continue
+                        fp = os.path.join(bv_dir, cn)
+                        if os.path.isfile(fp):
+                            try:
+                                os.unlink(fp)
+                                pruned += 1
+                            except Exception:
+                                pass
+
+    if os.path.isdir(bv_dir):
+        try:
+            for entry in os.listdir(bv_dir):
+                if entry in kept_files:
+                    continue
+                fp = os.path.join(bv_dir, entry)
+                if os.path.isfile(fp):
+                    try:
+                        os.unlink(fp)
+                        pruned += 1
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    return pruned
 
 
 def purge_conversational_state(cur: sqlite3.Cursor) -> None:
@@ -854,6 +938,7 @@ def sync_cloned_session(
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         reassign_session_ids(cur, orig_cid, new_cid)
+        _prune_transient_browserviews_on_clone(cur, user_id, new_cid)
         conn.commit()
 
     try:
@@ -904,6 +989,14 @@ def sync_resumed_session(
         )
 
     duplicate_session_domains(user_id, orig_cid, new_cid)
+    if os.path.exists(new_db):
+        with closing(sqlite3.connect(new_db, timeout=15.0)) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            _prune_transient_browserviews_on_clone(cur, user_id, new_cid)
+            conn.commit()
+    else:
+        _prune_transient_browserviews_on_clone(None, user_id, new_cid)
     try:
         from echo_window_manager import get_window_manager
 

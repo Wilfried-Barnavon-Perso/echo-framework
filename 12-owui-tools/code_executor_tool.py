@@ -1,16 +1,16 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 6.6.30.1
+version: 6.13.1.2
 description: Composant système interne : ECHO Code Executor (Python, Node.js, Bash & SSH).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.13.1.2: Fiabilisation Pacemaker bidi_polling (constantes SSOT, peek/ack scopé par window_id, push delta-only, grâce _is_closed, arrêt auto sur fin de job et broadcast_canvas_status).
 # 6.6.30.1: Isolation par sub_sid (ECHO_SUBAGENT_CONTEXT) des jobs, pollers et actions status/listen/kill.
 # 6.6.21.1: Support Bash (.sh) dans code_executor et ajout de ssh_executor branché sur l'Identity Vault.
 # 6.6.16.1: Raccordement natif de echo_monitor à l'onglet echo-canvas via EchoWindowManager (broadcast_canvas_frame, broadcast_canvas_event, consume_canvas_ui_payload) et suppression des appels emit_execute/call_execute legacy.
 # 5.234.1.2: Support du mode background=False/True (_BACKGROUND_POLLERS), ajout de control_sandbox_execution (status, listen, kill), routage d'événements echoPushMonitorEvent et alignement PAS.
-# 5.233.0.1: Décoration @echo_tool sur les 2 méthodes publiques et simplification des retours wrap_tool_output.
 
 # ECHO CONFIG NAME : ECHO Code Sandbox
 
@@ -23,6 +23,9 @@ from typing import Any, List, Literal, Optional
 
 sys.path.append("/app/backend/echo_libs")
 from echo_constants import (  # noqa: E402
+    ECHO_CANVAS_BOOT_TIMEOUT_SEC,
+    ECHO_CANVAS_GRACEFUL_CLOSE_SEC,
+    ECHO_CANVAS_PING_TIMEOUT_SEC,
     ECHO_CODING_WORKER_URL,
     ECHO_DEFAULT_CODE_EXECUTION_TIMEOUT,
     ECHO_MAX_CODE_EXECUTION_TIMEOUT,
@@ -57,7 +60,7 @@ def _is_run_owned_by_subagent(uid: str, cid: str, run_id: str, sub_sid: str) -> 
     return _SANDBOX_RUN_OWNERS.get(key) == sub_sid
 
 
-async def _emit_monitor_payload(uid: str, cid: str, meta: dict) -> None:
+async def _emit_monitor_payload(uid: str, cid: str, meta: dict, run_id: str = "") -> None:
     wm = get_window_manager()
     msg_type = meta.get("type", "display")
     wid = str(meta.get("window_id", "default"))
@@ -88,6 +91,7 @@ async def _emit_monitor_payload(uid: str, cid: str, meta: dict) -> None:
             "html": html_content,
         },
         auto_open=True,
+        run_id=run_id,
     )
 
 
@@ -326,32 +330,57 @@ class Tools:
             ui_payload_data = wm.consume_canvas_ui_payload(uid, cid) if fetch_ui_payload else None
 
             task_audit = {"status": "running", "run_id": run_id, "polls": 0, "payloads_pushed": 0, "payloads_pulled": 0}
+            run_result_state: dict[str, Any] = {"state": "running", "exit_code": None}
             sandbox_base = ECHO_CODING_WORKER_URL.replace("/execute", "")
             abort_event = asyncio.Event()
-            supervisor = {"first_seen": {}, "last_ping_values": {}, "boot_timeout": 3.0, "ping_timeout": 2.5}
+            supervisor = {
+                "first_seen": {},
+                "last_ping_values": {},
+                "boot_timeout": ECHO_CANVAS_BOOT_TIMEOUT_SEC,
+                "ping_timeout": ECHO_CANVAS_PING_TIMEOUT_SEC,
+                "graceful_close": ECHO_CANVAS_GRACEFUL_CLOSE_SEC,
+                "closing_since": None,
+            }
 
             async def bidi_polling():
                 offset = 0
                 start_t = asyncio.get_event_loop().time()
+                last_pushed_sig: Optional[str] = None
+                status_notified = False
                 try:
                     async with httpx.AsyncClient() as pclient:
                         while asyncio.get_event_loop().time() - start_t < actual_timeout:
                             task_audit["polls"] += 1
                             try:
-                                ui_data = wm.consume_canvas_ui_payload(uid, cid)
-                                if ui_data:
-                                    if ui_data.get("_echo_signal") == "abort":
-                                        task_audit["status"] = "aborted_by_ui"
-                                        abort_event.set()
-                                        if background:
-                                            await pclient.post(f"{sandbox_base}/kill", json={"user_id": uid, "chat_id": cid, "run_id": run_id})
-                                        break
+                                owned_wids = set(supervisor["first_seen"].keys())
+                                ui_data, ack_counts = wm.peek_canvas_ui_payload(uid, cid, window_ids=owned_wids)
+                                if ui_data.get("_echo_signal") == "abort":
+                                    task_audit["status"] = "aborted_by_ui"
+                                    run_result_state["state"] = "killed"
+                                    abort_event.set()
+                                    if background:
+                                        await pclient.post(f"{sandbox_base}/kill", json={"user_id": uid, "chat_id": cid, "run_id": run_id})
+                                    break
 
-                                    pings = ui_data.get("_pings", {})
-                                    now = asyncio.get_event_loop().time()
-                                    if supervisor["first_seen"]:
+                                now = asyncio.get_event_loop().time()
+                                if owned_wids:
+                                    closed_wids = set(ui_data.get("_closed_windows") or [])
+                                    if owned_wids.issubset(closed_wids):
+                                        if supervisor["closing_since"] is None:
+                                            supervisor["closing_since"] = now
+                                        if now - supervisor["closing_since"] >= supervisor["graceful_close"]:
+                                            task_audit["status"] = "all_windows_closed"
+                                            run_result_state["state"] = "killed"
+                                            abort_event.set()
+                                            if background:
+                                                await pclient.post(f"{sandbox_base}/kill", json={"user_id": uid, "chat_id": cid, "run_id": run_id})
+                                            break
+                                    else:
+                                        supervisor["closing_since"] = None
+                                        pings = ui_data.get("_pings", {})
                                         alive_windows = 0
-                                        for s_wid, first_t in supervisor["first_seen"].items():
+                                        for s_wid in owned_wids - closed_wids:
+                                            first_t = supervisor["first_seen"][s_wid]
                                             current_ping = pings.get(s_wid)
                                             if current_ping is None:
                                                 if now - first_t <= supervisor["boot_timeout"]:
@@ -365,17 +394,25 @@ class Tools:
                                                     alive_windows += 1
                                         if alive_windows == 0:
                                             task_audit["status"] = "all_windows_closed_or_crashed"
+                                            run_result_state["state"] = "killed"
                                             abort_event.set()
                                             if background:
                                                 await pclient.post(f"{sandbox_base}/kill", json={"user_id": uid, "chat_id": cid, "run_id": run_id})
                                             break
 
-                                    await pclient.post(
-                                        f"{sandbox_base}/update_payload",
-                                        json={"user_id": uid, "chat_id": cid, "run_id": run_id, "ui_payload": ui_data},
-                                        timeout=2.0,
-                                    )
-                                    task_audit["payloads_pushed"] += 1
+                                if ui_data:
+                                    payload_only = {k: v for k, v in ui_data.items() if k not in ("_pings", "_inbox_events")}
+                                    payload_sig = json.dumps(payload_only, sort_keys=True, default=str)
+                                    if bool(ack_counts) or (bool(payload_only) and payload_sig != last_pushed_sig):
+                                        upd_res = await pclient.post(
+                                            f"{sandbox_base}/update_payload",
+                                            json={"user_id": uid, "chat_id": cid, "run_id": run_id, "ui_payload": ui_data},
+                                            timeout=2.0,
+                                        )
+                                        if upd_res.status_code == 200:
+                                            wm.ack_canvas_inbox(uid, cid, ack_counts)
+                                            last_pushed_sig = payload_sig
+                                            task_audit["payloads_pushed"] += 1
                             except asyncio.CancelledError:
                                 raise
                             except Exception:
@@ -394,14 +431,40 @@ class Tools:
                                         wid = str(meta.get("window_id", "default"))
                                         if meta.get("type", "display") == "display" and wid not in supervisor["first_seen"]:
                                             supervisor["first_seen"][wid] = asyncio.get_event_loop().time()
-                                        await _emit_monitor_payload(uid, cid, meta)
+                                        await _emit_monitor_payload(uid, cid, meta, run_id=run_id)
                                         task_audit["payloads_pulled"] += 1
+                                    job_state = pdata.get("job_state", "unknown")
+                                    job_rc = pdata.get("exit_code")
+                                    if job_state not in ("running", "unknown"):
+                                        run_result_state["state"] = job_state
+                                        run_result_state["exit_code"] = job_rc
+                                        task_audit["status"] = job_state
+                                        break
                             except Exception:
                                 pass
                             await asyncio.sleep(0.5)
                 except asyncio.CancelledError:
                     pass
                 finally:
+                    if supervisor["first_seen"] and not status_notified:
+                        status_notified = True
+                        term_state = run_result_state["state"]
+                        if term_state == "running":
+                            elapsed = asyncio.get_event_loop().time() - start_t
+                            term_state = "timeout" if elapsed >= actual_timeout else "completed"
+                        wids = list(supervisor["first_seen"].keys())
+                        try:
+                            await wm.broadcast_canvas_status(
+                                uid,
+                                cid,
+                                wids,
+                                server_status=term_state,
+                                run_id=run_id,
+                                exit_code=run_result_state["exit_code"],
+                            )
+                        except Exception:
+                            pass
+                        wm.cleanup_canvas_run(uid, cid, wids)
                     _BACKGROUND_POLLERS.pop(f"{uid}:{cid}:{run_id}", None)
 
             polling_task = asyncio.create_task(bidi_polling())
@@ -425,13 +488,16 @@ class Tools:
                             },
                         )
                     )
+                    abort_wait_task = asyncio.create_task(abort_event.wait())
                     done, _ = await asyncio.wait(
-                        [http_task, asyncio.create_task(abort_event.wait())],
+                        [http_task, abort_wait_task],
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     if abort_event.is_set():
                         http_task.cancel()
                         raise asyncio.CancelledError("UI requested abort")
+                    if not abort_wait_task.done():
+                        abort_wait_task.cancel()
                     response = http_task.result()
 
                 if response.status_code == 200:
@@ -456,21 +522,28 @@ class Tools:
                             text=msg,
                             status={"status": "running", "run_id": run_id, "pid": worker_res.get("pid"), "task_review": task_audit},
                         )
+                    w_status = worker_res.get("status", "success")
+                    run_result_state["state"] = "completed" if w_status == "success" else str(w_status)
+                    run_result_state["exit_code"] = worker_res.get("exit_code")
                     if not abort_event.is_set():
                         task_audit["status"] = "completed"
                 else:
+                    run_result_state["state"] = "error"
                     err_msg = f"Erreur Worker (HTTP {response.status_code})"
                     await events.status(err_msg, done=True)
                     return wrap_tool_output(text="", status={"status": "critical_error", "code": response.status_code, "error": err_msg})
             except asyncio.CancelledError:
+                run_result_state["state"] = "killed"
                 wm.clear_canvas_signal(uid, cid)
                 async with httpx.AsyncClient() as client:
                     await client.post(f"{sandbox_base}/kill", json={"user_id": uid, "chat_id": cid, "run_id": run_id})
                 task_audit["status"] = "killed"
                 raise
             except httpx.RequestError:
+                run_result_state["state"] = "error"
                 return "❌ Service Coding Worker injoignable."
             except Exception as e:
+                run_result_state["state"] = "error"
                 task_audit["status"] = f"error: {str(e)}"
                 worker_res = {"status": "error", "error": str(e)}
             finally:
@@ -482,12 +555,30 @@ class Tools:
                 pulled_count = task_audit.get("payloads_pulled", 0)
                 remaining_payloads = worker_res["monitor_payloads"][pulled_count:]
                 success_count = 0
+                post_display_wids: list[str] = []
                 for meta in remaining_payloads:
                     try:
-                        await _emit_monitor_payload(uid, cid, meta)
+                        await _emit_monitor_payload(uid, cid, meta, run_id=run_id)
+                        if meta.get("type", "display") == "display":
+                            p_wid = str(meta.get("window_id", "default"))
+                            if p_wid not in post_display_wids:
+                                post_display_wids.append(p_wid)
                         success_count += 1
                     except Exception as e:
                         text_out += f"\n[Erreur Système Monitor: {str(e)}]"
+                if post_display_wids and not background:
+                    try:
+                        await wm.broadcast_canvas_status(
+                            uid,
+                            cid,
+                            post_display_wids,
+                            server_status=run_result_state["state"],
+                            run_id=run_id,
+                            exit_code=run_result_state["exit_code"],
+                        )
+                    except Exception:
+                        pass
+                    wm.cleanup_canvas_run(uid, cid, post_display_wids)
                 if success_count > 0:
                     s_pluriel = "s" if success_count > 1 else ""
                     text_out += f"\n[Système: ECHO Monitor a transmis {success_count} événement{s_pluriel} au navigateur en Post-Run.]"

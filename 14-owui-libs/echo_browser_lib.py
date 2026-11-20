@@ -1,26 +1,30 @@
 """
 title: ECHO Browser Lib
 author: ECHO Framework
-version: 6.6.5.1
+version: 6.13.1.1
 description: Composant système interne : ECHO Browser Lib.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.13.1.1: Extension de cleanup_expired_browserviews aux clips MP4 (purge couplée N1 + orphelins), ajout de enforce_transient_clip_budget (purge FIFO N2) et iter_screencast_stream SSE.
 # 6.6.5.1: Ajout de get_active_browser_sessions et cleanup_expired_browserviews pour la gestion éphémère/rétention des captures browserviews.
 # 5.232.0.1: Ajout du helper factorisé render_ephemeral_html pour la rasterisation incognito Zéro-Disque en mémoire vive via /render_ephemeral_view.
 # 5.231.20.1: Propagation explicite de chat_id dans EchoBrowserLib pour isoler les sessions Playwright éphémères et sous-agents sans perdre le coffre de fichiers du chat.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 1.15: Nouveaux types d'action (select, click_current), option clear_before, et zoom réel CDP (absolute_grid).
 
+import asyncio
 import json
 import os
 import time
 import httpx
 import logging
-from typing import Dict, Callable, Optional
+from typing import AsyncGenerator, Dict, Callable, Optional
 
 # On suppose que echo_constants est disponible dans le chemin PYTHONPATH (/app/backend/echo_libs)
 from echo_constants import (
+    BROWSER_CLIP_EXT,
+    BROWSER_MAX_TRANSIENT_CLIPS_MB,
+    BROWSER_MAX_TRANSIENT_CLIPS_PER_CHAT,
     BROWSER_VIEWS_DIR_NAME,
     BROWSER_VIEW_STATUS,
     NAVIGATION_ENGINE_URL,
@@ -164,6 +168,102 @@ async def get_active_browser_sessions(
     return None
 
 
+def _collect_clip_names(file_id: str, meta: dict) -> list[str]:
+    """Collecte les noms de fichiers clips candidats (dédupliqués, ordre préservé)."""
+    candidates: list[str] = []
+    raw_clip = os.path.basename(str((meta or {}).get("clip_filename") or ""))
+    if raw_clip:
+        candidates.append(raw_clip)
+    default_clip = f"{sanitize_echo_id(file_id)}{BROWSER_CLIP_EXT}"
+    if default_clip and default_clip not in candidates:
+        candidates.append(default_clip)
+    return candidates
+
+
+def enforce_transient_clip_budget(
+    user_id: str,
+    chat_id: str,
+    max_clips: int = BROWSER_MAX_TRANSIENT_CLIPS_PER_CHAT,
+    max_mb: int = BROWSER_MAX_TRANSIENT_CLIPS_MB,
+) -> dict:
+    """Évince les plus anciens clips MP4 éphémères au-delà du budget (nombre ou taille) sans toucher aux frames ni aux retained."""
+    if not chat_id:
+        return {"evicted": 0}
+    db_path = get_echo_session_path(user_id, chat_id, "db")
+    bv_dir = get_echo_session_path(user_id, chat_id, BROWSER_VIEWS_DIR_NAME)
+    if not os.path.isfile(db_path) or not os.path.isdir(bv_dir):
+        return {"evicted": 0}
+
+    state = EchoStateManager(user_id=user_id, chat_id=chat_id)
+    bv_res = state.get_resources(resource_type="browserview") or []
+    items = []
+    total_bytes = 0
+
+    for r in bv_res:
+        raw_meta = r.get("metadata")
+        meta: dict = {}
+        if isinstance(raw_meta, dict):
+            meta = dict(raw_meta)
+        elif isinstance(raw_meta, str) and raw_meta:
+            try:
+                parsed = json.loads(raw_meta)
+                if isinstance(parsed, dict):
+                    meta = parsed
+            except Exception:
+                meta = {}
+
+        is_retained = (
+            r.get("status") == BROWSER_VIEW_STATUS["RETAINED"]
+            or meta.get("retained") is True
+        )
+        if is_retained:
+            continue
+
+        clip_fp = None
+        for cname in _collect_clip_names(r["id"], meta):
+            cand = os.path.join(bv_dir, cname)
+            if os.path.isfile(cand):
+                clip_fp = cand
+                break
+        if not clip_fp:
+            continue
+
+        try:
+            size = os.path.getsize(clip_fp)
+        except OSError:
+            continue
+        created_at = r.get("created_at", 0) or 0
+        items.append((created_at, str(r["id"]), r, meta, clip_fp, size))
+        total_bytes += size
+
+    items.sort(key=lambda it: (it[0], it[1]))
+    max_bytes = max_mb * 1024 * 1024
+    evicted = 0
+
+    while items and (len(items) > max_clips or total_bytes > max_bytes):
+        _, _, res, meta, fp, size = items.pop(0)
+        try:
+            if os.path.isfile(fp):
+                os.unlink(fp)
+        except Exception:
+            pass
+        meta["clip_filename"] = None
+        meta["clip_duration_ms"] = 0
+        meta["clip_size_bytes"] = 0
+        meta["clip_purged"] = True
+        try:
+            state.update_resource_fields(
+                res["id"],
+                metadata=json.dumps(meta, ensure_ascii=False),
+            )
+        except Exception:
+            pass
+        total_bytes -= size
+        evicted += 1
+
+    return {"evicted": evicted}
+
+
 async def cleanup_expired_browserviews(
     user_id: str,
     chat_id: str,
@@ -213,8 +313,10 @@ async def cleanup_expired_browserviews(
             or meta.get("retained") is True
         )
         fname = os.path.basename(str(r.get("name") or "")) or f"{sanitize_echo_id(r['id'])}_frame.jpg"
+        clip_names = _collect_clip_names(r["id"], meta)
         if is_retained:
             kept_filenames.add(fname)
+            kept_filenames.update(clip_names)
             continue
 
         sess_id = meta.get("session_id") or chat_id
@@ -224,15 +326,17 @@ async def cleanup_expired_browserviews(
         )
         if not should_purge:
             kept_filenames.add(fname)
+            kept_filenames.update(clip_names)
             continue
 
         for base_d in (bv_dir, files_dir):
-            cand = os.path.join(base_d, fname)
-            if os.path.isfile(cand):
-                try:
-                    os.unlink(cand)
-                except Exception:
-                    pass
+            for cand_name in (fname, *clip_names):
+                cand = os.path.join(base_d, cand_name)
+                if os.path.isfile(cand):
+                    try:
+                        os.unlink(cand)
+                    except Exception:
+                        pass
         state.delete_resource(r["id"])
         purged += 1
 
@@ -240,7 +344,7 @@ async def cleanup_expired_browserviews(
         now = time.time()
         try:
             for entry in os.listdir(bv_dir):
-                if not entry.endswith("_frame.jpg") or entry in kept_filenames:
+                if not entry.endswith(("_frame.jpg", BROWSER_CLIP_EXT)) or entry in kept_filenames:
                     continue
                 fp = os.path.join(bv_dir, entry)
                 if os.path.isfile(fp) and (now - os.path.getmtime(fp) > 60.0):
@@ -252,7 +356,37 @@ async def cleanup_expired_browserviews(
         except Exception:
             pass
 
+    await asyncio.to_thread(enforce_transient_clip_budget, user_id, chat_id)
     return {"purged": purged}
+
+
+async def iter_screencast_stream(
+    session_id: str,
+    user_id: str,
+    stop_event: asyncio.Event,
+    timeout: float = 30.0,
+) -> AsyncGenerator[dict, None]:
+    """Consomme le flux SSE /screencast/stream/{session_id} du Browser Worker."""
+    url = f"{NAVIGATION_ENGINE_URL}/screencast/stream/{session_id}"
+    headers = {"X-OpenWebUI-User-Id": str(user_id)}
+    client = _get_browser_client(int(max(5, timeout)))
+    req_timeout = httpx.Timeout(connect=5.0, read=timeout, write=5.0, pool=5.0)
+    async with client.stream("GET", url, headers=headers, timeout=req_timeout) as resp:
+        resp.raise_for_status()
+        async for line in resp.aiter_lines():
+            if stop_event.is_set():
+                break
+            if not line or line.startswith(":"):
+                continue
+            if line.startswith("data: "):
+                try:
+                    ev = json.loads(line[6:])
+                except Exception:
+                    continue
+                if isinstance(ev, dict):
+                    yield ev
+                    if ev.get("type") == "eof":
+                        break
 
 
 async def render_ephemeral_html(
@@ -315,7 +449,7 @@ class EchoBrowserLib:
         return await req_to_browser(self.timeout, "/screencast/start", {"session_id": self.session_id}, self.user_id)
 
     async def stop_screencast(self) -> dict:
-        return await req_to_browser(self.timeout, "/screencast/stop", {"session_id": self.session_id}, self.user_id)
+        return await req_to_browser(max(self.timeout, 30), "/screencast/stop", {"session_id": self.session_id}, self.user_id)
         
     async def reset_session(self) -> dict:
         return await self._action("browser_control", {"command": "reset"})

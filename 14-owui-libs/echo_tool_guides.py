@@ -1,11 +1,12 @@
 """
 title: ECHO Tool Guides Manager
 author: Wilfried BARNAVON
-version: 6.7.1.1
+version: 6.13.2.1
 description: Gestionnaire de la base de connaissances opérationnelle des outils ECHO (tool_guides/*.md).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.13.2.1: Normalisation sans double préfixe 'v' dans l'index hiérarchique et les XML, libellé dédié pour les guides sans outil et factorisation du rendu XML.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 5.229.0.1: Intégration de version et updated_at dans le parsing frontmatter, la Carte Hiérarchique et les balises XML.
 # 5.229.0.0: Création initiale de EchoToolGuidesManager (indexation YAML, tool->domain et pré-injection).
@@ -117,6 +118,20 @@ class EchoToolGuidesManager:
         cls.load_all_guides()
         return cls._TOOL_TO_DOMAIN or {}
 
+    @staticmethod
+    def _format_manual_xml(domain_id: str, info: Dict) -> str:
+        """Formate un manuel opérationnel en balise XML `<operational_manual>`."""
+        ver_clean = str(info.get("version", "")).strip().lstrip("vV")
+        upd_str = str(info.get("updated_at", "")).strip()
+        ver_attr = f' version="{ver_clean}"' if ver_clean else ""
+        date_attr = f' updated_at="{upd_str}"' if upd_str else ""
+        return (
+            f'<operational_manual domain_id="{domain_id}" '
+            f'name="{info.get("name", domain_id)}"{ver_attr}{date_attr}>\n'
+            f"{info.get('body', '')}\n"
+            f"</operational_manual>"
+        )
+
     @classmethod
     def get_hierarchical_index(cls) -> str:
         """
@@ -129,8 +144,15 @@ class EchoToolGuidesManager:
 
         lines: List[str] = []
         for domain_id, info in guides.items():
-            tools_str = ", ".join(info.get("tools", []))
-            ver_str = f" [v{info.get('version', '')} - {info.get('updated_at', '')}]" if info.get("version") or info.get("updated_at") else ""
+            tools_list = info.get("tools", [])
+            tools_str = (
+                ", ".join(tools_list)
+                if tools_list
+                else "(Guide conceptuel / assistance Utilisateur — aucun outil dédié)"
+            )
+            ver_clean = str(info.get("version", "")).strip().lstrip("vV")
+            upd_str = str(info.get("updated_at", "")).strip()
+            ver_str = f" [v{ver_clean} - {upd_str}]" if ver_clean or upd_str else ""
             lines.append(
                 f"- DOMAINE `{domain_id}` ({info.get('name', domain_id)}){ver_str} :\n"
                 f"  Description : {info.get('description', '')}\n"
@@ -241,14 +263,7 @@ class EchoToolGuidesManager:
 
         blocks: List[str] = []
         for d_id in matched_domains[:max_preloaded]:
-            info = guides[d_id]
-            ver_attr = f' version="{info.get("version", "")}"' if info.get("version") else ""
-            date_attr = f' updated_at="{info.get("updated_at", "")}"' if info.get("updated_at") else ""
-            blocks.append(
-                f'<operational_manual domain_id="{d_id}" name="{info.get("name", d_id)}"{ver_attr}{date_attr}>\n'
-                f"{info.get('body', '')}\n"
-                f"</operational_manual>"
-            )
+            blocks.append(cls._format_manual_xml(d_id, guides[d_id]))
         return "\n\n".join(blocks)
 
     @classmethod
@@ -267,13 +282,7 @@ class EchoToolGuidesManager:
                 d_id = info["domain_id"]
                 if d_id not in seen:
                     seen.add(d_id)
-                    ver_attr = f' version="{info.get("version", "")}"' if info.get("version") else ""
-                    date_attr = f' updated_at="{info.get("updated_at", "")}"' if info.get("updated_at") else ""
-                    matched.append(
-                        f'<operational_manual domain_id="{d_id}" name="{info.get("name", d_id)}"{ver_attr}{date_attr}>\n'
-                        f"{info.get('body', '')}\n"
-                        f"</operational_manual>"
-                    )
+                    matched.append(cls._format_manual_xml(d_id, info))
 
         if not matched:
             valid_domains = ", ".join(sorted(guides.keys()))

@@ -101,10 +101,13 @@
 	import {
 		echoBrowserTarget,
 		echoCanvasActiveFrame,
+		echoCanvasFrames,
 		echoCodexTarget,
 		echoCognitionSelectedSubSid,
-		echoTabOpenRequest
+		echoTabOpenRequest,
+		removeEchoCanvasFrames
 	} from '$lib/stores/echo';
+	import { getEchoToken, postEchoWmRpc } from '$lib/apis/echo';
 	import FileNav from './FileNav.svelte';
 	import PyodideFileNav from './PyodideFileNav.svelte';
 	import Overview from './Overview.svelte';
@@ -569,7 +572,7 @@
 		openPanel({ id: kind, kind, label: view.label }, inSidePanel, backgroundOnly);
 	};
 
-	$: if ($echoTabOpenRequest && $echoTabOpenRequest.chatId === chatId) {
+	$: if ($echoTabOpenRequest && $echoTabOpenRequest.chatId === chatId && viewReady && viewEntry) {
 		const req = $echoTabOpenRequest;
 		echoTabOpenRequest.set(null);
 		if (req.payload?.subSid && chatId) {
@@ -594,6 +597,9 @@
 		}
 		if (req.kind === 'echo-canvas' && req.payload?.frameId && chatId) {
 			echoCanvasActiveFrame.update((curr) => ({ ...curr, [chatId]: req.payload!.frameId! }));
+		}
+		if (req.kind === 'echo-canvas') {
+			dismissedAutoTabs.delete('echo-canvas');
 		}
 		if (req.payload?.auto === true) {
 			if (!dismissedAutoTabs.has(req.kind)) {
@@ -813,6 +819,26 @@
 			if (tab.kind === 'preview') showEmbeds.set(false);
 			if (tab.kind?.startsWith('echo-')) {
 				dismissedAutoTabs.add(tab.kind);
+			}
+			if (tab.kind === 'echo-canvas') {
+				const targetCid = owner.chatId ?? chatId ?? '';
+				const frameIds = targetCid ? ($echoCanvasFrames[targetCid] || []).map((f) => f.id) : [];
+				const token = getEchoToken();
+				if (token && targetCid && frameIds.length > 0) {
+					void postEchoWmRpc(
+						token,
+						{
+							action: 'canvas_ui_event',
+							chat_id: targetCid,
+							window_closed: frameIds,
+							remove_frame: true
+						},
+						true
+					);
+				}
+				if (targetCid) {
+					removeEchoCanvasFrames(targetCid);
+				}
 			}
 			owner.drafts.delete(id);
 			const previousPanels = owner.state.panels;

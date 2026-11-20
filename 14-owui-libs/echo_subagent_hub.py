@@ -2,16 +2,16 @@
 """
 title: ECHO Subagent Hub
 author: Wilfried BARNAVON
-version: 6.7.11.1
+version: 6.13.1.1
 description: Contrôleur exécutif unifié des sous-agents, tranches supervisées, ToolDispatcher et file FIFO hybride.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.13.1.1: Découplage live SSE (/screencast/stream + live_state/live_cursor), persistance et broadcast sans Base64 des clips MP4 dans deploy_browser_navigation_monitor, garde finally stop_screencast et fix mimeType image/jpeg.
 # 6.7.11.1: Délégation du délestage dans StandardToolDispatcher._invoke_single_tool à apply_tool_spillover (echo_core).
 # 6.7.10.1: Alignement de StandardToolDispatcher._invoke_single_tool sur get_tool_truncation_limit et respect de _skip_truncation (suppression de la re-troncature à 32 Ko).
 # 6.7.7.1: Découpage des tranches par tours d'outils et timeout (slice_max_turns, slice_timeout_sec, autonomous_slice), suppression de la troncature zéro-batch dans execute_tool_calls et de la limite préalable de mission dans build_subagent_system_appendix.
 # 6.7.5.1: Unification du flux navigator sous verrou EchoSubagentController (step 0 2 parts, carte DOM à la reprise, sémaphore dès ensure_engine_ready, format_browser_dom_view et statuts pré-LLM).
-# 6.7.1.3: Câblage ECHO_SUBAGENT_ENGINES_REGISTRY dans save_subagent_meta et ajout de extract_response_parts_and_text, run_cognitive_step et dispatch_message.
 
 from __future__ import annotations
 
@@ -28,6 +28,8 @@ import uuid
 from typing import Any, Dict, List, Literal, Optional, Protocol, Tuple
 
 from echo_constants import (
+    BROWSER_CLIP_EXT,
+    BROWSER_CLIP_MIME,
     BROWSER_VIEWS_DIR_NAME,
     BROWSER_VIEW_STATUS,
     CONTEXT_TRUNCATE_THRESHOLD,
@@ -1298,6 +1300,7 @@ async def deploy_browser_navigation_monitor(
     """Enregistre la capture dans browserviews/ et la diffuse via EchoWindowManager."""
     import os
     import pybase64 as base64
+    from echo_browser_lib import enforce_transient_clip_budget
     from echo_paths import (
         generate_echo_file_id,
         get_echo_session_path,
@@ -1307,9 +1310,13 @@ async def deploy_browser_navigation_monitor(
     from echo_window_manager import get_window_manager
 
     b64 = res_view.get("screenshot_b64", "")
+    clip_b64 = res_view.get("clip_b64", "")
+    clip_duration_ms = int(res_view.get("clip_duration_ms") or 0)
+    clip_size_bytes = int(res_view.get("clip_size_bytes") or 0)
     eff_session_id = browser_session_id or chat_id
     file_id = ""
     filename = ""
+    clip_filename = ""
     ts_now = int(time.time())
 
     if b64:
@@ -1323,12 +1330,20 @@ async def deploy_browser_navigation_monitor(
             os.makedirs(vault_path, exist_ok=True)
             filepath = os.path.join(vault_path, filename)
 
-            def _write_img(b64_str: str, path: str) -> None:
-                img_data = base64.b64decode(b64_str)
+            def _write_bytes(data: bytes, path: str) -> None:
                 with open(path, "wb") as f:
-                    f.write(img_data)
+                    f.write(data)
 
-            await asyncio.to_thread(_write_img, b64, filepath)
+            img_data = base64.b64decode(b64)
+            await asyncio.to_thread(_write_bytes, img_data, filepath)
+
+            if file_id and clip_b64:
+                clip_data = base64.b64decode(clip_b64)
+                clip_filename = f"{file_id}{BROWSER_CLIP_EXT}"
+                clip_filepath = os.path.join(vault_path, clip_filename)
+                await asyncio.to_thread(_write_bytes, clip_data, clip_filepath)
+                clip_size_bytes = len(clip_data)
+
             state_manager.save_resource(
                 id=file_id,
                 name=filename,
@@ -1343,10 +1358,16 @@ async def deploy_browser_navigation_monitor(
                     "action": res_view.get("action", ""),
                     "timestamp": ts_now,
                     "retained": False,
+                    "clip_filename": clip_filename or None,
+                    "clip_mime": BROWSER_CLIP_MIME if clip_filename else None,
+                    "clip_duration_ms": clip_duration_ms if clip_filename else 0,
+                    "clip_size_bytes": clip_size_bytes if clip_filename else 0,
                 },
             )
+            await asyncio.to_thread(enforce_transient_clip_budget, uid, chat_id)
         except Exception:
             file_id = ""
+            clip_filename = ""
 
     if not show_browser_hud:
         return
@@ -1359,6 +1380,7 @@ async def deploy_browser_navigation_monitor(
             "echo-browser",
             {"sessionId": eff_session_id, "frameId": file_id, "auto": True},
         )
+    safe_cid = sanitize_echo_id(chat_id)
     await wm.broadcast_browser_frame(
         uid,
         chat_id,
@@ -1369,13 +1391,20 @@ async def deploy_browser_navigation_monitor(
             "url": res_view.get("url", ""),
             "action": res_view.get("action", ""),
             "timestamp": ts_now,
+            "status": BROWSER_VIEW_STATUS["TRANSIENT"],
+            "retained": False,
             "image_url": (
-                f"/echo/v1/cognition/{sanitize_echo_id(chat_id)}"
-                f"/browser-frames/{file_id}/image"
+                f"/echo/v1/cognition/{safe_cid}/browser-frames/{file_id}/image"
                 if file_id
                 else ""
             ),
-            "b64": res_view.get("webp_b64") or b64,
+            "clip_url": (
+                f"/echo/v1/cognition/{safe_cid}/browser-frames/{file_id}/clip"
+                if clip_filename
+                else ""
+            ),
+            "clip_duration_ms": clip_duration_ms if clip_filename else 0,
+            "clip_size_bytes": clip_size_bytes if clip_filename else 0,
         },
     )
 
@@ -1555,7 +1584,7 @@ class BrowserToolDispatcher:
         return res_view
 
     async def on_before_slice(self) -> None:
-        from echo_browser_lib import req_to_browser
+        from echo_browser_lib import iter_screencast_stream
         from echo_window_manager import get_window_manager
 
         await self.acquire_browser_slot()
@@ -1563,48 +1592,90 @@ class BrowserToolDispatcher:
 
         if self.show_browser_hud:
             async def _stream_proxy() -> None:
-                last_id = 0
                 wm = get_window_manager()
                 while not self._stop_streaming.is_set():
+                    if not wm.has_browser_live_subscribers(
+                        self.user_id, self.chat_id
+                    ):
+                        await asyncio.sleep(0.5)
+                        continue
                     try:
-                        resp = await req_to_browser(
-                            10,
-                            "/screencast/latest",
-                            {
-                                "session_id": self.browser_session_id,
-                                "last_frame_id": last_id,
-                            },
+                        async for ev in iter_screencast_stream(
+                            self.browser_session_id,
                             self.user_id,
-                        )
-                        if resp and resp.get("status") == "success":
-                            new_id = resp.get("frame_id", last_id)
-                            b64 = resp.get("frame_b64")
-                            if b64 and new_id != last_id:
-                                last_id = new_id
-                                await wm.broadcast_browser_frame(
+                            self._stop_streaming,
+                        ):
+                            if (
+                                self._stop_streaming.is_set()
+                                or not wm.has_browser_live_subscribers(
+                                    self.user_id, self.chat_id
+                                )
+                            ):
+                                break
+                            ev_type = ev.get("type")
+                            if ev_type == "frame":
+                                await wm.broadcast_browser_live(
                                     self.user_id,
                                     self.chat_id,
                                     {
+                                        "type": "live_frame",
                                         "session_id": self.browser_session_id,
-                                        "live_frame_id": new_id,
-                                        "url": resp.get("url", ""),
-                                        "live_b64": b64,
-                                        "timestamp": int(time.time()),
+                                        "frame_id": ev.get("frame_id", 0),
+                                        "b64": ev.get("b64", ""),
+                                        "url": ev.get("url", ""),
+                                        "vp_w": ev.get("vp_w", 1280),
+                                        "vp_h": ev.get("vp_h", 800),
+                                        "ts": ev.get("ts", time.time()),
                                     },
                                 )
+                            elif ev_type == "cursor":
+                                await wm.broadcast_browser_live(
+                                    self.user_id,
+                                    self.chat_id,
+                                    {
+                                        "type": "live_cursor",
+                                        "session_id": self.browser_session_id,
+                                        "x": ev.get("x"),
+                                        "y": ev.get("y"),
+                                        "vp_w": ev.get("vp_w", 1280),
+                                        "vp_h": ev.get("vp_h", 800),
+                                        "clicking": bool(ev.get("clicking")),
+                                        "ts": ev.get("ts", time.time()),
+                                    },
+                                )
+                            elif ev_type == "eof":
+                                break
                     except asyncio.CancelledError:
                         break
                     except Exception:
                         pass
-                    await asyncio.sleep(0.1)
+                    if not self._stop_streaming.is_set():
+                        await asyncio.sleep(0.2)
 
             self._proxy_task = asyncio.create_task(_stream_proxy())
 
     async def on_after_slice(self, final_status: str) -> None:
+        from echo_window_manager import get_window_manager
+
         self._stop_streaming.set()
         if self._proxy_task:
             self._proxy_task.cancel()
             self._proxy_task = None
+        if self.show_browser_hud:
+            try:
+                wm = get_window_manager()
+                if wm.has_browser_live_subscribers(self.user_id, self.chat_id):
+                    await wm.broadcast_browser_live(
+                        self.user_id,
+                        self.chat_id,
+                        {
+                            "type": "live_state",
+                            "session_id": self.browser_session_id,
+                            "active": False,
+                        },
+                    )
+            except Exception:
+                pass
         self.release_browser_slot()
 
     async def on_cleanup(self) -> None:
@@ -1639,180 +1710,231 @@ class BrowserToolDispatcher:
         last_fn_name = "action"
         err_streak = 0
 
+        from echo_window_manager import get_window_manager
+
+        wm = get_window_manager()
+        if self.show_browser_hud and wm.has_browser_live_subscribers(
+            self.user_id, self.chat_id
+        ):
+            try:
+                await wm.broadcast_browser_live(
+                    self.user_id,
+                    self.chat_id,
+                    {
+                        "type": "live_state",
+                        "session_id": self.browser_session_id,
+                        "active": True,
+                    },
+                )
+            except Exception:
+                pass
+
         try:
             await self.browser.start_screencast()
         except Exception:
             pass
 
-        for index, fc in enumerate(allowed_calls):
-            fn_name = fc.get("name", "")
-            fn_args = dict(fc.get("args", {}) or {})
-            fn_id = fc.get("id")
-            is_last_tool = index == len(allowed_calls) - 1
+        screencast_stopped = False
 
-            if fn_args.get("action_type") in ("download", "save_target"):
-                fn_args["download_file_id"] = f"DL_{uuid.uuid4().hex[:8]}"
-
-            if self.events:
-                await self.events.status(
-                    f"🖱️ [{self.sid}] {fn_name}({fn_args})", done=False
-                )
-
-            _resp: dict = {"status": "error", "message": "Outil inconnu."}
-            is_err = False
-
-            if fn_name in self.registry:
+        async def _stop_and_collect_clip() -> dict:
+            nonlocal screencast_stopped
+            if screencast_stopped:
+                return {}
+            screencast_stopped = True
+            sc_res: Any = {}
+            try:
+                sc_res = await self.browser.stop_screencast()
+            except Exception:
+                sc_res = {}
+            if self.show_browser_hud and wm.has_browser_live_subscribers(
+                self.user_id, self.chat_id
+            ):
                 try:
-                    action_res = await self.registry[fn_name](**fn_args)
-                    if action_res.get("_trigger_vision"):
-                        self.vision_requested = True
-                        grid = action_res.get("grid", False)
-                        zb = action_res.get("zoom_box")
-                        if action_res.get("is_zoom"):
-                            self.is_zooming = True
-                            self.zoom_attempts += 1
-                            cx, cy = action_res.get("cx"), action_res.get("cy")
-                            _resp = {
-                                "status": "success",
-                                "message": (
-                                    f"Zoom appliqué (Essai {self.zoom_attempts}/3). L'image jointe est rognée sur la zone cible. "
-                                    f"Un VISEUR ROUGE a été dessiné au centre absolu (X={cx}, Y={cy}). "
-                                    f"Si le point central de ce viseur est STRICTEMENT sur la cible, le Sous-Agent DOIT utiliser "
-                                    f"action_interact_dom(x={cx}, y={cy}, action_type='click')."
-                                ),
-                            }
-                        elif action_res.get("is_zoom_out"):
-                            self.is_zooming = False
-                            self.zoom_attempts = 0
-                            _resp = {
-                                "status": "success",
-                                "message": "Zoom annulé. Retour à la vue globale.",
-                            }
-                        else:
-                            _resp = {
-                                "status": "success",
-                                "message": "Capture d'écran demandée. Elle est jointe à ce message.",
-                            }
+                    await wm.broadcast_browser_live(
+                        self.user_id,
+                        self.chat_id,
+                        {
+                            "type": "live_state",
+                            "session_id": self.browser_session_id,
+                            "active": False,
+                        },
+                    )
+                except Exception:
+                    pass
+            return sc_res if isinstance(sc_res, dict) else {}
 
-                        if grid:
-                            last_view = await self.browser.vision_capture(
-                                grid=True, zoom_box=zb
-                            )
-                        else:
-                            last_view = await self.browser.highlight()
+        def _attach_clip_fields(target_view: dict, sc_res: dict) -> None:
+            if not isinstance(target_view, dict) or not isinstance(sc_res, dict):
+                return
+            for k in ("clip_b64", "clip_mime", "clip_duration_ms", "clip_size_bytes"):
+                if sc_res.get(k):
+                    target_view[k] = sc_res[k]
 
-                        hud_view = (
-                            await self.browser.highlight() if grid else last_view
-                        )
-                        if is_last_tool:
-                            try:
-                                sc_res = await self.browser.stop_screencast()
-                                if sc_res and sc_res.get("webp_b64"):
-                                    hud_view["webp_b64"] = sc_res["webp_b64"]
-                            except Exception:
-                                pass
-                        await deploy_browser_navigation_monitor(
-                            hud_view,
-                            self.chat_id,
-                            self.user_id,
-                            show_browser_hud=self.show_browser_hud,
-                            browser_session_id=self.browser_session_id,
-                        )
-                        last_fn_name = fn_name
-                    elif action_res.get("status") != "error":
-                        if fn_name in (
-                            "action_interact_dom",
-                            "action_interact_a11y",
-                            "action_browser_control",
-                        ):
-                            self.is_zooming = False
-                            self.zoom_attempts = 0
-                        if is_last_tool:
-                            if (
-                                "metadata" in action_res
-                                and "screenshot_b64" in action_res
-                            ):
-                                last_view = action_res
+        try:
+            for index, fc in enumerate(allowed_calls):
+                fn_name = fc.get("name", "")
+                fn_args = dict(fc.get("args", {}) or {})
+                fn_id = fc.get("id")
+                is_last_tool = index == len(allowed_calls) - 1
+
+                if fn_args.get("action_type") in ("download", "save_target"):
+                    fn_args["download_file_id"] = f"DL_{uuid.uuid4().hex[:8]}"
+
+                if self.events:
+                    await self.events.status(
+                        f"🖱️ [{self.sid}] {fn_name}({fn_args})", done=False
+                    )
+
+                _resp: dict = {"status": "error", "message": "Outil inconnu."}
+                is_err = False
+
+                if fn_name in self.registry:
+                    try:
+                        action_res = await self.registry[fn_name](**fn_args)
+                        if action_res.get("_trigger_vision"):
+                            self.vision_requested = True
+                            grid = action_res.get("grid", False)
+                            zb = action_res.get("zoom_box")
+                            if action_res.get("is_zoom"):
+                                self.is_zooming = True
+                                self.zoom_attempts += 1
+                                cx, cy = action_res.get("cx"), action_res.get("cy")
+                                _resp = {
+                                    "status": "success",
+                                    "message": (
+                                        f"Zoom appliqué (Essai {self.zoom_attempts}/3). L'image jointe est rognée sur la zone cible. "
+                                        f"Un VISEUR ROUGE a été dessiné au centre absolu (X={cx}, Y={cy}). "
+                                        f"Si le point central de ce viseur est STRICTEMENT sur la cible, le Sous-Agent DOIT utiliser "
+                                        f"action_interact_dom(x={cx}, y={cy}, action_type='click')."
+                                    ),
+                                }
+                            elif action_res.get("is_zoom_out"):
+                                self.is_zooming = False
+                                self.zoom_attempts = 0
+                                _resp = {
+                                    "status": "success",
+                                    "message": "Zoom annulé. Retour à la vue globale.",
+                                }
+                            else:
+                                _resp = {
+                                    "status": "success",
+                                    "message": "Capture d'écran demandée. Elle est jointe à ce message.",
+                                }
+
+                            if grid:
+                                last_view = await self.browser.vision_capture(
+                                    grid=True, zoom_box=zb
+                                )
                             else:
                                 last_view = await self.browser.highlight()
-                            try:
-                                sc_res = await self.browser.stop_screencast()
-                                if sc_res and sc_res.get("webp_b64"):
-                                    last_view["webp_b64"] = sc_res["webp_b64"]
-                            except Exception:
-                                pass
+
+                            hud_view = (
+                                await self.browser.highlight() if grid else last_view
+                            )
+                            if is_last_tool:
+                                sc_res = await _stop_and_collect_clip()
+                                _attach_clip_fields(hud_view, sc_res)
                             await deploy_browser_navigation_monitor(
-                                last_view,
+                                hud_view,
                                 self.chat_id,
                                 self.user_id,
                                 show_browser_hud=self.show_browser_hud,
                                 browser_session_id=self.browser_session_id,
                             )
-                            _resp = {
-                                "status": "success",
-                                "dom_map": last_view.get("metadata", []),
-                            }
+                            last_fn_name = fn_name
+                        elif action_res.get("status") != "error":
+                            if fn_name in (
+                                "action_interact_dom",
+                                "action_interact_a11y",
+                                "action_browser_control",
+                            ):
+                                self.is_zooming = False
+                                self.zoom_attempts = 0
+                            if is_last_tool:
+                                if (
+                                    "metadata" in action_res
+                                    and "screenshot_b64" in action_res
+                                ):
+                                    last_view = action_res
+                                else:
+                                    last_view = await self.browser.highlight()
+                                sc_res = await _stop_and_collect_clip()
+                                _attach_clip_fields(last_view, sc_res)
+                                await deploy_browser_navigation_monitor(
+                                    last_view,
+                                    self.chat_id,
+                                    self.user_id,
+                                    show_browser_hud=self.show_browser_hud,
+                                    browser_session_id=self.browser_session_id,
+                                )
+                                _resp = {
+                                    "status": "success",
+                                    "dom_map": last_view.get("metadata", []),
+                                }
+                            else:
+                                _resp = {
+                                    "status": "success",
+                                    "message": "Action exécutée avec succès.",
+                                }
+                            if action_res.get("status") == "downloading":
+                                _resp["message"] = (
+                                    f"📥 Téléchargement asynchrone démarré. Identifiant : {fn_args.get('download_file_id')}."
+                                )
+                            for k_extra in ("search_result", "content", "value"):
+                                if k_extra in action_res:
+                                    _resp[k_extra] = action_res[k_extra]
+                            last_fn_name = fn_name
                         else:
                             _resp = {
-                                "status": "success",
-                                "message": "Action exécutée avec succès.",
+                                "status": "error",
+                                "error": action_res.get("message"),
                             }
-                        if action_res.get("status") == "downloading":
-                            _resp["message"] = (
-                                f"📥 Téléchargement asynchrone démarré. Identifiant : {fn_args.get('download_file_id')}."
-                            )
-                        for k_extra in ("search_result", "content", "value"):
-                            if k_extra in action_res:
-                                _resp[k_extra] = action_res[k_extra]
-                        last_fn_name = fn_name
-                    else:
-                        _resp = {
-                            "status": "error",
-                            "error": action_res.get("message"),
-                        }
+                            is_err = True
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        _resp = {"status": "error", "error": str(e)}
                         is_err = True
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    _resp = {"status": "error", "error": str(e)}
+                elif fn_name == "action_analyze_page" and self.analyze_page_cb:
+                    try:
+                        current_url_resp = await self.browser.action_inspect_page(
+                            target="url"
+                        )
+                        raw_res = await self.analyze_page_cb(
+                            current_url_resp.get("url", ""),
+                            fn_args.get("query", ""),
+                        )
+                        _resp = {"status": "success", "result": raw_res}
+                    except Exception as e:
+                        _resp = {"status": "error", "error": str(e)}
+                        is_err = True
+                elif fn_name == "action_archive_page" and self.archive_page_cb:
+                    try:
+                        current_url_resp = await self.browser.action_inspect_page(
+                            target="url"
+                        )
+                        raw_res = await self.archive_page_cb(
+                            current_url_resp.get("url", "")
+                        )
+                        _resp = {"status": "success", "result": raw_res}
+                    except Exception as e:
+                        _resp = {"status": "error", "error": str(e)}
+                        is_err = True
+                else:
                     is_err = True
-            elif fn_name == "action_analyze_page" and self.analyze_page_cb:
-                try:
-                    current_url_resp = await self.browser.action_inspect_page(
-                        target="url"
-                    )
-                    raw_res = await self.analyze_page_cb(
-                        current_url_resp.get("url", ""),
-                        fn_args.get("query", ""),
-                    )
-                    _resp = {"status": "success", "result": raw_res}
-                except Exception as e:
-                    _resp = {"status": "error", "error": str(e)}
-                    is_err = True
-            elif fn_name == "action_archive_page" and self.archive_page_cb:
-                try:
-                    current_url_resp = await self.browser.action_inspect_page(
-                        target="url"
-                    )
-                    raw_res = await self.archive_page_cb(
-                        current_url_resp.get("url", "")
-                    )
-                    _resp = {"status": "success", "result": raw_res}
-                except Exception as e:
-                    _resp = {"status": "error", "error": str(e)}
-                    is_err = True
-            else:
-                is_err = True
 
-            if is_err:
-                err_streak += 1
-            else:
-                err_streak = 0
+                if is_err:
+                    err_streak += 1
+                else:
+                    err_streak = 0
 
-            _fr: dict = {"name": fn_name, "response": _resp}
-            if fn_id:
-                _fr["id"] = fn_id
-            response_parts.append({"functionResponse": _fr})
+                _fr: dict = {"name": fn_name, "response": _resp}
+                if fn_id:
+                    _fr["id"] = fn_id
+                response_parts.append({"functionResponse": _fr})
+        finally:
+            if not screencast_stopped:
+                await _stop_and_collect_clip()
 
         for fc in excess_calls:
             fn_id = fc.get("id")
@@ -1854,7 +1976,7 @@ class BrowserToolDispatcher:
                 )
                 response_parts.append({
                     "inlineData": {
-                        "mimeType": "image/png",
+                        "mimeType": "image/jpeg",
                         "data": last_view["screenshot_b64"],
                     }
                 })

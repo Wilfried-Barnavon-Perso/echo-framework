@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 6.10.0.1
+version: 6.13.2.1
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.13.2.1: Extension de la description et de la docstring de tool_advisor à l'assistance ECHO-UI (echo_ui_guide).
 # 6.10.0.1: Support des 3 modes de destination (new_chat, existing_chat avec target_chat_id='current', persistent_chat) sur create/update_ui_automation et exposition target/folder_id dans list_ui_automations.
 # 6.8.2.2: Migration Svelte native de ask_user_input (request:user_input / AskUserCard), blocage headless/automation via get_headless_block_reason, et ajout de create_ui_tasks, update_ui_task, toggle_ui_automation, search_ui_chats et view_ui_chat.
 # 6.7.11.1: Délégation du fenêtrage read_tool_output à paginate_lines_window et suppression des 7 skip_truncation=True redondants.
 # 6.7.10.1: Alignement de la fenêtre par défaut de read_tool_output (end_line=None) sur ECHO_CODEX_MAX_READ_LINES (800 lignes).
-# 5.239.17.1: Ajout des outils dédiés read_tool_output (lecture paginée par lignes et recherche regex/motif) et delete_tool_output pour l'exploitation du domaine tools_output.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -841,11 +841,11 @@ class Tools:
         self,
         objective: str = Field(
             ...,
-            description="Objectif technique précis, question sur l'usage d'un outil ou contexte d'erreur à diagnostiquer."
+            description="Objectif technique précis, question sur l'usage d'un outil, aide sur l'interface ECHO-UI à fournir à L'Utilisateur, ou contexte d'erreur à diagnostiquer."
         ),
         target_tools: str = Field(
             default=None,
-            description="Liste optionnelle de noms de fonctions ou de domaines séparés par des virgules (ex: 'edit_codex,open_codex_ui')."
+            description="Liste optionnelle de noms de fonctions ou de domaines séparés par des virgules (ex: 'edit_codex,open_codex_ui', 'echo_ui_guide')."
         ),
         error_context: str = Field(
             default=None,
@@ -857,7 +857,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None
     ) -> str:
-        """Consulte l'Expert-Conseil Opérationnel des Outils ECHO (manuels complets, paramètres exacts, séquences d'appels, utilité et diagnostic d'erreurs). Cet outil est transmis par défaut à tous les sous-agents pour assister l'orchestration, connaître l'usage d'une fonction ou diagnostiquer un échec d'appel."""
+        """Consulte l'Expert-Conseil Opérationnel ECHO (manuels complets des outils, paramètres exacts, séquences d'appels, diagnostic d'erreurs et guide d'utilisation de l'interface ECHO-UI pour assister L'Utilisateur). Transmis par défaut à tous les sous-agents."""
         if not __user__:
             return "Erreur : contexte OWUI manquant."
 

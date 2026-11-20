@@ -1,16 +1,16 @@
 """
 title: ECHO Resource Registry
 author: Wilfried BARNAVON
-version: 6.6.5.1
+version: 6.13.1.1
 description: Composant système interne : ECHO Resource Registry.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.13.1.1: Affichage des métadonnées clip vidéo MP4 dans _format_resource_detail pour resource_type="browserview".
 # 6.6.5.1: Prise en charge de resource_type="browserview" et affichage de ses métadonnées dans _format_resource_detail.
 # 5.235.5.1: Calcul et affichage de la provenance des ressources de session (branche active vs hors branche).
 # 5.233.0.1: Décoration @echo_tool sur query_registry et remplacement intégral des 7 appels wrap_tool_output par des retours directs.
 # 5.232.5.1: Prise en charge de resource_type="generated", ajout du filtre workspace ("main", "plans", "generated") et de la colonne Localisation (storage_path).
-# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 
 # ECHO CONFIG NAME : ECHO Registry
 
@@ -181,6 +181,10 @@ class Tools:
                     lines.append(f"- **URL** : {meta['url']}")
                 if meta.get("action"):
                     lines.append(f"- **Action** : `{meta['action']}`")
+                if meta.get("clip_filename"):
+                    lines.append(
+                        f"- **Clip vidéo** : `{meta['clip_filename']}` ({float(meta.get('clip_duration_ms') or 0)/1000.0:.1f} s, {float(meta.get('clip_size_bytes') or 0)/1024.0:.0f} Ko)"
+                    )
                 lines.append(f"- **Conservée** : {'Oui' if (r.get('status') == 'retained' or meta.get('retained')) else 'Non (éphémère)'}")
 
         # Résumé (Smart Context)
