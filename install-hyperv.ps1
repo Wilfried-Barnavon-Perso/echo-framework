@@ -60,8 +60,8 @@ $MemoryPriority = 35
 $QoSMarginPercent = 66
 
 # --- CONFIGURATION BRANCHE ---
-#$BRANCHE = "dev"
-$BRANCHE = "main"
+$BRANCHE = "dev"
+#$BRANCHE = "main"
 
 function Pause-OnError {
   param([string]$Message)
