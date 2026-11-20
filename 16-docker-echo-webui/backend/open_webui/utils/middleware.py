@@ -165,7 +165,6 @@ from open_webui.utils.tool_calling import (
 from open_webui.utils.tool_search import apply_tool_search, resolve_tool_call, split_tool_call_batches
 from open_webui.utils.tools import (
     connect_mcp_server,
-    display_file,
     get_attached_knowledge,
     get_builtin_tool_spec,
     get_builtin_tools,
@@ -2639,11 +2638,7 @@ async def process_chat_payload(request, form_data, user, metadata, model):
 
                 for tool in tool_specs:
                     tools_dict[tool['name']] = {
-                        'spec': (
-                            get_builtin_tool_spec(display_file)
-                            if tool_server.get('is_terminal') and tool['name'] == 'display_file'
-                            else tool
-                        ),
+                        'spec': tool,
                         'direct': True,
                         'server': tool_server,
                     }

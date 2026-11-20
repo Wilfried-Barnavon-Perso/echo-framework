@@ -35,7 +35,7 @@ La base de code de ce composant est verrouillée sur une version amont d'Open We
 Le conteneur bâti depuis ce composant s'insère au cœur de l'architecture multi-services d'ECHO V6. Les contrats d'interface suivants sont des invariants stricts :
 
 1. **Réseau & Service :**
-   - Nom de service : `echo-webui` (identité UI `ECHO-UI`, version front disjointe `UI_VERSION` `6.10.0.1`).
+   - Nom de service : `echo-webui` (identité UI `ECHO-UI`, version front disjointe `UI_VERSION` `6.13.0.1`).
    - Assignation réseau interne : `172.28.0.100:8080` (réseau `echo-net`).
 2. **Persistance des Données :**
    - Montage du volume persistant : `echo-webui-data:/app/backend/data`.
