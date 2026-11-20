@@ -924,6 +924,26 @@ async def process_tool_result(
         else:
             tool_result = str(tool_result)
 
+    chat_id = (metadata or {}).get('chat_id')
+    if tool_result_embeds and user and getattr(user, 'id', None) and is_saved_chat_id(chat_id):
+        try:
+            ensure_echo_sys_path()
+            from echo_paths import save_embed_html_document
+            externalized_embeds = []
+            for embed_entry in tool_result_embeds:
+                if (
+                    isinstance(embed_entry, str)
+                    and embed_entry.strip()
+                    and not embed_entry.startswith(('http://', 'https://', '/', 'echo-embed://'))
+                ):
+                    embed_uri = await asyncio.to_thread(save_embed_html_document, user.id, chat_id, embed_entry)
+                    externalized_embeds.append(embed_uri)
+                else:
+                    externalized_embeds.append(embed_entry)
+            tool_result_embeds = externalized_embeds
+        except Exception as e:
+            log.warning('Could not externalize tool embeds; retaining inline: %s', e)
+
     return tool_result, tool_result_files, tool_result_embeds
 
 
@@ -3900,6 +3920,7 @@ async def non_streaming_chat_response_handler(response, ctx):
                         'selectedModelId': response_data['selected_model_id'],
                     },
                     touch=False,
+                    sync_chat_blob=False,
                 )
 
             choices = response_data.get('choices', [])
@@ -4530,6 +4551,7 @@ async def streaming_chat_response_handler(response, ctx):
                         metadata['chat_id'],
                         metadata['message_id'],
                         {'error': {'content': error_content}},
+                        sync_chat_blob=False,
                     )
                 await event_emitter(
                     {
@@ -4590,6 +4612,7 @@ async def streaming_chat_response_handler(response, ctx):
                             {
                                 **event,
                             },
+                            sync_chat_blob=False,
                         )
 
                 async def stream_body_handler(response, current_form_data):
@@ -4735,6 +4758,7 @@ async def streaming_chat_response_handler(response, ctx):
                                                 {
                                                     'error': {'content': raw_error},
                                                 },
+                                                sync_chat_blob=False,
                                             )
                                         except Exception:
                                             pass
@@ -4773,6 +4797,7 @@ async def streaming_chat_response_handler(response, ctx):
                                                 'selectedModelId': form_data['model'],
                                             },
                                             touch=False,
+                                            sync_chat_blob=False,
                                         )
                                     await event_emitter(
                                         {
@@ -4854,6 +4879,7 @@ async def streaming_chat_response_handler(response, ctx):
                                                         {
                                                             'error': {'content': response_metadata['error']},
                                                         },
+                                                        sync_chat_blob=False,
                                                     )
                                                 except Exception:
                                                     pass
@@ -4904,6 +4930,7 @@ async def streaming_chat_response_handler(response, ctx):
                                                         {
                                                             'error': {'content': error},
                                                         },
+                                                        sync_chat_blob=False,
                                                     )
                                                 except Exception:
                                                     pass

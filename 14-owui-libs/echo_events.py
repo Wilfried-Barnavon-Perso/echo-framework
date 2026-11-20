@@ -2,16 +2,16 @@
 """
 title: ECHO Echo Events
 author: Wilfried BARNAVON
-version: 6.10.0.1
+version: 6.14.2.1
 description: Gestionnaire des événements WebSocket et UI. Intègre le protocole UCTP (Universal Chunked Transfer Protocol).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.14.2.1: Suppression du fallback JS mort window.echoWrapUctpPayload dans _wrap_wm_js et _build_uctp_frames.
 # 6.10.0.1: Court-circuit immédiat de call() et call_execute() en contexte d'automatisation planifiée.
 # 6.6.9.1: Suppression de l'import et de l'appel obsolète register_echo_wm_routes() dans EchoEvents.__init__.
 # 6.6.2.1: Suppression du fast-path mort echo_codex_action dans trigger_action.
 # 5.231.48.1: Marquage data-echo-scope="global", correction de window._uctp_<id> et watchdog d'auto-nettoyage DOM sur #uctp-loader-<id> dans _build_uctp_frames.
-# 5.231.46.1: Factorisation de _reassemble_uctp_payload post-FIRST_COMPLETED (double transport Socket.IO + SSE/RPC) et wrapping automatique echoWrapUctpPayload en mode call.
 import asyncio
 from typing import Any, Optional
 import uuid
@@ -99,7 +99,7 @@ class EchoEvents:
                 f"    return await window.EchoWM.runInChatScope({cid_json}, {eid_json}, {code_json}, {mode_json}, false);\n"
                 f"}}\n"
                 f"const _uctpRes = await (async () => {{\n{code_str}\n}})();\n"
-                f"return (typeof window.echoWrapUctpPayload === 'function') ? window.echoWrapUctpPayload(_uctpRes) : _uctpRes;"
+                f"return _uctpRes;"
             )
         return (
             f"(async () => {{\n"
@@ -187,7 +187,7 @@ class EchoEvents:
             }}
             const AsyncFunction = Object.getPrototypeOf(async function(){{}}).constructor;
             const _uctpRes = await (new AsyncFunction(code))();
-            return (typeof window.echoWrapUctpPayload === 'function') ? window.echoWrapUctpPayload(_uctpRes) : _uctpRes;
+            return _uctpRes;
         """
         final_js = f"(async () => {{{final_body}}})();" if mode == "emit" else final_body
         return setup_js, chunks_js, final_js

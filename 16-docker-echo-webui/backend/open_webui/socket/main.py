@@ -1741,6 +1741,7 @@ async def get_event_emitter(request_info, update_db=True):
                         {
                             'content': content,
                         },
+                        sync_chat_blob=False,
                     )
 
             elif event_type == 'replace':
@@ -1752,6 +1753,7 @@ async def get_event_emitter(request_info, update_db=True):
                     {
                         'content': content,
                     },
+                    sync_chat_blob=False,
                 )
 
             elif event_type == 'embeds':
@@ -1770,6 +1772,7 @@ async def get_event_emitter(request_info, update_db=True):
                         'embeds': embeds,
                     },
                     touch=False,
+                    sync_chat_blob=False,
                 )
 
             elif event_type == 'files':
@@ -1785,6 +1788,7 @@ async def get_event_emitter(request_info, update_db=True):
                         'files': files,
                     },
                     touch=False,
+                    sync_chat_blob=False,
                 )
 
             elif event_type in ('source', 'citation'):
@@ -1802,6 +1806,7 @@ async def get_event_emitter(request_info, update_db=True):
                             'sources': sources,
                         },
                         touch=False,
+                        sync_chat_blob=False,
                     )
 
     if 'user_id' in request_info and 'chat_id' in request_info and 'message_id' in request_info:

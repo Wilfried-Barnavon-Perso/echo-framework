@@ -402,6 +402,78 @@ class ChatMessageTable:
     # DB-internal columns excluded from the reconstructed message dict.
     EXCLUDED_COLUMNS = frozenset({'id', 'chat_id', 'updated_at'})
 
+    def row_to_message_dict(self, chat_id: str, row: ChatMessage) -> dict:
+        """Reconstruct a JSON-shaped message dict from a ChatMessage ORM row."""
+        prefix = f'{chat_id}-'
+        msg_id = row.id[len(prefix):] if row.id.startswith(prefix) else row.id
+
+        msg: dict = {'id': msg_id}
+        for col in ChatMessage.__table__.columns:
+            key = col.key
+            if key in self.EXCLUDED_COLUMNS:
+                continue
+            val = getattr(row, key)
+            if val is None:
+                continue
+            json_key = self.DB_TO_JSON_KEY_MAP.get(key, key)
+            msg[json_key] = val
+
+        # Ensure content always has a value
+        msg.setdefault('content', '')
+
+        # Mirror usage into info.usage for callers that read it there
+        if 'usage' in msg:
+            msg['info'] = {'usage': msg['usage']}
+
+        return msg
+
+    async def append_message_status(
+        self,
+        chat_id: str,
+        message_id: str,
+        status: dict,
+        db: Optional[AsyncSession] = None,
+    ) -> bool:
+        """Atomically append a status entry to a chat message's status_history."""
+        async with nullcontext(db) if db is not None else get_async_db_context() as session:
+            row = await session.get(ChatMessage, f'{chat_id}-{message_id}')
+            if row is None:
+                return False
+
+            history = list(row.status_history or [])
+            history.append(status)
+            row.status_history = history
+            row.updated_at = int(time.time())
+
+            if db is None:
+                await session.commit()
+            else:
+                await session.flush()
+            return True
+
+    async def append_message_files(
+        self,
+        chat_id: str,
+        message_id: str,
+        files: list[dict],
+        db: Optional[AsyncSession] = None,
+    ) -> Optional[list[dict]]:
+        """Atomically append file entries to a chat message's files list."""
+        async with nullcontext(db) if db is not None else get_async_db_context() as session:
+            row = await session.get(ChatMessage, f'{chat_id}-{message_id}')
+            if row is None:
+                return None
+
+            merged_files = list(row.files or []) + list(files or [])
+            row.files = merged_files
+            row.updated_at = int(time.time())
+
+            if db is None:
+                await session.commit()
+            else:
+                await session.flush()
+            return merged_files
+
     async def get_messages_map_by_chat_id(self, chat_id: str, db: Optional[AsyncSession] = None) -> Optional[dict]:
         """Build a {message_id: message_dict} map from chat_message rows.
 
@@ -417,34 +489,10 @@ class ChatMessageTable:
         if not rows:
             return None
 
-        # Strip the composite-id prefix ("{chat_id}-") to recover the
-        # original message_id used as map key.
-        prefix = f'{chat_id}-'
-        prefix_len = len(prefix)
-        col_keys = [c.key for c in ChatMessage.__table__.columns]
-
         messages_map: dict[str, dict] = {}
         for row in rows:
-            msg_id = row.id[prefix_len:] if row.id.startswith(prefix) else row.id
-
-            msg: dict = {'id': msg_id}
-            for key in col_keys:
-                if key in self.EXCLUDED_COLUMNS:
-                    continue
-                val = getattr(row, key)
-                if val is None:
-                    continue
-                json_key = self.DB_TO_JSON_KEY_MAP.get(key, key)
-                msg[json_key] = val
-
-            # Ensure content always has a value
-            msg.setdefault('content', '')
-
-            # Mirror usage into info.usage for callers that read it there
-            if 'usage' in msg:
-                msg['info'] = {'usage': msg['usage']}
-
-            messages_map[msg_id] = msg
+            msg = self.row_to_message_dict(chat_id, row)
+            messages_map[msg['id']] = msg
 
         # Reconstruct childrenIds from parentId links so that the map
         # is fully navigable (callers like the frontend rely on this).

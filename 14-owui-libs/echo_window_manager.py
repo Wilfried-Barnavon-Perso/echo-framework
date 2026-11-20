@@ -2,16 +2,16 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 6.13.1.2
+version: 6.14.2.1
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.14.2.1: Suppression intégrale de la persistance SQLite wm_state (_load_chat_state, _save_chat_state, _sanitize_windows_dict) et des actions RPC mortes (window_mounted, window_updated, window_closed, kv_sync).
 # 6.13.1.2: Ajout du canal SSE dédié browser-live (_browser_live_subscribers, subscribe_browser_live, unsubscribe_browser_live, has_browser_live_subscribers, broadcast_browser_live).
 # 6.13.1.1: Suppression du faux ping serveur, inbox Canvas scopée par window_id avec peek/ack, support echoPings batch et window_closed (_is_closed), broadcast_canvas_status, cleanup_canvas_run et exposition canvas_frames dans get_chat_snapshot.
 # 6.7.0.1: Purge des payloads de fenêtres fermées (_sanitize_windows_dict), auto-guérison wm_state, bridage update_codes et suppression du code mort get_client_loader_js.
 # 6.6.16.2: Ajout du bus Canvas bidirectionnel (broadcast_canvas_frame, broadcast_canvas_event, consume_canvas_ui_payload, clear_canvas_signal et RPC canvas_ui_event).
-# 6.6.9.1: Suppression du loader JS/FastAPI legacy (get_full_loader_bundle_js, inject_client_loader, wm_router, wm_static_router, register_echo_wm_routes, resolve_wm_user_id).
 
 import asyncio
 from contextlib import closing
@@ -21,60 +21,12 @@ import time
 import uuid
 from typing import Any, Dict, Optional, Set, Tuple
 
-import orjson as json
-
 from echo_constants import ECHO_BASE_DATA_DIR, ECHO_UCTP_CHUNK_SIZE, ECHO_USERS_ROOT
 from echo_paths import sanitize_echo_id
 from echo_state_manager import EchoStateManager
 
-WM_STATE_KEY = "wm_state"
-MAX_TRACKED_WINDOWS_PER_CHAT = 32
-MAX_KV_ENTRIES_PER_CHAT = 128
-TRANSIENT_HUD_PREFIXES = ("uctp-loader-", "echo-edge-hud", "echo-migration-hud", "echo-clone-hud")
 _OWUI_DB_PATH = os.path.join(ECHO_BASE_DATA_DIR, "webui.db")
 _EMAIL_TO_UID_CACHE: Dict[str, str] = {}
-
-
-def _is_transient_hud_id(wid: str) -> bool:
-    """Indique si l'ID DOM cible un HUD transitoire/global exclu de wm_state."""
-    s_wid = str(wid or "").strip()
-    return not s_wid or s_wid.startswith(TRANSIENT_HUD_PREFIXES)
-
-
-def _sanitize_windows_dict(wins: Dict[str, Any]) -> bool:
-    """Assainit in-place le dictionnaire des fenêtres (auto-guérison du bloat SQLite). Retourne True si modifié."""
-    if not isinstance(wins, dict):
-        return False
-    dirty = False
-    for wid in list(wins.keys()):
-        w_entry = wins.get(wid)
-        if _is_transient_hud_id(wid) or not isinstance(w_entry, dict):
-            wins.pop(wid, None)
-            dirty = True
-            continue
-        if not w_entry.get("is_open"):
-            if w_entry.get("mount_code") or w_entry.get("update_code") or w_entry.get("update_codes"):
-                w_entry["mount_code"] = ""
-                w_entry["update_code"] = ""
-                w_entry["update_codes"] = []
-                dirty = True
-            continue
-        uc_list = w_entry.get("update_codes")
-        if wid == "echo-nav-context-hud-wrapper":
-            latest_uc = (uc_list[-1] if isinstance(uc_list, list) and uc_list else "") or w_entry.get("update_code") or ""
-            if latest_uc and latest_uc != w_entry.get("mount_code"):
-                w_entry["mount_code"] = latest_uc
-                dirty = True
-            if w_entry.get("update_code") or uc_list:
-                w_entry["update_code"] = ""
-                w_entry["update_codes"] = []
-                dirty = True
-        elif wid != "echo-codex-hud":
-            if isinstance(uc_list, list) and len(uc_list) > 1:
-                w_entry["update_codes"] = [uc_list[-1]]
-                w_entry["update_code"] = uc_list[-1]
-                dirty = True
-    return dirty
 
 
 def extract_closure_context(fn: Any) -> Dict[str, str]:
@@ -159,8 +111,6 @@ class EchoWindowManager:
         self._pending_calls: Dict[str, Dict[str, Any]] = {}
         # exec_id -> { "user_id": str, "chat_id": str, "code": str, "created_at": float }
         self._recent_execs: Dict[str, Dict[str, Any]] = {}
-        # Cache mémoire de l'état par (user_id, chat_id)
-        self._chat_states: Dict[Tuple[str, str], Dict[str, Any]] = {}
         # Etat Canvas bidirectionnel par (user_id, chat_id)
         self._canvas_ui_state: Dict[Tuple[str, str], Dict[str, Any]] = {}
         # Abonnés live screencast navigateur par (user_id, chat_id) -> { client_id: Queue }
@@ -511,63 +461,6 @@ class EchoWindowManager:
         owner = _find_existing_chat_owner(chat_id)
         return owner or uid
 
-    def _load_chat_state(self, user_id: str, chat_id: str) -> Dict[str, Any]:
-        if not chat_id:
-            return {"windows": {}, "kv": {}}
-        uid = self._resolve_owner_uid(user_id, chat_id)
-        key = (uid, chat_id)
-        if key in self._chat_states:
-            return self._chat_states[key]
-
-        state = {"windows": {}, "kv": {}}
-        needs_heal_save = False
-        try:
-            sm = EchoStateManager(uid, chat_id)
-            if not os.path.isfile(sm.db_path):
-                return state
-            raw = sm.get_session_setting(WM_STATE_KEY)
-            if raw:
-                parsed = json.loads(raw)
-                if isinstance(parsed, dict):
-                    state["windows"] = parsed.get("windows") if isinstance(parsed.get("windows"), dict) else {}
-                    state["kv"] = parsed.get("kv") if isinstance(parsed.get("kv"), dict) else {}
-                    if _sanitize_windows_dict(state["windows"]):
-                        needs_heal_save = True
-        except Exception as e:
-            print(f"[EchoWindowManager] Load state error ({chat_id}): {e}")
-
-        self._chat_states[key] = state
-        if needs_heal_save:
-            self._save_chat_state(uid, chat_id)
-        return state
-
-    def _save_chat_state(self, user_id: str, chat_id: str) -> None:
-        if not chat_id:
-            return
-        uid = self._resolve_owner_uid(user_id, chat_id)
-        key = (uid, chat_id)
-        state = self._chat_states.get(key)
-        if not state:
-            return
-        try:
-            wins = state.get("windows", {})
-            if len(wins) > MAX_TRACKED_WINDOWS_PER_CHAT:
-                sorted_wids = sorted(wins.keys(), key=lambda w: wins[w].get("updated_at", 0))
-                for wid in sorted_wids[:-MAX_TRACKED_WINDOWS_PER_CHAT]:
-                    wins.pop(wid, None)
-
-            kv = state.get("kv", {})
-            if len(kv) > MAX_KV_ENTRIES_PER_CHAT:
-                for k in list(kv.keys())[:-MAX_KV_ENTRIES_PER_CHAT]:
-                    kv.pop(k, None)
-
-            sm = EchoStateManager(uid, chat_id)
-            if not os.path.isfile(sm.db_path):
-                return
-            sm.save_session_setting(WM_STATE_KEY, json.dumps(state).decode("utf-8"))
-        except Exception as e:
-            print(f"[EchoWindowManager] Save state error ({chat_id}): {e}")
-
     def register_exec(self, exec_id: str, user_id: str, chat_id: str, code: str) -> None:
         now = time.time()
         if len(self._recent_execs) > 256:
@@ -728,91 +621,6 @@ class EchoWindowManager:
                 )
             return {"status": "ok"}
 
-        if action in ("window_mounted", "window_updated"):
-            window_ids = payload.get("window_ids") or []
-            if isinstance(window_ids, str):
-                window_ids = [window_ids]
-            rec = self._recent_execs.get(exec_id)
-            code = payload.get("code") or (rec.get("code") if rec else "")
-            effective_cid = chat_id or (rec.get("chat_id") if rec else "")
-            effective_uid = (
-                rec.get("user_id") if (rec and rec.get("user_id") and rec.get("user_id") != "system") else user_id
-            )
-            if effective_cid and code and window_ids:
-                state = self._load_chat_state(effective_uid, effective_cid)
-                wins = state.setdefault("windows", {})
-                now = time.time()
-                for wid in window_ids:
-                    if _is_transient_hud_id(wid):
-                        continue
-                    w_entry = wins.get(wid) or {
-                        "window_id": wid,
-                        "chat_id": effective_cid,
-                        "is_open": True,
-                        "mount_code": "",
-                        "update_code": "",
-                        "update_codes": [],
-                        "updated_at": now,
-                    }
-                    w_entry["is_open"] = True
-                    w_entry["updated_at"] = now
-                    if wid == "echo-nav-context-hud-wrapper" or action == "window_mounted" or not w_entry.get("mount_code"):
-                        w_entry["mount_code"] = code
-                        w_entry["update_code"] = ""
-                        w_entry["update_codes"] = []
-                    else:
-                        if code != w_entry.get("mount_code"):
-                            w_entry["update_code"] = code
-                            if wid == "echo-codex-hud":
-                                uc_list = w_entry.get("update_codes")
-                                if not isinstance(uc_list, list):
-                                    uc_list = []
-                                if not uc_list or uc_list[-1] != code:
-                                    uc_list.append(code)
-                                w_entry["update_codes"] = uc_list[-16:]
-                            else:
-                                w_entry["update_codes"] = [code]
-                    wins[wid] = w_entry
-                self._save_chat_state(effective_uid, effective_cid)
-            return {"status": "ok"}
-
-        if action == "window_closed":
-            window_id = str(payload.get("window_id") or "")
-            if chat_id and window_id:
-                state = self._load_chat_state(user_id, chat_id)
-                wins = state.get("windows", {})
-                if window_id in wins:
-                    wins[window_id]["is_open"] = False
-                    wins[window_id]["mount_code"] = ""
-                    wins[window_id]["update_code"] = ""
-                    wins[window_id]["update_codes"] = []
-                    wins[window_id]["updated_at"] = time.time()
-                    self._save_chat_state(user_id, chat_id)
-                await self.broadcast(
-                    user_id,
-                    {"type": "wm_window_closed", "chat_id": chat_id, "window_id": window_id},
-                    exclude_client_id=client_id,
-                )
-            return {"status": "ok"}
-
-        if action == "kv_sync":
-            entries = payload.get("entries")
-            if chat_id and isinstance(entries, dict) and entries:
-                state = self._load_chat_state(user_id, chat_id)
-                kv = state.setdefault("kv", {})
-                for k, v in entries.items():
-                    if v is None:
-                        kv.pop(str(k), None)
-                    else:
-                        kv[str(k)] = str(v)
-                self._save_chat_state(user_id, chat_id)
-                await self.broadcast(
-                    user_id,
-                    {"type": "wm_kv_sync", "chat_id": chat_id, "entries": entries},
-                    exclude_client_id=client_id,
-                )
-            return {"status": "ok"}
-
         if action == "canvas_ui_event":
             if chat_id:
                 cstate = self._get_canvas_state(user_id, chat_id)
@@ -864,18 +672,7 @@ class EchoWindowManager:
         return {"status": "ignored"}
 
     def get_chat_snapshot(self, user_id: str, chat_id: str) -> Dict[str, Any]:
-        """Retourne l'état complet (KV, fenêtres ouvertes, appels RPC en attente et stats contexte) pour un chat."""
-        state = self._load_chat_state(user_id, chat_id)
-        wins_dict = state.get("windows", {})
-        if _sanitize_windows_dict(wins_dict):
-            self._save_chat_state(user_id, chat_id)
-
-        open_windows = [
-            w for wid, w in wins_dict.items()
-            if not _is_transient_hud_id(wid) and isinstance(w, dict) and w.get("is_open") and w.get("mount_code")
-        ]
-        open_windows.sort(key=lambda x: x.get("updated_at", 0))
-
+        """Retourne l'état complet (appels RPC en attente, stats contexte et frames Canvas) pour un chat."""
         pending = []
         for eid, info in self._pending_calls.items():
             fut = info.get("future")
@@ -918,8 +715,8 @@ class EchoWindowManager:
 
         return {
             "chat_id": chat_id,
-            "kv": state.get("kv", {}),
-            "windows": open_windows,
+            "kv": {},
+            "windows": [],
             "pending_calls": pending,
             "context_stats": context_stats,
             "canvas_frames": sorted(cstate["frames"].values(), key=lambda x: x.get("updated_at", 0)) if cstate and isinstance(cstate.get("frames"), dict) else [],

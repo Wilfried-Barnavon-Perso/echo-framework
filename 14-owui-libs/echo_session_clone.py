@@ -1,16 +1,16 @@
 """
 title: ECHO Session Clone & Migration Engine
 author: Wilfried BARNAVON
-version: 6.13.1.1
+version: 6.14.2.2
 description: Moteur partagé de duplication atomique des conteneurs de session ECHO (Clone, Fork et Migration).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.14.2.2: Retrait du ré-ancrage obsolète de echo_settings['wm_state'] dans reassign_session_ids et inclusion de tools_output/ dans duplicate_session_domains et _prune_domain_files_to_cutoff.
 # 6.13.1.1: Réécriture de echo_resources.metadata dans reassign_session_ids et ajout de _prune_transient_browserviews_on_clone (transfert retained uniquement lors du clone/resume).
 # 6.10.0.1: Ré-insertion dans align_codex_git_to_cutoff des fichiers trackés restaurés par Git mais absents d'echo_resources (cas de fichiers renommés ou déplacés après cutoff_ts).
 # 6.6.5.1: Inclusion du domaine BROWSER_VIEWS_DIR_NAME ('browserviews') dans duplicate_session_domains et _prune_domain_files_to_cutoff.
 # 5.239.13.1: duplicate_session_rag fiabilisé : retries bornés (_qdrant_call : réseau, 429, 5xx), upsert par lots de 64, comptage de contrôle exact et retour structuré RagCloneReport.
-# 5.239.12.1: Purge de wm_state dans purge_conversational_state, ré-ancrage des ressources actives (_reanchor_resumed_resources) et des vecteurs conversationnels RAG (anchor_msg_id).
 
 from contextlib import closing
 import asyncio
@@ -148,14 +148,6 @@ def reassign_session_ids(cur: sqlite3.Cursor, orig_cid: str, new_cid: str) -> No
                 )
             except Exception:
                 pass
-
-    try:
-        cur.execute(
-            "UPDATE echo_settings SET value = REPLACE(value, ?, ?) WHERE key = 'wm_state' AND value LIKE ?",
-            (orig_cid, new_cid, f"%{orig_cid}%"),
-        )
-    except Exception:
-        pass
 
     try:
         cur.execute(
@@ -652,6 +644,39 @@ def _prune_domain_files_to_cutoff(
                         except Exception:
                             pass
 
+    elif domain == "tools_output":
+        for dirpath, dirnames, filenames in os.walk(domain_dir, topdown=False):
+            for fn in filenames:
+                if fn.endswith(".meta.json"):
+                    continue
+                fp = os.path.join(dirpath, fn)
+                meta_fp = f"{fp}.meta.json"
+                try:
+                    ts = None
+                    if os.path.isfile(meta_fp):
+                        try:
+                            with open(meta_fp, "r", encoding="utf-8") as mf:
+                                meta_data = json.load(mf)
+                            if isinstance(meta_data, dict) and meta_data.get("created_at") is not None:
+                                ts = int(meta_data["created_at"])
+                        except Exception:
+                            ts = None
+                    if ts is None:
+                        ts = int(os.lstat(fp).st_mtime)
+                    if ts > cutoff_ts + 1:
+                        os.unlink(fp)
+                        if os.path.exists(meta_fp):
+                            os.unlink(meta_fp)
+                except Exception:
+                    pass
+            for dn in dirnames:
+                dp = os.path.join(dirpath, dn)
+                try:
+                    if not os.path.islink(dp) and not os.listdir(dp):
+                        os.rmdir(dp)
+                except Exception:
+                    pass
+
 
 def align_codex_git_to_cutoff(
     user_id: str, new_cid: str, cutoff_ts: int, new_db: str
@@ -820,7 +845,7 @@ def duplicate_session_domains(
 ) -> None:
     """Duplique les répertoires de l'Espace Utilisateur (files, codex, n8n_workflows, dependencies),
     limite leur contenu à cutoff_ts si is_partial_fork=True, et réajuste orig_cid -> new_cid."""
-    for domain in ("files", BROWSER_VIEWS_DIR_NAME, CODEX_DIR_NAME, "n8n_workflows", "dependencies"):
+    for domain in ("files", BROWSER_VIEWS_DIR_NAME, CODEX_DIR_NAME, "n8n_workflows", "dependencies", "tools_output"):
         s_dom = get_echo_session_path(user_id, orig_cid, domain)
         d_dom = get_echo_session_path(user_id, new_cid, domain)
         if os.path.exists(s_dom):

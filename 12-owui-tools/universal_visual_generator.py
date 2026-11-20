@@ -1,16 +1,16 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 6.7.4.1
+version: 6.14.2.1
 description: Composant système interne : ECHO Visual Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.14.2.1: Externalisation binaire des images générées via save_embed_binary_asset (echo-asset://) hors flux Base64.
 # 6.7.4.1: Passage intégral en override_thinking='medium' des 3 étapes (génération, réparation JSON et critique multimodal) de generate_rich_visualization.
 # 6.7.1.2: Télémétrie temps réel save_subagent_meta/mark_subagent_running sur generate_image et filtrage extract_response_parts_and_text dans _run_visual_critic.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 5.239.11.1: Ajout dans `context["message"]` de `generate_rich_visualization` de la consigne explicite anti-redondance Markdown après génération dans l'Iframe.
-# 5.233.0.2: Contrainte de sortie JSON via response_schema=VisualCriticOutput dans _run_visual_critic et LeafletSchema dans SYS_VISUAL_REPAIR, décoration @echo_tool et simplification des retours.
 # MOTEURS INTÉGRÉS ET DATAFLOWS :
 # - mermaid (v11) : Syntaxe Mermaid pure
 # - echarts (v5) : JSON ECharts strict
@@ -56,7 +56,7 @@ from echo_subagent_hub import (
     save_subagent_meta,
 )
 from echo_codex_git import CodexRepo
-from echo_paths import format_codex_storage_path, get_codex_lock
+from echo_paths import format_codex_storage_path, get_codex_lock, save_embed_binary_asset
 from echo_constants import (
     CODEX_WORKSPACE_GENERATED,
     ECHO_SUBAGENT_CONTEXT,
@@ -808,18 +808,31 @@ class Tools:
           commit_msg=last_commit_msg,
       )
 
-      gallery_items = [
-          {
-              "data_uri": f"data:{c['mime']};base64,{c['b64']}",
-              "filename": c["filename"],
-              "label": f"Essai {c['try_idx']} ({c['score']}/10)",
-              "best": bool(c.get("best")),
-              "analysis": c.get("analysis", ""),
-          }
-          for c in retained
-      ]
+      gallery_items = []
+      primary_uri = ""
+      for c in retained:
+        asset_uri = (
+            save_embed_binary_asset(user_id, chat_id, c["raw_bytes"], c["mime"], c["filename"])
+            if chat_id
+            else f"data:{c['mime']};base64,{c['b64']}"
+        )
+        if c is primary:
+          primary_uri = asset_uri
+        gallery_items.append({
+            "img_url": asset_uri,
+            "filename": c["filename"],
+            "label": f"Essai {c['try_idx']} ({c['score']}/10)",
+            "best": bool(c.get("best")),
+            "analysis": c.get("analysis", ""),
+        })
+      if not primary_uri:
+        primary_uri = (
+            save_embed_binary_asset(user_id, chat_id, primary["raw_bytes"], primary["mime"], primary["filename"])
+            if chat_id
+            else f"data:{primary['mime']};base64,{primary['b64']}"
+        )
       html_viewer = EchoUI.image_viewer(
-          f"data:{primary['mime']};base64,{primary['b64']}",
+          primary_uri,
           title=f"ECHO Image [{sid}] ({aspect_ratio})",
           filename=primary["filename"],
           is_remote_fallback=False,

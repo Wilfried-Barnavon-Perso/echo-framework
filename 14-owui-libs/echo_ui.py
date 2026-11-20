@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 6.6.16.1
+version: 6.14.2.2
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.14.2.2: Purge du code mort EchoFloatingHUD et ajout du pont postMessage echo-asset:// et du fast-path blob: dans image_viewer et get_media_export_js.
 # 6.6.16.1: Suppression de get_floating_monitor_js suite à la migration de echo_monitor vers EchoCanvasTab.svelte.
 # 6.6.9.2: Purge du reliquat mort get_esm_loader_js.
 # 6.6.9.1: Purge des ponts JS obsolètes (get_webgpu_probe_js, get_edge_embedding_bridge_js, get_event_dispatcher_js, get_mobile_guard_js, safe_deploy, get_context_gauge_renderer_js) et du doublon CustomEvent dans deploy_context_gauge.
 # 6.6.2.2: Purge de monitor_ECHO et _generate_webplayer_js (remplacés par l'onglet natif EchoBrowserTab).
-# 6.6.2.1: Purge de _generate_agent_monitor_js et _generate_identity_vault_js (remplacés par les onglets natifs Cognition et Vault).
 
 
 import sys
@@ -24,7 +24,6 @@ sys.path.append("/app/backend/echo_libs")
 from echo_constants import (  # noqa: E402
     ECHO_GLOBAL_TENANT_PROJECT_ID,
     ECHO_MAX_CONTEXT_SIZE,
-    ECHO_UCTP_CHUNK_SIZE,
 )
 
 
@@ -65,776 +64,6 @@ class EchoRichUI:
         path = EchoRichUI.ECHO_ICONS.get(name, "")
         cls = f" class='{css_class}'" if css_class else ""
         return f"<svg width='{size}' height='{size}' viewBox='0 0 24 24' fill='none' stroke='{color}' stroke-width='{stroke_width}' stroke-linecap='round' stroke-linejoin='round'{cls}>{path}</svg>"
-
-    @staticmethod
-    def get_hud_geometry_js() -> str:
-        """Génère le contrôleur géométrique universel (Drag SVG-safe, Clamping Viewport, Minimize, Fullscreen, ResizeObserver filtré)."""
-        return """
-        {
-            window.echoBindHudGeometry = function(hud, header, opts) {
-                if (header && !opts && (typeof header === 'object') && !header.nodeType) {
-                    opts = header;
-                    header = null;
-                }
-                opts = opts || {};
-                if (header && typeof header.setAttribute === 'function') header.setAttribute('data-echo-hud-header', '1');
-                if (typeof document !== 'undefined' && document.head && !document.getElementById('echo-hud-geometry-style')) {
-                    const st = document.createElement('style');
-                    st.id = 'echo-hud-geometry-style';
-                    st.textContent = '[data-echo-minimized="1"] > :not([data-echo-hud-header="1"]) { display: none !important; }';
-                    document.head.appendChild(st);
-                }
-                const defaultW = opts.defaultW || '700px';
-                const defaultH = opts.defaultH || '500px';
-                const defaultX = opts.defaultX !== undefined ? opts.defaultX : '50%';
-                const defaultY = opts.defaultY !== undefined ? opts.defaultY : '60px';
-                const defaultTx = opts.defaultTx !== undefined ? opts.defaultTx : (defaultX === '50%' ? 'translateX(-50%)' : 'none');
-                const minW = opts.minW || '200px';
-                const minH = opts.minH || '100px';
-                const minCollapsedH = opts.minimizedH || 'auto';
-                const minCollapsedMinH = opts.minimizedMinH || '0';
-                const fsW = opts.fsW || '95vw';
-                const fsH = opts.fsH || '95vh';
-                const fsX = opts.fsX !== undefined ? opts.fsX : '2.5vw';
-                const fsY = opts.fsY !== undefined ? opts.fsY : '2.5vh';
-                const allowResize = opts.allowResize !== false;
-
-                const isInvalidDim = (v) => !v || v === 'auto' || v === '42px' || v === '0px' || v === '95vw' || v === '95vh' || v === '100vw' || v === '100vh' || (typeof v === 'string' && v.endsWith('px') && parseFloat(v) < parseFloat(minH));
-                const isInvalidW = (v) => !v || v === 'auto' || v === '95vw' || v === '100vw' || (typeof v === 'string' && v.endsWith('px') && parseFloat(v) < parseFloat(minW));
-                const isGlobalHud = Boolean(hud && hud.getAttribute && hud.getAttribute('data-echo-scope') === 'global');
-                const wmBounds = (!isGlobalHud && window.EchoWM && typeof window.EchoWM.loadGeometry === 'function' && hud && hud.id) ? (window.EchoWM.loadGeometry(hud) || {}) : {};
-                const init = Object.assign({}, wmBounds, opts.initialBounds || {});
-                const fmtCoord = (v, def) => (v !== undefined && v !== null && v !== '') ? (typeof v === 'number' ? v + 'px' : String(v)) : def;
-                const hasSavedX = init.x !== undefined && init.x !== null && init.x !== '';
-
-                const normalBounds = {
-                    w: isInvalidW(init.w) ? defaultW : String(init.w),
-                    h: isInvalidDim(init.h) ? defaultH : String(init.h),
-                    x: fmtCoord(init.x, defaultX),
-                    y: fmtCoord(init.y, defaultY),
-                    tx: hasSavedX ? (String(init.x) === '50%' ? 'translateX(-50%)' : 'none') : defaultTx
-                };
-
-                const ctrl = {
-                    isMinimized: false,
-                    isFullscreen: false,
-                    isDragging: false,
-                    normalBounds: normalBounds,
-                    applyNormalBounds: function() {
-                        if (typeof hud.removeAttribute === 'function') hud.removeAttribute('data-echo-minimized');
-                        hud.style.maxWidth = '98vw';
-                        hud.style.maxHeight = '96vh';
-                        hud.style.minWidth = minW;
-                        hud.style.minHeight = minH;
-                        hud.style.width = normalBounds.w;
-                        hud.style.height = normalBounds.h;
-                        hud.style.left = normalBounds.x;
-                        hud.style.top = normalBounds.y;
-                        hud.style.transform = normalBounds.tx || 'none';
-                        if (allowResize && !opts.customResizer) hud.style.resize = 'both';
-                    },
-                    captureNormalBounds: function() {
-                        if (ctrl.isMinimized || ctrl.isFullscreen) return;
-                        if (hud.offsetWidth >= parseFloat(minW)) normalBounds.w = hud.offsetWidth + 'px';
-                        else if (!isInvalidW(hud.style.width)) normalBounds.w = hud.style.width;
-                        if (hud.offsetHeight >= parseFloat(minH)) normalBounds.h = hud.offsetHeight + 'px';
-                        else if (!isInvalidDim(hud.style.height)) normalBounds.h = hud.style.height;
-                        if (hud.style.left) normalBounds.x = hud.style.left;
-                        if (hud.style.top) normalBounds.y = hud.style.top;
-                        normalBounds.tx = hud.style.transform || 'none';
-                    },
-                    clampToViewport: function() {
-                        if (ctrl.isFullscreen || !hud.isConnected) return;
-                        if (hud.style.transform && hud.style.transform.includes('translateX')) return;
-                        const vw = window.innerWidth || 1280;
-                        const vh = window.innerHeight || 800;
-                        const w = hud.offsetWidth || parseFloat(normalBounds.w) || 600;
-                        const maxX = Math.max(0, vw - Math.min(w, vw));
-                        const maxY = Math.max(0, vh - 44);
-                        let curX = parseFloat(hud.style.left);
-                        let curY = parseFloat(hud.style.top);
-                        if (!isNaN(curX)) {
-                            curX = Math.max(0, Math.min(curX, maxX));
-                            hud.style.left = curX + 'px';
-                            normalBounds.x = hud.style.left;
-                        }
-                        if (!isNaN(curY)) {
-                            curY = Math.max(0, Math.min(curY, maxY));
-                            hud.style.top = curY + 'px';
-                            normalBounds.y = hud.style.top;
-                        }
-                    },
-                    save: function() {
-                        ctrl.captureNormalBounds();
-                        if (typeof opts.onSave === 'function') opts.onSave(normalBounds, ctrl);
-                        if (!isGlobalHud && window.EchoWM && typeof window.EchoWM.saveGeometry === 'function' && hud && hud.id) window.EchoWM.saveGeometry(hud, normalBounds, ctrl);
-                    },
-                    close: function() {
-                        if (ctrl.isMinimized) {
-                            ctrl.isMinimized = false;
-                            if (!isGlobalHud && window.EchoWM && typeof window.EchoWM.saveGeometry === 'function' && hud && hud.id) {
-                                window.EchoWM.saveGeometry(hud, normalBounds, ctrl);
-                            }
-                        }
-                        if (typeof opts.onClose === 'function') opts.onClose(ctrl);
-                    },
-                    toggleMinimize: function() {
-                        if (!ctrl.isMinimized) {
-                            ctrl.captureNormalBounds();
-                            ctrl.isMinimized = true;
-                            if (typeof hud.setAttribute === 'function') hud.setAttribute('data-echo-minimized', '1');
-                            hud.style.resize = 'none';
-                            hud.style.minHeight = minCollapsedMinH;
-                            hud.style.height = minCollapsedH;
-                        } else {
-                            ctrl.isMinimized = false;
-                            if (typeof hud.removeAttribute === 'function') hud.removeAttribute('data-echo-minimized');
-                            if (ctrl.isFullscreen) {
-                                hud.style.maxWidth = '100vw';
-                                hud.style.maxHeight = '100vh';
-                                hud.style.minHeight = minH;
-                                hud.style.width = fsW;
-                                hud.style.height = fsH;
-                                hud.style.resize = 'none';
-                            } else {
-                                hud.style.maxWidth = '98vw';
-                                hud.style.maxHeight = '96vh';
-                                hud.style.minHeight = minH;
-                                hud.style.width = normalBounds.w;
-                                hud.style.height = normalBounds.h;
-                                if (allowResize && !opts.customResizer) hud.style.resize = 'both';
-                                ctrl.clampToViewport();
-                            }
-                        }
-                        if (typeof opts.onMinimize === 'function') opts.onMinimize(ctrl.isMinimized, ctrl);
-                        ctrl.save();
-                        return ctrl.isMinimized;
-                    },
-                    toggleFullscreen: function() {
-                        if (ctrl.isMinimized) {
-                            ctrl.isMinimized = false;
-                            if (typeof hud.removeAttribute === 'function') hud.removeAttribute('data-echo-minimized');
-                            if (typeof opts.onMinimize === 'function') opts.onMinimize(false, ctrl);
-                        }
-                        if (!ctrl.isFullscreen) {
-                            ctrl.captureNormalBounds();
-                            ctrl.isFullscreen = true;
-                            hud.style.maxWidth = '100vw';
-                            hud.style.maxHeight = '100vh';
-                            hud.style.minHeight = minH;
-                            hud.style.width = fsW;
-                            hud.style.height = fsH;
-                            hud.style.left = fsX;
-                            hud.style.top = fsY;
-                            hud.style.transform = 'none';
-                            hud.style.resize = 'none';
-                        } else {
-                            ctrl.isFullscreen = false;
-                            ctrl.applyNormalBounds();
-                            ctrl.clampToViewport();
-                        }
-                        if (typeof opts.onFullscreen === 'function') opts.onFullscreen(ctrl.isFullscreen, ctrl);
-                        ctrl.save();
-                        return ctrl.isFullscreen;
-                    },
-                    resetSize: function() {
-                        ctrl.isFullscreen = false;
-                        ctrl.isMinimized = false;
-                        if (typeof hud.removeAttribute === 'function') hud.removeAttribute('data-echo-minimized');
-                        normalBounds.w = defaultW;
-                        normalBounds.h = defaultH;
-                        ctrl.applyNormalBounds();
-                        if (typeof opts.onMinimize === 'function') opts.onMinimize(false, ctrl);
-                        if (typeof opts.onFullscreen === 'function') opts.onFullscreen(false, ctrl);
-                        ctrl.save();
-                    }
-                };
-
-                const savedIsMin = Boolean(init && init.isMinimized);
-                const savedIsFs = Boolean(init && init.isFullscreen);
-
-                if (savedIsMin) {
-                    ctrl.isMinimized = true;
-                    if (typeof hud.setAttribute === 'function') hud.setAttribute('data-echo-minimized', '1');
-                    hud.style.resize = 'none';
-                    hud.style.minHeight = minCollapsedMinH;
-                    hud.style.height = minCollapsedH;
-                    if (typeof opts.onMinimize === 'function') opts.onMinimize(true, ctrl);
-                } else if (savedIsFs) {
-                    if (typeof hud.removeAttribute === 'function') hud.removeAttribute('data-echo-minimized');
-                    ctrl.isFullscreen = true;
-                    hud.style.maxWidth = '100vw';
-                    hud.style.maxHeight = '100vh';
-                    hud.style.minHeight = minH;
-                    hud.style.width = fsW;
-                    hud.style.height = fsH;
-                    hud.style.left = fsX;
-                    hud.style.top = fsY;
-                    hud.style.transform = 'none';
-                    hud.style.resize = 'none';
-                    if (typeof opts.onFullscreen === 'function') opts.onFullscreen(true, ctrl);
-                } else {
-                    if (typeof hud.removeAttribute === 'function') hud.removeAttribute('data-echo-minimized');
-                    ctrl.applyNormalBounds();
-                    ctrl.clampToViewport();
-                    if (typeof opts.onMinimize === 'function') opts.onMinimize(false, ctrl);
-                    if (typeof opts.onFullscreen === 'function') opts.onFullscreen(false, ctrl);
-                }
-
-                if (header) {
-                    header.onmousedown = function(e) {
-                        if (e.target && e.target.closest && e.target.closest('button, input, select, textarea, a, .no-drag')) return;
-                        if (e.target && (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
-                        if (ctrl.isFullscreen) return;
-                        if (e.preventDefault) e.preventDefault();
-                        if (hud.style.transform && hud.style.transform !== 'none') {
-                            const rect = hud.getBoundingClientRect ? hud.getBoundingClientRect() : null;
-                            const realLeft = (rect && rect.width > 0) ? rect.left : hud.offsetLeft;
-                            const realTop = (rect && rect.height > 0) ? rect.top : hud.offsetTop;
-                            hud.style.transform = 'none';
-                            hud.style.left = realLeft + 'px';
-                            hud.style.top = realTop + 'px';
-                            normalBounds.tx = 'none';
-                            normalBounds.x = hud.style.left;
-                            normalBounds.y = hud.style.top;
-                        }
-                        ctrl.isDragging = true;
-                        const startLeft = parseFloat(hud.style.left) || hud.offsetLeft || 0;
-                        const startTop = parseFloat(hud.style.top) || hud.offsetTop || 0;
-                        const dragOffsetX = e.clientX - startLeft;
-                        const dragOffsetY = e.clientY - startTop;
-                        hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
-
-                        const onMove = function(me) {
-                            if (!ctrl.isDragging) return;
-                            const vw = window.innerWidth || 1280;
-                            const vh = window.innerHeight || 800;
-                            const maxX = Math.max(0, vw - (hud.offsetWidth || 200));
-                            const maxY = Math.max(0, vh - 44);
-                            const newX = Math.max(0, Math.min(me.clientX - dragOffsetX, maxX));
-                            const newY = Math.max(0, Math.min(me.clientY - dragOffsetY, maxY));
-                            hud.style.left = newX + 'px';
-                            hud.style.top = newY + 'px';
-                            normalBounds.x = hud.style.left;
-                            normalBounds.y = hud.style.top;
-                            normalBounds.tx = 'none';
-                        };
-                        const onUp = function() {
-                            document.removeEventListener('mousemove', onMove);
-                            document.removeEventListener('mouseup', onUp);
-                            if (ctrl.isDragging) {
-                                ctrl.isDragging = false;
-                                hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
-                                ctrl.save();
-                            }
-                        };
-                        document.addEventListener('mousemove', onMove);
-                        document.addEventListener('mouseup', onUp);
-                    };
-                }
-
-                if (typeof ResizeObserver !== 'undefined') {
-                    new ResizeObserver(function() {
-                        if (!ctrl.isMinimized && !ctrl.isFullscreen && !ctrl.isDragging) {
-                            const w = hud.style.width;
-                            const h = hud.style.height;
-                            if (!isInvalidW(w)) normalBounds.w = w;
-                            if (!isInvalidDim(h)) normalBounds.h = h;
-                            if (typeof opts.onSave === 'function') opts.onSave(normalBounds, ctrl);
-                            if (!isGlobalHud && window.EchoWM && typeof window.EchoWM.saveGeometry === 'function' && hud && hud.id) window.EchoWM.saveGeometry(hud, normalBounds, ctrl);
-                        }
-                    }).observe(hud);
-                }
-
-                window.addEventListener('resize', function() {
-                    ctrl.clampToViewport();
-                });
-
-                return ctrl;
-            };
-        }
-        """
-
-    @staticmethod
-    def get_hud_rpc_bridge_js() -> str:
-        """Génère le pont RPC résilient universel (file d'attente, heartbeat 5s/25s anti-timeout 60s, reconnexion post-standby et garde-fou SPA)."""
-        return EchoRichUI.get_uctp_engine_js() + """
-        {
-            window.echoCreateHudRpcBridge = function(cfg) {
-                const hudId = cfg.hudId;
-                const actionId = cfg.actionId;
-                const resolveVar = cfg.resolveVar;
-                const sendFn = cfg.sendFn;
-                const readyFn = cfg.readyFn;
-                const cid = cfg.cid || '';
-                const mid = cfg.mid || '';
-                const modelId = cfg.modelId || 'echo_orchestrator';
-                const prePingActions = cfg.prePingActions || [];
-                const noWatchdogActions = cfg.noWatchdogActions || ['close'];
-                const visiblePingMs = cfg.visiblePingMs || 25000;
-                const hiddenPingMs = cfg.hiddenPingMs || 25000;
-                const watchdogMs = cfg.watchdogMs || 8000;
-
-                let actionQueue = [];
-                let isReconnecting = false;
-                let pendingReconnectUi = false;
-                let inFlightPayload = null;
-                let inFlightWatchdog = null;
-                let waitResolveTimer = null;
-                let lastReadyTs = Date.now();
-                let lastPingTs = 0;
-
-                function isOwnedHudAlive() {
-                    const el = document.getElementById(hudId);
-                    if (!el) return false;
-                    const elCid = (window.EchoWM && typeof window.EchoWM.getElementChatId === 'function')
-                        ? window.EchoWM.getElementChatId(el)
-                        : (el.getAttribute('data-echo-chat-id') || el.getAttribute('data-chat-id') || '');
-                    if (cid && elCid && elCid !== cid) return false;
-                    return true;
-                }
-
-                // Réinitialisation inconditionnelle du résolveur lors du montage d'un nouveau HUD
-                // afin d'empêcher une ancienne boucle backend en cours d'éviction de voler la première action (ex: load_file).
-                window[resolveVar] = null;
-
-                async function reconnectBackend() {
-                    if (isReconnecting || !isOwnedHudAlive()) return;
-                    isReconnecting = true;
-                    pendingReconnectUi = true;
-                    if (typeof cfg.onReconnectStart === 'function') cfg.onReconnectStart();
-                    try {
-                        const token = localStorage.token ? localStorage.token.replace(/^"|"$/g, '') : '';
-                        let msgId = mid;
-                        if (!msgId) {
-                            const msgs = document.querySelectorAll('[id^="message-"]');
-                            for (let i = msgs.length - 1; i >= 0; i--) {
-                                const rawId = msgs[i].id.replace(/^message-/, '');
-                                if (rawId && !rawId.includes('input') && !rawId.includes('edit') && !rawId.includes('feedback')) {
-                                    msgId = rawId;
-                                    break;
-                                }
-                            }
-                        }
-                        const extra = (typeof cfg.getExtraReconnect === 'function') ? (cfg.getExtraReconnect() || {}) : {};
-                        await fetch('/api/chat/actions/' + actionId, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-                            body: JSON.stringify(Object.assign({
-                                chat_id: cid, model: modelId, id: msgId || 'hud-reconnect', session_id: '', messages: [],
-                                reconnect_only: true
-                            }, extra))
-                        });
-                    } catch (e) {
-                        console.error('[ECHO HUD] Reconnect error (' + actionId + '):', e);
-                    } finally {
-                        setTimeout(() => {
-                            isReconnecting = false;
-                            if (actionQueue.length > 0 && typeof window[resolveVar] !== 'function') {
-                                flushQueue();
-                            }
-                        }, 2000);
-                    }
-                }
-
-                function getPingPayload() {
-                    return (typeof cfg.getPingPayload === 'function') ? cfg.getPingPayload() : { action: 'ping' };
-                }
-
-                function flushQueue() {
-                    if (actionQueue.length === 0) return;
-                    if (typeof window[resolveVar] === 'function' && lastReadyTs > 0 && (Date.now() - lastReadyTs > 45000)) {
-                        window[resolveVar] = null;
-                    }
-                    if (typeof window[resolveVar] === 'function') {
-                        if (actionQueue[0] && prePingActions.indexOf(actionQueue[0].action) !== -1 && (Date.now() - lastReadyTs > 10000)) {
-                            actionQueue.unshift(getPingPayload());
-                        }
-                        if (waitResolveTimer) { clearTimeout(waitResolveTimer); waitResolveTimer = null; }
-                        const resolveFn = window[resolveVar];
-                        window[resolveVar] = null;
-                        const payload = actionQueue.shift();
-                        inFlightPayload = payload;
-                        resolveFn(payload);
-
-                        if (inFlightWatchdog) clearTimeout(inFlightWatchdog);
-                        if (payload && noWatchdogActions.indexOf(payload.action) === -1) {
-                            inFlightWatchdog = setTimeout(() => {
-                                if (typeof window[resolveVar] !== 'function') {
-                                    if (inFlightPayload && inFlightPayload.action !== 'ping') {
-                                        actionQueue.unshift(inFlightPayload);
-                                    } else if (typeof cfg.onWatchdogFallback === 'function') {
-                                        const fb = cfg.onWatchdogFallback();
-                                        if (fb) actionQueue.push(fb);
-                                    }
-                                    inFlightPayload = null;
-                                    reconnectBackend();
-                                }
-                            }, watchdogMs);
-                        }
-                    } else {
-                        if (!waitResolveTimer) {
-                            waitResolveTimer = setTimeout(() => {
-                                waitResolveTimer = null;
-                                if (typeof window[resolveVar] !== 'function' && actionQueue.length > 0) {
-                                    reconnectBackend();
-                                }
-                            }, 1000);
-                        }
-                    }
-                }
-
-                window[readyFn] = function() {
-                    if (inFlightWatchdog) { clearTimeout(inFlightWatchdog); inFlightWatchdog = null; }
-                    if (waitResolveTimer) { clearTimeout(waitResolveTimer); waitResolveTimer = null; }
-                    inFlightPayload = null;
-                    isReconnecting = false;
-                    lastReadyTs = Date.now();
-                    if (pendingReconnectUi) {
-                        pendingReconnectUi = false;
-                        if (typeof cfg.onReconnectEnd === 'function') {
-                            try { cfg.onReconnectEnd(); } catch (e) {}
-                        }
-                    }
-                    flushQueue();
-                };
-
-                window[sendFn] = function(payload) {
-                    if (!payload) return;
-                    if (payload.action === 'ping') {
-                        if (actionQueue.length > 0 || inFlightPayload) return;
-                    } else {
-                        actionQueue = actionQueue.filter(p => p.action !== 'ping');
-                    }
-                    actionQueue.push(payload);
-                    flushQueue();
-                };
-
-                const pingInterval = setInterval(() => {
-                    if (!isOwnedHudAlive()) { clearInterval(pingInterval); return; }
-                    const el = document.getElementById(hudId);
-                    const now = Date.now();
-                    const isParked = el.getAttribute('data-echo-parked') === '1';
-                    const threshold = (document.hidden || isParked) ? hiddenPingMs : visiblePingMs;
-                    if (now - lastPingTs >= threshold) {
-                        lastPingTs = now;
-                        window[sendFn](getPingPayload());
-                    }
-                }, Math.min(5000, visiblePingMs));
-
-                const wakeUpHandler = () => {
-                    if (!isOwnedHudAlive()) {
-                        document.removeEventListener('visibilitychange', wakeUpHandler);
-                        window.removeEventListener('focus', wakeUpHandler);
-                        return;
-                    }
-                    if (!document.hidden) {
-                        window[sendFn](getPingPayload());
-                    }
-                };
-                document.addEventListener('visibilitychange', wakeUpHandler);
-                window.addEventListener('focus', wakeUpHandler);
-
-                return {
-                    send: window[sendFn],
-                    cleanup: () => {
-                        clearInterval(pingInterval);
-                        document.removeEventListener('visibilitychange', wakeUpHandler);
-                        window.removeEventListener('focus', wakeUpHandler);
-                    }
-                };
-            };
-        }
-        """
-
-    @staticmethod
-    def get_floating_window_class_js() -> str:
-        """
-        # ==============================================================================
-        # TEMPLATE STANDARD : ECHO FLOATING WINDOW (Moteur JS)
-        # Génère la classe ES6 `EchoFloatingWindow` utilisée par tous les HUDs flottants
-        # pour gérer nativement le rendu Glassmorphism, le Drag, Resize et les contrôles.
-        # ==============================================================================
-        """
-        return EchoRichUI.get_hud_geometry_js() + """
-        if (!window.EchoFloatingWindow) {
-            window.EchoFloatingWindow = class {
-                constructor(config) {
-                    this.id = config.id;
-                    this.title = config.title || '';
-                    this.icon = config.icon || '';
-                    this.bodyHtml = config.bodyHtml || '';
-                    this.customHeader = config.customHeader || '';
-                    this.width = config.width || '500px';
-                    this.height = config.height || '400px';
-                    this.minWidth = config.minWidth || '200px';
-                    this.minHeight = config.minHeight || '100px';
-                    this.allowResize = config.allowResize !== false;
-                    this.onClose = config.onClose || null;
-                    this.onMinimize = config.onMinimize || null;
-
-                    // Centrage basique
-                    this.posX = Math.max(20, (window.innerWidth / 2) - (parseInt(this.width)/2 || 250));
-                    this.posY = 100;
-
-                    this.isMinimized = false;
-                    this.isFullscreen = false;
-                    this.geo = null;
-                }
-
-                render() {
-                    let hud = document.getElementById(this.id);
-                    if (hud) hud.remove();
-
-                    hud = document.createElement('div');
-                    hud.id = this.id;
-                    hud.style.cssText = `position:fixed; left:${this.posX}px; top:${this.posY}px; width:${this.width}; height:${this.height}; max-width:98vw; max-height:96vh; z-index:10000; background:rgba(12,12,12,0.98); backdrop-filter:blur(25px); border:1px solid #333; border-radius:12px; box-shadow:0 25px 70px rgba(0,0,0,0.9); color:white; font-family:system-ui,sans-serif; display:flex; flex-direction:column; overflow:hidden; min-width:${this.minWidth}; min-height:${this.minHeight};`;
-
-                    const iconHtml = this.icon ? `<span style="font-size:14px; padding:3px 8px; border-radius:8px; background:rgba(0,212,255,0.1); color:#00d4ff;">${this.icon}</span>` : '';
-
-                    hud.innerHTML = `
-                      <div id="${this.id}-header" style="height:44px; padding:0 15px; background:rgba(255,255,255,0.02); display:flex; align-items:center; gap:12px; border-bottom:1px solid #222; cursor:move; user-select:none; box-sizing:border-box; flex-shrink:0;">
-                        ${iconHtml}
-                        <div style="font-weight:600; font-size:13px; color:#a3a3a3; display:flex; align-items:center; gap:8px;">${this.title}</div>
-                        ${this.customHeader}
-                        <div style="display:flex; gap:12px; align-items:center; margin-left:auto;">
-                          <button id="${this.id}-btn-zoom" title="Maximiser" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px; padding:0; display:flex; align-items:center;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3'/></svg></button>
-                          <button id="${this.id}-btn-reset" title="Taille réelle (1:1)" style="background:none; border:none; color:#777; cursor:pointer; font-size:11px; font-weight:bold; padding:0;">1:1</button>
-                          <button id="${this.id}-btn-min" title="Réduire" style="background:none; border:none; color:#777; cursor:pointer; font-size:16px; padding:0; display:flex; align-items:center;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='5' y1='12' x2='19' y2='12'/></svg></button>
-                          <button id="${this.id}-btn-close" title="Fermer" style="background:none; border:none; color:#ef4444; cursor:pointer; font-size:18px; padding:0; display:flex; align-items:center;"><svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><line x1='18' y1='6' x2='6' y2='18'/><line x1='6' y1='6' x2='18' y2='18'/></svg></button>
-                        </div>
-                      </div>
-                      <div id="${this.id}-body" style="flex:1; position:relative; overflow:hidden; display:flex; flex-direction:column; background:white;">
-                        ${this.bodyHtml}
-                        ${this.allowResize ? `<div id="${this.id}-resizer" style="position:absolute; bottom:0; right:0; width:16px; height:16px; cursor:nwse-resize; z-index:101; background:linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.4) 50%); border-bottom-right-radius: 12px;"></div>` : ''}
-                      </div>
-                    `;
-                    document.body.appendChild(hud);
-                }
-
-                attachBaseEvents() {
-                    const hud = document.getElementById(this.id);
-                    if (!hud) return;
-
-                    hud.addEventListener('mousedown', () => {
-                        document.querySelectorAll('[id^="echo-"]').forEach(el => {
-                            if (el.style.zIndex && parseInt(el.style.zIndex) >= 10000) {
-                                el.style.zIndex = '10000';
-                            }
-                        });
-                        hud.style.zIndex = '10001';
-                    });
-
-                    const header = document.getElementById(this.id + '-header');
-                    const body = document.getElementById(this.id + '-body');
-                    this.geo = window.echoBindHudGeometry(hud, header, {
-                        defaultW: this.width,
-                        defaultH: this.height,
-                        defaultX: this.posX + 'px',
-                        defaultY: this.posY + 'px',
-                        defaultTx: 'none',
-                        minW: this.minWidth,
-                        minH: this.minHeight,
-                        minimizedH: 'auto',
-                        minimizedMinH: '0',
-                        fsW: '100vw',
-                        fsH: '100vh',
-                        fsX: '0px',
-                        fsY: '0px',
-                        allowResize: this.allowResize,
-                        customResizer: true,
-                        onMinimize: (isMin) => {
-                            this.isMinimized = isMin;
-                            if (body) body.style.display = isMin ? 'none' : 'flex';
-                            if (this.onMinimize) this.onMinimize(isMin);
-                        },
-                        onFullscreen: (isFs) => {
-                            this.isFullscreen = isFs;
-                        }
-                    });
-
-                    if (this.allowResize) {
-                        const resizer = document.getElementById(this.id + '-resizer');
-                        resizer.onmousedown = (e) => {
-                            e.preventDefault(); e.stopPropagation();
-                            const rStartX = e.clientX;
-                            const rStartY = e.clientY;
-                            const startW = hud.offsetWidth || parseInt(hud.style.width) || 500;
-                            const startH = hud.offsetHeight || parseInt(hud.style.height) || 400;
-                            hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = 'none');
-                            const onMove = (me) => {
-                                me.preventDefault();
-                                hud.style.width = Math.max(parseInt(this.minWidth) || 200, startW + (me.clientX - rStartX)) + 'px';
-                                hud.style.height = Math.max(parseInt(this.minHeight) || 100, startH + (me.clientY - rStartY)) + 'px';
-                            };
-                            const onUp = () => {
-                                document.removeEventListener('mousemove', onMove);
-                                document.removeEventListener('mouseup', onUp);
-                                hud.querySelectorAll('iframe').forEach(f => f.style.pointerEvents = '');
-                                if (this.geo) this.geo.save();
-                            };
-                            document.addEventListener('mousemove', onMove);
-                            document.addEventListener('mouseup', onUp);
-                        };
-                    }
-
-                    document.getElementById(this.id + '-btn-close').onclick = () => {
-                        hud.remove();
-                        if (this.onClose) this.onClose();
-                    };
-
-                    document.getElementById(this.id + '-btn-min').onclick = (e) => {
-                        e.stopPropagation();
-                        this.geo.toggleMinimize();
-                    };
-
-                    document.getElementById(this.id + '-btn-zoom').onclick = () => {
-                        this.geo.toggleFullscreen();
-                    };
-
-                    document.getElementById(this.id + '-btn-reset').onclick = () => {
-                        this.geo.resetSize();
-                    };
-                }
-            };
-        }
-        """
-
-    @staticmethod
-    def get_uctp_engine_js() -> str:
-        """Injecte le moteur asynchrone UCTP d'ECHO sur le frontend."""
-        return f"""
-        {{
-            const UCTP_CHUNK_SIZE = {ECHO_UCTP_CHUNK_SIZE};
-            window._uctp_out = window._uctp_out || {{}};
-
-            function mountUctpOutLoader(loaderId) {{
-                if (typeof document === 'undefined' || !document.body || document.getElementById(loaderId)) return;
-                const loader = document.createElement('div');
-                loader.id = loaderId;
-                loader.setAttribute('data-echo-scope', 'global');
-                loader.style.cssText = 'position:fixed;bottom:20px;right:20px;background:rgba(15,23,42,0.9);'
-                    + 'border:1px solid rgba(56,189,248,0.3);border-radius:8px;padding:12px;display:flex;'
-                    + 'flex-direction:column;align-items:center;gap:8px;z-index:999999;'
-                    + 'box-shadow:0 10px 15px -3px rgba(0,0,0,0.5);backdrop-filter:blur(8px);font-family:system-ui;';
-                loader.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;margin-bottom:6px;">'
-                    + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2" '
-                    + 'stroke-linecap="round" stroke-linejoin="round" style="animation: spin 1s linear infinite;">'
-                    + '<polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline>'
-                    + '<path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg></div>'
-                    + '<div style="width:30px;height:2px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden;">'
-                    + '<div id="' + loaderId + '-bar" style="width:0%;height:100%;background:#38bdf8;transition:width 0.1s linear;"></div></div>'
-                    + '<style>@keyframes spin {{ 100% {{ transform: rotate(360deg); }} }}</style>';
-                document.body.appendChild(loader);
-            }}
-
-            function removeUctpOutLoader(loaderId) {{
-                if (typeof document === 'undefined') return;
-                const el = document.getElementById(loaderId);
-                if (el) el.remove();
-            }}
-
-            window.echoWrapUctpPayload = function(payload) {{
-                if (payload === null || payload === undefined) return payload;
-                if (typeof payload === 'object' && payload.action === '__chunked_payload__') return payload;
-                let raw = '';
-                try {{
-                    raw = JSON.stringify(payload);
-                }} catch (e) {{
-                    return payload;
-                }}
-                if (!raw || raw.length <= UCTP_CHUNK_SIZE) return payload;
-
-                const now = Date.now();
-                for (const k of Object.keys(window._uctp_out)) {{
-                    if (now - (window._uctp_out[k].createdAt || 0) > 120000) {{
-                        removeUctpOutLoader(window._uctp_out[k].loaderId);
-                        delete window._uctp_out[k];
-                    }}
-                }}
-
-                const chunks = [];
-                for (let i = 0; i < raw.length; i += UCTP_CHUNK_SIZE) {{
-                    chunks.push(raw.slice(i, i + UCTP_CHUNK_SIZE));
-                }}
-                const transferId = Math.random().toString(36).slice(2) + now.toString(36);
-                const loaderId = 'uctp-loader-out-' + transferId;
-                window._uctp_out[transferId] = {{
-                    chunks: chunks,
-                    index: 1,
-                    loaderId: loaderId,
-                    createdAt: now
-                }};
-                mountUctpOutLoader(loaderId);
-                const bar = (typeof document !== 'undefined') ? document.getElementById(loaderId + '-bar') : null;
-                if (bar) bar.style.width = Math.round((1 / chunks.length) * 100) + '%';
-
-                return {{
-                    action: '__chunked_payload__',
-                    transfer_id: transferId,
-                    data: chunks[0],
-                    total_chunks: chunks.length,
-                    wait_code: "return window._echoUctpNextChunk('" + transferId + "');"
-                }};
-            }};
-
-            window._echoUctpNextChunk = function(transferId, explicitIdx) {{
-                const entry = window._uctp_out && window._uctp_out[transferId];
-                if (!entry || !Array.isArray(entry.chunks)) {{
-                    return {{ action: '__chunked_payload__', data: '' }};
-                }}
-                const idx = (typeof explicitIdx === 'number') ? explicitIdx : entry.index;
-                entry.index = idx + 1;
-                const chunk = (idx < entry.chunks.length) ? entry.chunks[idx] : '';
-                const bar = (typeof document !== 'undefined') ? document.getElementById(entry.loaderId + '-bar') : null;
-                if (bar) bar.style.width = Math.min(100, Math.round(((idx + 1) / entry.chunks.length) * 100)) + '%';
-                if (idx + 1 >= entry.chunks.length) {{
-                    removeUctpOutLoader(entry.loaderId);
-                    delete window._uctp_out[transferId];
-                }}
-                return {{ action: '__chunked_payload__', data: chunk }};
-            }};
-        }}
-        """
-
-    @staticmethod
-    def get_media_viewport_js(container_id: str, image_id: str, crop_box_id: str = "") -> str:
-        """Encapsule le zoom wheel via ctrlKey."""
-        crop_logic = ""
-        if crop_box_id:
-            crop_logic = f"""
-                        var cropBox = document.getElementById('{crop_box_id}');
-                        if (cropBox && cropBox.style.display !== 'none') {{
-                            cropBox.style.width = canvas.offsetWidth + "px";
-                            cropBox.style.height = canvas.offsetHeight + "px";
-                            cropBox.style.transform = 'translate3d(0, 0, 0)';
-                        }}
-            """
-        return f"""
-        var _echo_vp = document.getElementById('{container_id}');
-        var _echo_img = document.getElementById('{image_id}');
-        var currentZoom = (typeof currentZoom !== 'undefined') ? currentZoom : 1.0;
-
-        if (_echo_vp && _echo_img) {{
-            _echo_vp.addEventListener('wheel', (e) => {{
-                if (e.ctrlKey) {{
-                    e.preventDefault();
-                    var delta = e.deltaY > 0 ? 0.9 : 1.1;
-                    currentZoom = Math.min(Math.max(0.1, currentZoom * delta), 15);
-                    var canvas = _echo_vp.querySelector('div');
-                    if (_echo_img.naturalHeight && canvas) {{
-                        var r = _echo_img.naturalHeight / _echo_img.naturalWidth;
-                        var targetH = Math.min(window.innerHeight * 0.75, _echo_img.naturalHeight);
-                        var targetW = targetH / r;
-                        var scaleW = targetW > (window.innerWidth * 0.95) ? (window.innerWidth * 0.95) / targetW : 1;
-                        canvas.style.height = (targetH * currentZoom * scaleW) + "px";
-                        canvas.style.width = (targetW * currentZoom * scaleW) + "px";
-                        {crop_logic}
-                    }}
-                }}
-            }}, {{ passive: false }});
-        }}
-        """
 
     @staticmethod
     def _get_boilerplate(content: str, title: str = "ECHO Visual") -> str:
@@ -1459,6 +688,18 @@ class EchoUI(EchoRichUI):
                 return false;
             }}
 
+            if (!isCropped && src.startsWith('blob:')) {{
+                try {{
+                    const resp = await fetch(src);
+                    const b = await resp.blob();
+                    if (b && b.type === 'image/png') {{
+                        await navigator.clipboard.write([new ClipboardItem({{ 'image/png': b }})]);
+                        flashButton(btnEl);
+                        return true;
+                    }}
+                }} catch (e) {{}}
+            }}
+
             if (!isCropped && src.startsWith('data:image/png;base64,')) {{
                 const parsed = parseDataUri(src);
                 if (parsed) {{
@@ -1749,6 +990,81 @@ class EchoUI(EchoRichUI):
         const btnExport = document.getElementById('echo-iv-btn-export');
         const galleryBar = document.getElementById('echo-iv-gallery-bar');
 
+        const _echoAssetUrlCache = new Map();
+        const _echoAssetPending = new Map();
+        let _echoAssetSeq = 0;
+        let _loadSeq = 0;
+
+        window.addEventListener('message', function(ev) {{
+          const data = ev && ev.data;
+          if (!data || typeof data !== 'object' || !data.reqId) return;
+          const entry = _echoAssetPending.get(data.reqId);
+          if (!entry) return;
+          if (data.type === 'echo:asset-blob') {{
+            clearTimeout(entry.timer);
+            _echoAssetPending.delete(data.reqId);
+            if (data.blob) {{
+              try {{
+                const blobUrl = URL.createObjectURL(data.blob);
+                _echoAssetUrlCache.set(entry.rawSrc, blobUrl);
+                entry.resolve(blobUrl);
+              }} catch (err) {{
+                entry.reject(err);
+              }}
+            }} else {{
+              entry.reject(new Error('Blob echo-asset manquant'));
+            }}
+          }} else if (data.type === 'echo:asset-error') {{
+            clearTimeout(entry.timer);
+            _echoAssetPending.delete(data.reqId);
+            entry.reject(new Error(data.error || 'Erreur chargement asset'));
+          }}
+        }});
+
+        window.addEventListener('pagehide', function() {{
+          _echoAssetUrlCache.forEach(function(url) {{
+            try {{ URL.revokeObjectURL(url); }} catch (e) {{}}
+          }});
+          _echoAssetUrlCache.clear();
+        }});
+
+        function resolveEchoAssetUrl(rawSrc) {{
+          if (!rawSrc || !rawSrc.startsWith('echo-asset://')) {{
+            return Promise.resolve(rawSrc);
+          }}
+          if (_echoAssetUrlCache.has(rawSrc)) {{
+            return Promise.resolve(_echoAssetUrlCache.get(rawSrc));
+          }}
+          return new Promise(function(resolve, reject) {{
+            const reqId = 'ea_' + (++_echoAssetSeq) + '_' + Date.now();
+            const timer = setTimeout(function() {{
+              _echoAssetPending.delete(reqId);
+              reject(new Error('Timeout echo-asset'));
+            }}, 15000);
+            _echoAssetPending.set(reqId, {{ resolve: resolve, reject: reject, timer: timer, rawSrc: rawSrc }});
+            try {{
+              window.parent.postMessage({{ type: 'echo:fetch-asset', reqId: reqId, asset: rawSrc.slice(13) }}, '*');
+            }} catch (err) {{
+              clearTimeout(timer);
+              _echoAssetPending.delete(reqId);
+              reject(err);
+            }}
+          }});
+        }}
+
+        function applyImageSource(rawSrc) {{
+          const seq = ++_loadSeq;
+          img.style.display = 'block';
+          errEl.style.display = 'none';
+          resolveEchoAssetUrl(rawSrc).then(function(resolved) {{
+            if (seq !== _loadSeq) return;
+            img.src = resolved;
+          }}).catch(function() {{
+            if (seq !== _loadSeq) return;
+            if (typeof img.onerror === 'function') img.onerror();
+          }});
+        }}
+
         let fitMode = true;
         let zoom = 1.0;
         let panX = 0, panY = 0;
@@ -2022,9 +1338,9 @@ class EchoUI(EchoRichUI):
             const item = GALLERY[idx];
             if (!item) return;
             activeIdx = idx;
-            IMG_SRC = item.data_uri || item.img_url || IMG_SRC;
+            IMG_SRC = item.img_url || item.data_uri || IMG_SRC;
             FILENAME = item.filename || FILENAME;
-            img.src = IMG_SRC;
+            applyImageSource(IMG_SRC);
             const tabs = galleryBar.querySelectorAll('.echo-iv-tab-btn');
             for (let i = 0; i < tabs.length; i++) {{
               tabs[i].classList.toggle('is-active', i === idx);
@@ -2047,7 +1363,7 @@ class EchoUI(EchoRichUI):
           }}
           selectGalleryItem(activeIdx);
         }} else {{
-          img.src = IMG_SRC;
+          applyImageSource(IMG_SRC);
         }}
 
         window.addEventListener('resize', updateLayout);
@@ -2332,23 +1648,6 @@ class EchoUI(EchoRichUI):
     </script>
     """
         return cls._get_boilerplate(content, title)
-
-    @classmethod
-    def generate_rich_view(
-            cls,
-            moteur: str,
-            payload: str,
-            title: str = "ECHO Rendu Visuel",
-            cdn_timeout_ms: int = 30000) -> tuple:
-        """Usine de rendu universelle (Restauration intégrale v5.121)."""
-        html = cls.build_rich_view_html(
-            moteur=moteur, payload=payload, title=title, cdn_timeout_ms=cdn_timeout_ms
-        )
-        response = HTMLResponse(
-            content=html, headers={
-                "Content-Disposition": "inline"})
-        return response, {"status": "success",
-                          "message": f"Visualisation {moteur} générée."}
 
     @staticmethod
     def get_print_isolation_js(target_selectors: str) -> str:

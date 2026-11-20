@@ -1,16 +1,16 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 6.7.18.1
+version: 6.14.2.1
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.14.2.1: Externalisation binaire des images de show_image_to_user via save_embed_binary_asset (echo-asset://).  # noqa: E501
 # 6.7.18.1: Télémétrie événementielle ciblée aux jalons réels (suppression des heartbeats 15s) et clôture done=True garantie.  # noqa: E501
 # 6.7.13.1: Parallélisation intra-appel Map-Reduce avec backpressure global (MAX_CONCURRENT_SEGMENTS), streaming PDF incrémental O(1) RAM, fail-fast, heartbeat agrégé et verrou FFmpeg loop-safe.  # noqa: E501
 # 6.6.5.2: Filtrage des pensées via extract_response_parts_and_text dans _call_apollo_with_heartbeat.  # noqa: E501
 # 6.6.5.1: Extension du paramètre workspace de show_image_to_user au domaine "browserviews".  # noqa: E501
-# 5.233.0.1: Unification du wrapper dans wrap_tool_output, décoration @echo_tool sur les 6 méthodes publiques et simplification des retours.
 
 import io
 import os
@@ -33,6 +33,7 @@ from echo_core import wrap_tool_output, echo_tool  # noqa: E402
 from echo_paths import (  # noqa: E402
     extract_clean_filename,
     resolve_extended_file_path,
+    save_embed_binary_asset,
 )
 from echo_gemini_client import EchoGeminiClient  # noqa: E402
 from echo_http import load_image_as_base64  # noqa: E402
@@ -1213,11 +1214,19 @@ class Tools:
                 mime = loaded["mime"]
                 b64 = loaded["b64"]
                 data_uri = f"data:{mime};base64,{b64}"
+                if cid:
+                    try:
+                        raw_bytes = base64.b64decode(b64)
+                        viewer_src = save_embed_binary_asset(uid, cid, raw_bytes, mime, fname)
+                    except Exception:
+                        viewer_src = data_uri
+                else:
+                    viewer_src = data_uri
                 if is_url:
                     title = f"Image Distante : {fname}"
                     await events.status("✅ Image distante intégrée.", done=True)
                     return (
-                        EchoUI.image_viewer(data_uri, title=title, filename=fname, is_remote_fallback=False),
+                        EchoUI.image_viewer(viewer_src, title=title, filename=fname, is_remote_fallback=False),
                         (
                             f"✅ Image distante `{fname}` ({mime}) vérifiée et rendue dans l'Iframe de la "
                             "réponse destinée à L'Utilisateur. L'affichage visuel étant déjà assuré par Le "
@@ -1228,7 +1237,7 @@ class Tools:
                 title = f"Espace Personnel : {fname}"
                 await events.status("✅ Image affichée.", done=True)
                 return (
-                    EchoUI.image_viewer(data_uri, title=title, filename=fname, is_remote_fallback=False),
+                    EchoUI.image_viewer(viewer_src, title=title, filename=fname, is_remote_fallback=False),
                     (
                         f"✅ Image locale `{fname}` ({mime}, titre : `{title}`) rendue dans l'Iframe de la "
                         "réponse destinée à L'Utilisateur. L'affichage visuel étant déjà assuré par Le "

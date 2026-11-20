@@ -860,7 +860,7 @@ app.include_router(notifications.router, prefix='/api/v1/notifications', tags=['
 app.include_router(prompts.router, prefix='/api/v1/prompts', tags=['prompts'])
 app.include_router(tools.router, prefix='/api/v1/tools', tags=['tools'])
 
-# [ECHO-V6-HOOK] Montage des routeurs souverains ECHO (Skills, Meta-Artifacts, Window Manager, Cognition, Codex, Vault)
+# [ECHO-V6-HOOK] Montage des routeurs souverains ECHO (Skills, Meta-Artifacts, Window Manager, Cognition, Codex, Vault, Embeds)
 from open_webui.echo.routers import (
     skills as echo_skills_router,
     meta_artifacts as echo_meta_artifacts_router,
@@ -868,6 +868,7 @@ from open_webui.echo.routers import (
     cognition as echo_cognition_router,
     codex as echo_codex_router,
     vault as echo_vault_router,
+    embeds as echo_embeds_router,
 )
 app.include_router(echo_skills_router.router, prefix='/echo/v1/skills', tags=['echo-skills'])
 app.include_router(echo_skills_router.router, prefix='/api/v1/skills', tags=['skills'])
@@ -876,6 +877,7 @@ app.include_router(echo_wm_router.router, prefix='/echo/v1/wm', tags=['echo-wm']
 app.include_router(echo_cognition_router.router, prefix='/echo/v1/cognition', tags=['echo-cognition'])
 app.include_router(echo_codex_router.router, prefix='/echo/v1/codex', tags=['echo-codex'])
 app.include_router(echo_vault_router.router, prefix='/echo/v1/vault', tags=['echo-vault'])
+app.include_router(echo_embeds_router.router, prefix='/echo/v1/embeds', tags=['echo-embeds'])
 # app.include_router(memories.router, prefix='/api/v1/memories', tags=['memories'])
 app.include_router(folders.router, prefix='/api/v1/folders', tags=['folders'])
 app.include_router(groups.router, prefix='/api/v1/groups', tags=['groups'])

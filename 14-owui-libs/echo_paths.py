@@ -2,21 +2,23 @@
 """
 title: ECHO Echo Paths
 author: Wilfried BARNAVON
-version: 6.11.0.1
+version: 6.14.2.1
 description: Résolution des chemins absolus du système.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.14.2.1: Ajout de EMBED_URI_PREFIX, ASSET_URI_PREFIX, get_echo_embeds_dir, save_embed_binary_asset et save_embed_html_document.
 # 6.11.0.1: Ajout de is_safe_user_exportable_path, resolve_user_exportable_file_path et support domaine 'files' sécurisé.
 # 6.10.0.1: Ajout de is_sandbox_internal_segment et resolve_confined_codex_path (confinement commonpath, rejet symlinks/IPC/.git), durcissement de normalize_codex_rel_path, check_codex_file_exists et resolve_extended_file_path.
 # 6.7.16.1: Repli sur le Vault global utilisateur et les Vaults de chats dans resolve_upload_file_path même lorsque chat_id est fourni.
 # 6.6.5.1: Support du domaine 'browserviews' et resource_type 'browserview' dans resolve_extended_file_path.
-# 5.235.5.2: Ajout de get_echo_identity_db_path, wait_for_chat_clone et sanctuarisation du schéma SQLite identité.
 import os
 import re
+import json
 import time
 import glob
 import uuid
+import base64
 import asyncio
 from urllib.parse import unquote
 from typing import Optional
@@ -703,3 +705,90 @@ def resolve_user_exportable_file_path(
                 return os.path.realpath(cand_transit)
 
     return None
+
+
+EMBED_URI_PREFIX = "echo-embed://"
+ASSET_URI_PREFIX = "echo-asset://"
+_EMBED_ID_RE = re.compile(r"^[a-f0-9]{16,64}$")
+_EMBED_ASSET_RE = re.compile(r"^[a-f0-9]{16,64}\.[a-z0-9]{2,5}$")
+_EMBED_DATA_IMG_RE = re.compile(
+    r"data:image/(png|jpeg|jpg|webp|gif|svg\+xml);base64,([A-Za-z0-9+/=\s]+)",
+    re.IGNORECASE,
+)
+_MIME_TO_EXT = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "image/svg+xml": "svg",
+}
+
+
+def get_echo_embeds_dir(user_id: str, chat_id: str) -> str:
+    """Retourne le répertoire embeds d'une session dans tools_output après création."""
+    embeds_dir = os.path.join(get_echo_session_path(user_id, chat_id, "tools_output"), "embeds")
+    os.makedirs(embeds_dir, exist_ok=True)
+    return embeds_dir
+
+
+def _atomic_write_bytes(target_path: str, data: bytes) -> None:
+    """Écrit atomiquement un flux d'octets via un fichier temporaire puis os.replace."""
+    tmp_path = f"{target_path}.{uuid.uuid4().hex[:8]}.tmp"
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(data)
+        os.replace(tmp_path, target_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        raise
+
+
+def save_embed_binary_asset(
+    user_id: str,
+    chat_id: str,
+    raw_bytes: bytes,
+    mime: str,
+    filename: str = "",
+) -> str:
+    """Persiste un asset binaire dans tools_output/embeds avec sa métadonnée JSON et retourne son URI echo-asset://."""
+    mime_clean = (mime or "application/octet-stream").split(";")[0].strip().lower()
+    ext = _MIME_TO_EXT.get(mime_clean, "bin")
+    asset_name = f"{uuid.uuid4().hex}.{ext}"
+    embeds_dir = get_echo_embeds_dir(user_id, chat_id)
+    _atomic_write_bytes(os.path.join(embeds_dir, asset_name), raw_bytes)
+    meta_bytes = json.dumps(
+        {
+            "mime": mime_clean,
+            "filename": os.path.basename(filename or "")[:120],
+            "created_at": int(time.time()),
+        }
+    ).encode("utf-8")
+    _atomic_write_bytes(os.path.join(embeds_dir, f"{asset_name}.meta.json"), meta_bytes)
+    return f"{ASSET_URI_PREFIX}{asset_name}"
+
+
+def save_embed_html_document(user_id: str, chat_id: str, html: str) -> str:
+    """Externalise les images data:image/...;base64 d'un document HTML vers echo-asset:// puis persiste le HTML et retourne echo-embed://."""
+    embeds_dir = get_echo_embeds_dir(user_id, chat_id)
+
+    def _replace_data_img(match: re.Match) -> str:
+        subtype = match.group(1)
+        b64_str = match.group(2)
+        try:
+            raw_bytes = base64.b64decode(re.sub(r"\s+", "", b64_str))
+            return save_embed_binary_asset(user_id, chat_id, raw_bytes, f"image/{subtype.lower()}")
+        except Exception:
+            return match.group(0)
+
+    processed_html = _EMBED_DATA_IMG_RE.sub(_replace_data_img, html or "")
+    embed_id = uuid.uuid4().hex
+    _atomic_write_bytes(
+        os.path.join(embeds_dir, f"{embed_id}.html"),
+        processed_html.encode("utf-8"),
+    )
+    return f"{EMBED_URI_PREFIX}{embed_id}?chat_id={sanitize_echo_id(chat_id)}"

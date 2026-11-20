@@ -7,7 +7,8 @@
 
 <script lang="ts">
 	import { onDestroy, onMount, tick } from 'svelte';
-	import { config } from '$lib/stores';
+	import { chatId, config } from '$lib/stores';
+	import { getEchoToken } from '$lib/apis/echo';
 	import { injectCsp } from '$lib/utils/csp';
 
 	// Props
@@ -36,6 +37,8 @@
 	let iframeSrc: string | null = null;
 	let iframeDoc: string | null = null;
 	let registeredWindow: Window | null = null;
+	let activeEmbedChatId: string | null = null;
+	let loadSeq = 0;
 
 	// Derived: build sandbox attribute from flags
 	$: sandbox =
@@ -50,18 +53,68 @@
 			.join(' ') || undefined;
 
 	// Detect URL vs raw HTML and prep src/srcdoc
-	$: isUrl = typeof src === 'string' && /^(https?:)?\/\//i.test(src);
+	$: isUrl = typeof src === 'string' && /^((https?:)?\/\/|\/[^/])/i.test(src);
 	$: if (src) {
 		setIframeSrc();
 	}
 
 	const setIframeSrc = async () => {
+		const seq = ++loadSeq;
 		await tick();
+		if (seq !== loadSeq) return;
+
+		if (typeof src === 'string' && src.startsWith('echo-embed://')) {
+			const rawRest = src.slice('echo-embed://'.length);
+			const qIdx = rawRest.indexOf('?');
+			const embedId = (qIdx >= 0 ? rawRest.slice(0, qIdx) : rawRest).replace(/\/+$/, '');
+			const queryChatId =
+				qIdx >= 0 ? new URLSearchParams(rawRest.slice(qIdx + 1)).get('chat_id') || '' : '';
+			const effectiveChatId = $chatId || queryChatId;
+			activeEmbedChatId = effectiveChatId || null;
+
+			if (!effectiveChatId || !/^[a-f0-9]{16,64}$/i.test(embedId)) {
+				iframeDoc = null;
+				iframeSrc = null;
+				return;
+			}
+
+			try {
+				const token = getEchoToken();
+				const resp = await fetch(
+					`/echo/v1/embeds/${encodeURIComponent(effectiveChatId)}/${encodeURIComponent(embedId)}`,
+					{
+						headers: token ? { Authorization: `Bearer ${token}` } : {},
+						credentials: 'include'
+					}
+				);
+				if (seq !== loadSeq) return;
+				if (!resp.ok) {
+					iframeDoc = null;
+					iframeSrc = null;
+					return;
+				}
+				const htmlText = await resp.text();
+				if (seq !== loadSeq) return;
+				iframeDoc = await processHtmlForDeps(htmlText);
+				if (seq !== loadSeq) return;
+				iframeSrc = null;
+			} catch (err) {
+				console.error('Failed to load echo-embed document:', err);
+				if (seq === loadSeq) {
+					iframeDoc = null;
+					iframeSrc = null;
+				}
+			}
+			return;
+		}
+
+		activeEmbedChatId = null;
 		if (isUrl) {
 			iframeSrc = src as string;
 			iframeDoc = null;
 		} else {
 			iframeDoc = await processHtmlForDeps(src as string);
+			if (seq !== loadSeq) return;
 			iframeSrc = null;
 		}
 	};
@@ -154,6 +207,39 @@ window.Chart = parent.Chart; // Chart previously assigned on parent
 		}
 	}
 
+	async function handleFetchAsset(data: { asset?: unknown; reqId?: unknown }) {
+		const reqId = data?.reqId ?? null;
+		const asset = data?.asset;
+		const cid = activeEmbedChatId || $chatId || '';
+		if (
+			typeof asset !== 'string' ||
+			!/^[a-f0-9]{16,64}\.[a-z0-9]{2,5}$/i.test(asset) ||
+			!cid
+		) {
+			iframe?.contentWindow?.postMessage({ type: 'echo:asset-error', reqId }, '*');
+			return;
+		}
+
+		try {
+			const token = getEchoToken();
+			const resp = await fetch(
+				`/echo/v1/embeds/${encodeURIComponent(cid)}/assets/${encodeURIComponent(asset)}`,
+				{
+					headers: token ? { Authorization: `Bearer ${token}` } : {},
+					credentials: 'include'
+				}
+			);
+			if (!resp.ok) {
+				iframe?.contentWindow?.postMessage({ type: 'echo:asset-error', reqId }, '*');
+				return;
+			}
+			const blob = await resp.blob();
+			iframe?.contentWindow?.postMessage({ type: 'echo:asset-blob', reqId, blob }, '*');
+		} catch {
+			iframe?.contentWindow?.postMessage({ type: 'echo:asset-error', reqId }, '*');
+		}
+	}
+
 	function onMessage(e: MessageEvent) {
 		if (!iframe || e.source !== iframe.contentWindow) return;
 
@@ -176,6 +262,11 @@ window.Chart = parent.Chart; // Chart previously assigned on parent
 				{ type: 'payload', requestId: data?.requestId ?? null, payload: payload },
 				'*'
 			);
+		}
+
+		// Fetch session-scoped binary embed asset and relay as Blob
+		if (data?.type === 'echo:fetch-asset') {
+			void handleFetchAsset(data);
 		}
 	}
 

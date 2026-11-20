@@ -473,35 +473,39 @@ class ChatTable:
                 await session.commit()
 
     @asynccontextmanager
+    async def _sqlite_message_tx(self):
+        # [ECHO-V6-HOOK] Row-level ChatMessage write transaction without loading Chat.chat blob
+        write_lock = self._get_sqlite_write_lock() if async_engine.dialect.name == 'sqlite' else nullcontext()
+        async with write_lock:
+            async with get_async_db() as session:
+                if session.bind.dialect.name == 'sqlite':
+                    await session.execute(text('BEGIN IMMEDIATE'))
+                yield session
+                await session.commit()
+
+    @asynccontextmanager
     async def edit_message_output(self, chat_id: str, message_id: str):
-        """Read and modify tool state under the same lock, updating both message stores."""
-        async with self._chat_transaction(chat_id) as (session, chat):
-            if chat is None:
-                yield None
-                return
-            history = (chat.chat or {}).get('history') or {}
-            message = dict(history.get('messages', {}).get(message_id) or {})
+        """Read and modify tool state under a row-level lock on ChatMessage."""
+        async with self._sqlite_message_tx() as session:
             row = await session.get(ChatMessage, f'{chat_id}-{message_id}')
             if row is not None:
-                message.update(
-                    {
-                        ChatMessages.DB_TO_JSON_KEY_MAP.get(column.key, column.key): getattr(row, column.key)
-                        for column in ChatMessage.__table__.columns
-                        if column.key not in ChatMessages.EXCLUDED_COLUMNS and getattr(row, column.key) is not None
-                    }
-                )
-                message['id'] = message_id
+                message = ChatMessages.row_to_message_dict(chat_id, row)
+                owner_uid = row.user_id
+            else:
+                chat = await session.get(Chat, chat_id)
+                if chat is None:
+                    yield None
+                    return
+                message = (((chat.chat or {}).get('history') or {}).get('messages') or {}).get(message_id)
+                owner_uid = chat.user_id
             if not message:
                 yield None
                 return
             message = deepcopy(message)
             yield message
             message = self._clean_null_bytes(message)
-            history.setdefault('messages', {})[message_id] = message
-            chat.chat = {**(chat.chat or {}), 'history': history}
-            flag_modified(chat, 'chat')
             await ChatMessages.upsert_message(
-                message_id, chat_id, message.get('user_id') or chat.user_id, message, db=session
+                message_id, chat_id, message.get('user_id') or owner_uid, message, db=session
             )
 
     def _clean_null_bytes(self, obj):
@@ -1446,6 +1450,7 @@ class ChatTable:
         *,
         touch: bool = True,
         create_if_missing: bool = False,  # [ECHO-V6-HOOK]
+        sync_chat_blob: bool = True,
     ) -> ChatModel | None:
         if not message.get('content'):
             output_text = get_output_text(message.get('output'))
@@ -1456,6 +1461,62 @@ class ChatTable:
         message_id = self._clean_null_bytes(message_id)
 
         try:
+            if not sync_chat_blob:
+                async with self._sqlite_message_tx() as session:
+                    existing_row = await session.get(ChatMessage, f'{id}-{message_id}')
+                    # [ECHO-V6-HOOK] Anti-resurrection guard for deleted/missing messages
+                    if not create_if_missing and existing_row is None:
+                        log.debug('Skipping upsert for deleted/missing message %s in chat %s', message_id, id)
+                        return None
+                    parent_id = message.get('parentId')
+                    if (
+                        existing_row is None
+                        and parent_id is not None
+                        and await session.get(ChatMessage, f'{id}-{parent_id}') is None
+                    ):
+                        log.debug(
+                            'Skipping upsert for message %s with missing parent %s in chat %s',
+                            message_id,
+                            parent_id,
+                            id,
+                        )
+                        return None
+
+                    if existing_row is not None:
+                        # [ECHO-V6-HOOK] Do not overwrite an existing non-None parentId with None
+                        if (
+                            'parentId' in message
+                            and message.get('parentId') is None
+                            and existing_row.parent_id is not None
+                        ):
+                            message = {k: v for k, v in message.items() if k != 'parentId'}
+
+                        incoming_meta = message.get('meta')
+                        existing_meta = existing_row.meta
+                        if isinstance(incoming_meta, dict) and isinstance(existing_meta, dict):
+                            preserved_keys = ('voice', 'task_id', 'response_started_at', 'response_ended_at')
+                            if set(incoming_meta) <= set(preserved_keys):
+                                message = {**message, 'meta': {**existing_meta, **incoming_meta}}
+                            else:
+                                message = {
+                                    **message,
+                                    'meta': {
+                                        **{key: existing_meta[key] for key in preserved_keys if key in existing_meta},
+                                        **incoming_meta,
+                                    },
+                                }
+
+                    owner_uid = (
+                        (existing_row.user_id if existing_row else None)
+                        or message.get('user_id')
+                        or await session.scalar(select(Chat.user_id).where(Chat.id == id))
+                    )
+                    if owner_uid is None:
+                        return None
+
+                    await ChatMessages.upsert_message(message_id, id, owner_uid, message, db=session)
+                    return None
+
             async with self._chat_transaction(id) as (session, chat_item):
                 if chat_item is None:
                     return None
@@ -1480,11 +1541,22 @@ class ChatTable:
                 self._repair_chat_current_id(chat)
 
                 history = chat.get('history', {})
+                existing_row = await session.get(ChatMessage, f'{id}-{message_id}')
+                if existing_row is not None:
+                    row_dict = ChatMessages.row_to_message_dict(id, existing_row)
+                    target = history.setdefault('messages', {}).setdefault(message_id, {})
+                    existing_children = target.get('childrenIds')
+                    target.update(row_dict)
+                    if existing_children is not None:
+                        target['childrenIds'] = existing_children
+
                 saved_message = self.upsert_message_to_history(history, message_id, message)
                 await ChatMessages.upsert_message(
                     message_id, id, saved_message.get('user_id') or chat_item.user_id, saved_message, db=session
                 )
                 chat['history'] = history
+                if isinstance(chat.get('messages'), list):
+                    chat['messages'] = chat_message_list(chat)
                 chat_item.chat = chat  # chat is a fresh dict when the column was empty
                 chat_item.title = self._clean_null_bytes(chat.get('title', 'New Chat'))
                 chat_item.current_message_id = self.get_current_message_id(chat)
@@ -1509,6 +1581,7 @@ class ChatTable:
                     return None
 
                 chat = chat_item.chat or {}
+                await self._overlay_fresh_chat_messages(id, chat, session)
                 self._repair_chat_current_id(chat)
 
                 history = chat.get('history', {})
@@ -1550,65 +1623,18 @@ class ChatTable:
     ) -> ChatModel | None:
         try:
             status = self._clean_null_bytes(status)
-            async with self._chat_transaction(id) as (session, chat_item):
-                if chat_item is None:
-                    return None
-
-                chat = chat_item.chat or {}
-                self._repair_chat_current_id(chat)
-                history = chat.get('history', {})
-
-                if message_id in history.get('messages', {}):
-                    status_history = history['messages'][message_id].get('statusHistory', [])
-                    status_history.append(status)
-                    history['messages'][message_id]['statusHistory'] = status_history
-                    message = history['messages'][message_id]
-                    await ChatMessages.upsert_message(
-                        message_id, id, message.get('user_id') or chat_item.user_id, message, db=session
-                    )
-
-                chat['history'] = history
-                chat_item.chat = chat
-                chat_item.title = self._clean_null_bytes(chat.get('title', 'New Chat'))
-                chat_item.current_message_id = self.get_current_message_id(chat)
-                flag_modified(chat_item, 'chat')
-
-                return ChatModel.model_validate(chat_item)
+            async with self._sqlite_message_tx() as session:
+                await ChatMessages.append_message_status(id, message_id, status, db=session)
+            return None
         except Exception:
             return None
 
     async def add_message_files_by_id_and_message_id(
         self, id: str, message_id: str, files: list[dict]
     ) -> list[dict] | None:
-        async with self._chat_transaction(id) as (session, chat_item):
-            if chat_item is None:
-                return None
-
-            chat = chat_item.chat or {}
-            history = chat.get('history', {})
-
-            message_files = []
-
-            if message_id in history.get('messages', {}):
-                message_files = history['messages'][message_id].get('files', [])
-                message_files = message_files + files
-                history['messages'][message_id]['files'] = message_files
-                message = history['messages'][message_id]
-                await ChatMessages.upsert_message(
-                    message_id,
-                    id,
-                    message.get('user_id') or chat_item.user_id,
-                    self._clean_null_bytes(message),
-                    db=session,
-                )
-
-            chat['history'] = history
-            chat_item.chat = self._clean_null_bytes(chat)
-            # History was mutated in place, so the new blob compares equal to the loaded one.
-            flag_modified(chat_item, 'chat')
-            chat_item.updated_at = int(time.time())
-
-            return message_files
+        clean_files = self._clean_null_bytes(files)
+        async with self._sqlite_message_tx() as session:
+            return await ChatMessages.append_message_files(id, message_id, clean_files, db=session)
 
     async def insert_shared_chat_by_chat_id(self, chat_id: str, db: AsyncSession | None = None) -> ChatModel | None:
         """Create a shared snapshot for a chat. Returns the original chat with share_id set."""
@@ -2013,6 +2039,52 @@ class ChatTable:
                 'total': total,
             }
 
+    async def _overlay_fresh_chat_messages(
+        self, chat_id: str, chat_dict: dict, session: AsyncSession
+    ) -> None:
+        """Overlay fresh ChatMessage rows onto chat_dict.history.messages on read."""
+        if not isinstance(chat_dict, dict):
+            return
+        result = await session.execute(select(ChatMessage).filter_by(chat_id=chat_id))
+        rows = result.scalars().all()
+        if not rows:
+            return
+
+        history = chat_dict.setdefault('history', {})
+        if not isinstance(history, dict):
+            return
+        messages = history.setdefault('messages', {})
+        if not isinstance(messages, dict):
+            return
+
+        for row in rows:
+            row_dict = ChatMessages.row_to_message_dict(chat_id, row)
+            msg_id = row_dict['id']
+            existing = messages.get(msg_id)
+            if isinstance(existing, dict):
+                merged = {**existing, **row_dict}
+                if 'childrenIds' in existing:
+                    merged['childrenIds'] = existing['childrenIds']
+                else:
+                    merged.setdefault('childrenIds', [])
+                messages[msg_id] = merged
+            else:
+                row_dict.setdefault('childrenIds', [])
+                messages[msg_id] = row_dict
+
+        for msg_id, msg in messages.items():
+            parent_id = msg.get('parentId')
+            if parent_id and parent_id in messages:
+                parent = messages[parent_id]
+                children = parent.get('childrenIds')
+                if children is None:
+                    parent['childrenIds'] = [msg_id]
+                elif msg_id not in children:
+                    children.append(msg_id)
+
+        if isinstance(chat_dict.get('messages'), list):
+            chat_dict['messages'] = chat_message_list(chat_dict)
+
     # retrieve conversation
     async def get_chat_by_id(
         self,
@@ -2028,6 +2100,7 @@ class ChatTable:
 
                 model = ChatModel.model_validate(chat_item)
                 model.chat = self._clean_null_bytes(model.chat)
+                await self._overlay_fresh_chat_messages(id, model.chat, session)
                 self._repair_chat_current_id(model.chat)
                 return model
 
@@ -2067,6 +2140,7 @@ class ChatTable:
 
                 model = ChatModel.model_validate(chat)
                 model.chat = self._clean_null_bytes(model.chat)
+                await self._overlay_fresh_chat_messages(id, model.chat, session)
                 self._repair_chat_current_id(model.chat)
                 return model
 
