@@ -1,17 +1,17 @@
 """
 title: ECHO Context Compaction Filter
 author: Wilfried BARNAVON
-version: 5.237.20.1
+version: 5.239.35.1
 description: Composant système interne : Compaction contextuelle automatique in-place sur seuil.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJjdXJyZW50Q29sb3IiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48cGF0aCBkPSJNMTIgMjJ2LTYiLz48cGF0aCBkPSJNMTIgOFYyIi8+PHBhdGggZD0iTTQgMTJIMiIvPjxwYXRoIGQ9Ik0xMCAxMkg4Ii8+PHBhdGggZD0iTTE2IDEyaC0yIi8+PHBhdGggZD0iTTIyIDEyaC0yIi8+PHBhdGggZD0ibTE1IDE5LTMtMy0zIDMiLz48cGF0aCBkPSJtMTUgNS0zIDMtMy0zIi8+PC9zdmc+
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.35.1: Garde-fou None-safe sur u.get("content") lors de la fusion trailing_users dans inlet.
 # 5.237.20.1: Retrait de tous les messages user finaux consécutifs et recalcul préventif du contexte actif après suppression de messages.
 # 5.231.58.2: Remplacement de l'encart modal #echo-compact-hud et des toasts par des notifications natives EchoEvents.status.
 # 5.231.58.1: Affichage du modèle clampé dans le HUD et le toast de compaction suite à la sélection du modèle le plus haut disponible.
 # 5.231.55.1: Réétagement de la priorité à 60 (après user_native_context_filter à 50 et avant new_context_filter à 70).
-# 5.231.38.1: Activation par défaut de la compaction contextuelle automatique (ENABLE_AUTO_COMPACTION=True).
 
 import sys
 import logging
@@ -130,7 +130,7 @@ class Filter:
                 if len(trailing_users) > 1:
                     incoming_msg = {
                         "role": "user",
-                        "content": "\n\n".join(str(u.get("content", "")) for u in trailing_users),
+                        "content": "\n\n".join(str(u.get("content") or "") for u in trailing_users),
                     }
 
                 last_turn_id = last_stats.get("last_turn_msg_id")

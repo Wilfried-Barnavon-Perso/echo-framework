@@ -1,16 +1,16 @@
 """
 title: ECHO Protocol Adapter
 author: Wilfried BARNAVON
-version: 5.233.0.1
+version: 5.239.35.1
 description: Couche de traduction parametres ECHO -> format API Gemini. Deux backends : AI Studio (cle API) et Code Assist v1internal (OAuth2). Fonctions pures -- aucun appel reseau, aucun etat. Point de modification unique pour adapter les requetes CA.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.35.1: Mise à jour du fallback de get_ca_model_id vers gemini-3.5-flash-lite.
 # 5.233.0.1: Ajout de normalize_response_schema, normalize_generation_config et des modèles Pydantic SSOT de sorties JSON contraintes (responseSchema Gemini 3+).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.3: Alignement documentaire interne sur echo_orchestrator.py.
 # 1.2: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
-# 1.1: CA_EXCLUDED_GEN_CONF_FIELDS vide -- thinkingConfig doit passer integralement vers CA.
 
 import copy
 from typing import Any, Dict, List, Literal, Optional, Type, Union
@@ -240,7 +240,7 @@ def get_ca_model_id(echo_model: str) -> str:
     """
     from echo_constants import ECHO_MODELS_REGISTRY
     config = ECHO_MODELS_REGISTRY.get(echo_model)
-    return config["ca_model_id"] if config else ECHO_MODELS_REGISTRY.get("MODEL_ZEPHYR", {}).get("ca_model_id", "gemini-3.1-flash-lite")
+    return config["ca_model_id"] if config else ECHO_MODELS_REGISTRY.get("MODEL_ZEPHYR", {}).get("ca_model_id", "gemini-3.5-flash-lite")
 
 
 def build_ca_generation_config(raw_gen_conf: dict) -> dict:

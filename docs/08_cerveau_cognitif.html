@@ -68,8 +68,8 @@
     <details class="tech-spec">
       <summary>⚙️ Dossier d'Ingénierie &amp; Spécifications</summary>
       <div>
-          <h3>1. Le Filtre Inlet &amp; Pipeline d'Ingestion (<code>new_context_filter.py</code> v5.235.5.1 &amp;
-            <code>echo_ingestion.py</code> v5.231.29.1)
+          <h3>1. Le Filtre Inlet &amp; Pipeline d'Ingestion (<code>new_context_filter.py</code> v5.239.35.1 &amp;
+            <code>echo_ingestion.py</code> v5.239.35.1)
           </h3>
           <p>Le Filtre Inlet (priorité 70) orchestre la préparation sémantique (Draft) selon la hiérarchie stricte du
             PGCU
@@ -106,14 +106,14 @@
             </li>
           </ul>
 
-          <h3>2. L'Orchestrateur Cognitif (<code>echo_orchestrator.py</code> v5.239.0.1 &amp; <code>echo_aec.py</code>
+          <h3>2. L'Orchestrateur Cognitif (<code>echo_orchestrator.py</code> v5.239.35.1 &amp; <code>echo_aec.py</code>
             v5.235.5.2)</h3>
           <p>Le Cortex principal gouverne la Suture Bit-Perfect, la Compaction Contextuelle In-Place et le routage
             cognitif :</p>
           <ul>
             <li><strong>Registre Cognitif, Closures &amp; Élasticité :</strong> Interroge
-              <code>ECHO_MODELS_REGISTRY</code> (<code>MODEL_ZEPHYR</code> et <code>MODEL_APOLLO</code> en
-              <code>thinkingLevel="high"</code>, et <code>MODEL_PROMETHEUS</code> / <code>MODEL_ATHENA</code> en
+              <code>ECHO_MODELS_REGISTRY</code> (<code>MODEL_APOLLO</code> et <code>MODEL_ATHENA</code> en
+              <code>thinkingLevel="high"</code>, et <code>MODEL_ZEPHYR</code> / <code>MODEL_PROMETHEUS</code> en
               <code>thinkingLevel="medium"</code> en nominal avec <code>"high"</code> forcé en cascade 429 via
               <code>get_generation_config(..., is_fallback_cascade=True)</code>). Fusionne déterministement les messages
               <code>user</code> consécutifs (<code>merge_consecutive_user_parts</code>) lorsqu'un message assistant
@@ -225,7 +225,7 @@
               <code>codex/sandbox</code>, <code>files</code>, <code>n8n_workflows</code>,
               <code>dependencies</code>, tools_output), initialisation des dépôts Git Dulwich pour les espaces versionnés, application
               du
-              schéma déclaratif SQLite v2 via <code>ensure_db</code> (<code>echo_db_schema.py</code> v5.237.20.2) sur
+              schéma déclaratif SQLite v2 via <code>ensure_db</code> (<code>echo_db_schema.py</code> v5.239.35.1) sur
               <code>identity.db</code> et <code>session.db</code>, et masquage <code>chmod 0o711</code> du dossier
               <code>files</code>.
             </li>
@@ -260,7 +260,7 @@
               identitaire et géo-temporel de l'utilisateur (<code>ENABLE_USER_NAME</code>,
               <code>OVERRIDE_LOCATION</code>).
             </li>
-            <li><strong><code>context_compaction_filter.py</code> (Inlet - Priorité 60, v5.237.20.1) :</strong>
+            <li><strong><code>context_compaction_filter.py</code> (Inlet - Priorité 60, v5.239.35.1) :</strong>
               Compaction
               contextuelle in-place automatique (activée par défaut via
               <code>UserValves.ENABLE_AUTO_COMPACTION = True</code> et commutable via l'icône UI
@@ -287,7 +287,7 @@
               flottant ECHO App Drawer (support tactile mobile et desktop, avec fallback REST direct
               <code>/api/chat/actions/&lt;id&gt;</code> et <code>window.echoOpenCodex</code>).
             </li>
-            <li><strong><code>conversation_rag_filter.py</code> (Outlet - Priorité 100, v5.239.13.1) :</strong>
+            <li><strong><code>conversation_rag_filter.py</code> (Outlet - Priorité 100, v5.239.35.1) :</strong>
               Indexation
               asynchrone Zéro-Latence des tours de parole (conditionnée à la présence d'au moins un message assistant)
               dans <code>echo_session_rag</code> avec validation O(1) en amont via la table SQLite dédiée
@@ -304,7 +304,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.239.31 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.37 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

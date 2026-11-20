@@ -1,16 +1,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 5.239.7.2
+version: 5.239.36.1
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.36.1: Application des coordonnées et largeur via applyNormalBounds et clampToViewport à l'initialisation en mode minimisé dans echoBindHudGeometry.  # noqa: E501
 # 5.239.7.2: Retrait de l'appel obsolète window.EchoWM.registerMountedWindow dans get_context_gauge_renderer_js.  # noqa: E501
 # 5.239.7.1: Rectification du fallback du tenant dans le HUD (aicode-consumers au lieu de ECHO).  # noqa: E501
 # 5.238.0.1: Factorisation intégrale du plein écran d'Iframe dans _get_boilerplate (script en <head>, Fullscreen API native + fallback postMessage, auto-binding #echo-iv-btn-fs et dimensionnement CSS déclaratif).  # noqa: E501
 # 5.234.1.1: Ajout du canal RPC Bidi dans get_floating_monitor_js (_echoUIInboxByChat, echoPushMonitorEvent, window.echoRequest, window.onEchoEvent).  # noqa: E501
-# 5.232.2.1: Support tactile mobile en mode 1:1 dans image_viewer (pan 1 doigt, pinch-to-zoom focalisé 2 doigts, touch-action dynamique et double-tap).  # noqa: E501
 
 
 import sys
@@ -787,11 +787,13 @@ class EchoRichUI:
                 const savedIsFs = Boolean(init && init.isFullscreen);
 
                 if (savedIsMin) {
+                    ctrl.applyNormalBounds();
                     ctrl.isMinimized = true;
                     if (typeof hud.setAttribute === 'function') hud.setAttribute('data-echo-minimized', '1');
                     hud.style.resize = 'none';
                     hud.style.minHeight = minCollapsedMinH;
                     hud.style.height = minCollapsedH;
+                    ctrl.clampToViewport();
                     if (typeof opts.onMinimize === 'function') opts.onMinimize(true, ctrl);
                 } else if (savedIsFs) {
                     if (typeof hud.removeAttribute === 'function') hud.removeAttribute('data-echo-minimized');

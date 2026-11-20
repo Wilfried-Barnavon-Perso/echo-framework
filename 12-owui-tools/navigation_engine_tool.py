@@ -1,16 +1,16 @@
 """
 title: ECHO Navigation Engine
 author: Wilfried BARNAVON & ECHO Team
-version: 5.238.1.1
+version: 5.239.35.1
 description: Composant système interne : ECHO Navigation Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.35.1: Alignement de generationConfig dans analyze_web_page sur le modèle clampé analyse_model.
 # 5.238.1.1: Ajout de MODEL_ATHENA dans target_model_key de delegate_web_browsing.
 # 5.233.0.1: Décoration @echo_tool sur les 6 méthodes publiques et simplification des retours wrap_tool_output.
 # 5.231.41.1: Tour de synthèse finale garanti en functionCallingConfig mode NONE à l'épuisement de max_iterations dans delegate_web_browsing, injection d'alerte de budget dans functionResponse et garde-fou de récupération.
 # 5.231.20.1: Isolation des sessions Playwright par sub_sid/sid dans delegate_web_browsing et close_web_thread, sessions éphémères parallélisables dans analyze/archive_web_page et nommage anti-écrasement des archives.
-# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
 
 import os
 import time
@@ -657,17 +657,17 @@ class Tools:
         await events.status("🧠 Analyse par le sous-agent...")
         
         from echo_constants import get_generation_config
-        
+
+        analyse_model = clamp_model("MODEL_APOLLO", __metadata__, user_id=uid)
         payload = {
             "contents": [{"role": "user", "parts": [
                 {"text": f"<instruction>\nLe Modèle doit analyser ce document Web pour accomplir cette tâche : {query}\nLa réponse doit être factuelle, précise et issue du texte.\n</instruction>"},
                 {"inlineData": {"mimeType": "text/plain", "data": f"___ECHO_STREAM_FILE___{tmp_path}___"}}
             ]}],
             "systemInstruction": {"parts": [{"text": SYS_NAV_BROWSER}]},
-            "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="medium")
+            "generationConfig": get_generation_config(analyse_model, override_thinking="medium")
         }
-        
-        analyse_model = clamp_model("MODEL_APOLLO", __metadata__, user_id=uid)
+
         data, _, _ = await EchoGeminiClient.call_cascade(
             target_model_key=analyse_model,
             payload=payload,

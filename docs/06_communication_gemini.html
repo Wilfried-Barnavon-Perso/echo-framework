@@ -83,9 +83,9 @@
             <tr>
               <td><code>MODEL_ATHENA</code> / <code>MODEL_PROMETHEUS</code></td>
               <td><code>3</code> / <code>2</code></td>
-              <td><code>gemini-4-carbon</code> / <code>gemini-4-argon</code></td>
-              <td><code>gemini-4-carbon-high</code> / <code>gemini-4-argon-high</code></td>
-              <td><code>medium</code> (nominal) / <code>high</code> (cascade 429)</td>
+              <td><code>gemini-4-carbon</code> / <code>gemini-4-neon</code></td>
+              <td><code>gemini-4-carbon-high</code> / <code>gemini-4-neon-medium</code></td>
+              <td><code>high</code> / <code>medium</code> (nominal) &amp; <code>high</code> (cascade 429)</td>
             </tr>
             <tr>
               <td><code>MODEL_APOLLO</code></td>
@@ -99,7 +99,7 @@
               <td><code>0</code></td>
               <td><code>gemini-3.5-flash-lite</code></td>
               <td><code>gemini-3.5-flash-lite</code></td>
-              <td><code>high</code></td>
+              <td><code>medium</code></td>
             </tr>
             <tr>
               <td><code>MODEL_DISTILLATION</code></td>
@@ -120,7 +120,7 @@
 
         <h3>3. Client HTTP/2, Cascade Cognitive &amp; Circuit Breaker OAuth2 (<code>echo_gemini_client.py</code>
           v5.239.17.1
-          &amp; <code>echo_orchestrator.py</code> v5.239.0.1)</h3>
+          &amp; <code>echo_orchestrator.py</code> v5.239.35.1)</h3>
         <ul>
           <li><strong>Multiplexage HTTP/2 &amp; Streaming Zéro-RAM (Disque et Mémoire Vive) :</strong> Connexion
             persistante via <code>httpx.AsyncClient(http2=True)</code> avec timeouts granulaires <code>build_httpx_timeout</code> (<code>ECHO_LLM_CALL_TIMEOUT = 600s</code> Non-Stream, <code>ECHO_LLM_STREAM_TIMEOUT = 300s</code> Stream, connect 15s, write 30s, pool 15s),
@@ -131,7 +131,7 @@
             <code>attach_thought_signature</code> (<code>echo_core.py</code> v5.239.17.1), normalisation stricte en
             <code>camelCase</code> (<code>inlineData</code>, <code>functionDeclarations</code>,
             <code>functionCallingConfig</code>, <code>responseMimeType</code>, <code>responseSchema</code> via
-            <code>normalize_generation_config</code> dans <code>echo_protocol.py</code> v5.233.0.1), injection dynamique
+            <code>normalize_generation_config</code> dans <code>echo_protocol.py</code> v5.239.35.1), injection dynamique
             de <code>"requestType"</code> (<code>"agent"</code> ou <code>"image_gen"</code>) et isolation par
             <code>sub_sid</code> dans le seed UUID5 de
             <code>index_text_in_ephemeral_rag</code>.
@@ -172,7 +172,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 5.239.31 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 5.239.37 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

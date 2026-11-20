@@ -1,16 +1,16 @@
 """
 title: ECHO Session RAG Conversation Filter
 author: ECHO Framework
-version: 5.239.13.1
+version: 5.239.35.1
 description: Composant système interne : ECHO Session RAG Conversation Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.35.1: Garde-fous None-safe sur msg.get("content") et p.get("text") dans _format_messages.
 # 5.239.13.1: Marquage rag_index_state différé au succès effectif de l'upsert Qdrant (_on_rag_indexed) et garde anti-double indexation _RAG_INFLIGHT.
 # 5.235.5.1: Clôture d'un tour de parole conditionnée à la présence d'au moins un message assistant lors de messages user consécutifs.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.13: Résolution Fork Assistant : Utilisation de l'ID du message assistant pour garantir l'indexation lors d'une régénération.
-# 1.11: Résolution Fork Bomb (Branching) : Itération à rebours O(1) via SQLite is_embedded.
 
 from typing import Optional, Any
 from pydantic import BaseModel, Field
@@ -51,9 +51,9 @@ class Filter:
         
         for msg in messages:
             role = msg.get("role", "user")
-            content = msg.get("content", "")
+            content = msg.get("content") or ""
             if isinstance(content, list):
-                text_parts = [str(p.get("text", "")) for p in content if isinstance(p, dict) and p.get("type") == "text" and p.get("text")]
+                text_parts = [str(p.get("text") or "") for p in content if isinstance(p, dict) and p.get("type") == "text" and p.get("text")]
                 content = "\n".join(text_parts)
             else:
                 content = str(content)

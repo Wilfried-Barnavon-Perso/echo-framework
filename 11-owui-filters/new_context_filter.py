@@ -2,16 +2,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 5.235.5.1
+version: 5.239.35.1
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.35.1: Garde-fous None-safe dans inlet (msgs[-2]/msgs[-1]) et outlet (préservation content=None sans mutation en "None").
 # 5.235.5.1: Comptage des tours logiques résilient à la fusion user+user, filtrage AEC de branche active et annotation de provenance.
 # 5.234.0.1: Utilisation de ECHO_AUTH_PENDING_MARKER et aiguillage déterministe des parts image_url (anti-doublon chats sauvegardés vs préservation inline en chats temporaires/API).
 # 5.231.55.1: Réétagement de la priorité à 70 (après context_compaction_filter à 60 et avant codex_links_filter à 80).
 # 5.231.11.1: Réétagement de la priorité à 30 (après user_native_context_filter à 20 et avant codex_links_filter à 40).
-# 5.231.7.1: Ajout du fallback sur metadata.user_message_id et timestamp courant pour garantir le scellement Shadow du message utilisateur.
 
 
 from pydantic import BaseModel, Field
@@ -103,11 +103,11 @@ class Filter:
                 return body
 
             if len(msgs) >= 2:
-                prev_content = str(msgs[-2].get("content", ""))
+                prev_content = str(msgs[-2].get("content") or "")
                 # Interception clé API AI Studio (fallback OAuth2).
                 # L'ancien bloc de détection code 4/… (PKCE) est supprimé :
                 # le Device Flow (RFC 8628) ne génère pas de code dans le chat.
-                last_content = str(msgs[-1].get("content", "")).strip()
+                last_content = str(msgs[-1].get("content") or "").strip()
                 keys = re.findall(GOOGLE_API_KEY_REGEX, last_content)
                 if ECHO_AUTH_PENDING_MARKER in prev_content and keys:
                     body["_api_key"] = last_content
@@ -478,12 +478,14 @@ class Filter:
     async def outlet(self, body: dict, __user__: Optional[dict] = None) -> dict:
         msgs = body.get("messages", [])
         for m in msgs:
-            orig = m.get("content", "")
+            orig = m.get("content")
+            if orig is None:
+                continue
             if isinstance(orig, list):
                 new_content = []
                 for p in orig:
                     if isinstance(p, dict) and p.get("type") == "text":
-                        txt = str(p.get("text", ""))
+                        txt = str(p.get("text") or "")
                         if re.search(GOOGLE_API_KEY_REGEX, txt):
                             txt = re.sub(GOOGLE_API_KEY_REGEX, "[CLÉ API GOOGLE MASQUÉE PAR SÉCURITÉ]", txt)
                         p["text"] = txt

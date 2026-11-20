@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 5.239.17.1
+version: 5.239.35.1
 description: Permet au modèle de manipuler un espace virtuel (Codex) avec versioning Git invisible et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 5.239.35.1: Alignement de generationConfig dans edit_codex sur le modèle sélectionné via self.user_valves.CODEX_EDIT_MODEL (fallback MODEL_APOLLO).
 # 5.239.17.1: Pagination bornée unifiée (HEAD et commits) de read_codex à ECHO_CODEX_MAX_READ_LINES (800 lignes) et ECHO_CODEX_MAX_READ_BYTES (46080 octets), indicateurs has_more/next_start_line et skip_truncation=True.
 # 5.235.5.1: Remplacement de l'accès direct SQLite par la méthode abstraite state.has_pending_directive.
 # 5.235.4.1: Sécurisation binaire exhaustive : refus d'édition assistée, propagation des métadonnées dans restore_codex et guard clause dans summarize_codex.
 # 5.235.2.2: Précision de la docstring OpenAPI de read_codex pour l'introspection dynamique tool_advisor.
-# 5.235.2.1: Détection et omission sécurisée des fichiers binaires dans read_codex (HEAD et commits) avec statut warning explicite et directive PAS.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -383,16 +383,17 @@ class Tools:
             original_sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
             user_prompt = f"## Document complet\n```{lang}\n{content}\n```\n\n## Instructions\n{instructions}"
 
+            edit_model = self.user_valves.CODEX_EDIT_MODEL or "MODEL_APOLLO"
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
-                "generationConfig": get_generation_config("MODEL_APOLLO"),
+                "generationConfig": get_generation_config(edit_model),
                 "systemInstruction": {
                     "parts": [{"text": SYS_CODEX_EDIT.format(filename=filename, language=lang)}]
                 },
             }
 
             data, model_key, reason = await EchoGeminiClient.call_cascade(
-                target_model_key=self.user_valves.CODEX_EDIT_MODEL,
+                target_model_key=edit_model,
                 payload=payload,
                 user_id=uid,
                 metadata=__metadata__,
