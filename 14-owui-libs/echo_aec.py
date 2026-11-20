@@ -2,16 +2,16 @@
 """
 title: ECHO AEC Manager
 author: Wilfried BARNAVON
-version: 6.6.3.1
+version: 6.7.20.1
 description: Composant système interne : ECHO AEC Manager.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.20.1: Ajout de EchoAEC.render_command_directive pour l'émission certifiée de <artifact id="AEC_commande"> (Priorité 4).
 # 6.6.3.1: Ajout du champ optionnel <genre> dans EchoAEC.render_identity_context.
 # 5.235.5.2: Délégation purge et drainage transactionnel à EchoStateManager, suffixe de provenance hors_branche et suppression des accès directs identity.db.
 # 5.231.28.1: Réintroduction de EchoAEC.render_context_checkpoint pour l'encapsulation XML déterministe de <artifact id="AEC_context_checkpoint">.
 # 5.231.20.1: Suffixe UUID sur event_id dans EchoAEC.record_event pour éliminer les collisions intra-milliseconde.
-# 5.227.1.1: Suppression de render_context_checkpoint suite à la suppression du compactage in-place.
 
 import time
 import uuid
@@ -150,6 +150,11 @@ class EchoAEC:
     def render_directive(message: str, source: str = "Système") -> str:
         """Génère la balise XML <artifact id="AEC_directive">."""
         return f'<artifact id="AEC_directive" source="{source}">\n{message}\n</artifact>\n\n'
+
+    @staticmethod
+    def render_command_directive(command_slash: str, directive_text: str, source: str = "Système") -> str:
+        """Génère la balise XML <artifact id="AEC_commande">."""
+        return f'<artifact id="AEC_commande" source="{source}" command="{command_slash}">\n{directive_text.strip()}\n</artifact>\n\n'
 
     @staticmethod
     def render_identity_context(name: str, gender: Optional[str] = None) -> str:

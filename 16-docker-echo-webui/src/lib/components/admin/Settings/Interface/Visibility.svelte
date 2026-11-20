@@ -28,8 +28,7 @@
 		'chat.selected_web_search',
 		'chat.selected_image_generation',
 		'chat.selected_code_interpreter',
-		'chat.usage',
-		'chat.model_command'
+		'chat.usage'
 	]);
 
 	const filteredGroups = CONTROL_GROUPS.filter(

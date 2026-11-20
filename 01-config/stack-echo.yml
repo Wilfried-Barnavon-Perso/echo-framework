@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 6.7.16.1
+# VERSION : 6.7.20.1
 # ==============================================================================
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
@@ -104,7 +104,7 @@ services:
       - /opt/ECHO/owui-events:/opt/ECHO/owui-events:ro
       - /opt/ECHO/config:/opt/ECHO/config:ro
       - /opt/ECHO/echo-images:/opt/ECHO/echo-images:ro
-      - /opt/ECHO/config/system-prompt.md:/app/backend/data/system-prompt.md:ro
+      - /opt/ECHO/config/system-prompt.xml:/app/backend/data/system-prompt.xml:ro
       - echo-webui-data:/app/backend/data
     labels:
       - "com.centurylinklabs.watchtower.enable=false"

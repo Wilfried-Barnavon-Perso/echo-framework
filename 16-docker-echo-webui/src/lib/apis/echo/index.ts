@@ -677,3 +677,26 @@ export const getEchoVaultSchemas = async (token: string): Promise<EchoVaultSchem
 		{ method: 'GET' },
 		'Échec de lecture des schémas de connecteurs'
 	);
+
+export interface EchoSlashCommandItem {
+	id: string;
+	slash: string;
+	aliases: string[];
+	accepts_args: boolean;
+	ui_description: string;
+}
+
+let _cachedSlashCommands: EchoSlashCommandItem[] | null = null;
+
+export const getEchoSlashCommands = async (token: string): Promise<EchoSlashCommandItem[]> => {
+	if (_cachedSlashCommands) return _cachedSlashCommands;
+	const res = await echoRequestJson<{ commands?: EchoSlashCommandItem[] }>(
+		'/wm/commands',
+		token,
+		{ method: 'GET' },
+		'Échec de lecture des commandes ECHO'
+	);
+	const items = Array.isArray(res?.commands) ? res.commands : [];
+	_cachedSlashCommands = items;
+	return items;
+};

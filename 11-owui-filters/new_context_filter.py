@@ -2,16 +2,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 6.7.16.1
+version: 6.7.20.1
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.20.1: Détection déterministe des commandes / ECHO en tête de requête, émission de AEC_commande (Priorité 4) et alignement de la directive d'accueil sur /help.
 # 6.7.16.1: Réutilisation inter-chats zéro-LLM des résumés VECTORIZED_SUM_UP d'identity.db avec clonage des points Qdrant vers la session cible.
 # 6.7.5.1: Préservation intacte de content: None dans outlet et lectures None-safe dans inlet.
 # 6.6.3.1: Lecture de canonical_gender (identity.db) et transmission à AEC_identite lorsque ENABLE_USER_NAME est actif.
 # 6.1.0.1: Prise en charge des fichiers pré-positionnés par EchoStorageProvider (pending_ingestion) et déduplication.
-# 5.235.5.1: Comptage des tours logiques résilient à la fusion user+user, filtrage AEC de branche active et annotation de provenance.
 
 
 from pydantic import BaseModel, Field
@@ -283,6 +283,7 @@ class Filter:
 
             idx = -1
             current_user_multipart_payload = []  # Payload hybride courant (texte + inline_data)
+            user_raw_texts = []
             for i in range(len(msgs) - 1, -1, -1):
                 if msgs[i].get("role") == "user":
                     idx = i
@@ -310,6 +311,7 @@ class Filter:
                                 elif p.get("type") == "text":
                                     txt_val = p.get("text", "")
                                     if txt_val.strip():
+                                        user_raw_texts.append(txt_val)
                                         current_user_multipart_payload.append({"text": f"<REQUETE_UTILISATEUR>\n{txt_val}\n</REQUETE_UTILISATEUR>"})
                                 else:
                                     # [PASSTHROUGH] Liste Blanche implicite.
@@ -318,6 +320,7 @@ class Filter:
                     else:
                         txt_val = str(orig_content or "")
                         if txt_val.strip():
+                            user_raw_texts.append(txt_val)
                             current_user_multipart_payload.append({"text": f"<REQUETE_UTILISATEUR>\n{txt_val}\n</REQUETE_UTILISATEUR>"})
                     break
 
@@ -394,7 +397,7 @@ class Filter:
                                 "Directive d'Initialisation de Session : Saluer l'Utilisateur et présenter "
                                 f"le Framework (nom vernaculaire Écho, nom technique ECHO, version active {version}, "
                                 "missions fondamentales), consulter silencieusement les Méta-Artéfacts si pertinent, "
-                                "recommander la commande !help, puis répondre à la requête de l'Utilisateur."
+                                "recommander la commande /help, puis répondre à la requête de l'Utilisateur."
                             )
                             if version != "##ECHO_VERSION##":
                                 state_manager.save_session_setting("last_framework_version", version)
@@ -409,11 +412,21 @@ class Filter:
                             "Directive d'Initialisation de Session : Saluer l'Utilisateur et présenter "
                             f"le Framework (nom vernaculaire Écho, nom technique ECHO, version active {version}, "
                             "missions fondamentales), consulter silencieusement les Méta-Artéfacts si pertinent, "
-                            "recommander la commande !help, puis répondre à la requête de l'Utilisateur."
+                            "recommander la commande /help, puis répondre à la requête de l'Utilisateur."
                         )
 
                 if directive_to_inject:
                     rich_parts.append({"text": directive_to_inject})
+
+                if idx == len(msgs) - 1 and user_raw_texts:
+                    from echo_core import extract_leading_slash_commands
+                    for cmd_entry in extract_leading_slash_commands("\n".join(user_raw_texts)):
+                        rich_parts.append({
+                            "text": EchoAEC.render_command_directive(
+                                cmd_entry["slash"],
+                                cmd_entry["directive"],
+                            )
+                        })
 
                 # === Configuration ZoneInfo ===
                 try:

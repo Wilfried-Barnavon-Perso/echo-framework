@@ -2,18 +2,19 @@
 """
 title: ECHO Echo Core
 author: Wilfried BARNAVON
-version: 6.7.11.1
+version: 6.7.20.1
 description: Fonctions cognitives et utilitaires pures.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.20.1: Chargeur XML sous cache st_mtime_ns (load_echo_commands_registry, load_assembled_system_prompt) et extraction normalisée extract_leading_slash_commands.
 # 6.7.11.1: Factorisation de apply_tool_spillover et paginate_lines_window.
 # 6.7.10.2: Application des 3 régimes SSOT, préservation de _skip_truncation sous ECHO_SUBAGENT_CONTEXT/is_nested dans _apply_final_spillover et directive PAS 800 lignes.
 # 6.6.30.1: Verrou thread-safe _get_aec_drain_lock(chat_id) autour de _drain_tool_aec_events.
 # 5.239.17.1: Délestage automatique des sorties d'outils > 32 Ko dans tools_output/{output_id}.txt avec aperçu Head+Tail aligné sur les lignes et métadonnées JSON (truncate_and_spill_tool_output, skip_truncation).
-# 5.239.11.1: Parsing JSON-first (`std_json.loads`) dans `unbox_tool_output` pour accepter la sérialisation Open WebUI (`null`/`true`/`false`), avec repli `ast.literal_eval` et garde `unstructured_data`.
 import os
 import re
+import copy
 import uuid
 import time
 import inspect
@@ -21,6 +22,10 @@ import functools
 import contextvars
 import threading
 import logging
+import unicodedata
+import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape as xml_escape
+from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -28,7 +33,15 @@ from echo_state_manager import EchoStateManager
 from echo_aec import EchoAEC
 import orjson as std_json
 from echo_paths import get_echo_version
-from echo_constants import CHARS_PER_TOKEN, AEC_REMINDERS, ECHO_SUBAGENT_CONTEXT
+from echo_constants import (
+    CHARS_PER_TOKEN,
+    AEC_REMINDERS,
+    ECHO_SUBAGENT_CONTEXT,
+    ECHO_BASE_DATA_DIR,
+    ECHO_PLUGIN_ROOT,
+    ECHO_SYSTEM_PROMPT_FILENAME,
+    ECHO_SYSTEM_COMMANDS_FILENAME,
+)
 
 logger = logging.getLogger("ECHO_CORE")
 
@@ -45,6 +58,176 @@ def resolve_placeholders(text: str, model_id: str, model_origin: str = "unknown"
     resolved = resolved.replace("##MODEL_ID##", build_model_identity(model_id))
     resolved = resolved.replace("##MODEL_ORIGIN##", build_model_identity(model_origin))
     return resolved
+
+
+_SYSTEM_XML_LOCK = threading.Lock()
+_COMMANDS_CACHE: Dict[Tuple[str, int], Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]], str]] = {}
+_PROMPT_CACHE: Dict[Tuple[str, int, str, int], str] = {}
+
+
+def _resolve_config_file(filename: str, config_dir: Optional[str] = None) -> Optional[Path]:
+    """Résout le premier fichier XML existant dans les dossiers candidats."""
+    if config_dir:
+        candidates = [Path(config_dir)]
+    else:
+        plugin_root = Path(os.getenv("ECHO_PLUGIN_ROOT", ECHO_PLUGIN_ROOT))
+        candidates = [
+            plugin_root / "config",
+            Path(ECHO_BASE_DATA_DIR),
+            Path(__file__).resolve().parent.parent / "01-config",
+        ]
+    for folder in candidates:
+        candidate = folder / filename
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def normalize_slash_command_key(raw: str) -> str:
+    """Normalise une commande slash (sans '/', sans accents NFD, minuscule)."""
+    cleaned = (raw or "").strip().lstrip("/")
+    nfd = unicodedata.normalize("NFD", cleaned)
+    stripped = "".join(ch for ch in nfd if unicodedata.category(ch) != "Mn")
+    return stripped.lower()
+
+
+def load_echo_commands_registry(
+    config_dir: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]], str]:
+    """Charge et met en cache system-commands.xml (liste UI, table de lookup et addendum XML)."""
+    cmds_path = _resolve_config_file(ECHO_SYSTEM_COMMANDS_FILENAME, config_dir=config_dir)
+    if cmds_path is None:
+        return [], {}, ""
+
+    cmds_path_str = str(cmds_path)
+    cmds_mtime_ns = cmds_path.stat().st_mtime_ns
+    cache_key = (cmds_path_str, cmds_mtime_ns)
+
+    with _SYSTEM_XML_LOCK:
+        cached = _COMMANDS_CACHE.get(cache_key)
+        if cached is not None:
+            return copy.deepcopy(cached[0]), copy.deepcopy(cached[1]), cached[2]
+
+    raw_xml = cmds_path.read_text(encoding="utf-8")
+    root = ET.fromstring(raw_xml)
+    desc = (root.findtext("description") or "").strip()
+
+    ui_list: List[Dict[str, Any]] = []
+    lookup_map: Dict[str, Dict[str, Any]] = {}
+    addendum_lines: List[str] = ["<authorized_commands_registry>"]
+    if desc:
+        addendum_lines.append(f"  <description>{xml_escape(desc)}</description>")
+
+    for cmd in root.findall("command"):
+        cid = (cmd.attrib.get("id") or "").strip()
+        slash = (cmd.attrib.get("slash") or "").strip()
+        aliases_raw = (cmd.attrib.get("aliases") or "").strip()
+        aliases_list = [a.strip() for a in aliases_raw.split(",") if a.strip()]
+        accepts_args_bool = (cmd.attrib.get("accepts_args") or "false").strip().lower() in ("true", "1", "yes")
+        ui_desc = (cmd.attrib.get("ui_description") or "").strip()
+        directive_text = (cmd.text or "").strip()
+
+        ui_list.append({
+            "id": cid,
+            "slash": slash,
+            "aliases": aliases_list,
+            "accepts_args": accepts_args_bool,
+            "ui_description": ui_desc,
+        })
+
+        entry = {
+            "id": cid,
+            "slash": slash,
+            "directive": directive_text,
+            "accepts_args": accepts_args_bool,
+            "ui_description": ui_desc,
+        }
+        for raw_key in [cid, slash, *aliases_list]:
+            norm_key = normalize_slash_command_key(raw_key)
+            if norm_key:
+                lookup_map[norm_key] = entry
+
+        attr_slash = xml_escape(slash, {'"': "&quot;"})
+        addendum_lines.append(f'  <command id="{attr_slash}">{xml_escape(directive_text)}</command>')
+
+    addendum_lines.append("</authorized_commands_registry>")
+    addendum_xml = "\n".join(addendum_lines)
+
+    with _SYSTEM_XML_LOCK:
+        _COMMANDS_CACHE[cache_key] = (ui_list, lookup_map, addendum_xml)
+        return copy.deepcopy(ui_list), copy.deepcopy(lookup_map), addendum_xml
+
+
+def load_assembled_system_prompt(
+    fallback_raw: Optional[str] = None,
+    config_dir: Optional[str] = None,
+) -> str:
+    """Charge system-prompt.xml (ou fallback_raw), retire le prologue XML et injecte authorized_commands_registry."""
+    prompt_path = _resolve_config_file(ECHO_SYSTEM_PROMPT_FILENAME, config_dir=config_dir)
+    cmds_path = _resolve_config_file(ECHO_SYSTEM_COMMANDS_FILENAME, config_dir=config_dir)
+
+    prompt_path_str = str(prompt_path) if prompt_path is not None else ""
+    prompt_mtime_ns = prompt_path.stat().st_mtime_ns if prompt_path is not None else 0
+    cmds_path_str = str(cmds_path) if cmds_path is not None else ""
+    cmds_mtime_ns = cmds_path.stat().st_mtime_ns if cmds_path is not None else 0
+
+    if prompt_path is not None:
+        cache_key = (prompt_path_str, prompt_mtime_ns, cmds_path_str, cmds_mtime_ns)
+        with _SYSTEM_XML_LOCK:
+            cached_prompt = _PROMPT_CACHE.get(cache_key)
+            if cached_prompt is not None:
+                return cached_prompt
+        raw = prompt_path.read_text(encoding="utf-8")
+    else:
+        raw = fallback_raw or ""
+
+    body = re.sub(r"^\s*<\?xml[^>]*\?>\s*", "", raw, count=1)
+    _, _, addendum_xml = load_echo_commands_registry(config_dir=config_dir)
+
+    if addendum_xml and "<authorized_commands_registry>" not in body:
+        if "</system_prompt>" in body:
+            body = body.replace("</system_prompt>", f"\n{addendum_xml}\n</system_prompt>", 1)
+        else:
+            body = f"{body.rstrip()}\n\n{addendum_xml}\n"
+
+    if prompt_path is not None:
+        cache_key = (prompt_path_str, prompt_mtime_ns, cmds_path_str, cmds_mtime_ns)
+        with _SYSTEM_XML_LOCK:
+            _PROMPT_CACHE[cache_key] = body
+
+    return body
+
+
+def extract_leading_slash_commands(
+    text: str,
+    config_dir: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Extrait les commandes /commande valides en tête de message utilisateur."""
+    tokens = (text or "").lstrip().split()
+    if not tokens:
+        return []
+
+    _, lookup_map, _ = load_echo_commands_registry(config_dir=config_dir)
+    if not lookup_map:
+        return []
+
+    matched: List[Dict[str, Any]] = []
+    seen_ids: Set[str] = set()
+    for tok in tokens:
+        if not tok.startswith("/"):
+            break
+        if tok == "/" or "/" in tok[1:]:
+            break
+        key = normalize_slash_command_key(tok)
+        entry = lookup_map.get(key)
+        if entry is None:
+            break
+        cid = entry["id"]
+        if cid not in seen_ids:
+            seen_ids.add(cid)
+            matched.append(entry)
+
+    return matched
 
 def ensure_gemini_parts(content: Any, model_id: str = "unknown", model_origin: str = "unknown") -> List[Dict]:
     parts = []

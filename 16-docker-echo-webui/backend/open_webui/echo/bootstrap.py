@@ -1,16 +1,16 @@
 """
 title: ECHO V6 Declarative Lifespan Bootstrap
 author: Wilfried BARNAVON
-version: 6.7.16.1
+version: 6.7.20.1
 description: Provisioning déclaratif au démarrage FastAPI remplaçant intégralement config-owui.sh.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.20.1: Provisioning du modèle maître depuis system-prompt.xml + system-commands.xml via load_assembled_system_prompt.
 # 6.7.16.1: Création idempotente au démarrage des 4 index SQLite composites sur la table file et purge one-shot echo.file_content_hygiene_v1 hors knowledge_file.
 # 6.7.8.1: Création et purge sécurisée au démarrage des résidus orphelins dans TMPDIR (.tmp_uploads) via _prepare_tmp_uploads_dir.
 # 6.6.3.1: Alignement des appels avatar par défaut avec le paramètre gender='X'.
 # 6.6.2.1: Alignement du provisioning lifespan avec la suppression des actions legacy (agent_monitor_action, echo_identity_vault_action, echo_codex_action, web_navigation_replay_action).
-# 6.5.3.2: Identité ECHO-UI, route avatar modèle echo_orchestrator et montage des routes audio /echo/v1/audio au démarrage.
 
 from __future__ import annotations
 
@@ -237,15 +237,24 @@ async def _sync_master_model(
     model_id = str(entry["id"])
     params_dict = dict(entry.get("params") or {})
 
-    # Injection du Kernel Statique (system-prompt.md)
-    sys_prompt_candidates = [
-        config_dir / "system-prompt.md",
-        Path("/app/backend/data/system-prompt.md"),
-    ]
-    for sp_path in sys_prompt_candidates:
+    # Injection du Kernel Statique (system-prompt.xml + system-commands.xml)
+    ensure_echo_sys_path()
+    from echo_core import load_assembled_system_prompt  # type: ignore
+
+    raw_fallback = None
+    for sp_path in (
+        config_dir / "system-prompt.xml",
+        Path("/app/backend/data/system-prompt.xml"),
+    ):
         if sp_path.is_file():
-            params_dict["system"] = sp_path.read_text(encoding="utf-8")
+            raw_fallback = sp_path.read_text(encoding="utf-8")
             break
+    assembled_sys = load_assembled_system_prompt(
+        fallback_raw=raw_fallback,
+        config_dir=str(config_dir) if config_dir.is_dir() else None,
+    )
+    if assembled_sys:
+        params_dict["system"] = assembled_sys
 
     meta_dict = dict(entry.get("meta") or {})
     meta_dict.pop("_comment_resources", None)

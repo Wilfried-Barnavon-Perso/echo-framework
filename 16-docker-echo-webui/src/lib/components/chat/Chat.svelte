@@ -3701,46 +3701,6 @@
 		}
 	};
 
-	const handleStatusCommand = () => {
-		messageInput?.showStatus();
-		messageInput?.focus({ preventScroll: true });
-	};
-
-	const handleModelCommand = (modelId = '') => {
-		if (!modelId) {
-			const currentModels = (atSelectedModel?.id ? [atSelectedModel.id] : selectedModels).filter(
-				Boolean
-			);
-			toast.message(
-				currentModels.length
-					? `Current model: ${currentModels.join(', ')}`
-					: $i18n.t('Model not selected')
-			);
-			messageInput?.setText('');
-			prompt = '';
-			messageInput?.focus({ preventScroll: true });
-			return;
-		}
-
-		const model = $models.find((model) => model.id === modelId);
-		if (!model) {
-			toast.error(`Model not found: ${modelId}`);
-			messageInput?.setText('');
-			prompt = '';
-			messageInput?.focus({ preventScroll: true });
-			return;
-		}
-
-		atSelectedModel = undefined;
-		selectedModels = [model.id];
-		saveControls(selectedModels);
-		saveSessionSelectedModels();
-		toast.success(`Model switched to: ${model.id}`);
-		messageInput?.setText('');
-		prompt = '';
-		messageInput?.focus({ preventScroll: true });
-	};
-
 	const handleForkChat = async (messageId: string | null = null) => {
 		if (!$chatId || $temporaryChatEnabled || !history?.currentId) {
 			toast.message($i18n.t('No chat to fork'));
@@ -3902,43 +3862,14 @@
 			await handleManualCompact();
 			return { status: 'rejected' };
 		}
-		if (String(userPrompt).trim() === '/status') {
-			clearCommandInput();
-			handleStatusCommand();
-			return { status: 'rejected' };
-		}
 		if (String(userPrompt).trim() === '/comments') {
 			clearCommandInput();
 			messageInput?.openComments();
 			return { status: 'rejected' };
 		}
-		const sideCommand = String(userPrompt)
-			.trim()
-			.match(/^\/(?:side|btw)(?:\s+([\s\S]*))?$/i);
-		if (sideCommand && !sideChatAllowed) {
-			toast.error($i18n.t('You do not have permission to use side chat.'));
-			return { status: 'rejected' };
-		}
-		if (sideCommand && !embedded && $chatId && history.currentId) {
-			if (selectedModels.length !== 1 || !selectedModelIds[0]) {
-				toast.error($i18n.t('Select only one model to open a side chat.'));
-				return { status: 'rejected' };
-			}
-			clearCommandInput();
-			sideChatRequest.set({ parentId: $chatId, prompt: sideCommand[1] ?? '' });
-			showTabs.set('side');
-			return { status: 'rejected' };
-		}
 		if (String(userPrompt).trim() === '/fork') {
 			clearCommandInput();
 			await handleForkChat();
-			return { status: 'rejected' };
-		}
-		const modelCommandMatch = String(userPrompt)
-			.trim()
-			.match(/^\/model(?:\s+([\s\S]+))?$/);
-		if (modelCommandMatch) {
-			handleModelCommand(modelCommandMatch[1]?.trim() ?? '');
 			return { status: 'rejected' };
 		}
 
@@ -4340,7 +4271,7 @@
 			params?.stream_response ??
 			$settings?.params?.stream_response ??
 			true;
-		// [ECHO-V6-HOOK] Le Kernel Statique (system-prompt.md) est injecté côté serveur ; ne pas injecter de prompt système client.
+		// [ECHO-V6-HOOK] Le Kernel Statique (system-prompt.xml) est injecté côté serveur ; ne pas injecter de prompt système client.
 		let messages: any[] = [];
 
 		if ($temporaryChatEnabled) {
@@ -5476,7 +5407,6 @@
 										{contextCompactionEnabled}
 										{embedded}
 										compactHandler={handleManualCompact}
-										statusHandler={handleStatusCommand}
 										forkHandler={handleForkChat}
 										{toolApprovalMode}
 										onToolApprovalModeChange={handleToolApprovalModeChange}
@@ -5577,7 +5507,6 @@
 										{contextCompactionEnabled}
 										{embedded}
 										compactHandler={handleManualCompact}
-										statusHandler={handleStatusCommand}
 										forkHandler={handleForkChat}
 										{toolApprovalMode}
 										onToolApprovalModeChange={handleToolApprovalModeChange}

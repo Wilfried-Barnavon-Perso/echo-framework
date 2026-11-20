@@ -43,6 +43,14 @@
 	let pausedAtStepCount = 0;
 	let pausedNewSteps = 0;
 
+	let composerTextareaEl: HTMLTextAreaElement | null = null;
+	let atMenuOpen = false;
+	let atQuery = '';
+	let atTriggerStart = -1;
+	let atSelectedIdx = 0;
+	let explicitlyMentionedSids: string[] = [];
+	let lastTrackedGroupId = '';
+
 	const syncChatStream = async (cid: string) => {
 		const normalized = cid && isSavedChatId(cid) ? cid : '';
 		if (normalized === boundChatId) return;
@@ -333,6 +341,8 @@
 	};
 
 	const toggleTargetSid = (sid: string) => {
+		explicitlyMentionedSids = [];
+		atMenuOpen = false;
 		if (!addressableMemberSids.includes(sid)) return;
 		if (selectedTargetSids.includes(sid)) {
 			if (selectedTargetSids.length > 1) {
@@ -344,8 +354,68 @@
 	};
 
 	const selectAllTargetSids = () => {
+		explicitlyMentionedSids = [];
+		atMenuOpen = false;
 		selectedTargetSids = [...addressableMemberSids];
 	};
+
+	const normalizeMentionQuery = (s: string): string =>
+		(s ?? '')
+			.normalize('NFD')
+			.replace(/[\u0300-\u036f]/g, '')
+			.toLowerCase();
+
+	$: if ((selectedGroup?.id ?? '') !== lastTrackedGroupId) {
+		lastTrackedGroupId = selectedGroup?.id ?? '';
+		explicitlyMentionedSids = [];
+		atMenuOpen = false;
+	}
+
+	$: liveAddressableSids = addressableMemberSids.filter(
+		(sid) => threadMeta[sid]?.status !== 'killed'
+	);
+
+	type AtCandidate =
+		| { kind: 'all'; key: string; label: string; subtitle: string }
+		| { kind: 'member'; key: string; sid: string; label: string; status: string; engine: string };
+
+	$: atCandidates = ((): AtCandidate[] => {
+		const normQ = normalizeMentionQuery(atQuery);
+		const list: AtCandidate[] = [];
+		if (
+			liveAddressableSids.length > 1 &&
+			(!normQ || 'tous'.startsWith(normQ) || 'all'.startsWith(normQ))
+		) {
+			list.push({
+				kind: 'all',
+				key: '__all__',
+				label: 'Tous',
+				subtitle: `Diffuser aux ${liveAddressableSids.length} membres`
+			});
+		}
+		for (const sid of liveAddressableSids) {
+			const label = getParticipantLabel(sid);
+			if (
+				!normQ ||
+				normalizeMentionQuery(label).includes(normQ) ||
+				normalizeMentionQuery(sid).includes(normQ)
+			) {
+				list.push({
+					kind: 'member',
+					key: sid,
+					sid,
+					label,
+					status: threadMeta[sid]?.status ?? 'idle',
+					engine: threadMeta[sid]?.engine ?? 'delegate'
+				});
+			}
+		}
+		return list;
+	})();
+
+	$: if (atSelectedIdx >= atCandidates.length) {
+		atSelectedIdx = Math.max(0, atCandidates.length - 1);
+	}
 
 	$: rawGroupSteps = ((): EchoCognitionStep[] => {
 		if (!selectedGroup) return [];
@@ -744,6 +814,8 @@
 		composerText = '';
 		try {
 			const res = await postEchoSubagentMessage(token, chatId, primarySid, text, targets);
+			explicitlyMentionedSids = [];
+			atMenuOpen = false;
 			const startedCount = res.started_sids?.length ?? (res.status === 'started' ? 1 : 0);
 			const queuedCount = res.queued_sids?.length ?? (res.status === 'queued' ? 1 : 0);
 			if (targets.length > 1) {
@@ -818,7 +890,101 @@
 		return meta?.icon || '';
 	};
 
+	const updateAtMenuFromCursor = () => {
+		if (!composerTextareaEl || liveAddressableSids.length === 0) {
+			atMenuOpen = false;
+			return;
+		}
+		const pos = composerTextareaEl.selectionStart ?? composerText.length;
+		const before = composerText.slice(0, pos);
+		const match = before.match(/(?:^|\s)@([^\s@]*)$/);
+		if (!match) {
+			atMenuOpen = false;
+			atQuery = '';
+			atTriggerStart = -1;
+			return;
+		}
+		const query = match[1] ?? '';
+		const triggerStart = before.length - query.length - 1;
+		if (!atMenuOpen || triggerStart !== atTriggerStart) {
+			atSelectedIdx = 0;
+		}
+		atQuery = query;
+		atTriggerStart = triggerStart;
+		atMenuOpen = true;
+	};
+
+	const handleTextareaKeyup = (e: KeyboardEvent) => {
+		if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
+		updateAtMenuFromCursor();
+	};
+
+	const handleTextareaBlur = () => {
+		atMenuOpen = false;
+	};
+
+	const applyAtCandidate = async (cand: AtCandidate) => {
+		const pos = composerTextareaEl?.selectionStart ?? composerText.length;
+		const start = atTriggerStart >= 0 ? atTriggerStart : pos;
+		const replacement = `@${cand.label} `;
+		const before = composerText.slice(0, start);
+		const after = composerText.slice(pos);
+		composerText = `${before}${replacement}${after}`;
+		atMenuOpen = false;
+		atQuery = '';
+		atTriggerStart = -1;
+
+		if (cand.kind === 'all') {
+			explicitlyMentionedSids = [];
+			selectAllTargetSids();
+		} else {
+			if (explicitlyMentionedSids.length === 0) {
+				explicitlyMentionedSids = [cand.sid];
+				selectedTargetSids = [cand.sid];
+			} else {
+				if (!explicitlyMentionedSids.includes(cand.sid)) {
+					explicitlyMentionedSids = [...explicitlyMentionedSids, cand.sid];
+				}
+				if (!selectedTargetSids.includes(cand.sid)) {
+					selectedTargetSids = [...selectedTargetSids, cand.sid];
+				}
+			}
+		}
+
+		await tick();
+		if (composerTextareaEl) {
+			const nextCursor = before.length + replacement.length;
+			composerTextareaEl.focus();
+			composerTextareaEl.setSelectionRange(nextCursor, nextCursor);
+		}
+	};
+
 	const handleComposerKeydown = (e: KeyboardEvent) => {
+		if (atMenuOpen && atCandidates.length > 0) {
+			if (e.key === 'ArrowDown') {
+				e.preventDefault();
+				atSelectedIdx = (atSelectedIdx + 1) % atCandidates.length;
+				return;
+			}
+			if (e.key === 'ArrowUp') {
+				e.preventDefault();
+				atSelectedIdx = (atSelectedIdx - 1 + atCandidates.length) % atCandidates.length;
+				return;
+			}
+			if (e.key === 'Enter' || e.key === 'Tab') {
+				e.preventDefault();
+				const chosen = atCandidates[atSelectedIdx] ?? atCandidates[0];
+				if (chosen) {
+					void applyAtCandidate(chosen);
+				}
+				return;
+			}
+			if (e.key === 'Escape') {
+				e.preventDefault();
+				atMenuOpen = false;
+				return;
+			}
+		}
 		if (e.key === 'Enter' && !e.shiftKey) {
 			e.preventDefault();
 			void sendMessage();
@@ -1441,17 +1607,49 @@
 						</div>
 					{/if}
 
-					<div class="flex items-end gap-2">
+					<div class="relative flex items-end gap-2">
+						{#if atMenuOpen && atCandidates.length > 0}
+							<div
+								class="absolute bottom-full left-0 mb-1.5 z-30 w-72 max-w-[calc(100%-3rem)] max-h-52 overflow-y-auto rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg p-1 text-xs"
+							>
+								{#each atCandidates as cand, idx (cand.key)}
+									<button
+										type="button"
+										on:mousedown|preventDefault={() => void applyAtCandidate(cand)}
+										on:mousemove={() => (atSelectedIdx = idx)}
+										class="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg text-left transition {idx ===
+										atSelectedIdx
+											? 'bg-indigo-500/15 text-indigo-700 dark:text-indigo-300'
+											: 'text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800'}"
+									>
+										<span class="font-medium truncate">@{cand.label}</span>
+										<span class="text-[10px] text-gray-400 dark:text-gray-500 shrink-0 truncate max-w-[140px]">
+											{#if cand.kind === 'all'}
+												{cand.subtitle}
+											{:else}
+												{cand.engine} · {cand.status}
+											{/if}
+										</span>
+									</button>
+								{/each}
+							</div>
+						{/if}
 						<textarea
+							bind:this={composerTextareaEl}
 							bind:value={composerText}
+							on:input={updateAtMenuFromCursor}
+							on:click={updateAtMenuFromCursor}
+							on:keyup={handleTextareaKeyup}
+							on:blur={handleTextareaBlur}
 							on:keydown={handleComposerKeydown}
 							rows="2"
 							disabled={sending}
-							placeholder={isAllTargetsSelected
+							placeholder={(isAllTargetsSelected
 								? `Diffuser une consigne aux ${selectedTargetSids.length} membres...`
 								: targetIsRunning
 									? 'Envoyer une consigne (mise en file pour le prochain tour)...'
-									: 'Envoyer une consigne directe au sous-agent...'}
+									: 'Envoyer une consigne directe au sous-agent...') +
+								(liveAddressableSids.length > 1 ? ' (@ pour cibler)' : '')}
 							class="flex-1 resize-none rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-xs text-gray-800 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 disabled:opacity-50"
 						></textarea>
 						<button

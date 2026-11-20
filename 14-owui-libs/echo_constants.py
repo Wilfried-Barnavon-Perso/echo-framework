@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.7.13.1
+version: 6.7.20.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.20.1: Ajout des constantes SSOT de chemins XML (ECHO_PLUGIN_ROOT, ECHO_CONFIG_DIR, system-prompt.xml, system-commands.xml).
 # 6.7.13.1: Ajout de ECHO_MAX_CONCURRENT_MULTIMODAL_SEGMENTS = 3 pour la régulation globale des segments multimodaux en parallèle.
 # 6.7.12.1: Passage du thinkingLevel par défaut de MODEL_ZEPHYR à high dans ECHO_MODELS_REGISTRY.
 # 6.7.10.1: Gouvernance SSOT à 3 régimes de troncature (ECHO_COGNITIVE_OUTPUT_PREVIEW_CHARS=524288, ECHO_PAGINATED_READER_TOOLS, ECHO_COGNITIVE_DISTILLATION_TOOLS, get_tool_truncation_limit).
 # 6.7.7.1: Migration du découpage des sous-agents vers les tours d'outils (ECHO_SUBAGENT_CHECKPOINT_TURNS=8, ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC=120, ECHO_AUTONOMOUS_MAX_TURNS=15, ECHO_AUTONOMOUS_TIMEOUT_SEC=300, ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND=3, ECHO_COUNCIL_ROUND_TIMEOUT_SEC=120) et ajout de default_slice_timeout_sec dans ECHO_SUBAGENT_ENGINES_REGISTRY.
-# 6.7.6.1: MAJ echo_constants.py - Version Antigravity 2.33.0 & CL 1024904911.
 
 import os
 import contextvars
@@ -61,6 +61,10 @@ ECHO_GC_GRACE_PERIOD_SEC = 900
 ECHO_UPLOADS_TRANSIT_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
 
 ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
+ECHO_PLUGIN_ROOT = "/opt/ECHO"
+ECHO_CONFIG_DIR = f"{ECHO_PLUGIN_ROOT}/config"
+ECHO_SYSTEM_PROMPT_FILENAME = "system-prompt.xml"
+ECHO_SYSTEM_COMMANDS_FILENAME = "system-commands.xml"
 
 BROWSER_VIEWS_DIR_NAME = "browserviews"
 ECHO_SESSION_DOMAINS = ["codex", "files", BROWSER_VIEWS_DIR_NAME, "db", "n8n_workflows", "dependencies", "tools_output"]

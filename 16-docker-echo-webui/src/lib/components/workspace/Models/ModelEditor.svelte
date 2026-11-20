@@ -809,7 +809,7 @@
 		<DiffEditorModal
 			bind:show={showComparison}
 			initialContent={comparison?.content ?? ''}
-			filePath="system-prompt.md"
+			filePath="system-prompt.xml"
 			onApply={applyComparison}
 		/>
 		<input

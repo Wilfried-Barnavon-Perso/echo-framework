@@ -1,6 +1,11 @@
 <script lang="ts">
-	import { getContext, onDestroy } from 'svelte';
+	import { getContext, onDestroy, onMount } from 'svelte';
 	import { getPrompts } from '$lib/apis/prompts';
+	import {
+		getEchoSlashCommands,
+		getEchoToken,
+		type EchoSlashCommandItem
+	} from '$lib/apis/echo';
 	import {
 		visibleControls
 	} from '$lib/stores';
@@ -9,19 +14,14 @@
 	import ChatBubbleDottedChecked from '$lib/components/icons/ChatBubbleDottedChecked.svelte';
 	import Knobs from '$lib/components/icons/Knobs.svelte';
 	import Annotation from '$lib/components/icons/Annotation.svelte';
-	import Icon from '$lib/components/chat/FileNav/Icon.svelte';
-	import Sparkles from '$lib/components/icons/Sparkles.svelte';
 
 	const i18n: any = getContext('i18n');
 
 	export let query = '';
-	export let onSelect = (e) => {};
+	export let onSelect: (e: any) => void = () => {};
 	export let canCompact = false;
-	export let canCompare = false;
 	export let compactDisabled = false;
-	export let canStatus = false;
 	export let canComments = false;
-	export let canSide = false;
 	export let canFork = false;
 	export let forkDisabled = false;
 	export let canTemporary = false;
@@ -29,12 +29,35 @@
 	export let hasChatContent = false;
 	export let contextPercent = 0;
 	export let contextHasThreshold = false;
+	void hasChatContent;
 
 	let selectedIdx = 0;
-	export let filteredItems = [];
+	export let filteredItems: any[] = [];
 
-	let prompts = [];
+	let prompts: any[] = [];
+	let echoCommands: EchoSlashCommandItem[] = [];
 	let searchDebounceTimer: ReturnType<typeof setTimeout>;
+
+	const normalizeCmd = (s: string): string =>
+		(s ?? '')
+			.normalize('NFD')
+			.replace(/[\u0300-\u036f]/g, '')
+			.toLowerCase()
+			.trim();
+
+	const matchesCmd = (names: string[], q: string): boolean => {
+		const nq = normalizeCmd(q);
+		return !nq || names.some((name) => normalizeCmd(name).startsWith(nq));
+	};
+
+	onMount(async () => {
+		try {
+			const token = getEchoToken() || (typeof localStorage !== 'undefined' ? localStorage.token || '' : '');
+			echoCommands = await getEchoSlashCommands(token);
+		} catch {
+			echoCommands = [];
+		}
+	});
 
 	$: contextCirclePercent = contextHasThreshold
 		? Math.min(Math.max(0, Math.round(contextPercent)), 100)
@@ -42,34 +65,27 @@
 	$: contextCircleOffset = 50.27 * (1 - contextCirclePercent / 100);
 
 	$: commandItems = [
-		...(canSide && ['side', 'btw'].some((name) => name.startsWith(query.toLowerCase()))
-			? [{ type: 'command', data: { id: 'side' } }]
-			: []),
-		...(canTemporary && 'temporary'.startsWith(query.toLowerCase())
+		...(canTemporary && matchesCmd(['temporary'], query)
 			? [{ type: 'command', data: { id: 'temporary' } }]
 			: []),
-		...(canCompact && 'compact'.startsWith(query.toLowerCase())
+		...(canCompact && matchesCmd(['compact'], query)
 			? [{ type: 'command', data: { id: 'compact' } }]
 			: []),
-		...(canFork && $visibleControls['chat.fork'] && 'fork'.startsWith(query.toLowerCase())
+		...(canFork && $visibleControls['chat.fork'] && matchesCmd(['fork', 'dupliquer'], query)
 			? [{ type: 'command', data: { id: 'fork' } }]
 			: []),
-		...(canStatus && $visibleControls['chat.status'] && 'status'.startsWith(query.toLowerCase())
-			? [{ type: 'command', data: { id: 'status' } }]
-			: []),
-		...(canComments && 'comments'.startsWith(query.toLowerCase())
+		...(canComments && matchesCmd(['comments'], query)
 			? [{ type: 'command', data: { id: 'comments' } }]
 			: []),
-		...($visibleControls['chat.model_command'] && 'model'.startsWith(query.toLowerCase())
-			? [{ type: 'command', data: { id: 'model' } }]
-			: []),
-		...($visibleControls['chat.settings_command'] && 'settings'.startsWith(query.toLowerCase())
+		...($visibleControls['chat.settings_command'] &&
+		matchesCmd(['settings', 'reglages', 'réglages'], query)
 			? [{ type: 'command', data: { id: 'settings' } }]
-			: []),
-		...(canCompare && $visibleControls['chat.compare'] && 'compare'.startsWith(query.toLowerCase())
-			? [{ type: 'command', data: { id: 'compare' } }]
 			: [])
 	];
+
+	$: filteredEchoCommands = echoCommands.filter((c) =>
+		matchesCmd([c.id, c.slash.replace(/^\//, ''), ...(c.aliases ?? [])], query)
+	);
 
 	$: filteredPrompts = prompts
 		.filter((p) => p.command.toLowerCase().includes(query.toLowerCase()))
@@ -77,6 +93,7 @@
 
 	$: filteredItems = [
 		...commandItems,
+		...filteredEchoCommands.map((data) => ({ type: 'echo_command', data })),
 		...filteredPrompts.map((data) => ({ type: 'prompt', data }))
 	];
 
@@ -274,50 +291,10 @@
 					</span>
 				</button>
 			</Tooltip>
-		{:else if item.data.id === 'status'}
-			<Tooltip content={$i18n.t('Check what is running in this chat.')} placement="top">
-				<button
-					type="button"
-					aria-label={$i18n.t('Status: check what is running in this chat.')}
-					class="slash-command-row flex items-center gap-2 w-full h-6 px-2 rounded-xl text-[0.8125rem] text-left transition-colors duration-75 hover:bg-gray-50/40 dark:hover:bg-gray-800/40
-						{commandIdx === selectedIdx ? 'app-interactive-active selected-command-option-button' : ''}"
-					on:mousedown={(e) => e.preventDefault()}
-					on:click={() => {
-						onSelect(item);
-					}}
-					on:mouseenter={() => {
-						selectedIdx = commandIdx;
-					}}
-					on:focus={() => {}}
-					data-selected={commandIdx === selectedIdx}
-				>
-					<span class="app-icon-muted flex items-center justify-center w-4 shrink-0">
-						<svg
-							class="size-3.5"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							stroke-width="1.75"
-							stroke-linecap="round"
-							stroke-linejoin="round"
-							aria-hidden="true"
-						>
-							<path d="M12 14l4-4" />
-							<path d="M3.34 19a10 10 0 1 1 17.32 0" />
-						</svg>
-					</span>
-					<span class="flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
-						<span class="min-w-0 flex-1 truncate">{$i18n.t('Status')}</span>
-						<span class="app-muted max-w-24 shrink-0 truncate text-[0.625rem]">
-							{$i18n.t('Check what is running in this chat.')}
-						</span>
-					</span>
-				</button>
-			</Tooltip>
-		{:else if item.data.id === 'comments' || item.data.id === 'side'}
+		{:else if item.data.id === 'comments'}
 			<button
 				type="button"
-				aria-label={item.data.id === 'side' ? $i18n.t('Side chat') : $i18n.t('Comments')}
+				aria-label={$i18n.t('Comments')}
 				class="slash-command-row flex items-center gap-2 w-full h-6 px-2 rounded-xl text-[0.8125rem] text-left transition-colors duration-75 hover:bg-gray-50/40 dark:hover:bg-gray-800/40
 					{commandIdx === selectedIdx ? 'app-interactive-active selected-command-option-button' : ''}"
 				on:mousedown={(e) => e.preventDefault()}
@@ -327,75 +304,11 @@
 				data-selected={commandIdx === selectedIdx}
 			>
 				<span class="app-icon-muted flex items-center justify-center w-4 shrink-0">
-					{#if item.data.id === 'side'}
-						<Icon name="chat-lines" class="size-3.5" />
-					{:else}
-						<Annotation className="size-3.5" />
-					{/if}
+					<Annotation className="size-3.5" />
 				</span>
 				<span class="flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
-					<span class="min-w-0 flex-1 truncate"
-						>{item.data.id === 'side' ? $i18n.t('Side chat') : $i18n.t('Comments')}</span
-					>
+					<span class="min-w-0 flex-1 truncate">{$i18n.t('Comments')}</span>
 					<span class="app-muted max-w-24 shrink-0 truncate text-[0.625rem]">/{item.data.id}</span>
-				</span>
-			</button>
-		{:else if item.data.id === 'model'}
-			<Tooltip content={$i18n.t('Show or switch the current model.')} placement="top">
-				<button
-					type="button"
-					aria-label={$i18n.t('Model: show or switch the current model.')}
-					class="slash-command-row flex items-center gap-2 w-full h-6 px-2 rounded-xl text-[0.8125rem] text-left transition-colors duration-75 hover:bg-gray-50/40 dark:hover:bg-gray-800/40
-						{commandIdx === selectedIdx ? 'app-interactive-active selected-command-option-button' : ''}"
-					on:mousedown={(e) => e.preventDefault()}
-					on:click={() => {
-						onSelect(item);
-					}}
-					on:mouseenter={() => {
-						selectedIdx = commandIdx;
-					}}
-					on:focus={() => {}}
-					data-selected={commandIdx === selectedIdx}
-				>
-					<span class="app-icon-muted flex items-center justify-center w-4 shrink-0">
-						<Sparkles className="size-3.5" />
-					</span>
-					<span class="flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
-						<span class="min-w-0 flex-1 truncate">{$i18n.t('Model')}</span>
-						<span class="app-muted max-w-24 shrink-0 truncate text-[0.625rem]">/model</span>
-					</span>
-				</button>
-			</Tooltip>
-		{:else if item.data.id === 'compare'}
-			<button
-				type="button"
-				aria-label={$i18n.t('Compare text')}
-				class="slash-command-row flex items-center gap-2 w-full h-6 px-2 rounded-xl text-[0.8125rem] text-left transition-colors duration-75 hover:bg-gray-50/40 dark:hover:bg-gray-800/40
-					{commandIdx === selectedIdx ? 'app-interactive-active selected-command-option-button' : ''}"
-				on:mousedown={(e) => e.preventDefault()}
-				on:click={() => onSelect(item)}
-				on:mouseenter={() => (selectedIdx = commandIdx)}
-				on:focus={() => {}}
-				data-selected={commandIdx === selectedIdx}
-			>
-				<span class="app-icon-muted flex items-center justify-center w-4 shrink-0">
-					<svg
-						class="size-3.5"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						stroke-width="1.5"
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						aria-hidden="true"
-					>
-						<rect x="3" y="4" width="18" height="16" rx="2" />
-						<path d="M12 4v16M5.5 12h4M14.5 12h4M16.5 10v4" />
-					</svg>
-				</span>
-				<span class="flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
-					<span class="min-w-0 flex-1 truncate">{$i18n.t('Compare text')}</span>
-					<span class="app-muted max-w-24 shrink-0 truncate text-[0.625rem]">/compare</span>
 				</span>
 			</button>
 		{:else if item.data.id === 'settings'}
@@ -428,13 +341,56 @@
 	{/each}
 {/if}
 
+{#if filteredEchoCommands.length > 0}
+	<div class="app-muted mb-0.5 px-2 pt-1 pb-0.5 text-[0.625rem] leading-none">
+		Commandes Écho
+	</div>
+
+	{#each filteredEchoCommands as cmd, echoIdx}
+		{@const itemIdx = commandItems.length + echoIdx}
+		<button
+			type="button"
+			class="slash-command-row flex items-center gap-2 w-full h-6 px-2 rounded-xl text-[0.8125rem] text-left transition-colors duration-75 hover:bg-gray-50/40 dark:hover:bg-gray-800/40 {selectedIdx ===
+			itemIdx
+				? 'app-interactive-active selected-command-option-button'
+				: ''}"
+			on:mousedown={(e) => e.preventDefault()}
+			on:click={() => onSelect({ type: 'echo_command', data: cmd })}
+			on:mousemove={() => (selectedIdx = itemIdx)}
+			on:focus={() => {}}
+			data-selected={selectedIdx === itemIdx}
+		>
+			<span class="app-icon-muted flex items-center justify-center w-4 shrink-0">
+				<svg
+					class="size-3.5"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="1.75"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+					aria-hidden="true"
+				>
+					<path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" />
+				</svg>
+			</span>
+			<span class="flex-1 min-w-0 flex items-center justify-between gap-2 overflow-hidden">
+				<span class="shrink-0 font-medium">{cmd.slash}</span>
+				<span class="text-xs text-gray-500 dark:text-gray-400 truncate">
+					{cmd.ui_description}
+				</span>
+			</span>
+		</button>
+	{/each}
+{/if}
+
 {#if filteredPrompts.length > 0}
 	<div class="app-muted mb-0.5 px-2 pt-1 pb-0.5 text-[0.625rem] leading-none">
 		{$i18n.t('Prompts')}
 	</div>
 
 	{#each filteredPrompts as promptItem, promptIdx}
-		{@const itemIdx = commandItems.length + promptIdx}
+		{@const itemIdx = commandItems.length + filteredEchoCommands.length + promptIdx}
 		<Tooltip content={promptItem.name} placement="top-start">
 			<button
 				class="flex h-6 w-full items-center gap-2 rounded-xl px-2 text-left text-[0.8125rem] transition-colors duration-75 hover:bg-gray-50/40 dark:hover:bg-gray-800/40 {itemIdx ===

@@ -1,6 +1,5 @@
 <script lang="ts">
 	import SlashCommands from './Commands/SlashCommands.svelte';
-	import AtCommands from './Commands/AtCommands.svelte';
 	import Knowledge from './Commands/Knowledge.svelte';
 	import Emojis from './Commands/Emojis.svelte';
 	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
@@ -14,37 +13,28 @@
 		type?: string;
 	}) => void;
 
-	export let onSelect: (e: any) => void = () => {};
 	export let onUpload: (e: any) => void = () => {};
 	export let onCompact: () => void = () => {};
-	export let onStatus: () => void = () => {};
 	export let onComments: () => void = () => {};
-	export let onSide: () => void = () => {};
 	export let onFork: () => void = () => {};
-	export let onModel: () => void = () => {};
-	export let onCompare: (() => void) | null = null;
 	export let onSettings: () => void = () => {};
 	export let onTemporary: () => void = () => {};
 	export let insertTextHandler: (text: string) => void = () => {};
 	export let canCompact: boolean | (() => boolean) = false;
 	export let compactDisabled: boolean | (() => boolean) = false;
-	export let canStatus: boolean | (() => boolean) = false;
 	export let canComments: boolean | (() => boolean) = false;
-	export let canSide: boolean | (() => boolean) = false;
 	export let canFork: boolean | (() => boolean) = false;
 	export let forkDisabled: boolean | (() => boolean) = false;
 	export let canTemporary: boolean | (() => boolean) = false;
 	export let temporaryEnabled: boolean | (() => boolean) = false;
 	export let hasChatContent = false;
-	export let contextUsage = null;
+	export let contextUsage: any = null;
 	export let fileUploadEnabled: boolean | (() => boolean) = true;
 
 	$: compactAvailable = typeof canCompact === 'function' ? canCompact() : canCompact;
 	$: isCompactDisabled =
 		typeof compactDisabled === 'function' ? compactDisabled() : compactDisabled;
-	$: statusAvailable = typeof canStatus === 'function' ? canStatus() : canStatus;
 	$: commentsAvailable = typeof canComments === 'function' ? canComments() : canComments;
-	$: sideAvailable = typeof canSide === 'function' ? canSide() : canSide;
 	$: forkAvailable = typeof canFork === 'function' ? canFork() : canFork;
 	$: isForkDisabled = typeof forkDisabled === 'function' ? forkDisabled() : forkDisabled;
 	$: temporaryAvailable = typeof canTemporary === 'function' ? canTemporary() : canTemporary;
@@ -108,22 +98,29 @@
 				<SlashCommands
 					bind:this={suggestionElement}
 					{query}
-					canCompare={onCompare !== null}
 					bind:filteredItems
 					canCompact={compactAvailable}
 					compactDisabled={isCompactDisabled}
-					canStatus={statusAvailable}
 					canComments={commentsAvailable}
-					canSide={sideAvailable}
 					canFork={forkAvailable}
 					forkDisabled={isForkDisabled}
 					canTemporary={temporaryAvailable}
 					temporaryEnabled={isTemporaryEnabled}
-					{contextPercent}
+					contextPercent={contextPercent ?? undefined}
 					{contextHasThreshold}
 					{hasChatContent}
 					onSelect={(e) => {
 						const { type, data } = e;
+
+						if (type === 'echo_command') {
+							command({
+								id: data.id,
+								label: data.slash,
+								content: data.slash,
+								type: 'echo_command'
+							});
+							return;
+						}
 
 						if (type === 'prompt') {
 							command({
@@ -135,24 +132,12 @@
 						} else if (type === 'command' && data.id === 'compact') {
 							command({ id: data.id, label: data.id });
 							onCompact();
-						} else if (type === 'command' && data.id === 'status') {
-							command({ id: data.id, label: data.id });
-							onStatus();
 						} else if (type === 'command' && data.id === 'comments') {
 							command({ id: data.id, label: data.id });
 							onComments();
-						} else if (type === 'command' && data.id === 'side') {
-							command({ id: data.id, label: data.id });
-							onSide();
 						} else if (type === 'command' && data.id === 'fork') {
 							command({ id: data.id, label: data.id });
 							onFork();
-						} else if (type === 'command' && data.id === 'model') {
-							command({ id: data.id, label: data.id });
-							onModel();
-						} else if (type === 'command' && data.id === 'compare') {
-							command({ id: data.id, label: data.id });
-							onCompare?.();
 						} else if (type === 'command' && data.id === 'settings') {
 							command({ id: data.id, label: data.id });
 							onSettings();
@@ -176,46 +161,6 @@
 
 							onUpload({
 								type: 'file',
-								data: data
-							});
-						} else if (type === 'web') {
-							insertTextHandler('');
-
-							onUpload({
-								type: 'web',
-								data: data
-							});
-						}
-					}}
-				/>
-			{:else if char === '@'}
-				<AtCommands
-					bind:this={suggestionElement}
-					{query}
-					fileUploadEnabled={isFileUploadEnabled}
-					bind:filteredItems
-					onSelect={(e) => {
-						const { type, data } = e;
-
-						if (type === 'model') {
-							insertTextHandler('');
-
-							onSelect({
-								type: 'model',
-								data: data
-							});
-						} else if (type === 'knowledge') {
-							insertTextHandler('');
-
-							onUpload({
-								type: 'file',
-								data: data
-							});
-						} else if (type === 'filesystem') {
-							insertTextHandler('');
-
-							onUpload({
-								type: 'filesystem',
 								data: data
 							});
 						} else if (type === 'web') {

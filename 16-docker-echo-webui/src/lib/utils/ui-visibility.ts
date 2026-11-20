@@ -40,7 +40,6 @@ export const CONTROL_LABELS = {
 	'model_editor.tools.skills': 'settings.admin.models.builtinTools.skills.label',
 	'model_editor.tools.tools': 'settings.admin.models.builtinTools.tools.label',
 	'chat.capture': 'Capture',
-	'chat.compare': 'Compare text',
 	'chat.attach_webpage': 'Attach Webpage',
 	'chat.attach_files': 'Attach Files',
 	'chat.attach_notes': 'Attach Notes',
@@ -59,8 +58,6 @@ export const CONTROL_LABELS = {
 		'settings.admin.interface.visibility.selectedImageGeneration.label',
 	'chat.selected_code_interpreter':
 		'settings.admin.interface.visibility.selectedCodeInterpreter.label',
-	'chat.status': '/status',
-	'chat.model_command': '/model',
 	'chat.settings_command': '/settings',
 	'chat.usage': 'settings.admin.models.capabilities.usage.label',
 	'chat.merge': 'Merge Responses',

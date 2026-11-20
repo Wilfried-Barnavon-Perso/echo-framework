@@ -1,11 +1,12 @@
 """
 title: ECHO V6 Window Manager Router
 author: Wilfried BARNAVON
-version: 6.6.9.1
+version: 6.7.20.1
 description: Routeur souverain FastAPI pour le gestionnaire de fenêtres et événements temps réel (/echo/v1/wm).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.20.1: Exposition de l'endpoint authentifié GET /echo/v1/wm/commands servant le catalogue déclaratif system-commands.xml.
 # 6.6.9.1: Passage sur get_echo_sse_user/get_echo_verified_user et create_echo_sse_response depuis echo.http_utils.
 # 6.6.8.1: Support du paramètre refresh sur /chat/{chat_id} via AuthService.refresh_quota_if_needed et préservation de context_stats enrichi par EchoWindowManager.
 # 6.3.0.1: Création du routeur natif FastAPI /echo/v1/wm (SSE, snapshot enrichi context_stats, RPC).
@@ -115,3 +116,11 @@ async def wm_post_rpc(
     wm = get_window_manager()
     res = await wm.handle_rpc(user_id, payload)
     return JSONResponse(content=res)
+
+
+@router.get("/commands")
+async def get_echo_authorized_commands(user=Depends(get_echo_verified_user)):
+    """Expose le registre des commandes '/' ECHO depuis system-commands.xml."""
+    from echo_core import load_echo_commands_registry
+    ui_commands, _, _ = await asyncio.to_thread(load_echo_commands_registry)
+    return JSONResponse(content={"commands": ui_commands})

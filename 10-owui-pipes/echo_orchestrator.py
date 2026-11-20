@@ -1,17 +1,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 6.7.16.1
+version: 6.7.20.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.20.1: Assemblage hot-reload de systemInstruction via load_assembled_system_prompt (system-prompt.xml + system-commands.xml) préservant le cache de préfixe Gemini.
 # 6.7.16.1: Synchronisation en fin de tour du statut final et du résumé VECTORIZED_SUM_UP des ressources de session vers identity.db.
 # 6.7.5.1: Garde-fous None-safe sur content, auto-guérison _sanitize_shadow_none_parts, fallback meta["message_id"] sur sous-tour actif et filtrage tamponné "None"+functionCall dans StreamProcessor.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.6.30.1: Centralisation et délégation de _TOOLS_CACHE à register_chat_tools (echo_subagent_hub).
-# 6.6.9.1: Retrait de register_echo_wm_routes, de l'appel redondant register_echo_audio_routes dans Pipe.__init__ et de UserValves.SHOW_CONTEXT_METRICS.
 
 
 # ==============================================================================
@@ -44,6 +44,7 @@ from echo_core import (
     unbox_tool_output,
     convert_owui_tools,
     attach_thought_signature,
+    load_assembled_system_prompt,
     EchoCompactionEngine,
 )
 from echo_gemini_client import EchoGeminiClient
@@ -1115,6 +1116,7 @@ class Pipe:
 
             # --- [NOUVEAU] RÉSOLUTION DYNAMIQUE DES INSTRUCTIONS SYSTÈME ---
             sys_instr_raw = "\n".join([m.get("content") or "" for m in body.get("messages", []) if m.get("role") == "system"]) or "Le Modèle est ECHO."
+            sys_instr_raw = load_assembled_system_prompt(fallback_raw=sys_instr_raw)
             resolved_sys = resolve_placeholders(sys_instr_raw, target_model, orch.model_origin)
             sys_instr = {"parts": [{"text": resolved_sys}]}
 

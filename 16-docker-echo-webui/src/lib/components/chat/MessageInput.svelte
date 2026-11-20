@@ -1,10 +1,6 @@
 <script lang="ts">
 	import type { TerminalContext } from '$lib/types';
-	import {
-		estimateTokens,
-		estimateMessagesTokens,
-		estimateUsageGrowth
-	} from '$lib/utils/contextUsage';
+	import emojiShortCodes from '$lib/emoji-shortcodes.json';
 	import { resolveLocalizedFunction } from '$lib/utils/localizedContent';
 	import { functions as localizedFunctions } from '$lib/stores';
 	import DOMPurify from 'dompurify';
@@ -44,7 +40,6 @@
 		showFileNavDir,
 		selectedTerminalId,
 		temporaryChatEnabled,
-		sideChatRequest,
 		visibleControls
 	} from '$lib/stores';
 
@@ -61,7 +56,6 @@
 		getCurrentDateTime,
 		getFormattedDate,
 		getFormattedTime,
-		getUsageTokenCount,
 		getUserPosition,
 		getUserTimezone,
 		getWeekday,
@@ -76,7 +70,6 @@
 
 	import { WEBUI_BASE_URL, WEBUI_API_BASE_URL, PASTED_TEXT_CHARACTER_LIMIT } from '$lib/constants';
 	import { matchKeybinding, Shortcut } from '$lib/shortcuts';
-	import { resolveLocalizedModelName } from '$lib/utils/localizedContent';
 
 	import { createNoteHandler } from '../notes/utils';
 	import { getSuggestionRenderer } from '../common/RichTextInput/suggestions';
@@ -150,7 +143,6 @@
 	export let createMessagePair: Function;
 	export let stopResponse: Function;
 	export let compactHandler: Function = () => {};
-	export let statusHandler: Function = () => {};
 	export let forkHandler: Function = () => {};
 	export let chatId = '';
 	export let inputId = 'chat-input';
@@ -176,12 +168,13 @@
 	export let chatFiles: any[] = [];
 	export let params: Record<string, any> = {};
 	export let onParamChange: (key: string, value: unknown) => void = () => {};
+	void atSelectedModel;
 	void chatFiles;
 	void params;
 	void onParamChange;
 
 	let selectedModelIds = [];
-	$: selectedModelIds = atSelectedModel !== undefined ? [atSelectedModel.id] : selectedModels;
+	$: selectedModelIds = selectedModels;
 	$: hasChatVariables = selectedModelIds.some(
 		(modelId) =>
 			($models.find((model) => model.id === modelId)?.info?.meta?.chat_variables_schema?.fields
@@ -205,14 +198,6 @@
 			(history.currentId && history.messages[history.currentId]?.done != true) ||
 			generating);
 	$: canCompact = !!history?.currentId;
-	$: canSide =
-		($_user?.role === 'admin' ||
-			($_user?.role === 'user' && ($_user.permissions?.chat?.side_chat ?? false))) &&
-		!embedded &&
-		selectedModels.length === 1 &&
-		!!selectedModelIds[0] &&
-		!!chatId &&
-		!!history?.currentId;
 	$: canComments = !!(
 		!embedded &&
 		$config?.features?.enable_comments &&
@@ -312,8 +297,6 @@
 	let inputVariableValues = {};
 
 	let showValvesModal = false;
-	let showStatusPanel = false;
-	let copiedStatusChatId = false;
 	let selectedValvesType = 'tool'; // 'tool' or 'function'
 	let selectedValvesItemId = null;
 	let showInputMenu = false;
@@ -536,95 +519,6 @@
 		}
 	};
 
-	export const showStatus = async () => {
-		showStatusPanel = true;
-		await tick();
-		focus({ preventScroll: true });
-	};
-
-	const formatTokenCount = (value: number) => {
-		if (value >= 1_000_000) return `${trimNumber(value / 1_000_000)}m`;
-		if (value >= 1_000) return `${trimNumber(value / 1_000)}k`;
-		return String(value ?? 0);
-	};
-
-	const trimNumber = (value: number) =>
-		value >= 10 ? String(Math.round(value)) : value.toFixed(1).replace(/\.0$/, '');
-
-	const getLocalContextUsage = (chatHistory: typeof history, system: string) => {
-		if (!chatHistory?.currentId) {
-			return null;
-		}
-
-		const messages = createMessagesList(chatHistory, chatHistory.currentId);
-		if (!messages.length) {
-			return null;
-		}
-
-		let summary = '';
-		let startIdx = 0;
-		for (let idx = 0; idx < messages.length; idx += 1) {
-			const value = messages[idx]?.contextSummary ?? messages[idx]?.context_summary;
-			if (typeof value === 'string' && value.trim()) {
-				summary = value;
-				startIdx = idx;
-			}
-		}
-
-		const activeMessages = messages.slice(startIdx);
-		let estimatedTokens = estimateTokens(system);
-		let hasUsageCheckpoint = false;
-
-		for (let idx = activeMessages.length - 1; idx >= 0; idx -= 1) {
-			const usage = activeMessages[idx]?.usage ?? activeMessages[idx]?.info?.usage;
-			const usageTokens = getUsageTokenCount(usage);
-			if (usageTokens) {
-				hasUsageCheckpoint = true;
-				estimatedTokens =
-					usageTokens +
-					estimateUsageGrowth(activeMessages[idx]) +
-					estimateMessagesTokens(activeMessages.slice(idx + 1));
-				break;
-			}
-		}
-
-		if (!hasUsageCheckpoint) {
-			estimatedTokens += estimateTokens(summary) + estimateMessagesTokens(activeMessages);
-		}
-
-		return {
-			tokens: estimatedTokens,
-			estimated_tokens: estimatedTokens,
-			threshold: null,
-			percent: null,
-			source: 'estimated'
-		};
-	};
-
-	const copyStatusChatId = async () => {
-		if (!chatId) return;
-		await navigator.clipboard.writeText(chatId);
-		copiedStatusChatId = true;
-		setTimeout(() => {
-			copiedStatusChatId = false;
-		}, 1600);
-	};
-
-	$: statusContextUsage = contextUsage ?? getLocalContextUsage(history, $settings?.system ?? '');
-	$: contextHasThreshold = Number(statusContextUsage?.threshold) > 0;
-	$: contextPercent = contextHasThreshold
-		? Math.max(0, Math.round(statusContextUsage?.percent ?? 0))
-		: null;
-	$: contextTokens = formatTokenCount(
-		statusContextUsage?.estimated_tokens || statusContextUsage?.tokens || 0
-	);
-	$: contextValue = statusContextUsage
-		? contextHasThreshold
-			? `${contextPercent}% ${contextTokens}/${formatTokenCount(statusContextUsage.threshold)}`
-			: `${contextTokens} ${$i18n.t('tokens')}`
-		: $i18n.t('unknown');
-	$: contextBarPercent = contextHasThreshold ? Math.min(contextPercent, 100) : 0;
-
 	const getCommand = () => {
 		const chatInput = document.getElementById(inputId);
 		let word = '';
@@ -766,7 +660,6 @@
 	$: showCommands =
 		['/', '#', '@', '$', ':'].includes(command?.charAt(0)) || '\\#' === command?.slice(0, 2);
 	let suggestions = null;
-	$: atSelectedModelName = resolveLocalizedModelName(atSelectedModel, $i18n.language);
 
 	let showTools = false;
 
@@ -801,45 +694,6 @@
 	let inputFiles;
 
 	let showInputModal = false;
-	let showComparison = false;
-	let comparisonLoading = false;
-	let ComparisonModal: typeof import('../common/DiffEditorModal.svelte').default | null = null;
-	// Preserve the previous comparison description in the translation catalogs.
-	// $i18n.t('Uses the left working copy as your prompt.');
-	let comparisonTarget: {
-		chatId: string;
-		input: RichTextInput;
-		content: string;
-	} | null = null;
-
-	const openComparison = async () => {
-		if (comparisonLoading) return;
-		comparisonLoading = true;
-		const target = { chatId, input: chatInputElement };
-		try {
-			ComparisonModal = (await import('../common/DiffEditorModal.svelte')).default;
-			if (!target.input || target.chatId !== chatId || target.input !== chatInputElement) return;
-			comparisonTarget = { chatId, input: target.input, content: prompt };
-			showComparison = true;
-		} catch {
-			toast.error($i18n.t('Could not open comparison. Please try again.'));
-		} finally {
-			comparisonLoading = false;
-		}
-	};
-
-	const applyComparisonToPrompt = (text: string) => {
-		if (
-			!chatInputElement ||
-			comparisonTarget?.chatId !== chatId ||
-			comparisonTarget?.input !== chatInputElement ||
-			comparisonTarget?.content !== prompt
-		)
-			throw new Error($i18n.t('The prompt has changed. Reopen the comparison before applying.'));
-		// The editor's literal setter preserves mentions without expanding prompt variables.
-		if (text !== comparisonTarget.content) chatInputElement.setText(text);
-		void tick().then(() => focus());
-	};
 
 	export let dragged = false;
 	export let dropzoneId = 'chat-pane';
@@ -918,7 +772,7 @@
 					($settings?.terminalServers ?? []).some((s) => s.url))));
 
 	let toggleFilters = [];
-	$: toggleFilters = (atSelectedModel?.id ? [atSelectedModel.id] : selectedModels)
+	$: toggleFilters = selectedModels
 		.map((id) => ($models.find((model) => model.id === id) || {})?.filters ?? [])
 		.reduce((acc, filters) => acc.filter((f1) => filters.some((f2) => f2.id === f1.id)));
 
@@ -1493,26 +1347,6 @@
 			return;
 		}
 
-		// [ECHO-V6-HOOK] Rejet des drops fantômes (chat/folder/note) — maintien exclusif de model
-		const textData = e.dataTransfer?.getData('text/plain');
-		if (textData) {
-			try {
-				const data = JSON.parse(textData);
-				if (data.type === 'model' && data.id) {
-					// Find the model from the store and set as @-selected model
-					const model = $models.find((m) => m.id === data.id);
-					if (model) {
-						atSelectedModel = model;
-					}
-					dragged = false;
-					e.stopPropagation();
-					return;
-				}
-			} catch (_) {
-				// Not valid JSON — fall through to file handling
-			}
-		}
-
 		if (e.dataTransfer?.files) {
 			const inputFiles = Array.from(e.dataTransfer?.files);
 			if (inputFiles && inputFiles.length > 0) {
@@ -1575,88 +1409,37 @@
 		shiftKey = false;
 	};
 
+	const emojiSearchEntries = Object.entries(emojiShortCodes).map(([name, codes]) => ({
+		name: name.toLowerCase(),
+		shortCodes: (typeof codes === 'string' ? [codes] : (codes as string[])).map((c) =>
+			c.toLowerCase()
+		)
+	}));
+	const hasMatchingEmoji = (q: string): boolean => {
+		const lq = q.toLowerCase();
+		return emojiSearchEntries.some(
+			(e) => e.name.includes(lq) || e.shortCodes.some((c) => c.includes(lq))
+		);
+	};
+
 	onMount(() => {
 		suggestions = [
 			{
-				char: '@',
-				render: getSuggestionRenderer(CommandSuggestionList, {
-					i18n,
-					fileUploadEnabled: () => fileUploadEnabled,
-					onSelect: (e) => {
-						const { type, data } = e;
-
-						if (type === 'model') {
-							atSelectedModel = data;
-						}
-
-						focus({ preventScroll: true });
-					},
-
-					insertTextHandler: insertTextAtCursor,
-					onUpload: (e) => {
-						const { type, data } = e;
-
-						if (type === 'file') {
-							if (files.find((f) => f.id === data.id)) {
-								return;
-							}
-							files = [
-								...files,
-								{
-									...data,
-									status: 'processed'
-								}
-							];
-						} else if (type === 'filesystem') {
-							const path = data.path ?? data.url ?? data.id;
-							if (
-								!path ||
-								files.find((f) => f.type === 'filesystem' && (f.path ?? f.url ?? f.id) === path)
-							) {
-								return;
-							}
-							files = [
-								...files,
-								{
-									...data,
-									type: 'filesystem',
-									id: path,
-									path,
-									url: path,
-									name: data.name,
-									size: data.size,
-									status: 'processed'
-								}
-							];
-						} else {
-							if (files.find((f) => f.url === data || f.name === data)) {
-								return;
-							}
-							onUpload(e);
-						}
-					}
-				})
-			},
-			{
 				char: '/',
 				command: ({ editor, range, props }) => {
+					if (props?.type === 'echo_command') {
+						const slashText = `${props.content || `/${props.id}`} `;
+						editor.chain().focus().insertContentAt(range, slashText).run();
+						return;
+					}
+
 					if (props?.type === 'prompt') {
 						void replaceSlashRangeWithPrompt(editor, range, props.content ?? '');
 						return;
 					}
 
 					if (
-						[
-							'compact',
-							'fork',
-							'status',
-							'comments',
-							'side',
-							'model',
-							'compare',
-							'settings',
-							'temporary'
-						].includes(props?.id)
+						['compact', 'fork', 'comments', 'settings', 'temporary'].includes(props?.id)
 					) {
 						editor.chain().focus().deleteRange(range).run();
 						return;
@@ -1678,9 +1461,7 @@
 					i18n,
 					canCompact: () => !!history?.currentId && contextCompactionEnabled,
 					compactDisabled: () => isActive,
-					canStatus: () => !!history?.currentId,
 					canComments: () => canComments,
-					canSide: () => canSide,
 					canFork: () =>
 						!!history?.currentId &&
 						!isTemporary &&
@@ -1689,27 +1470,13 @@
 					canTemporary: () => canToggleTemporary,
 					hasChatContent: hasChatContent,
 					temporaryEnabled: () => isTemporary === true,
-					contextUsage: () => statusContextUsage,
+					contextUsage: () => contextUsage,
 					onCompact: compactHandler,
-					onStatus: statusHandler,
 					onComments: openComments,
-					onSide: () => {
-						if (!canSide) return;
-						sideChatRequest.set({ parentId: chatId, prompt: '' });
-						showTabs.set('side');
-					},
 					onFork: forkHandler,
-					onModel: () => modelSelector?.open(),
-					onCompare: openComparison,
 					onSettings: () => showSettings.set(true),
 					onTemporary: temporaryHandler,
-					onSelect: (e) => {
-						const { type, data } = e;
-
-						if (type === 'model') {
-							atSelectedModel = data;
-						}
-
+					onSelect: () => {
 						focus({ preventScroll: true });
 					},
 
@@ -1740,6 +1507,11 @@
 			{
 				char: ':',
 				allowSpaces: false,
+				shouldShow: ({ query }: { query: string }) =>
+					typeof query === 'string' &&
+					query.length >= 2 &&
+					/^[a-zA-Z0-9_+-]+$/.test(query) &&
+					hasMatchingEmoji(query),
 				command: ({ editor, range, props }) => {
 					// Convert the Unicode hex codepoint (e.g. "1F44B") to the actual emoji character (👋)
 					const codepoint = props.id;
@@ -1807,21 +1579,6 @@
 		};
 	});
 </script>
-
-{#if showComparison && ComparisonModal}
-	<svelte:component
-		this={ComparisonModal}
-		bind:show={showComparison}
-		title={$i18n.t('Compare text')}
-		initialContent={comparisonTarget?.content ?? ''}
-		applyLabel={$i18n.t('Use in prompt')}
-		applyDescription={$i18n.t('Uses the proposed revision as your prompt.')}
-		discardMessage={$i18n.t(
-			'Your comparison changes will be discarded. Your prompt will stay unchanged.'
-		)}
-		onApply={applyComparisonToPrompt}
-	/>
-{/if}
 
 <ToolServersModal
 	bind:show={showTools}
@@ -2034,84 +1791,6 @@
 							</div>
 						{/if}
 
-						{#if showStatusPanel}
-							<div class="mx-1 rounded-2xl bg-white text-xs dark:bg-gray-900">
-								<div class="flex items-center justify-between px-3 py-1.5">
-									<div class="flex items-center gap-1.5 text-xs text-gray-700 dark:text-gray-300">
-										<span>{$i18n.t('Status')}</span>
-									</div>
-
-									<button
-										type="button"
-										class="text-xs text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-gray-300"
-										on:click={() => {
-											showStatusPanel = false;
-										}}
-									>
-										{$i18n.t('Close')}
-									</button>
-								</div>
-
-								<div class="space-y-0.5 px-3 pb-2">
-									<div class="rounded-xl py-0.5 text-gray-600 dark:text-gray-400">
-										<div class="flex min-h-4 items-center gap-3">
-											<span class="min-w-0 flex-1 truncate">{$i18n.t('Context usage')}</span>
-											<span
-												class="shrink-0 font-mono text-[0.625rem] text-gray-400 dark:text-gray-600"
-											>
-												{contextValue}
-											</span>
-										</div>
-										{#if contextHasThreshold}
-											<div
-												class="mt-1.5 h-0.5 overflow-hidden rounded-full bg-gray-100 dark:bg-white/8"
-											>
-												<div
-													class="h-full rounded-full bg-gray-300 dark:bg-white/20"
-													style={`width: ${contextBarPercent}%`}
-												></div>
-											</div>
-										{/if}
-									</div>
-
-									{#if messageQueue.length}
-										<div class="flex min-h-5 items-center gap-3 text-gray-600 dark:text-gray-400">
-											<span class="min-w-0 flex-1 truncate">{$i18n.t('Queued messages')}</span>
-											<span class="font-mono text-[0.625rem] text-gray-400 dark:text-gray-600">
-												{messageQueue.length}
-											</span>
-										</div>
-									{/if}
-
-									{#if chatTasks.length}
-										<div class="flex min-h-5 items-center gap-3 text-gray-600 dark:text-gray-400">
-											<span class="min-w-0 flex-1 truncate">{$i18n.t('Tasks')}</span>
-											<span class="font-mono text-[0.625rem] text-gray-400 dark:text-gray-600">
-												{chatTasks.length}
-											</span>
-										</div>
-									{/if}
-
-									<div class="flex min-h-5 items-center gap-3 text-gray-600 dark:text-gray-400">
-										<span class="min-w-0 flex-1 truncate">{$i18n.t('Chat ID')}</span>
-										{#if chatId}
-											<button
-												type="button"
-												class="min-w-0 max-w-[18rem] truncate font-mono text-[0.625rem] text-gray-400 underline-offset-2 transition-colors duration-75 hover:text-gray-700 hover:underline dark:text-gray-600 dark:hover:text-gray-200"
-												on:click={copyStatusChatId}
-											>
-												{copiedStatusChatId ? $i18n.t('Copied') : chatId}
-											</button>
-										{:else}
-											<span class="font-mono text-[0.625rem] text-gray-400 dark:text-gray-600">
-												none
-											</span>
-										{/if}
-									</div>
-								</div>
-							</div>
-						{/if}
-
 						<div
 							id={inputId === 'chat-input' ? 'message-input-container' : `${inputId}-wrapper`}
 							data-composer-id={inputId}
@@ -2123,34 +1802,6 @@
 								: ''}  transition px-0.5 bg-white/5 dark:bg-gray-500/5 backdrop-blur-sm dark:text-gray-100"
 							dir={$settings?.chatDirection ?? 'auto'}
 						>
-							{#if atSelectedModel !== undefined}
-								<div class="px-2.5 pt-2.5 text-left w-full flex flex-col z-10">
-									<div class="flex items-center justify-between w-full">
-										<div class="pl-[0.0625rem] flex items-center gap-2 text-sm dark:text-gray-500">
-											<img
-												alt={$i18n.t('model profile')}
-												class="size-3.5 max-w-[1.75rem] object-cover rounded-full"
-												src={`${WEBUI_API_BASE_URL}/models/model/profile/image?id=${$models.find((model) => model.id === atSelectedModel.id).id}&lang=${$i18n.language}`}
-											/>
-											<div class="translate-y-[0.5px]">
-												<span class="">{atSelectedModelName}</span>
-											</div>
-										</div>
-										<div>
-											<button
-												class="flex items-center dark:text-gray-500"
-												aria-label={$i18n.t('Remove Selected Model')}
-												on:click={() => {
-													atSelectedModel = undefined;
-												}}
-											>
-												<XMark />
-											</button>
-										</div>
-									</div>
-								</div>
-							{/if}
-
 							{#if files.length > 0}
 								<div
 									class="mx-2 mt-2 pb-1 flex items-center flex-wrap gap-1.5"
@@ -2264,9 +1915,7 @@
 								<div
 									class="scrollbar-hidden rtl:text-right ltr:text-left bg-transparent dark:text-gray-100 outline-hidden w-full pb-0.5 px-1 resize-none h-fit max-h-96 overflow-auto {files.length ===
 									0
-										? atSelectedModel !== undefined
-											? 'pt-1'
-											: 'pt-2'
+										? 'pt-2'
 										: ''}"
 									id={`${inputId}-container`}
 									on:input={handleTypingInput}
@@ -2403,7 +2052,6 @@
 															matchKeybinding(e) === Shortcut.CLEAR_INPUT_SELECTIONS
 														) {
 															console.log('Escape');
-															atSelectedModel = undefined;
 															selectedToolIds = [];
 															selectedFilterIds = [];
 
