@@ -1,16 +1,16 @@
 """
 title: ECHO Explorateur de l'Espace Personnel
 author: Wilfried BARNAVON
-version: 6.7.13.1
+version: 6.7.18.1
 description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.7.18.1: Télémétrie événementielle ciblée aux jalons réels (suppression des heartbeats 15s) et clôture done=True garantie.  # noqa: E501
 # 6.7.13.1: Parallélisation intra-appel Map-Reduce avec backpressure global (MAX_CONCURRENT_SEGMENTS), streaming PDF incrémental O(1) RAM, fail-fast, heartbeat agrégé et verrou FFmpeg loop-safe.  # noqa: E501
 # 6.6.5.2: Filtrage des pensées via extract_response_parts_and_text dans _call_apollo_with_heartbeat.  # noqa: E501
 # 6.6.5.1: Extension du paramètre workspace de show_image_to_user au domaine "browserviews".  # noqa: E501
 # 5.233.0.1: Unification du wrapper dans wrap_tool_output, décoration @echo_tool sur les 6 méthodes publiques et simplification des retours.
-# 5.232.5.1: Extension du paramètre workspace de show_image_to_user aux espaces "main", "plans", "generated" et "sandbox".  # noqa: E501
 
 import io
 import os
@@ -759,12 +759,10 @@ class Tools:
         uid: str,
         metadata: dict,
         events: EchoEvents,
-        heartbeats: List[str],
-        emit_heartbeats: bool = True,
     ) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
         """
         Exécute de façon factorisée l'appel EchoGeminiClient.call_cascade sur MODEL_APOLLO
-        avec maintien des heartbeats UI toutes les 15s (si emit_heartbeats=True), gestion des timeouts et extraction des pensées.
+        avec gestion des timeouts et extraction des pensées.
         Retourne (clean_text, thought_text, model_used, reason, error_msg).
         """
         cascade_task = asyncio.create_task(
@@ -781,27 +779,15 @@ class Tools:
             )
         )
 
-        if not emit_heartbeats:
-            try:
-                await cascade_task
-            except asyncio.CancelledError:
-                if not cascade_task.done():
-                    cascade_task.cancel()
-                await asyncio.gather(cascade_task, return_exceptions=True)
-                raise
-            except Exception as e:
-                return None, None, None, None, str(e)
-        else:
-            step_idx = 0
-            while not cascade_task.done():
-                await events.status(heartbeats[step_idx % len(heartbeats)], False)
-                step_idx += 1
-                try:
-                    await asyncio.wait_for(asyncio.shield(cascade_task), timeout=15.0)
-                except asyncio.TimeoutError:
-                    pass
-                except Exception:
-                    break
+        try:
+            await cascade_task
+        except asyncio.CancelledError:
+            if not cascade_task.done():
+                cascade_task.cancel()
+            await asyncio.gather(cascade_task, return_exceptions=True)
+            raise
+        except Exception as e:
+            return None, None, None, None, str(e)
 
         if cascade_task.exception():
             return None, None, None, None, str(cascade_task.exception())
@@ -874,43 +860,13 @@ class Tools:
             )
             await events.status(init_hb, False)
 
-            async def _heartbeat_loop() -> None:
-                step_idx = 0
-                while not abort_event.is_set():
-                    try:
-                        await asyncio.wait_for(abort_event.wait(), timeout=15.0)
-                        break
-                    except asyncio.TimeoutError:
-                        pass
-                    if not is_multi_segment:
-                        if mode == "sensory":
-                            msg = [
-                                f"👁️ L'agent sensoriel visionne {safe_name}...",
-                                f"👁️ Analyse multimodale en cours ({safe_name})...",
-                                f"👁️ Extraction et synchronisation des détails ({safe_name})...",
-                            ][step_idx % 3]
-                        else:
-                            msg = [
-                                f"🤖 Analyse sémantique de {safe_name}...",
-                                f"🤖 Parcours des vecteurs sémantiques ({safe_name})...",
-                                f"🤖 Extraction chirurgicale des concepts ({safe_name})...",
-                            ][step_idx % 3]
-                    else:
-                        in_flight = max(0, launched_count - completed_count)
-                        if mode == "sensory":
-                            msg = (
-                                f"👁️ Analyse multimodale de {safe_name} "
-                                f"({completed_count}/{launched_count} segments terminés, {in_flight} en cours)..."
-                            )
-                        else:
-                            msg = (
-                                f"🤖 Sondage sémantique de {safe_name} "
-                                f"({completed_count}/{launched_count} segments terminés, {in_flight} en cours)..."
-                            )
-                    step_idx += 1
-                    await events.status(msg, False)
+            last_status_msg: Optional[str] = None
 
-            hb_task = asyncio.create_task(_heartbeat_loop())
+            async def _emit_progress(msg: str) -> None:
+                nonlocal last_status_msg
+                if msg != last_status_msg:
+                    last_status_msg = msg
+                    await events.status(msg, False)
 
             def _launch_segment_task(
                 cur_idx: int,
@@ -953,8 +909,6 @@ class Tools:
                             uid=uid,
                             metadata=meta_copy,
                             events=events,
-                            heartbeats=[],
-                            emit_heartbeats=False,
                         )
                         if err:
                             if first_error is None:
@@ -969,6 +923,15 @@ class Tools:
                             "reason": reason,
                         }
                         completed_count += 1
+                        if is_multi_segment:
+                            await _emit_progress(
+                                f"👁️ Analyse multimodale de {safe_name} ({completed_count}/{launched_count} terminés)..."
+                                if mode == "sensory"
+                                else (
+                                    f"🤖 Sondage sémantique de {safe_name} "
+                                    f"({completed_count}/{launched_count} terminés)..."
+                                )
+                            )
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:
@@ -1010,6 +973,22 @@ class Tools:
                     launched_count += 1
                     if seg_label is not None or launched_count > 1:
                         is_multi_segment = True
+
+                    if is_multi_segment:
+                        await _emit_progress(
+                            f"👁️ Analyse multimodale de {safe_name} ({completed_count}/{launched_count} terminés)..."
+                            if mode == "sensory"
+                            else (
+                                f"🤖 Sondage sémantique de {safe_name} "
+                                f"({completed_count}/{launched_count} terminés)..."
+                            )
+                        )
+                    else:
+                        await _emit_progress(
+                            f"👁️ Analyse multimodale de {safe_name}..."
+                            if mode == "sensory"
+                            else f"🤖 Sondage sémantique de {safe_name}..."
+                        )
 
                     seg_prompt = (
                         f"[CONTEXTE DE SEGMENTATION : {seg_label} du fichier '{safe_name}'. "
@@ -1061,9 +1040,6 @@ class Tools:
                         t.cancel()
                 if segment_tasks:
                     await asyncio.gather(*segment_tasks, return_exceptions=True)
-                if not hb_task.done():
-                    hb_task.cancel()
-                await asyncio.gather(hb_task, return_exceptions=True)
 
             if first_error:
                 await events.status(prefix_err, True)
@@ -1085,6 +1061,7 @@ class Tools:
                     last_reason = res["reason"]
 
             if not segment_outputs:
+                await events.status("❌ Aucun segment exploitable.", True)
                 return "❌ Aucun segment exploitable n'a pu être extrait du fichier."
 
             # Assemblage final (Fast-Path mono-segment vs Map-Reduce multi-segments)
@@ -1121,13 +1098,14 @@ class Tools:
                         "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="medium"),
                         "systemInstruction": {"parts": [{"text": SYS_EXPLORER_PROBE}]},
                     }
+                    await _emit_progress(
+                        f"🤖 Consolidation Map-Reduce des {len(segment_outputs)} segments de {safe_name}..."
+                    )
                     red_clean, red_thought, red_model, red_reason, red_err = await self._call_apollo_with_heartbeat(
                         payload=reduce_payload,
                         uid=uid,
                         metadata=__metadata__,
                         events=events,
-                        heartbeats=[f"🤖 Consolidation Map-Reduce des {len(segment_outputs)} segments de {safe_name}..."],
-                        emit_heartbeats=True,
                     )
                     if not red_err and red_clean:
                         final_text = red_clean
