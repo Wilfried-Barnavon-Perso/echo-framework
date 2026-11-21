@@ -2,16 +2,16 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - SEMANTIC PRUNING & GC
-VERSION : 6.15.0.1
+VERSION : 6.15.1.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.15.1.1: Respect du délai de grâce BROWSER_TRANSIENT_GRACE_SEC (1800.0s) avant purge des captures browserviews éphémères.
 # 6.15.0.1: Correction de l'URL de recensement des sessions navigateur vers NAVIGATION_ENGINE_URL / http://echo-browser-worker:5002/sessions.
 # 6.6.5.1: Purge des captures browserviews éphémères (non retained) dont la session Playwright est absente de GET http://echo-browser:5001/sessions.
 # 5.237.4.1: Validation stricte par couple propriétaire (user_id, chat_id) via user_valid_chats et suppression du filtre len > 30 sur les dossiers orphelins.
 # 5.235.5.1: Purge des branches mortes dans session.db (gc_session_db) et du RAG Qdrant (_delete_rag_points) sous carence 900s.
-# 5.235.2.1: Décompte explicite des session.db purgées, couverture des utilisateurs orphelins dans purge_orphaned_chats et validation post-rmtree.
 from contextlib import closing
 import datetime
 import html
@@ -57,7 +57,12 @@ OWUI_DB_PATH = WEBUI_DB_PATH
 
 if HAS_ECHO_LIBS:
     from echo_session_gc import gc_session_db, build_session_rag_point_id
-    from echo_constants import SESSION_RAG_CONVERSATION_SOURCE_ID
+    from echo_constants import (
+        BROWSER_TRANSIENT_GRACE_SEC,
+        SESSION_RAG_CONVERSATION_SOURCE_ID,
+    )
+else:
+    BROWSER_TRANSIENT_GRACE_SEC = 1800.0
 
 
 def _delete_rag_points(uid: str, chat_id: str, seeds: list) -> int:
@@ -732,6 +737,7 @@ def _run_semantic_pruning(silent=False):
                         active_bv_sessions = None
 
                     if active_bv_sessions is not None:
+                        now_ts = time.time()
                         for uid in valid_ids:
                             chats_root = os.path.join(ECHO_USERS_ROOT, uid, "chats")
                             if not os.path.exists(chats_root):
@@ -747,10 +753,10 @@ def _run_semantic_pruning(silent=False):
                                 try:
                                     with closing(sqlite3.connect(session_db_path, timeout=10.0)) as s_conn:
                                         rows = s_conn.execute(
-                                            "SELECT id, name, status, metadata FROM echo_resources WHERE resource_type = 'browserview'"
+                                            "SELECT id, name, status, metadata, created_at FROM echo_resources WHERE resource_type = 'browserview'"
                                         ).fetchall()
                                         del_ids = []
-                                        for r_id, r_name, r_status, r_meta in rows:
+                                        for r_id, r_name, r_status, r_meta, r_created_at in rows:
                                             meta = {}
                                             if r_meta:
                                                 try:
@@ -761,6 +767,10 @@ def _run_semantic_pruning(silent=False):
                                                     meta = {}
                                             fname = os.path.basename(r_name or "") or f"{r_id}_frame.jpg"
                                             if r_status == "retained" or meta.get("retained") is True:
+                                                kept_fnames.add(fname)
+                                                continue
+                                            item_ts = float(meta.get("timestamp") or r_created_at or 0)
+                                            if item_ts > 0 and (now_ts - item_ts) < BROWSER_TRANSIENT_GRACE_SEC:
                                                 kept_fnames.add(fname)
                                                 continue
                                             sess_id = meta.get("session_id") or cid

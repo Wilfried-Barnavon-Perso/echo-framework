@@ -1,16 +1,16 @@
 """
 title: ECHO Browser Lib
 author: ECHO Framework
-version: 6.15.0.1
+version: 6.15.1.1
 description: Composant système interne : ECHO Browser Lib.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.15.1.1: Passage par défaut de min_age_sec à BROWSER_TRANSIENT_GRACE_SEC (1800.0s) dans cleanup_expired_browserviews et application systématique du délai de grâce y compris sur force_discard_sids.
 # 6.15.0.1: Ajout de min_age_sec dans cleanup_expired_browserviews pour préserver les captures récentes lors des purges passives sans affecter force_discard_sids.
 # 6.13.1.1: Extension de cleanup_expired_browserviews aux clips MP4 (purge couplée N1 + orphelins), ajout de enforce_transient_clip_budget (purge FIFO N2) et iter_screencast_stream SSE.
 # 6.6.5.1: Ajout de get_active_browser_sessions et cleanup_expired_browserviews pour la gestion éphémère/rétention des captures browserviews.
 # 5.232.0.1: Ajout du helper factorisé render_ephemeral_html pour la rasterisation incognito Zéro-Disque en mémoire vive via /render_ephemeral_view.
-# 5.231.20.1: Propagation explicite de chat_id dans EchoBrowserLib pour isoler les sessions Playwright éphémères et sous-agents sans perdre le coffre de fichiers du chat.
 
 import asyncio
 import json
@@ -25,6 +25,7 @@ from echo_constants import (
     BROWSER_CLIP_EXT,
     BROWSER_MAX_TRANSIENT_CLIPS_MB,
     BROWSER_MAX_TRANSIENT_CLIPS_PER_CHAT,
+    BROWSER_TRANSIENT_GRACE_SEC,
     BROWSER_VIEWS_DIR_NAME,
     BROWSER_VIEW_STATUS,
     NAVIGATION_ENGINE_URL,
@@ -269,7 +270,7 @@ async def cleanup_expired_browserviews(
     chat_id: str,
     active_session_ids: Optional[set[str]] = None,
     force_discard_sids: Optional[set[str]] = None,
-    min_age_sec: float = 0.0,
+    min_age_sec: float = BROWSER_TRANSIENT_GRACE_SEC,
 ) -> dict:
     """Purge les captures browserviews éphémères dont la session Playwright est expirée ou réinitialisée."""
     if not chat_id:
@@ -325,7 +326,7 @@ async def cleanup_expired_browserviews(
         is_forced = force_discard_sids is not None and sess_id in force_discard_sids
         is_passive_expired = active_session_ids is not None and sess_id not in active_session_ids
         should_purge = is_forced or is_passive_expired
-        if not is_forced and is_passive_expired and min_age_sec > 0:
+        if (is_forced or is_passive_expired) and min_age_sec > 0:
             item_ts = float(meta.get("timestamp") or r.get("created_at") or 0)
             if item_ts > 0 and (now - item_ts) < min_age_sec:
                 kept_filenames.add(fname)

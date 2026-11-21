@@ -1,16 +1,16 @@
 """
 title: ECHO V6 Cognition Router
 author: Wilfried BARNAVON
-version: 6.15.0.1
+version: 6.15.1.1
 description: Routeur FastAPI pour la visualisation cognitive et des sous-agents (/echo/v1/cognition).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.15.1.1: Alignement du délai de grâce dans GET /{chat_id}/browser-frames sur BROWSER_TRANSIENT_GRACE_SEC (1800.0s).
 # 6.15.0.1: Exposition de http_status dans _read_browser_frames_sync et grâce passive min_age_sec=300.0 dans GET /{chat_id}/browser-frames.
 # 6.13.2.1: Ajout de GET /{chat_id}/browser-frames/{file_id}/clip, POST /{chat_id}/browser-frames/{file_id}/retain, du flux SSE GET /{chat_id}/browser-live et exposition des métadonnées clip_* dans _read_browser_frames_sync.
 # 6.7.7.1: Normalisation des métriques de tranche par tours (slice_turns_used, slice_turns_limit, slice_timeout_sec, total_turns_used) avec miroirs rétrocompatibles slice_calls_* et alignement sur ECHO_SUBAGENT_CHECKPOINT_TURNS/ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC.
 # 6.6.30.2: Suppression troncature [:8] des groupes, tri déterministe des membres par role_order, alignement ECHO_SUBAGENT_ENGINES_REGISTRY et dispatch multi-cibles sur POST /message.
-# 6.6.30.1: Ajout de POST /{chat_id}/threads/{sub_sid}/control, normalisation des 9 statuts canoniques/métriques de tranche et branchement direct sur EchoSubagentController.
 
 from __future__ import annotations
 
@@ -43,6 +43,7 @@ try:
     from echo_constants import (  # type: ignore
         BROWSER_CLIP_EXT,
         BROWSER_CLIP_MIME,
+        BROWSER_TRANSIENT_GRACE_SEC,
         BROWSER_VIEW_STATUS,
         BROWSER_VIEWS_DIR_NAME,
         ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
@@ -78,6 +79,7 @@ except ImportError:
         from echo_constants import (  # type: ignore
             BROWSER_CLIP_EXT,
             BROWSER_CLIP_MIME,
+            BROWSER_TRANSIENT_GRACE_SEC,
             BROWSER_VIEW_STATUS,
             BROWSER_VIEWS_DIR_NAME,
             ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
@@ -87,6 +89,7 @@ except ImportError:
     except ImportError:
         BROWSER_CLIP_EXT = "_clip.mp4"
         BROWSER_CLIP_MIME = "video/mp4"
+        BROWSER_TRANSIENT_GRACE_SEC = 1800.0
         BROWSER_VIEW_STATUS = {"TRANSIENT": "transient", "RETAINED": "retained"}
         BROWSER_VIEWS_DIR_NAME = "browserviews"
         ECHO_SUBAGENT_CHECKPOINT_TURNS = 8
@@ -1103,7 +1106,7 @@ async def get_browser_frames(chat_id: str, user=Depends(get_echo_verified_user))
         return JSONResponse(content={"frames": []})
 
     try:
-        await cleanup_expired_browserviews(safe_uid, safe_cid, min_age_sec=300.0)
+        await cleanup_expired_browserviews(safe_uid, safe_cid, min_age_sec=BROWSER_TRANSIENT_GRACE_SEC)
     except Exception:
         pass
 

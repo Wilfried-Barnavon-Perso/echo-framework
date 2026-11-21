@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.13.1.2
+version: 6.15.1.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.15.1.1: Ajout de BROWSER_TRANSIENT_GRACE_SEC = 1800.0 et relèvement des plafonds clips navigateur (BROWSER_MAX_TRANSIENT_CLIPS_PER_CHAT = 50, BROWSER_MAX_TRANSIENT_CLIPS_MB = 60).
 # 6.13.1.2: Ajout des constantes SSOT clips vidéo navigateur (BROWSER_CLIP_MIME, BROWSER_CLIP_EXT, BROWSER_MAX_TRANSIENT_CLIPS_PER_CHAT, BROWSER_MAX_TRANSIENT_CLIPS_MB).
 # 6.13.1.1: Ajout des constantes SSOT Pacemaker Canvas (ECHO_CANVAS_HEARTBEAT_INTERVAL_SEC, ECHO_CANVAS_BOOT_TIMEOUT_SEC, ECHO_CANVAS_PING_TIMEOUT_SEC, ECHO_CANVAS_GRACEFUL_CLOSE_SEC).
 # 6.10.0.2: Ajout de ECHO_AUTOMATION_CONTEXT, ECHO_AUTOMATION_QUEUE_MAX_WAIT_SEC (10800s), is_automation_context et get_headless_block_reason.
 # 6.10.0.1: Ajout des constantes SSOT Codex d'écriture/transfert (CODEX_WRITABLE_WORKSPACES, CODEX_FILES_DOMAIN_NAME, CODEX_TRANSFER_*, CODEX_FORBIDDEN_PATH_SEGMENTS, CODEX_SANDBOX_INTERNAL_*, CODEX_MAX_PATH_DEPTH, CODEX_LIST_MAX_ENTRIES et types Literal).
-# 6.8.2.2: Ajout de create_ui_tasks et update_ui_task dans DELEGATE_AGENT_BLACKLIST (et constantes/gardes headless/automation/Codex).
 
 import os
 import contextvars
@@ -668,8 +668,9 @@ BROWSER_VIEW_STATUS = {
 
 BROWSER_CLIP_MIME = "video/mp4"
 BROWSER_CLIP_EXT = "_clip.mp4"
-BROWSER_MAX_TRANSIENT_CLIPS_PER_CHAT = 30
-BROWSER_MAX_TRANSIENT_CLIPS_MB = 25
+BROWSER_TRANSIENT_GRACE_SEC = 1800.0
+BROWSER_MAX_TRANSIENT_CLIPS_PER_CHAT = 50
+BROWSER_MAX_TRANSIENT_CLIPS_MB = 60
 
 # Mapping Ultime : Quel type supporte quels statuts ?
 RESOURCE_STATUS_MAP = {

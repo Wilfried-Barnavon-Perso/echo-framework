@@ -2,16 +2,16 @@
 """
 title: ECHO Subagent Hub
 author: Wilfried BARNAVON
-version: 6.15.0.1
+version: 6.15.1.1
 description: Contrôleur exécutif unifié des sous-agents, tranches supervisées, ToolDispatcher et file FIFO hybride.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.15.1.1: Alignement du délai de grâce dans BrowserToolDispatcher sur BROWSER_TRANSIENT_GRACE_SEC (1800.0s).
 # 6.15.0.1: Propagation et télémétrie HTTP (http_status, http_status_text, navigation_statuses) dans BrowserToolDispatcher/EchoAgentRunner/deploy_browser_navigation_monitor, grâce passive min_age_sec=300.0 et isolation de enforce_transient_clip_budget.
 # 6.13.1.1: Découplage live SSE (/screencast/stream + live_state/live_cursor), persistance et broadcast sans Base64 des clips MP4 dans deploy_browser_navigation_monitor, garde finally stop_screencast et fix mimeType image/jpeg.
 # 6.7.11.1: Délégation du délestage dans StandardToolDispatcher._invoke_single_tool à apply_tool_spillover (echo_core).
 # 6.7.10.1: Alignement de StandardToolDispatcher._invoke_single_tool sur get_tool_truncation_limit et respect de _skip_truncation (suppression de la re-troncature à 32 Ko).
-# 6.7.7.1: Découpage des tranches par tours d'outils et timeout (slice_max_turns, slice_timeout_sec, autonomous_slice), suppression de la troncature zéro-batch dans execute_tool_calls et de la limite préalable de mission dans build_subagent_system_appendix.
 
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Literal, Optional, Protocol, Tuple
 from echo_constants import (
     BROWSER_CLIP_EXT,
     BROWSER_CLIP_MIME,
+    BROWSER_TRANSIENT_GRACE_SEC,
     BROWSER_VIEWS_DIR_NAME,
     BROWSER_VIEW_STATUS,
     CONTEXT_TRUNCATE_THRESHOLD,
@@ -1615,7 +1616,7 @@ class BrowserToolDispatcher:
             if start_res.get("status") != "success":
                 return None
 
-        await cleanup_expired_browserviews(self.user_id, self.chat_id, min_age_sec=300.0)
+        await cleanup_expired_browserviews(self.user_id, self.chat_id, min_age_sec=BROWSER_TRANSIENT_GRACE_SEC)
         nav_res: Optional[dict] = None
         if start_url:
             if self.events:
