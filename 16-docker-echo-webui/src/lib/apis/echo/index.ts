@@ -542,11 +542,6 @@ export const getEchoCodexDiff = async (
 	);
 };
 
-export const getEchoCodexDownloadUrl = (chatId: string, workspace: string, path: string): string => {
-	const searchParams = new URLSearchParams({ workspace, path });
-	return `${ECHO_API_BASE_URL}/codex/${encodeURIComponent(chatId)}/download?${searchParams.toString()}`;
-};
-
 export const downloadEchoCodexFileBlob = async (
 	token: string,
 	chatId: string,

@@ -26,8 +26,7 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 6.16.0.2: Ajout de la location BunkerWeb /echo/v1/wm/app/ (auth_request off, proxy HTTP/1.1 + Upgrade WebSocket) pour les serveurs web sandboxés par ticket HMAC.
-# 6.16.0.1: Inclusion du préfixe /echo/ dans les règles Nginx @auth_soft_reject, @api_403_reject, @api_429_reject et @api_5xx_reject pour garantir des réponses JSON sur les routes API/WS ECHO.
+# 6.16.0.2: Préfixe /echo/ dans les règles Nginx JSON et location /echo/v1/wm/app/ (auth_request off, HTTP/1.1 + WS Upgrade) pour apps HMAC.
 # 6.14.1.1: Ajout de DATABASE_SQLITE_PRAGMA_BUSY_TIMEOUT=30000 sur echo-webui pour résorber la contention SQLite sur conversations volumineuses.
 # 6.14.0.1: Augmentation de la tolérance de démarrage du healthcheck echo-searxng (start_period: 60s, retries: 10) sous contention CPU.
 # 6.7.8.1: Passage de REVERSE_PROXY_REQUEST_BUFFERING=no (retrait client_body_buffer_size 100m) et isolation TMPDIR=/app/backend/data/.tmp_uploads sur echo-webui.

@@ -301,7 +301,6 @@ export const echoBrowserTarget = writable<{
 export const echoBrowserLiveFrames = writable<Record<string, any[]>>({});
 export const echoCanvasFrames = writable<Record<string, EchoCanvasFrame[]>>({});
 export const echoCanvasActiveFrame = writable<Record<string, string>>({});
-export const echoCanvasLastEvent = writable<EchoCanvasEventPayload | null>(null);
 export const echoCanvasEventQueues = writable<Record<string, EchoCanvasEventPayload[]>>({});
 let canvasEventSeq = 0;
 
@@ -768,20 +767,6 @@ const openWmSocket = () => {
 					});
 					echoCanvasActiveFrame.update((curr) => ({ ...curr, [cid]: frame.id }));
 					requestEchoTabOpen(cid, 'echo-canvas', { frameId: frame.id, auto: data.auto ?? true });
-				}
-			} else if (data.type === 'echo_canvas_event') {
-				const cid = data.chat_id || wmGetActiveChatId() || '';
-				if (cid) {
-					canvasEventSeq += 1;
-					const ev: EchoCanvasEventPayload = {
-						chatId: cid,
-						windowId: String(data.window_id || 'default'),
-						data: data.data,
-						reqId: data.req_id ?? null,
-						seq: canvasEventSeq
-					};
-					enqueueEchoCanvasEvent(ev);
-					echoCanvasLastEvent.set(ev);
 				}
 			} else if (data.type === 'echo_canvas_status') {
 				const cid = data.chat_id || wmGetActiveChatId() || '';

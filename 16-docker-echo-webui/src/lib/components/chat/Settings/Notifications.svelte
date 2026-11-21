@@ -3,6 +3,7 @@
 	import { canUseNotificationTargets } from '$lib/utils/settings-access';
 	import { getContext, onMount } from 'svelte';
 	import {
+		DEFAULT_NOTIFICATION_SOUND_STYLE,
 		playNotificationSound,
 		setNotificationSoundEnabled,
 		notificationSoundStyles,
@@ -35,7 +36,7 @@
 
 	let notificationEnabled = false;
 	let notificationSound = true;
-	let notificationSoundType: NotificationSoundStyle = 'chime';
+	let notificationSoundType: NotificationSoundStyle = DEFAULT_NOTIFICATION_SOUND_STYLE;
 	const previewSound = async () => {
 		if (!notificationSound) return;
 		setNotificationSoundEnabled(true);
@@ -206,8 +207,10 @@
 	onMount(async () => {
 		notificationEnabled = $settings.notificationEnabled ?? false;
 		notificationSound = $settings?.notificationSound ?? true;
-		const savedSound = $settings?.notificationSoundType ?? 'chime';
-		notificationSoundType = notificationSoundStyles.includes(savedSound) ? savedSound : 'chime';
+		const savedSound = $settings?.notificationSoundType ?? DEFAULT_NOTIFICATION_SOUND_STYLE;
+		notificationSoundType = notificationSoundStyles.includes(savedSound)
+			? savedSound
+			: DEFAULT_NOTIFICATION_SOUND_STYLE;
 	});
 </script>
 
@@ -267,6 +270,7 @@
 								saveSettings({ notificationSoundType });
 							}}
 						>
+							<option value="hey">Écho — Hey !</option>
 							<option value="chime">{$i18n.t('Chime')}</option>
 							<option value="soft">{$i18n.t('Soft')}</option>
 							<option value="bell">{$i18n.t('Bell')}</option>

@@ -6,8 +6,7 @@ description: Composant système interne : ECHO Code Executor (Python, Node.js, B
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 6.16.0.2: Extension de la garde pré-vol _inspect_sandbox_script à echo_monitor.expose_app() pour imposition de background=True.
-# 6.16.0.1: Suppression de bidi_polling/poller, raccordement à /wait_ready, offsets via WindowManager et arrêt abort léger.
+# 6.16.0.2: Retrait bidi_polling/poller, raccordement /wait_ready, offsets WM, abort léger et garde expose_app(background=True).
 # 6.15.2.1: Durcissement Option A : garde pré-vol serve_forever(), handshake ready/crash, boucle poller réveillée par wake_event, arrêt sur unknown x3 et cleanup scopé par run_id.
 # 6.13.1.2: Fiabilisation Pacemaker bidi_polling (constantes SSOT, peek/ack scopé par window_id, push delta-only, grâce _is_closed, arrêt auto sur fin de job et broadcast_canvas_status).
 # 6.6.30.1: Isolation par sub_sid (ECHO_SUBAGENT_CONTEXT) des jobs, pollers et actions status/listen/kill.

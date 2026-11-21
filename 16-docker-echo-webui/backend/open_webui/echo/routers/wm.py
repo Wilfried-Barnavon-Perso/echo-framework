@@ -6,9 +6,7 @@ description: Routeur souverain FastAPI pour le gestionnaire de fenêtres et év�
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 6.16.0.3: Proxy HTTP/WS ticketé HMAC /app/{ticket}, shim HTML (<base>, fetch, WebSocket) et support expose_app dans wm_canvas_ws_endpoint.
-# 6.16.0.2: Ajout du relais WebSocket full-duplex TEXT/BINARY /ws/canvas/{chat_id}/{run_id} vers CanvasRunHub.
-# 6.16.0.1: Migration SSE /stream vers WebSocket bidirectionnel /ws (authenticate_echo_websocket, rpc_ack et keepalive 20s).
+# 6.16.0.3: Migration /ws bidirectionnel, relais WS /ws/canvas/{chat_id}/{run_id}, proxy HTTP/WS HMAC /app/{ticket} et shim HTML.
 # 6.15.2.1: Réconciliation des frames Canvas (reconcile_canvas_frames) sur GET /chat/{chat_id} et action RPC canvas_stop_run sur POST /rpc.
 # 6.7.20.1: Exposition de l'endpoint authentifié GET /echo/v1/wm/commands servant le catalogue déclaratif system-commands.xml.
 

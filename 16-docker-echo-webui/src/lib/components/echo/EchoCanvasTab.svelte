@@ -610,15 +610,6 @@
 					echoSandboxStatus: ev.data,
 					window_id: wid
 				});
-			} else {
-				sendToFramePort(wid, {
-					echoSandboxEvent: {
-						data: ev.data,
-						req_id: ev.reqId ?? null,
-						binary: null
-					},
-					window_id: wid
-				});
 			}
 		}
 	};

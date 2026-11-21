@@ -7,8 +7,7 @@ VERSION : 6.16.0.2
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 6.16.0.2: Ajout de get_app_uds, get_app_port, wait_until_closed et expose_app (Niveau B2 UDS/TCP).
-# 6.16.0.1: Bus mémoire Socket AF_UNIX/TCP (ECHO_IPC_SOCK), framing binaire/JSON et BidiRouter événementiel en remplacement du JSONL.
+# 6.16.0.2: Bus AF_UNIX/TCP (ECHO_IPC_SOCK), BidiRouter événementiel et expose_app/get_app_uds/get_app_port/wait_until_closed (Niveau B2).
 # 6.15.2.1: Écriture thread-safe (_MONITOR_WRITE_LOCK), push_ready(), pool ThreadPoolExecutor borné, __echo_ping__.
 # 5.234.1.1: Isolation IPC par env vars et ajout de push_event, get_ui_requests et BidiRouter.
 # 5.226.18.0: Alignement sur le versioning global ECHO.

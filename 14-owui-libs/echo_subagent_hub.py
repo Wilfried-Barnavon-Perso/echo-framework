@@ -2,12 +2,12 @@
 """
 title: ECHO Subagent Hub
 author: Wilfried BARNAVON
-version: 6.16.0.1
+version: 6.16.0.2
 description: Contrôleur exécutif unifié des sous-agents, tranches supervisées, ToolDispatcher et file FIFO hybride.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 6.16.0.1: Suppression de _stream_proxy SSE dans BrowserToolDispatcher et enregistrement register_browser_session pour le WebSocket binaire hors-slices.
+# 6.16.0.2: Remplacement SSE par registre browser-live WebSocket et purge enqueue_human_message/pop_next_human_message.
 # 6.15.1.1: Alignement du délai de grâce dans BrowserToolDispatcher sur BROWSER_TRANSIENT_GRACE_SEC (1800.0s).
 # 6.15.0.1: Propagation et télémétrie HTTP (http_status, http_status_text, navigation_statuses) dans BrowserToolDispatcher/EchoAgentRunner/deploy_browser_navigation_monitor, grâce passive min_age_sec=300.0 et isolation de enforce_transient_clip_budget.
 # 6.13.1.1: Découplage live SSE (/screencast/stream + live_state/live_cursor), persistance et broadcast sans Base64 des clips MP4 dans deploy_browser_navigation_monitor, garde finally stop_screencast et fix mimeType image/jpeg.
@@ -561,35 +561,6 @@ def enqueue_subagent_message(
         )
         bump_cognition_seq(getattr(state_manager, "chat_id", "") or "")
         return list(queue)
-
-
-def enqueue_human_message(
-    state_manager: Any,
-    sub_sid: str,
-    content: str,
-    user_id: str = "",
-) -> list[dict]:
-    """Ajoute un message humain en fin de file FIFO dans echo_settings."""
-    return enqueue_subagent_message(
-        state_manager, sub_sid, content, user_id=user_id, origin="human"
-    )
-
-
-def pop_next_human_message(
-    state_manager: Any, sub_sid: str
-) -> Optional[dict]:
-    """Dépile et retourne le prochain message de la file FIFO."""
-    with _QUEUE_LOCK:
-        queue = _read_queue_unlocked(state_manager, sub_sid)
-        if not queue:
-            return None
-        item = queue.pop(0)
-        state_manager.save_session_setting(
-            f"{SUBAGENT_QUEUE_PREFIX}{sub_sid}",
-            json.dumps(queue, ensure_ascii=False),
-        )
-        bump_cognition_seq(getattr(state_manager, "chat_id", "") or "")
-        return item
 
 
 def pop_all_queued_messages(

@@ -128,8 +128,9 @@ export class AudioQueue {
 	}
 }
 
-export const notificationSoundStyles = ['chime', 'soft', 'bell', 'tap'] as const;
+export const notificationSoundStyles = ['hey', 'chime', 'soft', 'bell', 'tap'] as const;
 export type NotificationSoundStyle = (typeof notificationSoundStyles)[number];
+export const DEFAULT_NOTIFICATION_SOUND_STYLE: NotificationSoundStyle = 'hey';
 
 type NotificationTone = {
 	frequency: number;
@@ -139,7 +140,7 @@ type NotificationTone = {
 	endFrequency?: number;
 };
 
-const notificationTones: Record<NotificationSoundStyle, NotificationTone[]> = {
+const notificationTones: Record<Exclude<NotificationSoundStyle, 'hey'>, NotificationTone[]> = {
 	chime: [
 		{ frequency: 659.25, duration: 0.36, volume: 0.08 },
 		{ frequency: 880, duration: 0.48, volume: 0.06, delay: 0.09 }
@@ -156,18 +157,53 @@ const notificationTones: Record<NotificationSoundStyle, NotificationTone[]> = {
 	tap: [{ frequency: 200, endFrequency: 90, duration: 0.07, volume: 0.16 }]
 };
 
+const HEY_NOTIFICATION_AUDIO_URL = '/audio/echo-hey.mp3';
+
+type ActiveNotificationVoice = {
+	source: AudioBufferSourceNode | OscillatorNode;
+	gain: GainNode;
+};
+
 let notificationContext: AudioContext | null = null;
 let notificationSoundEnabled = true;
-const notificationVoices = new Set<{ oscillator: OscillatorNode; gain: GainNode }>();
+let heyAudioBuffer: AudioBuffer | null = null;
+let heyAudioLoadPromise: Promise<AudioBuffer | null> | null = null;
+const notificationVoices = new Set<ActiveNotificationVoice>();
+
+async function loadHeyAudioBuffer(ctx: AudioContext): Promise<AudioBuffer | null> {
+	if (heyAudioBuffer) return heyAudioBuffer;
+	if (heyAudioLoadPromise) return heyAudioLoadPromise;
+
+	heyAudioLoadPromise = (async () => {
+		try {
+			const res = await fetch(HEY_NOTIFICATION_AUDIO_URL, { cache: 'force-cache' });
+			if (!res.ok) return null;
+			const raw = await res.arrayBuffer();
+			const decoded = await ctx.decodeAudioData(raw.slice(0));
+			heyAudioBuffer = decoded;
+			return decoded;
+		} catch {
+			return null;
+		} finally {
+			heyAudioLoadPromise = null;
+		}
+	})();
+
+	return heyAudioLoadPromise;
+}
 
 function stopNotificationVoices() {
 	if (!notificationContext) return;
 	const now = notificationContext.currentTime;
-	for (const { oscillator, gain } of notificationVoices) {
-		gain.gain.cancelScheduledValues(now);
-		gain.gain.setValueAtTime(gain.gain.value, now);
-		gain.gain.linearRampToValueAtTime(0, now + 0.02);
-		oscillator.stop(now + 0.02);
+	for (const { source, gain } of notificationVoices) {
+		try {
+			gain.gain.cancelScheduledValues(now);
+			gain.gain.setValueAtTime(gain.gain.value, now);
+			gain.gain.linearRampToValueAtTime(0, now + 0.02);
+			source.stop(now + 0.02);
+		} catch {
+			// Ignore voices that have already finished or been stopped.
+		}
 	}
 	notificationVoices.clear();
 }
@@ -196,13 +232,39 @@ export async function unlockNotificationAudio(): Promise<boolean> {
 }
 
 export async function playNotificationSound(
-	style: NotificationSoundStyle = 'chime'
+	style: NotificationSoundStyle = DEFAULT_NOTIFICATION_SOUND_STYLE
 ): Promise<boolean> {
 	if (!(await unlockNotificationAudio()) || !notificationSoundEnabled || !notificationContext)
 		return false;
 	stopNotificationVoices();
-	const selected = notificationSoundStyles.includes(style) ? style : 'chime';
-	for (const tone of notificationTones[selected]) {
+	const selected = notificationSoundStyles.includes(style) ? style : DEFAULT_NOTIFICATION_SOUND_STYLE;
+
+	if (selected === 'hey') {
+		const buffer = await loadHeyAudioBuffer(notificationContext);
+		if (!notificationSoundEnabled || !notificationContext) return false;
+		if (buffer) {
+			stopNotificationVoices();
+			const source = notificationContext.createBufferSource();
+			source.buffer = buffer;
+			const gain = notificationContext.createGain();
+			const now = notificationContext.currentTime;
+			gain.gain.setValueAtTime(1.0, now);
+			source.connect(gain).connect(notificationContext.destination);
+			const voice: ActiveNotificationVoice = { source, gain };
+			notificationVoices.add(voice);
+			source.onended = () => {
+				source.disconnect();
+				gain.disconnect();
+				notificationVoices.delete(voice);
+			};
+			source.start(now);
+			return true;
+		}
+	}
+
+	const toneStyle: Exclude<NotificationSoundStyle, 'hey'> =
+		selected === 'hey' ? 'chime' : selected;
+	for (const tone of notificationTones[toneStyle]) {
 		const oscillator = notificationContext.createOscillator();
 		const gain = notificationContext.createGain();
 		const start = notificationContext.currentTime + (tone.delay ?? 0);
@@ -211,10 +273,10 @@ export async function playNotificationSound(
 			oscillator.frequency.exponentialRampToValueAtTime(tone.endFrequency, start + tone.duration);
 		}
 		gain.gain.setValueAtTime(0, start);
-		gain.gain.linearRampToValueAtTime(tone.volume, start + (selected === 'soft' ? 0.03 : 0.005));
+		gain.gain.linearRampToValueAtTime(tone.volume, start + (toneStyle === 'soft' ? 0.03 : 0.005));
 		gain.gain.exponentialRampToValueAtTime(0.0001, start + tone.duration);
 		oscillator.connect(gain).connect(notificationContext.destination);
-		const voice = { oscillator, gain };
+		const voice: ActiveNotificationVoice = { source: oscillator, gain };
 		notificationVoices.add(voice);
 		oscillator.onended = () => {
 			oscillator.disconnect();

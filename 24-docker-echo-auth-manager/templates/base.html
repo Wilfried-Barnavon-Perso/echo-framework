@@ -289,6 +289,43 @@
                 c.scrollTop += e.deltaY;
             }
         }, { passive: true });
+
+        (function () {
+            if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+                return;
+            }
+            const audio = new Audio('/static/audio/echo-reveal.mp3');
+            audio.preload = 'auto';
+            let active = true;
+            let timerId = null;
+
+            const cleanup = function () {
+                active = false;
+                if (timerId !== null) {
+                    clearTimeout(timerId);
+                    timerId = null;
+                }
+                document.removeEventListener('pointerdown', onFirstGesture, true);
+                document.removeEventListener('keydown', onFirstGesture, true);
+            };
+
+            const onFirstGesture = function () {
+                const canPlay = active;
+                cleanup();
+                if (canPlay) {
+                    audio.play().catch(function () {});
+                }
+            };
+
+            audio.play().catch(function (err) {
+                if (!active || !err || err.name !== 'NotAllowedError') {
+                    return;
+                }
+                document.addEventListener('pointerdown', onFirstGesture, { once: true, capture: true });
+                document.addEventListener('keydown', onFirstGesture, { once: true, capture: true });
+                timerId = setTimeout(cleanup, 2000);
+            });
+        })();
     </script>
 </body>
 </html>

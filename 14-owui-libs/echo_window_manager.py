@@ -2,14 +2,12 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 6.16.0.3
+version: 6.16.0.4
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 6.16.0.3: Ajout des capability tickets HMAC (issue/verify/revoke) et support du mode app_proxy dans broadcast/reconcile_canvas_frames.
-# 6.16.0.2: Purge _sandbox_pollers/inbox/peek/ack, ajout _sandbox_stream_offsets, _canvas_authorized_runs et relais /canvas_signal.
-# 6.16.0.1: Remplacement des files SSE browser-live par le registre _active_browser_sessions (register/unregister/get/wait_for_browser_session).
+# 6.16.0.4: Registre _active_browser_sessions, relais WS Canvas/App, tickets HMAC app_proxy et purge code mort polling/pings/event.
 # 6.15.2.1: Isolation multi-run par run_id dans les frames Canvas, arrêt ciblé canvas_stop_run, réconciliation F5 reconcile_canvas_frames et réveil réactif inbox via wake_event.
 # 6.14.2.1: Suppression intégrale de la persistance SQLite wm_state (_load_chat_state, _save_chat_state, _sanitize_windows_dict) et des actions RPC mortes (window_mounted, window_updated, window_closed, kv_sync).
 
@@ -218,7 +216,7 @@ class EchoWindowManager:
         key = (uid, chat_id or "")
         state = self._canvas_ui_state.get(key)
         if state is None:
-            state = {"frames": {}, "payloads": {}, "pings": {}, "closed": {}, "signal": None}
+            state = {"frames": {}, "payloads": {}, "closed": {}, "signal": None}
             self._canvas_ui_state[key] = state
         return state
 
@@ -583,7 +581,6 @@ class EchoWindowManager:
             "updated_at": time.time(),
         }
         cstate["frames"][wid] = frame_entry
-        cstate["pings"].pop(wid, None)
         cstate["closed"].pop(wid, None)
         await self.broadcast(
             user_id,
@@ -633,26 +630,6 @@ class EchoWindowManager:
             },
         )
 
-    async def broadcast_canvas_event(
-        self,
-        user_id: str,
-        chat_id: str,
-        window_id: str,
-        data: Any,
-        req_id: Optional[str] = None,
-    ) -> None:
-        """Diffuse un événement temps réel vers une frame Canvas côté client."""
-        await self.broadcast(
-            user_id,
-            {
-                "type": "echo_canvas_event",
-                "chat_id": chat_id,
-                "window_id": str(window_id or "default"),
-                "data": data,
-                "req_id": req_id,
-            },
-        )
-
     def consume_canvas_ui_payload(self, user_id: str, chat_id: str) -> Dict[str, Any]:
         """Retourne les payloads UI Canvas courants pour amorçage initial d'un run."""
         cstate = self._get_canvas_state(user_id, chat_id)
@@ -674,7 +651,7 @@ class EchoWindowManager:
         window_ids: Any,
         run_id: str = "",
     ) -> None:
-        """Nettoie les pings et marqueurs de fermeture associés aux fenêtres d'un run."""
+        """Nettoie les marqueurs de fermeture et tickets associés aux fenêtres d'un run."""
         if isinstance(window_ids, (list, tuple, set)):
             wids = [str(w) for w in window_ids if w]
         elif window_ids:
@@ -688,10 +665,8 @@ class EchoWindowManager:
             if run_id:
                 current_frame = cstate["frames"].get(wid)
                 if not isinstance(current_frame, dict) or current_frame.get("run_id", "") in ("", run_id):
-                    cstate["pings"].pop(wid, None)
                     cstate["closed"].pop(wid, None)
             else:
-                cstate["pings"].pop(wid, None)
                 cstate["closed"].pop(wid, None)
 
     def clear_canvas_signal(self, user_id: str, chat_id: str) -> None:
@@ -877,13 +852,11 @@ class EchoWindowManager:
             if chat_id:
                 owner_uid = self._resolve_owner_uid(user_id, chat_id)
                 cstate = self._get_canvas_state(user_id, chat_id)
-                now_ms = time.time() * 1000.0
                 ui_payload = payload.get("echoUIPayload")
                 if isinstance(ui_payload, dict):
                     wid = str(ui_payload.get("window_id") or payload.get("frame_id") or "default")
                     p_data = ui_payload.get("payload")
                     cstate["payloads"][wid] = p_data
-                    cstate["pings"][wid] = now_ms
                     cstate["closed"].pop(wid, None)
                     target_rid = str(
                         ui_payload.get("run_id")
@@ -902,18 +875,6 @@ class EchoWindowManager:
                         )
                 if payload.get("echoSignal") == "abort":
                     cstate["signal"] = "abort"
-                ping_wid = payload.get("echoPing")
-                if ping_wid:
-                    s_wid = str(ping_wid)
-                    cstate["pings"][s_wid] = now_ms
-                    cstate["closed"].pop(s_wid, None)
-                ping_wids = payload.get("echoPings")
-                if isinstance(ping_wids, list):
-                    for pw in ping_wids:
-                        if pw:
-                            s_wid = str(pw)
-                            cstate["pings"][s_wid] = now_ms
-                            cstate["closed"].pop(s_wid, None)
                 closed_val = payload.get("window_closed")
                 if closed_val:
                     closed_items = (
@@ -929,7 +890,6 @@ class EchoWindowManager:
                             s_wid = str(cw)
                             target_rid = explicit_rid or str((cstate["frames"].get(s_wid) or {}).get("run_id") or "")
                             cstate["closed"][s_wid] = True
-                            cstate["pings"].pop(s_wid, None)
                             if remove_frame:
                                 cstate["frames"].pop(s_wid, None)
                             if target_rid:

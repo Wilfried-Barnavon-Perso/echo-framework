@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 6.16.0.2
+VERSION : 6.16.0.3
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-11-21
 
@@ -9,8 +9,7 @@ DATE MAJ : 2026-11-21
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 6.16.0.2: Niveau B2 (proxy HTTP/WS /app_proxy et /ws/app, AF_UNIX /run/echo_app, port éphémère, _verify_job_owns_tcp_port).
-# 6.16.0.1: Remplacement des fichiers IPC et /poll_monitor par CanvasRunHub AF_UNIX, /wait_ready, /canvas_signal et /ws/canvas/{run_id}.
+# 6.16.0.3: CanvasRunHub AF_UNIX, /ws/canvas/{run_id}, proxy HTTP/WS B2 (/app_proxy, /ws/app) et purge monitor_payloads/flag test port.
 # 6.15.2.1: Long-polling /poll_monitor (wait), purge TTL/lifetime jobs terminés, contrôle /kill par run_id et payloads.
 # 6.13.1.1: Exposition de job_state, exit_code et alive dans GET /poll_monitor.
 # 6.6.22.1: Attachement TIOCSCTTY du PTY bwrap, déduplication buffer/out_queue, reprise par curseur et close 1000.
@@ -155,7 +154,6 @@ class CanvasRunHub:
         self.is_unix_sock = False
         self.allocated_port = None
         self.job_pgid = None
-        self.allow_any_local_port_for_test = False
 
         self.lock = threading.Lock()
         self.write_lock = threading.Lock()
@@ -709,7 +707,6 @@ def _build_job_response(job):
             "canvas_frames": canvas_frames,
             "ui_ready": ui_ready,
             "ui_payload": ui_payload,
-            "monitor_payloads": [],
         }
 
     status_val = "success" if state == "completed" else ("killed" if state == "killed" else "error")
@@ -723,7 +720,6 @@ def _build_job_response(job):
         "canvas_frames": canvas_frames,
         "ui_ready": ui_ready,
         "ui_payload": ui_payload,
-        "monitor_payloads": [],
     }
     if stderr_str:
         res["error"] = stderr_str if not err_msg else f"{err_msg}\n{stderr_str}"
@@ -2108,8 +2104,6 @@ def _verify_job_owns_tcp_port(hub, port: int) -> bool:
             except (OSError, ValueError, ProcessLookupError):
                 continue
         return False
-    if getattr(hub, "allow_any_local_port_for_test", False):
-        return True
     return hub.allocated_port is not None and port == hub.allocated_port
 
 
