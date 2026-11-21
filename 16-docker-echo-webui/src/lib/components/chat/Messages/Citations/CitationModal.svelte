@@ -3,7 +3,7 @@
 	import Modal from '$lib/components/common/Modal.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import Markdown from '$lib/components/chat/Messages/Markdown.svelte';
-	import { WEBUI_API_BASE_URL } from '$lib/constants';
+	import { ECHO_IFRAME_SANDBOX, WEBUI_API_BASE_URL } from '$lib/constants';
 	import { settings, config } from '$lib/stores';
 	import { injectCsp } from '$lib/utils/csp';
 	import { isValidHttpUrl } from '$lib/utils';
@@ -216,15 +216,7 @@
 							{#if document.metadata?.html}
 								<iframe
 									class="w-full border-0 h-auto rounded-none"
-									sandbox="{($settings?.iframeSandboxAllowScripts ?? true)
-										? 'allow-scripts'
-										: ''}{($settings?.iframeSandboxAllowForms ?? true)
-										? ' allow-forms'
-										: ''}{($settings?.iframeSandboxAllowDownloads ?? true)
-										? ' allow-downloads'
-										: ''}{($settings?.iframeSandboxAllowSameOrigin ?? false)
-										? ' allow-same-origin'
-										: ''}"
+									sandbox={ECHO_IFRAME_SANDBOX}
 									srcdoc={injectCsp(document.document, $config?.ui?.iframe_csp ?? '')}
 									title={$i18n.t('Content')}
 								></iframe>

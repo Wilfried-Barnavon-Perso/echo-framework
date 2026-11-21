@@ -202,8 +202,7 @@
 							src={embed}
 							{args}
 							allowScripts={true}
-							allowForms={$settings?.iframeSandboxAllowForms ?? false}
-							allowSameOrigin={$settings?.iframeSandboxAllowSameOrigin ?? false}
+							allowForms={true}
 							allowPopups={true}
 						/>
 					{/if}

@@ -1,11 +1,12 @@
 /**
  * ================================================================================
  * MODULE : ECHO - ECHO MONITOR (Node.js)
- * VERSION : 6.16.0.2
+ * VERSION : 6.17.4.1
  * ================================================================================
  */
 // Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 // Historique des versions :
+// 6.17.4.1: Suppression BidiRouter/push_ready/get_ui_requests, callbacks display/expose_app via HTTP interne Worker -> WebUI (Option B).
 // 6.16.0.2: Bus AF_UNIX/TCP (ECHO_IPC_SOCK), BidiRouter événementiel et expose_app/get_app_uds/get_app_port/wait_until_closed (Niveau B2).
 // 6.15.2.1: Ajout de push_ready(), exécution concurrente bornée (maxWorkers) dans BidiRouter et support natif __echo_ping__ / rejet RPC inconnu.
 // 5.234.1.1: Isolation IPC par env vars et ajout de push_event, get_ui_requests et BidiRouter.
@@ -23,9 +24,7 @@ let _recvBuffer = Buffer.alloc(0);
 let _pendingWrites = 0;
 let _keepAliveRefCount = 0;
 
-const _uiPayloads = {};
 const _closedWindows = new Set();
-const _rpcQueue = [];
 const _listeners = new Set();
 
 function _getIpcTarget() {
@@ -49,31 +48,10 @@ function _notifyListeners() {
     }
 }
 
-function _handleIncomingMessage(msg, binBuf) {
-    const msgType = msg.type;
-    const wid = msg.window_id || 'default';
-    if (msgType === 'payload_sync') {
-        const payload = msg.payload;
-        _uiPayloads[wid] = payload;
-        if (payload && typeof payload === 'object' && payload._is_closed) {
-            _closedWindows.add(wid);
-        }
-        _notifyListeners();
-    } else if (msgType === 'window_closed') {
+function _handleIncomingMessage(msg, _binBuf) {
+    if (msg.type === 'window_closed') {
+        const wid = msg.window_id || 'default';
         _closedWindows.add(wid);
-        if (!_uiPayloads[wid] || typeof _uiPayloads[wid] !== 'object') {
-            _uiPayloads[wid] = {};
-        }
-        _uiPayloads[wid]._is_closed = true;
-        _notifyListeners();
-    } else if (msgType === 'rpc') {
-        _rpcQueue.push({
-            window_id: wid,
-            req_id: msg.req_id !== undefined ? msg.req_id : null,
-            action: msg.action,
-            payload: msg.payload,
-            binary: binBuf
-        });
         _notifyListeners();
     }
 }
@@ -219,63 +197,8 @@ function display(htmlContent, title = 'ECHO Sandbox Monitor', width = '100%', he
     _send_ipc_frame(meta, Buffer.from(String(htmlContent), 'utf-8'));
 }
 
-function push_event(data, window_id = 'default', req_id = null, binary = null) {
-    const meta = {
-        type: 'event',
-        window_id: window_id,
-        req_id: req_id,
-        data: data
-    };
-    _send_ipc_frame(meta, binary);
-}
-
-function push_ready(window_id = 'default', actions = []) {
-    const meta = {
-        type: 'ready',
-        window_id: window_id,
-        actions: Array.isArray(actions) ? [...actions] : []
-    };
-    _send_ipc_frame(meta, null);
-}
-
-function get_ui_payload(window_id = 'default') {
-    if (Object.prototype.hasOwnProperty.call(_uiPayloads, window_id)) {
-        const val = _uiPayloads[window_id];
-        return val && typeof val === 'object' ? val : null;
-    }
-    return null;
-}
-
-function get_ui_requests(window_id = null) {
-    if (_rpcQueue.length === 0) return [];
-    if (window_id === null || window_id === undefined) {
-        return _rpcQueue.splice(0, _rpcQueue.length);
-    }
-    const matched = [];
-    const remaining = [];
-    for (const item of _rpcQueue) {
-        if ((item.window_id || 'default') === window_id) {
-            matched.push(item);
-        } else {
-            remaining.push(item);
-        }
-    }
-    _rpcQueue.length = 0;
-    for (const item of remaining) {
-        _rpcQueue.push(item);
-    }
-    return matched;
-}
-
 function is_window_closed(window_id = 'default') {
-    if (_socketClosed || _closedWindows.has(window_id)) {
-        return true;
-    }
-    const payload = get_ui_payload(window_id);
-    if (payload && typeof payload === 'object') {
-        return Boolean(payload._is_closed);
-    }
-    return false;
+    return _socketClosed || _closedWindows.has(window_id);
 }
 
 function get_app_uds() {
@@ -457,174 +380,18 @@ async function expose_app(
         },
         null
     );
-    push_ready(window_id, []);
     if (block) {
         await wait_until_closed(window_id);
     }
     return resolvedTarget;
 }
 
-class BidiRouter {
-    constructor(window_id = 'default', maxWorkers = 4) {
-        this.window_id = window_id;
-        this.maxWorkers = Math.max(1, Number(maxWorkers) || 4);
-        this._routes = {};
-        this._routeAcceptsBinary = {};
-        this._activeCount = 0;
-        this._queue = [];
-    }
-
-    route(action, fn) {
-        this._routes[action] = fn;
-        this._routeAcceptsBinary[action] = typeof fn === 'function' && fn.length >= 2;
-        return this;
-    }
-
-    async _executeRequest(req) {
-        const action = req.action;
-        const reqId = req.req_id !== undefined ? req.req_id : null;
-        const payload = req.payload;
-        try {
-            if (typeof this._routes[action] === 'function') {
-                const acceptsBinary = Boolean(this._routeAcceptsBinary[action]);
-                const res = acceptsBinary
-                    ? await this._routes[action](payload, req.binary !== undefined ? req.binary : null)
-                    : await this._routes[action](payload);
-                let resData = res;
-                let resBytes = null;
-                if (Buffer.isBuffer(res)) {
-                    resData = null;
-                    resBytes = res;
-                } else if (
-                    res &&
-                    typeof res === 'object' &&
-                    (Buffer.isBuffer(res.__echo_binary__) || res.__echo_binary__ instanceof Uint8Array)
-                ) {
-                    resData = res.data !== undefined ? res.data : null;
-                    resBytes = Buffer.from(res.__echo_binary__);
-                }
-                push_event({ status: 'ok', action: action, result: resData }, this.window_id, reqId, resBytes);
-            } else if (action === '__echo_ping__') {
-                push_event(
-                    {
-                        status: 'ok',
-                        action: action,
-                        result: {
-                            pong: true,
-                            window_id: this.window_id,
-                            ts: Date.now() / 1000,
-                            actions: Object.keys(this._routes).sort()
-                        }
-                    },
-                    this.window_id,
-                    reqId
-                );
-            } else {
-                push_event(
-                    {
-                        status: 'error',
-                        action: action,
-                        error: `Unknown RPC action: ${action}`,
-                        available_actions: Object.keys(this._routes).sort()
-                    },
-                    this.window_id,
-                    reqId
-                );
-            }
-        } catch (err) {
-            push_event(
-                { status: 'error', action: action, error: String(err && err.message ? err.message : err) },
-                this.window_id,
-                reqId
-            );
-        }
-    }
-
-    _drainQueue() {
-        while (this._activeCount < this.maxWorkers && this._queue.length > 0) {
-            const item = this._queue.shift();
-            this._activeCount += 1;
-            Promise.resolve(this._executeRequest(item.req))
-                .then(item.resolve, item.reject)
-                .finally(() => {
-                    this._activeCount -= 1;
-                    this._drainQueue();
-                });
-        }
-    }
-
-    _enqueue(req) {
-        return new Promise((resolve, reject) => {
-            this._queue.push({ req, resolve, reject });
-            this._drainQueue();
-        });
-    }
-
-    async dispatch_once(nonBlocking = false) {
-        const reqs = get_ui_requests(this.window_id);
-        if (nonBlocking === true) {
-            for (const req of reqs) {
-                this._enqueue(req);
-            }
-            return reqs.length;
-        }
-        const promises = reqs.map((req) => this._enqueue(req));
-        await Promise.all(promises);
-        return reqs.length;
-    }
-
-    serve_forever(pollIntervalMs = 50) {
-        _ensureConnected();
-        _keepAliveRefCount += 1;
-        _updateSocketRef();
-        push_ready(this.window_id, Object.keys(this._routes).sort());
-
-        return new Promise((resolve) => {
-            let finished = false;
-            let safetyTimer = null;
-
-            const cleanup = () => {
-                if (finished) return;
-                finished = true;
-                _listeners.delete(onEvent);
-                if (safetyTimer) {
-                    clearInterval(safetyTimer);
-                    safetyTimer = null;
-                }
-                _keepAliveRefCount = Math.max(0, _keepAliveRefCount - 1);
-                _updateSocketRef();
-                resolve();
-            };
-
-            const onEvent = () => {
-                this.dispatch_once(true);
-                if (is_window_closed(this.window_id)) {
-                    cleanup();
-                }
-            };
-
-            _listeners.add(onEvent);
-            safetyTimer = setInterval(onEvent, Math.max(50, Number(pollIntervalMs) || 500));
-            if (typeof safetyTimer.unref === 'function') {
-                safetyTimer.unref();
-            }
-            onEvent();
-        });
-    }
-}
-
 module.exports = {
     display,
-    push_event,
-    push_ready,
-    get_ui_payload,
-    get_ui_requests,
     is_window_closed,
+    wait_until_closed,
     get_app_uds,
     get_app_port,
-    wait_until_closed,
     expose_app,
-    BidiRouter,
-    _send_ipc_frame,
     send_ipc_frame
 };

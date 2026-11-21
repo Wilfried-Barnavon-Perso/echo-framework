@@ -15,7 +15,7 @@ Le Système exécute chaque script dans un conteneur isolé Bubblewrap (`bwrap`,
   - `/browserviews` (**Lecture seule**) : Captures d'écran de navigation web de la session.
   - `/echo_libs_sandbox` (**Lecture seule**) : Librairies natives (`echo_monitor.py`, `echo_monitor.js`).
   - `/sandbox-agent-readme.md` (**Lecture seule**) : Présent manuel de référence.
-  - `/run/echo_ipc.sock` (**Socket Unix AF_UNIX**) : Bus IPC mémoire binaire `< 2 ms` entre la Sandbox et le Hub Worker.
+  - `/run/echo_ipc.sock` (**Socket Unix AF_UNIX**) : Bus IPC mémoire binaire entre la Sandbox et le Hub Worker (`display`, `expose_app`, `window_closed`).
   - `/run/echo_app/http.sock` (**Socket Unix AF_UNIX** dans répertoire `/run/echo_app` RW) : Point d'écoute privilégié pour les serveurs web complets (FastAPI, Uvicorn, Express, `ws`).
 - **Variables d'environnement pré-injectées** :
   - `ECHO_RUN_ID` : Identifiant unique de l'exécution (`run_xxxxxxxx`).
@@ -43,11 +43,12 @@ Le Système exécute chaque script dans un conteneur isolé Bubblewrap (`bwrap`,
 
 ## 3. Modes d'Exécution & Pilotage du Cycle de Vie (`run_id`)
 1. **Mode Synchrone (`background=False`, valeur par défaut)** :
-   - Le Système attend la terminaison du processus (jusqu'à `timeout_sec`) et restitue la sortie complète (`stdout`/`stderr`) ainsi que le `run_id`.
+   - Adapté aux scripts de calcul et aux rendus visuels statiques (Pattern A : `echo_monitor.display()`).
+   - Le Système attend la terminaison du processus (jusqu'à `timeout_sec`) et restitue la sortie complète (`stdout`/`stderr`), les frames générées et le `run_id`.
 2. **Mode Arrière-Plan / Serveur (`background=True`)** :
-   - **ABSOLUMENT OBLIGATOIRE** pour tout serveur persistant : `BidiRouter.serve_forever()` (Pattern A) et `echo_monitor.expose_app()` (Pattern B).
+   - **ABSOLUMENT OBLIGATOIRE** pour toute application web persistante utilisant `echo_monitor.expose_app()` (Pattern B).
    - Le Système démarre le processus en arrière-plan, exécute une sonde de disponibilité (`Readiness Probe` jusqu'à `8s` via `/wait_ready`) et retourne immédiatement le `run_id` et le `pid`.
-   - Cycle de vie gouverné par un **TTL d'inactivité** (`1800s` par défaut, renouvelé à chaque interaction UI / proxy HTTP-WS / `/canvas_signal`) et un **plafond absolu** de `4h` (`14400s`).
+   - Cycle de vie gouverné par un **TTL d'inactivité** (`1800s` par défaut, renouvelé à chaque requête proxy HTTP/SSE/WS ou `/canvas_signal`) et un **plafond absolu** de `4h` (`14400s`).
    - Le Modèle DOIT utiliser `control_sandbox_execution(action, run_id, wait_sec)` pour superviser le processus :
      - `action="status"` : Inspecte l'état (`running`, `completed`, `error`, `timeout`, `killed`) d'un `run_id` ou liste tous les jobs de la session si `run_id` est omis.
      - `action="listen"` : Lit de manière incrémentale les nouveaux flux `stdout_chunk` et `stderr_chunk` du `run_id` (avec attente optionnelle `wait_sec` de `0` à `60` secondes).
@@ -57,52 +58,35 @@ Le Système exécute chaque script dans un conteneur isolé Bubblewrap (`bwrap`,
 
 ## 4. Interfaces & Serveurs dans l'Onglet Applications (`EchoCanvasTab`)
 
-Toute interface visuelle Sandbox est projetée dans l'onglet natif **Applications** (`EchoCanvasTab`) à l'intérieur d'une `<iframe sandbox="allow-scripts allow-forms allow-modals allow-popups">` (**sans** `allow-same-origin`).
-- **Contrainte de Sécurité `Origin: null`** : Dans une iframe sandboxée sans `allow-same-origin`, `localStorage`, `sessionStorage` et `document.cookie` sont **inutilisables** (`SecurityError`). Il est **ABSOLUMENT INTERDIT** de stocker un état persistant côté navigateur ; toute persistance d'état DOIT résider côté serveur dans `/sandbox` (SQLite, JSON ou fichiers).
+Toute interface visuelle Sandbox est projetée dans l'onglet natif **Applications** (`EchoCanvasTab`) à l'intérieur d'une `<iframe sandbox="allow-scripts allow-downloads allow-forms allow-modals allow-popups">` (**sans** `allow-same-origin`).
+- **Contrainte de Sécurité `Origin: null` & Polyfill RAM** : Dans une iframe sandboxée sans `allow-same-origin`, l'origine est opaque (`Origin: null`). L'hôte injecte un polyfill **en mémoire vive (RAM uniquement)** pour `localStorage` et `sessionStorage` afin d'éviter toute `SecurityError` sur les librairies tierces, mais cet état est strictement volatil (perdu au rechargement de la vue). Toute persistance durable d'état DOIT résider côté serveur dans `/sandbox` (SQLite, JSON ou fichiers).
 
-### 4.1 Pattern A — Widget Réactif Mono-Fichier (`display` + `BidiRouter`, Latence `< 2 ms`)
-Adapté aux widgets interactifs mono-HTML nécessitant des échanges RPC JSON ou binaires (`ArrayBuffer`) à très faible latence sur `/run/echo_ipc.sock`.
-- **Primitives `echo_monitor` (Python & Node.js)** :
-  - `display(html_content, title="ECHO Sandbox Monitor", width="100%", height="400px", window_id="default")` : Transmet l'interface HTML brute UTF-8 sans rechargement préalable.
-  - `push_event(data, window_id="default", req_id=None, binary=None)` : Pousse un événement JSON (avec charge binaire `bytes`/`Buffer` optionnelle) sans recréer le DOM.
-  - `push_ready(window_id="default", actions=None)` : Déclare les actions RPC prêtes (appelé automatiquement par `BidiRouter.serve_forever()`).
-  - `get_ui_requests(window_id=None)` / `is_window_closed(window_id="default")`.
-  - `BidiRouter(window_id="default", max_workers=4)` : Routeur concurrent exposant `@router.route(action)` (Python) / `router.route(action, handler)` (Node.js) et `serve_forever()`. Un handler acceptant `(payload, binary)` reçoit le binaire brut ; retourner `(data, bytes)` émet une réponse mixte JSON+binaire.
-- **Helpers JS pré-injectés dans l'`<iframe>`** :
-  - `await window.echoRequest(action, payload, arrayBuffer?)` : Appelle le `BidiRouter` (JSON + `ArrayBuffer` optionnel) et retourne une `Promise` résolue à la réponse.
-  - `window.onEchoEvent((data, reqId, arrayBuffer) => { ... })` : Écoute les événements poussés spontanément par le script Sandbox.
+### 4.1 Pattern A — Rendu Statique (`display`, `background=False`)
+Adapté aux restitutions visuelles statiques (tableaux, graphiques HTML/SVG/Canvas, rapports interactifs autonomes côté client) sans boucle serveur persistante.
+- **Primitive `echo_monitor` (Python & Node.js)** :
+  - `display(html_content, title="ECHO Sandbox Monitor", width="100%", height="400px", window_id="default")` : Transmet l'interface HTML UTF-8 au Hub via `/run/echo_ipc.sock`, puis le script se termine.
 
 ```python
-# Exemple Pattern A (Python, background=True)
+# Exemple Pattern A — Rendu Statique (Python, background=False)
 import echo_monitor
 
-HTML = """
-<div style="padding:16px;font-family:sans-serif;">
-  <button id="btn">Calculer</button><pre id="out"></pre>
-  <script>
-    document.getElementById('btn').onclick = async () => {
-      const res = await window.echoRequest('compute', { x: 21 });
-      document.getElementById('out').textContent = JSON.stringify(res);
-    };
-  </script>
-</div>
-"""
+HTML = """<!doctype html>
+<html>
+<body style="font-family:sans-serif;padding:16px;">
+  <h2>Rapport Statique ECHO</h2>
+  <p>Visualisation autonome rendue en mode srcdoc.</p>
+</body>
+</html>"""
 
-echo_monitor.display(HTML, title="Calculateur Bidi", window_id="calc_ui")
-router = echo_monitor.BidiRouter(window_id="calc_ui")
-
-@router.route("compute")
-def handle_compute(payload):
-    return {"double": payload.get("x", 0) * 2}
-
-router.serve_forever()
+echo_monitor.display(HTML, title="Rapport Statique", window_id="report_ui")
 ```
 
-### 4.2 Pattern B — Serveur Web Complet Multi-Routes & WebSockets (`expose_app`)
-Adapté aux applications web multi-pages, APIs REST, téléchargements de fichiers, assets statiques et WebSockets temps réel. Le Système proxifie automatiquement le trafic HTTP et WebSocket via un capability ticket HMAC (`/echo/v1/wm/app/{ticket}/...`) vers le Socket Unix `/run/echo_app/http.sock` (ou port TCP éphémère vérifié).
+### 4.2 Pattern B — Application Web Client-Serveur (`expose_app`, `background=True`)
+Adapté aux applications web interactives, APIs REST, streaming SSE, téléchargements de fichiers, assets statiques et WebSockets temps réel. Le Système proxifie automatiquement le trafic HTTP/SSE et WebSocket via un capability ticket HMAC (`/echo/v1/wm/app/{ticket}/...`) vers le Socket Unix `/run/echo_app/http.sock` (ou port TCP éphémère vérifié).
 - **Primitives `echo_monitor` (Python & Node.js)** :
   - `get_app_uds() -> str` : Retourne `ECHO_APP_UDS` (`/run/echo_app/http.sock`).
   - `get_app_port() -> int` : Retourne `ECHO_APP_PORT`.
+  - `is_window_closed(window_id="default") -> bool` : Indique si la fenêtre a été fermée par L'Utilisateur ou si le canal IPC est fermé.
   - `wait_until_closed(window_id="default")` : Bloque événementiellement (Python `Condition` / Node `Promise<void>`) jusqu'à fermeture de la fenêtre.
   - `expose_app(target=None, title="Application Sandbox", width="100%", height="600px", window_id="default", health_path="/", wait_timeout=15.0, block=True)` : Attend l'ouverture du socket serveur (UDS prioritaire puis TCP), publie l'application dans **Applications** et bloque par défaut (`block=True`) jusqu'à fermeture. En Node.js, accepte un objet d'options `{ target, title, ... }` ou les arguments positionnels.
 - **Règle d'adressage Frontend dans l'iframe** : Le proxy HTML injecte automatiquement `<base>` et réécrit `fetch('/...')` ainsi que `new WebSocket('/...')` vers `/echo/v1/wm/app/{ticket}/...` (et expose les helpers explicites `window.echoAppUrl(path)` et `window.echoWsUrl(path)`). Les pages HTML servies PEUVENT donc utiliser des URLs relatives (`./api/items`) ou `/...` (`fetch('/api/items')`, `new WebSocket('/ws')`) sans altération.
@@ -162,11 +146,8 @@ server.listen(uds, async () => {
 });
 ```
 
-### 4.3 Pattern C — Snapshot One-Shot (`display` + `get_ui_payload`)
-Adapté aux restitutions visuelles statiques ou interactives sans boucle serveur persistante (`background=False`). Le script appelle `echo_monitor.display(html, ...)` puis se termine ; `get_ui_payload(window_id)` reste disponible pour lire le dernier état synchronisé lors d'une ré-exécution ultérieure.
-
 ---
 
-## 5. Supervision Automatique (Pacemaker Anti-Zombie)
-- L'hôte UI émet un battement de cœur batch (`echoPings`) toutes les `5000ms` pour les fenêtres actives, avec tolérances de `25s` au démarrage (`boot_timeout`) et `45s` en fonctionnement (`ping_timeout`).
-- Si L'Utilisateur ferme la vue de l'application (`window_closed` $\rightarrow$ `_is_closed: true`), Le Système accorde un délai de grâce de `3s` pour une sortie propre du script avant d'exécuter `POST /kill` associé au `run_id`.
+## 5. Cycle de Vie & Arrêt Gracieux
+- **Expiration d'activité & Durée maximale** : Tout processus en arrière-plan (`background=True`) est arrêté par `SIGKILL` au-delà de son TTL d'inactivité (`idle_ttl_sec = 1800s` par défaut, réarmé sur toute requête HTTP/SSE/WS proxifiée et tout `/canvas_signal`) ou de sa durée maximale absolue (`max_lifetime_sec = 14400s` / `4h`).
+- **Fermeture de fenêtre & Arrêt gracieux** : Lorsque L'Utilisateur ferme la vue applicative (`window_closed` transmis via `/canvas_signal` vers le bus IPC `/run/echo_ipc.sock`), `wait_until_closed(window_id)` est débloqué et `is_window_closed(window_id)` passe à `True`. Le Système accorde un délai de grâce de `3s` pour permettre au serveur de fermer proprement ses ressources avant d'exécuter l'arrêt forcé (`SIGKILL`) du groupe de processus associé au `run_id`.

@@ -86,17 +86,6 @@ export interface EchoCanvasFrame {
 	[key: string]: any;
 }
 
-export interface EchoCanvasEventPayload {
-	chatId: string;
-	windowId: string;
-	data: any;
-	reqId?: string | null;
-	seq: number;
-	isStatusEvent?: boolean;
-	serverStatus?: string;
-	exitCode?: number | null;
-}
-
 export interface EchoCognitionStep {
 	sub_sid: string;
 	step_index: number;
@@ -301,31 +290,6 @@ export const echoBrowserTarget = writable<{
 export const echoBrowserLiveFrames = writable<Record<string, any[]>>({});
 export const echoCanvasFrames = writable<Record<string, EchoCanvasFrame[]>>({});
 export const echoCanvasActiveFrame = writable<Record<string, string>>({});
-export const echoCanvasEventQueues = writable<Record<string, EchoCanvasEventPayload[]>>({});
-let canvasEventSeq = 0;
-
-const canvasQueueKey = (chatId: string, windowId: string): string => `${chatId}::${windowId}`;
-
-export const enqueueEchoCanvasEvent = (ev: EchoCanvasEventPayload): void => {
-	const key = canvasQueueKey(ev.chatId, ev.windowId);
-	echoCanvasEventQueues.update((queues) => {
-		const existing = queues[key] || [];
-		return { ...queues, [key]: [...existing, ev].slice(-200) };
-	});
-};
-
-export const drainEchoCanvasEvents = (chatId: string, windowId: string): EchoCanvasEventPayload[] => {
-	const key = canvasQueueKey(chatId, windowId);
-	let drained: EchoCanvasEventPayload[] = [];
-	echoCanvasEventQueues.update((queues) => {
-		if (!queues[key] || queues[key].length === 0) return queues;
-		drained = queues[key];
-		const next = { ...queues };
-		delete next[key];
-		return next;
-	});
-	return drained;
-};
 
 export const hydrateEchoCanvasFrames = (chatId: string, rawFrames: any[]): void => {
 	if (!chatId || !Array.isArray(rawFrames) || rawFrames.length === 0) return;
@@ -348,6 +312,7 @@ export const hydrateEchoCanvasFrames = (chatId: string, rawFrames: any[]): void 
 					...list[idx],
 					...raw,
 					id,
+					src: raw.src || (raw.html ? '' : list[idx]?.src || ''),
 					run_id: raw.run_id ?? list[idx].run_id ?? '',
 					server_status: raw.server_status ?? list[idx].server_status ?? 'running',
 					exit_code: raw.exit_code ?? list[idx].exit_code ?? null,
@@ -392,20 +357,6 @@ export const removeEchoCanvasFrames = (chatId: string, frameIds?: string[]): voi
 			return next;
 		}
 		return { ...all, [chatId]: remaining };
-	});
-	echoCanvasEventQueues.update((queues) => {
-		const prefix = `${chatId}::`;
-		let changed = false;
-		const next = { ...queues };
-		for (const key of Object.keys(next)) {
-			if (!key.startsWith(prefix)) continue;
-			const wid = key.slice(prefix.length);
-			if (!idSet || idSet.has(wid)) {
-				delete next[key];
-				changed = true;
-			}
-		}
-		return changed ? next : queues;
 	});
 	echoCanvasActiveFrame.update((curr) => {
 		const active = curr[chatId];
@@ -762,8 +713,15 @@ const openWmSocket = () => {
 					echoCanvasFrames.update((all) => {
 						const list = all[cid] || [];
 						const idx = list.findIndex((f) => f.id === frame.id);
-						const next = idx >= 0 ? list.map((f, i) => (i === idx ? { ...f, ...frame } : f)) : [...list, frame];
-						return { ...all, [cid]: next };
+						if (idx >= 0) {
+							const merged: EchoCanvasFrame = {
+								...list[idx],
+								...frame,
+								src: frame.src || (frame.html ? '' : list[idx]?.src || '')
+							};
+							return { ...all, [cid]: list.map((f, i) => (i === idx ? merged : f)) };
+						}
+						return { ...all, [cid]: [...list, frame] };
 					});
 					echoCanvasActiveFrame.update((curr) => ({ ...curr, [cid]: frame.id }));
 					requestEchoTabOpen(cid, 'echo-canvas', { frameId: frame.id, auto: data.auto ?? true });
@@ -773,15 +731,17 @@ const openWmSocket = () => {
 				const wids: string[] = Array.isArray(data.window_ids)
 					? data.window_ids.map(String).filter(Boolean)
 					: [];
-				if (cid && wids.length > 0) {
+				const runId = data.run_id || '';
+				if (cid && (wids.length > 0 || runId)) {
 					const serverStatus = data.server_status || 'completed';
 					const exitCode = data.exit_code ?? null;
-					const runId = data.run_id || '';
 					echoCanvasFrames.update((all) => {
 						const list = all[cid] || [];
 						if (list.length === 0) return all;
 						const next = list.map((f) => {
-							if (wids.includes(f.id) && (!runId || !f.run_id || f.run_id === runId)) {
+							const matchesWid = wids.length > 0 && wids.includes(f.id) && (!runId || !f.run_id || f.run_id === runId);
+							const matchesRun = Boolean(runId) && f.run_id === runId;
+							if (matchesWid || matchesRun) {
 								return {
 									...f,
 									server_status: serverStatus,
@@ -792,23 +752,6 @@ const openWmSocket = () => {
 						});
 						return { ...all, [cid]: next };
 					});
-					for (const wid of wids) {
-						canvasEventSeq += 1;
-						enqueueEchoCanvasEvent({
-							chatId: cid,
-							windowId: wid,
-							data: {
-								server_status: serverStatus,
-								exit_code: exitCode,
-								run_id: runId
-							},
-							reqId: null,
-							seq: canvasEventSeq,
-							isStatusEvent: true,
-							serverStatus,
-							exitCode
-						});
-					}
 				}
 			}
 		} catch {

@@ -303,14 +303,8 @@ type Settings = {
 	splitLargeChunks?(body: any, splitLargeChunks: any): unknown;
 	backgroundImageUrl?: string | null;
 	landingPageMode?: string;
-	iframeSandboxAllowScripts?: boolean;
-	iframeSandboxAllowForms?: boolean;
-	iframeSandboxAllowSameOrigin?: boolean;
-	iframeSandboxAllowDownloads?: boolean;
-	terminalPreviewAllowSameOrigin?: boolean;
 	scrollOnBranchChange?: boolean;
 	scrollOnResponseGeneration?: boolean;
-	terminalFileDisplay?: 'sidebar' | 'inline';
 	directConnections?: null;
 	chatBubble?: boolean;
 	copyFormatted?: boolean;

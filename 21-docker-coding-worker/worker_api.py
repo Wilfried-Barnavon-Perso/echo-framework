@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 6.16.0.3
+VERSION : 6.17.4.1
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-11-21
 
@@ -9,6 +9,7 @@ DATE MAJ : 2026-11-21
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.17.4.1: Purge /ws/canvas et relais BidiRouter, ajout webhook interne sandbox_event HMAC et durcissement proxy HTTP/WS B2 (Option B).
 # 6.16.0.3: CanvasRunHub AF_UNIX, /ws/canvas/{run_id}, proxy HTTP/WS B2 (/app_proxy, /ws/app) et purge monitor_payloads/flag test port.
 # 6.15.2.1: Long-polling /poll_monitor (wait), purge TTL/lifetime jobs terminés, contrôle /kill par run_id et payloads.
 # 6.13.1.1: Exposition de job_state, exit_code et alive dans GET /poll_monitor.
@@ -48,11 +49,6 @@ try:
 except ImportError:
     websockets = None
     _WsConnectionClosed = Exception
-
-try:
-    import aiohttp
-except ImportError:
-    aiohttp = None
 
 # Configuration des logs pour voir qui fait quoi dans la console Docker
 
@@ -94,6 +90,7 @@ FINISHED_JOBS_MAX_PER_CHAT = 20
 FINISHED_JOBS_TTL_SEC = 900
 DEFAULT_BG_IDLE_TTL_SEC = float(os.environ.get("SANDBOX_BG_IDLE_TTL_SEC", 1800.0))
 DEFAULT_BG_MAX_LIFETIME_SEC = float(os.environ.get("SANDBOX_BG_MAX_LIFETIME_SEC", 14400.0))
+ECHO_WEBUI_INTERNAL_URL = os.environ.get("ECHO_WEBUI_INTERNAL_URL", "http://echo-webui:8080").rstrip("/")
 
 _JOBS_REGISTRY = {}
 _JOBS_LOCK = threading.Lock()
@@ -126,6 +123,31 @@ def _get_sandbox_dir(user_id, chat_id):
     return None
 
 
+def _notify_webui_sandbox_event(callback_token: str, payload: dict) -> None:
+    """Émet de manière non-bloquante un événement sandbox vers le backend Open WebUI."""
+    token = str(callback_token or "").strip()
+    if not token or not isinstance(payload, dict):
+        return
+    url = f"{ECHO_WEBUI_INTERNAL_URL}/echo/v1/wm/internal/sandbox_event"
+    body = orjson.dumps(payload)
+
+    def _send():
+        try:
+            with httpx.Client(timeout=2.5) as client:
+                client.post(
+                    url,
+                    content=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Echo-Callback-Token": token,
+                    },
+                )
+        except Exception:
+            pass
+
+    threading.Thread(target=_send, daemon=True, name="echo-sandbox-cb").start()
+
+
 def _allocate_ephemeral_port() -> int:
     for _ in range(16):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -139,13 +161,17 @@ def _allocate_ephemeral_port() -> int:
 class CanvasRunHub:
     """
     Bus IPC mémoire + serveur Socket Unix (AF_UNIX / repli AF_INET) par run_id
-    relayant en full-duplex (< 2 ms) entre le bwrap Sandbox et les clients WebSocket.
+    entre le bwrap Sandbox et le Hub Worker (display, expose_app, window_closed).
     """
 
     _HEADER_STRUCT = struct.Struct(">II")
 
-    def __init__(self, run_id, initial_ui_payload=None):
+    def __init__(self, run_id, user_id="", chat_id="", is_background=False, callback_token=""):
         self.run_id = str(run_id)
+        self.user_id = str(user_id or "")
+        self.chat_id = str(chat_id or "")
+        self.is_background = bool(is_background)
+        self.callback_token = str(callback_token or "").strip()
         self.safe_rid = _sanitize_id(self.run_id, default=uuid.uuid4().hex[:8])
         self.ipc_dir = os.path.join(tempfile.gettempdir(), "echo_ipc", self.safe_rid)
         self.app_sock_dir = os.path.join(self.ipc_dir, "app")
@@ -158,21 +184,11 @@ class CanvasRunHub:
         self.lock = threading.Lock()
         self.write_lock = threading.Lock()
         self.frames = {}
-        self.ready_windows = {}
         self.app_targets = {}
         self._verified_tcp_inodes = set()
-        self.ui_payloads = {}
         self.closed_windows = set()
-        if isinstance(initial_ui_payload, dict):
-            for wid, val in initial_ui_payload.items():
-                swid = str(wid)
-                self.ui_payloads[swid] = val
-                if isinstance(val, dict) and val.get("_is_closed"):
-                    self.closed_windows.add(swid)
 
         self.ready_or_display_event = threading.Event()
-        self.ws_clients = {}
-        self.last_ws_disconnect_at = 0.0
 
         self._job_ref = None
         self._server_sock = None
@@ -261,10 +277,7 @@ class CanvasRunHub:
             with self.write_lock:
                 self._active_client = conn
             with self.lock:
-                payloads_snap = dict(self.ui_payloads)
                 closed_snap = list(self.closed_windows)
-            for wid, payload in payloads_snap.items():
-                self._send_frame_to_conn(conn, {"type": "payload_sync", "window_id": wid, "payload": payload})
             for wid in closed_snap:
                 self._send_frame_to_conn(conn, {"type": "window_closed", "window_id": wid})
             t = threading.Thread(
@@ -295,14 +308,6 @@ class CanvasRunHub:
     def send_to_sandbox(self, meta, binary=b""):
         if not isinstance(meta, dict):
             return False
-        mtype = meta.get("type")
-        wid = str(meta.get("window_id") or "default")
-        if mtype == "payload_sync":
-            payload = meta.get("payload")
-            with self.lock:
-                self.ui_payloads[wid] = payload
-                if isinstance(payload, dict) and payload.get("_is_closed"):
-                    self.closed_windows.add(wid)
         with self.write_lock:
             conn = self._active_client
         if conn is None:
@@ -319,21 +324,7 @@ class CanvasRunHub:
         for wid in wids:
             with self.lock:
                 self.closed_windows.add(wid)
-                existing = self.ui_payloads.get(wid)
-                if isinstance(existing, dict):
-                    existing["_is_closed"] = True
-                else:
-                    self.ui_payloads[wid] = {"_is_closed": True}
             self.send_to_sandbox({"type": "window_closed", "window_id": wid}, b"")
-
-    def _broadcast_ws(self, item):
-        with self.lock:
-            clients = list(self.ws_clients.values())
-        for loop, q in clients:
-            try:
-                loop.call_soon_threadsafe(q.put_nowait, item)
-            except Exception:
-                pass
 
     def _client_reader(self, conn):
         try:
@@ -370,33 +361,24 @@ class CanvasRunHub:
                             "width": width,
                             "height": height,
                             "html": html_str,
+                            "mode": "srcdoc",
+                            "window_id": wid,
                             "updated_at": ts,
                         }
+                        frame_obj = dict(self.frames[wid])
                     self._touch_activity(ts)
                     self.ready_or_display_event.set()
-                    ws_msg = orjson.dumps({
-                        "type": "display",
-                        "run_id": self.run_id,
-                        "window_id": wid,
-                        "title": title,
-                        "width": width,
-                        "height": height,
-                        "html": html_str,
-                    }).decode("utf-8")
-                    self._broadcast_ws(ws_msg)
-                elif mtype == "ready":
-                    actions = list(meta.get("actions") or [])
-                    with self.lock:
-                        self.ready_windows[wid] = actions
-                    self._touch_activity()
-                    self.ready_or_display_event.set()
-                    ws_msg = orjson.dumps({
-                        "type": "ready",
-                        "run_id": self.run_id,
-                        "window_id": wid,
-                        "actions": actions,
-                    }).decode("utf-8")
-                    self._broadcast_ws(ws_msg)
+                    if self.is_background and self.callback_token:
+                        _notify_webui_sandbox_event(
+                            self.callback_token,
+                            {
+                                "event": "frame_upsert",
+                                "user_id": self.user_id,
+                                "chat_id": self.chat_id,
+                                "run_id": self.run_id,
+                                "frame": frame_obj,
+                            },
+                        )
                 elif mtype == "expose_app":
                     raw_target = str(meta.get("target") or "").strip()
                     resolved_target = None
@@ -431,33 +413,20 @@ class CanvasRunHub:
                             "window_id": wid,
                             "updated_at": ts,
                         }
+                        frame_obj = dict(self.frames[wid])
                     self._touch_activity(ts)
                     self.ready_or_display_event.set()
-                    ws_msg = orjson.dumps({
-                        "type": "expose_app",
-                        "run_id": self.run_id,
-                        "window_id": wid,
-                        "title": title,
-                        "width": width,
-                        "height": height,
-                        "mode": "app_proxy",
-                    }).decode("utf-8")
-                    self._broadcast_ws(ws_msg)
-                elif mtype == "event":
-                    self._touch_activity()
-                    ev_meta = {
-                        "type": "event",
-                        "run_id": self.run_id,
-                        "window_id": wid,
-                        "req_id": meta.get("req_id"),
-                        "data": meta.get("data"),
-                    }
-                    if not bin_raw:
-                        self._broadcast_ws(orjson.dumps(ev_meta).decode("utf-8"))
-                    else:
-                        meta_bytes = orjson.dumps(ev_meta)
-                        ws_bin = struct.pack("!I", len(meta_bytes)) + meta_bytes + bin_raw
-                        self._broadcast_ws(ws_bin)
+                    if self.is_background and self.callback_token:
+                        _notify_webui_sandbox_event(
+                            self.callback_token,
+                            {
+                                "event": "frame_upsert",
+                                "user_id": self.user_id,
+                                "chat_id": self.chat_id,
+                                "run_id": self.run_id,
+                                "frame": frame_obj,
+                            },
+                        )
         except OSError:
             pass
         finally:
@@ -469,44 +438,9 @@ class CanvasRunHub:
             except OSError:
                 pass
 
-    def register_ws_client(self, client_id, loop, out_queue):
-        with self.lock:
-            self.ws_clients[client_id] = (loop, out_queue)
-
-    def unregister_ws_client(self, client_id):
-        with self.lock:
-            self.ws_clients.pop(client_id, None)
-            self.last_ws_disconnect_at = time.time()
-
     def get_frames_list(self):
         with self.lock:
             return list(self.frames.values())
-
-    def get_ready_window_ids(self):
-        with self.lock:
-            return list(self.ready_windows.keys())
-
-    def get_payloads_dict(self):
-        with self.lock:
-            return dict(self.ui_payloads)
-
-    def get_snapshot(self, job=None):
-        job_state = self._job_state
-        exit_code = self._exit_code
-        if job is not None:
-            with job["lock"]:
-                job_state = job["state"]
-                exit_code = job["exit_code"]
-        with self.lock:
-            return {
-                "type": "snapshot",
-                "run_id": self.run_id,
-                "frames": list(self.frames.values()),
-                "ready_windows": dict(self.ready_windows),
-                "closed_windows": list(self.closed_windows),
-                "job_state": job_state,
-                "exit_code": exit_code,
-            }
 
     def mark_job_finished(self, job_state, exit_code):
         with self.lock:
@@ -517,14 +451,19 @@ class CanvasRunHub:
             self._exit_code = exit_code
             window_ids = list(self.frames.keys())
         self.ready_or_display_event.set()
-        ws_msg = orjson.dumps({
-            "type": "status",
-            "run_id": self.run_id,
-            "job_state": job_state,
-            "exit_code": exit_code,
-            "window_ids": window_ids,
-        }).decode("utf-8")
-        self._broadcast_ws(ws_msg)
+        if self.callback_token and (self.is_background or window_ids):
+            _notify_webui_sandbox_event(
+                self.callback_token,
+                {
+                    "event": "run_finished",
+                    "user_id": self.user_id,
+                    "chat_id": self.chat_id,
+                    "run_id": self.run_id,
+                    "state": job_state,
+                    "exit_code": exit_code,
+                    "window_ids": window_ids,
+                },
+            )
 
         with self.write_lock:
             if self._active_client is not None:
@@ -636,25 +575,6 @@ def _job_lifecycle_watcher(job):
                         job["error_msg"] = f"Durée maximale serveur dépassée ({int(job['max_lifetime_sec'])}s)."
                         should_kill = True
 
-                if not should_kill and hub is not None:
-                    with hub.lock:
-                        is_bidi = bool(hub.ready_windows)
-                        ws_count = len(hub.ws_clients)
-                        last_disc = hub.last_ws_disconnect_at
-                    if is_bidi and ws_count == 0:
-                        if last_disc > 0.0 and (now - last_disc) > 45.0:
-                            with job["lock"]:
-                                if job["state"] == "running":
-                                    job["state"] = "killed"
-                                    job["error_msg"] = "Serveur Bidi orphelin arrêté (déconnexion WS > 45s)."
-                                    should_kill = True
-                        elif last_disc == 0.0 and (now - job["started_at"]) > 25.0:
-                            with job["lock"]:
-                                if job["state"] == "running":
-                                    job["state"] = "killed"
-                                    job["error_msg"] = "Serveur Bidi orphelin arrêté (aucune connexion WS sous 25s)."
-                                    should_kill = True
-
                 if should_kill:
                     _kill_process_group(proc)
                     break
@@ -685,9 +605,7 @@ def _job_lifecycle_watcher(job):
 def _build_job_response(job):
     hub = job.get("canvas_hub")
     canvas_frames = hub.get_frames_list() if hub is not None else []
-    ready_wids = hub.get_ready_window_ids() if hub is not None else []
-    ui_ready = bool(ready_wids or canvas_frames)
-    ui_payload = hub.get_payloads_dict() if hub is not None else {}
+    ui_ready = bool(canvas_frames)
 
     with job["lock"]:
         stdout_str = "".join(job["stdout_buf"])
@@ -706,7 +624,6 @@ def _build_job_response(job):
             "output": stdout_str,
             "canvas_frames": canvas_frames,
             "ui_ready": ui_ready,
-            "ui_payload": ui_payload,
         }
 
     status_val = "success" if state == "completed" else ("killed" if state == "killed" else "error")
@@ -719,7 +636,6 @@ def _build_job_response(job):
         "output": stdout_str,
         "canvas_frames": canvas_frames,
         "ui_ready": ui_ready,
-        "ui_payload": ui_payload,
     }
     if stderr_str:
         res["error"] = stderr_str if not err_msg else f"{err_msg}\n{stderr_str}"
@@ -847,11 +763,12 @@ def _build_interactive_bwrap_cmd(
 def _start_sandbox_job(
     safe_uid, safe_cid, run_id, file_path, dependencies,
     sandbox_dir, files_dir, global_files_dir, deps_dir,
-    timeout_sec, ui_payload, max_output_length,
+    timeout_sec, max_output_length,
     browserviews_dir: str | None = None,
     background: bool = False,
     idle_ttl_sec: float = DEFAULT_BG_IDLE_TTL_SEC,
     max_lifetime_sec: float = DEFAULT_BG_MAX_LIFETIME_SEC,
+    callback_token: str = "",
 ):
     if not sandbox_dir:
         return None, {"status": "critical_error", "error": "Espace d'exécution non défini."}
@@ -912,7 +829,13 @@ def _start_sandbox_job(
                     text=True,
                 )
 
-    hub = CanvasRunHub(run_id, initial_ui_payload=ui_payload)
+    hub = CanvasRunHub(
+        run_id,
+        user_id=safe_uid,
+        chat_id=safe_cid,
+        is_background=background,
+        callback_token=callback_token,
+    )
     hub.start()
 
     bwrap_cmd = _build_base_bwrap_cmd(
@@ -1009,6 +932,7 @@ def _start_sandbox_job(
             "ended_at": None,
             "timeout_sec": timeout_sec,
             "background": bool(background),
+            "callback_token": str(callback_token or "").strip(),
             "idle_ttl_sec": max(30.0, float(idle_ttl_sec)),
             "max_lifetime_sec": max(60.0, float(max_lifetime_sec)),
             "last_activity_at": time.time(),
@@ -1259,12 +1183,33 @@ TERMINAL_MANAGER = TerminalSessionManager()
 # ROUTES FLASK REST EXISTANTES & TERMINAL
 # ================================================================================
 
+def _lookup_job(safe_uid: str, safe_cid: str, run_id: str = "", prune: bool = False):
+    """Recherche centralisée d'un job par (user_id, chat_id, run_id) ou liste des jobs de la session si run_id vide."""
+    with _JOBS_LOCK:
+        if prune and safe_uid and safe_cid:
+            _prune_finished_jobs_unlocked(safe_uid, safe_cid)
+        if not run_id:
+            prefix = f"{safe_uid}:{safe_cid}:"
+            return [j for k, j in _JOBS_REGISTRY.items() if k.startswith(prefix)]
+        if safe_uid and safe_cid:
+            return _JOBS_REGISTRY.get(f"{safe_uid}:{safe_cid}:{run_id}")
+        for candidate in _JOBS_REGISTRY.values():
+            if candidate["run_id"] != run_id:
+                continue
+            if safe_uid and candidate["user_id"] != safe_uid:
+                continue
+            if safe_cid and candidate["chat_id"] != safe_cid:
+                continue
+            return candidate
+    return None
+
+
 @app.route('/execute', methods=['POST'])
 def execute_code():
     data = request.json or {}
     file_path = data.get('file_path', '')
     dependencies = data.get('dependencies') or []
-    ui_payload = data.get('ui_payload', None)
+    callback_token = str(data.get("callback_token") or "").strip()
     timeout = int(data.get('timeout', 30))
     max_output_length = int(data.get('max_output_length', 131072))
     background = bool(data.get('background', False))
@@ -1294,11 +1239,12 @@ def execute_code():
     job, err = _start_sandbox_job(
         safe_uid, safe_cid, run_id, file_path, dependencies,
         sandbox_dir, files_dir, global_files_dir, deps_dir,
-        timeout, ui_payload, max_output_length,
+        timeout, max_output_length,
         browserviews_dir=browserviews_dir,
         background=background,
         idle_ttl_sec=idle_ttl_sec,
         max_lifetime_sec=max_lifetime_sec,
+        callback_token=callback_token,
     )
     if err is not None:
         err["run_id"] = run_id
@@ -1332,26 +1278,23 @@ def status_sandbox():
     except ValueError:
         wait_sec, stdout_offset, stderr_offset = 0.0, 0, 0
 
-    prefix = f"{safe_uid}:{safe_cid}:"
-    with _JOBS_LOCK:
-        _prune_finished_jobs_unlocked(safe_uid, safe_cid)
-        if not run_id:
-            jobs_summary = []
-            for k, j in _JOBS_REGISTRY.items():
-                if k.startswith(prefix):
-                    with j["lock"]:
-                        jobs_summary.append({
-                            "run_id": j["run_id"],
-                            "file_path": j["file_path"],
-                            "pid": j["pid"],
-                            "state": j["state"],
-                            "exit_code": j["exit_code"],
-                            "elapsed_sec": round((j["ended_at"] or time.time()) - j["started_at"], 2),
-                            "stdout_len": sum(len(s) for s in j["stdout_buf"]),
-                            "stderr_len": sum(len(s) for s in j["stderr_buf"]),
-                        })
-            return jsonify({"status": "ok", "jobs": jobs_summary})
-        job = _JOBS_REGISTRY.get(f"{prefix}{run_id}")
+    if not run_id:
+        jobs = _lookup_job(safe_uid, safe_cid, "", prune=True)
+        jobs_summary = []
+        for j in jobs:
+            with j["lock"]:
+                jobs_summary.append({
+                    "run_id": j["run_id"],
+                    "file_path": j["file_path"],
+                    "pid": j["pid"],
+                    "state": j["state"],
+                    "exit_code": j["exit_code"],
+                    "elapsed_sec": round((j["ended_at"] or time.time()) - j["started_at"], 2),
+                    "stdout_len": sum(len(s) for s in j["stdout_buf"]),
+                    "stderr_len": sum(len(s) for s in j["stderr_buf"]),
+                })
+        return jsonify({"status": "ok", "jobs": jobs_summary})
+    job = _lookup_job(safe_uid, safe_cid, run_id, prune=True)
 
     if not job:
         return jsonify({"status": "not_found", "run_id": run_id})
@@ -1429,16 +1372,7 @@ def wait_ready():
     except (TypeError, ValueError):
         wait_sec = 8.0
 
-    job = None
-    if safe_rid:
-        with _JOBS_LOCK:
-            if safe_cid:
-                job = _JOBS_REGISTRY.get(f"{safe_uid}:{safe_cid}:{safe_rid}")
-            else:
-                for candidate in _JOBS_REGISTRY.values():
-                    if candidate["run_id"] == safe_rid and candidate["user_id"] == safe_uid:
-                        job = candidate
-                        break
+    job = _lookup_job(safe_uid, safe_cid, safe_rid) if safe_rid else None
 
     if job is None:
         return jsonify({
@@ -1448,7 +1382,6 @@ def wait_ready():
             "alive": False,
             "ui_ready": False,
             "canvas_frames": [],
-            "ready_windows": [],
         })
 
     hub = job.get("canvas_hub")
@@ -1462,15 +1395,13 @@ def wait_ready():
         exit_code = job["exit_code"]
 
     frames = hub.get_frames_list() if hub is not None else []
-    ready_wins = hub.get_ready_window_ids() if hub is not None else []
     return jsonify({
         "status": "ok",
         "job_state": job_state,
         "exit_code": exit_code,
         "alive": job_state == "running",
-        "ui_ready": bool(ready_wins or frames),
+        "ui_ready": bool(frames),
         "canvas_frames": frames,
-        "ready_windows": ready_wins,
     })
 
 
@@ -1481,22 +1412,12 @@ def canvas_signal():
     safe_cid = _sanitize_id(data.get('chat_id'), default="")
     safe_rid = _sanitize_id(data.get('run_id'), default="")
     raw_closed = data.get('window_closed')
-    payload_sync = data.get('payload_sync')
     try:
         grace = max(0.0, float(data.get('grace_sec', 3.0)))
     except (TypeError, ValueError):
         grace = 3.0
 
-    job = None
-    if safe_rid:
-        with _JOBS_LOCK:
-            if safe_cid:
-                job = _JOBS_REGISTRY.get(f"{safe_uid}:{safe_cid}:{safe_rid}")
-            else:
-                for candidate in _JOBS_REGISTRY.values():
-                    if candidate["run_id"] == safe_rid and candidate["user_id"] == safe_uid:
-                        job = candidate
-                        break
+    job = _lookup_job(safe_uid, safe_cid, safe_rid) if safe_rid else None
 
     if job is None:
         return jsonify({"status": "not_found", "run_id": safe_rid})
@@ -1506,27 +1427,12 @@ def canvas_signal():
         with job["lock"]:
             job["last_activity_at"] = time.time()
 
-        if isinstance(payload_sync, dict):
-            if "window_id" in payload_sync and "payload" in payload_sync:
-                hub.send_to_sandbox({
-                    "type": "payload_sync",
-                    "window_id": str(payload_sync.get("window_id") or "default"),
-                    "payload": payload_sync.get("payload"),
-                })
-            else:
-                for wid, p_val in payload_sync.items():
-                    hub.send_to_sandbox({
-                        "type": "payload_sync",
-                        "window_id": str(wid),
-                        "payload": p_val,
-                    })
-
         if raw_closed:
             wids = [raw_closed] if isinstance(raw_closed, str) else [str(w) for w in raw_closed if w]
             if wids:
                 hub.close_windows(wids)
                 with hub.lock:
-                    known_wids = set(hub.frames.keys()) | set(hub.ready_windows.keys())
+                    known_wids = set(hub.frames.keys())
                     all_closed = (len(known_wids) == 0) or known_wids.issubset(hub.closed_windows)
                 if all_closed:
                     def _grace_killer(target_job, wait_grace):
@@ -1891,151 +1797,6 @@ async def ws_terminal_endpoint(websocket: WebSocket):
                 pass
 
 
-async def ws_canvas_endpoint(websocket: WebSocket):
-    run_id = _sanitize_id(websocket.path_params.get("run_id"), default="")
-    q_uid = websocket.query_params.get("user_id")
-    q_cid = websocket.query_params.get("chat_id")
-    safe_uid = _sanitize_id(q_uid) if q_uid else ""
-    safe_cid = _sanitize_id(q_cid, default="") if q_cid else ""
-
-    job = None
-    if run_id:
-        with _JOBS_LOCK:
-            if safe_uid and safe_cid:
-                job = _JOBS_REGISTRY.get(f"{safe_uid}:{safe_cid}:{run_id}")
-            else:
-                for candidate in _JOBS_REGISTRY.values():
-                    if candidate["run_id"] != run_id:
-                        continue
-                    if safe_uid and candidate["user_id"] != safe_uid:
-                        continue
-                    if safe_cid and candidate["chat_id"] != safe_cid:
-                        continue
-                    job = candidate
-                    break
-
-    await websocket.accept()
-    if job is None or job.get("canvas_hub") is None:
-        try:
-            await websocket.send_text(
-                orjson.dumps({
-                    "type": "status",
-                    "run_id": run_id,
-                    "job_state": "not_found",
-                    "exit_code": None,
-                    "window_ids": [],
-                }).decode("utf-8")
-            )
-            await websocket.close(code=1000)
-        except Exception:
-            pass
-        return
-
-    hub = job["canvas_hub"]
-    client_id = uuid.uuid4().hex
-    loop = asyncio.get_running_loop()
-    out_queue = asyncio.Queue()
-    send_lock = asyncio.Lock()
-    stop_event = asyncio.Event()
-
-    hub.register_ws_client(client_id, loop, out_queue)
-
-    async def _sender():
-        try:
-            while not stop_event.is_set():
-                try:
-                    item = await asyncio.wait_for(out_queue.get(), timeout=20.0)
-                except asyncio.TimeoutError:
-                    async with send_lock:
-                        await websocket.send_text('{"type":"ping"}')
-                    continue
-                async with send_lock:
-                    if isinstance(item, bytes):
-                        await websocket.send_bytes(item)
-                    else:
-                        await websocket.send_text(item)
-        except (WebSocketDisconnect, asyncio.CancelledError):
-            pass
-        except Exception:
-            pass
-        finally:
-            stop_event.set()
-
-    async def _receiver():
-        try:
-            while not stop_event.is_set():
-                msg = await websocket.receive()
-                if msg.get("type") == "websocket.disconnect":
-                    break
-                if "text" in msg and msg["text"] is not None:
-                    try:
-                        payload = orjson.loads(msg["text"])
-                    except Exception:
-                        continue
-                    if not isinstance(payload, dict):
-                        continue
-                    mtype = payload.get("type")
-                    if mtype == "ping":
-                        async with send_lock:
-                            await websocket.send_text('{"type":"pong"}')
-                        continue
-                    with job["lock"]:
-                        job["last_activity_at"] = time.time()
-                    if mtype == "window_closed":
-                        wids = payload.get("window_ids")
-                        if not wids:
-                            wid = payload.get("window_id") or "default"
-                            wids = [wid]
-                        hub.close_windows(wids)
-                    elif mtype in ("rpc", "payload_sync"):
-                        hub.send_to_sandbox(payload, b"")
-                elif "bytes" in msg and msg["bytes"] is not None:
-                    raw = msg["bytes"]
-                    if len(raw) < 4:
-                        continue
-                    meta_len = struct.unpack("!I", raw[:4])[0]
-                    if 4 + meta_len > len(raw):
-                        continue
-                    try:
-                        meta = orjson.loads(raw[4:4 + meta_len])
-                    except Exception:
-                        continue
-                    if isinstance(meta, dict):
-                        with job["lock"]:
-                            job["last_activity_at"] = time.time()
-                        hub.send_to_sandbox(meta, raw[4 + meta_len:])
-        except (WebSocketDisconnect, asyncio.CancelledError):
-            pass
-        except Exception:
-            pass
-        finally:
-            stop_event.set()
-
-    tasks = []
-    try:
-        snapshot = hub.get_snapshot(job)
-        async with send_lock:
-            await websocket.send_text(orjson.dumps(snapshot).decode("utf-8"))
-        tasks = [
-            asyncio.create_task(_sender()),
-            asyncio.create_task(_receiver()),
-        ]
-        _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-        stop_event.set()
-        for t in pending:
-            t.cancel()
-        for t in tasks:
-            try:
-                await t
-            except (asyncio.CancelledError, Exception):
-                pass
-    finally:
-        stop_event.set()
-        for t in tasks:
-            t.cancel()
-        hub.unregister_ws_client(client_id)
-
-
 def _list_listening_inodes_for_port(port: int) -> set[str]:
     inodes: set[str] = set()
     for proc_net in ("/proc/net/tcp", "/proc/net/tcp6"):
@@ -2113,18 +1874,7 @@ def _find_job_for_proxy(run_id: str, user_id: str | None = None, chat_id: str | 
     safe_cid = _sanitize_id(chat_id, default="") if chat_id else ""
     if not safe_rid:
         return None
-    with _JOBS_LOCK:
-        if safe_uid and safe_cid:
-            return _JOBS_REGISTRY.get(f"{safe_uid}:{safe_cid}:{safe_rid}")
-        for candidate in _JOBS_REGISTRY.values():
-            if candidate["run_id"] != safe_rid:
-                continue
-            if safe_uid and candidate["user_id"] != safe_uid:
-                continue
-            if safe_cid and candidate["chat_id"] != safe_cid:
-                continue
-            return candidate
-    return None
+    return _lookup_job(safe_uid, safe_cid, safe_rid)
 
 
 def _resolve_hub_app_target(hub, window_id: str | None):
@@ -2180,8 +1930,11 @@ async def app_http_proxy_endpoint(request):
     fwd_headers = [(k, v) for k, v in request.headers.items() if k.lower() not in req_hop_by_hop]
     body = await request.body()
 
+    accept_hdr = (request.headers.get("accept") or "").lower()
+    wants_sse = "text/event-stream" in accept_hdr
+    proxy_timeout = httpx.Timeout(connect=10.0, write=30.0, read=None if wants_sse else 300.0, pool=10.0)
     transport = httpx.AsyncHTTPTransport(uds=val) if kind == "uds" else None
-    client = httpx.AsyncClient(transport=transport, follow_redirects=False, timeout=60.0)
+    client = httpx.AsyncClient(transport=transport, follow_redirects=False, timeout=proxy_timeout)
     try:
         upstream_req = client.build_request(
             method=request.method,
@@ -2202,11 +1955,15 @@ async def app_http_proxy_endpoint(request):
         (k, v) for k, v in upstream_resp.headers.multi_items()
         if k.lower() not in resp_hop_by_hop
     ]
+    upstream_ct = (upstream_resp.headers.get("content-type") or "").lower()
+    is_sse = wants_sse or ("text/event-stream" in upstream_ct)
 
     async def _stream_body():
         try:
             async for chunk in upstream_resp.aiter_raw():
                 if chunk:
+                    with job["lock"]:
+                        job["last_activity_at"] = time.time()
                     yield chunk
         finally:
             await upstream_resp.aclose()
@@ -2215,6 +1972,8 @@ async def app_http_proxy_endpoint(request):
     resp = StreamingResponse(_stream_body(), status_code=upstream_resp.status_code)
     for k, v in resp_headers:
         resp.headers.append(k, v)
+    if is_sse and not any(k.lower() == "x-accel-buffering" for k, _ in resp_headers):
+        resp.headers["X-Accel-Buffering"] = "no"
     return resp
 
 
@@ -2268,7 +2027,22 @@ async def _relay_via_websockets(websocket: WebSocket, job: dict, kind: str, val,
             finally:
                 stop_event.set()
 
-        tasks = [asyncio.create_task(_c2u()), asyncio.create_task(_u2c())]
+        async def _touch_loop():
+            try:
+                while not stop_event.is_set():
+                    await asyncio.sleep(60.0)
+                    if stop_event.is_set():
+                        break
+                    with job["lock"]:
+                        job["last_activity_at"] = time.time()
+            except asyncio.CancelledError:
+                pass
+
+        tasks = [
+            asyncio.create_task(_c2u()),
+            asyncio.create_task(_u2c()),
+            asyncio.create_task(_touch_loop()),
+        ]
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         finally:
@@ -2280,67 +2054,6 @@ async def _relay_via_websockets(websocket: WebSocket, job: dict, kind: str, val,
                     await t
                 except (asyncio.CancelledError, Exception):
                     pass
-
-
-async def _relay_via_aiohttp(websocket: WebSocket, job: dict, kind: str, val, rel_path: str, query_str: str):
-    suffix = f"/{rel_path}" if rel_path else "/"
-    qs = f"?{query_str}" if query_str else ""
-    connector = aiohttp.UnixConnector(path=val) if kind == "uds" else None
-    ws_url = f"http://localhost{suffix}{qs}" if kind == "uds" else f"http://127.0.0.1:{val}{suffix}{qs}"
-    async with aiohttp.ClientSession(connector=connector) as session:
-        async with session.ws_connect(ws_url) as upstream:
-            stop_event = asyncio.Event()
-
-            async def _c2u():
-                try:
-                    while not stop_event.is_set():
-                        msg = await websocket.receive()
-                        if msg.get("type") == "websocket.disconnect":
-                            break
-                        with job["lock"]:
-                            job["last_activity_at"] = time.time()
-                        if "text" in msg and msg["text"] is not None:
-                            await upstream.send_str(msg["text"])
-                        elif "bytes" in msg and msg["bytes"] is not None:
-                            await upstream.send_bytes(msg["bytes"])
-                except (WebSocketDisconnect, asyncio.CancelledError, Exception):
-                    pass
-                finally:
-                    stop_event.set()
-
-            async def _u2c():
-                try:
-                    while not stop_event.is_set():
-                        msg = await upstream.receive()
-                        if msg.type in (
-                            aiohttp.WSMsgType.CLOSE,
-                            aiohttp.WSMsgType.CLOSED,
-                            aiohttp.WSMsgType.ERROR,
-                        ):
-                            break
-                        with job["lock"]:
-                            job["last_activity_at"] = time.time()
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            await websocket.send_text(msg.data)
-                        elif msg.type == aiohttp.WSMsgType.BINARY:
-                            await websocket.send_bytes(msg.data)
-                except (WebSocketDisconnect, asyncio.CancelledError, Exception):
-                    pass
-                finally:
-                    stop_event.set()
-
-            tasks = [asyncio.create_task(_c2u()), asyncio.create_task(_u2c())]
-            try:
-                await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-            finally:
-                stop_event.set()
-                for t in tasks:
-                    t.cancel()
-                for t in tasks:
-                    try:
-                        await t
-                    except (asyncio.CancelledError, Exception):
-                        pass
 
 
 async def ws_app_proxy_endpoint(websocket: WebSocket):
@@ -2376,14 +2089,7 @@ async def ws_app_proxy_endpoint(websocket: WebSocket):
 
     try:
         if websockets is not None:
-            try:
-                await _relay_via_websockets(websocket, job, kind, val, rel_path, query_str)
-            except RuntimeError:
-                if aiohttp is None:
-                    raise
-                await _relay_via_aiohttp(websocket, job, kind, val, rel_path, query_str)
-        elif aiohttp is not None:
-            await _relay_via_aiohttp(websocket, job, kind, val, rel_path, query_str)
+            await _relay_via_websockets(websocket, job, kind, val, rel_path, query_str)
         else:
             await websocket.close(code=1011)
     except Exception:
@@ -2401,7 +2107,6 @@ async def ws_app_proxy_endpoint(websocket: WebSocket):
 asgi_app = Starlette(
     routes=[
         WebSocketRoute("/api/terminals/{session_id}", ws_terminal_endpoint),
-        WebSocketRoute("/ws/canvas/{run_id}", ws_canvas_endpoint),
         WebSocketRoute("/ws/app/{run_id}", ws_app_proxy_endpoint),
         WebSocketRoute("/ws/app/{run_id}/{path:path}", ws_app_proxy_endpoint),
         Route(

@@ -1313,7 +1313,6 @@
 		}
 		if (type === 'terminal:display_file') {
 			if (!data?.path) return;
-			if ($settings?.terminalFileDisplay === 'inline') return;
 			displayFileHandler(data.path, { showTabs, showFileNavPath }, { page: data?.page });
 		} else if (type === 'terminal:write_file' || type === 'terminal:replace_file_content') {
 			if (!data?.path) return;
@@ -1832,8 +1831,7 @@
 		// (opaque srcdoc origin, submission still confirmed below) or via explicit opt-in.
 		const promptTypes = ['input:prompt', 'input:prompt:submit', 'action:submit'];
 		const isOwnEmbed = isEmbedWindow(event.source);
-		const isTrusted =
-			isSameOrigin || isOwnEmbed || ($settings?.iframeSandboxAllowSameOrigin ?? false);
+		const isTrusted = isSameOrigin || isOwnEmbed;
 
 		// Non-prompt message types are always restricted to same-origin only.
 		if (!isSameOrigin && !promptTypes.includes(type)) {

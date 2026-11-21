@@ -487,11 +487,6 @@
 		return { toolServer, toolServerData, token };
 	};
 
-	const isDirectTerminalServer = (serverUrl) =>
-		!!serverUrl &&
-		(($settings?.terminalServers ?? []).some((server) => server.url === serverUrl) ||
-			($terminalServers ?? []).some((server) => !server.id && server.url === serverUrl));
-
 	const terminalFileResult = (result, params, serverUrl, chatId) => {
 		const path = result?.path ?? params?.path;
 		const name =
@@ -526,12 +521,7 @@
 			return;
 		}
 		const { toolServer, toolServerData, token } = resolveToolServer(data.server?.url);
-		const defaultInline =
-			data?.name === 'display_file' &&
-			data?.params?.path &&
-			data?.params?.inline === undefined &&
-			$settings?.terminalFileDisplay === 'inline' &&
-			isDirectTerminalServer(data.server?.url);
+		const defaultInline = false;
 		const params = defaultInline ? { ...data.params, inline: true } : data?.params;
 		const serverParams = data?.name === 'display_file' && params ? { ...params } : params;
 		if (serverParams && data?.name === 'display_file') {

@@ -3,7 +3,7 @@
 	import type { Token } from 'marked';
 	import { getContext } from 'svelte';
 
-	import { WEBUI_BASE_URL } from '$lib/constants';
+	import { ECHO_IFRAME_SANDBOX, WEBUI_BASE_URL } from '$lib/constants';
 	import { settings } from '$lib/stores';
 
 	const i18n: any = getContext('i18n');
@@ -115,13 +115,7 @@
 				src={`${WEBUI_BASE_URL}/api/v1/files/${fileId}/content/html`}
 				title={$i18n.t('Content')}
 				frameborder="0"
-				sandbox="{($settings?.iframeSandboxAllowScripts ?? true)
-					? 'allow-scripts'
-					: ''}{($settings?.iframeSandboxAllowDownloads ?? true)
-					? ' allow-downloads'
-					: ''}{($settings?.iframeSandboxAllowForms ?? true)
-					? ' allow-forms'
-					: ''}{($settings?.iframeSandboxAllowSameOrigin ?? false) ? ' allow-same-origin' : ''}"
+				sandbox={ECHO_IFRAME_SANDBOX}
 				referrerpolicy="strict-origin-when-cross-origin"
 				allowfullscreen
 				width="100%"

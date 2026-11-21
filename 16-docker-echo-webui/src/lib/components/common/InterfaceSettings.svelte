@@ -33,13 +33,6 @@
 	$: hasDirectTerminal =
 		($terminalServers ?? []).some((server) => !server.id) ||
 		(currentSettings?.terminalServers ?? []).some((server) => server.url);
-	// Defaults apply to every user, so they follow what the instance offers.
-	$: hasTerminal =
-		$config?.features?.enable_tool_servers &&
-		(($terminalServers ?? []).some((server) => server.id) ||
-			(externalSettings
-				? $config?.features?.enable_direct_integrations
-				: hasDirectToolServerAccess && hasDirectTerminal));
 
 	let backgroundImageUrl: string | null = null;
 	let inputFiles: FileList | null = null;
@@ -55,7 +48,6 @@
 	let splitLargeChunks = false;
 	let scrollOnBranchChange = true;
 	let scrollOnResponseGeneration = true;
-	let terminalFileDisplay: 'sidebar' | 'inline' = 'sidebar';
 	let userLocation = false;
 
 	// Interface
@@ -119,12 +111,6 @@
 	let showEmojiInCall = false;
 	let voiceInterruption = false;
 	let hapticFeedback = false;
-
-	let iframeSandboxAllowScripts = true;
-	let iframeSandboxAllowSameOrigin = false;
-	let iframeSandboxAllowForms = true;
-	let iframeSandboxAllowDownloads = true;
-	let terminalPreviewAllowSameOrigin = false;
 
 	let showManageFloatingActionButtonsModal = false;
 	let showManageImageCompressionModal = false;
@@ -372,18 +358,11 @@
 		splitLargeChunks = currentSettings?.splitLargeChunks ?? false;
 		scrollOnBranchChange = currentSettings?.scrollOnBranchChange ?? true;
 		scrollOnResponseGeneration = currentSettings?.scrollOnResponseGeneration ?? true;
-		terminalFileDisplay = currentSettings?.terminalFileDisplay === 'inline' ? 'inline' : 'sidebar';
 
 		temporaryChatByDefault = currentSettings?.temporaryChatByDefault ?? false;
 		chatDirection = currentSettings?.chatDirection ?? 'auto';
 		userLocation = currentSettings?.userLocation ?? false;
 		showChatTitleInTab = currentSettings?.showChatTitleInTab ?? true;
-
-		iframeSandboxAllowScripts = currentSettings?.iframeSandboxAllowScripts ?? true;
-		iframeSandboxAllowSameOrigin = currentSettings?.iframeSandboxAllowSameOrigin ?? false;
-		iframeSandboxAllowForms = currentSettings?.iframeSandboxAllowForms ?? true;
-		iframeSandboxAllowDownloads = currentSettings?.iframeSandboxAllowDownloads ?? true;
-		terminalPreviewAllowSameOrigin = currentSettings?.terminalPreviewAllowSameOrigin ?? false;
 
 		stylizedPdfExport = currentSettings?.stylizedPdfExport ?? true;
 
@@ -1506,64 +1485,6 @@
 	{$i18n.t('settings.personal.interface.showFilesOnTerminalSelect.label')}
 	{$i18n.t('settings.personal.interface.showFilesOnTerminalSelect.description')}
 	-->
-	{#if hasTerminal}
-		<div>
-			<div class={settingRowClass}>
-				<label
-					id="terminal-file-display-label"
-					class={settingLabelClass}
-					for="terminal-file-display-label-control"
-				>
-					{$i18n.t('settings.personal.interface.terminalFileDisplay.label')}
-				</label>
-
-				<button
-					id="terminal-file-display-label-control"
-					aria-labelledby="terminal-file-display-label terminal-file-display-state"
-					class={actionButtonClass}
-					on:click={() => {
-						terminalFileDisplay = terminalFileDisplay === 'inline' ? 'sidebar' : 'inline';
-						saveSettings({ terminalFileDisplay });
-					}}
-					type="button"
-				>
-					<span id="terminal-file-display-state">
-						{terminalFileDisplay === 'inline' ? $i18n.t('Inline') : $i18n.t('Sidebar')}
-					</span>
-				</button>
-			</div>
-			<p class={settingDescriptionClass}>
-				{$i18n.t('settings.personal.interface.terminalFileDisplay.description')}
-			</p>
-		</div>
-
-		<div>
-			<div class={settingRowClass}>
-				<label
-					id="terminal-preview-allow-same-origin-label"
-					class={settingLabelClass}
-					for="terminal-preview-allow-same-origin-label-control"
-				>
-					{$i18n.t('settings.personal.interface.terminalPreviewAllowSameOrigin.label')}
-				</label>
-
-				<div class={settingControlClass}>
-					<Switch
-						ariaLabelledbyId="terminal-preview-allow-same-origin-label"
-						tooltip={true}
-						bind:state={terminalPreviewAllowSameOrigin}
-						inherited={isDefaultSetting('terminalPreviewAllowSameOrigin')}
-						on:change={() => {
-							saveSettings({ terminalPreviewAllowSameOrigin });
-						}}
-					/>
-				</div>
-			</div>
-			<p class={settingDescriptionClass}>
-				{$i18n.t('settings.personal.interface.terminalPreviewAllowSameOrigin.description')}
-			</p>
-		</div>
-	{/if}
 
 	<div>
 		<div class={settingRowClass}>
@@ -1829,128 +1750,6 @@
 			</div>
 			<p class={settingDescriptionClass}>
 				{$i18n.t('settings.personal.interface.pasteLargeTextAsFile.description')}
-			</p>
-		</div>
-	{/if}
-
-	{#if ['settings.iframe_sandbox_allow_scripts', 'settings.iframe_sandbox_allow_same_origin', 'settings.iframe_sandbox_allow_forms', 'settings.iframe_sandbox_allow_downloads'].some((id) => $visibleControls[id])}
-		<div class={sectionHeadingClass}>
-			{$i18n.t('settings.personal.interface.sections.artifacts.title')}
-		</div>
-	{/if}
-
-	{#if $visibleControls['settings.iframe_sandbox_allow_scripts']}
-		<div>
-			<div class={settingRowClass}>
-				<label
-					id="iframe-sandbox-allow-scripts-label"
-					class={settingLabelClass}
-					for="iframe-sandbox-allow-scripts-label-control"
-				>
-					{$i18n.t('settings.personal.interface.iframeSandboxAllowScripts.label')}
-				</label>
-
-				<div class={settingControlClass}>
-					<Switch
-						ariaLabelledbyId="iframe-sandbox-allow-scripts-label"
-						tooltip={true}
-						bind:state={iframeSandboxAllowScripts}
-						inherited={isDefaultSetting('iframeSandboxAllowScripts')}
-						on:change={() => {
-							saveSettings({ iframeSandboxAllowScripts });
-						}}
-					/>
-				</div>
-			</div>
-			<p class={settingDescriptionClass}>
-				{$i18n.t('settings.personal.interface.iframeSandboxAllowScripts.description')}
-			</p>
-		</div>
-	{/if}
-
-	{#if $visibleControls['settings.iframe_sandbox_allow_same_origin']}
-		<div>
-			<div class={settingRowClass}>
-				<label
-					id="iframe-sandbox-allow-same-origin-label"
-					class={settingLabelClass}
-					for="iframe-sandbox-allow-same-origin-label-control"
-				>
-					{$i18n.t('settings.personal.interface.iframeSandboxAllowSameOrigin.label')}
-				</label>
-
-				<div class={settingControlClass}>
-					<Switch
-						ariaLabelledbyId="iframe-sandbox-allow-same-origin-label"
-						tooltip={true}
-						bind:state={iframeSandboxAllowSameOrigin}
-						inherited={isDefaultSetting('iframeSandboxAllowSameOrigin')}
-						on:change={() => {
-							saveSettings({ iframeSandboxAllowSameOrigin });
-						}}
-					/>
-				</div>
-			</div>
-			<p class={settingDescriptionClass}>
-				{$i18n.t('settings.personal.interface.iframeSandboxAllowSameOrigin.description')}
-			</p>
-		</div>
-	{/if}
-
-	{#if $visibleControls['settings.iframe_sandbox_allow_forms']}
-		<div>
-			<div class={settingRowClass}>
-				<label
-					id="iframe-sandbox-allow-forms-label"
-					class={settingLabelClass}
-					for="iframe-sandbox-allow-forms-label-control"
-				>
-					{$i18n.t('settings.personal.interface.iframeSandboxAllowForms.label')}
-				</label>
-
-				<div class={settingControlClass}>
-					<Switch
-						ariaLabelledbyId="iframe-sandbox-allow-forms-label"
-						tooltip={true}
-						bind:state={iframeSandboxAllowForms}
-						inherited={isDefaultSetting('iframeSandboxAllowForms')}
-						on:change={() => {
-							saveSettings({ iframeSandboxAllowForms });
-						}}
-					/>
-				</div>
-			</div>
-			<p class={settingDescriptionClass}>
-				{$i18n.t('settings.personal.interface.iframeSandboxAllowForms.description')}
-			</p>
-		</div>
-	{/if}
-
-	{#if $visibleControls['settings.iframe_sandbox_allow_downloads']}
-		<div>
-			<div class={settingRowClass}>
-				<label
-					id="iframe-sandbox-allow-downloads-label"
-					class={settingLabelClass}
-					for="iframe-sandbox-allow-downloads-label-control"
-				>
-					{$i18n.t('settings.personal.interface.iframeSandboxAllowDownloads.label')}
-				</label>
-
-				<div class={settingControlClass}>
-					<Switch
-						ariaLabelledbyId="iframe-sandbox-allow-downloads-label"
-						tooltip={true}
-						bind:state={iframeSandboxAllowDownloads}
-						inherited={isDefaultSetting('iframeSandboxAllowDownloads')}
-						on:change={() => {
-							saveSettings({ iframeSandboxAllowDownloads });
-						}}
-					/>
-				</div>
-			</div>
-			<p class={settingDescriptionClass}>
-				{$i18n.t('settings.personal.interface.iframeSandboxAllowDownloads.description')}
 			</p>
 		</div>
 	{/if}

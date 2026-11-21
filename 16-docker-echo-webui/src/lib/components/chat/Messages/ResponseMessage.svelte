@@ -743,8 +743,7 @@
 											<FullHeightIframe
 												src={embed}
 												allowScripts={true}
-												allowForms={$settings?.iframeSandboxAllowForms ?? true}
-												allowSameOrigin={$settings?.iframeSandboxAllowSameOrigin ?? false}
+												allowForms={true}
 												allowPopups={true}
 											/>
 										{/if}

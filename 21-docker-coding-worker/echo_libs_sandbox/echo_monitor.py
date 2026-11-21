@@ -2,25 +2,23 @@
 """
 ================================================================================
 MODULE : ECHO - ECHO MONITOR
-VERSION : 6.16.0.2
+VERSION : 6.17.4.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.17.4.1: Suppression BidiRouter/push_ready/get_ui_requests, callbacks display/expose_app via HTTP interne Worker -> WebUI (Option B).
 # 6.16.0.2: Bus AF_UNIX/TCP (ECHO_IPC_SOCK), BidiRouter événementiel et expose_app/get_app_uds/get_app_port/wait_until_closed (Niveau B2).
 # 6.15.2.1: Écriture thread-safe (_MONITOR_WRITE_LOCK), push_ready(), pool ThreadPoolExecutor borné, __echo_ping__.
 # 5.234.1.1: Isolation IPC par env vars et ajout de push_event, get_ui_requests et BidiRouter.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
-import inspect
 import json
 import os
 import socket
 import struct
 import threading
 import time
-from typing import Any, Callable, Deque, Dict, List, Optional, Set
+from typing import Any, List, Optional, Set
 
 _DEFAULT_IPC_SOCK = "/run/echo_ipc.sock"
 _HEADER_STRUCT = struct.Struct(">II")
@@ -33,9 +31,7 @@ _CONNECTED_TARGET: Optional[str] = None
 _CONN_GEN: int = 0
 _SOCKET_CLOSED: bool = False
 
-_UI_PAYLOADS: Dict[str, Any] = {}
 _CLOSED_WINDOWS: Set[str] = set()
-_RPC_QUEUE: Deque[dict] = deque()
 
 
 def _get_ipc_target() -> str:
@@ -55,31 +51,10 @@ def _recv_exact(sock: socket.socket, n: int) -> Optional[bytes]:
 
 
 def _handle_incoming_message(msg: dict, bin_bytes: Optional[bytes]) -> None:
-    msg_type = msg.get("type")
-    wid = msg.get("window_id") or "default"
-    with _IPC_COND:
-        if msg_type == "payload_sync":
-            payload = msg.get("payload")
-            _UI_PAYLOADS[wid] = payload
-            if isinstance(payload, dict) and payload.get("_is_closed"):
-                _CLOSED_WINDOWS.add(wid)
-            _IPC_COND.notify_all()
-        elif msg_type == "window_closed":
+    if msg.get("type") == "window_closed":
+        wid = msg.get("window_id") or "default"
+        with _IPC_COND:
             _CLOSED_WINDOWS.add(wid)
-            existing = _UI_PAYLOADS.get(wid)
-            if not isinstance(existing, dict):
-                _UI_PAYLOADS[wid] = {"_is_closed": True}
-            else:
-                existing["_is_closed"] = True
-            _IPC_COND.notify_all()
-        elif msg_type == "rpc":
-            _RPC_QUEUE.append({
-                "window_id": wid,
-                "req_id": msg.get("req_id"),
-                "action": msg.get("action"),
-                "payload": msg.get("payload"),
-                "binary": bin_bytes,
-            })
             _IPC_COND.notify_all()
 
 
@@ -201,79 +176,8 @@ def display(
     _send_ipc_frame(meta, html_content.encode("utf-8"))
 
 
-def push_event(
-    data: Any,
-    window_id: str = "default",
-    req_id: Optional[str] = None,
-    binary: Optional[Any] = None,
-) -> None:
-    """
-    Pousse un événement JSON (avec charge binaire optionnelle) vers l'Iframe
-    de la fenêtre 'window_id' sans recharger ni recréer le DOM.
-    """
-    meta = {
-        "type": "event",
-        "window_id": window_id,
-        "req_id": req_id,
-        "data": data,
-    }
-    _send_ipc_frame(meta, binary)
-
-
-def push_ready(window_id: str = "default", actions: Optional[List[str]] = None) -> None:
-    """
-    Émet un événement de disponibilité RPC (ready) pour signaler à l'hôte UI
-    que le routeur Bidi de la fenêtre 'window_id' écoute les requêtes.
-    """
-    meta = {
-        "type": "ready",
-        "window_id": window_id,
-        "actions": list(actions or []),
-    }
-    _send_ipc_frame(meta, None)
-
-
-def get_ui_payload(window_id: str = "default") -> Optional[dict]:
-    """
-    Récupère le payload injecté par le Frontend depuis le bus mémoire IPC.
-    Multiplexé : Retourne uniquement les données associées à 'window_id'.
-    """
-    with _IPC_COND:
-        payload = _UI_PAYLOADS.get(window_id)
-        return payload if isinstance(payload, dict) else None
-
-
-def get_ui_requests(window_id: Optional[str] = None) -> List[dict]:
-    """
-    Dépile de manière FIFO et thread-safe les nouvelles requêtes RPC émises par
-    l'Iframe UI depuis le bus mémoire IPC.
-    """
-    with _IPC_COND:
-        if not _RPC_QUEUE:
-            return []
-        if window_id is None:
-            events = list(_RPC_QUEUE)
-            _RPC_QUEUE.clear()
-            return events
-        matched: List[dict] = []
-        remaining: Deque[dict] = deque()
-        for item in _RPC_QUEUE:
-            if (item.get("window_id") or "default") == window_id:
-                matched.append(item)
-            else:
-                remaining.append(item)
-        _RPC_QUEUE.clear()
-        _RPC_QUEUE.extend(remaining)
-        return matched
-
-
 def _is_window_closed_locked(window_id: str) -> bool:
-    if _SOCKET_CLOSED or window_id in _CLOSED_WINDOWS:
-        return True
-    payload = _UI_PAYLOADS.get(window_id)
-    if isinstance(payload, dict) and payload.get("_is_closed"):
-        return True
-    return False
+    return _SOCKET_CLOSED or window_id in _CLOSED_WINDOWS
 
 
 def is_window_closed(window_id: str = "default") -> bool:
@@ -411,117 +315,6 @@ def expose_app(
         },
         None,
     )
-    push_ready(window_id, [])
     if block:
         wait_until_closed(window_id)
     return resolved_target
-
-
-class BidiRouter:
-    """
-    Routeur RPC bidirectionnel événementiel permettant d'exposer des routes dans
-    la Sandbox et de répondre en temps réel aux requêtes de l'Iframe.
-    """
-
-    def __init__(self, window_id: str = "default", max_workers: int = 4):
-        self.window_id = window_id
-        self.max_workers = max(1, int(max_workers or 4))
-        self._routes: Dict[str, Callable[..., Any]] = {}
-        self._route_accepts_binary: Dict[str, bool] = {}
-
-    def route(self, action: str):
-        def decorator(fn: Callable[..., Any]):
-            params = inspect.signature(fn).parameters.values()
-            accepts_bin = (
-                len(params) >= 2
-                or any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in params)
-            )
-            self._routes[action] = fn
-            self._route_accepts_binary[action] = accepts_bin
-            return fn
-        return decorator
-
-    def _execute_request(self, req: dict) -> None:
-        action = req.get("action")
-        req_id = req.get("req_id")
-        payload = req.get("payload")
-        try:
-            if action in self._routes:
-                fn = self._routes[action]
-                if self._route_accepts_binary.get(action, False):
-                    res = fn(payload, req.get("binary"))
-                else:
-                    res = fn(payload)
-                res_data = res
-                res_bytes = None
-                if (
-                    isinstance(res, tuple)
-                    and len(res) == 2
-                    and isinstance(res[1], (bytes, bytearray, memoryview))
-                ):
-                    res_data, res_bytes = res[0], bytes(res[1])
-                push_event(
-                    {"status": "ok", "action": action, "result": res_data},
-                    window_id=self.window_id,
-                    req_id=req_id,
-                    binary=res_bytes,
-                )
-            elif action == "__echo_ping__":
-                push_event(
-                    {
-                        "status": "ok",
-                        "action": action,
-                        "result": {
-                            "pong": True,
-                            "window_id": self.window_id,
-                            "ts": time.time(),
-                            "actions": sorted(self._routes.keys()),
-                        },
-                    },
-                    window_id=self.window_id,
-                    req_id=req_id,
-                )
-            else:
-                push_event(
-                    {
-                        "status": "error",
-                        "action": action,
-                        "error": f"Unknown RPC action: {action}",
-                        "available_actions": sorted(self._routes.keys()),
-                    },
-                    window_id=self.window_id,
-                    req_id=req_id,
-                )
-        except Exception as exc:
-            push_event(
-                {"status": "error", "action": action, "error": str(exc)},
-                window_id=self.window_id,
-                req_id=req_id,
-            )
-
-    def dispatch_once(self, executor: Optional[ThreadPoolExecutor] = None) -> int:
-        reqs = get_ui_requests(self.window_id)
-        handled = 0
-        for req in reqs:
-            if executor is not None:
-                executor.submit(self._execute_request, req)
-            else:
-                self._execute_request(req)
-            handled += 1
-        return handled
-
-    def serve_forever(self, poll_interval: float = 0.05):
-        _ensure_connected()
-        push_ready(self.window_id, sorted(self._routes.keys()))
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            while True:
-                self.dispatch_once(executor=executor)
-                with _IPC_COND:
-                    if _is_window_closed_locked(self.window_id):
-                        break
-                    has_pending = any(
-                        (item.get("window_id") or "default") == self.window_id
-                        for item in _RPC_QUEUE
-                    )
-                    if not has_pending:
-                        _IPC_COND.wait(timeout=0.5)

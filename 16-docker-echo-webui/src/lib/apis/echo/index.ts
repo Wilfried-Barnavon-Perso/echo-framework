@@ -284,9 +284,6 @@ export const postEchoWmRpc = async (
 	);
 };
 
-export const getEchoCanvasWsUrl = (chatId: string, runId: string): string =>
-	buildEchoWsUrl(`/wm/ws/canvas/${encodeURIComponent(chatId)}/${encodeURIComponent(runId)}`);
-
 // ============================================================================
 // COGNITION ECHO (/echo/v1/cognition)
 // ============================================================================

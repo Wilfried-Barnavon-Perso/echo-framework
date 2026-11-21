@@ -17,6 +17,7 @@
 		type TerminalConnection
 	} from '$lib/apis/terminal';
 	import PortList from '../FileNav/PortList.svelte';
+	import { ECHO_IFRAME_SANDBOX } from '$lib/constants';
 	import { settings } from '$lib/stores';
 	import Icon from '../FileNav/Icon.svelte';
 	import Tooltip from '../../common/Tooltip.svelte';
@@ -453,9 +454,7 @@
 					src={frameUrl}
 					title={$i18n.t('Browser')}
 					class="block h-full w-full border-0 bg-white"
-					sandbox="allow-scripts{!session && ($settings?.terminalPreviewAllowSameOrigin ?? false)
-						? ' allow-same-origin'
-						: ''} allow-forms allow-popups allow-modals allow-downloads"
+					sandbox={ECHO_IFRAME_SANDBOX}
 					on:load={loaded}
 				></iframe>{/key}
 		{/if}

@@ -800,6 +800,15 @@ async def delete_all_user_chats(
     tag_ids = [tag.id for tag in await Tags.get_tags_by_user_id(user.id, db=db)]
     result = await Chats.delete_chats_by_user_id(user.id, db=db)
     if result:
+        # [ECHO-V6-HOOK] Purge Canvas & Sandbox processes for all user chats
+        try:
+            from open_webui.echo.runtime import ensure_echo_sys_path
+            ensure_echo_sys_path()
+            from echo_window_manager import get_window_manager
+
+            await get_window_manager().cleanup_user_canvas(user.id)
+        except Exception:
+            pass
         await Chats.delete_orphan_tags_for_user(tag_ids, user.id, db=db)
         await publish_event(
             request,
@@ -1790,6 +1799,15 @@ async def delete_chat_by_id(
         result = await Chats.delete_chat_by_id_and_user_id(id, user.id, db=db)
 
     if result:
+        # [ECHO-V6-HOOK] Purge Canvas & Sandbox processes for deleted chat
+        try:
+            from open_webui.echo.runtime import ensure_echo_sys_path
+            ensure_echo_sys_path()
+            from echo_window_manager import get_window_manager
+
+            await get_window_manager().cleanup_chat_canvas(chat.user_id, id)
+        except Exception:
+            pass
         await publish_event(
             request,
             EVENTS.CHAT_DELETED,

@@ -202,7 +202,7 @@
 			</div>
 		</ConsecutiveDetailsGroup>
 	{:else if displayItem.type === 'file'}
-		{#if displayItem.item?.displayed || $settings?.terminalFileDisplay === 'inline'}
+		{#if displayItem.item?.displayed}
 			<ToolOutputFile item={displayItem.item} {chatId} />
 		{/if}
 	{:else if displayItem.type === 'context_compaction'}

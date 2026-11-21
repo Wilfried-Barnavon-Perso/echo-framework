@@ -74,15 +74,7 @@ export const CONTROL_LABELS = {
 	'settings.widescreen': 'settings.personal.interface.widescreenMode.label',
 	'settings.floating_action_buttons': 'settings.personal.interface.floatingQuickActions.label',
 	'settings.rich_text_input': 'settings.personal.interface.richTextInputForChat.label',
-	'settings.large_text_as_file': 'settings.personal.interface.pasteLargeTextAsFile.label',
-	'settings.iframe_sandbox_allow_scripts':
-		'settings.personal.interface.iframeSandboxAllowScripts.label',
-	'settings.iframe_sandbox_allow_same_origin':
-		'settings.personal.interface.iframeSandboxAllowSameOrigin.label',
-	'settings.iframe_sandbox_allow_forms':
-		'settings.personal.interface.iframeSandboxAllowForms.label',
-	'settings.iframe_sandbox_allow_downloads':
-		'settings.personal.interface.iframeSandboxAllowDownloads.label'
+	'settings.large_text_as_file': 'settings.personal.interface.pasteLargeTextAsFile.label'
 } as const;
 
 export type ControlId = keyof typeof CONTROL_LABELS;

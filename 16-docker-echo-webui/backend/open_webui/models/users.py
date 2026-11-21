@@ -105,11 +105,6 @@ class InterfaceSettings(BaseModel):
     temporaryChatByDefault: bool | None = None
     userLocation: bool | None = None
     showChatTitleInTab: bool | None = None
-    iframeSandboxAllowScripts: bool | None = None
-    iframeSandboxAllowSameOrigin: bool | None = None
-    iframeSandboxAllowForms: bool | None = None
-    iframeSandboxAllowDownloads: bool | None = None
-    terminalPreviewAllowSameOrigin: bool | None = None
     stylizedPdfExport: bool | None = None
     hapticFeedback: bool | None = None
     ctrlEnterToSend: bool | None = None
@@ -119,7 +114,6 @@ class InterfaceSettings(BaseModel):
 
     landingPageMode: Literal['', 'chat'] | None = None
     chatDirection: Literal['LTR', 'RTL', 'auto'] | None = None
-    terminalFileDisplay: Literal['sidebar', 'inline'] | None = None
     defaultUploadContext: Literal['full', 'focused'] | None = None
     webSearch: Literal['always'] | None = None
     models: list[str] | None = None

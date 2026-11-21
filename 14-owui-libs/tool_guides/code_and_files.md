@@ -1,11 +1,11 @@
 ---
 domain_id: code_and_files
-version: 6.17.2.1
+version: 6.17.4.1
 updated_at: 2026-11-21
 name: Registre Unifié, Explorateur de l'Espace Personnel & Sandbox d'Exécution de Code
 description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash), exécution isolée de scripts Codex sandbox (.py / .js / .sh) et exécution SSH distante (ssh_executor).
 tools: [query_registry, read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes, code_executor, control_sandbox_execution, kill_sandbox_execution, ssh_executor]
-keywords: [registre, query_registry, fichier, file, code, python, node, javascript, bash, shell_script, shell, sandbox, code_executor, control_sandbox_execution, kill_sandbox_execution, ssh, ssh_executor, bidi, echo_monitor, fastapi, websocket, expose_app, server, uds, image, pdf, audio, video, multimedia, semantic_probe, read_multimedia_file, hash, sha256, plans, generated, browserviews]
+keywords: [registre, query_registry, fichier, file, code, python, node, javascript, bash, shell_script, shell, sandbox, code_executor, control_sandbox_execution, kill_sandbox_execution, ssh, ssh_executor, echo_monitor, fastapi, websocket, expose_app, server, uds, image, pdf, audio, video, multimedia, semantic_probe, read_multimedia_file, hash, sha256, plans, generated, browserviews]
 ---
 
 # MANUEL OPÉRATIONNEL : REGISTRE UNIFIÉ, FICHIERS & SANDBOX DE CODE (`code_and_files`)
@@ -54,7 +54,7 @@ Il est ABSOLUMENT INTERDIT de passer du code brut à `code_executor`. Toute mani
    - Modifier : `edit_codex(filename="script.py", ..., workspace="sandbox")`.
    - Supprimer un fichier ou dossier : `delete_codex(filename="...", workspace="sandbox", recursive=True)` (`recursive=True` REQUIS si dossier non vide).
 2. **Étape 2 — Exécuter le script** :
-   - Appeler `code_executor(file_path="script.py", dependencies=None, timeout_sec=900, fetch_ui_payload=False, background=False)` (extensions supportées dans `workspace="sandbox"` : `.py`, `.js` et `.sh` ; `timeout_sec` max `3600s` ; `dependencies` installe les paquets `pip`/`npm` manquants dans `/.deps`).
+   - Appeler `code_executor(file_path="script.py", dependencies=None, timeout_sec=900, background=False)` (extensions supportées dans `workspace="sandbox"` : `.py`, `.js` et `.sh` ; `timeout_sec` max `3600s` ; `dependencies` installe les paquets `pip`/`npm` manquants dans `/.deps`).
 3. **Étape 3 — Promotion des livrables vers `main`** :
    - Appeler `transfer_codex(source_path="...", source_workspace="sandbox", destination_workspace="main", mode="copy"|"move")` pour versionner sous Git et indexer dans le Registre Unifié les sorties destinées à L'Utilisateur.
 
@@ -68,51 +68,39 @@ Il est ABSOLUMENT INTERDIT de passer du code brut à `code_executor`. Toute mani
 - **Variables d'environnement pré-injectées** : `ECHO_RUN_ID`, `ECHO_IPC_SOCK`, `ECHO_APP_UDS` (`/run/echo_app/http.sock`), `ECHO_APP_PORT` (port TCP local de repli).
 - **Quotas & Isolation** : Chaque exécution est strictement isolée par `(user_id, chat_id, run_id)` (isolation stricte par session et par Sous-Agent), à raison d'un maximum de **4 processus simultanés par session** (`8` globalement sur le Worker).
 - **Modes d'exécution de `code_executor`** :
-  - `background=False` (**défaut REQUIS pour les scripts standards sans serveur**) : Exécution synchrone bloquante restituant `output`, `error` et `run_id` à la terminaison. **INTERDIT** pour tout script invoquant `BidiRouter.serve_forever()` ou `echo_monitor.expose_app()` (refus immédiat par garde pré-vol).
-  - `background=True` (**OBLIGATOIRE pour tout serveur `BidiRouter.serve_forever()`, `echo_monitor.expose_app()` ou calcul long**) : Démarre le processus en tâche de fond, exécute une **Readiness Probe** (jusqu'à `8s` pour réception du signal `ready` ou détection de crash précoce avec remontée `stderr`/`exit_code`), maintient le pont UI <-> Sandbox actif via le superviseur pérenne (`EchoWindowManager`), et retourne immédiatement `run_id`, `pid`, `ui_ready`, `window_ids` et `idle_ttl_sec`.
-  - **Durée de vie & TTL** : Un processus détaché avec `echo_monitor` (`BidiRouter` ou `expose_app`) est soumis à un **TTL d'inactivité de `1800s` (30 min)** renouvelé sur activité RPC/proxy/signal et un **plafond absolu de `4h` (`14400s`)**.
+  - `background=False` (**défaut REQUIS pour les scripts standards sans serveur**) : Exécution synchrone bloquante restituant `output`, `error` et `run_id` à la terminaison. **INTERDIT** pour tout script invoquant `echo_monitor.expose_app()` (refus immédiat par garde pré-vol).
+  - `background=True` (**OBLIGATOIRE pour tout serveur `echo_monitor.expose_app()` ou calcul long**) : Démarre le processus en tâche de fond, exécute une **Readiness Probe** (jusqu'à `8s` pour réception du signal `ready` ou détection de crash précoce avec remontée `stderr`/`exit_code`), maintient le pont UI <-> Sandbox actif via le superviseur pérenne (`EchoWindowManager`), et retourne immédiatement `run_id`, `pid`, `ui_ready`, `window_ids` et `idle_ttl_sec`.
+  - **Durée de vie & TTL** : Un processus détaché avec `echo_monitor.expose_app()` est soumis à un **TTL d'inactivité de `1800s` (30 min)** renouvelé sur activité proxy et un **plafond absolu de `4h` (`14400s`)**.
 - **Pilotage via `control_sandbox_execution(action, run_id=None, wait_sec=0)`** :
   - `action="status"` : Liste tous les `run_id` actifs et récemment terminés de la session (ou détaille un `run_id` précis).
   - `action="listen"` : Récupère les nouvelles sorties incrémentales `stdout_chunk` / `stderr_chunk` du `run_id` (en attendant jusqu'à `wait_sec` secondes, max `60s`, si le processus est en cours).
   - `action="kill"` (ou `kill_sandbox_execution(run_id=None)`) : Détruit immédiatement le groupe de processus (`SIGKILL`) du `run_id` cible (ou tous les processus actifs de la session si `run_id` est omis).
 
 ### 3.3 Interfaces Interactives & Serveurs Web Temps Réel (`echo_monitor`)
-Pour déployer une interface interactive ou un serveur web complet dans l'onglet natif **Applications**, Le Modèle DOIT utiliser `echo_monitor`.
+Pour déployer une vue HTML statique ou un serveur applicatif web complet dans l'onglet natif **Applications**, Le Modèle DOIT utiliser `echo_monitor`.
 
 > [!IMPORTANT]
 > **INTERDICTION DE DÉLÉGATION MANUELLE À L'UTILISATEUR** :
 > Il est ABSOLUMENT INTERDIT pour Le Modèle de demander à L'Utilisateur d'ouvrir un fichier local sur son poste, de lancer un serveur HTTP manuellement ou de copier-coller un JSON dans le chat.
-> **Contrainte `Origin: null`** : L'iframe de l'onglet **Applications** est sandboxée sans `allow-same-origin` ; `localStorage`, `sessionStorage` et `document.cookie` sont inutilisables côté navigateur. Toute persistance d'état DOIT résider côté serveur dans `/sandbox` (SQLite ou JSON).
+> **Contrainte `Origin: null` & Polyfill Mémoire** : L'iframe de l'onglet **Applications** est sandboxée sans `allow-same-origin`. Un polyfill en RAM pour `localStorage` et `sessionStorage` est injecté automatiquement pour prévenir tout crash JS, mais son contenu est éphémère (perdu au rechargement). Toute persistance durable DOIT résider côté serveur dans `/sandbox` (SQLite, JSON ou fichiers via API).
 
-#### Pattern A — Widget Réactif Mono-Fichier (`display` + `BidiRouter`, `< 2 ms`) :
-- Transport Socket Unix AF_UNIX sur `ECHO_IPC_SOCK` (`< 2 ms`), prenant en charge JSON et binaire brut (`ArrayBuffer` / `bytes` / `Buffer`).
-- **Côté Iframe JS** : `const res = await window.echoRequest("mon_action", { valeur: 42 }, arrayBuffer?);` et `window.onEchoEvent((data, reqId, arrayBuffer) => { ... });` (pré-injectés dans l'`<iframe>`).
-- **Côté Sandbox (`server.py`, `background=True` obligatoire)** :
+#### Pattern A — Rendu Statique (`display`, `background=False`) :
+- Adapté aux rapports HTML autonomes, graphiques statiques ou tableaux de bord sans serveur backend :
   ```python
   import echo_monitor
 
-  echo_monitor.display(open("app.html", encoding="utf-8").read(), title="Application Réactive", window_id="app_main")
-  router = echo_monitor.BidiRouter(window_id="app_main")
-
-  @router.route("mon_action")
-  def handle_action(payload):
-      return {"resultat": payload.get("valeur", 0) * 2}
-
-  router.serve_forever()
+  echo_monitor.display(html, title="Rapport Statique", window_id="report_main")
   ```
-- **Concurrence** : Le routeur exécute les handlers RPC en concurrence (`4` workers par défaut) : tout handler effectuant des appels réseau/HTTP DOIT imposer des timeouts courts (`timeout=3.0`–`5.0`).
+- Exécuté en mode synchrone (`background=False`) : la vue est transmise à l'onglet **Applications** et le statut passe à `completed` à la fin du script.
 
-#### Pattern B — Serveur Applicatif Web Complet (`FastAPI`/`Uvicorn` ou `Express`/`ws` + `expose_app`) :
-- Pour les applications web multi-routes, APIs REST, assets multi-fichiers (`<img src="...">`, CSS, JS dans `/sandbox`) et WebSockets natifs :
+#### Pattern B — Serveur Applicatif Web Complet (`expose_app`, `background=True` obligatoire) :
+- Pour les applications web interactives multi-routes, APIs REST/SSE, formulaires persistants, assets multi-fichiers (`<img src="...">`, CSS, JS dans `/sandbox`) et WebSockets natifs (FastAPI/Uvicorn, Flask, Express/ws, etc.) :
   1. Le script démarre son serveur HTTP/WS en écoutant sur `echo_monitor.get_app_uds()` (prioritaire, Socket Unix) ou sur `("127.0.0.1", echo_monitor.get_app_port())`.
-  2. Le script appelle `echo_monitor.expose_app(title="...")` (`background=True` obligatoire), qui sonde la disponibilité du serveur, publie l'application via un capability ticket HMAC dans l'onglet **Applications** et bloque jusqu'à fermeture de la fenêtre (`wait_until_closed`).
-  3. Les pages HTML servies PEUVENT utiliser des chemins relatifs ou `/...` (réécrits automatiquement par `<base>`, `fetch` et `WebSocket` du proxy ; helpers explicites `window.echoAppUrl(path)` et `window.echoWsUrl(path)` disponibles).
-
-#### Pattern C — Snapshot One-Shot (`get_ui_payload`) :
-- Pour un affichage statique ou une soumission ponctuelle (`background=False`) : `echo_monitor.display(html, ...)` sans boucle serveur ; `echo_monitor.get_ui_payload("app_id")` reste disponible pour lire le dernier payload émis par `window.parent.postMessage({ echoUIPayload: { window_id: "app_id", payload: {...} } }, "*")`.
+  2. Le script appelle `echo_monitor.expose_app(title="...", window_id="app_main")` (`background=True` obligatoire), qui sonde la disponibilité du serveur, publie l'application via un capability ticket HMAC dans l'onglet **Applications** et bloque jusqu'à fermeture de la fenêtre (`wait_until_closed`).
+  3. Les pages HTML servies PEUVENT utiliser des chemins relatifs ou `/...` (réécrits automatiquement côté serveur/DOM par `<base>`, réécriture des attributs `src`/`href`/`action`/`poster`, redirections `Location`, `fetch`, `XMLHttpRequest`, `EventSource` et `WebSocket` ; helpers explicites `window.echoAppUrl(path)` et `window.echoWsUrl(path)` disponibles).
 
 #### Cycle de Vie & Arrêt Propre de la Vue Interactive :
-- Lorsque L'Utilisateur ferme la vue **Applications**, `echo_monitor.is_window_closed("app_id")` retourne `True`, `wait_until_closed()` / `serve_forever()` se débloque et le script dispose de `3 s` pour libérer ses ressources avant interruption forcée par Le Système. Le Modèle PEUT appeler `control_sandbox_execution(action="listen", run_id=...)` pour suivre les journaux.
+- Lorsque L'Utilisateur ferme la vue **Applications**, `echo_monitor.is_window_closed("app_main")` retourne `True`, `wait_until_closed()` se débloque et le script dispose de `3 s` pour libérer ses ressources avant interruption forcée par Le Système. Le Modèle PEUT appeler `control_sandbox_execution(action="listen", run_id=...)` pour suivre les journaux.
 
 ### 3.4 Exécution SSH Distante (`ssh_executor`)
 1. **Découverte préalable** : Le Modèle DOIT appeler `list_identities(service="ssh")` pour lister les alias (`account_id`) configurés et leur `description` fonctionnelle.

@@ -4,6 +4,7 @@
 	import { downloadFileBlob } from '$lib/apis/terminal';
 	import MarkdownFileEditor from './MarkdownFileEditor.svelte';
 	import MarkdownDocument from './MarkdownDocument.svelte';
+	import { ECHO_IFRAME_SANDBOX } from '$lib/constants';
 	import { settings, config } from '$lib/stores';
 	import { injectCsp } from '$lib/utils/csp';
 	import { sanitizeSvg } from '$lib/utils';
@@ -362,13 +363,9 @@
 			{/if}
 			<iframe
 				src={serveUrl}
-				sandbox="{(allowScripts ?? $settings?.iframeSandboxAllowScripts ?? true)
-					? 'allow-scripts'
-					: ''}{($settings?.iframeSandboxAllowDownloads ?? true)
-					? ' allow-downloads'
-					: ''}{($settings?.iframeSandboxAllowForms ?? true)
-					? ' allow-forms'
-					: ''}{($settings?.iframeSandboxAllowSameOrigin ?? false) ? ' allow-same-origin' : ''}"
+				sandbox={(allowScripts ?? true)
+					? ECHO_IFRAME_SANDBOX
+					: 'allow-downloads allow-forms allow-modals allow-popups'}
 				class="w-full h-full border-none bg-white"
 				title={$i18n.t('HTML Preview')}
 			/>
@@ -378,13 +375,7 @@
 			{/if}
 			<iframe
 				srcdoc={injectCsp(fileContent, $config?.ui?.iframe_csp ?? '')}
-				sandbox="{(allowScripts ?? $settings?.iframeSandboxAllowScripts ?? true)
-					? 'allow-scripts'
-					: ''}{($settings?.iframeSandboxAllowDownloads ?? true)
-					? ' allow-downloads'
-					: ''}{($settings?.iframeSandboxAllowForms ?? true)
-					? ' allow-forms'
-					: ''}{($settings?.iframeSandboxAllowSameOrigin ?? false) ? ' allow-same-origin' : ''}"
+				sandbox={ECHO_IFRAME_SANDBOX}
 				class="w-full h-full border-none bg-white"
 				title={$i18n.t('HTML Preview')}
 			/>

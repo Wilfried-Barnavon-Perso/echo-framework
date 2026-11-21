@@ -1,11 +1,12 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 6.16.0.2
+version: 6.17.4.1
 description: Composant système interne : ECHO Code Executor (Python, Node.js, Bash & SSH).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.17.4.1: Propagation du jeton HMAC sandbox_callback_token lors de l'exécution et alignement Option B (sans Pacemaker WS/BidiRouter).
 # 6.16.0.2: Retrait bidi_polling/poller, raccordement /wait_ready, offsets WM, abort léger et garde expose_app(background=True).
 # 6.15.2.1: Durcissement Option A : garde pré-vol serve_forever(), handshake ready/crash, boucle poller réveillée par wake_event, arrêt sur unknown x3 et cleanup scopé par run_id.
 # 6.13.1.2: Fiabilisation Pacemaker bidi_polling (constantes SSOT, peek/ack scopé par window_id, push delta-only, grâce _is_closed, arrêt auto sur fin de job et broadcast_canvas_status).
@@ -64,7 +65,7 @@ def _inspect_sandbox_script(uid: str, cid: str, file_path: str) -> tuple[bool, b
         with open(target_path, "r", encoding="utf-8", errors="replace") as f:
             content = f.read()
         stripped = re.sub(r"(?m)(?:#|//).*$", "", content)
-        calls_daemon = ("serve_forever(" in stripped or "expose_app(" in stripped)
+        calls_daemon = ("expose_app(" in stripped)
         return ("echo_monitor" in stripped, calls_daemon)
     except Exception:
         return (False, False)
@@ -241,7 +242,6 @@ class Tools:
         file_path: str,
         dependencies: Optional[List[str]] = None,
         timeout_sec: int = ECHO_DEFAULT_CODE_EXECUTION_TIMEOUT,
-        fetch_ui_payload: bool = False,
         background: bool = False,
         __user__: Optional[dict] = None,
         __event_emitter__: Any = None,
@@ -261,12 +261,12 @@ class Tools:
             await events.status(f"Erreur: {err_msg}", done=True)
             return f"❌ {err_msg}"
 
-        uses_echo_monitor, calls_daemon = await asyncio.to_thread(
+        _, calls_daemon = await asyncio.to_thread(
             _inspect_sandbox_script, uid, cid, file_path
         )
         if not background and calls_daemon:
             return (
-                f"❌ Blocage prévenu : le script '{file_path}' invoque BidiRouter.serve_forever() ou echo_monitor.expose_app() "
+                f"❌ Blocage prévenu : le script '{file_path}' invoque echo_monitor.expose_app() "
                 "(serveur persistant). L'exécution synchrone (background=False) est interdite pour un serveur afin de ne pas bloquer "
                 f"la session. Rappeler code_executor(file_path='{file_path}', background=True)."
             )
@@ -282,54 +282,27 @@ class Tools:
 
         try:
             import httpx
-            wm.clear_canvas_signal(uid, cid)
-            ui_payload_data = wm.consume_canvas_ui_payload(uid, cid) if fetch_ui_payload else None
             sandbox_base = ECHO_CODING_WORKER_BASE_URL
-            abort_event = asyncio.Event()
-
-            async def _abort_watcher() -> None:
-                while not abort_event.is_set():
-                    await asyncio.sleep(0.25)
-                    if wm._get_canvas_state(uid, cid).get("signal") == "abort":
-                        abort_event.set()
-                        break
-
-            watcher_task: Optional[asyncio.Task] = None
+            callback_token = wm.issue_sandbox_callback_token(uid, cid)
             try:
                 async with httpx.AsyncClient(timeout=actual_timeout + 30.0) as client:
-                    http_task = asyncio.create_task(
-                        client.post(
-                            ECHO_CODING_WORKER_URL,
-                            json={
-                                "file_path": file_path,
-                                "dependencies": dependencies,
-                                "ui_payload": ui_payload_data,
-                                "user_id": uid,
-                                "chat_id": cid,
-                                "run_id": run_id,
-                                "timeout": actual_timeout,
-                                "max_output_length": ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS,
-                                "background": background,
-                                "idle_ttl_sec": ECHO_CANVAS_IDLE_TTL_SEC,
-                                "max_lifetime_sec": ECHO_CANVAS_MAX_LIFETIME_SEC,
-                            },
-                        )
+                    response = await client.post(
+                        ECHO_CODING_WORKER_URL,
+                        json={
+                            "file_path": file_path,
+                            "dependencies": dependencies,
+                            "user_id": uid,
+                            "chat_id": cid,
+                            "run_id": run_id,
+                            "callback_token": callback_token,
+                            "timeout": actual_timeout,
+                            "max_output_length": ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS,
+                            "background": background,
+                            "idle_ttl_sec": ECHO_CANVAS_IDLE_TTL_SEC,
+                            "max_lifetime_sec": ECHO_CANVAS_MAX_LIFETIME_SEC,
+                        },
                     )
-                    if not background:
-                        watcher_task = asyncio.create_task(_abort_watcher())
-                        abort_wait_task = asyncio.create_task(abort_event.wait())
-                        await asyncio.wait(
-                            [http_task, abort_wait_task],
-                            return_when=asyncio.FIRST_COMPLETED,
-                        )
-                        if not abort_wait_task.done():
-                            abort_wait_task.cancel()
-                        if abort_event.is_set() and not http_task.done():
-                            http_task.cancel()
-                            raise asyncio.CancelledError("UI requested abort")
-                    response = await http_task
             except asyncio.CancelledError:
-                wm.clear_canvas_signal(uid, cid)
                 try:
                     async with httpx.AsyncClient(timeout=5.0) as kclient:
                         await kclient.post(f"{sandbox_base}/kill", json={"user_id": uid, "chat_id": cid, "run_id": run_id})
@@ -341,9 +314,6 @@ class Tools:
             except httpx.RequestError:
                 wm.pop_sandbox_run_owner(uid, cid, run_id)
                 return "❌ Service Coding Worker injoignable."
-            finally:
-                if watcher_task is not None and not watcher_task.done():
-                    watcher_task.cancel()
 
             if response.status_code != 200:
                 wm.pop_sandbox_run_owner(uid, cid, run_id)
@@ -354,7 +324,6 @@ class Tools:
             worker_res = response.json()
             if background and worker_res.get("status") == "running":
                 init_out = worker_res.get("output", "")
-                wm.register_canvas_run(uid, cid, run_id)
                 wm.set_sandbox_stream_offsets(uid, cid, run_id, len(init_out), 0)
 
                 wdata: dict[str, Any] = {}
@@ -378,7 +347,14 @@ class Tools:
                 frame_wids: list[str] = []
                 for f in frames:
                     if isinstance(f, dict):
-                        await wm.broadcast_canvas_frame(user_id=uid, chat_id=cid, frame_data=f, auto_open=True, run_id=run_id)
+                        await wm.broadcast_canvas_frame(
+                            user_id=uid,
+                            chat_id=cid,
+                            frame_data=f,
+                            auto_open=True,
+                            run_id=run_id,
+                            mode=str(f.get("mode") or ""),
+                        )
                         fwid = str(f.get("id") or f.get("window_id") or "default")
                         if fwid not in frame_wids:
                             frame_wids.append(fwid)
@@ -477,7 +453,14 @@ class Tools:
             for f in frames:
                 if isinstance(f, dict):
                     try:
-                        await wm.broadcast_canvas_frame(user_id=uid, chat_id=cid, frame_data=f, auto_open=True, run_id=run_id)
+                        await wm.broadcast_canvas_frame(
+                            user_id=uid,
+                            chat_id=cid,
+                            frame_data=f,
+                            auto_open=True,
+                            run_id=run_id,
+                            mode=str(f.get("mode") or ""),
+                        )
                         p_wid = str(f.get("id") or f.get("window_id") or "default")
                         if p_wid not in post_display_wids:
                             post_display_wids.append(p_wid)
@@ -510,8 +493,6 @@ class Tools:
                 "run_id": run_id,
                 "pid": worker_res.get("pid"),
             }
-            if fetch_ui_payload and worker_res.get("ui_payload") is not None:
-                echo_status["ui_payload"] = worker_res["ui_payload"]
             if worker_res.get("error"):
                 echo_status["error"] = worker_res["error"]
 

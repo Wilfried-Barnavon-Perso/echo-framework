@@ -21,9 +21,9 @@
 	export let args = null;
 
 	export let allowScripts = true;
-	export let allowForms = false;
+	export let allowForms = true;
 
-	export let allowSameOrigin = false; // set to true only when you trust the content
+	export let allowModals = true;
 	export let allowPopups = false;
 	export let allowDownloads = true;
 
@@ -45,7 +45,7 @@
 		[
 			allowScripts && 'allow-scripts',
 			allowForms && 'allow-forms',
-			allowSameOrigin && 'allow-same-origin',
+			allowModals && 'allow-modals',
 			allowPopups && 'allow-popups',
 			allowDownloads && 'allow-downloads'
 		]
@@ -142,7 +142,7 @@
 	];
 
 	async function processHtmlForDeps(html: string): Promise<string> {
-		if (!allowSameOrigin) return html;
+		return html;
 
 		const scriptTags: string[] = [];
 

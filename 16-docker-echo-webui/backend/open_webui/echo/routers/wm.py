@@ -1,11 +1,12 @@
 """
 title: ECHO V6 Window Manager Router
 author: Wilfried BARNAVON
-version: 6.16.0.3
+version: 6.17.4.1
 description: Routeur souverain FastAPI pour le gestionnaire de fenêtres et événements temps réel (/echo/v1/wm).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.17.4.1: Suppression /ws/canvas, ajout POST /internal/sandbox_event HMAC, CORS preflight/réponses et shim HTML autonome sans location.host.
 # 6.16.0.3: Migration /ws bidirectionnel, relais WS /ws/canvas/{chat_id}/{run_id}, proxy HTTP/WS HMAC /app/{ticket} et shim HTML.
 # 6.15.2.1: Réconciliation des frames Canvas (reconcile_canvas_frames) sur GET /chat/{chat_id} et action RPC canvas_stop_run sur POST /rpc.
 # 6.7.20.1: Exposition de l'endpoint authentifié GET /echo/v1/wm/commands servant le catalogue déclaratif system-commands.xml.
@@ -18,10 +19,9 @@ import json
 import logging
 import re
 import sys
-import time
 import uuid
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import aiohttp
 import httpx
@@ -190,186 +190,206 @@ async def get_echo_authorized_commands(user=Depends(get_echo_verified_user)):
     return JSONResponse(content={"commands": ui_commands})
 
 
-@router.websocket("/ws/canvas/{chat_id}/{run_id}")
-async def wm_canvas_ws_endpoint(websocket: WebSocket, chat_id: str, run_id: str):
-    """Relais WebSocket full-duplex TEXT/BINARY entre l'Iframe Canvas et CanvasRunHub."""
-    auth_res = await authenticate_echo_websocket(websocket)
-    if auth_res is None:
-        return
-
-    user, _ = auth_res
-    wm = get_window_manager()
-    if not await wm.verify_canvas_run_access(user.id, chat_id, run_id):
-        await websocket.close(code=1008, reason="Canvas run access denied")
-        return
-
-    owner_uid = sanitize_echo_id(wm._resolve_owner_uid(user.id, chat_id))
-    safe_cid = sanitize_echo_id(chat_id)
-    safe_rid = sanitize_echo_id(run_id)
-    ws_url = f"{ECHO_CODING_WORKER_WS_BASE_URL}/ws/canvas/{safe_rid}?user_id={owner_uid}&chat_id={safe_cid}"
-
-    def _sync_frame_state(frame_obj: dict, default_status: str = "running") -> None:
-        wid = str(frame_obj.get("id") or frame_obj.get("window_id") or "default")
-        cstate = wm._get_canvas_state(user.id, chat_id)
-        prev = cstate["frames"].get(wid) if isinstance(cstate.get("frames"), dict) else None
-        mode = str(frame_obj.get("mode") or (prev or {}).get("mode") or "")
-        server_status = str(frame_obj.get("server_status") or default_status)
-        html_val = str(frame_obj.get("html") or "")
-        src_val = str(frame_obj.get("src") or (prev or {}).get("src") or "")
-        if mode == "app_proxy" and not src_val and server_status not in ("completed", "killed", "error", "timeout"):
-            ticket = wm.issue_app_capability_ticket(user.id, chat_id, safe_rid, wid)
-            src_val = f"/echo/v1/wm/app/{ticket}/"
-            html_val = ""
-        cstate["frames"][wid] = {
-            "id": wid,
-            "title": str(frame_obj.get("title") or (prev or {}).get("title") or "Monitor"),
-            "html": html_val,
-            "src": src_val,
-            "mode": mode,
-            "width": str(frame_obj.get("width") or (prev or {}).get("width") or "100%"),
-            "height": str(frame_obj.get("height") or (prev or {}).get("height") or "400px"),
-            "run_id": str(frame_obj.get("run_id") or safe_rid),
-            "server_status": server_status,
-            "exit_code": frame_obj.get("exit_code"),
-            "ready": bool(frame_obj.get("ready", (prev or {}).get("ready", False))),
-            "updated_at": float(frame_obj.get("updated_at") or time.time()),
-        }
-
+@router.post("/internal/sandbox_event")
+async def wm_internal_sandbox_event(request: Request):
+    """Webhook interne Worker -> WebUI authentifié par HMAC-SHA256 (Contrat C2)."""
+    token = request.headers.get("x-echo-callback-token") or ""
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(ws_url, heartbeat=20.0) as upstream:
-                async def _upstream_to_client() -> None:
-                    async for msg in upstream:
-                        if msg.type == aiohttp.WSMsgType.BINARY:
-                            await websocket.send_bytes(msg.data)
-                        elif msg.type == aiohttp.WSMsgType.TEXT:
-                            await websocket.send_text(msg.data)
-                            try:
-                                frame = json.loads(msg.data)
-                            except (json.JSONDecodeError, TypeError):
-                                continue
-                            if not isinstance(frame, dict):
-                                continue
-                            ftype = frame.get("type")
-                            if ftype == "display":
-                                _sync_frame_state(frame)
-                            elif ftype == "expose_app":
-                                wid = str(frame.get("window_id") or frame.get("id") or "default")
-                                await wm.broadcast_canvas_frame(
-                                    user.id,
-                                    chat_id,
-                                    {
-                                        "id": wid,
-                                        "title": frame.get("title") or "Application Sandbox",
-                                        "width": frame.get("width") or "100%",
-                                        "height": frame.get("height") or "600px",
-                                        "mode": "app_proxy",
-                                    },
-                                    auto_open=False,
-                                    run_id=safe_rid,
-                                )
-                            elif ftype == "snapshot":
-                                jstate = str(frame.get("job_state") or "running")
-                                for fitem in frame.get("frames") or []:
-                                    if isinstance(fitem, dict):
-                                        _sync_frame_state(fitem, default_status=jstate)
-                            elif ftype == "status":
-                                await wm.broadcast_canvas_status(
-                                    user.id,
-                                    chat_id,
-                                    frame.get("window_ids") or [],
-                                    server_status=str(frame.get("job_state") or "completed"),
-                                    run_id=str(frame.get("run_id") or safe_rid),
-                                    exit_code=frame.get("exit_code"),
-                                )
-                        elif msg.type in (
-                            aiohttp.WSMsgType.CLOSE,
-                            aiohttp.WSMsgType.CLOSED,
-                            aiohttp.WSMsgType.ERROR,
-                        ):
-                            break
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        return JSONResponse({"detail": "Invalid payload"}, status_code=400)
 
-                async def _client_to_upstream() -> None:
-                    while True:
-                        msg = await websocket.receive()
-                        if msg.get("type") == "websocket.disconnect":
-                            break
-                        if "bytes" in msg and msg["bytes"] is not None:
-                            await upstream.send_bytes(msg["bytes"])
-                        elif "text" in msg and msg["text"] is not None:
-                            await upstream.send_str(msg["text"])
+    user_id = str(payload.get("user_id") or "")
+    chat_id = str(payload.get("chat_id") or "")
+    wm = get_window_manager()
+    if not wm.verify_sandbox_callback_token(token, user_id, chat_id):
+        return JSONResponse({"detail": "Invalid callback token"}, status_code=403)
 
-                up_task = asyncio.create_task(_upstream_to_client())
-                down_task = asyncio.create_task(_client_to_upstream())
-                try:
-                    _, pending = await asyncio.wait(
-                        {up_task, down_task},
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    for t in pending:
-                        t.cancel()
-                finally:
-                    for t in (up_task, down_task):
-                        if not t.done():
-                            t.cancel()
-                        with contextlib.suppress(BaseException):
-                            await t
-    except (WebSocketDisconnect, RuntimeError):
-        pass
-    except Exception as exc:
-        log.debug("Erreur relais WS Canvas (%s/%s): %s", safe_cid, safe_rid, exc)
-        with contextlib.suppress(Exception):
-            await websocket.close(code=1011)
+    event = str(payload.get("event") or "")
+    run_id = str(payload.get("run_id") or "")
+    if event == "frame_upsert":
+        frame = payload.get("frame") if isinstance(payload.get("frame"), dict) else {}
+        frame_id = str(frame.get("id") or frame.get("window_id") or payload.get("window_id") or "default")
+        await wm.broadcast_canvas_frame(
+            user_id,
+            chat_id,
+            frame_id,
+            html=str(frame.get("html") or ""),
+            title=str(frame.get("title") or "Monitor"),
+            width=str(frame.get("width") or "100%"),
+            height=str(frame.get("height") or "400px"),
+            auto_open=True,
+            run_id=run_id,
+            server_status="running",
+            mode=str(frame.get("mode") or ""),
+        )
+    elif event == "run_finished":
+        wm.revoke_app_run_tickets(run_id)
+        window_ids = payload.get("window_ids") or []
+        state = str(payload.get("state") or "completed")
+        exit_code = payload.get("exit_code")
+        await wm.broadcast_canvas_status(
+            user_id,
+            chat_id,
+            window_ids,
+            server_status=state,
+            exit_code=exit_code,
+            run_id=run_id,
+        )
+    return JSONResponse({"status": "ok"})
 
 
-def _inject_app_proxy_html_shim(html_bytes: bytes, base_prefix: str) -> bytes:
-    """Injecte <base> et le shim JS (ECHO_APP_BASE, echoAppUrl, echoWsUrl, fetch, WebSocket)."""
+def _apply_app_cors_headers(headers: dict | object, request: Request) -> None:
+    """Ajoute les en-têtes CORS permissifs requis pour le proxy applicatif /app/{ticket}."""
+    req_headers = request.headers.get("access-control-request-headers") or "*"
+    headers["Access-Control-Allow-Origin"] = "*"
+    headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS"
+    headers["Access-Control-Allow-Headers"] = req_headers
+    headers["Access-Control-Expose-Headers"] = "*"
+    headers["Access-Control-Max-Age"] = "3600"
+
+
+def _rewrite_app_location_header(loc: str, base_prefix: str, public_host: str) -> str:
+    """Réécrit les redirections Location racine ou locales vers /echo/v1/wm/app/{ticket}/..."""
+    if not loc:
+        return loc
+    parsed = urlsplit(loc)
+    if not parsed.scheme and not parsed.netloc:
+        if loc.startswith("/") and not loc.startswith("//") and not loc.startswith("/echo/v1/wm/app/"):
+            return f"{base_prefix}{loc.lstrip('/')}"
+        return loc
+    host_l = (parsed.hostname or "").lower()
+    netloc_l = (parsed.netloc or "").lower()
+    is_local_host = host_l in ("localhost", "127.0.0.1") or (public_host and netloc_l == public_host.lower())
+    if parsed.scheme in ("http", "https") and is_local_host and not parsed.path.startswith("/echo/v1/wm/app/"):
+        rewritten = f"{base_prefix}{parsed.path.lstrip('/')}"
+        if parsed.query:
+            rewritten += f"?{parsed.query}"
+        if parsed.fragment:
+            rewritten += f"#{parsed.fragment}"
+        return rewritten
+    return loc
+
+
+def _inject_app_proxy_html_shim(
+    html_bytes: bytes,
+    base_prefix: str,
+    public_host: str,
+    is_https: bool,
+) -> bytes:
+    """Réécrit les attributs HTML racine et injecte <base> + shim JS autonome (sans location.host/origin)."""
+    html_text = html_bytes.decode("utf-8", errors="replace")
+    html_text = re.sub(
+        r"""(\b(?:src|href|action|poster)\s*=\s*)(["'])/(?!/|echo/v1/wm/app/)([^"']*)\2""",
+        lambda m: f"{m.group(1)}{m.group(2)}{base_prefix}{m.group(3)}{m.group(2)}",
+        html_text,
+        flags=re.IGNORECASE,
+    )
+
     safe_attr = base_prefix.replace('"', "%22").replace("<", "%3C").replace(">", "%3E")
     base_js = json.dumps(base_prefix)
+    host_js = json.dumps(public_host or "")
+    https_js = "true" if is_https else "false"
     shim_html = (
         f'<base href="{safe_attr}">'
         "<script>(function(){"
-        f"var B={base_js};"
+        f"var B={base_js},H={host_js},S={https_js};"
+        "function mkStore(){"
+        "var d=Object.create(null);"
+        "var api={"
+        "getItem:function(k){k=String(k);return Object.prototype.hasOwnProperty.call(d,k)?d[k]:null;},"
+        "setItem:function(k,v){d[String(k)]=String(v);},"
+        "removeItem:function(k){delete d[String(k)];},"
+        "clear:function(){d=Object.create(null);},"
+        "key:function(i){var ks=Object.keys(d);return(i>=0&&i<ks.length)?ks[i]:null;}"
+        "};"
+        "return new Proxy(api,{"
+        "get:function(t,p){"
+        "if(p==='length')return Object.keys(d).length;"
+        "if(p in t)return t[p];"
+        "if(typeof p==='string'&&Object.prototype.hasOwnProperty.call(d,p))return d[p];"
+        "return undefined;},"
+        "set:function(t,p,v){if(p==='length'||p in t)return false;d[String(p)]=String(v);return true;},"
+        "deleteProperty:function(t,p){if(typeof p==='string'){delete d[p];return true;}return false;},"
+        "has:function(t,p){return(p in t)||Object.prototype.hasOwnProperty.call(d,String(p));},"
+        "ownKeys:function(){return Object.keys(d);},"
+        "getOwnPropertyDescriptor:function(t,p){"
+        "if(typeof p==='string'&&Object.prototype.hasOwnProperty.call(d,p)){"
+        "return{enumerable:true,configurable:true,writable:true,value:d[p]};}"
+        "return Object.getOwnPropertyDescriptor(t,p);}"
+        "});}"
+        "try{var _t='__echo_t__';window.localStorage.setItem(_t,'1');window.localStorage.removeItem(_t);}"
+        "catch(_){try{Object.defineProperty(window,'localStorage',{configurable:true,"
+        "get:function(){return window.__echoLS||(window.__echoLS=mkStore());}});}catch(__){}}"
+        "try{var _t2='__echo_t__';window.sessionStorage.setItem(_t2,'1');window.sessionStorage.removeItem(_t2);}"
+        "catch(_){try{Object.defineProperty(window,'sessionStorage',{configurable:true,"
+        "get:function(){return window.__echoSS||(window.__echoSS=mkStore());}});}catch(__){}}"
         "window.ECHO_APP_BASE=B;"
         "window.echoAppUrl=function(p){var s=String(p==null?'':p);"
-        "if(/^(?:[a-z]+:)?\\/\\//i.test(s)||s.indexOf(B)===0)return s;"
+        "if(/^(?:[a-z][a-z0-9+.-]*:)?\\/\\//i.test(s)||s.indexOf(B)===0||s.indexOf('/echo/v1/wm/app/')===0)return s;"
         "return B+s.replace(/^\\/+/, '');};"
-        "window.echoWsUrl=function(p){var pr=location.protocol==='https:'?'wss://':'ws://';"
-        "return pr+location.host+B+String(p==null?'':p).replace(/^\\/+/, '');};"
+        "window.echoWsUrl=function(p){var s=String(p==null?'':p),pr=S?'wss://':'ws://';"
+        "if(/^(?:wss?:)?\\/\\//i.test(s))return s;"
+        "if(s.indexOf('/echo/v1/wm/app/')===0)return pr+H+s;"
+        "return pr+H+B+s.replace(/^\\/+/, '');};"
+        "function rw(s){"
+        "s=String(s==null?'':s);"
+        "if(s.charAt(0)==='/'&&s.indexOf('//')!==0&&s.indexOf('/echo/v1/wm/app/')!==0)return B+s.slice(1);"
+        "if(H&&/^(?:https?:)?\\/\\//i.test(s)){try{"
+        "var u=new URL(s,(S?'https://':'http://')+H);"
+        "if(u.host===H&&u.pathname.charAt(0)==='/'&&u.pathname.indexOf('/echo/v1/wm/app/')!==0){"
+        "return B+u.pathname.slice(1)+u.search+u.hash;}}catch(_){}}"
+        "return s;}"
         "var oF=window.fetch;"
         "if(oF){window.fetch=function(input,init){"
-        "if(typeof input==='string'&&input.charAt(0)==='/'&&input.indexOf('//')!==0&&input.indexOf('/echo/v1/wm/app/')!==0){"
-        "input=B+input.slice(1);"
-        "}else if(typeof Request!=='undefined'&&input instanceof Request){"
+        "if(typeof input==='string'){input=rw(input);}"
+        "else if(typeof URL!=='undefined'&&input instanceof URL){"
+        "if(H&&input.host===H&&input.pathname.charAt(0)==='/'&&input.pathname.indexOf('/echo/v1/wm/app/')!==0){"
+        "input=new URL(B+input.pathname.slice(1)+input.search+input.hash,(S?'https://':'http://')+H);}}"
+        "else if(typeof Request!=='undefined'&&input instanceof Request){"
         "try{var u=new URL(input.url);"
-        "if(u.origin===location.origin&&u.pathname.charAt(0)==='/'&&u.pathname.indexOf('/echo/v1/wm/app/')!==0){"
+        "if(H&&u.host===H&&u.pathname.charAt(0)==='/'&&u.pathname.indexOf('/echo/v1/wm/app/')!==0){"
         "input=new Request(B+u.pathname.slice(1)+u.search,input);}}catch(_){}}"
         "return oF.call(this,input,init);};}"
+        "if(typeof XMLHttpRequest!=='undefined'&&XMLHttpRequest.prototype&&XMLHttpRequest.prototype.open){"
+        "var oX=XMLHttpRequest.prototype.open;"
+        "XMLHttpRequest.prototype.open=function(method,url){"
+        "var args=Array.prototype.slice.call(arguments);"
+        "if(args.length>=2&&args[1]!=null){args[1]=rw(args[1] instanceof URL?args[1].href:args[1]);}"
+        "return oX.apply(this,args);};}"
+        "var oE=window.EventSource;"
+        "if(oE){window.EventSource=function(url,init){"
+        "var u=rw(url instanceof URL?url.href:url);"
+        "return init!==undefined?new oE(u,init):new oE(u);};"
+        "window.EventSource.prototype=oE.prototype;"
+        "window.EventSource.CONNECTING=oE.CONNECTING;window.EventSource.OPEN=oE.OPEN;window.EventSource.CLOSED=oE.CLOSED;}"
         "var oW=window.WebSocket;"
         "if(oW){window.WebSocket=function(url,protocols){"
-        "var s=String(url==null?'':url),pr=location.protocol==='https:'?'wss://':'ws://';"
+        "var s=String(url instanceof URL?url.href:(url==null?'':url)),pr=S?'wss://':'ws://';"
         "if(s.charAt(0)==='/'&&s.indexOf('//')!==0&&s.indexOf('/echo/v1/wm/app/')!==0){"
-        "s=pr+location.host+B+s.slice(1);"
-        "}else{try{var u=new URL(s,location.href);"
-        "if((u.protocol==='ws:'||u.protocol==='wss:')&&u.host===location.host&&u.pathname.indexOf('/echo/v1/wm/app/')!==0){"
-        "s=pr+location.host+B+u.pathname.replace(/^\\/+/, '')+u.search;}}catch(_){}}"
+        "s=pr+H+B+s.slice(1);"
+        "}else if(H){try{var u=new URL(s,(S?'https://':'http://')+H+B);"
+        "if((u.protocol==='ws:'||u.protocol==='wss:')&&u.host===H&&u.pathname.indexOf('/echo/v1/wm/app/')!==0){"
+        "s=pr+H+B+u.pathname.replace(/^\\/+/, '')+u.search;}}catch(_){}}"
         "return protocols!==undefined?new oW(s,protocols):new oW(s);};"
         "window.WebSocket.prototype=oW.prototype;"
         "window.WebSocket.CONNECTING=oW.CONNECTING;window.WebSocket.OPEN=oW.OPEN;"
         "window.WebSocket.CLOSING=oW.CLOSING;window.WebSocket.CLOSED=oW.CLOSED;}"
         "})();</script>"
-    ).encode("utf-8")
+    )
 
     patched, count = re.subn(
-        rb"(<head\b[^>]*>)",
+        r"(<head\b[^>]*>)",
         lambda m: m.group(1) + shim_html,
-        html_bytes,
+        html_text,
         count=1,
         flags=re.IGNORECASE,
     )
     if count > 0:
-        return patched
-    return shim_html + html_bytes
+        return patched.encode("utf-8")
+    return (shim_html + html_text).encode("utf-8")
 
 
 _APP_PROXY_HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
@@ -383,6 +403,17 @@ async def wm_app_http_proxy_endpoint(request: Request, ticket: str, path: str = 
     claims = wm.verify_app_capability_ticket(ticket)
     if claims is None:
         return JSONResponse({"detail": "Invalid or expired capability ticket"}, status_code=403)
+
+    if request.method == "OPTIONS":
+        preflight = Response(status_code=204)
+        _apply_app_cors_headers(preflight.headers, request)
+        return preflight
+
+    raw_host = request.headers.get("x-forwarded-host") or request.headers.get("host") or (request.url.netloc or "")
+    public_host = raw_host.split(",")[0].strip()
+    raw_proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "http"
+    is_https = raw_proto.split(",")[0].strip().lower() == "https"
+    base_prefix = f"/echo/v1/wm/app/{ticket}/"
 
     safe_rid = sanitize_echo_id(claims["run_id"])
     wid = claims["window_id"]
@@ -403,7 +434,10 @@ async def wm_app_http_proxy_endpoint(request: Request, ticket: str, path: str = 
     ]
     body = await request.body()
 
-    client = httpx.AsyncClient(follow_redirects=False, timeout=60.0)
+    accept_hdr = str(request.headers.get("accept") or "").lower()
+    is_sse_req = "text/event-stream" in accept_hdr
+    client_timeout = httpx.Timeout(connect=10.0, write=30.0, read=None if is_sse_req else 300.0, pool=10.0)
+    client = httpx.AsyncClient(follow_redirects=False, timeout=client_timeout)
     try:
         upstream_req = client.build_request(
             method=request.method,
@@ -421,6 +455,7 @@ async def wm_app_http_proxy_endpoint(request: Request, ticket: str, path: str = 
         "proxy-authenticate", "proxy-authorization", "te", "trailers", "upgrade",
     }
     content_type = str(upstream_resp.headers.get("content-type") or "").lower()
+    is_redirect = upstream_resp.status_code in (301, 302, 303, 307, 308)
 
     if "text/html" in content_type:
         try:
@@ -428,26 +463,46 @@ async def wm_app_http_proxy_endpoint(request: Request, ticket: str, path: str = 
         finally:
             await upstream_resp.aclose()
             await client.aclose()
-        patched_html = _inject_app_proxy_html_shim(raw_html, f"/echo/v1/wm/app/{ticket}/")
-        html_skip = hop_by_hop | {"content-length", "content-security-policy", "cache-control"}
+        patched_html = _inject_app_proxy_html_shim(raw_html, base_prefix, public_host, is_https)
+        html_skip = hop_by_hop | {
+            "content-length", "content-security-policy", "cache-control",
+            "origin-agent-cluster", "access-control-allow-origin",
+            "access-control-allow-methods", "access-control-allow-headers",
+            "access-control-expose-headers", "access-control-max-age",
+        }
         resp = Response(
             content=patched_html,
             status_code=upstream_resp.status_code,
             media_type=upstream_resp.headers.get("content-type"),
         )
         for k, v in upstream_resp.headers.multi_items():
-            if k.lower() not in html_skip:
-                resp.headers.append(k, v)
+            kl = k.lower()
+            if kl in html_skip:
+                continue
+            if kl == "location" and is_redirect:
+                v = _rewrite_app_location_header(v, base_prefix, public_host)
+            resp.headers.append(k, v)
+        resp.headers["Origin-Agent-Cluster"] = "?1"
         resp.headers["Content-Security-Policy"] = (
             "sandbox allow-scripts allow-downloads allow-forms allow-modals allow-popups;"
         )
         resp.headers["Cache-Control"] = "no-store"
+        _apply_app_cors_headers(resp.headers, request)
         return resp
 
-    resp_headers = [
-        (k, v) for k, v in upstream_resp.headers.multi_items()
-        if k.lower() not in (hop_by_hop | {"cache-control"})
-    ]
+    stream_skip = hop_by_hop | {
+        "cache-control", "access-control-allow-origin",
+        "access-control-allow-methods", "access-control-allow-headers",
+        "access-control-expose-headers", "access-control-max-age",
+    }
+    resp_headers = []
+    for k, v in upstream_resp.headers.multi_items():
+        kl = k.lower()
+        if kl in stream_skip:
+            continue
+        if kl == "location" and is_redirect:
+            v = _rewrite_app_location_header(v, base_prefix, public_host)
+        resp_headers.append((k, v))
 
     async def _stream_body():
         try:
@@ -462,6 +517,9 @@ async def wm_app_http_proxy_endpoint(request: Request, ticket: str, path: str = 
     for k, v in resp_headers:
         resp.headers.append(k, v)
     resp.headers["Cache-Control"] = "no-store"
+    if "text/event-stream" in content_type:
+        resp.headers["X-Accel-Buffering"] = "no"
+    _apply_app_cors_headers(resp.headers, request)
     return resp
 
 
