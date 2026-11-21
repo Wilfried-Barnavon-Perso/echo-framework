@@ -2,16 +2,16 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - MAINTENANCE & BACKUP SCHEDULER
-VERSION : 6.5.0.1
+VERSION : 6.18.0.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.0.1: Alignement de l'arrêt/redémarrage coordonné backup et reprise nocturne sur BACKUP_AUX_CONTAINERS (ECHO v6).
 # 6.5.0.1: Checkpoint WAL SQLite sur auth.db avant archivage et inclusion de SECRETS_DIR et HOST_ENV_FILE dans la sauvegarde tar.xz.
 # 5.239.1.1: Exécution de la sauvegarde tar.xz à priorité minimale (nice 19, ionice idle c3, XZ_OPT="-T2 -1", IDLE_PRIORITY_CLASS).
 # 5.235.5.1: Intégration des statistiques de purge des branches mortes dans le rapport de maintenance nocturne.
 # 5.235.2.1: Affichage explicite des session.db purgées dans le bilan d'élagage du cycle nocturne.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 from contextlib import closing
 import datetime
 import glob
@@ -23,6 +23,7 @@ import sqlite3
 import subprocess
 import time
 from core.config import (
+    BACKUP_AUX_CONTAINERS,
     BACKUP_DIR,
     DOCKER_AVAILABLE,
     HAS_PSUTIL,
@@ -152,12 +153,12 @@ def perform_backup_task(record_report: bool = False):
         total_src_bytes = max(1, sum(_get_tree_size(d) for d in tar_sources))
 
         MAINTENANCE_STATE["percent"] = 5
-        MAINTENANCE_STATE["status"] = f"Sauvegarde (1/{step_total}) : Arrêt temporaire des services (OWUI, Qdrant, N8N, MCP)..."
+        MAINTENANCE_STATE["status"] = f"Sauvegarde (1/{step_total}) : Arrêt temporaire des services critiques ECHO..."
 
         client = docker.from_env()
         target = client.containers.get(TARGET_CONTAINER)
         aux_containers = []
-        for cname in ('echo-qdrant', 'echo-n8n-worker', 'echo-mcp-broker'):
+        for cname in BACKUP_AUX_CONTAINERS:
             try:
                 aux_containers.append(client.containers.get(cname))
             except Exception:
@@ -373,7 +374,7 @@ def perform_backup_task(record_report: bool = False):
 
         return backup_info
     except Exception as e:
-        for c_name in (TARGET_CONTAINER, 'echo-qdrant', 'echo-n8n-worker', 'echo-mcp-broker'):
+        for c_name in (TARGET_CONTAINER, *BACKUP_AUX_CONTAINERS):
             try:
                 docker.from_env().containers.get(c_name).start()
             except Exception:
@@ -412,7 +413,7 @@ def run_nightly_maintenance_cycle():
     if DOCKER_AVAILABLE:
         try:
             client = docker.from_env()
-            for c_name in (TARGET_CONTAINER, 'echo-qdrant', 'echo-n8n-worker', 'echo-mcp-broker'):
+            for c_name in (TARGET_CONTAINER, *BACKUP_AUX_CONTAINERS):
                 try:
                     c_obj = client.containers.get(c_name)
                     if c_obj.status != 'running':

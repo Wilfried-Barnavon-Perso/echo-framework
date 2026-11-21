@@ -22,6 +22,13 @@
 		type EchoCodexAiEditPayload
 	} from '$lib/apis/echo';
 	import { ECHO_COGNITIVE_MODELS, echoCodexTarget } from '$lib/stores/echo';
+	import EchoCodexEditor from './EchoCodexEditor.svelte';
+	import {
+		SELECTABLE_CODEX_LANGUAGES,
+		detectCodexLanguage,
+		getCanonicalExtForLanguage,
+		getCodexLanguageSpec
+	} from './codexLanguages';
 
 	export let chatId: string = '';
 
@@ -47,12 +54,17 @@
 		mime?: string;
 		size_bytes?: number;
 		hex_preview?: string;
+		language?: string;
+		total_lines?: number;
 	} | null = null;
 	let viewMode: 'code' | 'preview' = 'code';
 	let previewBlobUrl = '';
 
-	let codeTextarea: HTMLTextAreaElement | null = null;
+	let codexEditorRef: EchoCodexEditor | null = null;
 	let editorSelection = '';
+	let manualLanguageOverride = '';
+	let editorWordWrap = true;
+	let cursorInfo = { line: 1, col: 1, lineCount: 0, selectionChars: 0, selectionLines: 0 };
 	let aiInstruction = '';
 	let aiModel = 'MODEL_APOLLO';
 	let isAiEditing = false;
@@ -130,6 +142,28 @@
 	$: isDirty = Boolean(
 		selectedPath && isWritable && !fileMeta?.is_binary && fileContent !== savedFileContent
 	);
+	$: detectedLanguage = selectedPath
+		? detectCodexLanguage({
+				path: selectedPath,
+				backendLang: fileMeta?.language || null,
+				mime: fileMeta?.mime || null,
+				isBinary: fileMeta?.is_binary,
+				content: fileMeta?.is_binary ? null : fileContent
+			})
+		: 'plaintext';
+	$: activeLanguage = manualLanguageOverride || detectedLanguage;
+	$: activeLangSpec = getCodexLanguageSpec(activeLanguage);
+	$: isEditableTextLanguage = Boolean(
+		selectedPath &&
+			!fileMeta?.is_binary &&
+			(activeLangSpec.category === 'code' ||
+				(activeLangSpec.category === 'document' && activeLangSpec.id !== 'pdf'))
+	);
+
+	const resetEditorLanguageState = () => {
+		manualLanguageOverride = '';
+		cursorInfo = { line: 1, col: 1, lineCount: 0, selectionChars: 0, selectionLines: 0 };
+	};
 
 	const resetAiState = () => {
 		editorSelection = '';
@@ -184,6 +218,7 @@
 		diffText = '';
 		currentCommit = '';
 		aiInstruction = '';
+		resetEditorLanguageState();
 		resetAiState();
 		revokePreviewBlob();
 		void loadChats();
@@ -437,6 +472,7 @@
 		viewMode = 'code';
 		fileMeta = null;
 		savedFileContent = '';
+		resetEditorLanguageState();
 		resetAiState();
 		revokePreviewBlob();
 		if (splitWidth > 0 && splitWidth < 480) {
@@ -462,7 +498,9 @@
 					is_binary: Boolean(res?.is_binary),
 					mime: res?.mime_type || res?.mime,
 					size_bytes: res?.size_bytes,
-					hex_preview: res?.hex_preview
+					hex_preview: res?.hex_preview,
+					language: res?.language,
+					total_lines: res?.total_lines
 				};
 				fileMeta = nextMeta;
 				fileContent = res?.content ?? '';
@@ -491,6 +529,37 @@
 		const targetCid = getEffectiveChatId();
 		if (mode === 'preview' && previewCaps.needsBlob && !previewBlobUrl && selectedPath && targetCid) {
 			void loadPreviewBlob(targetCid, selectedWorkspace, selectedPath);
+		}
+	};
+
+	const handleLanguageChange = async (newLang: string) => {
+		manualLanguageOverride = newLang;
+		if (!isWritable || !selectedPath) return;
+		const newExt = getCanonicalExtForLanguage(newLang);
+		if (!newExt) return;
+		const lastSlash = selectedPath.lastIndexOf('/');
+		const dir = lastSlash >= 0 ? selectedPath.slice(0, lastSlash + 1) : '';
+		const base = lastSlash >= 0 ? selectedPath.slice(lastSlash + 1) : selectedPath;
+		const dotIdx = base.lastIndexOf('.');
+		const currentExt = dotIdx > 0 ? base.slice(dotIdx).toLowerCase() : '';
+		if (currentExt === newExt.toLowerCase()) return;
+		const stem = dotIdx > 0 ? base.slice(0, dotIdx) : base;
+		const newPath = `${dir}${stem}${newExt}`;
+		if (!confirm(`Renommer « ${selectedPath} » en « ${newPath} » ?`)) return;
+		const token = getEchoToken();
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
+		isMutating = true;
+		try {
+			await renameEchoCodex(token, targetCid, selectedWorkspace, selectedPath, newPath);
+			selectedPath = newPath;
+			manualLanguageOverride = '';
+			toast.success(`Renommé en ${newPath}`);
+			await loadTree(currentDirPath);
+		} catch (e: any) {
+			toast.error('Échec renommage: ' + (e.message || ''));
+		} finally {
+			isMutating = false;
 		}
 	};
 
@@ -540,6 +609,7 @@
 				fileContent = '';
 				savedFileContent = '';
 				fileMeta = null;
+				resetEditorLanguageState();
 				resetAiState();
 				revokePreviewBlob();
 			}
@@ -710,8 +780,10 @@
 			toast.success(`Renommé en ${cleanNew}`);
 			if (selectedPath === oldPath) {
 				selectedPath = cleanNew;
+				resetEditorLanguageState();
 			} else if (isDir && selectedPath.startsWith(oldPath + '/')) {
 				selectedPath = cleanNew + selectedPath.slice(oldPath.length);
+				resetEditorLanguageState();
 			}
 			await loadTree(currentDirPath);
 		} catch (e: any) {
@@ -779,10 +851,15 @@
 			domSelectionText = '';
 			return;
 		}
+		const anchorEl = sel.anchorNode
+			? sel.anchorNode instanceof Element
+				? sel.anchorNode
+				: sel.anchorNode.parentElement
+			: null;
 		if (
 			sel.anchorNode &&
 			editorViewportRef.contains(sel.anchorNode) &&
-			!(codeTextarea && (codeTextarea === sel.anchorNode || codeTextarea.contains(sel.anchorNode)))
+			!anchorEl?.closest('.cm-editor')
 		) {
 			domSelectionText = sel.toString();
 		} else {
@@ -996,11 +1073,7 @@
 		}
 
 		if (viewMode === 'code' && !fileMeta?.is_binary && aiPendingContent === null) {
-			const liveSel = codeTextarea
-				? codeTextarea.selectionEnd > codeTextarea.selectionStart
-					? codeTextarea.value.slice(codeTextarea.selectionStart, codeTextarea.selectionEnd)
-					: editorSelection
-				: editorSelection;
+			const liveSel = codexEditorRef?.getSelection() || editorSelection;
 			if (liveSel) {
 				const ok = await writePlainTextClipboard(liveSel);
 				if (ok) {
@@ -1255,6 +1328,7 @@ img, svg { max-width: 100%; height: auto; }
 		logEntries = [];
 		diffText = '';
 		currentCommit = '';
+		resetEditorLanguageState();
 		resetAiState();
 		revokePreviewBlob();
 		void loadTree('', Boolean(nextCross));
@@ -1262,24 +1336,6 @@ img, svg { max-width: 100%; height: auto; }
 
 	const exitCrossRead = () => {
 		handleChatSwitch('');
-	};
-
-	const updateSelectionFromTextarea = () => {
-		if (!codeTextarea) return;
-		const start = codeTextarea.selectionStart ?? 0;
-		const end = codeTextarea.selectionEnd ?? 0;
-		if (end > start) {
-			editorSelection = codeTextarea.value.slice(start, end);
-		} else {
-			editorSelection = '';
-		}
-	};
-
-	const handleEditorKeydown = (e: KeyboardEvent) => {
-		if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-			e.preventDefault();
-			void handleSave();
-		}
 	};
 
 	const handleAiEdit = async (quickAction?: QuickActionId, quickLabel?: string) => {
@@ -1299,7 +1355,8 @@ img, svg { max-width: 100%; height: auto; }
 				quick_action: quickAction,
 				content: fileContent,
 				selection: editorSelection ? editorSelection : null,
-				model: aiModel
+				model: aiModel,
+				language: activeLanguage
 			});
 			aiLastInstruction = instr;
 			aiUsedModel = res.model_used || aiModel;
@@ -1346,6 +1403,8 @@ img, svg { max-width: 100%; height: auto; }
 	interface DiffLine {
 		type: 'same' | 'add' | 'del';
 		text: string;
+		oldLine?: number;
+		newLine?: number;
 	}
 
 	const computeLineDiff = (beforeText: string, afterText: string): DiffLine[] => {
@@ -1362,10 +1421,10 @@ img, svg { max-width: 100%; height: auto; }
 				const a = aLines[i];
 				const b = bLines[i];
 				if (a === b && a !== undefined) {
-					out.push({ type: 'same', text: a });
+					out.push({ type: 'same', text: a, oldLine: i + 1, newLine: i + 1 });
 				} else {
-					if (a !== undefined) out.push({ type: 'del', text: a });
-					if (b !== undefined) out.push({ type: 'add', text: b });
+					if (a !== undefined) out.push({ type: 'del', text: a, oldLine: i + 1 });
+					if (b !== undefined) out.push({ type: 'add', text: b, newLine: i + 1 });
 				}
 			}
 			return out;
@@ -1391,27 +1450,75 @@ img, svg { max-width: 100%; height: auto; }
 		let j = 0;
 		while (i < n && j < m) {
 			if (aLines[i] === bLines[j]) {
-				result.push({ type: 'same', text: aLines[i] });
+				result.push({ type: 'same', text: aLines[i], oldLine: i + 1, newLine: j + 1 });
 				i++;
 				j++;
 			} else if (dp[i + 1][j] >= dp[i][j + 1]) {
-				result.push({ type: 'del', text: aLines[i] });
+				result.push({ type: 'del', text: aLines[i], oldLine: i + 1 });
 				i++;
 			} else {
-				result.push({ type: 'add', text: bLines[j] });
+				result.push({ type: 'add', text: bLines[j], newLine: j + 1 });
 				j++;
 			}
 		}
 		while (i < n) {
-			result.push({ type: 'del', text: aLines[i++] });
+			result.push({ type: 'del', text: aLines[i], oldLine: i + 1 });
+			i++;
 		}
 		while (j < m) {
-			result.push({ type: 'add', text: bLines[j++] });
+			result.push({ type: 'add', text: bLines[j], newLine: j + 1 });
+			j++;
 		}
 		return result;
 	};
 
 	$: aiDiffLines = aiPendingContent !== null ? computeLineDiff(fileContent, aiPendingContent) : [];
+
+	interface UnifiedDiffLine {
+		text: string;
+		oldLine?: number;
+		newLine?: number;
+	}
+
+	const parseUnifiedDiffLines = (rawDiff: string): UnifiedDiffLine[] => {
+		const lines = rawDiff.split('\n');
+		const result: UnifiedDiffLine[] = [];
+		let oldLine = 0;
+		let newLine = 0;
+		let inHunk = false;
+
+		for (const line of lines) {
+			const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+			if (hunkMatch) {
+				oldLine = parseInt(hunkMatch[1], 10);
+				newLine = parseInt(hunkMatch[2], 10);
+				inHunk = true;
+				result.push({ text: line });
+				continue;
+			}
+			if (
+				!inHunk ||
+				line.startsWith('diff ') ||
+				line.startsWith('index ') ||
+				line.startsWith('---') ||
+				line.startsWith('+++')
+			) {
+				if (line.startsWith('diff ')) inHunk = false;
+				result.push({ text: line });
+				continue;
+			}
+			if (line.startsWith('-')) {
+				result.push({ text: line, oldLine: oldLine++ });
+			} else if (line.startsWith('+')) {
+				result.push({ text: line, newLine: newLine++ });
+			} else if (line.startsWith('\\')) {
+				result.push({ text: line });
+			} else {
+				result.push({ text: line, oldLine: oldLine++, newLine: newLine++ });
+			}
+		}
+		return result;
+	};
 
 	const getDiffLineClass = (line: string): string => {
 		if (line.startsWith('+++') || line.startsWith('---')) {
@@ -1554,6 +1661,7 @@ img, svg { max-width: 100%; height: auto; }
 					savedFileContent = '';
 					fileMeta = null;
 					viewMode = 'code';
+					resetEditorLanguageState();
 					resetAiState();
 					revokePreviewBlob();
 					void loadTree('');
@@ -1762,7 +1870,9 @@ img, svg { max-width: 100%; height: auto; }
 									type="button"
 									class="flex-1 min-w-0 text-left flex items-center gap-1.5 truncate"
 									on:click={() => (isDir ? navigateToDir(entryPath) : selectFile(entryPath))}
-									title={entryPath}
+									title={!isDir
+										? `${entryPath} (${getCodexLanguageSpec(detectCodexLanguage({ path: entryPath, backendLang: entry?.lang, mime: entry?.mime })).label})`
+										: entryPath}
 								>
 									{#if isDir}
 										<span class="text-xs flex-shrink-0">📁</span>
@@ -1855,6 +1965,27 @@ img, svg { max-width: 100%; height: auto; }
 								>
 									● Modifié
 								</span>
+							{/if}
+							{#if selectedPath && !loadingFile}
+								{#if isEditableTextLanguage}
+									<select
+										aria-label="Langage du document"
+										value={activeLanguage}
+										on:change={(e) => void handleLanguageChange(e.currentTarget.value)}
+										class="text-[11px] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-1.5 py-0.5 font-mono text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-500 shrink-0"
+									>
+										{#if !SELECTABLE_CODEX_LANGUAGES.some((l) => l.id === activeLanguage)}
+											<option value={activeLanguage}>{activeLangSpec.label}</option>
+										{/if}
+										{#each SELECTABLE_CODEX_LANGUAGES as lang (lang.id)}
+											<option value={lang.id}>{lang.label}</option>
+										{/each}
+									</select>
+								{:else}
+									<span class="px-1.5 py-0.5 rounded bg-gray-200/80 dark:bg-gray-800 text-gray-600 dark:text-gray-300 text-[10px] font-mono shrink-0">
+										{activeLangSpec.label}
+									</span>
+								{/if}
 							{/if}
 						{:else}
 							<span class="font-mono text-xs text-gray-400 dark:text-gray-500 truncate">
@@ -2172,32 +2303,71 @@ img, svg { max-width: 100%; height: auto; }
 									<div class="flex-1 overflow-auto p-2 font-mono text-xs leading-relaxed">
 										{#each aiDiffLines as line}
 											<div
-												class="px-2 whitespace-pre-wrap break-all {line.type === 'add'
+												class="flex items-start px-2 whitespace-pre-wrap break-all {line.type === 'add'
 													? 'bg-emerald-950/45 text-emerald-300'
 													: line.type === 'del'
 														? 'bg-rose-950/45 text-rose-300'
 														: 'text-gray-400'}"
 											>
-												<span class="inline-block w-4 select-none opacity-70">{line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' '}</span>{line.text}
+												<span class="inline-block w-10 pr-1.5 text-right select-none opacity-50 shrink-0">{line.oldLine ?? ''}</span>
+												<span class="inline-block w-10 pr-2 text-right select-none opacity-50 shrink-0">{line.newLine ?? ''}</span>
+												<span class="inline-block w-4 select-none opacity-70 shrink-0">{line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' '}</span>
+												<span class="flex-1 min-w-0">{line.text}</span>
 											</div>
 										{/each}
 									</div>
 								{:else}
-									<pre class="flex-1 overflow-auto p-3 font-mono text-xs text-gray-200 whitespace-pre-wrap break-all">{aiPendingContent}</pre>
+									<div class="flex-1 min-h-0 overflow-hidden">
+										<EchoCodexEditor
+											value={aiPendingContent}
+											filePath={selectedPath}
+											language={activeLanguage}
+											readOnly={true}
+											wordWrap={editorWordWrap}
+											ariaLabel="Aperçu texte complet proposition IA"
+										/>
+									</div>
 								{/if}
 							</div>
 						{:else}
-							<textarea
-								bind:this={codeTextarea}
-								class="w-full h-full p-3 font-mono text-xs bg-gray-50 dark:bg-gray-950 border border-gray-200 dark:border-gray-800 rounded-lg text-gray-800 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-500 resize-none"
-								bind:value={fileContent}
-								readonly={!isWritable}
-								on:input={updateSelectionFromTextarea}
-								on:select={updateSelectionFromTextarea}
-								on:keyup={updateSelectionFromTextarea}
-								on:mouseup={updateSelectionFromTextarea}
-								on:keydown={handleEditorKeydown}
-							></textarea>
+							<div class="flex-1 min-h-0 flex flex-col overflow-hidden">
+								<div class="flex-1 min-h-0 overflow-hidden rounded-lg border border-gray-200 dark:border-gray-800">
+									<EchoCodexEditor
+										bind:this={codexEditorRef}
+										bind:value={fileContent}
+										filePath={selectedPath}
+										language={activeLanguage}
+										readOnly={!isWritable}
+										wordWrap={editorWordWrap}
+										gitBaseContent={savedFileContent}
+										onSave={handleSave}
+										onSelectionChange={(sel) => (editorSelection = sel)}
+										onCursorChange={(info) => (cursorInfo = info)}
+									/>
+								</div>
+								<div class="px-2.5 py-1 text-[11px] font-mono text-gray-500 dark:text-gray-400 flex items-center justify-between gap-2 shrink-0">
+									<div class="flex items-center gap-2 truncate">
+										<span>Ln {cursorInfo.line}, Col {cursorInfo.col}</span>
+										<span>·</span>
+										<span>{cursorInfo.lineCount} ligne{cursorInfo.lineCount > 1 ? 's' : ''}</span>
+										{#if cursorInfo.selectionChars > 0}
+											<span>·</span>
+											<span>{cursorInfo.selectionChars} car. ({cursorInfo.selectionLines} l.)</span>
+										{/if}
+									</div>
+									<div class="flex items-center gap-2 shrink-0">
+										<span>{activeLangSpec.label}</span>
+										<button
+											type="button"
+											on:click={() => (editorWordWrap = !editorWordWrap)}
+											class="px-1.5 py-0.5 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition {editorWordWrap ? 'text-sky-600 dark:text-sky-400 border-sky-500/40' : ''}"
+											title="Activer/désactiver le retour à la ligne"
+										>
+											Retour ligne
+										</button>
+									</div>
+								</div>
+							</div>
 						{/if}
 					</div>
 
@@ -2350,8 +2520,12 @@ img, svg { max-width: 100%; height: auto; }
 						{#if !diffText}
 							<div class="text-gray-400">Aucune différence ou diff vide.</div>
 						{:else}
-							{#each diffText.split('\n') as line}
-								<div class="px-1.5 whitespace-pre-wrap break-all {getDiffLineClass(line)}">{line}</div>
+							{#each parseUnifiedDiffLines(diffText) as diffLine}
+								<div class="flex items-start px-1.5 whitespace-pre-wrap break-all {getDiffLineClass(diffLine.text)}">
+									<span class="inline-block w-10 pr-1.5 text-right select-none opacity-50 shrink-0">{diffLine.oldLine ?? ''}</span>
+									<span class="inline-block w-10 pr-2 text-right select-none opacity-50 shrink-0">{diffLine.newLine ?? ''}</span>
+									<span class="flex-1 min-w-0">{diffLine.text}</span>
+								</div>
 							{/each}
 						{/if}
 					</div>

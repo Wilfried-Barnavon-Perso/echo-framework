@@ -1,16 +1,16 @@
 """
 title: ECHO V6 Codex Router
 author: Wilfried BARNAVON
-version: 6.12.0.1
+version: 6.18.1.1
 description: Routeur FastAPI pour dépôts Codex et conteneurs de session (/echo/v1/codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.1.1: Exposition du langage/type détecté (`lang` dans `_list_files_entries_sync`, `language` dans `GET /{chat_id}/file` tous workspaces) via `CodexRepo.detect_language`.
 # 6.12.0.1: Factorisation vers echo_codex_git/echo_paths (suppression helpers/validations dupliqués), confinement symlinks _resolve_safe_files_path, support delete récursif, move_entry et sync SQLite atomique sous get_codex_lock.
 # 6.6.13.1: Ajout de l'endpoint GET /{chat_id}/chats (get_codex_chats) exposant CodexRepo.get_user_codex_chats(..., include_files=True).
 # 6.6.9.1: Déportation asyncio.to_thread sur les opérations FS et Git Dulwich synchrones (tree, file, log, diff, download, mkdir, rename).
 # 6.6.6.1: Ajout de POST /{chat_id}/ai-edit (édition LLM one-shot), verrous get_codex_lock sur save/delete et synchro SQLite echo_resources.
-# 6.6.4.1: Normalisation canonique GET /{chat_id}/tree (name, path, filename, type, mime) et POST /{chat_id}/upload.
 
 from __future__ import annotations
 
@@ -212,6 +212,7 @@ def _list_files_entries_sync(
             "path": rel_item_path,
             "filename": rel_item_path,
             "type": "directory" if is_dir else "file",
+            "lang": "folder" if is_dir else CodexRepo.detect_language(item.name),
             "size": st.st_size if not is_dir else 0,
             "mime": mime or "application/octet-stream",
             "updated_at": int(st.st_mtime),
@@ -244,6 +245,7 @@ def _read_files_entry_sync(target_file: str, path: str) -> dict:
         "mime_type": mime_type,
         "size_bytes": st.st_size,
         "total_lines": len(content.splitlines()) if not is_binary else 0,
+        "language": CodexRepo.detect_language(path, None if is_binary else content),
     }
     if hex_preview is not None:
         payload_res["hex_preview"] = hex_preview
@@ -397,6 +399,7 @@ async def get_codex_file(
     else:
         res.setdefault("mime_type", mime_guessed or "text/plain")
 
+    res["language"] = CodexRepo.detect_language(path, None if res.get("is_binary") else res.get("content"))
     return JSONResponse(content=res)
 
 

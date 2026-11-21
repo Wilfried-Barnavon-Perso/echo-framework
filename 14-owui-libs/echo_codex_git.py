@@ -1,16 +1,16 @@
 """
 title: ECHO Codex Git Engine
 author: Wilfried BARNAVON
-version: 6.13.1.1
+version: 6.18.1.1
 description: Composant système interne : ECHO Codex Git Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.1.1: Enrichissement de CodexRepo.detect_language (noms spéciaux Dockerfile/Containerfile/Makefile/CMakeLists/Jenkinsfile/.env, extensions CODEX_LANG_MAP et heuristique contenu shebang/HTML/XML/PHP/JSON/YAML).
 # 6.13.1.1: Support de la résolution et du transfert des clips vidéo browserviews (clip_filename dans metadata).
 # 6.10.0.1: Durcissement confinement/symlinks/O_NOFOLLOW (_open_regular_file_ro, _ensure_parent_dirs_safe), create_directory avec retour (rel, created), delete_file récursif sans commit vide, move_entry, list_directory récursif/borné + list_all_files, transfer_codex_entries (matrice, quotas, rollback, move Option A) et sync_codex_registry_save/delete/relocate.
 # 6.6.13.1: Ajout du paramètre include_files: bool = False à get_user_codex_chats pour détecter également les sessions possédant des fichiers dans files/.
 # 5.235.4.1: Exclusion systématique des flux binaires dans search_in_file et trace_history pour éliminer les faux positifs et ralentissements.
-# 5.235.2.1: Implémentation de read_file_at_commit retournant les métadonnées complètes et factorisation de get_file_at_commit.
 # Couche pure, testable, sans dépendance OWUI/LLM/events.
 # desc.
 
@@ -1211,12 +1211,70 @@ class CodexRepo:
     # =========================================================================
 
     @staticmethod
-    def detect_language(filename: str) -> str:
-        """Détecte le langage Monaco depuis le nom ou l'extension."""
-        if os.path.basename(filename or "").lower() == "dockerfile":
+    def detect_language(filename: str, content: Optional[str] = None) -> str:
+        """Détecte le langage Monaco depuis le nom, l'extension ou le contenu."""
+        base = os.path.basename(filename or "").lower()
+        if (
+            base == "dockerfile"
+            or base.startswith("dockerfile.")
+            or base == "containerfile"
+            or base.startswith("containerfile.")
+        ):
             return "dockerfile"
-        ext = os.path.splitext(filename or "")[1].lower()
-        return CODEX_LANG_MAP.get(ext, CODEX_DEFAULT_LANG)
+        if base in ("makefile", "gnumakefile"):
+            return "makefile"
+        if base == "cmakelists.txt":
+            return "cmake"
+        if base == "jenkinsfile":
+            return "groovy"
+        if base in (".env", ".gitignore", ".dockerignore") or base.startswith(".env."):
+            return "ini"
+
+        ext = os.path.splitext(base)[1]
+        if ext in CODEX_LANG_MAP:
+            return CODEX_LANG_MAP[ext]
+
+        if isinstance(content, str) and content.strip():
+            head = content.lstrip("\ufeff \t\r\n")[:512]
+            lines = head.splitlines()
+            first_line = lines[0].strip().lower() if lines else ""
+
+            if first_line.startswith("#!"):
+                if "python" in first_line:
+                    return "python"
+                if re.search(r"\b(pwsh|powershell)\b", first_line):
+                    return "powershell"
+                if re.search(r"\b(bash|sh|zsh|dash|ksh)\b", first_line):
+                    return "shell"
+                if re.search(r"\b(node|deno|bun)\b", first_line):
+                    return "javascript"
+                if re.search(r"\bruby\b", first_line):
+                    return "ruby"
+                if re.search(r"\bperl\b", first_line):
+                    return "perl"
+                if re.search(r"\bphp\b", first_line):
+                    return "php"
+
+            head_lower = head.lower()
+            if head_lower.startswith("<!doctype html") or head_lower.startswith("<html"):
+                return "html"
+            if head_lower.startswith("<svg") or head_lower.startswith("<?xml"):
+                return "xml"
+            if head_lower.startswith("<?php"):
+                return "php"
+
+            if (head.startswith("{") or head.startswith("[")) and len(content) <= 262144:
+                try:
+                    json.loads(content)
+                    return "json"
+                except (ValueError, TypeError):
+                    pass
+
+            if first_line == "---" and len(lines) > 1:
+                if any(re.match(r"^[a-zA-Z0-9_.-]+\s*:", ln.strip()) for ln in lines[1:]):
+                    return "yaml"
+
+        return CODEX_DEFAULT_LANG
 
     # =========================================================================
     # MULTI-CHAT & DÉCOUVERTE SOUVERAINE

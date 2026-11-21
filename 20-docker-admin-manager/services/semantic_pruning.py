@@ -2,16 +2,16 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - SEMANTIC PRUNING & GC
-VERSION : 6.15.1.1
+VERSION : 6.18.0.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.0.1: Compatibilité ECHO v6 (API Safeguard /api/v1/users/ + follow_redirects, GC fichiers dual-topologie EchoStorageProvider/Download Broker, délégation browserviews+MP4 à cleanup_expired_browserviews_sync, purge webui.db auth/access_grant/automation_run et levée du filtre len<=30 dans purge_user_artifacts).
 # 6.15.1.1: Respect du délai de grâce BROWSER_TRANSIENT_GRACE_SEC (1800.0s) avant purge des captures browserviews éphémères.
 # 6.15.0.1: Correction de l'URL de recensement des sessions navigateur vers NAVIGATION_ENGINE_URL / http://echo-browser-worker:5002/sessions.
 # 6.6.5.1: Purge des captures browserviews éphémères (non retained) dont la session Playwright est absente de GET http://echo-browser:5001/sessions.
 # 5.237.4.1: Validation stricte par couple propriétaire (user_id, chat_id) via user_valid_chats et suppression du filtre len > 30 sur les dossiers orphelins.
-# 5.235.5.1: Purge des branches mortes dans session.db (gc_session_db) et du RAG Qdrant (_delete_rag_points) sous carence 900s.
 from contextlib import closing
 import datetime
 import html
@@ -24,6 +24,7 @@ import sqlite3
 import time
 import traceback
 from core.config import (
+    BROWSER_WORKER_URL,
     COLLECTION_META_ARTIFACTS,
     COLLECTION_SESSION_RAG,
     DEFAULT_MAINT_CONFIG,
@@ -58,11 +59,18 @@ OWUI_DB_PATH = WEBUI_DB_PATH
 if HAS_ECHO_LIBS:
     from echo_session_gc import gc_session_db, build_session_rag_point_id
     from echo_constants import (
+        BROWSER_CLIP_EXT,
         BROWSER_TRANSIENT_GRACE_SEC,
         SESSION_RAG_CONVERSATION_SOURCE_ID,
     )
+    try:
+        from echo_browser_lib import cleanup_expired_browserviews_sync
+    except ImportError:
+        cleanup_expired_browserviews_sync = None
 else:
+    BROWSER_CLIP_EXT = "_clip.mp4"
     BROWSER_TRANSIENT_GRACE_SEC = 1800.0
+    cleanup_expired_browserviews_sync = None
 
 
 def _delete_rag_points(uid: str, chat_id: str, seeds: list) -> int:
@@ -127,7 +135,7 @@ __all__ = [
 def purge_user_artifacts(uid: str):
     """Purge atomique multi-volumes des artefacts d'un utilisateur certifié supprimé de la SSoT webui.db."""
     uid = str(uid or "").strip()
-    if len(uid) <= 30 or "/" in uid or "\\" in uid or ".." in uid:
+    if not uid or uid.startswith(".") or "/" in uid or "\\" in uid or ".." in uid:
         return
 
     user_dir = Path(ECHO_USERS_ROOT) / uid
@@ -314,7 +322,7 @@ def _run_semantic_pruning(silent=False):
         # Authentification de secours/admin pour obtenir un vrai jeton JWT
         owui_url = WEBUI_URL
         
-        # Injection de l'en-tête SSO si le domaine est configuré (cf. config-owui.sh)
+        # Injection de l'en-tête SSO si le domaine est configuré (cf. stack-echo.yml)
         extra_headers = {}
         if os.environ.get("ECHO_DOMAIN"):
             extra_headers["X-Webui-User"] = SYSTEM_ADMIN_EMAIL
@@ -342,7 +350,7 @@ def _run_semantic_pruning(silent=False):
         auth_headers = {"Authorization": f"Bearer {admin_token}"}
         auth_headers.update(extra_headers)
         
-        r_auth = httpx.get(f"{owui_url}/api/v1/users", headers=auth_headers, timeout=10)
+        r_auth = httpx.get(f"{owui_url}/api/v1/users/", headers=auth_headers, follow_redirects=True, timeout=10)
         if r_auth.status_code != 200:
             err_msg = f"API Safeguard: Auth OWUI échouée (HTTP {r_auth.status_code}). Pruning annulé."
             print(f"❌ {err_msg}")
@@ -374,6 +382,10 @@ def _run_semantic_pruning(silent=False):
                 raise sqlite3.DatabaseError(f"PRAGMA quick_check(1) en échec : {chk}")
             user_rows = conn.execute("SELECT id, email FROM user").fetchall()
             chat_rows = conn.execute("SELECT id, user_id FROM chat").fetchall()
+            try:
+                file_rows = conn.execute("SELECT id, user_id FROM file").fetchall()
+            except sqlite3.OperationalError:
+                file_rows = []
     except Exception as e:
         err_msg = f"BDD Safeguard: Base SSoT webui.db injoignable, verrouillée ou corrompue ({e}). Pruning annulé."
         print(f"❌ {err_msg}")
@@ -391,11 +403,16 @@ def _run_semantic_pruning(silent=False):
             save_maint_report(err_msg)
         return err_msg, {}
 
-    # Cartographie stricte des chats valides par propriétaire SSoT (user_id -> set[chat_id])
+    # Cartographie stricte des chats et fichiers valides par propriétaire SSoT
     user_valid_chats = {uid: set() for uid in valid_ids}
     for r in chat_rows:
         if r and r[0] and str(r[1]) in user_valid_chats:
             user_valid_chats[str(r[1])].add(str(r[0]))
+    user_valid_file_ids = {uid: set() for uid in valid_ids}
+    for r in file_rows:
+        if r and r[0] and str(r[1]) in user_valid_file_ids:
+            user_valid_file_ids[str(r[1])].add(str(r[0]))
+    all_valid_file_ids = {fid for fids in user_valid_file_ids.values() for fid in fids}
     db_valid_chats = {cid for cids in user_valid_chats.values() for cid in cids}
 
     stats = {
@@ -629,13 +646,13 @@ def _run_semantic_pruning(silent=False):
                             stats["users"]["c"] += 1
                             stats["users"]["b"] += sz
 
-                # --- A.bis Purge Granulaire des Fichiers (RefCounting FS) ---
+                # --- A.bis Purge Granulaire des Fichiers (Dual-Topologie v6 EchoStorageProvider & Download Broker) ---
                 if HAS_ECHO_LIBS and ECHO_GC_GRACE_PERIOD_SEC is not None:
                     MAINTENANCE_STATE["percent"] = 65
                     MAINTENANCE_STATE["status"] = "Élagage (4/7) : Garbage Collection des fichiers (FS)..."
                     grace_period = time.time() - ECHO_GC_GRACE_PERIOD_SEC
-                    
-                    # Étape 1 : Cartographier tous les symlinks valides dans les chats existants
+
+                    # Étape 1 : Cartographier tous les symlinks valides dans les chats actifs (Topologie B : Download Broker / dérivés / clones)
                     active_symlink_targets = set()
                     for folder in valid_ids:
                         valid_u_chats = user_valid_chats.get(folder, set())
@@ -652,31 +669,45 @@ def _run_semantic_pruning(silent=False):
                                                     active_symlink_targets.add(os.path.realpath(f_path))
                                                 except Exception:
                                                     pass
-                    
-                    # Étape 2 : Purger les fichiers du Vault Global (fichiers originaux/dérivés orphelins)
+
+                    # Étape 2 : Nettoyer users/<uid>/files/ (dead symlinks v6 + physiques orphelins hors webui.db et hors chats actifs)
                     for folder in valid_ids:
                         user_files_dir = os.path.join(ECHO_USERS_ROOT, folder, "files")
+                        valid_u_fids = user_valid_file_ids.get(folder, set())
                         if os.path.exists(user_files_dir):
                             for f_name in os.listdir(user_files_dir):
                                 f_path = os.path.join(user_files_dir, f_name)
-                                if os.path.isfile(f_path) and not os.path.islink(f_path):
-                                    if f_path not in active_symlink_targets:
-                                        # Vérification de l'âge pour éviter la suppression d'un upload en cours
-                                        if os.path.getmtime(f_path) < grace_period:
-                                            try:
-                                                sz = os.path.getsize(f_path) if os.path.exists(f_path) else 0
-                                                os.remove(f_path)
-                                                stats["files"]["c"] += 1
-                                                stats["files"]["b"] += sz
-                                            except Exception:
-                                                pass
+                                if os.path.islink(f_path):
+                                    # Topologie A v6 : symlink miroir vers chats/<cid>/files devenu mort après purge du chat
+                                    if not os.path.exists(f_path):
+                                        try:
+                                            os.unlink(f_path)
+                                            stats["files"]["c"] += 1
+                                        except Exception:
+                                            pass
+                                elif os.path.isfile(f_path):
+                                    file_prefix = f_name.split("_", 1)[0]
+                                    real_fp = os.path.realpath(f_path)
+                                    is_referenced = (
+                                        real_fp in active_symlink_targets
+                                        or f_path in active_symlink_targets
+                                        or file_prefix in valid_u_fids
+                                        or f_name in valid_u_fids
+                                    )
+                                    if not is_referenced and os.path.getmtime(f_path) < grace_period:
+                                        try:
+                                            sz = os.path.getsize(f_path) if os.path.exists(f_path) else 0
+                                            os.remove(f_path)
+                                            stats["files"]["c"] += 1
+                                            stats["files"]["b"] += sz
+                                        except Exception:
+                                            pass
 
-                    # Étape 3 : Nettoyer le dossier UPLOADS_DIR (Fichiers en dur et Liens morts)
+                    # Étape 3 : Nettoyer le dossier UPLOADS_DIR (Liens morts et fichiers physiques non référencés)
                     if os.path.exists(UPLOADS_DIR):
                         for f_name in os.listdir(UPLOADS_DIR):
                             f_path = os.path.join(UPLOADS_DIR, f_name)
                             if os.path.islink(f_path):
-                                # os.path.exists() retourne False sur un Dead Symlink
                                 if not os.path.exists(f_path):
                                     try:
                                         os.unlink(f_path)
@@ -684,8 +715,12 @@ def _run_semantic_pruning(silent=False):
                                     except Exception:
                                         pass
                             elif os.path.isfile(f_path):
-                                # Fichier physique orphelin (non converti en symlink par echo_ingestion)
-                                if os.path.getmtime(f_path) < grace_period:
+                                file_prefix = f_name.split("_", 1)[0]
+                                if (
+                                    file_prefix not in all_valid_file_ids
+                                    and f_name not in all_valid_file_ids
+                                    and os.path.getmtime(f_path) < grace_period
+                                ):
                                     try:
                                         sz = os.path.getsize(f_path)
                                         os.remove(f_path)
@@ -722,12 +757,12 @@ def _run_semantic_pruning(silent=False):
                     except Exception as e:
                         logger.error(f"Erreur GC branches mortes : {e}")
 
-            # --- A.quater Purge des captures browserviews éphémères expirées ---
+            # --- A.quater Purge des captures & clips browserviews éphémères (SSOT echo_browser_lib) ---
             if HAS_HTTPX and valid_ids:
                 try:
                     active_bv_sessions = None
                     try:
-                        nav_base = os.environ.get("NAVIGATION_ENGINE_URL", "http://echo-browser-worker:5002").rstrip("/")
+                        nav_base = os.environ.get("NAVIGATION_ENGINE_URL", BROWSER_WORKER_URL).rstrip("/")
                         bv_resp = httpx.get(f"{nav_base}/sessions", timeout=5)
                         if bv_resp.status_code == 200:
                             bv_data = bv_resp.json()
@@ -737,7 +772,6 @@ def _run_semantic_pruning(silent=False):
                         active_bv_sessions = None
 
                     if active_bv_sessions is not None:
-                        now_ts = time.time()
                         for uid in valid_ids:
                             chats_root = os.path.join(ECHO_USERS_ROOT, uid, "chats")
                             if not os.path.exists(chats_root):
@@ -745,62 +779,85 @@ def _run_semantic_pruning(silent=False):
                             for cid in user_valid_chats.get(uid, set()):
                                 chat_dir = os.path.join(chats_root, cid)
                                 session_db_path = os.path.join(chat_dir, "session.db")
-                                bv_dir = os.path.join(chat_dir, "browserviews")
-                                files_dir = os.path.join(chat_dir, "files")
                                 if not os.path.isfile(session_db_path):
                                     continue
-                                kept_fnames = set()
-                                try:
-                                    with closing(sqlite3.connect(session_db_path, timeout=10.0)) as s_conn:
-                                        rows = s_conn.execute(
-                                            "SELECT id, name, status, metadata, created_at FROM echo_resources WHERE resource_type = 'browserview'"
-                                        ).fetchall()
-                                        del_ids = []
-                                        for r_id, r_name, r_status, r_meta, r_created_at in rows:
-                                            meta = {}
-                                            if r_meta:
-                                                try:
-                                                    parsed = json.loads(r_meta)
-                                                    if isinstance(parsed, dict):
-                                                        meta = parsed
-                                                except Exception:
-                                                    meta = {}
-                                            fname = os.path.basename(r_name or "") or f"{r_id}_frame.jpg"
-                                            if r_status == "retained" or meta.get("retained") is True:
-                                                kept_fnames.add(fname)
-                                                continue
-                                            item_ts = float(meta.get("timestamp") or r_created_at or 0)
-                                            if item_ts > 0 and (now_ts - item_ts) < BROWSER_TRANSIENT_GRACE_SEC:
-                                                kept_fnames.add(fname)
-                                                continue
-                                            sess_id = meta.get("session_id") or cid
-                                            if sess_id not in active_bv_sessions:
-                                                for b_dir in (bv_dir, files_dir):
-                                                    fp = os.path.join(b_dir, fname)
-                                                    if os.path.isfile(fp):
-                                                        try:
-                                                            os.unlink(fp)
-                                                        except Exception:
-                                                            pass
-                                                del_ids.append((r_id,))
-                                            else:
-                                                kept_fnames.add(fname)
-                                        if del_ids:
-                                            with s_conn:
-                                                s_conn.executemany("DELETE FROM echo_resources WHERE id = ?", del_ids)
-                                except Exception:
-                                    pass
-                                if os.path.isdir(bv_dir):
+                                if cleanup_expired_browserviews_sync is not None:
+                                    try:
+                                        cleanup_expired_browserviews_sync(
+                                            uid,
+                                            cid,
+                                            active_session_ids=active_bv_sessions,
+                                            min_age_sec=BROWSER_TRANSIENT_GRACE_SEC,
+                                        )
+                                    except Exception as e:
+                                        logger.warning(f"Erreur GC browserviews SSOT ({uid}/{cid}) : {e}")
+                                else:
+                                    bv_dir = os.path.join(chat_dir, "browserviews")
+                                    files_dir = os.path.join(chat_dir, "files")
+                                    kept_fnames = set()
                                     now_ts = time.time()
-                                    for entry in os.listdir(bv_dir):
-                                        if not entry.endswith("_frame.jpg") or entry in kept_fnames:
-                                            continue
-                                        fp = os.path.join(bv_dir, entry)
-                                        if os.path.isfile(fp) and (now_ts - os.path.getmtime(fp) > 60.0):
-                                            try:
-                                                os.unlink(fp)
-                                            except Exception:
-                                                pass
+                                    try:
+                                        with closing(sqlite3.connect(session_db_path, timeout=10.0)) as s_conn:
+                                            rows = s_conn.execute(
+                                                "SELECT id, name, status, metadata, created_at FROM echo_resources WHERE resource_type = 'browserview'"
+                                            ).fetchall()
+                                            del_ids = []
+                                            for r_id, r_name, r_status, r_meta, r_created_at in rows:
+                                                meta = {}
+                                                if r_meta:
+                                                    try:
+                                                        parsed = json.loads(r_meta)
+                                                        if isinstance(parsed, dict):
+                                                            meta = parsed
+                                                    except Exception:
+                                                        meta = {}
+                                                fname = os.path.basename(r_name or "") or f"{r_id}_frame.jpg"
+                                                clip_names = []
+                                                raw_clip = os.path.basename(str(meta.get("clip_filename") or ""))
+                                                if raw_clip:
+                                                    clip_names.append(raw_clip)
+                                                def_clip = f"{r_id}{BROWSER_CLIP_EXT}"
+                                                if def_clip not in clip_names:
+                                                    clip_names.append(def_clip)
+                                                if r_status == "retained" or meta.get("retained") is True:
+                                                    kept_fnames.add(fname)
+                                                    kept_fnames.update(clip_names)
+                                                    continue
+                                                item_ts = float(meta.get("timestamp") or r_created_at or 0)
+                                                if item_ts > 0 and (now_ts - item_ts) < BROWSER_TRANSIENT_GRACE_SEC:
+                                                    kept_fnames.add(fname)
+                                                    kept_fnames.update(clip_names)
+                                                    continue
+                                                sess_id = meta.get("session_id") or cid
+                                                if sess_id not in active_bv_sessions:
+                                                    for b_dir in (bv_dir, files_dir):
+                                                        for cand_name in (fname, *clip_names):
+                                                            fp = os.path.join(b_dir, cand_name)
+                                                            if os.path.isfile(fp):
+                                                                try:
+                                                                    os.unlink(fp)
+                                                                except Exception:
+                                                                    pass
+                                                    del_ids.append((r_id,))
+                                                else:
+                                                    kept_fnames.add(fname)
+                                                    kept_fnames.update(clip_names)
+                                            if del_ids:
+                                                with s_conn:
+                                                    s_conn.executemany("DELETE FROM echo_resources WHERE id = ?", del_ids)
+                                    except Exception:
+                                        pass
+                                    if os.path.isdir(bv_dir):
+                                        now_ts = time.time()
+                                        for entry in os.listdir(bv_dir):
+                                            if not entry.endswith(("_frame.jpg", BROWSER_CLIP_EXT)) or entry in kept_fnames:
+                                                continue
+                                            fp = os.path.join(bv_dir, entry)
+                                            if os.path.isfile(fp) and (now_ts - os.path.getmtime(fp) > 60.0):
+                                                try:
+                                                    os.unlink(fp)
+                                                except Exception:
+                                                    pass
                 except Exception as e:
                     logger.error(f"Erreur GC browserviews : {e}")
 
@@ -880,6 +937,7 @@ def _run_semantic_pruning(silent=False):
                     orphans_db = 0
                     if config.get("purge_orphaned_users", False):
                         tables = [row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+                        tables_set = set(tables)
                         for table in tables:
                             if table == "user":
                                 continue
@@ -893,6 +951,19 @@ def _run_semantic_pruning(silent=False):
                                         orphans_db += cur_del.rowcount
                             except Exception as te:
                                 print(f"⚠️ [ECHO-GC] Erreur purge orphelins table {table} : {te}")
+                        # Tables ECHO-UI v6 liées aux utilisateurs sans colonne user_id
+                        for extra_tbl, extra_sql in (
+                            ("auth", "DELETE FROM auth WHERE id NOT IN (SELECT id FROM user)"),
+                            ("access_grant", "DELETE FROM access_grant WHERE principal_type = 'user' AND principal_id NOT IN (SELECT id FROM user)"),
+                            ("automation_run", "DELETE FROM automation_run WHERE automation_id NOT IN (SELECT id FROM automation)" if "automation" in tables_set else ""),
+                        ):
+                            if extra_tbl in tables_set and extra_sql:
+                                try:
+                                    cur_del = conn.execute(extra_sql)
+                                    if cur_del.rowcount and cur_del.rowcount > 0:
+                                        orphans_db += cur_del.rowcount
+                                except Exception as te:
+                                    print(f"⚠️ [ECHO-GC] Erreur purge orphelins table {extra_tbl} : {te}")
                     elif config.get("purge_orphaned_chats", False):
                         try:
                             cur_del = conn.execute(
@@ -903,17 +974,20 @@ def _run_semantic_pruning(silent=False):
                         except Exception as te:
                             print(f"⚠️ [ECHO-GC] Erreur purge chats orphelins table chat : {te}")
 
-                    db_files = conn.execute("SELECT id, user_id FROM file").fetchall()
-                    for file_id, file_user_id in db_files:
-                        user_files_dir = os.path.join(ECHO_USERS_ROOT, str(file_user_id), "files")
-                        file_exists_on_disk = False
-                        
-                        if os.path.exists(user_files_dir):
-                            for f_name in os.listdir(user_files_dir):
-                                if f_name.startswith(str(file_id)):
-                                    file_exists_on_disk = True
-                                    break
-                        
+                    file_cols = {col[1] for col in conn.execute("PRAGMA table_info(file)").fetchall()}
+                    if "path" in file_cols:
+                        db_files = conn.execute("SELECT id, user_id, path FROM file").fetchall()
+                    else:
+                        db_files = [(r[0], r[1], None) for r in conn.execute("SELECT id, user_id FROM file").fetchall()]
+                    for file_id, file_user_id, file_path in db_files:
+                        file_exists_on_disk = bool(file_path and os.path.isfile(file_path))
+                        if not file_exists_on_disk:
+                            user_files_dir = os.path.join(ECHO_USERS_ROOT, str(file_user_id), "files")
+                            if os.path.exists(user_files_dir):
+                                for f_name in os.listdir(user_files_dir):
+                                    if f_name.startswith(str(file_id)) and os.path.isfile(os.path.join(user_files_dir, f_name)):
+                                        file_exists_on_disk = True
+                                        break
                         if not file_exists_on_disk:
                             conn.execute("DELETE FROM file WHERE id = ?", (file_id,))
                             orphans_db += 1

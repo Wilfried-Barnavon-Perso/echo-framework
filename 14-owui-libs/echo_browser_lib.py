@@ -1,16 +1,16 @@
 """
 title: ECHO Browser Lib
 author: ECHO Framework
-version: 6.16.0.1
+version: 6.18.0.1
 description: Composant système interne : ECHO Browser Lib.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.0.1: Extraction du helper synchrone SSOT cleanup_expired_browserviews_sync (partagé ECHO-UI et Admin Manager) et délégation asyncio.to_thread.
 # 6.16.0.1: Suppression de iter_screencast_stream SSE et ajout de build_browser_ws_url et resolve_chat_browser_session_id.
 # 6.15.1.1: Passage par défaut de min_age_sec à BROWSER_TRANSIENT_GRACE_SEC (1800.0s) dans cleanup_expired_browserviews et application systématique du délai de grâce y compris sur force_discard_sids.
 # 6.15.0.1: Ajout de min_age_sec dans cleanup_expired_browserviews pour préserver les captures récentes lors des purges passives sans affecter force_discard_sids.
 # 6.13.1.1: Extension de cleanup_expired_browserviews aux clips MP4 (purge couplée N1 + orphelins), ajout de enforce_transient_clip_budget (purge FIFO N2) et iter_screencast_stream SSE.
-# 6.6.5.1: Ajout de get_active_browser_sessions et cleanup_expired_browserviews pour la gestion éphémère/rétention des captures browserviews.
 
 import asyncio
 import json
@@ -265,24 +265,21 @@ def enforce_transient_clip_budget(
     return {"evicted": evicted}
 
 
-async def cleanup_expired_browserviews(
+def cleanup_expired_browserviews_sync(
     user_id: str,
     chat_id: str,
     active_session_ids: Optional[set[str]] = None,
     force_discard_sids: Optional[set[str]] = None,
     min_age_sec: float = BROWSER_TRANSIENT_GRACE_SEC,
 ) -> dict:
-    """Purge les captures browserviews éphémères dont la session Playwright est expirée ou réinitialisée."""
+    """Purge synchrone SSOT des captures et clips browserviews éphémères (partagée ECHO-UI & Admin Manager)."""
     if not chat_id:
-        return {"purged": 0}
+        return {"purged": 0, "clips_evicted": 0}
+    if active_session_ids is None and not force_discard_sids:
+        return {"purged": 0, "clips_evicted": 0}
     db_path = get_echo_session_path(user_id, chat_id, "db")
     if not os.path.isfile(db_path):
-        return {"purged": 0}
-
-    if active_session_ids is None:
-        active_session_ids = await get_active_browser_sessions(user_id, chat_id)
-    if active_session_ids is None and not force_discard_sids:
-        return {"purged": 0}
+        return {"purged": 0, "clips_evicted": 0}
 
     state = EchoStateManager(user_id=user_id, chat_id=chat_id)
     bv_res = state.get_resources(resource_type="browserview") or []
@@ -363,8 +360,37 @@ async def cleanup_expired_browserviews(
         except Exception:
             pass
 
-    await asyncio.to_thread(enforce_transient_clip_budget, user_id, chat_id)
-    return {"purged": purged}
+    budget_res = enforce_transient_clip_budget(user_id, chat_id)
+    return {"purged": purged, "clips_evicted": int((budget_res or {}).get("evicted", 0))}
+
+
+async def cleanup_expired_browserviews(
+    user_id: str,
+    chat_id: str,
+    active_session_ids: Optional[set[str]] = None,
+    force_discard_sids: Optional[set[str]] = None,
+    min_age_sec: float = BROWSER_TRANSIENT_GRACE_SEC,
+) -> dict:
+    """Purge les captures browserviews éphémères dont la session Playwright est expirée ou réinitialisée."""
+    if not chat_id:
+        return {"purged": 0, "clips_evicted": 0}
+    db_path = get_echo_session_path(user_id, chat_id, "db")
+    if not os.path.isfile(db_path):
+        return {"purged": 0, "clips_evicted": 0}
+
+    if active_session_ids is None:
+        active_session_ids = await get_active_browser_sessions(user_id, chat_id)
+    if active_session_ids is None and not force_discard_sids:
+        return {"purged": 0, "clips_evicted": 0}
+
+    return await asyncio.to_thread(
+        cleanup_expired_browserviews_sync,
+        user_id,
+        chat_id,
+        active_session_ids,
+        force_discard_sids,
+        min_age_sec,
+    )
 
 
 def build_browser_ws_url(session_id: str) -> str:

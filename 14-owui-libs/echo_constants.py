@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.16.0.2
+version: 6.18.1.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.1.1: Enrichissement SSOT CODEX_LANG_MAP (.txt canonique, csv/tsv, svelte/vue/scss/less, audio/vidéo, diff/latex/hcl/elixir) et exclusion audio/video dans CODEX_LANG_TO_EXT.
 # 6.16.0.2: Ajout ECHO_CODING_WORKER_BASE_URL/WS_BASE_URL, vidage CODEX_SANDBOX_INTERNAL_PREFIXES et purge constantes polling/heartbeat Canvas.
 # 6.15.2.1: Ajout des constantes SSOT Option A Canvas (ECHO_CANVAS_READY_TIMEOUT_SEC, ECHO_CANVAS_IDLE_TTL_SEC, ECHO_CANVAS_MAX_LIFETIME_SEC, ECHO_CANVAS_POLL_WAIT_SEC, ECHO_CANVAS_UNKNOWN_GRACE_POLLS, ECHO_CANVAS_ROUTER_WORKERS).
 # 6.15.1.1: Ajout de BROWSER_TRANSIENT_GRACE_SEC = 1800.0 et relèvement des plafonds clips navigateur (BROWSER_MAX_TRANSIENT_CLIPS_PER_CHAT = 50, BROWSER_MAX_TRANSIENT_CLIPS_MB = 60).
 # 6.13.1.2: Ajout des constantes SSOT clips vidéo navigateur (BROWSER_CLIP_MIME, BROWSER_CLIP_EXT, BROWSER_MAX_TRANSIENT_CLIPS_PER_CHAT, BROWSER_MAX_TRANSIENT_CLIPS_MB).
-# 6.13.1.1: Ajout des constantes SSOT Pacemaker Canvas (ECHO_CANVAS_HEARTBEAT_INTERVAL_SEC, ECHO_CANVAS_BOOT_TIMEOUT_SEC, ECHO_CANVAS_PING_TIMEOUT_SEC, ECHO_CANVAS_GRACEFUL_CLOSE_SEC).
 
 import os
 import contextvars
@@ -716,18 +716,31 @@ ECHO_CODE_FENCE_PATTERN = r"```[\s\S]*?```"
 
 # Mapping extension → langage Monaco Editor
 CODEX_LANG_MAP = {
-    ".py": "python", ".js": "javascript", ".jsx": "javascript", ".ts": "typescript", ".tsx": "typescript",
+    ".py": "python",
+    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+    ".ts": "typescript", ".tsx": "typescript", ".mts": "typescript", ".cts": "typescript",
     ".c": "c", ".cpp": "cpp", ".h": "c", ".hpp": "cpp",
     ".java": "java", ".go": "go", ".rs": "rust", ".rb": "ruby",
     ".php": "php", ".swift": "swift", ".kt": "kotlin",
     ".cs": "csharp", ".vb": "vb",
-    ".sh": "shell", ".bash": "shell", ".ps1": "powershell", ".bat": "bat", ".cmd": "bat",
-    ".html": "html", ".htm": "html", ".css": "css",
+    ".sh": "shell", ".bash": "shell", ".zsh": "shell",
+    ".ps1": "powershell", ".bat": "bat", ".cmd": "bat",
+    ".html": "html", ".htm": "html", ".css": "css", ".scss": "scss", ".less": "less",
+    ".svelte": "svelte", ".vue": "vue",
     ".json": "json", ".xml": "xml", ".svg": "xml", ".yaml": "yaml", ".yml": "yaml",
-    ".toml": "toml", ".ini": "ini", ".conf": "plaintext",
-    ".md": "markdown", ".txt": "plaintext", ".log": "plaintext", ".csv": "plaintext", ".pdf": "pdf",
+    ".toml": "toml", ".ini": "ini", ".env": "ini",
+    ".md": "markdown", ".markdown": "markdown",
+    ".txt": "plaintext", ".conf": "plaintext", ".log": "plaintext",
+    ".csv": "csv", ".tsv": "tsv",
+    ".diff": "diff", ".patch": "diff", ".tex": "latex",
+    ".tf": "hcl", ".hcl": "hcl", ".ex": "elixir", ".exs": "elixir",
+    ".dart": "dart", ".scala": "scala", ".groovy": "groovy", ".proto": "protobuf",
+    ".pdf": "pdf",
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image",
-    ".webp": "image", ".bmp": "image", ".ico": "image",
+    ".webp": "image", ".bmp": "image", ".ico": "image", ".avif": "image",
+    ".mp3": "audio", ".wav": "audio", ".ogg": "audio", ".flac": "audio",
+    ".aac": "audio", ".m4a": "audio", ".opus": "audio",
+    ".mp4": "video", ".webm": "video", ".mov": "video", ".avi": "video", ".ogv": "video",
     ".sql": "sql", ".r": "r", ".lua": "lua", ".pl": "perl",
     ".dockerfile": "dockerfile",
 }
@@ -736,7 +749,7 @@ CODEX_DEFAULT_LANG = "plaintext"
 # Mapping inversé langage Monaco → extension (première extension canonique trouvée)
 CODEX_LANG_TO_EXT: dict[str, str] = {}
 for _ext, _lang in CODEX_LANG_MAP.items():
-    if _lang not in CODEX_LANG_TO_EXT and _lang not in ("pdf", "image"):
+    if _lang not in CODEX_LANG_TO_EXT and _lang not in ("pdf", "image", "audio", "video"):
         CODEX_LANG_TO_EXT[_lang] = _ext
 
 # Les prompts de la librairie CODEX ont été migrés vers 14-owui-libs/echo_prompts.py

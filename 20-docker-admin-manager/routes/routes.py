@@ -2,16 +2,16 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - FLASK ROUTES
-VERSION : 6.6.3.1
+VERSION : 6.18.0.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.0.1: Compatibilité ECHO v6 (BACKUP_AUX_CONTAINERS et détection ECHO_ADMIN_PASSWORD au restore, purge identity_vault dans auth_reset_user, purge auth/access_grant/automation_run dans auth_delete_user, suppression de la route dupliquée auth_user_role).
 # 6.6.3.1: Prise en charge de users.gender (M/F/X) à la création, dans /api/auth/users et via /action/auth/gender.
 # 6.5.0.1: Restauration sécurisée de .secrets et .env via conteneur éphémère one-shot (echo-python-base:latest), détection de divergence des clés maîtresses en RAM et redémarrage des conteneurs hot-reload.
 # 5.239.4.1: Validation obligatoire du champ nom dans /action/auth/create pour prévenir les profils SSO sans nom ou corrompus.
 # 5.239.2.1: Persistance et validation des paramètres anti-bruteforce dans /action/auth/settings, exposition de failed_attempts/locked_until dans /api/auth/users et déblocage dans /action/auth/reset.
-# 5.236.1.1: Validation Dual-Tier untrusted_session_timeout/session_timeout dans auth_settings_save et exposition directe de is_trusted, expires_at, expires_dt et time_remaining_sec dans api_auth_sessions.
 import configparser
 from contextlib import closing
 import datetime
@@ -36,6 +36,7 @@ from flask import (  # pyright: ignore[reportMissingImports]
 )
 from werkzeug.utils import secure_filename  # pyright: ignore[reportMissingImports]
 from core.config import (
+    BACKUP_AUX_CONTAINERS,
     BACKUP_DIR,
     DEFAULT_MAINT_CONFIG,
     DOCKER_AVAILABLE,
@@ -52,7 +53,6 @@ from core.config import (
     OWUI_DATA_ROOT,
     RCLONE_CONF_DIR,
     RCLONE_CONF_PATH,
-    SECRETS_DIR,
     SYSTEM_ADMIN_EMAIL,
     TARGET_CONTAINER,
     UPLOADS_DIR,
@@ -389,6 +389,7 @@ def _restore_host_secrets_and_check_env(client, archive_path: str, has_secrets: 
 
         checks = [
             (restored_kv.get("ECHO_VAULT_ENCRYPTION_KEY", ""), _get_container_env_val(TARGET_CONTAINER, "ECHO_VAULT_ENCRYPTION_KEY")),
+            (restored_kv.get("ECHO_ADMIN_PASSWORD", ""), _get_container_env_val(TARGET_CONTAINER, "WEBUI_ADMIN_PASSWORD")),
             (restored_kv.get("N8N_ENCRYPTION_KEY", ""), _get_container_env_val("echo-n8n-worker", "N8N_ENCRYPTION_KEY")),
             (restored_kv.get("ECHO_SSO_SECRET", ""), os.environ.get("ECHO_SSO_SECRET", "")),
         ]
@@ -514,7 +515,7 @@ def handle_action(action):
             stopped_containers = []
             try:
                 client = docker.from_env()
-                for c_name in (TARGET_CONTAINER, 'echo-qdrant', 'echo-n8n-worker', 'echo-mcp-broker'):
+                for c_name in (TARGET_CONTAINER, *BACKUP_AUX_CONTAINERS):
                     try:
                         c_obj = client.containers.get(c_name)
                         c_obj.stop()
@@ -553,7 +554,8 @@ def handle_action(action):
                 if env_recreate_required:
                     flash(
                         "Restauration terminée. ⚠️ Des clés maîtresses (.env) ont été modifiées : "
-                        "exécutez 'echo-update.sh' ou 'docker compose up -d' sur l'hôte pour recréer les conteneurs.",
+                        "exécutez 'docker compose --env-file /opt/ECHO/.env -f /opt/ECHO/config/stack-echo.yml up -d' "
+                        "(ou 'echo-upgrade.sh') sur l'hôte pour recréer les conteneurs.",
                         'warning',
                     )
                 else:
@@ -641,14 +643,20 @@ def auth_reset_user(user_id):
     purged_any = False
     if os.path.exists(db_path):
         try:
+            def _purge_identity_tables(db_conn):
+                tbls = {r[0] for r in db_conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+                if "auth_data" in tbls:
+                    db_conn.execute("DELETE FROM auth_data")
+                if "identity_vault" in tbls:
+                    db_conn.execute("DELETE FROM identity_vault")
+                db_conn.commit()
+
             if HAS_ECHO_LIBS:
                 with closing(open_db(db_path, timeout=5.0)) as conn:
-                    conn.execute("DELETE FROM auth_data")
-                    conn.commit()
+                    _purge_identity_tables(conn)
             else:
                 with closing(sqlite3.connect(db_path, timeout=5.0)) as conn:
-                    conn.execute("DELETE FROM auth_data")
-                    conn.commit()
+                    _purge_identity_tables(conn)
             purged_any = True
         except Exception as e:
             flash(f'Erreur lors de la purge identity.db: {e}', 'danger')
@@ -1250,6 +1258,16 @@ def auth_delete_user():
                         return redirect(url_for('index'))
 
                 tables = [row[0] for row in conn_owui.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+                tables_set = set(tables)
+                # Tables ECHO-UI v6 sans colonne user_id (nettoyées avant suppression d'automation et user)
+                if "automation_run" in tables_set and "automation" in tables_set:
+                    try:
+                        conn_owui.execute(
+                            "DELETE FROM automation_run WHERE automation_id IN (SELECT id FROM automation WHERE user_id=?)",
+                            (uid,),
+                        )
+                    except Exception as e:
+                        print(f"Erreur purge table automation_run: {e}")
                 for table in tables:
                     if table == "user":
                         continue
@@ -1259,6 +1277,19 @@ def auth_delete_user():
                             conn_owui.execute(f"DELETE FROM {table} WHERE user_id=?", (uid,))
                     except Exception as e:
                         print(f"Erreur purge table {table}: {e}")
+                if "access_grant" in tables_set:
+                    try:
+                        conn_owui.execute(
+                            "DELETE FROM access_grant WHERE principal_type = 'user' AND principal_id = ?",
+                            (uid,),
+                        )
+                    except Exception as e:
+                        print(f"Erreur purge table access_grant: {e}")
+                if "auth" in tables_set:
+                    try:
+                        conn_owui.execute("DELETE FROM auth WHERE id = ?", (uid,))
+                    except Exception as e:
+                        print(f"Erreur purge table auth: {e}")
 
                 conn_owui.execute("DELETE FROM user WHERE id=?", (uid,))
                 conn_owui.commit()
@@ -1278,36 +1309,6 @@ def auth_delete_user():
             flash(f"Utilisateur {email} supprimé de l'Auth (non trouvé dans la SSoT Open WebUI).", "success")
     except Exception as e:
         flash(f"Erreur: {e}", "danger")
-    return redirect(url_for('index'))
-
-@app.route('/action/user_role/<user_id>', methods=['POST'])
-def auth_user_role(user_id):
-    if not session.get('logged_in'): return redirect(url_for('index'))
-    new_role = request.form.get('new_role')
-    if new_role not in ('admin', 'user'): return redirect(url_for('index'))
-    try:
-        with sqlite3.connect(f"file:{WEBUI_DB_PATH}", uri=True) as conn:
-            user = conn.execute("SELECT name, email, role FROM user WHERE id = ?", (user_id,)).fetchone()
-            if not user:
-                flash('Utilisateur introuvable.', 'danger')
-                return redirect(url_for('index'))
-            
-            if user[1].endswith('@echo.local'):
-                flash("Impossible de modifier le rôle d'un compte système.", 'danger')
-                return redirect(url_for('index'))
-                
-            if new_role == 'user' and user[2] == 'admin':
-                admins = conn.execute("SELECT email FROM user WHERE role = 'admin'").fetchall()
-                human_admins = [a[0] for a in admins if not a[0].endswith('@echo.local')]
-                if len(human_admins) <= 1 and user[1] in human_admins:
-                    flash('Action bloquée : Rétrogradation impossible du dernier administrateur humain.', 'danger')
-                    return redirect(url_for('index'))
-                    
-            conn.execute("UPDATE user SET role = ? WHERE id = ?", (new_role, user_id))
-            conn.commit()
-            flash(f"Le rôle de {user[0]} est désormais : {new_role.upper()}.", 'success')
-    except Exception as e:
-        flash(f"Erreur changement de rôle: {e}", "danger")
     return redirect(url_for('index'))
 
 @app.route('/api/bunkerweb/status')

@@ -2,16 +2,16 @@
 r"""
 # ================================================================================
 # MODULE : ECHO ADMIN MANAGER SERVER
-# VERSION : 6.5.3.1
+# VERSION : 6.18.0.1
 # ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.0.1: Ajout des constantes SSOT BACKUP_AUX_CONTAINERS (couvrant tous les écrivains :rw ECHO v6) et BROWSER_WORKER_URL.
 # 6.5.3.1: Alignement de l'URL interne et du nom de conteneur sur echo-webui.
 # 6.5.0.1: Définition des constantes SECRETS_DIR, HOST_ENV_FILE et HOST_ECHO_ROOT pour l'archivage et la restauration des secrets hôtes.
 # 5.239.2.1: Ajout de login_retry_delay_sec (5s), unenrolled_max_attempts (5) et unenrolled_lockout_min (10m) dans DEFAULT_AUTH_SETTINGS.
 # 5.236.1.1: Ajout de untrusted_session_timeout (24h par défaut) dans DEFAULT_AUTH_SETTINGS.
-# 5.235.5.1: Chargement dynamique optionnel de /app/echo_libs et ajout de l'option purge_dead_branches dans DEFAULT_MAINT_CONFIG.
 
 import os
 import sys
@@ -80,6 +80,15 @@ MAINTENANCE_STATE = {
 }
 SYSTEM_ADMIN_EMAIL = "admin@echo.local"
 TARGET_CONTAINER = os.environ.get('TARGET_CONTAINER', 'echo-webui')
+# Conteneurs auxiliaires montant les volumes persistants en écriture (:rw) lors des sauvegardes/restaurations
+BACKUP_AUX_CONTAINERS = (
+    'echo-qdrant',
+    'echo-n8n-worker',
+    'echo-mcp-broker',
+    'echo-download-broker',
+    'echo-coding-worker',
+    'echo-user-manager',
+)
 BACKUP_DIR = "/backups"
 HOST_GATEWAY = "host.docker.internal"
 SETTINGS_FILE = os.path.join(BACKUP_DIR, "settings.json")
@@ -103,6 +112,7 @@ MCP_CACHE_DIR = "/app/mcp_cache"
 WEBUI_URL = "http://echo-webui:8080"
 QDRANT_URL = "http://echo-qdrant:6333"
 N8N_WORKER_URL = "http://echo-n8n-worker:5003"
+BROWSER_WORKER_URL = os.environ.get("NAVIGATION_ENGINE_URL", "http://echo-browser-worker:5002").rstrip("/")
 COLLECTION_META_ARTIFACTS = "echo_meta_artifacts"
 COLLECTION_SESSION_RAG = "echo_session_rag"
 
