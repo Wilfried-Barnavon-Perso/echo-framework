@@ -97,6 +97,7 @@
 	let isDraggingOver = false;
 
 	let splitWidth = 0;
+	let showTreePanel = true;
 	let userTreeWidth: number | null = null;
 	let resizingTree = false;
 	let resizeStartX = 0;
@@ -438,6 +439,9 @@
 		savedFileContent = '';
 		resetAiState();
 		revokePreviewBlob();
+		if (splitWidth > 0 && splitWidth < 480) {
+			showTreePanel = false;
+		}
 		const token = getEchoToken();
 		const targetCid = getEffectiveChatId();
 		if (!token || !targetCid) return;
@@ -1494,6 +1498,21 @@ img, svg { max-width: 100%; height: auto; }
 	<!-- Barre de contrôle supérieure -->
 	<div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-850 shrink-0">
 		<div class="flex flex-wrap items-center gap-2 min-w-0">
+			<button
+				type="button"
+				on:click={() => (showTreePanel = !showTreePanel)}
+				title={showTreePanel ? "Masquer l'explorateur de fichiers" : "Afficher l'explorateur de fichiers"}
+				aria-label={showTreePanel ? "Masquer l'explorateur de fichiers" : "Afficher l'explorateur de fichiers"}
+				aria-pressed={showTreePanel}
+				class="p-1.5 rounded-lg border text-xs transition shrink-0 {showTreePanel
+					? 'bg-sky-500/10 border-sky-500/30 text-sky-600 dark:text-sky-400'
+					: 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}"
+			>
+				<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<rect x="3" y="3" width="18" height="18" rx="2" />
+					<line x1="9" y1="3" x2="9" y2="21" />
+				</svg>
+			</button>
 			<span class="font-bold text-sm text-gray-900 dark:text-white flex items-center gap-1.5">
 				<svg class="w-4 h-4 text-sky-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 					<path d="M16.5 9.4 7.55 4.24a1.78 1.78 0 0 0-2.5 1.55v12.42a1.78 1.78 0 0 0 2.5 1.55L16.5 14.6a1.78 1.78 0 0 0 0-3.2z" />
@@ -1583,6 +1602,7 @@ img, svg { max-width: 100%; height: auto; }
 
 	<!-- Corps splité : Arborescence à gauche, contenu au centre -->
 	<div class="flex flex-1 overflow-hidden" bind:clientWidth={splitWidth}>
+		{#if showTreePanel}
 		<!-- Explorateur arborescent (gauche) -->
 		<div
 			role="region"
@@ -1816,6 +1836,7 @@ img, svg { max-width: 100%; height: auto; }
 			on:keydown={handleResizerKeydown}
 			title="Glisser pour redimensionner • Double-clic pour ajustement automatique"
 		></div>
+		{/if}
 
 		<!-- Zone Principale (droite) -->
 		<div class="flex-1 min-w-0 flex flex-col overflow-hidden bg-white dark:bg-gray-900">

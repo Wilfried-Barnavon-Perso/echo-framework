@@ -1794,7 +1794,7 @@
 						<div
 							id={inputId === 'chat-input' ? 'message-input-container' : `${inputId}-wrapper`}
 							data-composer-id={inputId}
-							class="flex-1 flex flex-col relative w-full shadow-lg rounded-3xl border {isTemporary
+							class="echo-composer-container flex-1 flex flex-col relative w-full shadow-lg rounded-3xl border {isTemporary
 								? 'border-dashed border-gray-100 dark:border-gray-800 hover:border-gray-200 focus-within:border-gray-200 hover:dark:border-gray-700 focus-within:dark:border-gray-700'
 								: ' border-gray-100/50 dark:border-gray-850/50 hover:border-gray-200 focus-within:border-gray-100 hover:dark:border-gray-800 focus-within:dark:border-gray-800'} {($settings?.highContrastMode ??
 							false)
@@ -2103,9 +2103,10 @@
 								</div>
 							</div>
 
-							<div class=" flex justify-between mt-0.5 mb-2 mx-0.5 max-w-full" dir="ltr">
-								<div class="ml-1 self-end flex items-center">
-									<InputMenu
+							<div class="echo-composer-bar flex items-center justify-between gap-x-1.5 gap-y-1.5 mt-1 mb-2 mx-1.5 max-w-full" dir="ltr">
+								<div class="echo-composer-left flex items-center min-w-0 shrink">
+									<div class="flex items-center shrink-0">
+										<InputMenu
 										bind:show={showInputMenu}
 										bind:tab={inputMenuTab}
 										closeOnOutsideClick={inputMenuCloseOnOutsideClick}
@@ -2454,15 +2455,16 @@
 										{/each}
 									</div>
 								</div>
+								</div>
 
 								<!-- [ECHO-V6-HOOK] Barre Contexte/Session/Identité Google redimensionnable + WebGPU entre les filtres et Écho v6 -->
-								<div class="flex flex-1 items-center justify-end gap-1.5 min-w-0 sm:min-w-[140px] mx-1.5 self-center">
+								<div class="echo-composer-hud flex flex-1 items-center justify-end gap-1.5 min-w-[136px] mx-0.5">
 									<EchoContextGauge chatId={chatId || history?.currentId || ''} />
 									<EchoEdgeEmbedding />
 								</div>
 
-								<div class="self-end flex space-x-1 mr-1 min-w-0 gap-[0.03125rem]">
-									<div class="flex min-w-0 max-w-[10rem] items-center sm:max-w-[13rem]">
+								<div class="echo-composer-right flex items-center gap-1 shrink-0">
+									<div class="flex min-w-0 items-center">
 										<ModelSelector
 											bind:this={modelSelector}
 											multipleEnabled={multipleModels}
@@ -2666,5 +2668,37 @@
 		box-shadow:
 			0 0 8px 2px rgb(255 255 255 / 0.4),
 			0 0 20px 4px rgb(255 255 255 / 0.25);
+	}
+
+	.echo-composer-container {
+		container-type: inline-size;
+	}
+
+	@container (min-width: 520px) and (max-width: 639px) {
+		.echo-composer-hud {
+			min-width: 136px;
+		}
+		.echo-composer-hud :global(.echo-webgpu-label) {
+			display: none;
+		}
+	}
+
+	@container (max-width: 519px) {
+		.echo-composer-bar {
+			flex-wrap: wrap;
+		}
+		.echo-composer-hud {
+			order: -1;
+			flex: 1 1 100%;
+			width: 100%;
+			min-width: 0;
+			margin-inline: 0;
+			padding-bottom: 0.375rem;
+			border-bottom: 1px solid rgb(156 163 175 / 0.16);
+		}
+		.echo-composer-left {
+			flex: 1 1 0%;
+			min-width: 0;
+		}
 	}
 </style>

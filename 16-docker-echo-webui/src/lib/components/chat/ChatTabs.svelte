@@ -104,6 +104,7 @@
 		echoCanvasFrames,
 		echoCodexTarget,
 		echoCognitionSelectedSubSid,
+		echoOpenSecondaryTabsCount,
 		echoTabOpenRequest,
 		removeEchoCanvasFrames
 	} from '$lib/stores/echo';
@@ -424,7 +425,9 @@
 	};
 	const selectTab = (id: string) => {
 		tabs = activateTab(tabs, id);
-		showTabs.set(true);
+		if (id !== mainChatTabId || !largeScreen) {
+			showTabs.set(true);
+		}
 	};
 	const activateFilesOnDrag = (node: HTMLElement, tab: PanelTab) => {
 		if (tab.kind !== 'files') return;
@@ -467,7 +470,9 @@
 				: openTabInSidePanel(tabs, tab)
 			: openTab(tabs, tab);
 		changeChatView(viewEntry, { ...viewEntry.state, panels: tabs });
-		showTabs.set(true);
+		if (!(backgroundOnly && !largeScreen)) {
+			showTabs.set(true);
+		}
 	};
 	const openFiles = (selector = $selectedTerminalId, directory?: string, _newTab = false) => {
 		if (
@@ -848,7 +853,7 @@
 				tabs = owner.state.panels;
 				delete dirtyFiles[id];
 				delete fileContexts[id];
-				if (!tabs.tabs.length || (!largeScreen && tabs.tabs.every((tab) => tab.kind === 'chat')))
+				if (!tabs.tabs.length || tabs.tabs.every((tab) => tab.kind === 'chat'))
 					showTabs.set(false);
 				await tick();
 				if (owner === viewEntry) document.getElementById(domId(tabs.activeId))?.focus();
@@ -1319,6 +1324,7 @@
 		++countVersion;
 		++featureVersion;
 		showOverview.set(false);
+		echoOpenSecondaryTabsCount.set(0);
 	});
 
 	// Clear selected direct terminal if user lost permission
@@ -1335,8 +1341,18 @@
 	}
 
 	const handleMediaQuery = (event: MediaQueryList | MediaQueryListEvent) => {
+		const wasLargeScreen = largeScreen;
 		if (panelTarget && largeScreen !== event.matches) releasePanel(panelTarget);
 		largeScreen = event.matches;
+		if (wasLargeScreen && !event.matches) {
+			const hasSecondaryTabs = tabs.tabs.some((tab) => tab.kind !== 'chat');
+			const voiceActive = tabs.activeId === 'voice' || Boolean($showCallOverlay);
+			const mainWasVisible =
+				!hasSecondaryTabs || tabs.activeId === mainChatTabId || tabs.groups.length > 1;
+			if (!voiceActive && mainWasVisible) {
+				showTabs.set(false);
+			}
+		}
 	};
 
 	onMount(() => {
@@ -1383,6 +1399,7 @@
 	});
 	// Tab-opening handlers mutate tabs indirectly, so derive visibility and placement after them.
 	$: displayTabs = fullWidth ? tabs : setMainChatTab(tabs, false);
+	$: echoOpenSecondaryTabsCount.set(tabs.tabs.filter((tab) => tab.kind !== 'chat').length);
 	$: positions = fullWidth
 		? panelPositions(displayTabs.layout)
 		: {
@@ -1852,11 +1869,42 @@
 				{/if}
 			</div>
 		{/each}
-		{#if viewReady && !chatLoading && !viewError && !tabs.tabs.length && canOpenNewTab}<div
-				class="flex h-full items-center justify-center p-4 text-center text-xs text-gray-400"
-			>
-				{$i18n.t('Open a tab using the + menu.')}
-			</div>{/if}
+		{#if viewReady && !chatLoading && !viewError && !displayTabs.tabs.length && (canOpenNewTab || !largeScreen)}
+			<div class="pointer-events-auto flex h-full items-center justify-center overflow-y-auto p-4">
+				<div class="flex w-full max-w-sm flex-col items-center gap-3 text-center">
+					<div class="space-y-1">
+						<div class="text-sm font-medium text-gray-700 dark:text-gray-200">
+							Espaces de travail de la session
+						</div>
+						<p class="text-xs text-gray-500 dark:text-gray-400">
+							Sélectionnez un panneau à ouvrir ou utilisez le bouton + de la barre d'onglets.
+						</p>
+					</div>
+					<div class="flex w-full flex-wrap items-center justify-center gap-2">
+						{#if terminalMenuVisible && terminalMenuClickable}
+							<button
+								type="button"
+								class="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900/70 dark:text-gray-200 dark:hover:bg-gray-800"
+								on:click={newTerminal}
+							>
+								<Icon name="terminal" size={14} />
+								<span>{$i18n.t('New Terminal')}</span>
+							</button>
+						{/if}
+						{#each newTabViews as view (view.kind)}
+							<button
+								type="button"
+								class="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white/80 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-100 dark:border-gray-800 dark:bg-gray-900/70 dark:text-gray-200 dark:hover:bg-gray-800"
+								on:click={() => openFeature(view.kind as any)}
+							>
+								<Icon name={tabIcon(view.kind as PanelTab['kind'])} size={14} />
+								<span>{view.label}</span>
+							</button>
+						{/each}
+					</div>
+				</div>
+			</div>
+		{/if}
 	</div>
 </div>
 

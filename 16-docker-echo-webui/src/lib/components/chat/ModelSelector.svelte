@@ -28,14 +28,14 @@
 	export const open = () => {};
 </script>
 
-<div class="flex min-w-0 max-w-full flex-col items-start select-none">
+<div class="flex min-w-0 max-w-full items-center select-none shrink-0">
 	<Tooltip content="Cortex Cognitif Dynamique (Zéphyr · Apollon · Prométhée · Athéna)" placement="top">
 		<div
-			class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-gray-100/80 dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 text-gray-900 dark:text-gray-100 cursor-default shadow-xs transition"
+			class="inline-flex h-[1.875rem] items-center gap-1.5 px-2.5 rounded-xl bg-gray-100/80 dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/80 text-gray-900 dark:text-gray-100 cursor-default shadow-xs transition"
 		>
-			<span class="size-2 rounded-full bg-emerald-500 animate-pulse"></span>
-			<span class="text-sm font-semibold tracking-wide">Écho</span>
-			<span class="text-[11px] font-mono text-gray-400 dark:text-gray-400 font-medium">v6</span>
+			<span class="size-2 shrink-0 rounded-full bg-emerald-500 animate-pulse"></span>
+			<span class="text-xs font-semibold tracking-wide leading-none">Écho</span>
+			<span class="text-[11px] font-mono text-gray-400 dark:text-gray-400 font-medium leading-none">v6</span>
 		</div>
 	</Tooltip>
 </div>

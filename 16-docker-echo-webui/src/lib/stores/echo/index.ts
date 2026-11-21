@@ -1189,13 +1189,42 @@ export const stopEchoEdgeEmbedding = (): void => {
 	closeEdgeWebSocket();
 };
 
-export const startEchoEdgeEmbedding = (isMobile: () => boolean = () => false): (() => void) => {
+export const echoOpenSecondaryTabsCount = writable<number>(0);
+
+export const isTrueMobileDevice = (): boolean => {
+	if (typeof navigator === 'undefined') return false;
+	if ((navigator as any).userAgentData?.mobile) return true;
+	return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile/i.test(
+		navigator.userAgent || ''
+	);
+};
+
+export const computeClampedPopoverStyle = (
+	anchorEl: HTMLElement | null,
+	preferredWidthPx: number = 352,
+	marginPx: number = 12
+): string => {
+	if (typeof window === 'undefined' || !anchorEl) {
+		return `width: ${preferredWidthPx}px;`;
+	}
+	const vw = window.innerWidth || document.documentElement?.clientWidth || preferredWidthPx;
+	const width = Math.round(Math.min(preferredWidthPx, Math.max(240, vw - marginPx * 2)));
+	const rect = anchorEl.getBoundingClientRect();
+	const minLeft = marginPx;
+	const maxLeft = Math.max(marginPx, vw - marginPx - width);
+	const centeredLeft = rect.left + rect.width / 2 - width / 2;
+	const desiredViewportLeft = Math.min(Math.max(centeredLeft, minLeft), maxLeft);
+	const relativeLeft = Math.round(desiredViewportLeft - rect.left);
+	return `width: ${width}px; left: ${relativeLeft}px; right: auto;`;
+};
+
+export const startEchoEdgeEmbedding = (_isMobile: () => boolean = () => false): (() => void) => {
 	if (typeof window === 'undefined') return () => {};
 	if (edgeActive || edgeInitPromise) {
 		return () => stopEchoEdgeEmbedding();
 	}
 
-	if (isMobile()) {
+	if (isTrueMobileDevice()) {
 		echoEdgeEmbedState.set('incompatible');
 		echoEdgeEmbedReason.set('Appareil mobile détecté');
 		return () => {};

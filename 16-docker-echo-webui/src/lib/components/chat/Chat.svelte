@@ -5541,7 +5541,7 @@
 								</div>
 							</div>
 						{:else}
-							<div class="flex items-center h-full">
+							<div class="flex min-h-full py-4">
 								<Placeholder
 									chatId={$chatId}
 									bind:terminalContext

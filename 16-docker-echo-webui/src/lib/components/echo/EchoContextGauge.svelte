@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { echoContextGauge } from '$lib/stores/echo';
+	import { computeClampedPopoverStyle, echoContextGauge } from '$lib/stores/echo';
 	import { getEchoToken, getEchoWmChatSnapshot } from '$lib/apis/echo';
 
 	export let chatId: string = '';
 
 	let showPopover = false;
+	let popoverStyle = '';
 	let containerRef: HTMLDivElement | null = null;
 	let mounted = false;
 	let currentChatId = '__init__';
@@ -53,6 +54,12 @@
 		}
 	};
 
+	const updatePopoverPosition = () => {
+		if (showPopover && containerRef) {
+			popoverStyle = computeClampedPopoverStyle(containerRef, 368);
+		}
+	};
+
 	const handleClick = () => {
 		if (clickTimer) {
 			clearTimeout(clickTimer);
@@ -61,6 +68,9 @@
 		clickTimer = setTimeout(() => {
 			clickTimer = null;
 			showPopover = !showPopover;
+			if (showPopover) {
+				popoverStyle = computeClampedPopoverStyle(containerRef, 368);
+			}
 		}, 200);
 	};
 
@@ -75,6 +85,7 @@
 	onMount(() => {
 		mounted = true;
 		window.addEventListener('click', handleClickOutside);
+		window.addEventListener('resize', updatePopoverPosition);
 		currentChatId = normalizedChatId;
 		void refreshStats(normalizedChatId, false);
 	});
@@ -86,6 +97,7 @@
 		}
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('click', handleClickOutside);
+			window.removeEventListener('resize', updatePopoverPosition);
 		}
 	});
 
@@ -181,10 +193,10 @@
 	};
 </script>
 
-<div class="relative flex flex-1 items-center min-w-[72px] sm:min-w-[110px] max-w-full" bind:this={containerRef}>
+<div class="echo-gauge-root relative flex flex-1 items-center min-w-[96px] max-w-full" bind:this={containerRef}>
 	<button
 		type="button"
-		class="w-full flex items-center gap-2 px-2.5 py-1 text-xs font-mono font-medium rounded-xl border bg-gray-100/80 dark:bg-gray-800/80 hover:bg-gray-200/70 dark:hover:bg-gray-700/80 transition shadow-xs select-none {badgeBorder}"
+		class="w-full h-[1.875rem] flex items-center gap-1.5 px-2.5 text-xs font-mono font-medium rounded-xl border bg-gray-100/80 dark:bg-gray-800/80 hover:bg-gray-200/70 dark:hover:bg-gray-700/80 transition shadow-xs select-none {badgeBorder}"
 		on:click={handleClick}
 		on:dblclick|preventDefault|stopPropagation={handleDoubleClick}
 		title="Contexte, session & identité Google (clic : détails · double-clic : rafraîchir)"
@@ -227,14 +239,14 @@
 				/>
 			</svg>
 			{#if shortIdentityLabel}
-				<span class="hidden xl:inline truncate max-w-[110px] text-[11px] text-gray-600 dark:text-gray-300">
+				<span class="echo-gauge-identity truncate max-w-[105px] text-[11px] text-gray-600 dark:text-gray-300">
 					{shortIdentityLabel}
 				</span>
 			{/if}
 		</div>
 
 		<!-- 2. Barre de Contexte 3 segments redimensionnable (centre) -->
-		<div class="flex flex-1 min-w-[36px] h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+		<div class="flex flex-1 min-w-[28px] h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
 			{#if cachePct > 0}
 				<div
 					class="h-full bg-violet-500 transition-all duration-300"
@@ -256,14 +268,14 @@
 		</div>
 
 		<!-- 3. Session & Différentiel (droite) -->
-		<div class="shrink-0 flex items-center gap-1.5">
+		<div class="shrink-0 flex items-center gap-1">
 			<span class="text-gray-800 dark:text-gray-200 font-semibold">{pctFormatted}%</span>
-			<span class="hidden md:inline text-gray-400 dark:text-gray-500">
+			<span class="echo-gauge-tokens text-gray-400 dark:text-gray-500">
 				({formatNumber(totalTokens)})
 			</span>
 			{#if capacityLostPct !== 0}
 				<span
-					class="hidden sm:inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium border {capacityLostPct > 0
+					class="echo-gauge-delta items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium border {capacityLostPct > 0
 						? 'bg-red-500/10 text-red-500 border-red-500/25'
 						: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/25'}"
 				>
@@ -276,7 +288,8 @@
 	<!-- Popover détaillé vers le haut -->
 	{#if showPopover}
 		<div
-			class="bottom-full left-0 sm:left-auto sm:right-0 mb-2 absolute w-80 sm:w-96 p-4 rounded-xl shadow-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-xs z-50 animate-in fade-in zoom-in-95 duration-150"
+			style={popoverStyle}
+			class="bottom-full mb-2 absolute max-h-[min(75dvh,28rem)] overflow-y-auto p-4 rounded-xl shadow-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-xs z-50 animate-in fade-in zoom-in-95 duration-150"
 		>
 			<!-- En-tête -->
 			<div class="flex items-center justify-between pb-2 mb-3 border-b border-gray-100 dark:border-gray-800">
@@ -477,3 +490,29 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	.echo-gauge-root {
+		container-type: inline-size;
+	}
+	.echo-gauge-identity,
+	.echo-gauge-tokens,
+	.echo-gauge-delta {
+		display: none;
+	}
+	@container (min-width: 175px) {
+		.echo-gauge-tokens {
+			display: inline;
+		}
+	}
+	@container (min-width: 220px) {
+		.echo-gauge-delta {
+			display: inline-flex;
+		}
+	}
+	@container (min-width: 255px) {
+		.echo-gauge-identity {
+			display: inline;
+		}
+	}
+</style>

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import {
+		computeClampedPopoverStyle,
 		echoEdgeEmbedState,
 		echoEdgeEmbedProgress,
 		echoEdgeEmbedReason,
@@ -9,7 +10,21 @@
 	} from '$lib/stores/echo';
 
 	let showPopover = false;
+	let popoverStyle = '';
 	let containerRef: HTMLDivElement | null = null;
+
+	const updatePopoverPosition = () => {
+		if (showPopover && containerRef) {
+			popoverStyle = computeClampedPopoverStyle(containerRef, 288);
+		}
+	};
+
+	const togglePopover = () => {
+		showPopover = !showPopover;
+		if (showPopover) {
+			popoverStyle = computeClampedPopoverStyle(containerRef, 288);
+		}
+	};
 
 	const handleClickOutside = (e: MouseEvent) => {
 		if (showPopover && containerRef && !containerRef.contains(e.target as Node)) {
@@ -19,11 +34,13 @@
 
 	onMount(() => {
 		window.addEventListener('click', handleClickOutside);
+		window.addEventListener('resize', updatePopoverPosition);
 	});
 
 	onDestroy(() => {
 		if (typeof window !== 'undefined') {
 			window.removeEventListener('click', handleClickOutside);
+			window.removeEventListener('resize', updatePopoverPosition);
 		}
 	});
 
@@ -62,8 +79,8 @@
 <div class="relative inline-flex items-center shrink-0" bind:this={containerRef}>
 	<button
 		type="button"
-		class="inline-flex items-center gap-1.5 px-2 py-1 rounded-xl border text-xs font-mono transition shadow-xs select-none {badgeBorder}"
-		on:click={() => (showPopover = !showPopover)}
+		class="inline-flex h-[1.875rem] items-center gap-1.5 px-2.5 rounded-xl border text-xs font-mono transition shadow-xs select-none {badgeBorder}"
+		on:click={togglePopover}
 		title={statusLabel}
 		aria-label="État WebGPU Edge Embedding"
 	>
@@ -103,13 +120,14 @@
 		{#if state === 'downloading'}
 			<span class="font-semibold">{progress}%</span>
 		{:else}
-			<span class="hidden sm:inline font-medium">WebGPU</span>
+			<span class="echo-webgpu-label font-medium">WebGPU</span>
 		{/if}
 	</button>
 
 	{#if showPopover}
 		<div
-			class="bottom-full right-0 mb-2 absolute w-72 p-3.5 rounded-xl shadow-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-xs z-50 animate-in fade-in zoom-in-95 duration-150"
+			style={popoverStyle}
+			class="bottom-full mb-2 absolute max-h-[min(75dvh,24rem)] overflow-y-auto p-3.5 rounded-xl shadow-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 text-xs z-50 animate-in fade-in zoom-in-95 duration-150"
 		>
 			<div class="flex items-center justify-between pb-2 mb-2.5 border-b border-gray-100 dark:border-gray-800">
 				<span class="font-semibold text-gray-900 dark:text-white flex items-center gap-1.5">

@@ -47,6 +47,7 @@
 	import { refreshChatList, refreshFolderChatLists } from '$lib/stores/chatList';
 	import ChatParticipants from '$lib/components/common/ChatParticipants.svelte';
 	import EchoSubagentIndicator from '$lib/components/echo/EchoSubagentIndicator.svelte';
+	import { echoOpenSecondaryTabsCount } from '$lib/stores/echo';
 
 	const i18n: any = getContext('i18n');
 
@@ -230,6 +231,7 @@
 {/snippet}
 
 {#snippet renderTabBarActions()}
+	<EchoSubagentIndicator chatId={chat?.id || $chatId || ''} />
 	{@render renderTemporaryChatToggle()}
 	{#if liveParticipants.length > 0}
 		<div class="flex h-6 shrink-0 items-center px-1">
@@ -420,12 +422,19 @@
 					<!-- [ECHO-V6-HOOK] Bouton Tabs toujours accessible -->
 					<Tooltip content={$i18n.t('Tabs')}>
 						<button
-							class="flex size-6 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
+							class="relative flex size-6 cursor-pointer items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-50/40 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-200"
 							on:click={() => showTabs.set(!$showTabs)}
 							aria-label={$i18n.t('Tabs')}
 							aria-expanded={!!$showTabs}
 						>
 							<SplitPanel className="size-4.5" strokeWidth="1" />
+							{#if $echoOpenSecondaryTabsCount > 0}
+								<span
+									class="pointer-events-none absolute -top-1 -right-1 flex min-w-[0.95rem] h-[0.95rem] items-center justify-center rounded-full bg-sky-500 px-1 text-[9px] font-bold leading-none text-white shadow-xs"
+								>
+									{$echoOpenSecondaryTabsCount}
+								</span>
+							{/if}
 						</button>
 					</Tooltip>
 				</div>
@@ -447,7 +456,7 @@
 				>
 					{#if ($config?.license_metadata?.type ?? null) === 'trial'}
 						<Banner
-							className="px-[11px] rounded-lg"
+							className="mx-2 px-[11px] rounded-lg"
 							banner={{
 								type: 'info',
 								title: $i18n.t('Trial License'),
@@ -460,7 +469,7 @@
 
 					{#if ($config?.license_metadata?.seats ?? null) !== null && $config?.user_count > $config?.license_metadata?.seats}
 						<Banner
-							className="px-[11px] rounded-lg"
+							className="mx-2 px-[11px] rounded-lg"
 							banner={{
 								type: 'error',
 								title: $i18n.t('License Error'),
@@ -473,7 +482,7 @@
 
 					{#each $banners.filter((b) => ![...getDismissedBannerIds(), ...closedBannerIds].includes(b.id)) as banner (banner.id)}
 						<Banner
-							className="px-[11px] rounded-lg"
+							className="mx-2 px-[11px] rounded-lg"
 							{banner}
 							on:dismiss={(e) => {
 								const bannerId = e.detail;

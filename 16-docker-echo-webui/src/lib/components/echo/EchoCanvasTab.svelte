@@ -832,7 +832,7 @@
 
 <div class="flex flex-col h-full bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 overflow-hidden">
 	<!-- Barre supérieure des frames Canvas -->
-	<div class="flex items-center justify-between px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-850">
+	<div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-850 shrink-0">
 		<div class="flex items-center gap-2 overflow-x-auto">
 			<span class="font-bold text-sm text-gray-900 dark:text-white flex items-center gap-1.5 flex-shrink-0">
 				<svg class="w-4 h-4 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -864,14 +864,17 @@
 		</div>
 
 		{#if activeFrame}
-			<div class="flex items-center gap-2">
+			<div class="flex items-center gap-2 min-w-0 ml-auto">
 				<span
-					class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium {activeIsTerminal ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'}"
+					class="inline-flex shrink-0 items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium {activeIsTerminal ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'}"
 				>
 					<span class="w-1.5 h-1.5 rounded-full {activeIsTerminal ? 'bg-amber-500' : 'bg-emerald-500'}"></span>
 					{activeIsTerminal ? 'Arrêté' : 'Actif'}
 				</span>
-				<span class="text-[11px] font-mono text-gray-400">
+				<span
+					class="text-[11px] font-mono text-gray-400 truncate max-w-[150px] sm:max-w-[260px]"
+					title={activeFrame.title || activeFrame.id}
+				>
 					{activeFrame.title || activeFrame.id}
 				</span>
 				{#if !activeIsTerminal && Boolean(activeFrame.run_id)}
