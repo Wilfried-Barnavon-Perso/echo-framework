@@ -105,6 +105,53 @@
 					}
 				});
 				const isDarkMode = document.documentElement.classList.contains('dark');
+				const isHerTheme = document.documentElement.classList.contains('her');
+				const reducedMotion =
+					window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+				let startSplashRevealAudio = () => {};
+				if (!isHerTheme && !reducedMotion) {
+					const splashAudio = new Audio('/audio/echo-reveal.mp3');
+					splashAudio.preload = 'auto';
+					let audioActive = true;
+					let audioStarted = false;
+
+					const detachSplashAudioUnlock = () => {
+						document.removeEventListener('pointerdown', onSplashFirstGesture, true);
+						document.removeEventListener('keydown', onSplashFirstGesture, true);
+					};
+
+					const cleanupSplashAudio = () => {
+						audioActive = false;
+						detachSplashAudioUnlock();
+						delete window.__echoCleanupSplashAudio;
+					};
+
+					const onSplashFirstGesture = () => {
+						const canPlay = audioActive;
+						cleanupSplashAudio();
+						if (!canPlay) return;
+						void splashAudio.play().catch(() => {});
+					};
+
+					window.__echoCleanupSplashAudio = cleanupSplashAudio;
+
+					startSplashRevealAudio = () => {
+						if (audioStarted || !audioActive) return;
+						audioStarted = true;
+						void splashAudio.play().catch((err) => {
+							if (!audioActive || !err || err.name !== 'NotAllowedError') return;
+							document.addEventListener('pointerdown', onSplashFirstGesture, {
+								once: true,
+								capture: true
+							});
+							document.addEventListener('keydown', onSplashFirstGesture, {
+								once: true,
+								capture: true
+							});
+						});
+					};
+				}
 
 				const logo = document.createElement('img');
 				logo.id = 'logo';
@@ -127,6 +174,7 @@
 					if (splash) {
 						splash.prepend(logo);
 						const revealLogo = () => {
+							startSplashRevealAudio();
 							splash.dataset.echoSplashStart = String(performance.now());
 							// Force style commit at opacity:0 before triggering CSS transition
 							void logo.offsetWidth;

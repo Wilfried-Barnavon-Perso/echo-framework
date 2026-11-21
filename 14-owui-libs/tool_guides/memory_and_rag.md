@@ -1,7 +1,7 @@
 ---
 domain_id: memory_and_rag
-version: 6.13.2.1
-updated_at: 2026-11-20
+version: 6.17.2.1
+updated_at: 2026-11-21
 name: Mémoire Vectorielle Long-Terme (Méta-Artéfacts) & Mémoire Vectorielle de Session
 description: Gouvernance de la mémoire persistante inter-sessions (PACP/PRAC) et de la Mémoire Vectorielle de la session (documents ingérés et historique conversationnel).
 tools: [update_meta_artifact, search_meta_artifacts, delete_meta_artifact_item, save_session_context, delete_session_context_source, search_sessions_context]
@@ -39,13 +39,14 @@ Dans `update_meta_artifact(artifact_name, fact, importance)`, le paramètre `imp
 - `"5"` (**Axiome**) : Injonction explicite de L'Utilisateur ou invariant stratégique critique validé.
 
 ### 2.3 Spécifications des Fonctions Méta-Artéfacts
+- **Contrainte d'environnement (Sous-Agent)** : `update_meta_artifact` et `delete_meta_artifact_item` sont **ABSOLUMENT INTERDITS depuis un Sous-Agent headless** (`DELEGATE_AGENT_BLACKLIST` ; seule la lecture via `search_meta_artifacts` est autorisée).
 - `update_meta_artifact` :
   - `fact` : Énoncé factuel, dense et autonome (sans pronoms ambigus ni références temporelles relatives).
   - **Retour** : Génère et retourne le `memory_id` unique (indispensable pour suppression ultérieure).
 - `search_meta_artifacts` :
   - `artifact_name` : `"Profil d'Alignement"`, `"Hypothèses d'Apprentissage"`, ou `None` (les deux simultanément).
-  - **Mode Recherche Ciblée (`query` renseigné)** : Extraction sémantique pondérée par niveau d'importance.
-  - **Mode Lecture Globale (`query=None` ou omis)** : Extraction chronologique des `limit` derniers faits mémorisés avec leurs `memory_id` (**REQUIS** avant suppression).
+  - **Mode Recherche Ciblée (`query` renseigné)** : Extraction sémantique pondérée par niveau d'importance (`limit=20` par défaut).
+  - **Mode Lecture Globale (`query=None` ou omis)** : Extraction chronologique des `limit` (défaut `20`) derniers faits mémorisés avec leurs `memory_id` (**REQUIS** avant suppression).
   - `start_date` / `end_date` : Bornes temporelles optionnelles au format ISO 8601 (`"YYYY-MM-DD"`).
 - `delete_meta_artifact_item` :
   - Supprime définitivement un souvenir à partir de son `memory_id` exact (obtenu via `update_meta_artifact` ou `search_meta_artifacts`).
@@ -78,6 +79,7 @@ Lorsqu'un document est ingéré, la balise `<artifact id="AEC_smart_context">` f
 - `global_search` :
   - `False` (Défaut) : Restreint la recherche à la session active avec filtrage automatique sur les messages de la **branche active**. Les messages de branches mortes ou alternatives sont exclus de la restitution textuelle.
   - `True` : Étend la recherche à **l'intégralité de l'historique inter-sessions** de L'Utilisateur (**DOIT** être activé dès que L'Utilisateur mentionne un échange antérieur).
+- **Isolation Sous-Agent Headless** : Lorsqu'il est invoqué depuis un Sous-Agent headless, `search_sessions_context` est strictement isolé sur le `sub_sid` de ce Sous-Agent.
 
 ### 3.3 Persistance et Purge de Sources de Session
 - `save_session_context(text, source_id)` : Remplace tout vecteur existant sous `source_id` puis vectorise `text` dans la session active.

@@ -1,11 +1,11 @@
 ---
 domain_id: identity_and_api_mcp
-version: 6.13.2.1
-updated_at: 2026-11-20
+version: 6.17.2.1
+updated_at: 2026-11-21
 name: Coffre-Fort d'Identités (Identity Vault), Client API HTTP & Protocole MCP
-description: Découverte et gestion des secrets/comptes chiffrés et sécurisés (Identity Vault), requêtes HTTP universelles (call_api), instanciation/exécution sur les serveurs MCP et stratégies par service.
+description: Découverte et gestion des secrets/comptes chiffrés (AES-256-GCM) (Identity Vault), requêtes HTTP universelles (call_api), instanciation/exécution sur les serveurs MCP et stratégies par service.
 tools: [list_identities_services, list_identities, manage_identity, call_api, list_mcp_functions, call_mcp_function, upload_file_to_drive]
-keywords: [vault, secret, clé_api, token, identité, credentials, api, http, rest, mcp, serveur_mcp, broker, m365, workspace, contacts, google_contacts, carnet_adresses, jobs, academic, uvx, npx, sse, ssh, serveur_ssh]
+keywords: [vault, secret, clé_api, token, identité, credentials, api, http, rest, mcp, serveur_mcp, broker, m365, workspace, contacts, google_contacts, carnet_adresses, jobs, academic, uvx, npx, sse, ssh, serveur_ssh, drive, google_drive, onedrive, upload, upload_file_to_drive, outlook, gmail, email, mail, oauth, account_id]
 ---
 
 # MANUEL OPÉRATIONNEL : IDENTITY VAULT, CLIENT API & MCP (`identity_and_api_mcp`)
@@ -35,7 +35,7 @@ L'Identity Vault centralise les identifiants d'API, secrets d'orchestration N8N 
     - Clés requises : `"command"` (`"uvx"` ou `"npx"`), `"args"` (tableau JSON de paramètres, ex: `'["-y", "@modelcontextprotocol/server-postgres"]'`), `"description"`.
   - **Serveurs SSH Distants (`orchestration`, service `"ssh"`)** :
     - Clés : `"host"`, `"user"`, `"description"` (et `"port"` optionnel, défaut `"22"`).
-    - Conformément au MPSI, `"password"` ou `"private_key"` DOIT être saisi par L'Utilisateur dans l'onglet **Coffre**, puis utilisé par Le Modèle via `ssh_executor(account_id, command)`.
+    - Conformément au MPSI, `"password"` ou `"private_key"` DOIT être saisi par L'Utilisateur dans l'onglet **Coffre & Identité**, puis utilisé par Le Modèle via `ssh_executor(account_id, command)`.
   - **Instructions Spécifiques** : Si `list_identities_services` retourne des `user_required_instructions` pour le service visé, Le Modèle **DOIT** suivre scrupuleusement ces instructions et demander les valeurs requises via `ask_user_input`.
 
 ---
@@ -45,10 +45,10 @@ L'outil MCP route dynamiquement les requêtes vers les serveurs (`mcp_native`, `
 
 ### Séquence d'Exécution MCP
 1. **Découverte des Schémas (`list_mcp_functions`)** :
-   - `list_mcp_functions(service="...", account_id=None, query=None)` : `service` DOIT correspondre à un identifiant valide issu de `list_identities_services()`. `account_id` (optionnel) sélectionne un compte spécifique configuré dans l'Identity Vault (défaut : premier compte disponible ; il est **ABSOLUMENT INTERDIT** d'injecter `account_id` dans le dictionnaire `arguments` d'outils non compatibles comme ceux de Google Workspace). `query` (optionnel) filtre le catalogue retourné par mots-clés (sur le nom et la description des outils) et compacte les schémas d'entrée : Le Modèle DOIT utiliser `query` sur les serveurs volumineux (`google_workspace`, `microsoft_365`).
+   - `list_mcp_functions(service="...", account_id=None, query=None)` : `service` DOIT correspondre à un identifiant valide issu de `list_identities_services()`. `account_id` (optionnel) sélectionne un compte spécifique configuré dans l'Identity Vault (si un seul compte existe, il est sélectionné par défaut ; en multi-comptes, un `account_id` inconnu ou omis déclenche une erreur structurée retournant `available_accounts` ; il est **ABSOLUMENT INTERDIT** d'injecter `account_id` dans le dictionnaire `arguments` d'outils non compatibles comme ceux de Google Workspace). `query` (optionnel) filtre le catalogue retourné par mots-clés (sur le nom et la description des outils) et compacte les schémas d'entrée : Le Modèle DOIT utiliser `query` sur les serveurs volumineux (`google_workspace`, `microsoft_365`).
    - Si le statut retourné indique qu'une configuration est requise, Le Modèle DOIT configurer d'abord les identifiants du service via `manage_identity`.
 2. **Appel d'une Fonction (`call_mcp_function`)** :
-   - `call_mcp_function(service="...", function_name="...", arguments={...}, account_id=None)` : Exécute la méthode `function_name` sur le serveur `service` avec le dictionnaire `arguments` (`account_id` sélectionne le compte dans l'Identity Vault sans être transmis dans `arguments`).
+   - `call_mcp_function(service="...", function_name="...", arguments={...}, account_id=None)` : Exécute la méthode `function_name` sur le serveur `service` avec le dictionnaire `arguments` (`account_id` sélectionne le compte dans l'Identity Vault sans être transmis dans `arguments`, avec le même contrôle strict `available_accounts` en multi-comptes).
 3. **Envoi Sécurisé de Fichiers Locaux vers le Cloud (`upload_file_to_drive`)** :
    - `upload_file_to_drive(service, file_ref, workspace=None, remote_folder_id=None, remote_filename=None, overwrite_file_id=None, convert_to_native=False, conflict_behavior="replace", account_id=None)` :
      - `service` : `"google_workspace"` ou `"microsoft_365"`.
@@ -144,4 +144,4 @@ L'outil MCP route dynamiquement les requêtes vers les serveurs (`mcp_native`, `
 - Exécute une requête HTTP/REST directe (`"GET"`, `"POST"`, `"PUT"`, `"DELETE"`, `"PATCH"`, `"HEAD"`, `"OPTIONS"`) vers une URL externe publique (SSRF bloqué sur IP privées/locales RFC 1918).
 - `headers` / `body` : Dictionnaires JSON optionnels.
 - **INTERDICTION STRICTE** : Il est **ABSOLUMENT INTERDIT** d'utiliser `call_api` pour interroger un serveur MCP (Le Modèle DOIT utiliser exclusivement `list_mcp_functions` et `call_mcp_function`).
-- **Troncature** : Réponse limitée à **131 Ko**. Pour traiter ou filtrer un flux volumineux, Le Modèle DOIT déléguer l'appel à `code_executor`.
+- **Garde Anti-OOM & Délestage** : Garde anti-OOM physique plafonnée à **5 Mo** (`5 242 880` caractères) ; au-delà de **32 768 caractères**, Le Système déleste automatiquement la sortie dans `tools_output/` (lisible par pagination via `read_tool_output`). Pour traiter ou filtrer un flux binaire ou supérieur à 5 Mo, Le Modèle DOIT déléguer l'appel à `code_executor`.

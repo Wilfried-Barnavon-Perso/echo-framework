@@ -1,11 +1,12 @@
 """
 title: ECHO Tool Guides Manager
 author: Wilfried BARNAVON
-version: 6.13.2.1
+version: 6.17.2.1
 description: Gestionnaire de la base de connaissances opérationnelle des outils ECHO (tool_guides/*.md).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.17.2.1: Matching lexical par frontière de mot anti-faux-positifs, invalidation cache st_mtime_ns et filtrage excluded_tools dans l'index hiérarchique.
 # 6.13.2.1: Normalisation sans double préfixe 'v' dans l'index hiérarchique et les XML, libellé dédié pour les guides sans outil et factorisation du rendu XML.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 5.229.0.1: Intégration de version et updated_at dans le parsing frontmatter, la Carte Hiérarchique et les balises XML.
@@ -25,11 +26,52 @@ class EchoToolGuidesManager:
 
     _GUIDES_CACHE: Optional[Dict[str, Dict]] = None
     _TOOL_TO_DOMAIN: Optional[Dict[str, str]] = None
+    _GUIDES_MTIME_SIG: Optional[tuple] = None
 
     @classmethod
     def get_guides_dir(cls) -> str:
         """Retourne le chemin absolu du dossier `tool_guides`."""
         return os.path.join(os.path.dirname(os.path.abspath(__file__)), "tool_guides")
+
+    @staticmethod
+    def _get_guides_signature(guides_dir: str) -> tuple:
+        """Retourne la signature déterministe des manuels `.md` (nom, st_mtime_ns)."""
+        if not os.path.isdir(guides_dir):
+            return ()
+        entries = []
+        for fname in sorted(os.listdir(guides_dir)):
+            if not fname.endswith(".md"):
+                continue
+            fpath = os.path.join(guides_dir, fname)
+            if os.path.isfile(fpath):
+                try:
+                    entries.append((fname, os.stat(fpath).st_mtime_ns))
+                except OSError:
+                    continue
+        return tuple(entries)
+
+    @staticmethod
+    def _match_term(text_lower: str, term: str) -> bool:
+        """
+        Vérifie la présence d'un identifiant ou mot-clé avec frontière lexicale stricte
+        pour prévenir les faux positifs sous-chaîne (ex: 'ui' dans 'suite').
+        """
+        term_low = (term or "").strip().lower()
+        if not term_low or not text_lower:
+            return False
+
+        if term_low.startswith("__") and len(term_low) >= 6:
+            return term_low in text_lower
+
+        candidates = [term_low]
+        if "_" in term_low and not term_low.startswith("_"):
+            candidates.append(term_low.replace("_", " "))
+            candidates.append(term_low.replace("_", "-"))
+
+        for cand in candidates:
+            if re.search(rf"(?<![\w]){re.escape(cand)}(?![\w])", text_lower):
+                return True
+        return False
 
     @staticmethod
     def _parse_frontmatter(raw_content: str) -> Dict:
@@ -81,11 +123,17 @@ class EchoToolGuidesManager:
         """
         Scanne `tool_guides/*.md`, construit le catalogue par `domain_id`
         et l'index inversé `tool_name -> domain_id`.
+        Invalide automatiquement le cache lorsque `st_mtime_ns` change sur disque.
         """
-        if cls._GUIDES_CACHE is not None and not force_reload:
+        guides_dir = cls.get_guides_dir()
+        current_sig = cls._get_guides_signature(guides_dir)
+        if (
+            cls._GUIDES_CACHE is not None
+            and not force_reload
+            and cls._GUIDES_MTIME_SIG == current_sig
+        ):
             return cls._GUIDES_CACHE
 
-        guides_dir = cls.get_guides_dir()
         guides: Dict[str, Dict] = {}
         tool_to_domain: Dict[str, str] = {}
 
@@ -110,6 +158,7 @@ class EchoToolGuidesManager:
 
         cls._GUIDES_CACHE = guides
         cls._TOOL_TO_DOMAIN = tool_to_domain
+        cls._GUIDES_MTIME_SIG = current_sig
         return guides
 
     @classmethod
@@ -133,7 +182,7 @@ class EchoToolGuidesManager:
         )
 
     @classmethod
-    def get_hierarchical_index(cls) -> str:
+    def get_hierarchical_index(cls, excluded_tools: Optional[Set[str]] = None) -> str:
         """
         Construit la Carte Hiérarchique complète (`Domaine -> Description -> Outils`)
         injectée dans le prompt système du Conseiller Outils.
@@ -142,22 +191,38 @@ class EchoToolGuidesManager:
         if not guides:
             return "Aucun manuel opérationnel disponible."
 
+        excluded = set(excluded_tools or ())
         lines: List[str] = []
         for domain_id, info in guides.items():
             tools_list = info.get("tools", [])
-            tools_str = (
-                ", ".join(tools_list)
-                if tools_list
-                else "(Guide conceptuel / assistance Utilisateur — aucun outil dédié)"
-            )
+            blocked_tools: List[str] = []
+            if not tools_list:
+                tools_str = "(Guide conceptuel / assistance Utilisateur — aucun outil dédié)"
+            elif excluded:
+                available_tools = [t for t in tools_list if t not in excluded]
+                blocked_tools = [t for t in tools_list if t in excluded]
+                tools_str = (
+                    ", ".join(available_tools)
+                    if available_tools
+                    else "(Aucun outil autorisé dans ce contexte)"
+                )
+            else:
+                tools_str = ", ".join(tools_list)
+
             ver_clean = str(info.get("version", "")).strip().lstrip("vV")
             upd_str = str(info.get("updated_at", "")).strip()
             ver_str = f" [v{ver_clean} - {upd_str}]" if ver_clean or upd_str else ""
-            lines.append(
+            entry = (
                 f"- DOMAINE `{domain_id}` ({info.get('name', domain_id)}){ver_str} :\n"
                 f"  Description : {info.get('description', '')}\n"
                 f"  Outils couverts : {tools_str}"
             )
+            if blocked_tools:
+                entry += (
+                    "\n  Outils INTERDITS pour l'appelant courant : "
+                    + ", ".join(blocked_tools)
+                )
+            lines.append(entry)
         return "\n".join(lines)
 
     @classmethod
@@ -229,10 +294,10 @@ class EchoToolGuidesManager:
 
         # 2. Détection exacte de noms de fonctions ou domain_id dans le texte
         for d_id in guides:
-            if d_id.lower() in combined_text:
+            if cls._match_term(combined_text, d_id):
                 _add_domain(d_id)
         for t_name, d_id in tool_map.items():
-            if t_name.lower() in combined_text:
+            if cls._match_term(combined_text, t_name):
                 _add_domain(d_id)
 
         # 3. Scoring par mots-clés (keywords YAML) si on a encore de la place
@@ -242,9 +307,15 @@ class EchoToolGuidesManager:
                 if d_id in seen:
                     continue
                 score = 0
+                matched_kws: Set[str] = set()
                 for kw in info.get("keywords", []):
-                    kw_low = kw.lower()
-                    if kw_low and kw_low in combined_text:
+                    kw_low = kw.strip().lower()
+                    if (
+                        kw_low
+                        and kw_low not in matched_kws
+                        and cls._match_term(combined_text, kw_low)
+                    ):
+                        matched_kws.add(kw_low)
                         score += 1
                 if score > 0:
                     scored.append((score, d_id))

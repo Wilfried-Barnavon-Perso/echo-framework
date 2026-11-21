@@ -1,16 +1,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 6.15.0.1
+version: 6.17.2.1
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.17.2.1: Correctif indentation break dans tool_advisor (anti-double appel LLM), découplage get_chat_tools et propagation caller_context/excluded_tools.
 # 6.15.0.1: Typage UiTaskItem et normalisation tolérante (title/label/text/name/description -> content) + garde invalid_tasks_payload dans create_ui_tasks.
 # 6.13.2.1: Extension de la description et de la docstring de tool_advisor à l'assistance ECHO-UI (echo_ui_guide).
 # 6.10.0.1: Support des 3 modes de destination (new_chat, existing_chat avec target_chat_id='current', persistent_chat) sur create/update_ui_automation et exposition target/folder_id dans list_ui_automations.
 # 6.8.2.2: Migration Svelte native de ask_user_input (request:user_input / AskUserCard), blocage headless/automation via get_headless_block_reason, et ajout de create_ui_tasks, update_ui_task, toggle_ui_automation, search_ui_chats et view_ui_chat.
-# 6.7.11.1: Délégation du fenêtrage read_tool_output à paginate_lines_window et suppression des 7 skip_truncation=True redondants.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -900,13 +900,9 @@ class Tools:
         chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id") or ""
         user_id = __user__.get("id", "system")
 
-        # Introspection Dynamique : Extraction sécurisée du cache Pipe
-        _pipe_mod = sys.modules.get("function_echo_orchestrator")
-        _tools_cache = (getattr(_pipe_mod, "_TOOLS_CACHE", {}) or {}) if _pipe_mod else {}
-        _tools_dict = _tools_cache.get(chat_id, {})
-
-        if not _tools_dict:
-            _tools_dict = (__metadata__ or {}).get("_echo_tools_dict", {})
+        # Introspection Dynamique : Extraction sécurisée du registre unifié
+        from echo_subagent_hub import get_chat_tools
+        _tools_dict = get_chat_tools(chat_id, __metadata__)
 
         from echo_constants import ECHO_SUBAGENT_CONTEXT, DELEGATE_AGENT_BLACKLIST
         sub_ctx = ECHO_SUBAGENT_CONTEXT.get()
@@ -919,6 +915,20 @@ class Tools:
         blacklist = {"tool_advisor"}
         if is_subagent:
             blacklist |= set(DELEGATE_AGENT_BLACKLIST)
+            sub_sid_label = sub_ctx.get("sub_sid") or "inconnu"
+            blocked_sorted = ", ".join(sorted(blacklist - {"tool_advisor"}))
+            caller_context = (
+                f"Mode : Sous-Agent headless (sub_sid={sub_sid_label}). "
+                f"Outils STRICTEMENT INTERDITS à cet appelant : {blocked_sorted}. "
+                "Seuls les outils listés dans <available_tools_signatures> sont exécutables."
+            )
+            excluded_for_index = blacklist - {"tool_advisor"}
+        else:
+            caller_context = (
+                "Mode : Modèle principal (Orchestrateur). "
+                "Tous les outils listés dans <available_tools_signatures> sont exécutables."
+            )
+            excluded_for_index = None
 
         # Construction textuelle des signatures techniques disponibles
         tools_docs = []
@@ -936,7 +946,9 @@ class Tools:
         tools_catalog = "\n".join(tools_docs) if tools_docs else "Catalogue dynamique non chargé (se référer aux manuels)."
 
         # Résolution de la Carte Hiérarchique et pré-injection déterministe des manuels .md
-        hierarchical_index = EchoToolGuidesManager.get_hierarchical_index()
+        hierarchical_index = EchoToolGuidesManager.get_hierarchical_index(
+            excluded_tools=excluded_for_index
+        )
         preloaded_guides = EchoToolGuidesManager.resolve_guides(
             objective=objective,
             target_tools=target_tools,
@@ -944,6 +956,7 @@ class Tools:
         )
 
         system_prompt = SYS_ORCHESTRATOR_CONSULTANT.format(
+            caller_context=caller_context,
             hierarchical_index=hierarchical_index,
             tools_catalog=tools_catalog,
             preloaded_guides=preloaded_guides,
@@ -1051,7 +1064,7 @@ class Tools:
                 for p in parts:
                     if "text" in p and not p.get("thought"):
                         text_result += p["text"]
-                    break
+                break
 
             await events.status("✅ Conseiller Outils : Recommandation opérationnelle prête.", done=True)
             return f"Recommandation du Conseiller Outils :\n\n{text_result}"

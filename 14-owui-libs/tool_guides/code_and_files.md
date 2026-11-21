@@ -1,11 +1,11 @@
 ---
 domain_id: code_and_files
-version: 6.16.0.1
+version: 6.17.2.1
 updated_at: 2026-11-21
 name: Registre Unifié, Explorateur de l'Espace Personnel & Sandbox d'Exécution de Code
 description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash), exécution isolée de scripts Codex sandbox (.py / .js / .sh) et exécution SSH distante (ssh_executor).
 tools: [query_registry, read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes, code_executor, control_sandbox_execution, kill_sandbox_execution, ssh_executor]
-keywords: [registre, query_registry, fichier, file, code, python, node, javascript, bash, sh, shell, sandbox, code_executor, control_sandbox_execution, kill_sandbox_execution, ssh, ssh_executor, bidi, echo_monitor, fastapi, websocket, expose_app, server, uds, image, pdf, audio, video, multimedia, semantic_probe, read_multimedia_file, hash, sha256, plans, generated]
+keywords: [registre, query_registry, fichier, file, code, python, node, javascript, bash, shell_script, shell, sandbox, code_executor, control_sandbox_execution, kill_sandbox_execution, ssh, ssh_executor, bidi, echo_monitor, fastapi, websocket, expose_app, server, uds, image, pdf, audio, video, multimedia, semantic_probe, read_multimedia_file, hash, sha256, plans, generated, browserviews]
 ---
 
 # MANUEL OPÉRATIONNEL : REGISTRE UNIFIÉ, FICHIERS & SANDBOX DE CODE (`code_and_files`)
@@ -29,15 +29,15 @@ Avant toute manipulation d'un fichier, d'un document Codex, d'un plan, d'un méd
 ---
 
 ## 2. EXPLORATEUR DE L'ESPACE PERSONNEL
-Tous les outils ci-dessous résolvent `file_id` (ou `target`) dans l'ordre : 1) par `workspace` explicite (`"main"`, `"plans"`, `"generated"`, `"sandbox"`) ou préfixe (`"main/..."`, `"plans/..."`, `"generated/..."`, `"sandbox/..."`), 2) par ID Registre (`DOC_...`, `U_...`, `plan-...`, `dlg_img_...`), 3) par Nom de fichier dans le Registre, et 4) par Nom sur disque (`codex/main/`, `codex/plans/`, `codex/generated/`, `codex/sandbox/`, `files/`).
+Tous les outils ci-dessous résolvent `file_id` (ou `target`) dans l'ordre : 1) par `workspace` explicite (`"main"`, `"plans"`, `"generated"`, `"sandbox"`, `"browserviews"`) ou préfixe (`"main/..."`, `"plans/..."`, `"generated/..."`, `"sandbox/..."`, `"browserviews/..."`), 2) par ID Registre (`DOC_...`, `U_...`, `plan-...`, `dlg_img_...`), 3) par Nom de fichier dans le Registre, et 4) par Nom sur disque (`codex/main/`, `codex/plans/`, `codex/generated/`, `codex/sandbox/`, `browserviews/`, `files/`).
 
 ### 2.1 Matrice de Sélection de l'Outil d'Exploration
 | Besoin Opérationnel | Outil à Invoquer | Spécifications & Contraintes Critiques |
 | :--- | :--- | :--- |
 | **Extraction chirurgicale ciblée dans un fichier ou média volumineux (Texte, PDF, Image, Audio, Vidéo)** | `semantic_probe(file_id, query)` | Délègue l'extraction ciblée à `MODEL_APOLLO` selon `query` (segmentation Map-Reduce parallélisée en mémoire vive avec backpressure au-delà de 30 Mo ou 45 min). Appels parallélisables intra-tour sur fichiers distincts. |
 | **Rapport descriptif complet et horodaté d'un Média (Image, Audio, Vidéo, PDF)** | `read_multimedia_file(file_id, instruction=None)` | Sonde multimodale (`MODEL_APOLLO`) restituant une distillation complète et horodatée du média (segmentation parallèle bornée au-delà de 30 Mo ou 45 min). `instruction` optionnel pour surcharger la consigne par défaut. Appels parallélisables intra-tour sur fichiers distincts. |
-| **Lecture brute de lignes ou d'octets** | `read_raw_file_content(file_id, start_line=1, end_line=100, output_mode="text", byte_offset=0)` | `output_mode` : `"text"`, `"base64"` ou `"hex"`. **CONTRAINTE CRITIQUE** : `byte_offset` (> 0) est mutuellement exclusif avec `start_line`/`end_line`. Limiter à ~100 lignes par appel (max 16 Ko). Si un binaire lu en `"text"` est illisible, il est ABSOLUMENT INTERDIT de boucler : Le Modèle DOIT utiliser `semantic_probe` ou `read_multimedia_file`. |
-| **Afficher une image à l'Utilisateur** | `show_image_to_user(target, workspace=None)` | Rend toute image locale (par ID Registre, par Nom de fichier ou par `workspace="main"\|"plans"\|"generated"\|"sandbox"`) ou distante (`http(s)://`) dans une Iframe interactive intégrée au message destiné à L'Utilisateur. **Outil strictement réservé au Modèle principal** : son appel depuis un Sous-Agent headless est ABSOLUMENT INTERDIT (Le Sous-Agent DOIT restituer l'identifiant, le nom ou l'URL au Modèle principal qui exécute l'affichage). L'affichage visuel étant assuré nativement par l'Iframe du Système, il est ABSOLUMENT INTERDIT pour Le Modèle d'émettre une balise Markdown `![...](...)` ou un lien d'image redondant dans sa réponse. |
+| **Lecture brute de lignes ou d'octets** | `read_raw_file_content(file_id, start_line=1, end_line=100, output_mode="text", byte_offset=0)` | `output_mode` : `"text"`, `"base64"` (max `12 288` octets/appel) ou `"hex"` (max `8 192` octets/appel). **CONTRAINTE CRITIQUE** : `byte_offset` (> 0) est mutuellement exclusif avec `start_line`/`end_line`. Limiter à ~100 lignes par appel en texte (max 16 Ko). Si un binaire lu en `"text"` est illisible, il est ABSOLUMENT INTERDIT de boucler : Le Modèle DOIT utiliser `semantic_probe` ou `read_multimedia_file`. |
+| **Afficher une image à L'Utilisateur** | `show_image_to_user(target, workspace=None)` | Rend toute image locale (par ID Registre, par Nom de fichier ou par `workspace="main"\|"plans"\|"generated"\|"sandbox"\|"browserviews"`) ou distante (`http(s)://`) dans une Iframe interactive intégrée au message destiné à L'Utilisateur. **Outil strictement réservé au Modèle principal** : son appel depuis un Sous-Agent headless est ABSOLUMENT INTERDIT (Le Sous-Agent DOIT restituer l'identifiant, le nom ou l'URL au Modèle principal qui exécute l'affichage). L'affichage visuel étant assuré nativement par l'Iframe du Système, il est ABSOLUMENT INTERDIT pour Le Modèle d'émettre une balise Markdown `![...](...)` ou un lien d'image redondant dans sa réponse. |
 | **Métadonnées & Intégrité cryptographique** | `get_file_metadata(file_id)` / `calculate_file_hashes(file_ids, algorithm="sha256")` | `get_file_metadata` retourne taille et MIME. `calculate_file_hashes` accepte une liste `file_ids` et `algorithm` parmi `"sha256"`, `"md5"`, `"sha1"`, `"sha512"`, `"blake2b"`, `"crc32"`. |
 
 ---
@@ -54,7 +54,7 @@ Il est ABSOLUMENT INTERDIT de passer du code brut à `code_executor`. Toute mani
    - Modifier : `edit_codex(filename="script.py", ..., workspace="sandbox")`.
    - Supprimer un fichier ou dossier : `delete_codex(filename="...", workspace="sandbox", recursive=True)` (`recursive=True` REQUIS si dossier non vide).
 2. **Étape 2 — Exécuter le script** :
-   - Appeler `code_executor(file_path="script.py", dependencies=None, timeout_sec=900, fetch_ui_payload=False, background=False)` (extensions supportées dans `workspace="sandbox"` : `.py`, `.js` et `.sh`).
+   - Appeler `code_executor(file_path="script.py", dependencies=None, timeout_sec=900, fetch_ui_payload=False, background=False)` (extensions supportées dans `workspace="sandbox"` : `.py`, `.js` et `.sh` ; `timeout_sec` max `3600s` ; `dependencies` installe les paquets `pip`/`npm` manquants dans `/.deps`).
 3. **Étape 3 — Promotion des livrables vers `main`** :
    - Appeler `transfer_codex(source_path="...", source_workspace="sandbox", destination_workspace="main", mode="copy"|"move")` pour versionner sous Git et indexer dans le Registre Unifié les sorties destinées à L'Utilisateur.
 
@@ -106,7 +106,7 @@ Pour déployer une interface interactive ou un serveur web complet dans l'onglet
 - Pour les applications web multi-routes, APIs REST, assets multi-fichiers (`<img src="...">`, CSS, JS dans `/sandbox`) et WebSockets natifs :
   1. Le script démarre son serveur HTTP/WS en écoutant sur `echo_monitor.get_app_uds()` (prioritaire, Socket Unix) ou sur `("127.0.0.1", echo_monitor.get_app_port())`.
   2. Le script appelle `echo_monitor.expose_app(title="...")` (`background=True` obligatoire), qui sonde la disponibilité du serveur, publie l'application via un capability ticket HMAC dans l'onglet **Applications** et bloque jusqu'à fermeture de la fenêtre (`wait_until_closed`).
-  3. Les pages HTML servies peuvent utiliser des chemins relatifs ou `/...` (réécrits automatiquement par le shim `<base>`, `fetch` et `WebSocket` du proxy).
+  3. Les pages HTML servies PEUVENT utiliser des chemins relatifs ou `/...` (réécrits automatiquement par `<base>`, `fetch` et `WebSocket` du proxy ; helpers explicites `window.echoAppUrl(path)` et `window.echoWsUrl(path)` disponibles).
 
 #### Pattern C — Snapshot One-Shot (`get_ui_payload`) :
 - Pour un affichage statique ou une soumission ponctuelle (`background=False`) : `echo_monitor.display(html, ...)` sans boucle serveur ; `echo_monitor.get_ui_payload("app_id")` reste disponible pour lire le dernier payload émis par `window.parent.postMessage({ echoUIPayload: { window_id: "app_id", payload: {...} } }, "*")`.
@@ -117,4 +117,4 @@ Pour déployer une interface interactive ou un serveur web complet dans l'onglet
 ### 3.4 Exécution SSH Distante (`ssh_executor`)
 1. **Découverte préalable** : Le Modèle DOIT appeler `list_identities(service="ssh")` pour lister les alias (`account_id`) configurés et leur `description` fonctionnelle.
 2. **Exécution sécurisée sans exposition de secret (MPSI)** : Le Modèle DOIT appeler `ssh_executor(account_id="...", command="...", timeout_sec=60)`. Les identifiants sont injectés côté serveur dans un environnement isolé sans exposition au Modèle (répertoire courant `/sandbox` en lecture/écriture, `/main`, `/plans`, `/generated` et `/files` en lecture seule).
-3. **Interdiction absolue (MPSI)** : Il est ABSOLUMENT INTERDIT de demander à L'Utilisateur un mot de passe ou une clé privée SSH en clair dans le chat. Si aucun compte n'est configuré, Le Modèle DOIT inviter L'Utilisateur à le saisir dans l'onglet **Coffre**.
+3. **Interdiction absolue (MPSI)** : Il est ABSOLUMENT INTERDIT de demander à L'Utilisateur un mot de passe ou une clé privée SSH en clair dans le chat. Si aucun compte n'est configuré, Le Modèle DOIT inviter L'Utilisateur à le saisir dans l'onglet **Coffre & Identité**.

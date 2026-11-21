@@ -1,6 +1,6 @@
 ---
 domain_id: strategic_planner
-version: 6.15.0.1
+version: 6.17.2.1
 updated_at: 2026-11-21
 name: Planification Stratégique & Suivi Tactique
 description: Conception de plans d'action (MODEL_PROMETHEUS), audit contradictoire, amorçage par validation utilisateur et pointage tactique des tâches (MODEL_APOLLO) adossés au workspace plans du Codex.
@@ -24,7 +24,7 @@ Le Planificateur Stratégique génère, versionne sous Git et maintient deux fic
    - `update_plan(plan_id, instructions)` : Modifie la stratégie d'un plan au statut `'proposed'`.
 3. **Amorçage Officiel de l'Exécution (`proposed ➔ executing`)** :
    - Dès que L'Utilisateur demande de lancer le plan, Le Modèle **DOIT IMPÉRATIVEMENT** invoquer `process_plan(plan_id, user_already_validated=...)` **AVANT** d'exécuter la première tâche.
-   - Si `user_already_validated=False` (défaut), une modale interactive demande confirmation à L'Utilisateur. Si L'Utilisateur a déjà explicitement validé dans son message, Le Modèle DOIT passer `user_already_validated=True`.
+   - Si `user_already_validated=False` (défaut), une modale interactive demande confirmation à L'Utilisateur (impossible en contexte headless ou automatisation planifiée). Si L'Utilisateur a déjà explicitement validé dans son message, Le Modèle DOIT passer `user_already_validated=True`.
    - `process_plan` bascule le statut du plan à `'executing'` et verrouille `update_plan`.
 4. **Exécution Séquentielle & Pointage Tactique (`executing`)** :
    - Le Modèle DOIT exécuter les tâches dans l'ordre chronologique.
@@ -53,7 +53,7 @@ Outil exclusif pour modifier le statut des tâches dans `tasks_{plan_id}_{slug}.
 
 ### 2.3 `close_plan`
 Outil exclusif de clôture formelle d'un plan (`plan_id`).
-- `final_status` : Statut terminal obligatoire parmi `success`, `partial`, `failed`, `abandoned`. Un plan au statut `'proposed'` ne peut être clôturé qu'avec `final_status='abandoned'`.
+- `final_status` : Statut terminal obligatoire parmi `success`, `partial`, `failed`, `abandoned`. Un plan au statut `'proposed'` DOIT être clôturé exclusivement avec `final_status='abandoned'`.
 - `execution_summary` : Synthèse non vide des actions menées et résultats obtenus, consignée sous `## Synthèse d'exécution`.
 
 ### 2.4 `read_plan` & `delete_plan`
@@ -66,3 +66,4 @@ Outil exclusif de clôture formelle d'un plan (`plan_id`).
 - **Gatekeeper 1 (Verrou Stratégique)** : `update_plan` refuse toute modification dès que le statut du plan n'est plus `'proposed'` (en cours d'exécution, utiliser `update_tasks` et `close_plan`).
 - **Gatekeeper 2 (Interdiction de Bypass)** : Il est **ABSOLUMENT INTERDIT** d'utiliser `update_plan` ou `edit_codex` pour modifier manuellement `status:` dans le frontmatter YAML. Seul `process_plan` est habilité à passer un plan à `'executing'`, et seul `close_plan` est habilité à le clôturer vers un statut terminal.
 - **Verrouillage Post-Clôture** : Une fois le plan clôturé (`success`, `partial`, `failed`, `abandoned`), toute modification via `update_plan`, `update_tasks` ou nouvelle clôture via `close_plan` est **ABSOLUMENT INTERDITE**.
+- **Contrainte Headless / Automatisation** : En contexte Sous-Agent ou automatisation planifiée, `process_plan(user_already_validated=False)` est bloqué car la modale interactive est indisponible (`user_already_validated=True` REQUIS uniquement sur validation explicite préalable de L'Utilisateur).

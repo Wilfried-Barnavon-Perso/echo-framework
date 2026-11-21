@@ -1,11 +1,11 @@
 ---
 domain_id: codex_management
-version: 6.15.0.1
+version: 6.17.2.1
 updated_at: 2026-11-21
 name: Gestionnaire Documentaire & Versionnement Git (ECHO Codex)
 description: Création, édition directe ou assistée, gestion d'arborescence (dossiers, déplacement/renommage), transferts inter-workspaces sécurisés, suppression contrôlée, lecture paginée/historique, recherche récursive/temporelle et versionnement Git sur main, plans, generated et sandbox.
 tools: [create_codex, edit_codex, create_codex_directory, move_codex, transfer_codex, delete_codex, read_codex, restore_codex, search_codex, summarize_codex, list_codex, list_other_chats_ids, history_codex, open_codex_ui]
-keywords: [codex, document, fichier, git, commit, version, diff, edit_codex, create_codex, open_codex_ui, workspace, main, plans, generated, sandbox, multi_chat, target_chat_id, list_other_chats_ids, read_only, wrap_tool_output, urn, links, binary, is_binary, binary_content_omitted, pagination, has_more, next_start_line, create_codex_directory, move_codex, transfer_codex, dossier, repertoire, mkdir, sous_dossier, rename, renommer, move, deplacer, copy, copier, transfer, promouvoir, recursive, overwrite, files, browserviews, skipped_entries]
+keywords: [codex, codex_main, document, fichier, git, commit, version, diff, edit_codex, create_codex, open_codex_ui, workspace, plans, generated, sandbox, multi_chat, target_chat_id, list_other_chats_ids, read_only, wrap_tool_output, urn, binary, is_binary, binary_content_omitted, pagination, has_more, next_start_line, create_codex_directory, move_codex, copy_codex, transfer_codex, dossier, repertoire, mkdir, sous_dossier, rename, renommer, deplacer, copier, promouvoir, recursive, overwrite, files, browserviews, skipped_entries, concurrent_modification_conflict]
 ---
 
 # MANUEL OPÉRATIONNEL : ECHO CODEX (`codex_management`)
@@ -18,7 +18,7 @@ Le Codex ECHO gère des fichiers texte, code et médias répartis en 4 espaces d
   - `"generated"` (Versionné Git, indexé dans le Registre Unifié, **lecture seule directe**, `resource_type="generated"`) : Espace dédié aux médias générés (images `<nom_court>.png` versionnées par essai et retouche via `generate_image`).
   - `"sandbox"` (Non versionné, non indexé dans le Registre Unifié, monté `rw` en exécution, écriture ouverte) : Espace de travail technique isolé utilisé pour écrire et exécuter les scripts `.py`, `.js` et `.sh` via `code_executor`.
   - `"files"` et `"browserviews"` : Sources de session externes en lecture seule (fichiers Vault et captures navigateur), utilisables uniquement en copie vers `"sandbox"` via `transfer_codex`.
-- **Sécurité d'Arborescence** : Les chemins ciblant `.git`, les segments IPC internes de la sandbox (`.echo_*`, `.tmp`), les traversées `..`, les octets nuls et les liens symboliques hors Vault utilisateur sont **ABSOLUMENT INTERDITS**.
+- **Sécurité d'Arborescence** : Les chemins ciblant `.git`, `.tmp`, les traversées `..`, les octets nuls et les liens symboliques hors Vault utilisateur sont **ABSOLUMENT INTERDITS**.
 - **Navigation Transverse Multi-Chat (Lecture Seule)** :
   - Le Modèle PEUT explorer et lire les fichiers de n'importe quelle autre conversation du même Utilisateur sans quitter la session active.
   - **Invariant Inviolable (Read-Only)** : Toute consultation d'une conversation distante (`target_chat_id != current_chat_id`) s'effectue strictement en lecture seule. Aucune action mutative n'est autorisée sur un dépôt distant et aucune ressource n'est injectée dans le Registre Unifié de la session active.
@@ -28,14 +28,14 @@ Le Codex ECHO gère des fichiers texte, code et médias répartis en 4 espaces d
 ## 2. CRÉATION, ÉDITION, ARBORESCENCE, TRANSFERTS & OUVERTURE VISUELLE
 
 ### 2.1 Création : `create_codex`
-- Crée un nouveau fichier (versionné sur `main`, disque seul sur `sandbox`) dans le Codex de la conversation courante.
+- Crée un nouveau fichier (`filename`, `content`, `language=None`, `commit_message=None`, `workspace="main"` ; versionné sur `main`, disque seul sur `sandbox`) dans le Codex de la conversation courante.
 - **Contrainte d'unicité** : Si `filename` existe déjà dans le `workspace` cible, `create_codex` renvoie une erreur. Le Modèle **DOIT** alors utiliser `edit_codex`. En cas de collision avec un dossier existant, `error_code="path_conflict"` est retourné.
 - Le Modèle DOIT vérifier l'absence de collision préalable via `query_registry(resource_type="codex")` ou `list_codex(workspace=...)`.
 
 ### 2.2 Édition : `edit_codex`
 - **CONTRAINTE CRITIQUE D'EXCLUSIVITÉ MUTUELLE** : Les paramètres `new_content` et `instructions` sont **strictement mutuellement exclusifs**. Le Modèle DOIT fournir l'un **OU** l'autre, et il est **ABSOLUMENT INTERDIT** de fournir les deux simultanément :
-  1. **Mode Remplacement Direct (`new_content="..."`, `instructions=None`)** : Remplace immédiatement l'intégralité du fichier par `new_content` et crée un commit Git sur `main` (latence nulle). Idéal pour les fichiers courts ou entièrement régénérés.
-  2. **Mode Édition Assistée (`instructions="...", new_content=None`)** : Délègue la modification chirurgicale du fichier existant à un Sous-Agent éditeur (`MODEL_APOLLO`) qui applique les `instructions` sur le document complet et commite le résultat. Idéal pour modifier une section précise d'un long fichier sans réécrire tout le contenu.
+  1. **Mode Remplacement Direct (`new_content="..."`, `instructions=None`)** : Remplace immédiatement l'intégralité du fichier par `new_content` et crée un commit Git sur `main` (latence nulle). À utiliser pour les fichiers courts ou entièrement régénérés.
+  2. **Mode Édition Assistée (`instructions="...", new_content=None`)** : Délègue la modification chirurgicale du fichier existant à un Sous-Agent éditeur (`MODEL_APOLLO`) qui applique les `instructions` sur le document complet et commite le résultat. À utiliser pour modifier une section précise d'un long fichier sans réécrire tout le contenu. Protégé par contrôle optimiste SHA-256 : en cas de modification concurrente, retourne `error_code="concurrent_modification_conflict"` (Le Modèle DOIT relire le fichier avant réessai).
 - **Restriction Binaire** : L'édition assistée par instructions est formellement refusée sur les fichiers binaires (`error_code="binary_edit_not_supported"`).
 
 ### 2.3 Arborescence & Réorganisation Intra-Workspace
@@ -53,10 +53,11 @@ Le Codex ECHO gère des fichiers texte, code et médias répartis en 4 espaces d
 - **`transfer_codex(source_path, source_workspace, destination_workspace, destination_path=None, mode="copy", overwrite=False, commit_message=None)`** :
   - **Strictement inter-workspaces** : un appel avec `source_workspace == destination_workspace` est refusé (`error_code="intra_workspace_forbidden"`). Le Modèle DOIT utiliser `move_codex`.
   - **Promotion `sandbox -> main`** : autorise `mode="copy"` ou `mode="move"`.
-    - Filtre automatiquement les entrées exclues (`.git`, `.venv`, `node_modules`, `__pycache__`, fichiers cachés et segments IPC `.echo_*`, `.tmp`) qui sont restituées dans `skipped_entries`.
+    - Filtre automatiquement les entrées exclues (`.git`, `.venv`, `node_modules`, `__pycache__`, `.tmp` et fichiers cachés `.*`) qui sont restituées dans `skipped_entries`.
     - En `mode="move"`, supprime de `sandbox` uniquement les fichiers effectivement transférés et les sous-dossiers devenus vides, en conservant les éléments ignorés dans `sandbox`.
     - Quotas de destination `main` : maximum `200` fichiers, `25 Mo` par fichier et `100 Mo` cumulés (`error_code="quota_exceeded"` en cas de dépassement).
   - **Import `{main, plans, generated, files, browserviews} -> sandbox`** : **`mode="copy"` uniquement** (`mode="move"` est refusé : la suppression dans `main` reste indépendante via `delete_codex` ; `plans`, `generated`, `files` et `browserviews` sont strictement en lecture seule).
+    - Quotas de destination `sandbox` : maximum `500` fichiers, `512 Mo` par fichier et `1 Go` cumulés (`error_code="quota_exceeded"` en cas de dépassement).
     - Pour `files` et `browserviews`, `source_path` accepte un chemin relatif ou l'`id`/`name` exact issu de `query_registry`.
 
 ### 2.5 Ouverture de l'Onglet Codex : `open_codex_ui`

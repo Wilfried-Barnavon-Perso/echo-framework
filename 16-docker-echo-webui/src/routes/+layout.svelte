@@ -1421,53 +1421,25 @@
 
 		await tick();
 
-		/**
-		 * @param {string} url
-		 * @returns {() => void}
-		 */
-		const startSplashRevealAudio = (url) => {
-			let active = true;
-			const audio = new Audio(url);
-			audio.preload = 'auto';
-
-			const detachUnlockListeners = () => {
-				document.removeEventListener('pointerdown', onFirstGesture, true);
-				document.removeEventListener('keydown', onFirstGesture, true);
-			};
-
-			const onFirstGesture = () => {
-				detachUnlockListeners();
-				if (!active) return;
-				void audio.play().catch(() => {});
-			};
-
-			void audio.play().catch((err) => {
-				if (!active || err?.name !== 'NotAllowedError') return;
-				document.addEventListener('pointerdown', onFirstGesture, { once: true, capture: true });
-				document.addEventListener('keydown', onFirstGesture, { once: true, capture: true });
-			});
-
-			return () => {
-				active = false;
-				detachUnlockListeners();
-			};
+		const cleanupSplashAudio = () => {
+			window.__echoCleanupSplashAudio?.();
 		};
 
 		const dismissSplashScreen = async () => {
 			const splash = document.getElementById('splash-screen');
 			if (!splash) {
+				cleanupSplashAudio();
 				loaded = true;
 				return;
 			}
 
 			const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 			if (reducedMotion || document.documentElement.classList.contains('her')) {
+				cleanupSplashAudio();
 				loaded = true;
 				splash.remove();
 				return;
 			}
-
-			const cleanupSplashAudio = startSplashRevealAudio('/audio/echo-reveal.mp3');
 
 			const parsedStart = Number(splash.dataset.echoSplashStart);
 			const startedAt =

@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 6.16.0.2
+# VERSION : 6.17.3.1
 # ==============================================================================
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
@@ -26,6 +26,7 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.17.3.1: Exemption statique /audio dans CUSTOM_CONF_SERVER_HTTP_statics pour servir /audio/*.mp3 sans détour /api/verify.
 # 6.16.0.2: Préfixe /echo/ dans les règles Nginx JSON et location /echo/v1/wm/app/ (auth_request off, HTTP/1.1 + WS Upgrade) pour apps HMAC.
 # 6.14.1.1: Ajout de DATABASE_SQLITE_PRAGMA_BUSY_TIMEOUT=30000 sur echo-webui pour résorber la contention SQLite sur conversations volumineuses.
 # 6.14.0.1: Augmentation de la tolérance de démarrage du healthcheck echo-searxng (start_period: 60s, retries: 10) sous contention CPU.
@@ -204,7 +205,7 @@ services:
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_bypass=location ~ ^/api/(version|config) { auth_request off; set $$upstream_owui http://echo-webui:8080; proxy_pass $$upstream_owui; proxy_http_version 1.1; proxy_set_header Connection \"\"; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
 
       # 🔓 EXCLUSION FICHIERS STATIQUES : Requis pour la PWA, les assets et la mise à jour du Service Worker
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_statics=location ~ ^/(assets|static|_app|wasm|manifest\\.json|favicon.*\\.png|robots\\.txt) { auth_request off; set $$upstream_owui http://echo-webui:8080; proxy_pass $$upstream_owui; proxy_http_version 1.1; proxy_set_header Connection \"\"; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $$scheme; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_statics=location ~ ^/(assets|static|audio|_app|wasm|manifest\\.json|favicon.*\\.png|robots\\.txt) { auth_request off; set $$upstream_owui http://echo-webui:8080; proxy_pass $$upstream_owui; proxy_http_version 1.1; proxy_set_header Connection \"\"; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $$scheme; }"
 
 
       # 🚫 ANTI-CACHE DYNAMIQUE (Pour forcer l'interception SSO sur le HTML)

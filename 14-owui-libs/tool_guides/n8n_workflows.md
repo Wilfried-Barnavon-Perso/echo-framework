@@ -1,7 +1,7 @@
 ---
 domain_id: n8n_workflows
-version: 6.13.2.1
-updated_at: 2026-11-20
+version: 6.17.2.1
+updated_at: 2026-11-21
 name: Orchestration & Automatisation N8N
 description: Conception déléguée (N8N Grapher Prometheus), recherche Hub N8N, gestion de templates globaux, exécution éphémère Oneshot et déploiement de Daemons persistants.
 tools: [create_n8n_template, modify_n8n_template, delete_n8n_template, prepare_n8n_workflow, modify_n8n_workflow, delete_n8n_workflow, run_n8n_oneshot_workflow, deploy_n8n_daemon, search_n8n_hub, download_n8n_hub_template, query_n8n_documentation, delegate_to_n8n_grapher]
@@ -13,7 +13,8 @@ keywords: [n8n, workflow, automatisation, daemon, oneshot, template, grapher, hu
 ## 1. RÈGLES D'ARCHITECTURE N8N ECHO & DÉLÉGATION AU GRAPHER
 
 ### 1.1 Règle Critique de Délégation (`delegate_to_n8n_grapher`)
-- Dès qu'un workflow demandé **dépasse 2 nœuds**, nécessite du mocking, une gestion de payloads volumineux ou des tests en Sandbox, Le Modèle principal **DOIT IMPÉRATIVEMENT** déléguer la tâche à `delegate_to_n8n_grapher(instructions="...")` (`MODEL_PROMETHEUS`).
+- **Contrainte d'environnement** : **ABSOLUMENT INTERDIT** depuis un Sous-Agent headless (`DELEGATE_AGENT_BLACKLIST`).
+- Dès qu'un workflow demandé **dépasse 2 nœuds**, nécessite du mocking, une gestion de payloads volumineux ou des tests en Sandbox, Le Modèle principal **DOIT IMPÉRATIVEMENT** déléguer la tâche à `delegate_to_n8n_grapher(instructions="...")` (`MODEL_PROMETHEUS`, exécuté par **tranches coopératives de 8 tours d'outils / 120s** sous session `thread_n8n_<hex8>`, reprenable via `control_subagents`).
 - `delegate_to_n8n_grapher` dispose de tous les outils N8N, du Codex, du Code Executor et de la consultation de l'Identity Vault (`list_identities_services`, `list_identities`) pour concevoir, tester en Oneshot et déployer le graphe de bout en bout. *(Attention : `ask_user_input` et `manage_identity` étant **ABSOLUMENT INTERDITS** en mode headless, la collecte et l'enregistrement d'un secret manquant DOIVENT être effectués par Le Modèle principal avant ou après la délégation).*
 - Si Le Modèle principal intervient directement sur un workflow simple, il **DOIT** préalablement appeler `query_n8n_documentation()` pour récupérer la version exacte de l'instance N8N et ses contraintes architecturales.
 
@@ -50,6 +51,7 @@ keywords: [n8n, workflow, automatisation, daemon, oneshot, template, grapher, hu
 
 ### Étape 3 : Exécution Éphémère (`run_n8n_oneshot_workflow`) vs Déploiement Persistant (`deploy_n8n_daemon`)
 1. **Exécution Éphémère CLI (`run_n8n_oneshot_workflow`)** :
+  - **Exigence de Déclencheur** : Tout workflow exécuté en Oneshot **DOIT IMPÉRATIVEMENT** démarrer par un nœud **`Execute Workflow Trigger`**.
   - `sync=True` : Mode bloquant qui attend la fin d'exécution et retourne `stdout/stderr` (limité à **8 Ko** max ; au-delà, Le Système bloque le retour et exige `sync=False` ou écriture dans `__ECHO_DOWNLOAD_DIR__`).
   - `sync=False` (**REQUIS pour les tâches longues ou volumineuses**) : Lance l'exécution en tâche de fond ; les fichiers générés sont ingérés automatiquement.
   - `parameters_override` : Dictionnaire optionnel `{"Nom du Noeud": {"param": "valeur"}}` pour surcharger à la volée les paramètres d'un nœud sans modifier le JSON.

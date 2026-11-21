@@ -1,11 +1,11 @@
 ---
 domain_id: ui_calendar_and_automations
-version: 6.15.0.1
+version: 6.17.2.1
 updated_at: 2026-11-21
 name: Agenda de l'Interface Utilisateur, Automatisations CRON (RRULE), Dossiers UI, Étiquettes, Saisie Interactive, Tâches UI, Historique Chats & Lecture des Sorties Délestées
 description: Gestion complète du calendrier de l'Interface Utilisateur, programmation de tâches de fond CRON (syntaxe RRULE iCalendar), dossiers UI, exploration des étiquettes (tags), ask_user_input, wait_timer, checklist UI (create_ui_tasks, update_ui_task), recherche/lecture exacte de conversations (search_ui_chats, view_ui_chat) et exploitation paginée/purge des sorties d'outils délestées (read_tool_output, delete_tool_output).
 tools: [search_ui_calendar_events, list_ui_calendar_events, read_ui_calendar_events, create_ui_calendar_event, update_ui_calendar_event, delete_ui_calendar_event, create_ui_automation, update_ui_automation, toggle_ui_automation, delete_ui_automation, read_ui_automations, list_ui_automations, list_ui_folders, list_ui_tags, ask_user_input, wait_timer, create_ui_tasks, update_ui_task, search_ui_chats, view_ui_chat, read_tool_output, delete_tool_output]
-keywords: [calendrier, agenda, événement, rendez-vous, calendar, automation, cron, rrule, dtstart, toggle_ui_automation, ask_user_input, wait_timer, create_ui_tasks, update_ui_task, search_ui_chats, view_ui_chat, dossier, folder, tag, etiquette, tools_output, output_id, truncated, read_tool_output, delete_tool_output]
+keywords: [calendrier, agenda, événement, rendez-vous, calendar, automation, cron, rrule, dtstart, toggle_ui_automation, persistent_chat, existing_chat, new_chat, ask_user_input, wait_timer, create_ui_tasks, update_ui_task, checklist, ui_task, search_ui_chats, view_ui_chat, historique, chat, dossier, folder, tag, etiquette, tools_output, output_id, truncated, spillover, délestage, read_tool_output, delete_tool_output]
 ---
 
 # MANUEL OPÉRATIONNEL : AGENDA UI, AUTOMATISATIONS CRON & INTERACTIONS (`ui_calendar_and_automations`)
@@ -22,7 +22,7 @@ Toutes les dates DOIVENT être alignées sur la référence temporelle `<artifac
   - Retourne l'intégralité des métadonnées de chaque événement (`title`, `description`, `start`, `end`, `all_day`, `rrule`, `location`, `color`, `reminder_minutes`, `is_cancelled`, `attendees`). **REQUIS** pour auditer un événement avant mise à jour.
 
 ### 1.2 Création, Mise à Jour & Suppression
-- `create_ui_calendar_event` : Crée un nouvel événement dans l'agenda.
+- `create_ui_calendar_event(title, description="", start="", end="", location="")` : Crée un nouvel événement dans l'agenda (n'accepte pas `all_day` ni `reminder_minutes` à la création ; enchaîner `update_ui_calendar_event` avec l'UUID retourné si ces options sont requises).
 - `update_ui_calendar_event` :
   - Seuls les paramètres non-`None` sont modifiés ; les champs omis conservent leur valeur existante.
   - `reminder_minutes` : Délai en minutes avant l'événement (`0` pour l'heure pile, `-1` pour désactiver).
@@ -74,7 +74,8 @@ L'argument `rrule` dans `create_ui_automation` et `update_ui_automation` **DOIT 
   - Met en pause l'exécution de `1` à `300` secondes. **Strictement limité à 1 seul appel par boucle agentique**.
 
 ## 4. LECTURE PAGINÉE & PURGE DES SORTIES D'OUTILS DÉLESTÉES (`read_tool_output`, `delete_tool_output`)
-- Gouvernance à 3 régimes : `32 768` caractères pour les outils I/O bruts par défaut, `524 288` caractères (512 Ko) pour les outils de distillation cognitive et Sous-Agents, et exemption totale pour les lecteurs déjà paginés. Lorsqu'un seuil est franchi (hors Base64 protégé), l'intégralité de la sortie est délestée dans `tools_output/{output_id}.txt` et la réponse inline retourne un aperçu `Head + Tail` accompagné de `truncated: true`, `output_id`, `total_chars`, `total_lines`, `omitted_lines_range` et `next_tools`. Si la requête de L'Utilisateur exige une restitution exhaustive ou un verbatim, il est ABSOLUMENT INTERDIT de synthétiser l'aperçu partiel sans paginer toutes les lignes omises.
+- Gouvernance à 3 régimes : `32 768` caractères pour les outils I/O bruts par défaut, `524 288` caractères (512 Ko) pour les outils de distillation cognitive et Sous-Agents, et exemption totale pour les lecteurs déjà paginés (`read_codex`, `read_tool_output`, `delete_tool_output`). Lorsqu'un seuil est franchi (hors Base64 protégé), l'intégralité de la sortie est délestée dans `tools_output/{output_id}.txt` et la réponse inline retourne un aperçu `Head + Tail` accompagné de `truncated: true`, `output_id`, `total_chars`, `total_lines`, `omitted_lines_range` et `next_tools`. Si la requête de L'Utilisateur exige une restitution exhaustive ou un verbatim, il est ABSOLUMENT INTERDIT de synthétiser l'aperçu partiel sans paginer toutes les lignes omises.
+- **Accessibilité Sous-Agent** : `read_tool_output` et `delete_tool_output` appartiennent à `DELEGATE_AGENT_SYSTEM_TOOLS` et restent toujours disponibles aux Sous-Agents même lorsque `allowed_tools` est restreint.
 - `read_tool_output(output_id, start_line=1, end_line=None, search_pattern=None)` :
   - Lit une fenêtre bornée (par défaut et au plus `800` lignes et `46 080` octets par appel, parcours total illimité) d'une sortie délestée identifiée par `output_id`. Les fenêtres PEUVENT être lues séquentiellement via `has_more` / `next_start_line` ou en parallèle (jusqu'à 5 appels `read_tool_output` par tour lorsque `omitted_lines_range` est connu).
   - Si `search_pattern` (expression régulière) est fourni, extrait uniquement les lignes correspondantes avec `±2` lignes de contexte et les numéros de lignes exacts avant toute lecture ciblée.
@@ -89,6 +90,7 @@ L'argument `rrule` dans `create_ui_automation` et `update_ui_automation` **DOIT 
   - Réservée au Modèle principal (**ABSOLUMENT INTERDITE aux Sous-Agents headless**).
   - Usage : suivi visuel léger des étapes d'une tâche courante dans l'interface (`pending`, `in_progress`, `completed`, `cancelled`), distinct de `strategic_planner` (planification/exécution persistée complexe).
   - Contrat `create_ui_tasks(tasks=[{"content": "...", "status": "pending", "id": "..."}])` : clé `content` requise (non vide), `status` optionnel parmi `pending`, `in_progress`, `completed`, `cancelled` (défaut `pending`), `id` optionnel (auto-généré si omis).
+  - Contrat `update_ui_task(task_id, status="completed")` : met à jour le statut d'une tâche existante (`pending`, `in_progress`, `completed`, `cancelled`) via son `task_id`.
 - **Recherche & Lecture Exacte des Chats (`search_ui_chats`, `view_ui_chat`)** :
   - `search_ui_chats(query, count=5, start_timestamp=None, end_timestamp=None)` : Recherche exacte par titre et contenu dans l'historique des conversations (exclut le chat courant). Complémentaire à `search_sessions_context` (recherche sémantique).
   - `view_ui_chat(chat_id)` : Restitue l'historique chronologique complet d'une conversation précédente identifiée par `search_ui_chats`.

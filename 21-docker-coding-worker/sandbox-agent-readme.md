@@ -99,13 +99,13 @@ router.serve_forever()
 ```
 
 ### 4.2 Pattern B — Serveur Web Complet Multi-Routes & WebSockets (`expose_app`)
-Adapté aux applications web multi-pages, APIs REST, téléchargements de fichiers, assets statiques et WebSockets temps réel. Le Système proxifie automatiquement le trafic HTTP (`/app_proxy/{run_id}/...`) et WebSocket (`/ws/app/{run_id}/...`) vers le Socket Unix `/run/echo_app/http.sock` (ou port TCP éphémère vérifié).
+Adapté aux applications web multi-pages, APIs REST, téléchargements de fichiers, assets statiques et WebSockets temps réel. Le Système proxifie automatiquement le trafic HTTP et WebSocket via un capability ticket HMAC (`/echo/v1/wm/app/{ticket}/...`) vers le Socket Unix `/run/echo_app/http.sock` (ou port TCP éphémère vérifié).
 - **Primitives `echo_monitor` (Python & Node.js)** :
   - `get_app_uds() -> str` : Retourne `ECHO_APP_UDS` (`/run/echo_app/http.sock`).
   - `get_app_port() -> int` : Retourne `ECHO_APP_PORT`.
   - `wait_until_closed(window_id="default")` : Bloque événementiellement (Python `Condition` / Node `Promise<void>`) jusqu'à fermeture de la fenêtre.
   - `expose_app(target=None, title="Application Sandbox", width="100%", height="600px", window_id="default", health_path="/", wait_timeout=15.0, block=True)` : Attend l'ouverture du socket serveur (UDS prioritaire puis TCP), publie l'application dans **Applications** et bloque par défaut (`block=True`) jusqu'à fermeture. En Node.js, accepte un objet d'options `{ target, title, ... }` ou les arguments positionnels.
-- **Règle d'adressage Frontend dans l'iframe** : Les pages HTML servies DOIVENT utiliser des URLs relatives (`fetch('./api/items')`, assets relatifs sans `/` initial) pour HTTP et dériver le WebSocket vers `/ws/app/{run_id}/...` (`location.pathname.replace('/app_proxy/', '/ws/app/').replace(/\/?$/, '') + '/ws'`) afin que le routage par `<base>` / proxy `/app_proxy/{run_id}/` opère sans altération.
+- **Règle d'adressage Frontend dans l'iframe** : Le proxy HTML injecte automatiquement `<base>` et réécrit `fetch('/...')` ainsi que `new WebSocket('/...')` vers `/echo/v1/wm/app/{ticket}/...` (et expose les helpers explicites `window.echoAppUrl(path)` et `window.echoWsUrl(path)`). Les pages HTML servies PEUVENT donc utiliser des URLs relatives (`./api/items`) ou `/...` (`fetch('/api/items')`, `new WebSocket('/ws')`) sans altération.
 
 ```python
 # Exemple Pattern B — Python FastAPI + WebSocket (background=True)
@@ -120,9 +120,7 @@ def index():
     return """<!doctype html><html><body>
       <button onclick="ws.send('ping')">Ping WS</button><pre id="log"></pre>
       <script>
-        const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsPath = location.pathname.replace('/app_proxy/', '/ws/app/').replace(/\\/?$/, '') + '/ws';
-        const ws = new WebSocket(wsProto + '//' + location.host + wsPath);
+        const ws = new WebSocket('/ws');
         ws.onmessage = (e) => { document.getElementById('log').textContent += e.data + '\\n'; };
       </script></body></html>"""
 
