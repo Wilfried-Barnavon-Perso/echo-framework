@@ -1,16 +1,16 @@
 """
 title: ECHO Constants
 author: ECHO Framework
-version: 6.15.2.1
+version: 6.16.0.1
 description: Composant système interne : ECHO Constants.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.16.0.1: Ajout ECHO_CODING_WORKER_BASE_URL / WS_BASE_URL, vidage CODEX_SANDBOX_INTERNAL_PREFIXES et retrait constantes polling.
 # 6.15.2.1: Ajout des constantes SSOT Option A Canvas (ECHO_CANVAS_READY_TIMEOUT_SEC, ECHO_CANVAS_IDLE_TTL_SEC, ECHO_CANVAS_MAX_LIFETIME_SEC, ECHO_CANVAS_POLL_WAIT_SEC, ECHO_CANVAS_UNKNOWN_GRACE_POLLS, ECHO_CANVAS_ROUTER_WORKERS).
 # 6.15.1.1: Ajout de BROWSER_TRANSIENT_GRACE_SEC = 1800.0 et relèvement des plafonds clips navigateur (BROWSER_MAX_TRANSIENT_CLIPS_PER_CHAT = 50, BROWSER_MAX_TRANSIENT_CLIPS_MB = 60).
 # 6.13.1.2: Ajout des constantes SSOT clips vidéo navigateur (BROWSER_CLIP_MIME, BROWSER_CLIP_EXT, BROWSER_MAX_TRANSIENT_CLIPS_PER_CHAT, BROWSER_MAX_TRANSIENT_CLIPS_MB).
 # 6.13.1.1: Ajout des constantes SSOT Pacemaker Canvas (ECHO_CANVAS_HEARTBEAT_INTERVAL_SEC, ECHO_CANVAS_BOOT_TIMEOUT_SEC, ECHO_CANVAS_PING_TIMEOUT_SEC, ECHO_CANVAS_GRACEFUL_CLOSE_SEC).
-# 6.10.0.2: Ajout de ECHO_AUTOMATION_CONTEXT, ECHO_AUTOMATION_QUEUE_MAX_WAIT_SEC (10800s), is_automation_context et get_headless_block_reason.
 
 import os
 import contextvars
@@ -1230,11 +1230,7 @@ ECHO_SYNC_EXCLUDE_LIST = [".venv", "node_modules", "__pycache__", ".git", ".pyte
 
 # Sécurité d'arborescence & Quotas de transfert Codex
 CODEX_FORBIDDEN_PATH_SEGMENTS: frozenset[str] = frozenset({".git", ".", ".."})
-CODEX_SANDBOX_INTERNAL_PREFIXES: tuple[str, ...] = (
-    ".echo_monitor_",
-    ".echo_ui_payload_",
-    ".echo_ui_inbox_",
-)
+CODEX_SANDBOX_INTERNAL_PREFIXES: tuple[str, ...] = ()
 CODEX_SANDBOX_INTERNAL_NAMES: frozenset[str] = frozenset({".tmp"})
 CODEX_MAX_PATH_DEPTH: int = 16
 CODEX_LIST_MAX_ENTRIES: int = 200
@@ -1247,6 +1243,8 @@ CODEX_TRANSFER_MAX_FILE_BYTES_SANDBOX: int = 512 * 1024 * 1024
 CODEX_TRANSFER_MAX_TOTAL_BYTES_SANDBOX: int = 1024 * 1024 * 1024
 
 # ECHO_CODING_WORKER_URL : Utilisée pour isoler l'exécution de code (Python, JS, etc.).
+ECHO_CODING_WORKER_BASE_URL = "http://echo-coding-worker:5000"
+ECHO_CODING_WORKER_WS_BASE_URL = "ws://echo-coding-worker:5000"
 ECHO_CODING_WORKER_URL = "http://echo-coding-worker:5000/execute"
 ECHO_DEFAULT_CODE_EXECUTION_TIMEOUT = 900
 ECHO_MAX_CODE_EXECUTION_TIMEOUT = 3600
@@ -1262,8 +1260,6 @@ ECHO_CANVAS_GRACEFUL_CLOSE_SEC = 3.0
 ECHO_CANVAS_READY_TIMEOUT_SEC = 8.0
 ECHO_CANVAS_IDLE_TTL_SEC = 1800.0
 ECHO_CANVAS_MAX_LIFETIME_SEC = 14400.0
-ECHO_CANVAS_POLL_WAIT_SEC = 2.0
-ECHO_CANVAS_UNKNOWN_GRACE_POLLS = 3
 ECHO_CANVAS_ROUTER_WORKERS = 4
 
 # NAVIGATION_ENGINE_URL : Utilisée par navigation_engine_tool pour le pilotage Playwright/Chrome.

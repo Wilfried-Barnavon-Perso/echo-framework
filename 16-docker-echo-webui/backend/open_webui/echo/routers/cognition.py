@@ -1,35 +1,37 @@
 """
 title: ECHO V6 Cognition Router
 author: Wilfried BARNAVON
-version: 6.15.1.1
+version: 6.16.0.1
 description: Routeur FastAPI pour la visualisation cognitive et des sous-agents (/echo/v1/cognition).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.16.0.1: Remplacement du SSE /{chat_id}/browser-live par le relais WebSocket binaire zéro-parsing /{chat_id}/browser-ws.
 # 6.15.1.1: Alignement du délai de grâce dans GET /{chat_id}/browser-frames sur BROWSER_TRANSIENT_GRACE_SEC (1800.0s).
 # 6.15.0.1: Exposition de http_status dans _read_browser_frames_sync et grâce passive min_age_sec=300.0 dans GET /{chat_id}/browser-frames.
 # 6.13.2.1: Ajout de GET /{chat_id}/browser-frames/{file_id}/clip, POST /{chat_id}/browser-frames/{file_id}/retain, du flux SSE GET /{chat_id}/browser-live et exposition des métadonnées clip_* dans _read_browser_frames_sync.
 # 6.7.7.1: Normalisation des métriques de tranche par tours (slice_turns_used, slice_turns_limit, slice_timeout_sec, total_turns_used) avec miroirs rétrocompatibles slice_calls_* et alignement sur ECHO_SUBAGENT_CHECKPOINT_TURNS/ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC.
-# 6.6.30.2: Suppression troncature [:8] des groupes, tri déterministe des membres par role_order, alignement ECHO_SUBAGENT_ENGINES_REGISTRY et dispatch multi-cibles sur POST /message.
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import re
 import sys
-import uuid
 from contextlib import closing
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
+import aiohttp
 import orjson as json
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from open_webui.echo.http_utils import (
+    authenticate_echo_websocket,
     create_echo_sse_response,
     get_echo_sse_user,
     get_echo_verified_user,
@@ -39,7 +41,11 @@ from open_webui.models.chats import Chats
 
 ensure_echo_sys_path()
 try:
-    from echo_browser_lib import cleanup_expired_browserviews  # type: ignore
+    from echo_browser_lib import (  # type: ignore
+        build_browser_ws_url,
+        cleanup_expired_browserviews,
+        resolve_chat_browser_session_id,
+    )
     from echo_constants import (  # type: ignore
         BROWSER_CLIP_EXT,
         BROWSER_CLIP_MIME,
@@ -71,10 +77,20 @@ except ImportError:
     if local_libs.is_dir() and str(local_libs) not in sys.path:
         sys.path.insert(0, str(local_libs))
     try:
-        from echo_browser_lib import cleanup_expired_browserviews  # type: ignore
+        from echo_browser_lib import (  # type: ignore
+            build_browser_ws_url,
+            cleanup_expired_browserviews,
+            resolve_chat_browser_session_id,
+        )
     except ImportError:
         def cleanup_expired_browserviews(*args: Any, **kwargs: Any) -> int:
             return 0
+
+        def build_browser_ws_url(session_id: str) -> str:
+            return ""
+
+        async def resolve_chat_browser_session_id(user_id: str, chat_id: str) -> Optional[str]:
+            return None
     try:
         from echo_constants import (  # type: ignore
             BROWSER_CLIP_EXT,
@@ -1284,37 +1300,140 @@ async def retain_browser_frame(
     )
 
 
-@router.get("/{chat_id}/browser-live")
-async def stream_browser_live(
-    chat_id: str,
-    request: Request,
-    client_id: str = "",
-    user=Depends(get_echo_sse_user),
-):
-    """Flux SSE temps réel (screencast live_frame, live_cursor, live_state) du navigateur."""
+@router.websocket("/{chat_id}/browser-ws")
+async def stream_browser_live_ws(websocket: WebSocket, chat_id: str):
+    """Relais WebSocket binaire zéro-parsing vers le Browser Worker (/ws/screencast/{session_id})."""
+    auth_res = await authenticate_echo_websocket(websocket)
+    if not auth_res:
+        return
+    user, _ = auth_res
     if not get_window_manager:
-        raise HTTPException(status_code=503, detail="WindowManager indisponible.")
+        await websocket.close(code=1011)
+        return
     wm = get_window_manager()
-    cid = client_id or uuid.uuid4().hex
-    queue = wm.subscribe_browser_live(user.id, chat_id, cid)
+    send_lock = asyncio.Lock()
 
-    async def event_generator():
-        try:
-            init_ev = {
-                "type": "live_connected",
-                "chat_id": chat_id,
-                "client_id": cid,
-            }
-            yield f"data: {json.dumps(init_ev).decode('utf-8')}\n\n"
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    ev = await asyncio.wait_for(queue.get(), timeout=15.0)
-                    yield f"data: {json.dumps(ev).decode('utf-8')}\n\n"
-                except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"
-        finally:
-            wm.unsubscribe_browser_live(user.id, chat_id, cid)
+    try:
+        while True:
+            sid = wm.get_active_browser_session(user.id, chat_id)
+            if not sid:
+                sid = await resolve_chat_browser_session_id(user.id, chat_id)
+                if sid:
+                    wm.register_browser_session(user.id, chat_id, sid)
 
-    return create_echo_sse_response(event_generator())
+            while not sid:
+                async with send_lock:
+                    await websocket.send_text(
+                        json.dumps({"type": "live_state", "active": False}).decode("utf-8")
+                    )
+                wait_task = asyncio.create_task(
+                    wm.wait_for_browser_session(user.id, chat_id, timeout=15.0)
+                )
+                recv_task = asyncio.create_task(websocket.receive())
+                done, pending = await asyncio.wait(
+                    {wait_task, recv_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for t in pending:
+                    t.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect, Exception):
+                        await t
+
+                if recv_task in done:
+                    cmsg = recv_task.result()
+                    if cmsg.get("type") == "websocket.disconnect":
+                        return
+                    txt = cmsg.get("text")
+                    if txt and "ping" in txt:
+                        try:
+                            ev = json.loads(txt)
+                            if isinstance(ev, dict) and ev.get("type") == "ping":
+                                async with send_lock:
+                                    await websocket.send_text('{"type":"pong"}')
+                        except Exception:
+                            pass
+
+                if wait_task in done:
+                    sid = wait_task.result()
+                if not sid:
+                    sid = wm.get_active_browser_session(user.id, chat_id)
+                    if not sid:
+                        sid = await resolve_chat_browser_session_id(user.id, chat_id)
+                        if sid:
+                            wm.register_browser_session(user.id, chat_id, sid)
+
+            ws_url = build_browser_ws_url(sid)
+            if not ws_url:
+                await asyncio.sleep(1.0)
+                continue
+
+            try:
+                async with aiohttp.ClientSession() as http_sess:
+                    async with http_sess.ws_connect(ws_url, heartbeat=20.0) as upstream:
+                        async def _up_to_client() -> None:
+                            async for msg in upstream:
+                                if msg.type == aiohttp.WSMsgType.BINARY:
+                                    async with send_lock:
+                                        await websocket.send_bytes(msg.data)
+                                elif msg.type == aiohttp.WSMsgType.TEXT:
+                                    if "eof" in msg.data:
+                                        try:
+                                            ev = json.loads(msg.data)
+                                            if isinstance(ev, dict) and ev.get("type") == "eof":
+                                                wm.unregister_browser_session(user.id, chat_id, sid)
+                                                async with send_lock:
+                                                    await websocket.send_text(
+                                                        json.dumps({"type": "live_state", "active": False}).decode("utf-8")
+                                                    )
+                                                break
+                                        except Exception:
+                                            pass
+                                    async with send_lock:
+                                        await websocket.send_text(msg.data)
+                                elif msg.type in (
+                                    aiohttp.WSMsgType.CLOSE,
+                                    aiohttp.WSMsgType.CLOSED,
+                                    aiohttp.WSMsgType.ERROR,
+                                ):
+                                    break
+
+                        async def _client_to_up() -> None:
+                            while True:
+                                cmsg = await websocket.receive()
+                                if cmsg.get("type") == "websocket.disconnect":
+                                    raise WebSocketDisconnect()
+                                if cmsg.get("text") is not None:
+                                    await upstream.send_str(cmsg["text"])
+                                elif cmsg.get("bytes") is not None:
+                                    await upstream.send_bytes(cmsg["bytes"])
+
+                        up_task = asyncio.create_task(_up_to_client())
+                        down_task = asyncio.create_task(_client_to_up())
+                        done, pending = await asyncio.wait(
+                            {up_task, down_task},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        for t in pending:
+                            t.cancel()
+                            with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect, Exception):
+                                await t
+                        for t in done:
+                            exc = t.exception()
+                            if isinstance(exc, WebSocketDisconnect):
+                                raise exc
+            except WebSocketDisconnect:
+                return
+            except (aiohttp.ClientError, OSError) as exc:
+                log.debug("[%s] Upstream browser WS erreur (%s): %s", chat_id, sid, exc)
+                wm.unregister_browser_session(user.id, chat_id, sid)
+                async with send_lock:
+                    await websocket.send_text(
+                        json.dumps({"type": "live_state", "active": False}).decode("utf-8")
+                    )
+                await asyncio.sleep(1.0)
+    except WebSocketDisconnect:
+        return
+    except Exception as exc:
+        log.warning("[%s] Relais browser-ws arrêté: %s", chat_id, exc)
+        with contextlib.suppress(Exception):
+            await websocket.close(code=1011)

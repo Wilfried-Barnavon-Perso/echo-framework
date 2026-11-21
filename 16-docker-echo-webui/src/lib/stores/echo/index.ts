@@ -1,5 +1,11 @@
 import { writable } from 'svelte/store';
-import { ECHO_API_BASE_URL, getEchoCognitionSnapshot, getEchoToken } from '$lib/apis/echo';
+import {
+	ECHO_API_BASE_URL,
+	buildEchoWsUrl,
+	getEchoCognitionSnapshot,
+	getEchoToken,
+	registerEchoWmWsTransport
+} from '$lib/apis/echo';
 import { isSavedChatId } from '$lib/utils/chatId';
 
 export interface EchoContextGaugePayload {
@@ -560,12 +566,37 @@ export const refreshCognitionSnapshot = async (
 };
 
 // ============================================================================
-// Gestionnaire SSE global unique pour /echo/v1/wm/stream
+// Gestionnaire WebSocket global unique pour /echo/v1/wm/ws
 // ============================================================================
-let wmEventSource: EventSource | null = null;
+const WM_RPC_TIMEOUT_MS = 10000;
+const WM_RECONNECT_MAX_MS = 8000;
+
+let wmSocket: WebSocket | null = null;
+let wmSocketAuthenticated = false;
 let wmReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let wmReconnectAttempt = 0;
 let wmActive = false;
+let wmClientId = '';
 let wmGetActiveChatId: () => string = () => '';
+
+const wmPendingRpcs = new Map<
+	string,
+	{
+		resolve: (val: any) => void;
+		reject: (err: any) => void;
+		timer: ReturnType<typeof setTimeout>;
+	}
+>();
+
+const getOrCreateWmClientId = (): string => {
+	if (!wmClientId) {
+		wmClientId =
+			typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+				? crypto.randomUUID()
+				: `wm-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+	}
+	return wmClientId;
+};
 
 const clearWmReconnectTimer = () => {
 	if (wmReconnectTimer !== null) {
@@ -574,28 +605,118 @@ const clearWmReconnectTimer = () => {
 	}
 };
 
-const closeWmEventSource = () => {
+const rejectAllPendingWmRpcs = (reason: string) => {
+	for (const [, entry] of wmPendingRpcs) {
+		clearTimeout(entry.timer);
+		entry.reject(new Error(reason));
+	}
+	wmPendingRpcs.clear();
+};
+
+const sendWmRpcOverWs = (payload: Record<string, any>): Promise<any> | null => {
+	const sock = wmSocket;
+	if (!sock || sock.readyState !== WebSocket.OPEN || !wmSocketAuthenticated) {
+		return null;
+	}
+	const reqId =
+		typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+			? crypto.randomUUID()
+			: `rpc-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			wmPendingRpcs.delete(reqId);
+			reject(new Error('WM WebSocket RPC timeout'));
+		}, WM_RPC_TIMEOUT_MS);
+
+		wmPendingRpcs.set(reqId, { resolve, reject, timer });
+		try {
+			sock.send(JSON.stringify({ type: 'rpc', req_id: reqId, payload }));
+		} catch (err) {
+			clearTimeout(timer);
+			wmPendingRpcs.delete(reqId);
+			reject(err);
+		}
+	});
+};
+
+const closeWmSocket = () => {
 	clearWmReconnectTimer();
-	if (wmEventSource) {
-		wmEventSource.close();
-		wmEventSource = null;
+	wmSocketAuthenticated = false;
+	registerEchoWmWsTransport(null);
+	rejectAllPendingWmRpcs('WM WebSocket closed');
+	if (wmSocket) {
+		const sock = wmSocket;
+		wmSocket = null;
+		sock.onopen = null;
+		sock.onmessage = null;
+		sock.onerror = null;
+		sock.onclose = null;
+		try {
+			sock.close();
+		} catch {
+			// Ignorer les erreurs de fermeture
+		}
 	}
 };
 
-const openWmEventSource = () => {
+const openWmSocket = () => {
 	if (typeof window === 'undefined' || !wmActive) return;
 	const token = getEchoToken();
 	if (!token) return;
 
-	closeWmEventSource();
-	const wmUrl = `${ECHO_API_BASE_URL}/wm/stream?token=${encodeURIComponent(token)}`;
-	const source = new EventSource(wmUrl);
-	wmEventSource = source;
+	closeWmSocket();
+	const wmUrl = buildEchoWsUrl('/wm/ws');
+	const socket = new WebSocket(wmUrl);
+	wmSocket = socket;
+	wmSocketAuthenticated = false;
 
-	source.onmessage = (event) => {
+	socket.onopen = () => {
+		if (wmSocket !== socket) return;
+		socket.send(
+			JSON.stringify({
+				type: 'auth',
+				token,
+				client_id: getOrCreateWmClientId()
+			})
+		);
+	};
+
+	socket.onmessage = (event) => {
+		if (wmSocket !== socket) return;
 		try {
 			const data = JSON.parse(event.data);
 			if (!data || typeof data !== 'object') return;
+
+			if (data.type === 'wm_connected') {
+				wmSocketAuthenticated = true;
+				wmReconnectAttempt = 0;
+				registerEchoWmWsTransport(sendWmRpcOverWs);
+				return;
+			}
+			if (data.type === 'ping') {
+				if (socket.readyState === WebSocket.OPEN) {
+					socket.send('{"type":"pong"}');
+				}
+				return;
+			}
+			if (data.type === 'pong') {
+				return;
+			}
+			if (data.type === 'rpc_ack') {
+				const reqId = typeof data.req_id === 'string' ? data.req_id : '';
+				if (reqId && wmPendingRpcs.has(reqId)) {
+					const pending = wmPendingRpcs.get(reqId)!;
+					wmPendingRpcs.delete(reqId);
+					clearTimeout(pending.timer);
+					if (data.error) {
+						pending.reject(new Error(String(data.error)));
+					} else {
+						pending.resolve(data.result);
+					}
+				}
+				return;
+			}
 
 			if (data.type === 'echo_context_gauge' && data.payload) {
 				const activeCid = wmGetActiveChatId();
@@ -710,26 +831,41 @@ const openWmEventSource = () => {
 		}
 	};
 
-	source.onerror = () => {
-		if (wmEventSource === source) {
-			source.close();
-			wmEventSource = null;
+	socket.onerror = () => {
+		if (wmSocket === socket && socket.readyState !== WebSocket.CLOSED && socket.readyState !== WebSocket.CLOSING) {
+			try {
+				socket.close();
+			} catch {
+				// Ignorer
+			}
 		}
+	};
+
+	socket.onclose = () => {
+		if (wmSocket !== socket) return;
+		wmSocket = null;
+		wmSocketAuthenticated = false;
+		registerEchoWmWsTransport(null);
+		rejectAllPendingWmRpcs('WM WebSocket disconnected');
 		if (wmActive) {
 			clearWmReconnectTimer();
+			const baseDelay = Math.min(1000 * Math.pow(2, wmReconnectAttempt), WM_RECONNECT_MAX_MS);
+			const jitter = Math.floor(Math.random() * 401);
+			wmReconnectAttempt += 1;
 			wmReconnectTimer = setTimeout(() => {
 				wmReconnectTimer = null;
 				if (wmActive) {
-					openWmEventSource();
+					openWmSocket();
 				}
-			}, 3000);
+			}, baseDelay + jitter);
 		}
 	};
 };
 
 export const stopEchoWmStream = (): void => {
 	wmActive = false;
-	closeWmEventSource();
+	wmReconnectAttempt = 0;
+	closeWmSocket();
 };
 
 export const startEchoWmStream = (getActiveChatId: () => string): (() => void) => {
@@ -742,8 +878,8 @@ export const startEchoWmStream = (getActiveChatId: () => string): (() => void) =
 	}
 
 	wmActive = true;
-	if (!wmEventSource) {
-		openWmEventSource();
+	if (!wmSocket || wmSocket.readyState === WebSocket.CLOSED || wmSocket.readyState === WebSocket.CLOSING) {
+		openWmSocket();
 	}
 
 	return () => {

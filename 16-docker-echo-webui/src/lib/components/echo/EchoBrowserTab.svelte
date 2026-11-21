@@ -7,7 +7,7 @@
     getEchoBrowserFrameClipUrl,
     getEchoBrowserFrameImageUrl,
     getEchoBrowserFrames,
-    getEchoBrowserLiveStreamUrl,
+    getEchoBrowserLiveWsUrl,
     getEchoToken,
     retainEchoBrowserFrame,
     type EchoBrowserFrame,
@@ -26,11 +26,14 @@
   let playbackSpeedMs = 1000;
   let playTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Flux SSE temps réel (/browser-live) + curseur SVG
-  let liveEventSource: EventSource | null = null;
+  // Flux WebSocket binaire temps réel (/browser-ws) + canvas GPU & curseur SVG
+  let liveSocket: WebSocket | null = null;
+  let liveCanvasEl: HTMLCanvasElement | null = null;
+  let hasLiveBitmap = false;
+  let lastLiveBitmap: ImageBitmap | null = null;
+  let liveBitmapDims = { w: 1280, h: 800 };
   let liveReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let liveActive = false;
-  let liveFrameB64 = "";
   let liveUrl = "";
   let liveViewport = { w: 1280, h: 800 };
   let liveCursor: { x: number; y: number; clicking: boolean } | null = null;
@@ -73,11 +76,29 @@
   const getActiveMediaElement = ():
     | HTMLImageElement
     | HTMLVideoElement
+    | HTMLCanvasElement
     | null => {
+    if (showLiveFeed && liveCanvasEl) {
+      return liveCanvasEl;
+    }
     if (!showLiveFeed && showClipVideo && activeClipSrc && videoElement) {
       return videoElement;
     }
     return imgElement;
+  };
+
+  const paintLiveCanvas = () => {
+    if (!liveCanvasEl || !lastLiveBitmap) return;
+    if (liveCanvasEl.width !== lastLiveBitmap.width) {
+      liveCanvasEl.width = lastLiveBitmap.width;
+    }
+    if (liveCanvasEl.height !== lastLiveBitmap.height) {
+      liveCanvasEl.height = lastLiveBitmap.height;
+    }
+    const ctx = liveCanvasEl.getContext("2d");
+    if (ctx) {
+      ctx.drawImage(lastLiveBitmap, 0, 0);
+    }
   };
 
   const handleImageLoad = () => {
@@ -92,7 +113,19 @@
     imgNaturalHeight = videoElement.videoHeight || 0;
   };
 
-  $: if (!showLiveFeed && showClipVideo && activeClipSrc) {
+  $: if (showLiveFeed && liveCanvasEl && lastLiveBitmap) {
+    paintLiveCanvas();
+  }
+
+  $: if (showLiveFeed) {
+    if (hasLiveBitmap && lastLiveBitmap) {
+      imgNaturalWidth = lastLiveBitmap.width;
+      imgNaturalHeight = lastLiveBitmap.height;
+    } else {
+      imgNaturalWidth = 0;
+      imgNaturalHeight = 0;
+    }
+  } else if (showClipVideo && activeClipSrc) {
     if (videoElement && videoElement.readyState >= 2 && videoElement.videoWidth > 0) {
       imgNaturalWidth = videoElement.videoWidth;
       imgNaturalHeight = videoElement.videoHeight;
@@ -101,7 +134,7 @@
       imgNaturalHeight = 0;
     }
   } else {
-    const displaySrc = showLiveFeed ? liveImageSrc : activeImageSrc;
+    const displaySrc = activeImageSrc;
     if (!displaySrc) {
       imgNaturalWidth = 0;
       imgNaturalHeight = 0;
@@ -153,67 +186,121 @@
       clearTimeout(liveReconnectTimer);
       liveReconnectTimer = null;
     }
-    if (liveEventSource) {
-      liveEventSource.close();
-      liveEventSource = null;
+    if (liveSocket) {
+      const ws = liveSocket;
+      liveSocket = null;
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
     }
     liveActive = false;
-    liveFrameB64 = "";
+    hasLiveBitmap = false;
+    if (lastLiveBitmap) {
+      lastLiveBitmap.close();
+      lastLiveBitmap = null;
+    }
+    liveBitmapDims = { w: 1280, h: 800 };
     liveUrl = "";
     liveCursor = null;
   };
 
   const openLiveStream = (cid: string) => {
-    if (typeof EventSource === "undefined" || !cid || !isSavedChatId(cid)) {
+    if (typeof WebSocket === "undefined" || !cid || !isSavedChatId(cid)) {
       return;
     }
     const token = getEchoToken();
-    if (!token || liveEventSource) return;
-    const url = getEchoBrowserLiveStreamUrl(cid, token);
-    const source = new EventSource(url);
-    liveEventSource = source;
+    if (!token || liveSocket) return;
+    const ws = new WebSocket(getEchoBrowserLiveWsUrl(cid));
+    ws.binaryType = "arraybuffer";
+    liveSocket = ws;
 
-    source.onmessage = (event) => {
-      if (cid !== boundChatId || liveEventSource !== source) return;
-      try {
-        const ev = JSON.parse(event.data);
-        if (!ev || typeof ev !== "object") return;
-        if (ev.type === "live_frame") {
-          if (ev.b64) liveFrameB64 = String(ev.b64);
-          if (typeof ev.url === "string") liveUrl = ev.url;
-          liveViewport = {
-            w: Number(ev.vp_w) > 0 ? Number(ev.vp_w) : 1280,
-            h: Number(ev.vp_h) > 0 ? Number(ev.vp_h) : 800,
-          };
-          liveActive = true;
-        } else if (ev.type === "live_cursor") {
-          liveViewport = {
-            w: Number(ev.vp_w) > 0 ? Number(ev.vp_w) : liveViewport.w,
-            h: Number(ev.vp_h) > 0 ? Number(ev.vp_h) : liveViewport.h,
-          };
-          liveCursor =
-            ev.x != null && ev.y != null
-              ? {
-                  x: Number(ev.x),
-                  y: Number(ev.y),
-                  clicking: Boolean(ev.clicking),
-                }
-              : null;
-        } else if (ev.type === "live_state") {
-          liveActive = Boolean(ev.active);
-          if (!liveActive) {
-            liveCursor = null;
-          }
+    ws.onopen = () => {
+      if (cid !== boundChatId || liveSocket !== ws) return;
+      ws.send(JSON.stringify({ type: "auth", token }));
+    };
+
+    ws.onmessage = (event) => {
+      if (cid !== boundChatId || liveSocket !== ws) return;
+      if (event.data instanceof ArrayBuffer && event.data.byteLength > 16) {
+        const dv = new DataView(event.data, 0, 16);
+        const flags = dv.getUint8(1);
+        const vpW = dv.getUint16(2, false);
+        const vpH = dv.getUint16(4, false);
+        const curX = dv.getUint16(6, false);
+        const curY = dv.getUint16(8, false);
+        const frameId = dv.getUint32(10, false);
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: "ack", frame_id: frameId }));
         }
-      } catch {
-        // Ignorer les messages SSE malformés
+        createImageBitmap(
+          new Blob([event.data.slice(16)], { type: "image/jpeg" }),
+        )
+          .then((bmp) => {
+            if (cid !== boundChatId || liveSocket !== ws) {
+              bmp.close();
+              return;
+            }
+            if (lastLiveBitmap) lastLiveBitmap.close();
+            lastLiveBitmap = bmp;
+            liveBitmapDims = { w: bmp.width, h: bmp.height };
+            liveViewport = {
+              w: vpW > 0 ? vpW : 1280,
+              h: vpH > 0 ? vpH : 800,
+            };
+            liveCursor =
+              curX !== 0xffff && curY !== 0xffff
+                ? { x: curX, y: curY, clicking: (flags & 1) === 1 }
+                : liveCursor;
+            hasLiveBitmap = true;
+            liveActive = true;
+            paintLiveCanvas();
+          })
+          .catch(() => {});
+        return;
+      }
+
+      if (typeof event.data === "string") {
+        try {
+          const ev = JSON.parse(event.data);
+          if (!ev || typeof ev !== "object") return;
+          if (ev.type === "ping") {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send('{"type":"pong"}');
+            }
+          } else if (ev.type === "state" || ev.type === "live_state") {
+            if (typeof ev.url === "string") liveUrl = ev.url;
+            liveActive =
+              ev.active !== undefined
+                ? Boolean(ev.active)
+                : ev.status === "live";
+            if (!liveActive) {
+              liveCursor = null;
+            }
+          } else if (ev.type === "cursor" || ev.type === "live_cursor") {
+            liveViewport = {
+              w: Number(ev.vp_w) > 0 ? Number(ev.vp_w) : liveViewport.w,
+              h: Number(ev.vp_h) > 0 ? Number(ev.vp_h) : liveViewport.h,
+            };
+            liveCursor =
+              ev.x != null && ev.y != null
+                ? {
+                    x: Number(ev.x),
+                    y: Number(ev.y),
+                    clicking: Boolean(ev.clicking),
+                  }
+                : null;
+          }
+        } catch {
+          // Ignorer les messages JSON malformés
+        }
       }
     };
 
-    source.onerror = () => {
-      if (liveEventSource === source) {
-        source.close();
-        liveEventSource = null;
+    ws.onclose = () => {
+      if (liveSocket === ws) {
+        liveSocket = null;
         if (cid === boundChatId && isSavedChatId(cid)) {
           if (liveReconnectTimer !== null) clearTimeout(liveReconnectTimer);
           liveReconnectTimer = setTimeout(() => {
@@ -286,7 +373,7 @@
     typeof window !== "undefined" &&
     boundChatId &&
     isSavedChatId(boundChatId) &&
-    !liveEventSource &&
+    !liveSocket &&
     liveReconnectTimer === null
   ) {
     openLiveStream(boundChatId);
@@ -466,14 +553,9 @@
   }
   $: isOnLatestLive =
     isLive && (frames.length === 0 || currentIndex === frames.length - 1);
-  $: showLiveFeed = isOnLatestLive && liveActive && Boolean(liveFrameB64);
-  $: liveImageSrc = liveFrameB64
-    ? liveFrameB64.startsWith("data:")
-      ? liveFrameB64
-      : `data:image/jpeg;base64,${liveFrameB64}`
-    : "";
+  $: showLiveFeed = isOnLatestLive && liveActive && hasLiveBitmap;
   $: activeMediaAvailable = showLiveFeed
-    ? Boolean(liveImageSrc)
+    ? hasLiveBitmap
     : showClipVideo
       ? Boolean(activeClipSrc)
       : Boolean(activeImageSrc);
@@ -660,6 +742,10 @@
       if (mediaEl.readyState < 2 || mediaEl.videoWidth === 0) return null;
       nw = mediaEl.videoWidth;
       nh = mediaEl.videoHeight;
+    } else if (mediaEl instanceof HTMLCanvasElement) {
+      if (mediaEl.width === 0 || mediaEl.height === 0) return null;
+      nw = mediaEl.width;
+      nh = mediaEl.height;
     } else {
       if (!mediaEl.complete || mediaEl.naturalWidth === 0) return null;
       nw = mediaEl.naturalWidth;
@@ -708,7 +794,9 @@
     const mediaReady =
       mediaEl instanceof HTMLVideoElement
         ? mediaEl.readyState >= 2 && mediaEl.videoWidth > 0
-        : Boolean(mediaEl && mediaEl.complete && mediaEl.naturalWidth > 0);
+        : mediaEl instanceof HTMLCanvasElement
+          ? mediaEl.width > 0 && mediaEl.height > 0
+          : Boolean(mediaEl && mediaEl.complete && mediaEl.naturalWidth > 0);
     if (!mediaReady) {
       toast.error("Image indisponible pour la copie.");
       return;
@@ -1103,16 +1191,14 @@
           ? `width: ${fittedDimensions.width}px; height: ${fittedDimensions.height}px; `
           : ''}transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: center center;"
       >
-        <img
-          bind:this={imgElement}
-          src={liveImageSrc}
-          alt={liveUrl || "Flux navigateur en direct"}
-          on:load={handleImageLoad}
+        <canvas
+          bind:this={liveCanvasEl}
+          width={liveBitmapDims.w}
+          height={liveBitmapDims.h}
           class="{fittedDimensions
             ? 'w-full h-full block'
             : 'max-w-full max-h-full'} object-contain pointer-events-none select-none shadow-2xl"
-          draggable="false"
-        />
+        ></canvas>
 
         {#if liveCursor}
           <div

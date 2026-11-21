@@ -3,6 +3,21 @@ import type { EchoCognitionSnapshot } from '$lib/stores/echo';
 
 export const ECHO_API_BASE_URL = `${WEBUI_BASE_URL}/echo/v1`;
 
+export const buildEchoWsUrl = (path: string): string => {
+	const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+	if (ECHO_API_BASE_URL.startsWith('https://')) {
+		return `wss://${ECHO_API_BASE_URL.slice('https://'.length)}${normalizedPath}`;
+	}
+	if (ECHO_API_BASE_URL.startsWith('http://')) {
+		return `ws://${ECHO_API_BASE_URL.slice('http://'.length)}${normalizedPath}`;
+	}
+	const protocol =
+		typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+	const host = typeof window !== 'undefined' ? window.location.host : 'localhost:3000';
+	const prefix = ECHO_API_BASE_URL.startsWith('/') ? ECHO_API_BASE_URL : `/${ECHO_API_BASE_URL}`;
+	return `${protocol}//${host}${prefix}${normalizedPath}`;
+};
+
 export const getEchoToken = (): string =>
 	typeof localStorage !== 'undefined' ? (localStorage.token ?? '') : '';
 
@@ -239,17 +254,38 @@ export const getEchoWmChatSnapshot = async (
 	);
 };
 
+type EchoWmWsRpcSender = (payload: Record<string, any>) => Promise<any> | null;
+let _wmWsRpcSender: EchoWmWsRpcSender | null = null;
+
+export const registerEchoWmWsTransport = (sender: EchoWmWsRpcSender | null): void => {
+	_wmWsRpcSender = sender;
+};
+
 export const postEchoWmRpc = async (
 	token: string,
 	payload: Record<string, any>,
 	keepalive: boolean = false
-): Promise<any> =>
-	echoRequestJson<any>(
+): Promise<any> => {
+	if (!keepalive && _wmWsRpcSender) {
+		const wsAttempt = _wmWsRpcSender(payload);
+		if (wsAttempt !== null) {
+			try {
+				return await wsAttempt;
+			} catch {
+				// Repli HTTP
+			}
+		}
+	}
+	return echoRequestJson<any>(
 		'/wm/rpc',
 		token,
 		{ method: 'POST', body: JSON.stringify(payload), ...(keepalive ? { keepalive: true } : {}) },
 		'Échec appel RPC Window Manager'
 	);
+};
+
+export const getEchoCanvasWsUrl = (chatId: string, runId: string): string =>
+	buildEchoWsUrl(`/wm/ws/canvas/${encodeURIComponent(chatId)}/${encodeURIComponent(runId)}`);
 
 // ============================================================================
 // COGNITION ECHO (/echo/v1/cognition)
@@ -288,8 +324,8 @@ export const getEchoBrowserFrameImageUrl = (chatId: string, fileId: string): str
 export const getEchoBrowserFrameClipUrl = (chatId: string, fileId: string): string =>
 	`${ECHO_API_BASE_URL}/cognition/${encodeURIComponent(chatId)}/browser-frames/${encodeURIComponent(fileId)}/clip`;
 
-export const getEchoBrowserLiveStreamUrl = (chatId: string, token: string): string =>
-	`${ECHO_API_BASE_URL}/cognition/${encodeURIComponent(chatId)}/browser-live?token=${encodeURIComponent(token)}`;
+export const getEchoBrowserLiveWsUrl = (chatId: string): string =>
+	buildEchoWsUrl(`/cognition/${encodeURIComponent(chatId)}/browser-ws`);
 
 export const retainEchoBrowserFrame = async (
 	token: string,

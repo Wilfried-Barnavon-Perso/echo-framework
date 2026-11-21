@@ -24,6 +24,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     PIP_BREAK_SYSTEM_PACKAGES=1 CMAKE_BUILD_PARALLEL_LEVEL=2 pip install \
     fastapi \
     uvicorn \
+    websockets \
     httpx \
     orjson \
     pybase64 \

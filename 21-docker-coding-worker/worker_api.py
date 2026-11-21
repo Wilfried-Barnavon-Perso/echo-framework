@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 6.15.2.1
+VERSION : 6.16.0.2
 AUTEUR : Wilfried BARNAVON
 DATE MAJ : 2026-11-21
 
@@ -9,11 +9,11 @@ DATE MAJ : 2026-11-21
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
-# 6.15.2.1: Durcissement Option A : long-polling /poll_monitor (wait), purge TTL/lifetime des jobs terminés, contrôle /kill par run_id et exposition des payloads/états.
+# 6.16.0.2: Niveau B2 (proxy HTTP/WS /app_proxy et /ws/app, AF_UNIX /run/echo_app, port éphémère, _verify_job_owns_tcp_port).
+# 6.16.0.1: Remplacement des fichiers IPC et /poll_monitor par CanvasRunHub AF_UNIX, /wait_ready, /canvas_signal et /ws/canvas/{run_id}.
+# 6.15.2.1: Long-polling /poll_monitor (wait), purge TTL/lifetime jobs terminés, contrôle /kill par run_id et payloads.
 # 6.13.1.1: Exposition de job_state, exit_code et alive dans GET /poll_monitor.
 # 6.6.22.1: Attachement TIOCSCTTY du PTY bwrap, déduplication buffer/out_queue, reprise par curseur et close 1000.
-# 6.6.21.1: Support des scripts .sh, /etc/passwd et /etc/group dans bwrap, PS1/PATH terminal et route POST /ssh.
-# 6.6.18.1: Tolérance aux requêtes POST sans Content-Type JSON dans create_terminal() (fix HTTP 415).
 
 import asyncio
 import json
@@ -25,18 +25,35 @@ import queue
 import re
 import shutil
 import signal
+import socket
+import struct
 import subprocess
 import tempfile
 import threading
 import time
+from urllib.parse import urlencode
 import uuid
 
 from flask import Flask, jsonify, request  # pyright: ignore[reportMissingImports]
+import httpx
 from starlette.applications import Starlette
 from starlette.middleware.wsgi import WSGIMiddleware
-from starlette.routing import Mount, WebSocketRoute
+from starlette.responses import Response, StreamingResponse
+from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 import uvicorn
+
+try:
+    import websockets
+    from websockets.exceptions import ConnectionClosed as _WsConnectionClosed
+except ImportError:
+    websockets = None
+    _WsConnectionClosed = Exception
+
+try:
+    import aiohttp
+except ImportError:
+    aiohttp = None
 
 # Configuration des logs pour voir qui fait quoi dans la console Docker
 
@@ -110,43 +127,421 @@ def _get_sandbox_dir(user_id, chat_id):
     return None
 
 
-def _get_ipc_filenames(run_id):
-    safe_rid = _sanitize_id(run_id, default="")
-    if safe_rid:
-        return (
-            f".echo_monitor_{safe_rid}.jsonl",
-            f".echo_ui_payload_{safe_rid}.json",
-            f".echo_ui_inbox_{safe_rid}.jsonl",
-        )
-    return (".echo_monitor.jsonl", ".echo_ui_payload.json", ".echo_ui_inbox.jsonl")
+def _allocate_ephemeral_port() -> int:
+    for _ in range(16):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+            if port != 5000:
+                return port
+    return 0
 
 
-def _cleanup_ipc_files(sandbox_dir, run_id):
-    if not sandbox_dir:
-        return
-    for fname in _get_ipc_filenames(run_id):
-        fpath = os.path.join(sandbox_dir, fname)
-        if os.path.exists(fpath):
+class CanvasRunHub:
+    """
+    Bus IPC mémoire + serveur Socket Unix (AF_UNIX / repli AF_INET) par run_id
+    relayant en full-duplex (< 2 ms) entre le bwrap Sandbox et les clients WebSocket.
+    """
+
+    _HEADER_STRUCT = struct.Struct(">II")
+
+    def __init__(self, run_id, initial_ui_payload=None):
+        self.run_id = str(run_id)
+        self.safe_rid = _sanitize_id(self.run_id, default=uuid.uuid4().hex[:8])
+        self.ipc_dir = os.path.join(tempfile.gettempdir(), "echo_ipc", self.safe_rid)
+        self.app_sock_dir = os.path.join(self.ipc_dir, "app")
+        self.sock_path = None
+        self.sandbox_sock_env = "/run/echo_ipc.sock"
+        self.is_unix_sock = False
+        self.allocated_port = None
+        self.job_pgid = None
+        self.allow_any_local_port_for_test = False
+
+        self.lock = threading.Lock()
+        self.write_lock = threading.Lock()
+        self.frames = {}
+        self.ready_windows = {}
+        self.app_targets = {}
+        self._verified_tcp_inodes = set()
+        self.ui_payloads = {}
+        self.closed_windows = set()
+        if isinstance(initial_ui_payload, dict):
+            for wid, val in initial_ui_payload.items():
+                swid = str(wid)
+                self.ui_payloads[swid] = val
+                if isinstance(val, dict) and val.get("_is_closed"):
+                    self.closed_windows.add(swid)
+
+        self.ready_or_display_event = threading.Event()
+        self.ws_clients = {}
+        self.last_ws_disconnect_at = 0.0
+
+        self._job_ref = None
+        self._server_sock = None
+        self._active_client = None
+        self._closed = False
+        self._job_state = "running"
+        self._exit_code = None
+
+    def attach_job(self, job):
+        with self.lock:
+            self._job_ref = job
+
+    def _touch_activity(self, ts=None):
+        job = self._job_ref
+        if job is not None:
+            now = ts if ts is not None else time.time()
+            with job["lock"]:
+                job["last_activity_at"] = now
+
+    def start(self):
+        os.makedirs(self.ipc_dir, exist_ok=True)
+        try:
+            os.chmod(self.ipc_dir, 0o755)
+        except OSError:
+            pass
+        os.makedirs(self.app_sock_dir, exist_ok=True)
+        try:
+            os.chmod(self.app_sock_dir, 0o777)
+        except OSError:
+            pass
+        if not self.allocated_port:
+            self.allocated_port = _allocate_ephemeral_port()
+
+        if hasattr(socket, "AF_UNIX") and os.environ.get("ECHO_IPC_FORCE_TCP") != "1":
+            sock_path = os.path.join(self.ipc_dir, "ipc.sock")
+            if os.path.exists(sock_path):
+                try:
+                    os.remove(sock_path)
+                except OSError:
+                    pass
+            srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            srv.bind(sock_path)
+            os.chmod(sock_path, 0o666)
+            srv.listen(8)
+            self.sock_path = sock_path
+            self.sandbox_sock_env = "/run/echo_ipc.sock"
+            self.is_unix_sock = True
+        else:
+            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            srv.bind(("127.0.0.1", 0))
+            srv.listen(8)
+            port = srv.getsockname()[1]
+            self.sock_path = None
+            self.sandbox_sock_env = f"tcp://127.0.0.1:{port}"
+            self.is_unix_sock = False
+
+        self._server_sock = srv
+        t = threading.Thread(target=self._accept_loop, daemon=True, name=f"canvas-ipc-{self.safe_rid}")
+        t.start()
+
+    @staticmethod
+    def _recv_exact(conn, n):
+        chunks = []
+        remaining = n
+        while remaining > 0:
+            chunk = conn.recv(remaining)
+            if not chunk:
+                return None
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+
+    @classmethod
+    def _encode_uds_frame(cls, meta, binary=b""):
+        meta_bytes = orjson.dumps(meta)
+        bin_bytes = bytes(binary) if binary else b""
+        return cls._HEADER_STRUCT.pack(len(meta_bytes), len(bin_bytes)) + meta_bytes + bin_bytes
+
+    def _accept_loop(self):
+        srv = self._server_sock
+        while srv is not None and not self._closed:
             try:
-                os.remove(fpath)
+                conn, _ = srv.accept()
+            except OSError:
+                break
+            with self.write_lock:
+                self._active_client = conn
+            with self.lock:
+                payloads_snap = dict(self.ui_payloads)
+                closed_snap = list(self.closed_windows)
+            for wid, payload in payloads_snap.items():
+                self._send_frame_to_conn(conn, {"type": "payload_sync", "window_id": wid, "payload": payload})
+            for wid in closed_snap:
+                self._send_frame_to_conn(conn, {"type": "window_closed", "window_id": wid})
+            t = threading.Thread(
+                target=self._client_reader,
+                args=(conn,),
+                daemon=True,
+                name=f"canvas-cli-{self.safe_rid}",
+            )
+            t.start()
+
+    def _send_frame_to_conn(self, conn, meta, binary=b""):
+        frame = self._encode_uds_frame(meta, binary)
+        with self.write_lock:
+            if conn is None or self._closed:
+                return False
+            try:
+                conn.sendall(frame)
+                return True
+            except OSError:
+                if self._active_client is conn:
+                    self._active_client = None
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                return False
+
+    def send_to_sandbox(self, meta, binary=b""):
+        if not isinstance(meta, dict):
+            return False
+        mtype = meta.get("type")
+        wid = str(meta.get("window_id") or "default")
+        if mtype == "payload_sync":
+            payload = meta.get("payload")
+            with self.lock:
+                self.ui_payloads[wid] = payload
+                if isinstance(payload, dict) and payload.get("_is_closed"):
+                    self.closed_windows.add(wid)
+        with self.write_lock:
+            conn = self._active_client
+        if conn is None:
+            return False
+        return self._send_frame_to_conn(conn, meta, binary)
+
+    def close_windows(self, window_ids):
+        if isinstance(window_ids, str):
+            wids = [window_ids]
+        else:
+            wids = [str(w) for w in (window_ids or []) if w]
+        if not wids:
+            wids = ["default"]
+        for wid in wids:
+            with self.lock:
+                self.closed_windows.add(wid)
+                existing = self.ui_payloads.get(wid)
+                if isinstance(existing, dict):
+                    existing["_is_closed"] = True
+                else:
+                    self.ui_payloads[wid] = {"_is_closed": True}
+            self.send_to_sandbox({"type": "window_closed", "window_id": wid}, b"")
+
+    def _broadcast_ws(self, item):
+        with self.lock:
+            clients = list(self.ws_clients.values())
+        for loop, q in clients:
+            try:
+                loop.call_soon_threadsafe(q.put_nowait, item)
             except Exception:
                 pass
 
-
-def _read_monitor_file(monitor_path):
-    payloads = []
-    if monitor_path and os.path.exists(monitor_path):
+    def _client_reader(self, conn):
         try:
-            with open(monitor_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    if line.strip():
+            while not self._closed:
+                header = self._recv_exact(conn, self._HEADER_STRUCT.size)
+                if header is None:
+                    break
+                meta_len, bin_len = self._HEADER_STRUCT.unpack(header)
+                meta_raw = self._recv_exact(conn, meta_len) if meta_len > 0 else b"{}"
+                if meta_raw is None:
+                    break
+                bin_raw = self._recv_exact(conn, bin_len) if bin_len > 0 else b""
+                if bin_len > 0 and bin_raw is None:
+                    break
+                try:
+                    meta = orjson.loads(meta_raw)
+                except Exception:
+                    continue
+                if not isinstance(meta, dict):
+                    continue
+
+                mtype = meta.get("type")
+                wid = str(meta.get("window_id") or "default")
+                if mtype == "display":
+                    html_str = bin_raw.decode("utf-8", errors="replace") if bin_raw else (meta.get("html") or "")
+                    title = meta.get("title", "ECHO Sandbox Monitor")
+                    width = meta.get("width", "100%")
+                    height = meta.get("height", "400px")
+                    ts = time.time()
+                    with self.lock:
+                        self.frames[wid] = {
+                            "id": wid,
+                            "title": title,
+                            "width": width,
+                            "height": height,
+                            "html": html_str,
+                            "updated_at": ts,
+                        }
+                    self._touch_activity(ts)
+                    self.ready_or_display_event.set()
+                    ws_msg = orjson.dumps({
+                        "type": "display",
+                        "run_id": self.run_id,
+                        "window_id": wid,
+                        "title": title,
+                        "width": width,
+                        "height": height,
+                        "html": html_str,
+                    }).decode("utf-8")
+                    self._broadcast_ws(ws_msg)
+                elif mtype == "ready":
+                    actions = list(meta.get("actions") or [])
+                    with self.lock:
+                        self.ready_windows[wid] = actions
+                    self._touch_activity()
+                    self.ready_or_display_event.set()
+                    ws_msg = orjson.dumps({
+                        "type": "ready",
+                        "run_id": self.run_id,
+                        "window_id": wid,
+                        "actions": actions,
+                    }).decode("utf-8")
+                    self._broadcast_ws(ws_msg)
+                elif mtype == "expose_app":
+                    raw_target = str(meta.get("target") or "").strip()
+                    resolved_target = None
+                    if raw_target.startswith("uds:"):
+                        raw_path = raw_target[4:].strip()
+                        sock_name = os.path.basename(raw_path)
+                        if sock_name and sock_name not in (".", ".."):
+                            safe_uds_path = os.path.join(self.app_sock_dir, sock_name)
+                            resolved_target = ("uds", safe_uds_path)
+                    elif raw_target.startswith("tcp:"):
                         try:
-                            payloads.append(orjson.loads(line))
-                        except Exception:
-                            pass
-        except Exception as e:
-            logger.error(f"Erreur lecture monitor payload: {e}")
-    return payloads
+                            port = int(raw_target[4:].strip())
+                        except (TypeError, ValueError):
+                            port = 0
+                        if 1024 <= port <= 65535 and port != 5000:
+                            resolved_target = ("tcp", port)
+                    if resolved_target is None:
+                        continue
+                    title = meta.get("title", "Application Sandbox")
+                    width = meta.get("width", "100%")
+                    height = meta.get("height", "600px")
+                    ts = time.time()
+                    with self.lock:
+                        self.app_targets[wid] = resolved_target
+                        self.frames[wid] = {
+                            "id": wid,
+                            "title": title,
+                            "width": width,
+                            "height": height,
+                            "html": "",
+                            "mode": "app_proxy",
+                            "window_id": wid,
+                            "updated_at": ts,
+                        }
+                    self._touch_activity(ts)
+                    self.ready_or_display_event.set()
+                    ws_msg = orjson.dumps({
+                        "type": "expose_app",
+                        "run_id": self.run_id,
+                        "window_id": wid,
+                        "title": title,
+                        "width": width,
+                        "height": height,
+                        "mode": "app_proxy",
+                    }).decode("utf-8")
+                    self._broadcast_ws(ws_msg)
+                elif mtype == "event":
+                    self._touch_activity()
+                    ev_meta = {
+                        "type": "event",
+                        "run_id": self.run_id,
+                        "window_id": wid,
+                        "req_id": meta.get("req_id"),
+                        "data": meta.get("data"),
+                    }
+                    if not bin_raw:
+                        self._broadcast_ws(orjson.dumps(ev_meta).decode("utf-8"))
+                    else:
+                        meta_bytes = orjson.dumps(ev_meta)
+                        ws_bin = struct.pack("!I", len(meta_bytes)) + meta_bytes + bin_raw
+                        self._broadcast_ws(ws_bin)
+        except OSError:
+            pass
+        finally:
+            with self.write_lock:
+                if self._active_client is conn:
+                    self._active_client = None
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def register_ws_client(self, client_id, loop, out_queue):
+        with self.lock:
+            self.ws_clients[client_id] = (loop, out_queue)
+
+    def unregister_ws_client(self, client_id):
+        with self.lock:
+            self.ws_clients.pop(client_id, None)
+            self.last_ws_disconnect_at = time.time()
+
+    def get_frames_list(self):
+        with self.lock:
+            return list(self.frames.values())
+
+    def get_ready_window_ids(self):
+        with self.lock:
+            return list(self.ready_windows.keys())
+
+    def get_payloads_dict(self):
+        with self.lock:
+            return dict(self.ui_payloads)
+
+    def get_snapshot(self, job=None):
+        job_state = self._job_state
+        exit_code = self._exit_code
+        if job is not None:
+            with job["lock"]:
+                job_state = job["state"]
+                exit_code = job["exit_code"]
+        with self.lock:
+            return {
+                "type": "snapshot",
+                "run_id": self.run_id,
+                "frames": list(self.frames.values()),
+                "ready_windows": dict(self.ready_windows),
+                "closed_windows": list(self.closed_windows),
+                "job_state": job_state,
+                "exit_code": exit_code,
+            }
+
+    def mark_job_finished(self, job_state, exit_code):
+        with self.lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._job_state = job_state
+            self._exit_code = exit_code
+            window_ids = list(self.frames.keys())
+        self.ready_or_display_event.set()
+        ws_msg = orjson.dumps({
+            "type": "status",
+            "run_id": self.run_id,
+            "job_state": job_state,
+            "exit_code": exit_code,
+            "window_ids": window_ids,
+        }).decode("utf-8")
+        self._broadcast_ws(ws_msg)
+
+        with self.write_lock:
+            if self._active_client is not None:
+                try:
+                    self._active_client.close()
+                except OSError:
+                    pass
+                self._active_client = None
+        if self._server_sock is not None:
+            try:
+                self._server_sock.close()
+            except OSError:
+                pass
+            self._server_sock = None
+        shutil.rmtree(self.ipc_dir, ignore_errors=True)
 
 
 def _kill_process_group(proc):
@@ -213,6 +608,7 @@ def _stream_reader(pipe, buf_list, size_ref, lock, max_len, is_stdout=True):
 def _job_lifecycle_watcher(job):
     proc = job["proc"]
     timeout_sec = job["timeout_sec"]
+    hub = job.get("canvas_hub")
     if not job.get("background"):
         try:
             proc.wait(timeout=timeout_sec)
@@ -241,6 +637,26 @@ def _job_lifecycle_watcher(job):
                         job["state"] = "timeout"
                         job["error_msg"] = f"Durée maximale serveur dépassée ({int(job['max_lifetime_sec'])}s)."
                         should_kill = True
+
+                if not should_kill and hub is not None:
+                    with hub.lock:
+                        is_bidi = bool(hub.ready_windows)
+                        ws_count = len(hub.ws_clients)
+                        last_disc = hub.last_ws_disconnect_at
+                    if is_bidi and ws_count == 0:
+                        if last_disc > 0.0 and (now - last_disc) > 45.0:
+                            with job["lock"]:
+                                if job["state"] == "running":
+                                    job["state"] = "killed"
+                                    job["error_msg"] = "Serveur Bidi orphelin arrêté (déconnexion WS > 45s)."
+                                    should_kill = True
+                        elif last_disc == 0.0 and (now - job["started_at"]) > 25.0:
+                            with job["lock"]:
+                                if job["state"] == "running":
+                                    job["state"] = "killed"
+                                    job["error_msg"] = "Serveur Bidi orphelin arrêté (aucune connexion WS sous 25s)."
+                                    should_kill = True
+
                 if should_kill:
                     _kill_process_group(proc)
                     break
@@ -250,44 +666,37 @@ def _job_lifecycle_watcher(job):
             t.join(timeout=2.0)
 
     rc = proc.poll()
-    monitor_file = job.get("monitor_file")
-    raw_bytes = b""
-    if monitor_file and os.path.exists(monitor_file):
-        try:
-            with open(monitor_file, "rb") as mf:
-                raw_bytes = mf.read(8 * 1024 * 1024)
-        except Exception:
-            raw_bytes = b""
-    if raw_bytes:
-        with job["lock"]:
-            job["monitor_raw_bytes"] = raw_bytes
-
-    monitor_payloads = _read_monitor_file(monitor_file)
-    _cleanup_ipc_files(job.get("sandbox_dir"), job["run_id"])
 
     with job["lock"]:
         job["exit_code"] = rc
         job["ended_at"] = time.time()
-        if monitor_payloads:
-            job["monitor_payloads"] = monitor_payloads
         if job["state"] == "running":
             stderr_str = "".join(job["stderr_buf"])
             if stderr_str or (rc is not None and rc != 0):
                 job["state"] = "error"
             else:
                 job["state"] = "completed"
+        final_state = job["state"]
+
+    if hub is not None:
+        hub.mark_job_finished(final_state, rc)
 
     job["done_event"].set()
 
 
 def _build_job_response(job):
+    hub = job.get("canvas_hub")
+    canvas_frames = hub.get_frames_list() if hub is not None else []
+    ready_wids = hub.get_ready_window_ids() if hub is not None else []
+    ui_ready = bool(ready_wids or canvas_frames)
+    ui_payload = hub.get_payloads_dict() if hub is not None else {}
+
     with job["lock"]:
         stdout_str = "".join(job["stdout_buf"])
         stderr_str = "".join(job["stderr_buf"])
         state = job["state"]
         rc = job["exit_code"]
         err_msg = job.get("error_msg") or ""
-        mon = list(job.get("monitor_payloads") or [])
 
     if state == "running":
         return {
@@ -297,6 +706,10 @@ def _build_job_response(job):
             "pid": job["pid"],
             "file_path": job["file_path"],
             "output": stdout_str,
+            "canvas_frames": canvas_frames,
+            "ui_ready": ui_ready,
+            "ui_payload": ui_payload,
+            "monitor_payloads": [],
         }
 
     status_val = "success" if state == "completed" else ("killed" if state == "killed" else "error")
@@ -307,6 +720,10 @@ def _build_job_response(job):
         "pid": job["pid"],
         "exit_code": rc,
         "output": stdout_str,
+        "canvas_frames": canvas_frames,
+        "ui_ready": ui_ready,
+        "ui_payload": ui_payload,
+        "monitor_payloads": [],
     }
     if stderr_str:
         res["error"] = stderr_str if not err_msg else f"{err_msg}\n{stderr_str}"
@@ -314,8 +731,6 @@ def _build_job_response(job):
         res["error"] = err_msg
     elif rc is not None and rc != 0 and state != "killed":
         res["error"] = f"Process exited with code {rc}"
-    if mon:
-        res["monitor_payloads"] = mon
     return res
 
 
@@ -501,16 +916,8 @@ def _start_sandbox_job(
                     text=True,
                 )
 
-    mon_fname, pay_fname, inb_fname = _get_ipc_filenames(run_id)
-    _cleanup_ipc_files(sandbox_dir, run_id)
-    monitor_file = os.path.join(sandbox_dir, mon_fname)
-    ui_payload_file = os.path.join(sandbox_dir, pay_fname)
-    if ui_payload:
-        try:
-            with open(ui_payload_file, "w", encoding="utf-8") as f:
-                f.write(orjson.dumps(ui_payload).decode("utf-8"))
-        except Exception:
-            pass
+    hub = CanvasRunHub(run_id, initial_ui_payload=ui_payload)
+    hub.start()
 
     bwrap_cmd = _build_base_bwrap_cmd(
         safe_uid=safe_uid,
@@ -522,12 +929,22 @@ def _start_sandbox_job(
         deps_dir=deps_dir,
         browserviews_dir=browserviews_dir,
     )
+    if hub.is_unix_sock and hub.sock_path:
+        bwrap_cmd.extend([
+            "--dir", "/run",
+            "--bind", hub.sock_path, "/run/echo_ipc.sock",
+            "--dir", "/run/echo_app",
+            "--bind", hub.app_sock_dir, "/run/echo_app",
+        ])
+    default_path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+    extra_bins = "/.deps/python/bin:/.deps/node/.bin"
     bwrap_cmd.extend([
         "--setenv", "PYTHONUNBUFFERED", "1",
+        "--setenv", "PATH", f"{extra_bins}:{default_path}",
         "--setenv", "ECHO_RUN_ID", str(run_id),
-        "--setenv", "ECHO_MONITOR_FILE", mon_fname,
-        "--setenv", "ECHO_UI_PAYLOAD_FILE", pay_fname,
-        "--setenv", "ECHO_UI_INBOX_FILE", inb_fname,
+        "--setenv", "ECHO_IPC_SOCK", hub.sandbox_sock_env,
+        "--setenv", "ECHO_APP_UDS", "/run/echo_app/http.sock",
+        "--setenv", "ECHO_APP_PORT", str(hub.allocated_port),
     ])
 
     if is_python:
@@ -547,11 +964,13 @@ def _start_sandbox_job(
         active_chat = sum(1 for k, j in _JOBS_REGISTRY.items() if k.startswith(prefix) and j["state"] == "running")
         active_global = sum(1 for j in _JOBS_REGISTRY.values() if j["state"] == "running")
         if active_chat >= MAX_CONCURRENT_JOBS_PER_CHAT:
+            hub.mark_job_finished("error", None)
             return None, {
                 "status": "error",
                 "error": f"Quota dépassé : {active_chat}/{MAX_CONCURRENT_JOBS_PER_CHAT} processus actifs session.",
             }
         if active_global >= MAX_CONCURRENT_JOBS_GLOBAL:
+            hub.mark_job_finished("error", None)
             return None, {
                 "status": "error",
                 "error": f"Quota global dépassé : {active_global}/{MAX_CONCURRENT_JOBS_GLOBAL} processus actifs.",
@@ -565,6 +984,7 @@ def _start_sandbox_job(
             bufsize=1,
             start_new_session=True,
         )
+        hub.job_pgid = proc.pid
         job_lock = threading.Lock()
         stdout_buf, stderr_buf = [], []
         out_sz, err_sz = [0], [0]
@@ -596,19 +1016,18 @@ def _start_sandbox_job(
             "idle_ttl_sec": max(30.0, float(idle_ttl_sec)),
             "max_lifetime_sec": max(60.0, float(max_lifetime_sec)),
             "last_activity_at": time.time(),
-            "monitor_raw_bytes": b"",
             "exit_code": None,
             "error_msg": "",
             "stdout_buf": stdout_buf,
             "stderr_buf": stderr_buf,
-            "monitor_payloads": [],
-            "monitor_file": monitor_file,
+            "canvas_hub": hub,
             "sandbox_dir": sandbox_dir,
             "lock": job_lock,
             "done_event": threading.Event(),
             "t_out": t_out,
             "t_err": t_err,
         }
+        hub.attach_job(job)
         _JOBS_REGISTRY[f"{safe_uid}:{safe_cid}:{run_id}"] = job
 
     watcher = threading.Thread(target=_job_lifecycle_watcher, args=(job,), daemon=True)
@@ -995,139 +1414,142 @@ def kill_sandbox():
             j["done_event"].wait(timeout=2.0)
             killed_pids.append(j["pid"])
             killed_runs.append(j["run_id"])
-        _cleanup_ipc_files(j.get("sandbox_dir"), j["run_id"])
+        hub = j.get("canvas_hub")
+        if hub is not None:
+            hub.mark_job_finished(j["state"], j["exit_code"])
 
     if killed_pids:
         return jsonify({"status": "killed", "pid": killed_pids[0], "pids": killed_pids, "run_ids": killed_runs})
     return jsonify({"status": "not_found"})
 
 
-@app.route('/poll_monitor', methods=['GET'])
-def poll_monitor():
-    user_id = request.args.get('user_id', 'system')
-    chat_id = request.args.get('chat_id')
-    run_id = request.args.get('run_id', '')
-    safe_uid = _sanitize_id(user_id)
-    safe_cid = _sanitize_id(chat_id, default="")
-    safe_rid = _sanitize_id(run_id, default="")
+@app.route('/wait_ready', methods=['GET'])
+def wait_ready():
+    safe_uid = _sanitize_id(request.args.get('user_id', 'system'))
+    safe_cid = _sanitize_id(request.args.get('chat_id'), default="")
+    safe_rid = _sanitize_id(request.args.get('run_id'), default="")
     try:
-        offset = int(request.args.get('offset', 0))
-    except ValueError:
-        offset = 0
-    try:
-        wait_sec = max(0.0, min(float(request.args.get('wait_sec', 0.0)), 5.0))
+        wait_sec = max(0.0, min(float(request.args.get('timeout', 8.0)), 15.0))
     except (TypeError, ValueError):
-        wait_sec = 0.0
+        wait_sec = 8.0
 
     job = None
-    job_state = "unknown"
-    exit_code = None
-    if safe_cid and safe_rid:
+    if safe_rid:
         with _JOBS_LOCK:
-            job = _JOBS_REGISTRY.get(f"{safe_uid}:{safe_cid}:{safe_rid}")
-
-    sandbox_dir = _get_sandbox_dir(user_id, chat_id)
-    mon_fname, _, _ = _get_ipc_filenames(run_id)
-    monitor_file = os.path.join(sandbox_dir, mon_fname) if sandbox_dir else None
-
-    if wait_sec > 0 and job is not None:
-        deadline = time.monotonic() + wait_sec
-        while time.monotonic() < deadline:
-            if monitor_file and os.path.exists(monitor_file):
-                try:
-                    if os.path.getsize(monitor_file) > offset:
-                        break
-                except OSError:
-                    pass
-            if job["done_event"].is_set():
-                break
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            job["done_event"].wait(timeout=min(0.05, remaining))
-
-    raw_bytes = b""
-    if job is not None:
-        with job["lock"]:
-            job_state = job["state"]
-            exit_code = job["exit_code"]
-            raw_bytes = job.get("monitor_raw_bytes") or b""
-
-    if not sandbox_dir:
-        return jsonify({"payloads": [], "offset": offset, "job_state": job_state, "exit_code": exit_code, "alive": job_state == "running"})
-
-    payloads = []
-    if monitor_file and os.path.exists(monitor_file):
-        try:
-            with open(monitor_file, 'rb') as f:
-                f.seek(offset)
-                content = f.read()
-
-            last_newline = content.rfind(b'\n')
-            if last_newline != -1:
-                valid_content = content[:last_newline + 1]
-                new_offset = offset + len(valid_content)
-                for line in valid_content.decode('utf-8', errors='replace').strip().split('\n'):
-                    if line.strip():
-                        try:
-                            payloads.append(orjson.loads(line))
-                        except Exception:
-                            pass
-                offset = new_offset
-        except Exception:
-            pass
-    elif job is not None and raw_bytes and 0 <= offset < len(raw_bytes):
-        content = raw_bytes[offset:]
-        last_newline = content.rfind(b'\n')
-        if last_newline != -1:
-            valid_content = content[:last_newline + 1]
-            new_offset = offset + len(valid_content)
-            for line in valid_content.decode('utf-8', errors='replace').strip().split('\n'):
-                if line.strip():
-                    try:
-                        payloads.append(orjson.loads(line))
-                    except Exception:
-                        pass
-            offset = new_offset
-
-    return jsonify({"payloads": payloads, "offset": offset, "job_state": job_state, "exit_code": exit_code, "alive": job_state == "running"})
-
-
-@app.route('/update_payload', methods=['POST'])
-def update_payload():
-    data = request.json or {}
-    ui_payload = data.get('ui_payload')
-    run_id = data.get('run_id', '')
-    if run_id:
-        safe_uid = _sanitize_id(data.get('user_id', 'system'))
-        safe_cid = _sanitize_id(data.get('chat_id'), default="")
-        safe_rid = _sanitize_id(run_id, default="")
-        if safe_cid and safe_rid:
-            with _JOBS_LOCK:
+            if safe_cid:
                 job = _JOBS_REGISTRY.get(f"{safe_uid}:{safe_cid}:{safe_rid}")
-            if job is not None:
-                with job["lock"]:
-                    job["last_activity_at"] = time.time()
-    sandbox_dir = _get_sandbox_dir(data.get('user_id', 'system'), data.get('chat_id'))
-    if sandbox_dir and isinstance(ui_payload, dict):
-        _, pay_fname, inb_fname = _get_ipc_filenames(run_id)
-        inbox_events = ui_payload.pop('_inbox_events', None)
-        if isinstance(inbox_events, list) and inbox_events:
-            inb_path = os.path.join(sandbox_dir, inb_fname)
-            try:
-                with open(inb_path, 'a', encoding='utf-8') as f:
-                    for ev in inbox_events:
-                        f.write(orjson.dumps(ev).decode('utf-8') + '\n')
-            except Exception:
-                pass
-        tmp = os.path.join(sandbox_dir, f".echo_ui.tmp.{uuid.uuid4().hex}")
-        tgt = os.path.join(sandbox_dir, pay_fname)
-        try:
-            with open(tmp, 'w', encoding='utf-8') as f:
-                f.write(orjson.dumps(ui_payload).decode("utf-8"))
-            os.replace(tmp, tgt)
-        except Exception:
-            return jsonify({"status": "error"}), 500
+            else:
+                for candidate in _JOBS_REGISTRY.values():
+                    if candidate["run_id"] == safe_rid and candidate["user_id"] == safe_uid:
+                        job = candidate
+                        break
+
+    if job is None:
+        return jsonify({
+            "status": "not_found",
+            "job_state": "not_found",
+            "exit_code": None,
+            "alive": False,
+            "ui_ready": False,
+            "canvas_frames": [],
+            "ready_windows": [],
+        })
+
+    hub = job.get("canvas_hub")
+    with job["lock"]:
+        is_running = (job["state"] == "running")
+    if is_running and hub is not None and wait_sec > 0.0:
+        hub.ready_or_display_event.wait(timeout=wait_sec)
+
+    with job["lock"]:
+        job_state = job["state"]
+        exit_code = job["exit_code"]
+
+    frames = hub.get_frames_list() if hub is not None else []
+    ready_wins = hub.get_ready_window_ids() if hub is not None else []
+    return jsonify({
+        "status": "ok",
+        "job_state": job_state,
+        "exit_code": exit_code,
+        "alive": job_state == "running",
+        "ui_ready": bool(ready_wins or frames),
+        "canvas_frames": frames,
+        "ready_windows": ready_wins,
+    })
+
+
+@app.route('/canvas_signal', methods=['POST'])
+def canvas_signal():
+    data = request.get_json(silent=True) or {}
+    safe_uid = _sanitize_id(data.get('user_id', 'system'))
+    safe_cid = _sanitize_id(data.get('chat_id'), default="")
+    safe_rid = _sanitize_id(data.get('run_id'), default="")
+    raw_closed = data.get('window_closed')
+    payload_sync = data.get('payload_sync')
+    try:
+        grace = max(0.0, float(data.get('grace_sec', 3.0)))
+    except (TypeError, ValueError):
+        grace = 3.0
+
+    job = None
+    if safe_rid:
+        with _JOBS_LOCK:
+            if safe_cid:
+                job = _JOBS_REGISTRY.get(f"{safe_uid}:{safe_cid}:{safe_rid}")
+            else:
+                for candidate in _JOBS_REGISTRY.values():
+                    if candidate["run_id"] == safe_rid and candidate["user_id"] == safe_uid:
+                        job = candidate
+                        break
+
+    if job is None:
+        return jsonify({"status": "not_found", "run_id": safe_rid})
+
+    hub = job.get("canvas_hub")
+    if hub is not None:
+        with job["lock"]:
+            job["last_activity_at"] = time.time()
+
+        if isinstance(payload_sync, dict):
+            if "window_id" in payload_sync and "payload" in payload_sync:
+                hub.send_to_sandbox({
+                    "type": "payload_sync",
+                    "window_id": str(payload_sync.get("window_id") or "default"),
+                    "payload": payload_sync.get("payload"),
+                })
+            else:
+                for wid, p_val in payload_sync.items():
+                    hub.send_to_sandbox({
+                        "type": "payload_sync",
+                        "window_id": str(wid),
+                        "payload": p_val,
+                    })
+
+        if raw_closed:
+            wids = [raw_closed] if isinstance(raw_closed, str) else [str(w) for w in raw_closed if w]
+            if wids:
+                hub.close_windows(wids)
+                with hub.lock:
+                    known_wids = set(hub.frames.keys()) | set(hub.ready_windows.keys())
+                    all_closed = (len(known_wids) == 0) or known_wids.issubset(hub.closed_windows)
+                if all_closed:
+                    def _grace_killer(target_job, wait_grace):
+                        target_job["done_event"].wait(timeout=min(3.0, wait_grace))
+                        with target_job["lock"]:
+                            still_running = (target_job["state"] == "running")
+                            if still_running:
+                                target_job["state"] = "killed"
+                                target_job["error_msg"] = "Fenêtres Canvas fermées par l'utilisateur."
+                        if still_running:
+                            _kill_process_group(target_job["proc"])
+
+                    threading.Thread(
+                        target=_grace_killer,
+                        args=(job, grace),
+                        daemon=True,
+                        name=f"canvas-grace-{safe_rid}",
+                    ).start()
+
     return jsonify({"status": "ok"})
 
 
@@ -1473,9 +1895,531 @@ async def ws_terminal_endpoint(websocket: WebSocket):
                 pass
 
 
+async def ws_canvas_endpoint(websocket: WebSocket):
+    run_id = _sanitize_id(websocket.path_params.get("run_id"), default="")
+    q_uid = websocket.query_params.get("user_id")
+    q_cid = websocket.query_params.get("chat_id")
+    safe_uid = _sanitize_id(q_uid) if q_uid else ""
+    safe_cid = _sanitize_id(q_cid, default="") if q_cid else ""
+
+    job = None
+    if run_id:
+        with _JOBS_LOCK:
+            if safe_uid and safe_cid:
+                job = _JOBS_REGISTRY.get(f"{safe_uid}:{safe_cid}:{run_id}")
+            else:
+                for candidate in _JOBS_REGISTRY.values():
+                    if candidate["run_id"] != run_id:
+                        continue
+                    if safe_uid and candidate["user_id"] != safe_uid:
+                        continue
+                    if safe_cid and candidate["chat_id"] != safe_cid:
+                        continue
+                    job = candidate
+                    break
+
+    await websocket.accept()
+    if job is None or job.get("canvas_hub") is None:
+        try:
+            await websocket.send_text(
+                orjson.dumps({
+                    "type": "status",
+                    "run_id": run_id,
+                    "job_state": "not_found",
+                    "exit_code": None,
+                    "window_ids": [],
+                }).decode("utf-8")
+            )
+            await websocket.close(code=1000)
+        except Exception:
+            pass
+        return
+
+    hub = job["canvas_hub"]
+    client_id = uuid.uuid4().hex
+    loop = asyncio.get_running_loop()
+    out_queue = asyncio.Queue()
+    send_lock = asyncio.Lock()
+    stop_event = asyncio.Event()
+
+    hub.register_ws_client(client_id, loop, out_queue)
+
+    async def _sender():
+        try:
+            while not stop_event.is_set():
+                try:
+                    item = await asyncio.wait_for(out_queue.get(), timeout=20.0)
+                except asyncio.TimeoutError:
+                    async with send_lock:
+                        await websocket.send_text('{"type":"ping"}')
+                    continue
+                async with send_lock:
+                    if isinstance(item, bytes):
+                        await websocket.send_bytes(item)
+                    else:
+                        await websocket.send_text(item)
+        except (WebSocketDisconnect, asyncio.CancelledError):
+            pass
+        except Exception:
+            pass
+        finally:
+            stop_event.set()
+
+    async def _receiver():
+        try:
+            while not stop_event.is_set():
+                msg = await websocket.receive()
+                if msg.get("type") == "websocket.disconnect":
+                    break
+                if "text" in msg and msg["text"] is not None:
+                    try:
+                        payload = orjson.loads(msg["text"])
+                    except Exception:
+                        continue
+                    if not isinstance(payload, dict):
+                        continue
+                    mtype = payload.get("type")
+                    if mtype == "ping":
+                        async with send_lock:
+                            await websocket.send_text('{"type":"pong"}')
+                        continue
+                    with job["lock"]:
+                        job["last_activity_at"] = time.time()
+                    if mtype == "window_closed":
+                        wids = payload.get("window_ids")
+                        if not wids:
+                            wid = payload.get("window_id") or "default"
+                            wids = [wid]
+                        hub.close_windows(wids)
+                    elif mtype in ("rpc", "payload_sync"):
+                        hub.send_to_sandbox(payload, b"")
+                elif "bytes" in msg and msg["bytes"] is not None:
+                    raw = msg["bytes"]
+                    if len(raw) < 4:
+                        continue
+                    meta_len = struct.unpack("!I", raw[:4])[0]
+                    if 4 + meta_len > len(raw):
+                        continue
+                    try:
+                        meta = orjson.loads(raw[4:4 + meta_len])
+                    except Exception:
+                        continue
+                    if isinstance(meta, dict):
+                        with job["lock"]:
+                            job["last_activity_at"] = time.time()
+                        hub.send_to_sandbox(meta, raw[4 + meta_len:])
+        except (WebSocketDisconnect, asyncio.CancelledError):
+            pass
+        except Exception:
+            pass
+        finally:
+            stop_event.set()
+
+    tasks = []
+    try:
+        snapshot = hub.get_snapshot(job)
+        async with send_lock:
+            await websocket.send_text(orjson.dumps(snapshot).decode("utf-8"))
+        tasks = [
+            asyncio.create_task(_sender()),
+            asyncio.create_task(_receiver()),
+        ]
+        _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        stop_event.set()
+        for t in pending:
+            t.cancel()
+        for t in tasks:
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
+    finally:
+        stop_event.set()
+        for t in tasks:
+            t.cancel()
+        hub.unregister_ws_client(client_id)
+
+
+def _list_listening_inodes_for_port(port: int) -> set[str]:
+    inodes: set[str] = set()
+    for proc_net in ("/proc/net/tcp", "/proc/net/tcp6"):
+        if not os.path.exists(proc_net):
+            continue
+        try:
+            with open(proc_net, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()[1:]
+            for line in lines:
+                parts = line.split()
+                if len(parts) < 10:
+                    continue
+                local_addr = parts[1]
+                state = parts[3].upper()
+                inode = parts[9]
+                if state != "0A" or inode == "0" or ":" not in local_addr:
+                    continue
+                try:
+                    l_port = int(local_addr.rsplit(":", 1)[1], 16)
+                except ValueError:
+                    continue
+                if l_port == port:
+                    inodes.add(inode)
+        except OSError:
+            continue
+    return inodes
+
+
+def _verify_job_owns_tcp_port(hub, port: int) -> bool:
+    if not isinstance(port, int) or port < 1024 or port > 65535 or port == 5000:
+        return False
+    if os.path.exists("/proc/net/tcp"):
+        listening_inodes = _list_listening_inodes_for_port(port)
+        if not listening_inodes:
+            return False
+        with hub.lock:
+            for inode in listening_inodes:
+                if (port, inode) in hub._verified_tcp_inodes:
+                    return True
+        target_pgid = getattr(hub, "job_pgid", None)
+        if target_pgid is None:
+            return False
+        expected_targets = {f"socket:[{inode}]" for inode in listening_inodes}
+        try:
+            proc_entries = os.listdir("/proc")
+        except OSError:
+            return False
+        for pid_str in proc_entries:
+            if not pid_str.isdigit():
+                continue
+            pid = int(pid_str)
+            try:
+                if os.getpgid(pid) != target_pgid:
+                    continue
+                fd_dir = f"/proc/{pid}/fd"
+                for fd_name in os.listdir(fd_dir):
+                    try:
+                        link_target = os.readlink(os.path.join(fd_dir, fd_name))
+                    except OSError:
+                        continue
+                    if link_target in expected_targets:
+                        inode = link_target[8:-1]
+                        with hub.lock:
+                            hub._verified_tcp_inodes.add((port, inode))
+                        return True
+            except (OSError, ValueError, ProcessLookupError):
+                continue
+        return False
+    if getattr(hub, "allow_any_local_port_for_test", False):
+        return True
+    return hub.allocated_port is not None and port == hub.allocated_port
+
+
+def _find_job_for_proxy(run_id: str, user_id: str | None = None, chat_id: str | None = None):
+    safe_rid = _sanitize_id(run_id, default="")
+    safe_uid = _sanitize_id(user_id) if user_id else ""
+    safe_cid = _sanitize_id(chat_id, default="") if chat_id else ""
+    if not safe_rid:
+        return None
+    with _JOBS_LOCK:
+        if safe_uid and safe_cid:
+            return _JOBS_REGISTRY.get(f"{safe_uid}:{safe_cid}:{safe_rid}")
+        for candidate in _JOBS_REGISTRY.values():
+            if candidate["run_id"] != safe_rid:
+                continue
+            if safe_uid and candidate["user_id"] != safe_uid:
+                continue
+            if safe_cid and candidate["chat_id"] != safe_cid:
+                continue
+            return candidate
+    return None
+
+
+def _resolve_hub_app_target(hub, window_id: str | None):
+    with hub.lock:
+        if window_id:
+            target = hub.app_targets.get(window_id)
+        elif "default" in hub.app_targets:
+            target = hub.app_targets["default"]
+        elif hub.app_targets:
+            target = next(iter(hub.app_targets.values()))
+        else:
+            target = None
+    if target is None:
+        return None, ("App target not registered", 404)
+    kind, val = target
+    if kind == "tcp" and not _verify_job_owns_tcp_port(hub, val):
+        return None, ("Forbidden TCP port", 403)
+    return target, None
+
+
+async def app_http_proxy_endpoint(request):
+    """Proxifie en streaming les requêtes HTTP vers le serveur applicatif UDS/TCP du sandbox."""
+    run_id = request.path_params.get("run_id", "")
+    wid = request.query_params.get("__echo_wid")
+    job = _find_job_for_proxy(
+        run_id,
+        request.query_params.get("user_id"),
+        request.query_params.get("chat_id"),
+    )
+    if job is None or job.get("canvas_hub") is None:
+        return Response("Sandbox run not found", status_code=404)
+
+    hub = job["canvas_hub"]
+    target, err = _resolve_hub_app_target(hub, wid)
+    if err is not None:
+        return Response(err[0], status_code=err[1])
+
+    with job["lock"]:
+        job["last_activity_at"] = time.time()
+
+    kind, val = target
+    rel_path = (request.path_params.get("path") or "").lstrip("/")
+    query_items = [(k, v) for k, v in request.query_params.multi_items() if k != "__echo_wid"]
+    query_str = urlencode(query_items)
+    base_url = "http://localhost" if kind == "uds" else f"http://127.0.0.1:{val}"
+    target_url = f"{base_url}/{rel_path}" + (f"?{query_str}" if query_str else "")
+
+    req_hop_by_hop = {
+        "host", "connection", "keep-alive", "transfer-encoding",
+        "te", "trailers", "upgrade", "proxy-authenticate",
+        "proxy-authorization", "proxy-connection", "content-length",
+    }
+    fwd_headers = [(k, v) for k, v in request.headers.items() if k.lower() not in req_hop_by_hop]
+    body = await request.body()
+
+    transport = httpx.AsyncHTTPTransport(uds=val) if kind == "uds" else None
+    client = httpx.AsyncClient(transport=transport, follow_redirects=False, timeout=60.0)
+    try:
+        upstream_req = client.build_request(
+            method=request.method,
+            url=target_url,
+            headers=fwd_headers,
+            content=body if body else None,
+        )
+        upstream_resp = await client.send(upstream_req, stream=True)
+    except Exception as exc:
+        await client.aclose()
+        return Response(f"Upstream app error: {exc}", status_code=502)
+
+    resp_hop_by_hop = {
+        "transfer-encoding", "connection", "keep-alive",
+        "proxy-authenticate", "proxy-authorization", "te", "trailers", "upgrade",
+    }
+    resp_headers = [
+        (k, v) for k, v in upstream_resp.headers.multi_items()
+        if k.lower() not in resp_hop_by_hop
+    ]
+
+    async def _stream_body():
+        try:
+            async for chunk in upstream_resp.aiter_raw():
+                if chunk:
+                    yield chunk
+        finally:
+            await upstream_resp.aclose()
+            await client.aclose()
+
+    resp = StreamingResponse(_stream_body(), status_code=upstream_resp.status_code)
+    for k, v in resp_headers:
+        resp.headers.append(k, v)
+    return resp
+
+
+async def _relay_via_websockets(websocket: WebSocket, job: dict, kind: str, val, rel_path: str, query_str: str):
+    suffix = f"/{rel_path}" if rel_path else "/"
+    qs = f"?{query_str}" if query_str else ""
+    if kind == "uds":
+        unix_conn = getattr(websockets, "unix_connect", None)
+        if unix_conn is None:
+            ws_asyncio = getattr(websockets, "asyncio", None)
+            ws_client = getattr(ws_asyncio, "client", None) if ws_asyncio else None
+            unix_conn = getattr(ws_client, "unix_connect", None) if ws_client else None
+        if unix_conn is None:
+            raise RuntimeError("websockets.unix_connect unavailable")
+        conn_ctx = unix_conn(val, f"ws://localhost{suffix}{qs}")
+    else:
+        conn_ctx = websockets.connect(f"ws://127.0.0.1:{val}{suffix}{qs}")
+
+    async with conn_ctx as upstream:
+        stop_event = asyncio.Event()
+
+        async def _c2u():
+            try:
+                while not stop_event.is_set():
+                    msg = await websocket.receive()
+                    if msg.get("type") == "websocket.disconnect":
+                        break
+                    with job["lock"]:
+                        job["last_activity_at"] = time.time()
+                    if "text" in msg and msg["text"] is not None:
+                        await upstream.send(msg["text"])
+                    elif "bytes" in msg and msg["bytes"] is not None:
+                        await upstream.send(msg["bytes"])
+            except (WebSocketDisconnect, _WsConnectionClosed, asyncio.CancelledError):
+                pass
+            finally:
+                stop_event.set()
+
+        async def _u2c():
+            try:
+                while not stop_event.is_set():
+                    data = await upstream.recv()
+                    with job["lock"]:
+                        job["last_activity_at"] = time.time()
+                    if isinstance(data, bytes):
+                        await websocket.send_bytes(data)
+                    else:
+                        await websocket.send_text(str(data))
+            except (WebSocketDisconnect, _WsConnectionClosed, asyncio.CancelledError):
+                pass
+            finally:
+                stop_event.set()
+
+        tasks = [asyncio.create_task(_c2u()), asyncio.create_task(_u2c())]
+        try:
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            stop_event.set()
+            for t in tasks:
+                t.cancel()
+            for t in tasks:
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+
+async def _relay_via_aiohttp(websocket: WebSocket, job: dict, kind: str, val, rel_path: str, query_str: str):
+    suffix = f"/{rel_path}" if rel_path else "/"
+    qs = f"?{query_str}" if query_str else ""
+    connector = aiohttp.UnixConnector(path=val) if kind == "uds" else None
+    ws_url = f"http://localhost{suffix}{qs}" if kind == "uds" else f"http://127.0.0.1:{val}{suffix}{qs}"
+    async with aiohttp.ClientSession(connector=connector) as session:
+        async with session.ws_connect(ws_url) as upstream:
+            stop_event = asyncio.Event()
+
+            async def _c2u():
+                try:
+                    while not stop_event.is_set():
+                        msg = await websocket.receive()
+                        if msg.get("type") == "websocket.disconnect":
+                            break
+                        with job["lock"]:
+                            job["last_activity_at"] = time.time()
+                        if "text" in msg and msg["text"] is not None:
+                            await upstream.send_str(msg["text"])
+                        elif "bytes" in msg and msg["bytes"] is not None:
+                            await upstream.send_bytes(msg["bytes"])
+                except (WebSocketDisconnect, asyncio.CancelledError, Exception):
+                    pass
+                finally:
+                    stop_event.set()
+
+            async def _u2c():
+                try:
+                    while not stop_event.is_set():
+                        msg = await upstream.receive()
+                        if msg.type in (
+                            aiohttp.WSMsgType.CLOSE,
+                            aiohttp.WSMsgType.CLOSED,
+                            aiohttp.WSMsgType.ERROR,
+                        ):
+                            break
+                        with job["lock"]:
+                            job["last_activity_at"] = time.time()
+                        if msg.type == aiohttp.WSMsgType.TEXT:
+                            await websocket.send_text(msg.data)
+                        elif msg.type == aiohttp.WSMsgType.BINARY:
+                            await websocket.send_bytes(msg.data)
+                except (WebSocketDisconnect, asyncio.CancelledError, Exception):
+                    pass
+                finally:
+                    stop_event.set()
+
+            tasks = [asyncio.create_task(_c2u()), asyncio.create_task(_u2c())]
+            try:
+                await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                stop_event.set()
+                for t in tasks:
+                    t.cancel()
+                for t in tasks:
+                    try:
+                        await t
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+
+async def ws_app_proxy_endpoint(websocket: WebSocket):
+    """Proxifie en full-duplex (TEXT/BINARY) les WebSockets vers le serveur applicatif sandbox."""
+    run_id = websocket.path_params.get("run_id", "")
+    wid = websocket.query_params.get("__echo_wid")
+    job = _find_job_for_proxy(
+        run_id,
+        websocket.query_params.get("user_id"),
+        websocket.query_params.get("chat_id"),
+    )
+    await websocket.accept()
+    if job is None or job.get("canvas_hub") is None:
+        try:
+            await websocket.close(code=4404)
+        except Exception:
+            pass
+        return
+
+    hub = job["canvas_hub"]
+    target, err = _resolve_hub_app_target(hub, wid)
+    if err is not None:
+        try:
+            await websocket.close(code=4403 if err[1] == 403 else 4404)
+        except Exception:
+            pass
+        return
+
+    kind, val = target
+    rel_path = (websocket.path_params.get("path") or "").lstrip("/")
+    query_items = [(k, v) for k, v in websocket.query_params.multi_items() if k != "__echo_wid"]
+    query_str = urlencode(query_items)
+
+    try:
+        if websockets is not None:
+            try:
+                await _relay_via_websockets(websocket, job, kind, val, rel_path, query_str)
+            except RuntimeError:
+                if aiohttp is None:
+                    raise
+                await _relay_via_aiohttp(websocket, job, kind, val, rel_path, query_str)
+        elif aiohttp is not None:
+            await _relay_via_aiohttp(websocket, job, kind, val, rel_path, query_str)
+        else:
+            await websocket.close(code=1011)
+    except Exception:
+        try:
+            await websocket.close(code=1011)
+        except Exception:
+            pass
+    finally:
+        try:
+            await websocket.close(code=1000)
+        except Exception:
+            pass
+
+
 asgi_app = Starlette(
     routes=[
         WebSocketRoute("/api/terminals/{session_id}", ws_terminal_endpoint),
+        WebSocketRoute("/ws/canvas/{run_id}", ws_canvas_endpoint),
+        WebSocketRoute("/ws/app/{run_id}", ws_app_proxy_endpoint),
+        WebSocketRoute("/ws/app/{run_id}/{path:path}", ws_app_proxy_endpoint),
+        Route(
+            "/app_proxy/{run_id}",
+            app_http_proxy_endpoint,
+            methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+        ),
+        Route(
+            "/app_proxy/{run_id}/{path:path}",
+            app_http_proxy_endpoint,
+            methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+        ),
         Mount("/", app=WSGIMiddleware(app)),
     ]
 )

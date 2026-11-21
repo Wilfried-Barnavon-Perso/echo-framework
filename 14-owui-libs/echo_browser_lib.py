@@ -1,16 +1,16 @@
 """
 title: ECHO Browser Lib
 author: ECHO Framework
-version: 6.15.1.1
+version: 6.16.0.1
 description: Composant système interne : ECHO Browser Lib.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.16.0.1: Suppression de iter_screencast_stream SSE et ajout de build_browser_ws_url et resolve_chat_browser_session_id.
 # 6.15.1.1: Passage par défaut de min_age_sec à BROWSER_TRANSIENT_GRACE_SEC (1800.0s) dans cleanup_expired_browserviews et application systématique du délai de grâce y compris sur force_discard_sids.
 # 6.15.0.1: Ajout de min_age_sec dans cleanup_expired_browserviews pour préserver les captures récentes lors des purges passives sans affecter force_discard_sids.
 # 6.13.1.1: Extension de cleanup_expired_browserviews aux clips MP4 (purge couplée N1 + orphelins), ajout de enforce_transient_clip_budget (purge FIFO N2) et iter_screencast_stream SSE.
 # 6.6.5.1: Ajout de get_active_browser_sessions et cleanup_expired_browserviews pour la gestion éphémère/rétention des captures browserviews.
-# 5.232.0.1: Ajout du helper factorisé render_ephemeral_html pour la rasterisation incognito Zéro-Disque en mémoire vive via /render_ephemeral_view.
 
 import asyncio
 import json
@@ -18,7 +18,7 @@ import os
 import time
 import httpx
 import logging
-from typing import AsyncGenerator, Dict, Callable, Optional
+from typing import Dict, Callable, Optional
 
 # On suppose que echo_constants est disponible dans le chemin PYTHONPATH (/app/backend/echo_libs)
 from echo_constants import (
@@ -367,33 +367,26 @@ async def cleanup_expired_browserviews(
     return {"purged": purged}
 
 
-async def iter_screencast_stream(
-    session_id: str,
-    user_id: str,
-    stop_event: asyncio.Event,
-    timeout: float = 30.0,
-) -> AsyncGenerator[dict, None]:
-    """Consomme le flux SSE /screencast/stream/{session_id} du Browser Worker."""
-    url = f"{NAVIGATION_ENGINE_URL}/screencast/stream/{session_id}"
-    headers = {"X-OpenWebUI-User-Id": str(user_id)}
-    client = _get_browser_client(int(max(5, timeout)))
-    req_timeout = httpx.Timeout(connect=5.0, read=timeout, write=5.0, pool=5.0)
-    async with client.stream("GET", url, headers=headers, timeout=req_timeout) as resp:
-        resp.raise_for_status()
-        async for line in resp.aiter_lines():
-            if stop_event.is_set():
-                break
-            if not line or line.startswith(":"):
-                continue
-            if line.startswith("data: "):
-                try:
-                    ev = json.loads(line[6:])
-                except Exception:
-                    continue
-                if isinstance(ev, dict):
-                    yield ev
-                    if ev.get("type") == "eof":
-                        break
+def build_browser_ws_url(session_id: str) -> str:
+    """Convertit NAVIGATION_ENGINE_URL vers l'URL WebSocket /ws/screencast/{session_id}."""
+    base = str(NAVIGATION_ENGINE_URL or "").rstrip("/")
+    if base.startswith("https://"):
+        ws_base = "wss://" + base[len("https://"):]
+    elif base.startswith("http://"):
+        ws_base = "ws://" + base[len("http://"):]
+    else:
+        ws_base = base
+    return f"{ws_base}/ws/screencast/{session_id}"
+
+
+async def resolve_chat_browser_session_id(user_id: str, chat_id: str) -> Optional[str]:
+    """Interroge get_active_browser_sessions() pour retrouver un session_id actif de (user_id, chat_id)."""
+    if not chat_id:
+        return None
+    sessions = await get_active_browser_sessions(user_id=user_id, chat_id=chat_id)
+    if not sessions:
+        return None
+    return sorted(sessions)[0]
 
 
 async def render_ephemeral_html(

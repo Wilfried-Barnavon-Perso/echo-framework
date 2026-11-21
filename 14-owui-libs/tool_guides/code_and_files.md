@@ -1,11 +1,11 @@
 ---
 domain_id: code_and_files
-version: 6.15.2.1
+version: 6.16.0.1
 updated_at: 2026-11-21
 name: Registre Unifié, Explorateur de l'Espace Personnel & Sandbox d'Exécution de Code
 description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash), exécution isolée de scripts Codex sandbox (.py / .js / .sh) et exécution SSH distante (ssh_executor).
 tools: [query_registry, read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes, code_executor, control_sandbox_execution, kill_sandbox_execution, ssh_executor]
-keywords: [registre, query_registry, fichier, file, code, python, node, javascript, bash, sh, shell, sandbox, code_executor, control_sandbox_execution, kill_sandbox_execution, ssh, ssh_executor, bidi, echo_monitor, image, pdf, audio, video, multimedia, semantic_probe, read_multimedia_file, hash, sha256, plans, generated]
+keywords: [registre, query_registry, fichier, file, code, python, node, javascript, bash, sh, shell, sandbox, code_executor, control_sandbox_execution, kill_sandbox_execution, ssh, ssh_executor, bidi, echo_monitor, fastapi, websocket, expose_app, server, uds, image, pdf, audio, video, multimedia, semantic_probe, read_multimedia_file, hash, sha256, plans, generated]
 ---
 
 # MANUEL OPÉRATIONNEL : REGISTRE UNIFIÉ, FICHIERS & SANDBOX DE CODE (`code_and_files`)
@@ -62,27 +62,32 @@ Il est ABSOLUMENT INTERDIT de passer du code brut à `code_executor`. Toute mani
 - **Points de montage du système de fichiers Sandbox** :
   - `/sandbox` (**Lecture & Écriture persistante**) : Répertoire de travail courant.
   - `/main`, `/plans`, `/generated`, `/files`, `/browserviews` (**Lecture seule**) : Espaces Codex, fichiers téléversés par L'Utilisateur et captures de navigation web.
+  - `/echo_libs_sandbox` (**Lecture seule**) : Librairies natives (`echo_monitor.py`, `echo_monitor.js`) injectées dans `PYTHONPATH` et `NODE_PATH`.
   - `/sandbox-agent-readme.md` (**Lecture seule**) : Manuel technique interne de la Sandbox.
+  - `/run/echo_ipc.sock` (**Socket Unix AF_UNIX**) et `/run/echo_app/http.sock` (**Socket Unix AF_UNIX** RW) : Canaux IPC et serveur applicatif web.
+- **Variables d'environnement pré-injectées** : `ECHO_RUN_ID`, `ECHO_IPC_SOCK`, `ECHO_APP_UDS` (`/run/echo_app/http.sock`), `ECHO_APP_PORT` (port TCP local de repli).
 - **Quotas & Isolation** : Chaque exécution est strictement isolée par `(user_id, chat_id, run_id)` (isolation stricte par session et par Sous-Agent), à raison d'un maximum de **4 processus simultanés par session** (`8` globalement sur le Worker).
 - **Modes d'exécution de `code_executor`** :
-  - `background=False` (**défaut REQUIS pour les scripts standards sans serveur**) : Exécution synchrone bloquante restituant `output`, `error` et `run_id` à la terminaison. **INTERDIT** pour tout script invoquant `BidiRouter.serve_forever()` (refus immédiat par garde pré-vol).
-  - `background=True` (**OBLIGATOIRE pour tout serveur `BidiRouter.serve_forever()` ou calcul long**) : Démarre le processus en tâche de fond, exécute une **Readiness Probe** (jusqu'à `8s` pour réception du signal `ready` ou détection de crash précoce avec remontée `stderr`/`exit_code`), maintient le pont UI <-> Sandbox actif via le superviseur pérenne (`EchoWindowManager`), et retourne immédiatement `run_id`, `pid`, `ui_ready`, `window_ids` et `idle_ttl_sec`.
-  - **Durée de vie & TTL** : Un processus détaché avec `echo_monitor` / `BidiRouter` est soumis à un **TTL d'inactivité de `1800s` (30 min)** renouvelé sur activité RPC/poll et un **plafond absolu de `4h` (`14400s`)**.
+  - `background=False` (**défaut REQUIS pour les scripts standards sans serveur**) : Exécution synchrone bloquante restituant `output`, `error` et `run_id` à la terminaison. **INTERDIT** pour tout script invoquant `BidiRouter.serve_forever()` ou `echo_monitor.expose_app()` (refus immédiat par garde pré-vol).
+  - `background=True` (**OBLIGATOIRE pour tout serveur `BidiRouter.serve_forever()`, `echo_monitor.expose_app()` ou calcul long**) : Démarre le processus en tâche de fond, exécute une **Readiness Probe** (jusqu'à `8s` pour réception du signal `ready` ou détection de crash précoce avec remontée `stderr`/`exit_code`), maintient le pont UI <-> Sandbox actif via le superviseur pérenne (`EchoWindowManager`), et retourne immédiatement `run_id`, `pid`, `ui_ready`, `window_ids` et `idle_ttl_sec`.
+  - **Durée de vie & TTL** : Un processus détaché avec `echo_monitor` (`BidiRouter` ou `expose_app`) est soumis à un **TTL d'inactivité de `1800s` (30 min)** renouvelé sur activité RPC/proxy/signal et un **plafond absolu de `4h` (`14400s`)**.
 - **Pilotage via `control_sandbox_execution(action, run_id=None, wait_sec=0)`** :
   - `action="status"` : Liste tous les `run_id` actifs et récemment terminés de la session (ou détaille un `run_id` précis).
   - `action="listen"` : Récupère les nouvelles sorties incrémentales `stdout_chunk` / `stderr_chunk` du `run_id` (en attendant jusqu'à `wait_sec` secondes, max `60s`, si le processus est en cours).
   - `action="kill"` (ou `kill_sandbox_execution(run_id=None)`) : Détruit immédiatement le groupe de processus (`SIGKILL`) du `run_id` cible (ou tous les processus actifs de la session si `run_id` est omis).
 
-### 3.3 Interfaces Interactives & Routeur Bidi Temps Réel (`echo_monitor`)
-Pour déployer une application web interactive ou un serveur réactif dans l'onglet natif **Applications** (onglet Applications de l'interface), Le Modèle DOIT utiliser `echo_monitor`.
+### 3.3 Interfaces Interactives & Serveurs Web Temps Réel (`echo_monitor`)
+Pour déployer une interface interactive ou un serveur web complet dans l'onglet natif **Applications**, Le Modèle DOIT utiliser `echo_monitor`.
 
 > [!IMPORTANT]
 > **INTERDICTION DE DÉLÉGATION MANUELLE À L'UTILISATEUR** :
 > Il est ABSOLUMENT INTERDIT pour Le Modèle de demander à L'Utilisateur d'ouvrir un fichier local sur son poste, de lancer un serveur HTTP manuellement ou de copier-coller un JSON dans le chat.
+> **Contrainte `Origin: null`** : L'iframe de l'onglet **Applications** est sandboxée sans `allow-same-origin` ; `localStorage`, `sessionStorage` et `document.cookie` sont inutilisables côté navigateur. Toute persistance d'état DOIT résider côté serveur dans `/sandbox` (SQLite ou JSON).
 
-#### Pattern A — Routeur RPC Temps Réel sans rechargement DOM (`BidiRouter` + `window.echoRequest`) :
-- **Côté Iframe JS** : `const res = await window.echoRequest("mon_action", { valeur: 42 });` et `window.onEchoEvent((data, reqId) => { ... });` (pré-injectés dans l'`<iframe>`).
-- **Côté Sandbox (`server.py`)** :
+#### Pattern A — Widget Réactif Mono-Fichier (`display` + `BidiRouter`, `< 2 ms`) :
+- Transport Socket Unix AF_UNIX sur `ECHO_IPC_SOCK` (`< 2 ms`), prenant en charge JSON et binaire brut (`ArrayBuffer` / `bytes` / `Buffer`).
+- **Côté Iframe JS** : `const res = await window.echoRequest("mon_action", { valeur: 42 }, arrayBuffer?);` et `window.onEchoEvent((data, reqId, arrayBuffer) => { ... });` (pré-injectés dans l'`<iframe>`).
+- **Côté Sandbox (`server.py`, `background=True` obligatoire)** :
   ```python
   import echo_monitor
 
@@ -95,13 +100,19 @@ Pour déployer une application web interactive ou un serveur réactif dans l'ong
 
   router.serve_forever()
   ```
-- **Lancement & Concurrence** : Le Modèle **DOIT IMPÉRATIVEMENT** lancer tout serveur `BidiRouter.serve_forever()` avec `background=True` (refusé en `background=False`). Le routeur exécute les handlers RPC en **concurrence multi-threadée** (`4` workers par défaut) : tout handler effectuant des appels réseau/HTTP DOIT imposer des timeouts courts (ex: `timeout=3.0`–`5.0`). Le déploiement d'un nouveau run sur un `window_id` déjà actif remplace et arrête automatiquement le run précédent. Le Modèle peut continuer à interagir et appeler `control_sandbox_execution(action="listen", run_id=...)`.
+- **Concurrence** : Le routeur exécute les handlers RPC en concurrence (`4` workers par défaut) : tout handler effectuant des appels réseau/HTTP DOIT imposer des timeouts courts (`timeout=3.0`–`5.0`).
 
-#### Pattern B — Soumission One-Shot par Snapshot (`get_ui_payload`) :
-- L'`<iframe>` émet `window.parent.postMessage({ echoUIPayload: { window_id: "app_id", payload: {...} } }, "*");` et le script Sandbox lit `echo_monitor.get_ui_payload("app_id")` dans une boucle `while not echo_monitor.is_window_closed("app_id"):`.
+#### Pattern B — Serveur Applicatif Web Complet (`FastAPI`/`Uvicorn` ou `Express`/`ws` + `expose_app`) :
+- Pour les applications web multi-routes, APIs REST, assets multi-fichiers (`<img src="...">`, CSS, JS dans `/sandbox`) et WebSockets natifs :
+  1. Le script démarre son serveur HTTP/WS en écoutant sur `echo_monitor.get_app_uds()` (prioritaire, Socket Unix) ou sur `("127.0.0.1", echo_monitor.get_app_port())`.
+  2. Le script appelle `echo_monitor.expose_app(title="...")` (`background=True` obligatoire), qui sonde la disponibilité du serveur, publie l'application via un capability ticket HMAC dans l'onglet **Applications** et bloque jusqu'à fermeture de la fenêtre (`wait_until_closed`).
+  3. Les pages HTML servies peuvent utiliser des chemins relatifs ou `/...` (réécrits automatiquement par le shim `<base>`, `fetch` et `WebSocket` du proxy).
+
+#### Pattern C — Snapshot One-Shot (`get_ui_payload`) :
+- Pour un affichage statique ou une soumission ponctuelle (`background=False`) : `echo_monitor.display(html, ...)` sans boucle serveur ; `echo_monitor.get_ui_payload("app_id")` reste disponible pour lire le dernier payload émis par `window.parent.postMessage({ echoUIPayload: { window_id: "app_id", payload: {...} } }, "*")`.
 
 #### Cycle de Vie & Arrêt Propre de la Vue Interactive :
-- Lorsque L'Utilisateur ferme l'onglet ou la vue **Applications**, `echo_monitor.is_window_closed("app_id")` retourne `True` et le script dispose de `3 s` pour libérer ses ressources et quitter proprement avant interruption forcée par Le Système.
+- Lorsque L'Utilisateur ferme la vue **Applications**, `echo_monitor.is_window_closed("app_id")` retourne `True`, `wait_until_closed()` / `serve_forever()` se débloque et le script dispose de `3 s` pour libérer ses ressources avant interruption forcée par Le Système. Le Modèle PEUT appeler `control_sandbox_execution(action="listen", run_id=...)` pour suivre les journaux.
 
 ### 3.4 Exécution SSH Distante (`ssh_executor`)
 1. **Découverte préalable** : Le Modèle DOIT appeler `list_identities(service="ssh")` pour lister les alias (`account_id`) configurés et leur `description` fonctionnelle.

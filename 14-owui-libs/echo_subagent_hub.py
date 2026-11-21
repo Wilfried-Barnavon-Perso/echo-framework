@@ -2,16 +2,16 @@
 """
 title: ECHO Subagent Hub
 author: Wilfried BARNAVON
-version: 6.15.1.1
+version: 6.16.0.1
 description: Contrôleur exécutif unifié des sous-agents, tranches supervisées, ToolDispatcher et file FIFO hybride.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.16.0.1: Suppression de _stream_proxy SSE dans BrowserToolDispatcher et enregistrement register_browser_session pour le WebSocket binaire hors-slices.
 # 6.15.1.1: Alignement du délai de grâce dans BrowserToolDispatcher sur BROWSER_TRANSIENT_GRACE_SEC (1800.0s).
 # 6.15.0.1: Propagation et télémétrie HTTP (http_status, http_status_text, navigation_statuses) dans BrowserToolDispatcher/EchoAgentRunner/deploy_browser_navigation_monitor, grâce passive min_age_sec=300.0 et isolation de enforce_transient_clip_budget.
 # 6.13.1.1: Découplage live SSE (/screencast/stream + live_state/live_cursor), persistance et broadcast sans Base64 des clips MP4 dans deploy_browser_navigation_monitor, garde finally stop_screencast et fix mimeType image/jpeg.
 # 6.7.11.1: Délégation du délestage dans StandardToolDispatcher._invoke_single_tool à apply_tool_spillover (echo_core).
-# 6.7.10.1: Alignement de StandardToolDispatcher._invoke_single_tool sur get_tool_truncation_limit et respect de _skip_truncation (suppression de la re-troncature à 32 Ko).
 
 from __future__ import annotations
 
@@ -1486,8 +1486,6 @@ class BrowserToolDispatcher:
         self.zoom_attempts = 0
         self.last_view: Optional[dict] = None
         self._sem_acquired = False
-        self._stop_streaming = asyncio.Event()
-        self._proxy_task: Optional[asyncio.Task] = None
         self.last_url: str = ""
         self.last_http_status: Optional[int] = None
         self.last_http_status_text: str = ""
@@ -1616,6 +1614,13 @@ class BrowserToolDispatcher:
             if start_res.get("status") != "success":
                 return None
 
+        if self.show_browser_hud:
+            from echo_window_manager import get_window_manager
+
+            get_window_manager().register_browser_session(
+                self.user_id, self.chat_id, self.browser_session_id
+            )
+
         await cleanup_expired_browserviews(self.user_id, self.chat_id, min_age_sec=BROWSER_TRANSIENT_GRACE_SEC)
         nav_res: Optional[dict] = None
         if start_url:
@@ -1656,104 +1661,30 @@ class BrowserToolDispatcher:
         return res_view
 
     async def on_before_slice(self) -> None:
-        from echo_browser_lib import iter_screencast_stream
-        from echo_window_manager import get_window_manager
-
         await self.acquire_browser_slot()
-        self._stop_streaming.clear()
-
         if self.show_browser_hud:
-            async def _stream_proxy() -> None:
-                wm = get_window_manager()
-                while not self._stop_streaming.is_set():
-                    if not wm.has_browser_live_subscribers(
-                        self.user_id, self.chat_id
-                    ):
-                        await asyncio.sleep(0.5)
-                        continue
-                    try:
-                        async for ev in iter_screencast_stream(
-                            self.browser_session_id,
-                            self.user_id,
-                            self._stop_streaming,
-                        ):
-                            if (
-                                self._stop_streaming.is_set()
-                                or not wm.has_browser_live_subscribers(
-                                    self.user_id, self.chat_id
-                                )
-                            ):
-                                break
-                            ev_type = ev.get("type")
-                            if ev_type == "frame":
-                                await wm.broadcast_browser_live(
-                                    self.user_id,
-                                    self.chat_id,
-                                    {
-                                        "type": "live_frame",
-                                        "session_id": self.browser_session_id,
-                                        "frame_id": ev.get("frame_id", 0),
-                                        "b64": ev.get("b64", ""),
-                                        "url": ev.get("url", ""),
-                                        "vp_w": ev.get("vp_w", 1280),
-                                        "vp_h": ev.get("vp_h", 800),
-                                        "ts": ev.get("ts", time.time()),
-                                    },
-                                )
-                            elif ev_type == "cursor":
-                                await wm.broadcast_browser_live(
-                                    self.user_id,
-                                    self.chat_id,
-                                    {
-                                        "type": "live_cursor",
-                                        "session_id": self.browser_session_id,
-                                        "x": ev.get("x"),
-                                        "y": ev.get("y"),
-                                        "vp_w": ev.get("vp_w", 1280),
-                                        "vp_h": ev.get("vp_h", 800),
-                                        "clicking": bool(ev.get("clicking")),
-                                        "ts": ev.get("ts", time.time()),
-                                    },
-                                )
-                            elif ev_type == "eof":
-                                break
-                    except asyncio.CancelledError:
-                        break
-                    except Exception:
-                        pass
-                    if not self._stop_streaming.is_set():
-                        await asyncio.sleep(0.2)
+            from echo_window_manager import get_window_manager
 
-            self._proxy_task = asyncio.create_task(_stream_proxy())
+            get_window_manager().register_browser_session(
+                self.user_id, self.chat_id, self.browser_session_id
+            )
 
     async def on_after_slice(self, final_status: str) -> None:
-        from echo_window_manager import get_window_manager
-
-        self._stop_streaming.set()
-        if self._proxy_task:
-            self._proxy_task.cancel()
-            self._proxy_task = None
-        if self.show_browser_hud:
-            try:
-                wm = get_window_manager()
-                if wm.has_browser_live_subscribers(self.user_id, self.chat_id):
-                    await wm.broadcast_browser_live(
-                        self.user_id,
-                        self.chat_id,
-                        {
-                            "type": "live_state",
-                            "session_id": self.browser_session_id,
-                            "active": False,
-                        },
-                    )
-            except Exception:
-                pass
         self.release_browser_slot()
 
     async def on_cleanup(self) -> None:
         from echo_browser_lib import cleanup_expired_browserviews
 
         await self.on_after_slice("killed")
+        if self.show_browser_hud:
+            try:
+                from echo_window_manager import get_window_manager
+
+                get_window_manager().unregister_browser_session(
+                    self.user_id, self.chat_id, self.browser_session_id
+                )
+            except Exception:
+                pass
         try:
             await self.browser.reset_session()
         except Exception:
@@ -1782,25 +1713,6 @@ class BrowserToolDispatcher:
         last_fn_name = "action"
         err_streak = 0
 
-        from echo_window_manager import get_window_manager
-
-        wm = get_window_manager()
-        if self.show_browser_hud and wm.has_browser_live_subscribers(
-            self.user_id, self.chat_id
-        ):
-            try:
-                await wm.broadcast_browser_live(
-                    self.user_id,
-                    self.chat_id,
-                    {
-                        "type": "live_state",
-                        "session_id": self.browser_session_id,
-                        "active": True,
-                    },
-                )
-            except Exception:
-                pass
-
         try:
             await self.browser.start_screencast()
         except Exception:
@@ -1818,21 +1730,6 @@ class BrowserToolDispatcher:
                 sc_res = await self.browser.stop_screencast()
             except Exception:
                 sc_res = {}
-            if self.show_browser_hud and wm.has_browser_live_subscribers(
-                self.user_id, self.chat_id
-            ):
-                try:
-                    await wm.broadcast_browser_live(
-                        self.user_id,
-                        self.chat_id,
-                        {
-                            "type": "live_state",
-                            "session_id": self.browser_session_id,
-                            "active": False,
-                        },
-                    )
-                except Exception:
-                    pass
             return sc_res if isinstance(sc_res, dict) else {}
 
         def _attach_clip_fields(target_view: dict, sc_res: dict) -> None:

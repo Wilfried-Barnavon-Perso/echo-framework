@@ -1,7 +1,7 @@
 """
 ================================================================================
 MODULE : ECHO BROWSER WORKER API (FASTAPI ASYNC EDITION)
-VERSION : 6.15.0.1
+VERSION : 6.16.0.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-11-21
 
@@ -9,30 +9,31 @@ DATE MAJ : 2026-11-21
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.16.0.1: Migration screencast live vers WebSocket binaire (/ws/screencast, header 16B !BBHHHHIH + JPEG brut, ACK et CDP continu).
 # 6.15.0.1: Capture et exposition du statut HTTP (page_http_status, listener main-frame, _goto_resilient, navigate/refresh/tab_new/inspect_page) et normalisation _norm_echo_id dans GET /sessions.
 # 6.13.1.1: Découplage live CDP SSE (/screencast/stream), curseur JSON léger, encodage clip MP4 H.264 (curseur incrusté, filtre pair) sur /screencast/stop et correction fuites CDPSession.
 # 6.7.5.1: Ajout de _goto_resilient (wait_until="domcontentloaded", repli gracieux sur PlaywrightTimeoutError hors about:blank) pour navigate, tab_new et refresh.
 # 6.6.5.1: Ajout de l'endpoint GET /sessions pour lister les sessions Playwright actives par user_id/chat_id.
-# 5.236.4.1: Durcissement furtivité anti-bot (Client Hints, prototypes safe, WebGL Linux/Android), élimination du tatouage DOM (Zéro-Trace) et incrustation active du curseur hors-DOM via Pillow sur le screencast.
 
 import asyncio
 from collections import deque
 import io
 import pybase64 as base64
 import os
+import struct
 import subprocess
 import tempfile
 import time
 import random
+import uuid
 import logging
 from typing import Any, Optional
 import orjson as json
 import html2text
 from PIL import Image, ImageDraw
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError, async_playwright
 import logging.config
 
@@ -85,6 +86,8 @@ CLIP_FRAME_MAX_DUR_SEC = 1.50
 CLIP_FFMPEG_CRF = "28"
 CLIP_FFMPEG_TIMEOUT_SEC = 20
 LIVE_QUEUE_MAXSIZE = 8
+LIVE_FRAME_HEADER = struct.Struct("!BBHHHHIH")
+LIVE_MAX_IN_FLIGHT_FRAMES = 2
 SESSIONS = {}
 SESSIONS_LOCK = asyncio.Lock()
 
@@ -779,8 +782,6 @@ class BrowserSession:
         self.cdp_client = None
         self.cdp_page = None
         self.action_lock = asyncio.Lock()
-        self.last_screencast_poll = 0
-        self.latest_frame = None
         self.frame_id = 0
         self.index_gen = 0
         self.new_tab_opened = False
@@ -792,7 +793,7 @@ class BrowserSession:
         self.mouse_y = None
         self.mouse_clicking = False
         self.viewport = None
-        self.live_subscribers: set[asyncio.Queue] = set()
+        self.ws_subscribers: dict[str, dict[str, Any]] = {}
         self.recording_clip = False
         self.clip_frames: deque = deque(maxlen=CLIP_MAX_FRAMES)
         self._clip_start_ts = 0.0
@@ -878,17 +879,53 @@ class BrowserSession:
             return (int(self.viewport.get("width", 1280)), int(self.viewport.get("height", 800)))
         return (1280, 800)
 
-    def _publish_live_event(self, event: dict) -> None:
-        for q in list(self.live_subscribers):
-            try:
-                if q.full():
-                    try:
-                        q.get_nowait()
-                    except asyncio.QueueEmpty:
-                        pass
-                q.put_nowait(event)
-            except (asyncio.QueueFull, Exception):
-                pass
+    def pack_binary_frame(self, raw_jpeg: bytes, frame_type: int = 1) -> bytes:
+        vp_w, vp_h = self._get_viewport_dims()
+        cx = max(0, min(65534, int(self.mouse_x))) if self.mouse_x is not None else 0xFFFF
+        cy = max(0, min(65534, int(self.mouse_y))) if self.mouse_y is not None else 0xFFFF
+        flags = 0x01 if self.mouse_clicking else 0x00
+        header = LIVE_FRAME_HEADER.pack(
+            frame_type & 0xFF,
+            flags,
+            max(1, min(65535, vp_w)),
+            max(1, min(65535, vp_h)),
+            cx,
+            cy,
+            self.frame_id & 0xFFFFFFFF,
+            0,
+        )
+        return header + raw_jpeg
+
+    @staticmethod
+    def _push_ws_queue(q: asyncio.Queue, item: tuple[str, Any]) -> bool:
+        try:
+            if q.full():
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+            q.put_nowait(item)
+            return True
+        except (asyncio.QueueFull, Exception):
+            return False
+
+    def _publish_ws_frame(self, raw_jpeg: bytes, frame_type: int = 1) -> None:
+        if not self.ws_subscribers:
+            return
+        packet = self.pack_binary_frame(raw_jpeg, frame_type)
+        for sub in list(self.ws_subscribers.values()):
+            acked_id = sub.get("acked_id", 0)
+            if sub.get("sent_id", 0) > acked_id and (self.frame_id - acked_id) > LIVE_MAX_IN_FLIGHT_FRAMES:
+                continue
+            if self._push_ws_queue(sub["queue"], ("bytes", packet)):
+                sub["sent_id"] = self.frame_id
+
+    def _publish_ws_json(self, event: dict[str, Any]) -> None:
+        if not self.ws_subscribers:
+            return
+        payload_txt = json.dumps(event).decode("utf-8")
+        for sub in list(self.ws_subscribers.values()):
+            self._push_ws_queue(sub["queue"], ("text", payload_txt))
 
     def _record_clip_sample(self, raw_bytes: Optional[bytes], force: bool = False) -> None:
         now = time.monotonic()
@@ -914,7 +951,7 @@ class BrowserSession:
             self.mouse_clicking = bool(clicking)
         vp_w, vp_h = self._get_viewport_dims()
         if self.mouse_x is not None and self.mouse_y is not None:
-            self._publish_live_event({
+            self._publish_ws_json({
                 "type": "cursor",
                 "session_id": self.sid,
                 "x": self.mouse_x,
@@ -930,7 +967,6 @@ class BrowserSession:
         cdp = self.cdp_client
         self.cdp_client = None
         self.cdp_page = None
-        self.last_screencast_poll = 0
         if cdp:
             try:
                 await cdp.send('Page.stopScreencast')
@@ -951,7 +987,6 @@ class BrowserSession:
         vp = page.viewport_size
         if vp:
             self.viewport = vp
-        vp_w, vp_h = self._get_viewport_dims()
         max_w = (vp["width"] // 2) if vp else 640
         max_h = (vp["height"] // 2) if vp else 400
 
@@ -959,20 +994,19 @@ class BrowserSession:
             try:
                 raw_b = base64.b64decode(event['data'])
                 self.raw_frame_bytes = raw_b
-                self.latest_frame = event['data']
                 self.frame_id += 1
-                self.latest_url = page.url
+                current_url = page.url
+                if current_url != self.latest_url:
+                    self.latest_url = current_url
+                    self._publish_ws_json({
+                        "type": "state",
+                        "session_id": self.sid,
+                        "url": self.latest_url,
+                        "status": "live",
+                        "active": True,
+                    })
                 self._record_clip_sample(raw_b, force=True)
-                self._publish_live_event({
-                    "type": "frame",
-                    "session_id": self.sid,
-                    "frame_id": self.frame_id,
-                    "b64": event['data'],
-                    "url": self.latest_url,
-                    "vp_w": vp_w,
-                    "vp_h": vp_h,
-                    "ts": time.time(),
-                })
+                self._publish_ws_frame(raw_b, frame_type=1)
             except Exception as e:
                 logger.warning(f"[{self.sid}] handle_frame error: {e}")
             finally:
@@ -1117,7 +1151,7 @@ class BrowserSession:
     async def close(self):
         try:
             await self._detach_cdp()
-            self._publish_live_event({"type": "eof", "session_id": self.sid})
+            self._publish_ws_json({"type": "eof", "session_id": self.sid})
             await self.context.close()
             logger.info(f"[{self.sid}] 🗑️ BrowserContext closed.")
         except Exception as e:
@@ -1161,13 +1195,7 @@ async def session_cleanup_loop():
                 session = SESSIONS.pop(sid)
                 await session.close()
             for sid, s in SESSIONS.items():
-                if (
-                    s.cdp_client
-                    and not s.live_subscribers
-                    and not s.recording_clip
-                    and (now - s.last_screencast_poll > 2.5)
-                    and s.last_screencast_poll > 0
-                ):
+                if s.cdp_client and not s.ws_subscribers and not s.recording_clip:
                     logger.info(f"[{sid}] 🛑 Watchdog: Stopping idle screencast")
                     await s._detach_cdp()
 
@@ -1266,7 +1294,6 @@ async def screencast_start(request: Request) -> dict[str, Any]:
     if not page:
         return {"status": "error", "message": "Aucune page active."}
     try:
-        await session._detach_cdp()
         session.clip_frames.clear()
         session._clip_start_ts = time.monotonic()
         session._last_clip_sample_ts = 0.0
@@ -1299,7 +1326,8 @@ async def screencast_stop(request: Request) -> dict[str, Any]:
     except Exception as e:
         logger.error(f"[{sid}] Screencast stop error: {e}")
     finally:
-        await session._detach_cdp()
+        if not session.ws_subscribers:
+            await session._detach_cdp()
     clip_b64 = base64.b64encode(mp4_bytes).decode("utf-8") if mp4_bytes else ""
     return {
         "status": "success",
@@ -1311,95 +1339,115 @@ async def screencast_stop(request: Request) -> dict[str, Any]:
     }
 
 
-@app.get("/screencast/stream/{session_id}")
-async def screencast_stream(session_id: str, request: Request):
+@app.websocket("/ws/screencast/{session_id}")
+async def ws_screencast(websocket: WebSocket, session_id: str):
+    await websocket.accept()
     session = SESSIONS.get(session_id)
-
-    async def event_generator():
-        if not session:
-            yield f"data: {json.dumps({'type': 'eof', 'session_id': session_id}).decode('utf-8')}\n\n"
-            return
-        q: asyncio.Queue = asyncio.Queue(maxsize=LIVE_QUEUE_MAXSIZE)
-        session.live_subscribers.add(q)
-        try:
-            vp_w, vp_h = session._get_viewport_dims()
-            if session.latest_frame:
-                init_frame = {
-                    "type": "frame",
-                    "session_id": session.sid,
-                    "frame_id": session.frame_id,
-                    "b64": session.latest_frame,
-                    "url": session.latest_url,
-                    "vp_w": vp_w,
-                    "vp_h": vp_h,
-                    "ts": time.time(),
-                }
-                yield f"data: {json.dumps(init_frame).decode('utf-8')}\n\n"
-            if session.mouse_x is not None and session.mouse_y is not None:
-                init_cursor = {
-                    "type": "cursor",
-                    "session_id": session.sid,
-                    "x": session.mouse_x,
-                    "y": session.mouse_y,
-                    "vp_w": vp_w,
-                    "vp_h": vp_h,
-                    "clicking": session.mouse_clicking,
-                    "ts": time.time(),
-                }
-                yield f"data: {json.dumps(init_cursor).decode('utf-8')}\n\n"
-
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    ev = await asyncio.wait_for(q.get(), timeout=10.0)
-                    yield f"data: {json.dumps(ev).decode('utf-8')}\n\n"
-                    if ev.get("type") == "eof":
-                        break
-                except asyncio.TimeoutError:
-                    yield ": keepalive\n\n"
-        finally:
-            session.live_subscribers.discard(q)
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-@app.post("/screencast/latest")
-async def screencast_latest(request: Request) -> dict[str, Any]:
-    data = await request.json()
-    sid = data.get("session_id")
-    last_frame_id = data.get("last_frame_id", 0)
-    session = SESSIONS.get(sid)
     if not session:
-        return {"status": "error", "message": "Session introuvable."}
-    session.last_screencast_poll = time.time()
-    if not session.cdp_client:
+        try:
+            await websocket.send_text(json.dumps({"type": "eof", "session_id": session_id}).decode("utf-8"))
+            await websocket.close(code=1000)
+        except Exception:
+            pass
+        return
+
+    sub_id = uuid.uuid4().hex
+    sub: dict[str, Any] = {
+        "queue": asyncio.Queue(maxsize=LIVE_QUEUE_MAXSIZE),
+        "sent_id": session.frame_id,
+        "acked_id": session.frame_id,
+    }
+    session.ws_subscribers[sub_id] = sub
+    send_lock = asyncio.Lock()
+
+    try:
         page = await session.get_active_page()
         if page:
-            try:
-                await session.ensure_screencast(page)
-            except Exception as e:
-                logger.error(f"[{sid}] Auto-Resume error: {e}")
-    start_time = time.time()
-    while session.frame_id == last_frame_id and time.time() - start_time < 1.0:
-        await asyncio.sleep(0.05)
-    page = await session.get_active_page()
-    current_url = page.url if page else ""
-    return {
-        "status": "success",
-        "frame_id": session.frame_id,
-        "frame_b64": session.latest_frame,
-        "url": current_url,
-        "cursor": {
-            "x": session.mouse_x,
-            "y": session.mouse_y,
-            "clicking": session.mouse_clicking,
-        },
-    }
+            await session.ensure_screencast(page)
+
+        init_state = {
+            "type": "state",
+            "session_id": session.sid,
+            "url": session.latest_url or (page.url if page else ""),
+            "status": "live",
+            "active": True,
+        }
+        async with send_lock:
+            await websocket.send_text(json.dumps(init_state).decode("utf-8"))
+            if session.raw_frame_bytes:
+                await websocket.send_bytes(session.pack_binary_frame(session.raw_frame_bytes, frame_type=1))
+
+        async def _sender() -> None:
+            q: asyncio.Queue = sub["queue"]
+            while True:
+                try:
+                    kind, payload = await asyncio.wait_for(q.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    async with send_lock:
+                        await websocket.send_text(json.dumps({"type": "ping"}).decode("utf-8"))
+                    continue
+                async with send_lock:
+                    if kind == "bytes":
+                        await websocket.send_bytes(payload)
+                    else:
+                        await websocket.send_text(payload)
+                        try:
+                            if json.loads(payload).get("type") == "eof":
+                                return
+                        except Exception:
+                            pass
+
+        async def _receiver() -> None:
+            while True:
+                raw_msg = await websocket.receive_text()
+                try:
+                    msg = json.loads(raw_msg)
+                except Exception:
+                    continue
+                if not isinstance(msg, dict):
+                    continue
+                msg_type = msg.get("type")
+                if msg_type == "ack":
+                    try:
+                        ack_id = int(msg.get("frame_id", 0))
+                    except (TypeError, ValueError):
+                        ack_id = 0
+                    sub["acked_id"] = max(sub["acked_id"], ack_id)
+                elif msg_type == "ping":
+                    async with send_lock:
+                        await websocket.send_text(json.dumps({"type": "pong"}).decode("utf-8"))
+
+        sender_task = asyncio.create_task(_sender())
+        receiver_task = asyncio.create_task(_receiver())
+        try:
+            done, pending = await asyncio.wait(
+                {sender_task, receiver_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            for task in pending:
+                try:
+                    await task
+                except (asyncio.CancelledError, WebSocketDisconnect, Exception):
+                    pass
+            for task in done:
+                try:
+                    await task
+                except (asyncio.CancelledError, WebSocketDisconnect):
+                    pass
+        finally:
+            for task in (sender_task, receiver_task):
+                if not task.done():
+                    task.cancel()
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.warning(f"[{session_id}] WebSocket screencast error: {e}")
+    finally:
+        session.ws_subscribers.pop(sub_id, None)
+        if not session.ws_subscribers and not session.recording_clip:
+            await session._detach_cdp()
 
 
 @app.post("/action")

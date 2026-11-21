@@ -1,7 +1,7 @@
 ---
 domain_id: echo_ui_guide
-version: 6.13.2.1
-updated_at: 2026-11-20
+version: 6.16.0.1
+updated_at: 2026-11-21
 name: Guide de l'Interface Utilisateur ECHO-UI (Navigation, Onglets, Commandes & Réglages)
 description: Cartographie opérationnelle des écrans, panneaux latéraux, onglets de session, commandes slash, mode vocal, import de fichiers et réglages manipulables directement par L'Utilisateur dans ECHO-UI.
 tools: []
@@ -52,7 +52,7 @@ keywords: [ui, interface, echo-ui, ecran, onglet, panneau, sidebar, barre_latera
 - **Codex & Fichiers** : Sélecteur de conversation (consultation en lecture seule des dépôts d'autres conversations), sélecteur d'espace (`main`, `plans`, `generated`, `sandbox`, `files`), arborescence avec actions **`Renommer`** et **`Supprimer`**, prévisualisation multi-format (Markdown, HTML, SVG, CSV/TSV, images, PDF, audio, vidéo, vue hexadécimale), éditeur texte avec sauvegarde **`Ctrl+S`**, édition assistée par IA (actions rapides, consigne libre et prévisualisation diff avant acceptation), historique/diff/restauration Git sur les espaces versionnés, et actions **`Importer`** (y compris glisser-déposer), **`Exporter`**, **`Copier`**, **`Imprimer`**.
 - **Navigateur Web** : Suivi en temps réel (`🔴 EN DIRECT`) avec affichage du curseur d'action, navigation temporelle DVR (`⏸️ DIFFÉRÉ`) avec bouton **`🔴 Retour au temps réel`**, lecture et téléchargement des clips vidéo d'action (**`🎬 Voir l'action`**, **`🖼️ Image HD`**, **`⬇️ MP4`**), bouton d'épinglage **`📌 Conserver`** / **`📌 Conservée`** (protège la capture de la purge automatique de fin de session), zoom/déplacement, recadrage par 8 poignées (**`✂️ Recadrer`**), copie (**`📋 Copier`**) et export **`PNG`** (**`💾 Exporter PNG`**).
 - **Coffre (`Connexions & Secrets`)** : Consultation du statut des comptes/clés chiffrés et ajout, modification ou suppression sécurisée des identifiants (clés API, SSH, Google Workspace, Microsoft 365, serveurs MCP) avec directives de configuration dépliables par connecteur.
-- **Applications** : Affichage et interaction avec les applications web générées depuis la Sandbox, pastille d'état (`Actif` / `Arrêté`) et fermeture par `×`.
+- **Applications** : Affichage et interaction avec les interfaces réactives et les serveurs web complets temps réel (REST, fichiers médias et WebSockets) isolés dans la Sandbox, avec pastille d'état (`Actif` / `Arrêté`) et fermeture par `×`.
 - **Terminal (`+` → `Nouveau terminal`)** : Terminal shell interactif de la session, disponible dès que la conversation est enregistrée.
 
 ---

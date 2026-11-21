@@ -1,6 +1,6 @@
 ---
 domain_id: web_search_and_browsing
-version: 6.15.0.1
+version: 6.16.0.1
 updated_at: 2026-11-21
 name: Recherche Web Souveraine, Navigateur Autonome & Géolocalisation Maps
 description: Escalade de recherche Web (Réponses instantanées, Méta-moteur de recherche, Deep Research), navigation interactive via le Navigateur Autonome et ancrage cartographique Maps.
@@ -42,8 +42,8 @@ keywords: [web, recherche, search, navigateur, browser, url, page, maps, carte, 
 - `sub_sid` : Identifiant de session de navigation optionnel (`thread_web_*`). Permet de reprendre une navigation existante après un point de contrôle (`status="suspended_checkpoint"` au bout de **8 tours d'actions / 120s**) soit en rappelant `delegate_web_browsing(task_objective=..., sub_sid=...)`, soit via `control_subagents(action="resume", target_ids=[sub_sid])`. Les métadonnées de retour incluent la télémétrie HTTP (`final_url`, `http_status`, `http_status_text`, `navigation_statuses`), et le Sous-Agent est informé des codes HTTP `>= 400`.
 - **Administration du Navigateur Autonome** :
   - `get_browser_frames_history(depth=10)` : Opère en **lecture seule non destructive** et restitue l'historique des dernières captures d'écran présentes sur disque (`file_id`, `date`, `frame`, `session_id`, `url`, `http_status`, `action`, `status`, `retained`, et `has_clip` indiquant la présence d'un clip vidéo MP4 d'action rejouable et téléchargeable dans l'onglet Navigateur Web).
-  - `retain_browser_frame(file_id, retain=True)` : Marque une capture de navigation (`resource_type="browserview"`, stockée dans `browserviews/`) au statut `"retained"` pour la préserver (ainsi que son clip vidéo MP4 d'action) de la purge automatique en fin de session (ou la repasse en `"transient"` si `retain=False`). Les clips `"transient"` sont soumis à un plafond FIFO par conversation (30 clips / 25 Mo, sans supprimer les captures HD), les captures `"transient"` sont purgées en fin de session navigateur (`web_browse_reset` / `control_subagents(action="close", target_ids=[sub_sid])` / expiration), et le clonage/migration de session ne transfère que les captures `"retained"`.
-  - `open_browser_ui(frame_index=None)` : Ouvre l'onglet natif **Navigateur Web** dans l'interface de L'Utilisateur en direct ou positionné sur l'index de capture indiqué.
+  - `retain_browser_frame(file_id, retain=True)` : Marque une capture de navigation (`resource_type="browserview"`, stockée dans `browserviews/`) au statut `"retained"` pour la préserver (ainsi que son clip vidéo MP4 d'action) de la purge automatique en fin de session (ou la repasse en `"transient"` si `retain=False`). Les clips `"transient"` sont soumis à un plafond FIFO par conversation (`50 clips / 60 Mo`, sans supprimer les captures HD), les captures `"transient"` sont purgées en fin de session navigateur (`web_browse_reset` / `control_subagents(action="close", target_ids=[sub_sid])` / expiration), et le clonage/migration de session ne transfère que les captures `"retained"`.
+  - `open_browser_ui(frame_index=None)` : Ouvre l'onglet natif **Navigateur Web** dans l'interface de L'Utilisateur avec suivi temps réel continu (ou positionné sur l'index de capture indiqué).
   - `web_browse_reset()` : Réinitialise immédiatement la session active du Navigateur Autonome.
   - Fermeture et purge d'une session `thread_web_*` : Le Modèle DOIT appeler **`control_subagents(action="close", target_ids=[sub_sid])`**.
 

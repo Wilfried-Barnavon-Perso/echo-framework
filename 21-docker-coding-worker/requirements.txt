@@ -4,6 +4,8 @@ requests
 httpx
 starlette
 uvicorn
+fastapi
+websockets
 wsproto
 pandas
 numpy
@@ -33,3 +35,6 @@ sqlalchemy
 cryptography
 pydantic
 tabulate
+pyyaml
+tqdm
+reportlab

@@ -13,7 +13,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y curl bubblewrap openssh-client sshpass jq less nano iputils-ping dnsutils && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
-    npm install -g axios cheerio js-yaml lodash papaparse mathjs zod dotenv moment && \
+    npm install -g ws express axios cheerio js-yaml lodash papaparse mathjs zod dotenv moment && \
     rm -rf /var/lib/apt/lists/*
 
 # Configurer le NODE_PATH global

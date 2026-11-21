@@ -1,6 +1,6 @@
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 6.14.1.1
+# VERSION : 6.16.0.2
 # ==============================================================================
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
@@ -26,11 +26,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.16.0.2: Ajout de la location BunkerWeb /echo/v1/wm/app/ (auth_request off, proxy HTTP/1.1 + Upgrade WebSocket) pour les serveurs web sandboxés par ticket HMAC.
+# 6.16.0.1: Inclusion du préfixe /echo/ dans les règles Nginx @auth_soft_reject, @api_403_reject, @api_429_reject et @api_5xx_reject pour garantir des réponses JSON sur les routes API/WS ECHO.
 # 6.14.1.1: Ajout de DATABASE_SQLITE_PRAGMA_BUSY_TIMEOUT=30000 sur echo-webui pour résorber la contention SQLite sur conversations volumineuses.
 # 6.14.0.1: Augmentation de la tolérance de démarrage du healthcheck echo-searxng (start_period: 60s, retries: 10) sous contention CPU.
 # 6.7.8.1: Passage de REVERSE_PROXY_REQUEST_BUFFERING=no (retrait client_body_buffer_size 100m) et isolation TMPDIR=/app/backend/data/.tmp_uploads sur echo-webui.
-# 6.6.27.1: Suppression de l'exposition hôte 8000:8000 sur echo-mcp-broker (accès interne Docker uniquement).
-# 6.5.3.1: Renommage du service et de l'image echo-open-webui en echo-webui (ECHO-UI).
 
 name: echo
 
@@ -148,12 +148,31 @@ services:
 
       # 🛡️ ECHO AUTH : Forward Auth
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST=/api/verify"
-      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @api_403_reject; error_page 429 = @api_429_reject; error_page 500 501 502 503 504 = @api_5xx_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/(api|ollama|openai|audio|images|v1)/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_x_sveltekit_data) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @api_403_reject { if ($$request_uri ~* ^/(api|ollama|openai|audio|images|v1)/) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } if ($$http_accept ~* application/json) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } if ($$http_x_sveltekit_data) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } default_type text/html; return 403 '<html><body><center><h1>403 Forbidden</h1></center></body></html>'; } location @api_429_reject { if ($$request_uri ~* ^/(api|ollama|openai|audio|images|v1)/) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } if ($$http_accept ~* application/json) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } if ($$http_x_sveltekit_data) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } default_type text/html; return 429 '<html><body><center><h1>429 Too Many Requests</h1></center></body></html>'; } location @api_5xx_reject { if ($$request_uri ~* ^/api/version) { return 200 '{\"version\":\"booting\",\"deployment_id\":\"startup\"}'; } if ($$request_uri ~* ^/(api|ollama|openai|audio|images|v1)/) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } if ($$http_accept ~* application/json) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } if ($$http_x_sveltekit_data) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } default_type text/html; return 500 '<html><body><center><h1>500 Internal Server Error</h1><p>Le backend de l\\'application est temporairement indisponible.</p></center></body></html>'; }"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @api_403_reject; error_page 429 = @api_429_reject; error_page 500 501 502 503 504 = @api_5xx_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/(api|echo|ollama|openai|audio|images|v1)/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_x_sveltekit_data) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @api_403_reject { if ($$request_uri ~* ^/(api|echo|ollama|openai|audio|images|v1)/) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } if ($$http_accept ~* application/json) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } if ($$http_x_sveltekit_data) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } default_type text/html; return 403 '<html><body><center><h1>403 Forbidden</h1></center></body></html>'; } location @api_429_reject { if ($$request_uri ~* ^/(api|echo|ollama|openai|audio|images|v1)/) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } if ($$http_accept ~* application/json) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } if ($$http_x_sveltekit_data) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } default_type text/html; return 429 '<html><body><center><h1>429 Too Many Requests</h1></center></body></html>'; } location @api_5xx_reject { if ($$request_uri ~* ^/api/version) { return 200 '{\"version\":\"booting\",\"deployment_id\":\"startup\"}'; } if ($$request_uri ~* ^/(api|echo|ollama|openai|audio|images|v1)/) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } if ($$http_accept ~* application/json) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } if ($$http_x_sveltekit_data) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } default_type text/html; return 500 '<html><body><center><h1>500 Internal Server Error</h1><p>Le backend de l\\'application est temporairement indisponible.</p></center></body></html>'; }"
       - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$webui_name $$upstream_http_x_webui_name;$$webui_gender $$upstream_http_x_webui_gender"
       - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name;X-Webui-Gender $$webui_gender"
 
       # 🔓 EXCLUSION UPLOADS (WORKAROUND FETCH) : Empêche le 401 WAF sur les uploads multimédias tout en conservant la sécurité du Bearer Token applicatif
       - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_media=location ~ ^/api/v1/(files|audio|images) { auth_request off; set $$upstream_owui http://echo-webui:8080; proxy_pass $$upstream_owui; proxy_http_version 1.1; proxy_set_header Connection \"\"; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
+
+      # 🔓 SANDBOX APP PROXY (CAPABILITY TICKET HMAC SANS COOKIE, HTTP + WEBSOCKET)
+      - |
+        bunkerweb.CUSTOM_CONF_SERVER_HTTP_wmapp=location ^~ /echo/v1/wm/app/ {
+            auth_request off;
+            set $$upstream_owui http://echo-webui:8080;
+            proxy_pass $$upstream_owui;
+            proxy_http_version 1.1;
+            set $$conn_hdr "";
+            if ($$http_upgrade != "") {
+                set $$conn_hdr "upgrade";
+            }
+            proxy_set_header Upgrade $$http_upgrade;
+            proxy_set_header Connection $$conn_hdr;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+        }
 
       # 🛡️ ECHO AUTH BACKEND (Nginx internal proxy_pass sécurisé contre le transfert de Content-Length)
       # On crée manuellement la location Nginx sans passer par la macro REVERSE_PROXY_URL_2

@@ -2,20 +2,25 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 6.15.2.1
+version: 6.16.0.3
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.16.0.3: Ajout des capability tickets HMAC (issue/verify/revoke) et support du mode app_proxy dans broadcast/reconcile_canvas_frames.
+# 6.16.0.2: Purge _sandbox_pollers/inbox/peek/ack, ajout _sandbox_stream_offsets, _canvas_authorized_runs et relais /canvas_signal.
+# 6.16.0.1: Remplacement des files SSE browser-live par le registre _active_browser_sessions (register/unregister/get/wait_for_browser_session).
 # 6.15.2.1: Isolation multi-run par run_id dans les frames Canvas, arrêt ciblé canvas_stop_run, réconciliation F5 reconcile_canvas_frames et réveil réactif inbox via wake_event.
 # 6.14.2.1: Suppression intégrale de la persistance SQLite wm_state (_load_chat_state, _save_chat_state, _sanitize_windows_dict) et des actions RPC mortes (window_mounted, window_updated, window_closed, kv_sync).
-# 6.13.1.2: Ajout du canal SSE dédié browser-live (_browser_live_subscribers, subscribe_browser_live, unsubscribe_browser_live, has_browser_live_subscribers, broadcast_browser_live).
-# 6.13.1.1: Suppression du faux ping serveur, inbox Canvas scopée par window_id avec peek/ack, support echoPings batch et window_closed (_is_closed), broadcast_canvas_status, cleanup_canvas_run et exposition canvas_frames dans get_chat_snapshot.
-# 6.7.0.1: Purge des payloads de fenêtres fermées (_sanitize_windows_dict), auto-guérison wm_state, bridage update_codes et suppression du code mort get_client_loader_js.
 
 import asyncio
+import base64
 from contextlib import closing
+import hashlib
+import hmac
+import json
 import os
+import secrets
 import sqlite3
 import time
 import uuid
@@ -23,9 +28,10 @@ from typing import Any, Dict, Optional, Set, Tuple
 
 from echo_constants import ECHO_BASE_DATA_DIR, ECHO_UCTP_CHUNK_SIZE, ECHO_USERS_ROOT
 try:
-    from echo_constants import ECHO_CODING_WORKER_URL
+    from echo_constants import ECHO_CODING_WORKER_BASE_URL, ECHO_CODING_WORKER_URL
 except ImportError:
     ECHO_CODING_WORKER_URL = "http://echo-coding-worker:5000/execute"
+    ECHO_CODING_WORKER_BASE_URL = "http://echo-coding-worker:5000"
 from echo_paths import sanitize_echo_id
 from echo_state_manager import EchoStateManager
 
@@ -117,11 +123,94 @@ class EchoWindowManager:
         self._recent_execs: Dict[str, Dict[str, Any]] = {}
         # Etat Canvas bidirectionnel par (user_id, chat_id)
         self._canvas_ui_state: Dict[Tuple[str, str], Dict[str, Any]] = {}
-        # Abonnés live screencast navigateur par (user_id, chat_id) -> { client_id: Queue }
-        self._browser_live_subscribers: Dict[Tuple[str, str], Dict[str, asyncio.Queue]] = {}
-        # Superviseur pérenne Sandbox par f"{uid}:{cid}:{run_id}"
-        self._sandbox_pollers: Dict[str, Dict[str, Any]] = {}
+        # Sessions navigateur actives par (user_id, chat_id) -> session_id
+        self._active_browser_sessions: Dict[Tuple[str, str], str] = {}
+        self._browser_session_events: Dict[Tuple[str, str], asyncio.Event] = {}
+        # Propriétaires & offsets de lecture stdout/stderr Sandbox par f"{uid}:{cid}:{run_id}"
         self._sandbox_run_owners: Dict[str, str] = {}
+        self._sandbox_stream_offsets: Dict[str, Tuple[int, int]] = {}
+        self._canvas_authorized_runs: Set[Tuple[str, str, str]] = set()
+        self._revoked_app_runs: Set[str] = set()
+        raw_secret = (
+            os.environ.get("WEBUI_SECRET_KEY")
+            or os.environ.get("ECHO_VAULT_ENCRYPTION_KEY")
+            or secrets.token_hex(32)
+        )
+        self._app_ticket_secret: bytes = hashlib.sha256(str(raw_secret).encode("utf-8")).digest()
+
+    def issue_app_capability_ticket(
+        self,
+        user_id: str,
+        chat_id: str,
+        run_id: str,
+        window_id: str = "default",
+        ttl_sec: int = 14400,
+    ) -> str:
+        """Émet un capability ticket HMAC-SHA256 sans cookie pour /echo/v1/wm/app/{ticket}."""
+        owner_uid = self._resolve_owner_uid(user_id, chat_id) if chat_id else (user_id or "system")
+        rid = str(run_id or "")
+        wid = str(window_id or "default")
+        if rid:
+            self._revoked_app_runs.discard(rid)
+        payload = {
+            "u": owner_uid,
+            "c": chat_id or "",
+            "r": rid,
+            "w": wid,
+            "e": int(time.time() + ttl_sec),
+        }
+        payload_bytes = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        payload_b64 = base64.urlsafe_b64encode(payload_bytes).decode("ascii").rstrip("=")
+        sig_bytes = hmac.new(self._app_ticket_secret, payload_b64.encode("ascii"), hashlib.sha256).digest()
+        sig_b64 = base64.urlsafe_b64encode(sig_bytes).decode("ascii").rstrip("=")
+        return f"v1.{payload_b64}.{sig_b64}"
+
+    def verify_app_capability_ticket(self, ticket: str) -> Optional[Dict[str, str]]:
+        """Vérifie la signature HMAC, l'expiration et la non-révocation d'un ticket app_proxy."""
+        if not isinstance(ticket, str) or not ticket:
+            return None
+        parts = ticket.split(".")
+        if len(parts) != 3 or parts[0] != "v1":
+            return None
+        _, payload_b64, sig_b64 = parts
+        if not payload_b64 or not sig_b64:
+            return None
+        try:
+            expected_bytes = hmac.new(self._app_ticket_secret, payload_b64.encode("ascii"), hashlib.sha256).digest()
+        except Exception:
+            return None
+        expected_b64 = base64.urlsafe_b64encode(expected_bytes).decode("ascii").rstrip("=")
+        if not hmac.compare_digest(sig_b64, expected_b64):
+            return None
+        try:
+            padded = payload_b64 + ("=" * (-len(payload_b64) % 4))
+            data = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        exp = data.get("e")
+        if not isinstance(exp, (int, float)) or exp <= time.time():
+            return None
+        uid = str(data.get("u") or "")
+        cid = str(data.get("c") or "")
+        rid = str(data.get("r") or "")
+        wid = str(data.get("w") or "default")
+        if not rid or rid in self._revoked_app_runs:
+            return None
+        cstate = self._canvas_ui_state.get((uid, cid))
+        if cstate and isinstance(cstate.get("closed"), dict) and cstate["closed"].get(wid):
+            return None
+        return {"user_id": uid, "chat_id": cid, "run_id": rid, "window_id": wid}
+
+    def revoke_app_run_tickets(self, run_id: str) -> None:
+        """Révoque immédiatement tous les capability tickets associés à un run_id."""
+        rid = str(run_id or "")
+        if not rid:
+            return
+        if len(self._revoked_app_runs) >= 5000:
+            self._revoked_app_runs.pop()
+        self._revoked_app_runs.add(rid)
 
     def _get_canvas_state(self, user_id: str, chat_id: str) -> Dict[str, Any]:
         """Retourne ou initialise le registre d'état Canvas bidirectionnel pour (user_id, chat_id)."""
@@ -129,7 +218,7 @@ class EchoWindowManager:
         key = (uid, chat_id or "")
         state = self._canvas_ui_state.get(key)
         if state is None:
-            state = {"frames": {}, "payloads": {}, "inbox": {}, "pings": {}, "closed": {}, "signal": None}
+            state = {"frames": {}, "payloads": {}, "pings": {}, "closed": {}, "signal": None}
             self._canvas_ui_state[key] = state
         return state
 
@@ -216,73 +305,95 @@ class EchoWindowManager:
             },
         )
 
-    def subscribe_browser_live(self, user_id: str, chat_id: str, client_id: str) -> asyncio.Queue:
-        """Enregistre un flux SSE live screencast pour (user_id, chat_id)."""
-        key = (user_id or "system", chat_id or "")
-        sub_map = self._browser_live_subscribers.setdefault(key, {})
-        q: asyncio.Queue = asyncio.Queue(maxsize=16)
-        sub_map[client_id] = q
-        return q
-
-    def unsubscribe_browser_live(self, user_id: str, chat_id: str, client_id: str) -> None:
-        """Désinscrit un flux SSE live screencast."""
-        key = (user_id or "system", chat_id or "")
-        sub_map = self._browser_live_subscribers.get(key)
-        if sub_map is not None:
-            sub_map.pop(client_id, None)
-            if not sub_map:
-                self._browser_live_subscribers.pop(key, None)
-
-    def has_browser_live_subscribers(self, user_id: str, chat_id: str) -> bool:
-        """Indique si au moins un client écoute le live screencast pour ce chat."""
-        uid = user_id or "system"
+    def register_browser_session(self, user_id: str, chat_id: str, session_id: str) -> None:
+        """Enregistre la session Playwright active pour (user_id, chat_id) et réveille les attentes."""
+        raw_uid = user_id or "system"
         cid = chat_id or ""
-        if self._browser_live_subscribers.get((uid, cid)):
-            return True
+        owner_uid = self._resolve_owner_uid(raw_uid, cid) if cid else raw_uid
+        keys = [(owner_uid, cid)]
+        if (raw_uid, cid) not in keys:
+            keys.append((raw_uid, cid))
+        for key in keys:
+            self._active_browser_sessions[key] = session_id
+            ev = self._browser_session_events.get(key)
+            if ev is None:
+                ev = asyncio.Event()
+                self._browser_session_events[key] = ev
+            ev.set()
+
+    def unregister_browser_session(self, user_id: str, chat_id: str, session_id: str = "") -> None:
+        """Désinscrit la session Playwright active pour (user_id, chat_id)."""
+        raw_uid = user_id or "system"
+        cid = chat_id or ""
+        owner_uid = self._resolve_owner_uid(raw_uid, cid) if cid else raw_uid
+        keys = [(owner_uid, cid)]
+        if (raw_uid, cid) not in keys:
+            keys.append((raw_uid, cid))
+        for key in keys:
+            current = self._active_browser_sessions.get(key)
+            if not session_id or current == session_id:
+                self._active_browser_sessions.pop(key, None)
+                ev = self._browser_session_events.get(key)
+                if ev is not None:
+                    ev.clear()
+
+    def get_active_browser_session(self, user_id: str, chat_id: str) -> Optional[str]:
+        """Retourne le session_id navigateur enregistré pour (user_id, chat_id) ou par chat_id."""
+        raw_uid = user_id or "system"
+        cid = chat_id or ""
+        sid = self._active_browser_sessions.get((raw_uid, cid))
+        if sid:
+            return sid
         if cid:
-            for (_, k_cid), sub_map in self._browser_live_subscribers.items():
-                if k_cid == cid and sub_map:
-                    return True
-        return False
+            owner_uid = self._resolve_owner_uid(raw_uid, cid)
+            sid = self._active_browser_sessions.get((owner_uid, cid))
+            if sid:
+                return sid
+            for (_, k_cid), val in self._active_browser_sessions.items():
+                if k_cid == cid and val:
+                    return val
+        return None
 
-    async def broadcast_browser_live(self, user_id: str, chat_id: str, event: Dict[str, Any]) -> int:
-        """Diffuse un événement screencast live vers les abonnés du chat (drop-oldest si plein)."""
-        uid = user_id or "system"
-        cid = chat_id or ""
-        target_maps = []
-        exact = self._browser_live_subscribers.get((uid, cid))
-        if exact:
-            target_maps.append(exact)
-        elif cid:
-            for (_, k_cid), sub_map in self._browser_live_subscribers.items():
-                if k_cid == cid and sub_map:
-                    target_maps.append(sub_map)
-
-        delivered = 0
-        for sub_map in target_maps:
-            for q in list(sub_map.values()):
-                try:
-                    if q.full():
-                        try:
-                            q.get_nowait()
-                        except asyncio.QueueEmpty:
-                            pass
-                    q.put_nowait(event)
-                    delivered += 1
-                except Exception:
-                    pass
-        return delivered
+    async def wait_for_browser_session(
+        self,
+        user_id: str,
+        chat_id: str,
+        timeout: float = 15.0,
+    ) -> Optional[str]:
+        """Attend l'enregistrement d'une session navigateur active pour (user_id, chat_id)."""
+        sid = self.get_active_browser_session(user_id, chat_id)
+        if sid:
+            return sid
+        key = (user_id or "system", chat_id or "")
+        ev = self._browser_session_events.get(key)
+        if ev is None:
+            ev = asyncio.Event()
+            self._browser_session_events[key] = ev
+        try:
+            await asyncio.wait_for(ev.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            pass
+        return self.get_active_browser_session(user_id, chat_id)
 
     async def _fire_and_forget_sandbox_kill(self, uid: str, cid: str, run_id: str) -> None:
         """Envoie un /kill asynchrone sans bloquer lors du remplacement d'une frame Canvas."""
         try:
             import httpx
-            sandbox_base = ECHO_CODING_WORKER_URL.replace("/execute", "")
             async with httpx.AsyncClient(timeout=3.0) as client:
                 await client.post(
-                    f"{sandbox_base}/kill",
+                    f"{ECHO_CODING_WORKER_BASE_URL}/kill",
                     json={"user_id": uid, "chat_id": cid, "run_id": run_id},
                 )
+        except Exception:
+            pass
+
+    async def _fire_and_forget_canvas_signal(self, uid: str, cid: str, run_id: str, body: Dict[str, Any]) -> None:
+        """Pousse un signal Canvas (/canvas_signal) vers CanvasRunHub sans bloquer le routeur RPC."""
+        try:
+            import httpx
+            payload = {"user_id": uid, "chat_id": cid, "run_id": run_id, **body}
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                await client.post(f"{ECHO_CODING_WORKER_BASE_URL}/canvas_signal", json=payload)
         except Exception:
             pass
 
@@ -306,96 +417,69 @@ class EchoWindowManager:
         """Vérifie si un run_id appartient au sous-agent sub_sid."""
         if not sub_sid:
             return True
+        return self._sandbox_run_owners.get(f"{uid}:{cid}:{run_id}") == sub_sid
+
+    def get_sandbox_stream_offsets(self, uid: str, cid: str, run_id: str) -> Tuple[int, int]:
+        """Retourne les offsets (stdout_offset, stderr_offset) mémorisés pour un run Sandbox."""
+        return self._sandbox_stream_offsets.get(f"{uid}:{cid}:{run_id}", (0, 0))
+
+    def set_sandbox_stream_offsets(self, uid: str, cid: str, run_id: str, out_off: int, err_off: int) -> None:
+        """Mémorise les offsets (stdout_offset, stderr_offset) pour control_sandbox_execution(action='listen')."""
         key = f"{uid}:{cid}:{run_id}"
-        poller = self._sandbox_pollers.get(key)
-        if poller is not None and "sub_sid" in poller:
-            return poller["sub_sid"] == sub_sid
-        return self._sandbox_run_owners.get(key) == sub_sid
+        while len(self._sandbox_stream_offsets) >= 1000:
+            self._sandbox_stream_offsets.pop(next(iter(self._sandbox_stream_offsets)))
+        self._sandbox_stream_offsets[key] = (int(out_off), int(err_off))
 
-    def register_sandbox_poller(self, uid: str, cid: str, run_id: str, entry: Dict[str, Any]) -> None:
-        """Enregistre un poller Sandbox actif dans le gestionnaire pérenne."""
-        self._sandbox_pollers[f"{uid}:{cid}:{run_id}"] = entry
-
-    def get_sandbox_poller(self, uid: str, cid: str, run_id: str) -> Optional[Dict[str, Any]]:
-        """Retourne l'entrée du poller Sandbox pour (uid, cid, run_id)."""
-        return self._sandbox_pollers.get(f"{uid}:{cid}:{run_id}")
-
-    def list_sandbox_pollers(self, uid: str, cid: str) -> Dict[str, Dict[str, Any]]:
-        """Liste les pollers Sandbox actifs pour une session donnée, indexés par run_id."""
-        prefix = f"{uid}:{cid}:"
-        return {
-            k[len(prefix):]: v
-            for k, v in self._sandbox_pollers.items()
-            if k.startswith(prefix)
-        }
-
-    def pop_sandbox_poller(
-        self,
-        uid: str,
-        cid: str,
-        run_id: str,
-        expected_task: Optional[asyncio.Task] = None,
-    ) -> None:
-        """Retire un poller Sandbox uniquement si expected_task est None ou correspond à l'entrée."""
-        key = f"{uid}:{cid}:{run_id}"
-        entry = self._sandbox_pollers.get(key)
-        if entry is None:
+    def clear_sandbox_stream_offsets(self, uid: str, cid: str, run_id: Optional[str] = None) -> None:
+        """Supprime les offsets mémorisés d'un ou de tous les runs d'une session."""
+        if run_id:
+            self._sandbox_stream_offsets.pop(f"{uid}:{cid}:{run_id}", None)
             return
-        if expected_task is None or entry.get("task") is expected_task:
-            self._sandbox_pollers.pop(key, None)
-
-    def stop_sandbox_poller(
-        self,
-        uid: str,
-        cid: str,
-        run_id: Optional[str] = None,
-        sub_sid: str = "",
-    ) -> list[str]:
-        """Annule les pollers Sandbox ciblés et retourne la liste des run_id arrêtés."""
         prefix = f"{uid}:{cid}:"
-        keys = (
-            [f"{prefix}{run_id}"]
-            if run_id
-            else [k for k in list(self._sandbox_pollers.keys()) if k.startswith(prefix)]
-        )
-        stopped: list[str] = []
-        for k in keys:
-            rid = k[len(prefix):] if k.startswith(prefix) else k
-            if sub_sid and not self.is_run_owned_by_subagent(uid, cid, rid, sub_sid):
-                continue
-            entry = self._sandbox_pollers.pop(k, None)
-            if entry:
-                stopped.append(rid)
-                task = entry.get("task")
-                if task and not task.done():
-                    task.cancel()
-        return stopped
+        for k in [k for k in list(self._sandbox_stream_offsets.keys()) if k.startswith(prefix)]:
+            self._sandbox_stream_offsets.pop(k, None)
 
-    def wake_sandbox_pollers(
-        self,
-        user_id: str,
-        chat_id: str,
-        run_id: str = "",
-        window_id: str = "",
-    ) -> None:
-        """Réveille les pollers Sandbox concernés via leur wake_event."""
+    def register_canvas_run(self, user_id: str, chat_id: str, run_id: str) -> None:
+        """Autorise l'accès WebSocket Canvas pour (owner_uid, chat_id, run_id)."""
+        if not run_id:
+            return
         owner_uid = self._resolve_owner_uid(user_id, chat_id) if chat_id else (user_id or "system")
-        prefix = f"{owner_uid}:{chat_id}:"
-        for k, entry in list(self._sandbox_pollers.items()):
-            if not k.startswith(prefix):
-                continue
-            rid = k[len(prefix):]
-            if run_id:
-                matched = rid == run_id
-            elif window_id:
-                wids = entry.get("window_ids")
-                matched = bool(wids is not None and window_id in wids)
-            else:
-                matched = True
-            if matched:
-                wake_ev = entry.get("wake_event")
-                if wake_ev is not None:
-                    wake_ev.set()
+        if len(self._canvas_authorized_runs) >= 2000:
+            self._canvas_authorized_runs.pop()
+        self._canvas_authorized_runs.add((owner_uid, chat_id or "", str(run_id)))
+
+    async def verify_canvas_run_access(self, user_id: str, chat_id: str, run_id: str) -> bool:
+        """Vérifie l'autorisation d'accès au flux WebSocket Canvas (registre mémoire, frames ou worker /status)."""
+        if not run_id:
+            return False
+        owner_uid = self._resolve_owner_uid(user_id, chat_id) if chat_id else (user_id or "system")
+        cid = chat_id or ""
+        rid = str(run_id)
+        if (owner_uid, cid, rid) in self._canvas_authorized_runs:
+            return True
+
+        cstate = self._canvas_ui_state.get((owner_uid, cid))
+        if cstate and isinstance(cstate.get("frames"), dict):
+            if any(isinstance(f, dict) and str(f.get("run_id") or "") == rid for f in cstate["frames"].values()):
+                self._canvas_authorized_runs.add((owner_uid, cid, rid))
+                return True
+
+        try:
+            import httpx
+            safe_uid = sanitize_echo_id(owner_uid)
+            safe_cid = sanitize_echo_id(cid, fallback="")
+            safe_rid = sanitize_echo_id(rid, fallback="")
+            async with httpx.AsyncClient(timeout=2.5) as client:
+                res = await client.get(
+                    f"{ECHO_CODING_WORKER_BASE_URL}/status",
+                    params={"user_id": safe_uid, "chat_id": safe_cid, "run_id": safe_rid},
+                )
+            if res.status_code == 200 and res.json().get("status") != "not_found":
+                self._canvas_authorized_runs.add((owner_uid, cid, rid))
+                return True
+        except Exception:
+            pass
+        return False
 
     async def reconcile_canvas_frames(self, user_id: str, chat_id: str) -> None:
         """Réconcilie l'état des frames Canvas actives avec le Worker Sandbox."""
@@ -415,10 +499,9 @@ class EchoWindowManager:
                 return
 
             import httpx
-            sandbox_base = ECHO_CODING_WORKER_URL.replace("/execute", "")
             async with httpx.AsyncClient(timeout=1.5) as client:
                 res = await client.get(
-                    f"{sandbox_base}/status",
+                    f"{ECHO_CODING_WORKER_BASE_URL}/status",
                     params={"user_id": owner_uid, "chat_id": chat_id},
                 )
             if res.status_code != 200:
@@ -434,12 +517,18 @@ class EchoWindowManager:
                 if job is None:
                     entry["server_status"] = "error"
                     entry["updated_at"] = now
-                    self.stop_sandbox_poller(owner_uid, chat_id, run_id=rid)
+                    self.revoke_app_run_tickets(rid)
                 elif job.get("state") not in ("running", "unknown"):
                     entry["server_status"] = str(job.get("state") or "completed")
                     entry["exit_code"] = job.get("exit_code")
                     entry["updated_at"] = now
-                    self.stop_sandbox_poller(owner_uid, chat_id, run_id=rid)
+                    self.revoke_app_run_tickets(rid)
+                elif entry.get("mode") == "app_proxy":
+                    wid = str(entry.get("id") or "default")
+                    ticket = self.issue_app_capability_ticket(owner_uid, chat_id, rid, wid)
+                    entry["src"] = f"/echo/v1/wm/app/{ticket}/"
+                    entry["html"] = ""
+                    entry["updated_at"] = now
         except Exception:
             pass
 
@@ -451,7 +540,7 @@ class EchoWindowManager:
         auto_open: bool = True,
         run_id: str = "",
     ) -> None:
-        """Enregistre une frame Canvas et la diffuse via SSE vers l'onglet natif echo-canvas."""
+        """Enregistre une frame Canvas et la diffuse via WS/SSE vers l'onglet natif echo-canvas."""
         owner_uid = self._resolve_owner_uid(user_id, chat_id) if chat_id else (user_id or "system")
         cstate = self._get_canvas_state(user_id, chat_id)
         wid = str(frame_data.get("id") or frame_data.get("window_id") or "default")
@@ -465,22 +554,30 @@ class EchoWindowManager:
                 and prev_rid != new_rid
                 and prev.get("server_status") not in ("completed", "killed", "error", "timeout")
             ):
-                self.stop_sandbox_poller(owner_uid, chat_id, run_id=prev_rid)
-                cstate["inbox"].pop((wid, prev_rid), None)
                 try:
                     asyncio.create_task(self._fire_and_forget_sandbox_kill(owner_uid, chat_id, prev_rid))
                 except Exception:
                     pass
 
+        mode = str(frame_data.get("mode") or "")
+        server_status = str(frame_data.get("server_status") or "running")
+        html_val = str(frame_data.get("html") or "")
+        src_val = str(frame_data.get("src") or "")
+        if mode == "app_proxy" and new_rid and server_status not in ("completed", "killed", "error", "timeout"):
+            ticket = self.issue_app_capability_ticket(owner_uid, chat_id, new_rid, wid)
+            src_val = f"/echo/v1/wm/app/{ticket}/"
+            html_val = ""
+
         frame_entry = {
             "id": wid,
             "title": str(frame_data.get("title") or "Monitor"),
-            "html": str(frame_data.get("html") or ""),
-            "src": str(frame_data.get("src") or ""),
+            "html": html_val,
+            "src": src_val,
+            "mode": mode,
             "width": str(frame_data.get("width") or "100%"),
             "height": str(frame_data.get("height") or "400px"),
             "run_id": new_rid,
-            "server_status": str(frame_data.get("server_status") or "running"),
+            "server_status": server_status,
             "exit_code": frame_data.get("exit_code"),
             "ready": bool(frame_data.get("ready", False)),
             "updated_at": time.time(),
@@ -507,7 +604,7 @@ class EchoWindowManager:
         run_id: str = "",
         exit_code: Optional[int] = None,
     ) -> None:
-        """Met à jour le statut serveur des frames Canvas ciblées et le diffuse via SSE."""
+        """Met à jour le statut serveur des frames Canvas ciblées et le diffuse."""
         if isinstance(window_ids, (list, tuple, set)):
             wids = [str(w) for w in window_ids if w]
         elif window_ids:
@@ -522,6 +619,8 @@ class EchoWindowManager:
                 entry["server_status"] = server_status
                 entry["exit_code"] = exit_code
                 entry["updated_at"] = now
+        if run_id and server_status in ("completed", "killed", "error", "timeout"):
+            self.revoke_app_run_tickets(run_id)
         await self.broadcast(
             user_id,
             {
@@ -542,7 +641,7 @@ class EchoWindowManager:
         data: Any,
         req_id: Optional[str] = None,
     ) -> None:
-        """Diffuse un événement temps réel vers une frame Canvas côté client via SSE."""
+        """Diffuse un événement temps réel vers une frame Canvas côté client."""
         await self.broadcast(
             user_id,
             {
@@ -554,81 +653,18 @@ class EchoWindowManager:
             },
         )
 
-    def peek_canvas_ui_payload(
-        self,
-        user_id: str,
-        chat_id: str,
-        window_ids: Optional[Set[str]] = None,
-        run_id: str = "",
-    ) -> Tuple[Dict[str, Any], Dict[Any, int]]:
-        """Lit les payloads UI, pings, fermetures et événements inbox Canvas sans vider la file inbox."""
+    def consume_canvas_ui_payload(self, user_id: str, chat_id: str) -> Dict[str, Any]:
+        """Retourne les payloads UI Canvas courants pour amorçage initial d'un run."""
         cstate = self._get_canvas_state(user_id, chat_id)
         out: Dict[str, Any] = {}
         for wid, val in cstate["payloads"].items():
-            if window_ids is not None and wid not in window_ids:
-                continue
             out[wid] = dict(val) if isinstance(val, dict) else val
-
-        pings = {
-            wid: ts
-            for wid, ts in cstate["pings"].items()
-            if window_ids is None or wid in window_ids
-        }
-        if pings:
-            out["_pings"] = pings
-
-        closed_wids = [
-            wid
-            for wid in cstate["closed"]
-            if window_ids is None or wid in window_ids
-        ]
-        if closed_wids:
-            out["_closed_windows"] = closed_wids
-            for wid in closed_wids:
-                existing = out.get(wid)
-                if isinstance(existing, dict):
-                    existing["_is_closed"] = True
-                else:
-                    out[wid] = {"_is_closed": True}
-
-        if cstate["signal"] is not None:
-            out["_echo_signal"] = cstate["signal"]
-
-        inbox_events = []
-        ack_counts: Dict[Any, int] = {}
-        for inbox_key, q_list in cstate["inbox"].items():
-            if isinstance(inbox_key, tuple) and len(inbox_key) == 2:
-                wid, r_id = inbox_key
+        for wid in cstate["closed"]:
+            existing = out.get(wid)
+            if isinstance(existing, dict):
+                existing["_is_closed"] = True
             else:
-                wid, r_id = str(inbox_key), ""
-            if window_ids is not None and wid not in window_ids:
-                continue
-            if run_id and r_id not in (run_id, ""):
-                continue
-            if isinstance(q_list, list) and q_list:
-                inbox_events.extend(q_list)
-                ack_counts[inbox_key] = len(q_list)
-        if inbox_events:
-            out["_inbox_events"] = inbox_events
-        return out, ack_counts
-
-    def ack_canvas_inbox(self, user_id: str, chat_id: str, ack_counts: Dict[Any, int]) -> None:
-        """Acquitte les événements inbox consommés en supprimant le préfixe traité."""
-        cstate = self._get_canvas_state(user_id, chat_id)
-        for inbox_key, count in ack_counts.items():
-            if count <= 0:
-                continue
-            q_list = cstate["inbox"].get(inbox_key)
-            if isinstance(q_list, list):
-                del q_list[:count]
-                if not q_list:
-                    cstate["inbox"].pop(inbox_key, None)
-
-    def consume_canvas_ui_payload(self, user_id: str, chat_id: str) -> Dict[str, Any]:
-        """Retourne les payloads UI Canvas courants et vide atomiquement la file inbox."""
-        out, ack_counts = self.peek_canvas_ui_payload(user_id, chat_id)
-        if ack_counts:
-            self.ack_canvas_inbox(user_id, chat_id, ack_counts)
+                out[wid] = {"_is_closed": True}
         return out
 
     def cleanup_canvas_run(
@@ -638,7 +674,7 @@ class EchoWindowManager:
         window_ids: Any,
         run_id: str = "",
     ) -> None:
-        """Nettoie les pings, inbox et marqueurs de fermeture associés aux fenêtres d'un run."""
+        """Nettoie les pings et marqueurs de fermeture associés aux fenêtres d'un run."""
         if isinstance(window_ids, (list, tuple, set)):
             wids = [str(w) for w in window_ids if w]
         elif window_ids:
@@ -646,24 +682,17 @@ class EchoWindowManager:
         else:
             wids = []
         cstate = self._get_canvas_state(user_id, chat_id)
+        if run_id:
+            self.revoke_app_run_tickets(run_id)
         for wid in wids:
             if run_id:
-                cstate["inbox"].pop((wid, run_id), None)
                 current_frame = cstate["frames"].get(wid)
                 if not isinstance(current_frame, dict) or current_frame.get("run_id", "") in ("", run_id):
                     cstate["pings"].pop(wid, None)
                     cstate["closed"].pop(wid, None)
-                    cstate["inbox"].pop((wid, ""), None)
-                    cstate["inbox"].pop(wid, None)
             else:
                 cstate["pings"].pop(wid, None)
                 cstate["closed"].pop(wid, None)
-                cstate["inbox"].pop(wid, None)
-                for k in [
-                    ik for ik in list(cstate["inbox"].keys())
-                    if isinstance(ik, tuple) and len(ik) == 2 and ik[0] == wid
-                ]:
-                    cstate["inbox"].pop(k, None)
 
     def clear_canvas_signal(self, user_id: str, chat_id: str) -> None:
         """Réinitialise le signal Canvas (ex: abort) après prise en compte."""
@@ -846,41 +875,33 @@ class EchoWindowManager:
 
         if action == "canvas_ui_event":
             if chat_id:
+                owner_uid = self._resolve_owner_uid(user_id, chat_id)
                 cstate = self._get_canvas_state(user_id, chat_id)
                 now_ms = time.time() * 1000.0
                 ui_payload = payload.get("echoUIPayload")
                 if isinstance(ui_payload, dict):
                     wid = str(ui_payload.get("window_id") or payload.get("frame_id") or "default")
-                    cstate["payloads"][wid] = ui_payload.get("payload")
+                    p_data = ui_payload.get("payload")
+                    cstate["payloads"][wid] = p_data
                     cstate["pings"][wid] = now_ms
                     cstate["closed"].pop(wid, None)
-                    self.wake_sandbox_pollers(
-                        user_id,
-                        chat_id,
-                        run_id=str(ui_payload.get("run_id") or payload.get("run_id") or ""),
-                        window_id=wid,
-                    )
-                ui_request = payload.get("echoUIRequest")
-                if isinstance(ui_request, dict):
-                    req = dict(ui_request)
-                    wid = str(req.get("window_id") or payload.get("frame_id") or "default")
-                    req["window_id"] = wid
-                    req_run_id = str(
-                        req.get("run_id")
+                    target_rid = str(
+                        ui_payload.get("run_id")
                         or payload.get("run_id")
                         or (cstate["frames"].get(wid) or {}).get("run_id")
                         or ""
                     )
-                    q_list = cstate["inbox"].setdefault((wid, req_run_id), [])
-                    q_list.append(req)
-                    if len(q_list) > 256:
-                        del q_list[:-256]
-                    cstate["pings"][wid] = now_ms
-                    cstate["closed"].pop(wid, None)
-                    self.wake_sandbox_pollers(user_id, chat_id, run_id=req_run_id, window_id=wid)
+                    if target_rid:
+                        asyncio.create_task(
+                            self._fire_and_forget_canvas_signal(
+                                owner_uid,
+                                chat_id,
+                                target_rid,
+                                {"payload_sync": {wid: p_data}},
+                            )
+                        )
                 if payload.get("echoSignal") == "abort":
                     cstate["signal"] = "abort"
-                    self.wake_sandbox_pollers(user_id, chat_id)
                 ping_wid = payload.get("echoPing")
                 if ping_wid:
                     s_wid = str(ping_wid)
@@ -895,17 +916,34 @@ class EchoWindowManager:
                             cstate["closed"].pop(s_wid, None)
                 closed_val = payload.get("window_closed")
                 if closed_val:
-                    closed_items = [closed_val] if isinstance(closed_val, str) else (closed_val if isinstance(closed_val, list) else [])
+                    closed_items = (
+                        [closed_val]
+                        if isinstance(closed_val, str)
+                        else (closed_val if isinstance(closed_val, list) else [])
+                    )
                     remove_frame = bool(payload.get("remove_frame", False))
+                    by_run_id: Dict[str, list[str]] = {}
+                    explicit_rid = str(payload.get("run_id") or "")
                     for cw in closed_items:
                         if cw:
                             s_wid = str(cw)
-                            target_rid = str((cstate["frames"].get(s_wid) or {}).get("run_id") or "")
-                            cstate["closed"][s_wid] = now_ms
+                            target_rid = explicit_rid or str((cstate["frames"].get(s_wid) or {}).get("run_id") or "")
+                            cstate["closed"][s_wid] = True
                             cstate["pings"].pop(s_wid, None)
                             if remove_frame:
                                 cstate["frames"].pop(s_wid, None)
-                            self.wake_sandbox_pollers(user_id, chat_id, run_id=target_rid, window_id=s_wid)
+                            if target_rid:
+                                by_run_id.setdefault(target_rid, []).append(s_wid)
+                    for target_rid, wids_list in by_run_id.items():
+                        self.revoke_app_run_tickets(target_rid)
+                        asyncio.create_task(
+                            self._fire_and_forget_canvas_signal(
+                                owner_uid,
+                                chat_id,
+                                target_rid,
+                                {"window_closed": wids_list},
+                            )
+                        )
             return {"status": "ok"}
 
         if action == "canvas_stop_run":
@@ -915,28 +953,25 @@ class EchoWindowManager:
             cstate = self._get_canvas_state(user_id, chat_id)
             wid = str(payload.get("frame_id") or payload.get("window_id") or "default")
             target_rid = str(payload.get("run_id") or (cstate["frames"].get(wid) or {}).get("run_id") or "")
-            cstate["closed"][wid] = time.time() * 1000.0
-            self.wake_sandbox_pollers(owner_uid, chat_id, run_id=target_rid, window_id=wid)
-            poller = self.get_sandbox_poller(owner_uid, chat_id, target_rid) if target_rid else None
-            poller_active = bool(poller and poller.get("task") and not poller["task"].done())
-            if not poller_active:
-                try:
-                    import httpx
-                    sandbox_base = ECHO_CODING_WORKER_URL.replace("/execute", "")
-                    async with httpx.AsyncClient(timeout=5.0) as client:
-                        await client.post(
-                            f"{sandbox_base}/kill",
-                            json={"user_id": owner_uid, "chat_id": chat_id, "run_id": target_rid or None},
-                        )
-                except Exception:
-                    pass
-                await self.broadcast_canvas_status(
-                    owner_uid,
-                    chat_id,
-                    [wid],
-                    server_status="killed",
-                    run_id=target_rid,
-                )
+            cstate["closed"][wid] = True
+            if target_rid:
+                self.revoke_app_run_tickets(target_rid)
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    await client.post(
+                        f"{ECHO_CODING_WORKER_BASE_URL}/kill",
+                        json={"user_id": owner_uid, "chat_id": chat_id, "run_id": target_rid or None},
+                    )
+            except Exception:
+                pass
+            await self.broadcast_canvas_status(
+                owner_uid,
+                chat_id,
+                [wid],
+                server_status="killed",
+                run_id=target_rid,
+            )
             return {"status": "ok", "run_id": target_rid}
 
         return {"status": "ignored"}
