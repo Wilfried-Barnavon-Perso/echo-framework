@@ -2,20 +2,31 @@
 """
 ================================================================================
 MODULE : ECHO - ECHO MONITOR
-VERSION : 5.234.1.1
+VERSION : 6.15.2.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.15.2.1: Écriture thread-safe (_MONITOR_WRITE_LOCK), push_ready(), pool ThreadPoolExecutor borné dans BidiRouter.serve_forever() et support __echo_ping__.
 # 5.234.1.1: Isolation IPC par variables d'environnement (ECHO_MONITOR_FILE, ECHO_UI_PAYLOAD_FILE, ECHO_UI_INBOX_FILE) et ajout de push_event, get_ui_requests et BidiRouter.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
+import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
 _INBOX_OFFSETS: Dict[str, int] = {}
+_MONITOR_WRITE_LOCK = threading.Lock()
+
+
+def _append_monitor_record(meta: dict) -> None:
+    with _MONITOR_WRITE_LOCK:
+        with open(_get_monitor_path(), 'a', encoding='utf-8') as f:
+            f.write(json.dumps(meta) + "\n")
+            f.flush()
 
 
 def _get_monitor_path() -> str:
@@ -48,8 +59,7 @@ def display(html_content: str, title: str = "ECHO Sandbox Monitor", width: str =
         "html": payload_html
     }
 
-    with open(_get_monitor_path(), 'a', encoding='utf-8') as f:
-        f.write(json.dumps(meta) + "\n")
+    _append_monitor_record(meta)
 
 
 def push_event(data: Any, window_id: str = "default", req_id: Optional[str] = None) -> None:
@@ -63,8 +73,20 @@ def push_event(data: Any, window_id: str = "default", req_id: Optional[str] = No
         "req_id": req_id,
         "data": data
     }
-    with open(_get_monitor_path(), 'a', encoding='utf-8') as f:
-        f.write(json.dumps(meta) + "\n")
+    _append_monitor_record(meta)
+
+
+def push_ready(window_id: str = "default", actions: Optional[List[str]] = None) -> None:
+    """
+    Émet un événement de disponibilité RPC (ready) pour signaler à l'hôte UI
+    que le routeur Bidi de la fenêtre 'window_id' écoute les requêtes.
+    """
+    meta = {
+        "type": "ready",
+        "window_id": window_id,
+        "actions": list(actions or []),
+    }
+    _append_monitor_record(meta)
 
 
 def get_ui_payload(window_id: str = "default") -> Optional[dict]:
@@ -134,8 +156,9 @@ class BidiRouter:
     Routeur RPC bidirectionnel permettant d'exposer des routes dans la Sandbox
     et de répondre en temps réel aux requêtes de l'Iframe sans rechargement DOM.
     """
-    def __init__(self, window_id: str = "default"):
+    def __init__(self, window_id: str = "default", max_workers: int = 4):
         self.window_id = window_id
+        self.max_workers = max(1, int(max_workers or 4))
         self._routes: Dict[str, Callable[[Any], Any]] = {}
 
     def route(self, action: str):
@@ -144,23 +167,57 @@ class BidiRouter:
             return fn
         return decorator
 
-    def dispatch_once(self) -> int:
+    def _execute_request(self, req: dict) -> None:
+        action = req.get("action")
+        req_id = req.get("req_id")
+        payload = req.get("payload")
+        try:
+            if action in self._routes:
+                res = self._routes[action](payload)
+                push_event({"status": "ok", "action": action, "result": res}, window_id=self.window_id, req_id=req_id)
+            elif action == "__echo_ping__":
+                push_event(
+                    {
+                        "status": "ok",
+                        "action": action,
+                        "result": {
+                            "pong": True,
+                            "window_id": self.window_id,
+                            "ts": time.time(),
+                            "actions": sorted(self._routes.keys()),
+                        },
+                    },
+                    window_id=self.window_id,
+                    req_id=req_id,
+                )
+            else:
+                push_event(
+                    {
+                        "status": "error",
+                        "action": action,
+                        "error": f"Unknown RPC action: {action}",
+                        "available_actions": sorted(self._routes.keys()),
+                    },
+                    window_id=self.window_id,
+                    req_id=req_id,
+                )
+        except Exception as exc:
+            push_event({"status": "error", "action": action, "error": str(exc)}, window_id=self.window_id, req_id=req_id)
+
+    def dispatch_once(self, executor: Optional[ThreadPoolExecutor] = None) -> int:
         reqs = get_ui_requests(self.window_id)
         handled = 0
         for req in reqs:
-            action = req.get("action")
-            req_id = req.get("req_id")
-            payload = req.get("payload")
-            if action in self._routes:
-                try:
-                    res = self._routes[action](payload)
-                    push_event({"status": "ok", "action": action, "result": res}, window_id=self.window_id, req_id=req_id)
-                except Exception as exc:
-                    push_event({"status": "error", "action": action, "error": str(exc)}, window_id=self.window_id, req_id=req_id)
-                handled += 1
+            if executor is not None:
+                executor.submit(self._execute_request, req)
+            else:
+                self._execute_request(req)
+            handled += 1
         return handled
 
-    def serve_forever(self, poll_interval: float = 0.2):
-        while not is_window_closed(self.window_id):
-            self.dispatch_once()
-            time.sleep(poll_interval)
+    def serve_forever(self, poll_interval: float = 0.05):
+        push_ready(self.window_id, sorted(self._routes.keys()))
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            while not is_window_closed(self.window_id):
+                self.dispatch_once(executor=executor)
+                time.sleep(poll_interval)

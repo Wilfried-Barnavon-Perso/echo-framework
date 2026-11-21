@@ -32,7 +32,9 @@ Le Système exécute chaque script dans un conteneur isolé Bubblewrap (`bwrap`,
 1. **Mode Synchrone (`background=False`, valeur par défaut)** :
    - Le Système attend la terminaison du processus (jusqu'à `timeout_sec`) et restitue la sortie complète (`stdout`/`stderr`) ainsi que le `run_id`.
 2. **Mode Arrière-Plan / Serveur (`background=True`)** :
+   - **Obligatoire** pour tout serveur `BidiRouter` (`serve_forever()`).
    - Le Système démarre le processus en arrière-plan, maintient le pont bidirectionnel UI <-> Sandbox actif et retourne immédiatement le `run_id` et le `pid`.
+   - Cycle de vie gouverné par **TTL d'inactivité** (`1800s` par défaut, renouvelé à chaque interaction UI / `/update_payload`) et un **plafond absolu** de `4h` (`14400s`).
    - Le Modèle DOIT utiliser `control_sandbox_execution(action, run_id, wait_sec)` pour superviser le processus :
      - `action="status"` : Inspecte l'état (`running`, `completed`, `error`, `timeout`, `killed`) d'un `run_id` ou liste tous les jobs de la session si `run_id` est omis.
      - `action="listen"` : Lit de manière incrémentale les nouveaux flux `stdout_chunk` et `stderr_chunk` du `run_id` (avec attente optionnelle `wait_sec` de `0` à `60` secondes).
@@ -47,10 +49,11 @@ L'interface visuelle est projetée dans une véritable `<iframe>` HTML5 (`sandbo
 ### 4.1 Primitives `echo_monitor` (Python & Node.js)
 - `display(html_content, title="ECHO Sandbox Monitor", width="100%", height="400px", window_id="default")` : Crée ou remplace intégralement l'`<iframe>` de la fenêtre `window_id`.
 - `push_event(data, window_id="default", req_id=None)` : Pousse un événement JSON temps réel vers l'`<iframe>` existante via `postMessage` **sans recharger le DOM**.
+- `push_ready(window_id="default", actions=None)` : Émet un signal `{"type": "ready", "window_id": window_id, "actions": [...]}` indiquant à l'hôte UI que le routeur Bidi est prêt. Appelé automatiquement par `BidiRouter.serve_forever()`.
 - `get_ui_payload(window_id="default") -> dict | None` : Lit le dernier état snapshot émis par l'`<iframe>`.
 - `get_ui_requests(window_id=None) -> list[dict]` : Lit de manière incrémentale (par curseur d'offset sans perte) la file FIFO des requêtes RPC émises par l'`<iframe>`.
 - `is_window_closed(window_id="default") -> bool` : Retourne `True` si L'Utilisateur a fermé la fenêtre.
-- `BidiRouter(window_id="default")` : Routeur RPC déclaratif exposant `@router.route(action)` (Python) / `router.route(action, handler)` (Node.js), `dispatch_once()` et `serve_forever(poll_interval=0.2)`.
+- `BidiRouter(window_id="default", max_workers=4)` : Routeur RPC déclaratif à exécution concurrente bornée (`max_workers=4` par défaut) exposant `@router.route(action)` (Python) / `router.route(action, handler)` (Node.js), `dispatch_once()` et `serve_forever(poll_interval=0.05)`. Supporte nativement `__echo_ping__` et rejette immédiatement toute action inconnue (`Unknown RPC action`) avec la liste `available_actions`. Il est fortement recommandé d'utiliser des timeouts réseau courts (`timeout=10`) dans les handlers afin de ne pas saturer les workers.
 
 ### 4.2 Primitives JavaScript Pré-Injectées dans l'`<iframe>`
 Le Système injecte automatiquement dans chaque `<iframe>` créée par `display()` deux helpers globaux :

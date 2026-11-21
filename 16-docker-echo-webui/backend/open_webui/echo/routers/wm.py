@@ -1,11 +1,12 @@
 """
 title: ECHO V6 Window Manager Router
 author: Wilfried BARNAVON
-version: 6.7.20.1
+version: 6.15.2.1
 description: Routeur souverain FastAPI pour le gestionnaire de fenêtres et événements temps réel (/echo/v1/wm).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.15.2.1: Réconciliation des frames Canvas (reconcile_canvas_frames) sur GET /chat/{chat_id} et action RPC canvas_stop_run sur POST /rpc.
 # 6.7.20.1: Exposition de l'endpoint authentifié GET /echo/v1/wm/commands servant le catalogue déclaratif system-commands.xml.
 # 6.6.9.1: Passage sur get_echo_sse_user/get_echo_verified_user et create_echo_sse_response depuis echo.http_utils.
 # 6.6.8.1: Support du paramètre refresh sur /chat/{chat_id} via AuthService.refresh_quota_if_needed et préservation de context_stats enrichi par EchoWindowManager.
@@ -92,6 +93,11 @@ async def wm_get_chat_snapshot(
             await AuthService(user_id=uid).refresh_quota_if_needed(force=True)
         except Exception as e:
             log.debug("Erreur refresh_quota_if_needed pour snapshot WM: %s", e)
+
+    try:
+        await wm.reconcile_canvas_frames(user_id, chat_id)
+    except Exception as e:
+        log.debug("Erreur reconcile_canvas_frames pour snapshot WM: %s", e)
 
     snapshot = await asyncio.to_thread(wm.get_chat_snapshot, user_id, chat_id)
     return JSONResponse(content=snapshot)

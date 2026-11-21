@@ -324,6 +324,7 @@ export const drainEchoCanvasEvents = (chatId: string, windowId: string): EchoCan
 
 export const hydrateEchoCanvasFrames = (chatId: string, rawFrames: any[]): void => {
 	if (!chatId || !Array.isArray(rawFrames) || rawFrames.length === 0) return;
+	const TERMINAL_STATUSES = new Set(['completed', 'killed', 'error', 'timeout']);
 	echoCanvasFrames.update((all) => {
 		const list = [...(all[chatId] || [])];
 		for (const raw of rawFrames) {
@@ -334,7 +335,10 @@ export const hydrateEchoCanvasFrames = (chatId: string, rawFrames: any[]): void 
 			const idx = list.findIndex((f) => f.id === id);
 			if (idx >= 0) {
 				const localUpdated = typeof list[idx].updated_at === 'number' ? list[idx].updated_at! : 0;
-				if (localUpdated > incomingUpdated) continue;
+				const isTerminalReconciliation =
+					TERMINAL_STATUSES.has(String(raw.server_status || '')) &&
+					!TERMINAL_STATUSES.has(String(list[idx].server_status || ''));
+				if (localUpdated > incomingUpdated && !isTerminalReconciliation) continue;
 				list[idx] = {
 					...list[idx],
 					...raw,

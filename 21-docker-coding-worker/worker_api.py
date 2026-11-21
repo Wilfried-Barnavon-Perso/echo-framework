@@ -1,19 +1,19 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 6.13.1.1
+VERSION : 6.15.2.1
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-11-20
+DATE MAJ : 2026-11-21
 
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.15.2.1: Durcissement Option A : long-polling /poll_monitor (wait), purge TTL/lifetime des jobs terminés, contrôle /kill par run_id et exposition des payloads/états.
 # 6.13.1.1: Exposition de job_state, exit_code et alive dans GET /poll_monitor.
 # 6.6.22.1: Attachement TIOCSCTTY du PTY bwrap, déduplication buffer/out_queue, reprise par curseur et close 1000.
 # 6.6.21.1: Support des scripts .sh, /etc/passwd et /etc/group dans bwrap, PS1/PATH terminal et route POST /ssh.
 # 6.6.18.1: Tolérance aux requêtes POST sans Content-Type JSON dans create_terminal() (fix HTTP 415).
-# 6.6.5.1: Montage bwrap en lecture seule (--ro-bind-try) du domaine /browserviews.
 
 import asyncio
 import json
@@ -76,6 +76,8 @@ MAX_CONCURRENT_JOBS_PER_CHAT = int(os.environ.get("SANDBOX_MAX_CONCURRENT_JOBS_P
 MAX_CONCURRENT_JOBS_GLOBAL = int(os.environ.get("SANDBOX_MAX_CONCURRENT_JOBS_GLOBAL", 8))
 FINISHED_JOBS_MAX_PER_CHAT = 20
 FINISHED_JOBS_TTL_SEC = 900
+DEFAULT_BG_IDLE_TTL_SEC = float(os.environ.get("SANDBOX_BG_IDLE_TTL_SEC", 1800.0))
+DEFAULT_BG_MAX_LIFETIME_SEC = float(os.environ.get("SANDBOX_BG_MAX_LIFETIME_SEC", 14400.0))
 
 _JOBS_REGISTRY = {}
 _JOBS_LOCK = threading.Lock()
@@ -211,21 +213,56 @@ def _stream_reader(pipe, buf_list, size_ref, lock, max_len, is_stdout=True):
 def _job_lifecycle_watcher(job):
     proc = job["proc"]
     timeout_sec = job["timeout_sec"]
-    try:
-        proc.wait(timeout=timeout_sec)
-    except subprocess.TimeoutExpired:
-        _kill_process_group(proc)
-        with job["lock"]:
-            if job["state"] == "running":
-                job["state"] = "timeout"
-                job["error_msg"] = f"Timeout ({timeout_sec}s) dépassé."
+    if not job.get("background"):
+        try:
+            proc.wait(timeout=timeout_sec)
+        except subprocess.TimeoutExpired:
+            _kill_process_group(proc)
+            with job["lock"]:
+                if job["state"] == "running":
+                    job["state"] = "timeout"
+                    job["error_msg"] = f"Timeout ({timeout_sec}s) dépassé."
+    else:
+        while True:
+            try:
+                proc.wait(timeout=1.0)
+                break
+            except subprocess.TimeoutExpired:
+                now = time.time()
+                should_kill = False
+                with job["lock"]:
+                    if job["state"] != "running":
+                        break
+                    if now - job["last_activity_at"] >= job["idle_ttl_sec"]:
+                        job["state"] = "timeout"
+                        job["error_msg"] = f"Serveur arrêté après inactivité ({int(job['idle_ttl_sec'])}s)."
+                        should_kill = True
+                    elif now - job["started_at"] >= job["max_lifetime_sec"]:
+                        job["state"] = "timeout"
+                        job["error_msg"] = f"Durée maximale serveur dépassée ({int(job['max_lifetime_sec'])}s)."
+                        should_kill = True
+                if should_kill:
+                    _kill_process_group(proc)
+                    break
 
     for t in (job.get("t_out"), job.get("t_err")):
         if t:
             t.join(timeout=2.0)
 
     rc = proc.poll()
-    monitor_payloads = _read_monitor_file(job.get("monitor_file"))
+    monitor_file = job.get("monitor_file")
+    raw_bytes = b""
+    if monitor_file and os.path.exists(monitor_file):
+        try:
+            with open(monitor_file, "rb") as mf:
+                raw_bytes = mf.read(8 * 1024 * 1024)
+        except Exception:
+            raw_bytes = b""
+    if raw_bytes:
+        with job["lock"]:
+            job["monitor_raw_bytes"] = raw_bytes
+
+    monitor_payloads = _read_monitor_file(monitor_file)
     _cleanup_ipc_files(job.get("sandbox_dir"), job["run_id"])
 
     with job["lock"]:
@@ -401,6 +438,9 @@ def _start_sandbox_job(
     sandbox_dir, files_dir, global_files_dir, deps_dir,
     timeout_sec, ui_payload, max_output_length,
     browserviews_dir: str | None = None,
+    background: bool = False,
+    idle_ttl_sec: float = DEFAULT_BG_IDLE_TTL_SEC,
+    max_lifetime_sec: float = DEFAULT_BG_MAX_LIFETIME_SEC,
 ):
     if not sandbox_dir:
         return None, {"status": "critical_error", "error": "Espace d'exécution non défini."}
@@ -552,6 +592,11 @@ def _start_sandbox_job(
             "started_at": time.time(),
             "ended_at": None,
             "timeout_sec": timeout_sec,
+            "background": bool(background),
+            "idle_ttl_sec": max(30.0, float(idle_ttl_sec)),
+            "max_lifetime_sec": max(60.0, float(max_lifetime_sec)),
+            "last_activity_at": time.time(),
+            "monitor_raw_bytes": b"",
             "exit_code": None,
             "error_msg": "",
             "stdout_buf": stdout_buf,
@@ -808,6 +853,14 @@ def execute_code():
     timeout = int(data.get('timeout', 30))
     max_output_length = int(data.get('max_output_length', 131072))
     background = bool(data.get('background', False))
+    try:
+        idle_ttl_sec = float(data.get('idle_ttl_sec', DEFAULT_BG_IDLE_TTL_SEC))
+    except (TypeError, ValueError):
+        idle_ttl_sec = DEFAULT_BG_IDLE_TTL_SEC
+    try:
+        max_lifetime_sec = float(data.get('max_lifetime_sec', DEFAULT_BG_MAX_LIFETIME_SEC))
+    except (TypeError, ValueError):
+        max_lifetime_sec = DEFAULT_BG_MAX_LIFETIME_SEC
     run_id = _sanitize_id(data.get('run_id') or f"run_{uuid.uuid4().hex[:8]}")
     safe_uid = _sanitize_id(data.get('user_id', 'system'))
     safe_cid = _sanitize_id(data.get('chat_id'), default="")
@@ -828,6 +881,9 @@ def execute_code():
         sandbox_dir, files_dir, global_files_dir, deps_dir,
         timeout, ui_payload, max_output_length,
         browserviews_dir=browserviews_dir,
+        background=background,
+        idle_ttl_sec=idle_ttl_sec,
+        max_lifetime_sec=max_lifetime_sec,
     )
     if err is not None:
         err["run_id"] = run_id
@@ -954,34 +1010,74 @@ def poll_monitor():
     safe_uid = _sanitize_id(user_id)
     safe_cid = _sanitize_id(chat_id, default="")
     safe_rid = _sanitize_id(run_id, default="")
+    try:
+        offset = int(request.args.get('offset', 0))
+    except ValueError:
+        offset = 0
+    try:
+        wait_sec = max(0.0, min(float(request.args.get('wait_sec', 0.0)), 5.0))
+    except (TypeError, ValueError):
+        wait_sec = 0.0
+
+    job = None
     job_state = "unknown"
     exit_code = None
     if safe_cid and safe_rid:
         with _JOBS_LOCK:
             job = _JOBS_REGISTRY.get(f"{safe_uid}:{safe_cid}:{safe_rid}")
-        if job is not None:
-            with job["lock"]:
-                job_state = job["state"]
-                exit_code = job["exit_code"]
-    try:
-        offset = int(request.args.get('offset', 0))
-    except ValueError:
-        offset = 0
+
     sandbox_dir = _get_sandbox_dir(user_id, chat_id)
+    mon_fname, _, _ = _get_ipc_filenames(run_id)
+    monitor_file = os.path.join(sandbox_dir, mon_fname) if sandbox_dir else None
+
+    if wait_sec > 0 and job is not None:
+        deadline = time.monotonic() + wait_sec
+        while time.monotonic() < deadline:
+            if monitor_file and os.path.exists(monitor_file):
+                try:
+                    if os.path.getsize(monitor_file) > offset:
+                        break
+                except OSError:
+                    pass
+            if job["done_event"].is_set():
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            job["done_event"].wait(timeout=min(0.05, remaining))
+
+    raw_bytes = b""
+    if job is not None:
+        with job["lock"]:
+            job_state = job["state"]
+            exit_code = job["exit_code"]
+            raw_bytes = job.get("monitor_raw_bytes") or b""
+
     if not sandbox_dir:
         return jsonify({"payloads": [], "offset": offset, "job_state": job_state, "exit_code": exit_code, "alive": job_state == "running"})
 
-    mon_fname, _, _ = _get_ipc_filenames(run_id)
-    monitor_file = os.path.join(sandbox_dir, mon_fname)
-    if not os.path.exists(monitor_file):
-        return jsonify({"payloads": [], "offset": offset, "job_state": job_state, "exit_code": exit_code, "alive": job_state == "running"})
-
     payloads = []
-    try:
-        with open(monitor_file, 'rb') as f:
-            f.seek(offset)
-            content = f.read()
+    if monitor_file and os.path.exists(monitor_file):
+        try:
+            with open(monitor_file, 'rb') as f:
+                f.seek(offset)
+                content = f.read()
 
+            last_newline = content.rfind(b'\n')
+            if last_newline != -1:
+                valid_content = content[:last_newline + 1]
+                new_offset = offset + len(valid_content)
+                for line in valid_content.decode('utf-8', errors='replace').strip().split('\n'):
+                    if line.strip():
+                        try:
+                            payloads.append(orjson.loads(line))
+                        except Exception:
+                            pass
+                offset = new_offset
+        except Exception:
+            pass
+    elif job is not None and raw_bytes and 0 <= offset < len(raw_bytes):
+        content = raw_bytes[offset:]
         last_newline = content.rfind(b'\n')
         if last_newline != -1:
             valid_content = content[:last_newline + 1]
@@ -993,8 +1089,7 @@ def poll_monitor():
                     except Exception:
                         pass
             offset = new_offset
-    except Exception:
-        pass
+
     return jsonify({"payloads": payloads, "offset": offset, "job_state": job_state, "exit_code": exit_code, "alive": job_state == "running"})
 
 
@@ -1003,6 +1098,16 @@ def update_payload():
     data = request.json or {}
     ui_payload = data.get('ui_payload')
     run_id = data.get('run_id', '')
+    if run_id:
+        safe_uid = _sanitize_id(data.get('user_id', 'system'))
+        safe_cid = _sanitize_id(data.get('chat_id'), default="")
+        safe_rid = _sanitize_id(run_id, default="")
+        if safe_cid and safe_rid:
+            with _JOBS_LOCK:
+                job = _JOBS_REGISTRY.get(f"{safe_uid}:{safe_cid}:{safe_rid}")
+            if job is not None:
+                with job["lock"]:
+                    job["last_activity_at"] = time.time()
     sandbox_dir = _get_sandbox_dir(data.get('user_id', 'system'), data.get('chat_id'))
     if sandbox_dir and isinstance(ui_payload, dict):
         _, pay_fname, inb_fname = _get_ipc_filenames(run_id)

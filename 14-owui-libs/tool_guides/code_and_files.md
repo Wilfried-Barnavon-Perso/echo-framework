@@ -1,7 +1,7 @@
 ---
 domain_id: code_and_files
-version: 6.13.2.1
-updated_at: 2026-11-20
+version: 6.15.2.1
+updated_at: 2026-11-21
 name: Registre Unifié, Explorateur de l'Espace Personnel & Sandbox d'Exécution de Code
 description: Consultation du Registre Unifié (query_registry), lecture de fichiers (RAW, Sonde Sémantique, Multimédia, Image, Hash), exécution isolée de scripts Codex sandbox (.py / .js / .sh) et exécution SSH distante (ssh_executor).
 tools: [query_registry, read_raw_file_content, semantic_probe, read_multimedia_file, show_image_to_user, get_file_metadata, calculate_file_hashes, code_executor, control_sandbox_execution, kill_sandbox_execution, ssh_executor]
@@ -65,8 +65,9 @@ Il est ABSOLUMENT INTERDIT de passer du code brut à `code_executor`. Toute mani
   - `/sandbox-agent-readme.md` (**Lecture seule**) : Manuel technique interne de la Sandbox.
 - **Quotas & Isolation** : Chaque exécution est strictement isolée par `(user_id, chat_id, run_id)` (isolation stricte par session et par Sous-Agent), à raison d'un maximum de **4 processus simultanés par session** (`8` globalement sur le Worker).
 - **Modes d'exécution de `code_executor`** :
-  - `background=False` (**défaut REQUIS pour les scripts standards**) : Exécution synchrone bloquante restituant `output`, `error` et `run_id` à la terminaison.
-  - `background=True` : Démarre le processus en tâche de fond (serveur Bidi `echo_monitor` ou calcul long), maintient le pont UI <-> Sandbox actif en tâche asynchrone et retourne immédiatement le `run_id` (`run_xxxxxxxx`) et le `pid`.
+  - `background=False` (**défaut REQUIS pour les scripts standards sans serveur**) : Exécution synchrone bloquante restituant `output`, `error` et `run_id` à la terminaison. **INTERDIT** pour tout script invoquant `BidiRouter.serve_forever()` (refus immédiat par garde pré-vol).
+  - `background=True` (**OBLIGATOIRE pour tout serveur `BidiRouter.serve_forever()` ou calcul long**) : Démarre le processus en tâche de fond, exécute une **Readiness Probe** (jusqu'à `8s` pour réception du signal `ready` ou détection de crash précoce avec remontée `stderr`/`exit_code`), maintient le pont UI <-> Sandbox actif via le superviseur pérenne (`EchoWindowManager`), et retourne immédiatement `run_id`, `pid`, `ui_ready`, `window_ids` et `idle_ttl_sec`.
+  - **Durée de vie & TTL** : Un processus détaché avec `echo_monitor` / `BidiRouter` est soumis à un **TTL d'inactivité de `1800s` (30 min)** renouvelé sur activité RPC/poll et un **plafond absolu de `4h` (`14400s`)**.
 - **Pilotage via `control_sandbox_execution(action, run_id=None, wait_sec=0)`** :
   - `action="status"` : Liste tous les `run_id` actifs et récemment terminés de la session (ou détaille un `run_id` précis).
   - `action="listen"` : Récupère les nouvelles sorties incrémentales `stdout_chunk` / `stderr_chunk` du `run_id` (en attendant jusqu'à `wait_sec` secondes, max `60s`, si le processus est en cours).
@@ -94,7 +95,7 @@ Pour déployer une application web interactive ou un serveur réactif dans l'ong
 
   router.serve_forever()
   ```
-- **Lancement** : Le Modèle PEUT lancer ce serveur en mode synchrone (`background=False`, bloquant jusqu'à fermeture de la vue d'application) ou en arrière-plan (`background=True`, permettant au Modèle de continuer à interagir et d'appeler `control_sandbox_execution(action="listen", run_id=...)`).
+- **Lancement & Concurrence** : Le Modèle **DOIT IMPÉRATIVEMENT** lancer tout serveur `BidiRouter.serve_forever()` avec `background=True` (refusé en `background=False`). Le routeur exécute les handlers RPC en **concurrence multi-threadée** (`4` workers par défaut) : tout handler effectuant des appels réseau/HTTP DOIT imposer des timeouts courts (ex: `timeout=3.0`–`5.0`). Le déploiement d'un nouveau run sur un `window_id` déjà actif remplace et arrête automatiquement le run précédent. Le Modèle peut continuer à interagir et appeler `control_sandbox_execution(action="listen", run_id=...)`.
 
 #### Pattern B — Soumission One-Shot par Snapshot (`get_ui_payload`) :
 - L'`<iframe>` émet `window.parent.postMessage({ echoUIPayload: { window_id: "app_id", payload: {...} } }, "*");` et le script Sandbox lit `echo_monitor.get_ui_payload("app_id")` dans une boucle `while not echo_monitor.is_window_closed("app_id"):`.

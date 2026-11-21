@@ -10,7 +10,7 @@ Ce dossier contient le code source de l'**API d'Exécution Multi-Langages Sécur
 
 ## 2. Cartographie des Fichiers et Algorithmes
 
-### `worker_api.py` (v6.13.1.1)
+### `worker_api.py` (v6.15.2.1)
 Fichier hybride combinant une API WSGI Flask et un serveur ASGI Starlette propulsé par `uvicorn` sur le port **5000**.
 - **Architecture Hybride ASGI/WSGI (`asgi_app`)** : Enveloppe l'application Flask via `WSGIMiddleware` pour servir sans friction l'ensemble des routes HTTP existantes, tout en exposant une route native WebSocket asynchrone (`WebSocketRoute("/api/terminals/{session_id}")`).
 - **Endpoints HTTP Terminal & Découverte** :
@@ -28,11 +28,11 @@ Fichier hybride combinant une API WSGI Flask et un serveur ASGI Starlette propul
   - Maintient un buffer circulaire de 64 Ko (`max_buffer = 65536`) et un curseur incrémental pour la reprise après déconnexion.
 - **Factorisation Bubblewrap (`_build_base_bwrap_cmd` & `_build_interactive_bwrap_cmd`)** :
   - Mutualise l'ensemble des montages de sécurité : isolation namespaces (`--unshare-ipc`, `--unshare-uts`, `--unshare-cgroup`, `--die-with-parent`), bascule utilisateur non privilégié (`--unshare-user --uid 65534 --gid 65534`), génération/montage `--ro-bind-try` de `/etc/passwd` et `/etc/group` (`_ensure_bwrap_identity_files`) pour `uid=65534`, montage RW de `/sandbox` (`--chdir /sandbox`), montages RO stricts de `/main`, `/plans`, `/generated`, `/files`, `/browserviews` et RW de `/.deps`. `_build_interactive_bwrap_cmd` configure également `PS1` (`sandbox:\w\$ `) et `PATH` (`/.deps/python/bin:/.deps/node/.bin:{PATH}`).
-- **Endpoints HTTP Batch & SSH** : `/execute` (synchrone/background pour `.py`, `.js` et `.sh` avec validation syntaxique `/bin/bash -n`), `/ssh` (`POST`, validation stricte `host`/`user`/`port`, `_normalize_ssh_private_key()` et exécution isolée sous `bwrap` avec clé privée `0o600` ou `sshpass -e`), `/status`, `/kill`, `/poll_monitor` (exposant `job_state`, `exit_code` et `alive` depuis `_JOBS_REGISTRY`), `/update_payload` et `/health`.
+- **Endpoints HTTP Batch & SSH** : `/execute` (synchrone/background pour `.py`, `.js` et `.sh` avec validation syntaxique `/bin/bash -n`, gestion du cycle de vie background par `idle_ttl_sec=1800s` et `max_lifetime_sec=14400s`), `/ssh` (`POST`, validation stricte `host`/`user`/`port`, `_normalize_ssh_private_key()` et exécution isolée sous `bwrap` avec clé privée `0o600` ou `sshpass -e`), `/status`, `/kill`, `/poll_monitor` (exposant `job_state`, `exit_code`, `alive`, long-polling `wait_sec` jusqu'à `5.0s` et repli `monitor_raw_bytes` post-nettoyage), `/update_payload` (renouvelant `last_activity_at` du job actif) et `/health`.
 
-### ECHO Sandbox Monitor (`echo_monitor.py` & `echo_monitor.js` v5.234.1.1)
+### ECHO Sandbox Monitor (`echo_monitor.py` & `echo_monitor.js` v6.15.2.1)
 - **Sémantique** : La librairie native `echo_monitor` permet au modèle de transmettre des interfaces HTML/JS complexes vers Open WebUI via UCTP.
-- **Canaux Bidirectionnels Temps-Réel & `BidiRouter`** : Outre `display()` (projection d'`<iframe>` en mode Upsert) et `get_ui_payload()` (snapshot d'état), la librairie expose `push_event(data, window_id, req_id)`, `get_ui_requests(window_id)` et la classe `BidiRouter`.
+- **Canaux Bidirectionnels Temps-Réel & `BidiRouter`** : Outre `display()` (projection d'`<iframe>` en mode Upsert) et `get_ui_payload()` (snapshot d'état), la librairie expose `push_event(data, window_id, req_id)`, `push_ready(window_id, actions)`, `get_ui_requests(window_id)` et la classe `BidiRouter(window_id, max_workers=4)` à exécution concurrente bornée, support natif `__echo_ping__` et rejet immédiat des routes inconnues.
 - **Supervisor Pattern & Heartbeat Hôte** : Supervision par heartbeat hôte batch toutes les `5s` (`25s` boot / `45s` ping) et fermeture propre `_is_closed` avec délai de grâce `3s` avant `/kill` du groupe de processus associé au `run_id`.
 
 ### `Dockerfile` & `requirements.txt`

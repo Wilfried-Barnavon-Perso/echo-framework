@@ -19,7 +19,7 @@
 	let activeFrameId = '';
 	let iframeRefs: Record<string, HTMLIFrameElement | null> = {};
 	let iframeReady: Record<string, boolean> = {};
-	let srcdocCache: Record<string, { html: string; srcdoc: string }> = {};
+	let srcdocCache: Record<string, { html: string; runId: string; srcdoc: string }> = {};
 	let unsubscribeQueues: (() => void) | null = null;
 	let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 	let themeObserver: MutationObserver | null = null;
@@ -39,9 +39,7 @@
 
 	$: if (chatId && chatId !== lastHydratedChatId) {
 		lastHydratedChatId = chatId;
-		if (frames.length === 0) {
-			void rehydrateCanvasFrames(chatId);
-		}
+		void rehydrateCanvasFrames(chatId);
 	}
 
 	$: {
@@ -57,11 +55,13 @@
 		}
 	}
 
-	const buildSandboxBridgeScript = (windowId: string): string => {
+	const buildSandboxBridgeScript = (windowId: string, runId: string = ''): string => {
 		const widJson = JSON.stringify(windowId || 'default');
+		const runIdJson = JSON.stringify(runId || '');
 		return `<script>
 (function() {
 	var WID = ${widJson};
+	var RUN_ID = ${runIdJson};
 	try { window.parent.postMessage({ type: 'echo:iframe:init', window_id: WID }, '*'); } catch (e) {}
 	window._echoPendingReqs = {};
 	window._echoEventListeners = [];
@@ -114,7 +114,7 @@
 				}
 			}, ttl);
 			window._echoPendingReqs[reqId] = { resolve: resolve, reject: reject, timer: timer };
-			window.parent.postMessage({ echoUIRequest: { window_id: WID, action: action, payload: payload, req_id: reqId } }, '*');
+			window.parent.postMessage({ echoUIRequest: { window_id: WID, run_id: RUN_ID, action: action, payload: payload, req_id: reqId } }, '*');
 		});
 	};
 	window.onEchoEvent = function(cb) {
@@ -127,8 +127,8 @@
 <\/script>`;
 	};
 
-	const injectSandboxBridgeScript = (html: string, windowId: string): string => {
-		const bridge = buildSandboxBridgeScript(windowId);
+	const injectSandboxBridgeScript = (html: string, windowId: string, runId: string = ''): string => {
+		const bridge = buildSandboxBridgeScript(windowId, runId);
 		const source = html || '';
 		const headMatch = source.match(/<head(?:\s[^>]*)?>/i);
 		if (headMatch && headMatch.index !== undefined) {
@@ -151,12 +151,13 @@
 	const getFrameSrcdoc = (f: EchoCanvasFrame): string | undefined => {
 		if (f.src) return undefined;
 		const rawHtml = f.html || '';
+		const runId = f.run_id || '';
 		const cached = srcdocCache[f.id];
-		if (cached && cached.html === rawHtml) {
+		if (cached && cached.html === rawHtml && cached.runId === runId) {
 			return cached.srcdoc;
 		}
-		const srcdoc = injectSandboxBridgeScript(rawHtml, f.id);
-		srcdocCache[f.id] = { html: rawHtml, srcdoc };
+		const srcdoc = injectSandboxBridgeScript(rawHtml, f.id, runId);
+		srcdocCache[f.id] = { html: rawHtml, runId, srcdoc };
 		return srcdoc;
 	};
 
@@ -266,11 +267,14 @@
 		) {
 			const token = getEchoToken();
 			if (!token) return;
+			const targetFrame = frames.find((f) => f.id === sourceWid);
+			const effectiveRunId = targetFrame?.run_id || e.data.echoUIRequest?.run_id || '';
 			try {
 				await postEchoWmRpc(token, {
 					action: 'canvas_ui_event',
 					chat_id: chatId,
 					frame_id: sourceWid,
+					run_id: effectiveRunId,
 					echoUIPayload: e.data.echoUIPayload,
 					echoUIRequest: e.data.echoUIRequest,
 					echoPing: e.data.echoPing,
@@ -310,6 +314,22 @@
 		}
 	};
 
+	const stopFrameServer = async (frame: EchoCanvasFrame) => {
+		if (!frame || !chatId) return;
+		const token = getEchoToken();
+		if (!token) return;
+		try {
+			await postEchoWmRpc(token, {
+				action: 'canvas_stop_run',
+				chat_id: chatId,
+				frame_id: frame.id,
+				run_id: frame.run_id || ''
+			});
+		} catch {
+			// Ignorer les erreurs réseau transitoires lors de l'arrêt du serveur
+		}
+	};
+
 	const closeFrame = (frameId: string) => {
 		if (!frameId) return;
 		const token = getEchoToken();
@@ -342,7 +362,7 @@
 				}
 			}
 		});
-		if (chatId && frames.length === 0) {
+		if (chatId) {
 			lastHydratedChatId = chatId;
 			void rehydrateCanvasFrames(chatId);
 		}
@@ -419,6 +439,19 @@
 				<span class="text-[11px] font-mono text-gray-400">
 					{activeFrame.title || activeFrame.id}
 				</span>
+				{#if !activeIsTerminal && Boolean(activeFrame.run_id)}
+					<button
+						type="button"
+						class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/30 dark:text-red-300 dark:hover:bg-red-900/50 transition"
+						title="Arrêter le serveur"
+						on:click={() => stopFrameServer(activeFrame)}
+					>
+						<svg class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
+							<rect x="6" y="6" width="12" height="12" rx="1" />
+						</svg>
+						Arrêter
+					</button>
+				{/if}
 				<button
 					type="button"
 					class="p-1 rounded text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
