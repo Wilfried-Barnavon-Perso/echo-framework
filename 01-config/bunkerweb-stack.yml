@@ -1,0 +1,359 @@
+# Copyright (c) 2025-2026 Wilfried BARNAVON
+# SPDX-License-Identifier: Apache-2.0
+# ==============================================================================
+# ECHO SECURE EDGE (BunkerWeb v1.6+ Autoconf)
+# VERSION : 6.5.3.1
+# ==============================================================================
+# ==============================================================================
+# Architecture Robuste (MariaDB Backend, Shared Config via Anchors)
+# ==============================================================================
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 6.5.3.1: Alignement du routage reverse-proxy et IPAM (.100) sur echo-webui.
+# 5.236.5.1: Déclaration du service echo-user-manager (my.${ECHO_DOMAIN}, IP .27, Forward Auth /api/verify) et extension CSP form-action.
+# 5.236.3.1: Alignement explicite de USE_ANTIBOT="no" conformément au schéma BunkerWeb v1.6.17.
+# 5.236.2.1: Mise à niveau de BunkerWeb en v1.6.17 (correctifs NGINX 1.30.6 et timeouts MariaDB).
+# 5.231.36.1: Fix du nommage de l'image echo-auth-manager (suppression du double préfixe echo-echo-* via directive image: explicite).
+
+# ==============================================================================
+# 🗺️ DOMAIN-DRIVEN IPAM (PLAN D'ADRESSAGE IP STATIQUE)
+# ==============================================================================
+# 1. Briques Core & Externes (Plage .100 - .199) :
+#    - echo-webui       : .100
+#    - searxng          : .101
+#    - watchtower       : .102
+#    - qdrant           : .103
+#
+# 2. Workers ECHO (Reflet strict du numéro de dossier source) :
+#    - admin-manager    : .20  (Dossier 20-)
+#    - coding-worker    : .21  (Dossier 21-)
+#    - browser-worker   : .22  (Dossier 22-)
+#    - mcp-broker       : .23  (Dossier 23-)
+#    - auth-manager     : .24  (Dossier 24- -> voir bunkerweb-stack.yml)
+#    - download-broker  : .25  (Dossier 25-)
+#    - n8n-worker       : .26  (Dossier 26-)
+#    - user-manager     : .27  (Dossier 27- -> voir bunkerweb-stack.yml)
+#    - embedding        : .30  (Dossier 30-)
+# ==============================================================================
+
+# --- BLOC DE CONFIGURATION PARTAGÉ (YAML ANCHOR) ---
+x-bw-config: &bw-config
+  # Backend de base de données (MariaDB)
+  DATABASE_URI: "mysql://bunkerweb:${BW_DB_PASSWORD}@bw-db:3306/db"
+  
+  # Whitelist API critique
+  API_WHITELIST_IP: "127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
+  
+  # Whitelist Globale (Désactivation WAF sur ces IPs)
+  USE_WHITELIST_IP: "yes"
+  WHITELIST_IP: "192.168.0.0/16 10.0.0.0/8 172.16.0.0/12 127.0.0.0/8"
+
+  # Exclusion Let's Encrypt (Crash bw-scheduler)
+  www.example.com_AUTO_LETS_ENCRYPT: "no"
+  
+  # Optimisations
+  GUNICORN_TIMEOUT: "120"   # Augmenté de 60 → 120s (v1.26) : couvre le backoff SSE
+                             # max (~15s post-fix echo_constants) avec marge ×8.
+                             # 60s déclenchait SIGKILL du worker uvicorn en cours de retry.
+  GUNICORN_WORKERS: "2"
+  USE_BUNKERNET: "no"
+  SEND_ANONYMOUS_REPORT: "no"
+  
+  # ==========================================
+  # CONFIGURATIONS GLOBALES AUTOCONF
+  # Doivent être ici pour être poussées en base
+  # ==========================================
+  AUTO_LETS_ENCRYPT: "yes"
+  REDIRECT_HTTP_TO_HTTPS: "yes"
+  USE_GZIP: "yes"
+  USE_BROTLI: "yes"
+  USE_CLIENT_CACHE: "yes"
+  USE_CLAMAV: "no"
+  USE_ANTIBOT: "no"
+  DISABLE_DEFAULT_SERVER: "yes"
+  USE_MODSECURITY: "yes"
+  MODSEC_CRS_PARANOIA_LEVEL: "1"
+
+name: echo
+
+services:
+  
+  # 1. BunkerWeb (Frontal HTTP/HTTPS)
+  bunkerweb:
+    image: bunkerity/bunkerweb:1.6.17
+    container_name: bunkerweb
+    restart: unless-stopped
+    ports:
+      - "80:8080"
+      - "443:8443"
+    environment:
+      <<: *bw-config
+      SERVER_NAME: ""
+      MULTISITE: "yes"
+    labels:
+      - "bunkerweb.INSTANCE=yes"
+    networks:
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.2
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.200
+    volumes:
+      - bw-data:/data
+
+  # 2. Autoconf (Contrôleur Dynamique)
+  bw-autoconf:
+    image: bunkerity/bunkerweb-autoconf:1.6.17
+    container_name: bw-autoconf
+    restart: unless-stopped
+    depends_on:
+      bunkerweb:
+        condition: service_started
+      bw-docker:
+        condition: service_started
+      bw-db:
+        condition: service_healthy
+    environment:
+      <<: *bw-config
+      DOCKER_HOST: "tcp://bw-docker:2375"
+    networks:
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.3
+      bw-docker:
+    volumes:
+      - bw-data:/data
+
+  # 3. Scheduler (Tâches de fond)
+  bw-scheduler:
+    image: bunkerity/bunkerweb-scheduler:1.6.17
+    container_name: bw-scheduler
+    restart: unless-stopped
+    depends_on:
+      bunkerweb:
+        condition: service_started
+      bw-docker:
+        condition: service_started
+      bw-db:
+        condition: service_healthy
+    environment:
+      <<: *bw-config
+      DOCKER_HOST: "tcp://bw-docker:2375"
+      # Indique explicitement l'instance à contacter (évite les erreurs sur 127.0.0.1)
+      BUNKERWEB_INSTANCES: "bunkerweb"
+      MULTISITE: "yes"
+    networks:
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.4
+      bw-docker:
+    volumes:
+      - bw-data:/data
+
+  # 4. Socket Proxy (Sécurité Docker)
+  bw-docker:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: bw-docker
+    restart: unless-stopped
+    user: root
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      CONTAINERS: "1"
+      NETWORKS: "1"
+      SERVICES: "1"
+      INFO: "1"
+    networks:
+      - bw-docker
+
+  # 5. Base de Données (MariaDB 11.4 LTS)
+  bw-db:
+    image: mariadb:11.4
+    container_name: bw-db
+    restart: unless-stopped
+    command: --max-allowed-packet=128M
+    environment:
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+      MYSQL_DATABASE: "db"
+      MYSQL_USER: "bunkerweb"
+      MYSQL_PASSWORD: "${BW_DB_PASSWORD}"
+    volumes:
+      - bw-db-data:/var/lib/mysql
+    networks:
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.6
+    # Healthcheck TCP : garantit que MySQL accepte les connexions avant Autoconf/Scheduler
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+
+  # 6. Redirector (Redirection Root/WWW -> UI)
+  redirector:
+    image: alpine:latest
+    container_name: echo-redirector
+    restart: unless-stopped
+    networks:
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.7
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.201
+    command: tail -f /dev/null
+    labels:
+      - "bunkerweb.SERVER_NAME=${ECHO_DOMAIN:-localhost} www.${ECHO_DOMAIN:-localhost}"
+      - "bunkerweb.USE_REVERSE_PROXY=no"
+      # Redirection 301 Permanente vers le sous-domaine UI (Plugin Natif)
+      - "bunkerweb.REDIRECT_TO=https://ui.${ECHO_DOMAIN:-localhost}"
+      - "bunkerweb.REDIRECT_TO_REQUEST_URI=yes"
+      - "bunkerweb.REDIRECT_TO_STATUS_CODE=301"
+      - "bunkerweb.USE_BAD_BEHAVIOR=no"
+
+  # 7. ECHO Auth (SSO & MFA IdP)
+  echo-auth-manager:
+    image: echo-auth-manager:latest
+    build:
+      context: /opt/ECHO/docker-echo-auth-manager
+      dockerfile: Dockerfile
+    container_name: echo-auth-manager
+    restart: always
+    networks:
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.24
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.24
+    environment:
+      - TZ=Europe/Paris
+      - ECHO_DOMAIN=${ECHO_DOMAIN:-localhost}
+      - ECHO_SSO_SECRET=${ECHO_SSO_SECRET}
+      - AUTH_DB_PATH=/app/auth-data/auth.db
+    volumes:
+      - echo-auth-data:/app/auth-data
+      - /opt/ECHO/docker-echo-auth-manager/auth_server.py:/app/auth_server.py:ro
+      - /opt/ECHO/docker-echo-auth-manager/static:/app/static:ro
+      - /opt/ECHO/docker-echo-auth-manager/templates:/app/templates:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/login\")' 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+      # Exposition via BunkerWeb sous un sous-domaine dédié auth.DOMAINE
+      - "bunkerweb.SERVER_NAME=auth.${ECHO_DOMAIN:-localhost}"
+      - "bunkerweb.USE_REVERSE_PROXY=yes"
+      - "bunkerweb.REVERSE_PROXY_URL=/"
+      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-auth-manager:8000"
+      - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
+      - "bunkerweb.USE_MODSECURITY=no"
+      - "bunkerweb.USE_BAD_BEHAVIOR=no"
+      - "bunkerweb.CONTENT_SECURITY_POLICY=object-src 'none'; form-action 'self' https://ui.${ECHO_DOMAIN:-localhost} https://am.${ECHO_DOMAIN:-localhost} https://my.${ECHO_DOMAIN:-localhost}; frame-ancestors 'self';"
+
+  # 8. ECHO User Manager (Portail Utilisateur Self-Service)
+  echo-user-manager:
+    image: echo-user-manager:latest
+    build:
+      context: /opt/ECHO/docker-user-manager
+      dockerfile: Dockerfile
+    container_name: echo-user-manager
+    restart: always
+    networks:
+      bw-universe:
+        ipv4_address: ${ECHO_NET_BW_UNIVERSE_PREFIX}.27
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.27
+    environment:
+      - TZ=Europe/Paris
+      - ECHO_DOMAIN=${ECHO_DOMAIN:-localhost}
+      - ECHO_SSO_SECRET=${ECHO_SSO_SECRET}
+    volumes:
+      - /opt/ECHO/docker-user-manager/server.py:/app/server.py:ro
+      - /opt/ECHO/docker-user-manager/core:/app/core:ro
+      - /opt/ECHO/docker-user-manager/services:/app/services:ro
+      - /opt/ECHO/docker-user-manager/routes:/app/routes:ro
+      - /opt/ECHO/docker-user-manager/templates:/app/templates:ro
+      - /opt/ECHO/owui-libs:/app/echo_libs:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
+      - /opt/ECHO/echo-images:/app/static:ro
+      - echo-webui-data:/app/backend/data
+      - echo-auth-data:/app/auth-data
+      - /opt/ECHO/ECHO_VERSION:/app/ECHO_VERSION:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:3002/health\")' 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+      - "bunkerweb.SERVER_NAME=my.${ECHO_DOMAIN:-localhost}"
+      - "bunkerweb.USE_REVERSE_PROXY=yes"
+      - "bunkerweb.REVERSE_PROXY_URL=/"
+      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-user-manager:3002"
+      - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=yes"
+      - "bunkerweb.REVERSE_PROXY_READ_TIMEOUT=600s"
+      - "bunkerweb.REVERSE_PROXY_SEND_TIMEOUT=600s"
+      # 🛡️ ECHO AUTH : Forward Auth + SSO Secret
+      - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST=/api/verify"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @api_403_reject; error_page 429 = @api_429_reject; error_page 500 501 502 503 504 = @api_5xx_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @api_403_reject { if ($$request_uri ~* ^/api/) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403)\"}'; } default_type text/html; return 403 '<html><body><center><h1>403 Forbidden</h1></center></body></html>'; } location @api_429_reject { if ($$request_uri ~* ^/api/) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } default_type text/html; return 429 '<html><body><center><h1>429 Too Many Requests</h1></center></body></html>'; } location @api_5xx_reject { default_type application/json; if ($$request_uri ~* ^/api/) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } return 500 '{\"detail\":\"Internal Error (500)\"}'; }"
+      - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$webui_name $$upstream_http_x_webui_name;$$dummy $$upstream_http_dummy"
+      - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name;X-Echo-Sso-Secret ${ECHO_SSO_SECRET}"
+      - |
+        bunkerweb.CUSTOM_CONF_SERVER_HTTP_authbackend=location = /api/verify {
+            internal;
+            proxy_intercept_errors off;
+            set $$upstream_auth http://echo-auth-manager:8000;
+            proxy_pass $$upstream_auth;
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+            proxy_set_header X-Original-URI $$request_uri;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+        }
+      - "bunkerweb.USE_BAD_BEHAVIOR=yes"
+      - "bunkerweb.BAD_BEHAVIOR_STATUS_CODES=405 444"
+      - "bunkerweb.BAD_BEHAVIOR_THRESHOLD=50"
+      - "bunkerweb.BAD_BEHAVIOR_BAN_TIME=300"
+      - "bunkerweb.USE_LIMIT_REQ=yes"
+      - "bunkerweb.LIMIT_REQ_RATE=50r/s"
+      - "bunkerweb.LIMIT_REQ_BURST=150"
+      - "bunkerweb.INTERCEPTED_ERROR_CODES=403 429 500 501 502 503 504"
+      - "bunkerweb.CUSTOM_HEADER_1=X-Robots-Tag: noindex, nofollow"
+
+# ==============================================================================
+# Réseaux
+# ==============================================================================
+networks:
+  bw-universe:
+    name: bw-universe
+    ipam:
+      driver: default
+      config:
+        - subnet: ${ECHO_NET_BW_UNIVERSE_PREFIX}.0/24
+  bw-docker:
+    name: bw-docker
+  echo-network:
+    name: echo-network
+    external: true
+
+# ==============================================================================
+# Volumes
+# ==============================================================================
+volumes:
+  bw-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/ECHO/bunkerweb
+  bw-db-data:
+  echo-auth-data:
+    external: true
+  echo-webui-data:
+    external: true

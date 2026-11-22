@@ -1,0 +1,544 @@
+# Copyright (c) 2025-2026 Wilfried BARNAVON
+# SPDX-License-Identifier: Apache-2.0
+"""
+================================================================================
+MODULE : ECHO MCP BROKER
+VERSION : 6.11.0.1
+AUTEUR : Wilfried BARNAVON & ECHO Team
+DATE MAJ : 2026-11-20
+===============================================================================
+"""
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 6.11.0.1: Ajout route streaming POST /upload_drive, factorisation _build_broker_exception_response et précision Google People API [Contacts].
+# 6.6.21.1: Ajout du schéma 'ssh' dans SERVICE_SCHEMAS pour l'Identity Vault et ssh_executor.
+# 5.239.12.1: Directives microsoft_365 MAJ (Contacts.ReadWrite optionnel, complete_authentication sans flow_cache).
+# 5.231.37.1: Extraction de x-openwebui-chat-id dans WebUIUserMiddleware (chat_id_var) et compatibilité FastMCP.
+# 5.231.20.1: Extraction et décodage de l'en-tête x-echo-credentials dans WebUIUserMiddleware (credentials_var).
+import base64
+import json
+import logging
+import uvicorn
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse, JSONResponse
+try:
+    from mcp.server import MCPServer
+except ImportError:
+    from mcp.server.fastmcp import FastMCP as MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
+
+from core.security import user_id_var, chat_id_var, credentials_var
+from modules.m5_proxy_mcp import proxy_mcp_request, AuthRequiredError, _parse_and_validate_credentials
+from modules.m5_providers import get_service_provider
+from modules.m2_jobs_omnisearch import setup_jobs_omnisearch_mcp
+from modules.m3_corporate import register_corporate_tools
+from modules.m4_academic import register_academic_tools
+
+logger = logging.getLogger(__name__)
+
+# Initialisation du serveur MCP avec protection DNS Rebinding désactivée
+# (Docker interne)
+mcp = MCPServer("ECHO_MCP_Broker")
+
+# Importation des modules pour enregistrer les outils
+
+setup_jobs_omnisearch_mcp(mcp)
+register_corporate_tools(mcp)
+register_academic_tools(mcp)
+
+
+@mcp.tool()
+async def ping() -> str:
+    """Outil de test basique pour vérifier la connectivité du Broker via MCP."""
+    return "pong"
+
+# FastMCP et Open WebUI communiquent via StreamableHTTP (et non SSE standard)
+# Nous utiliserons Uvicorn pour exposer l'application ASGI générée par mcp.
+try:
+    app = mcp.streamable_http_app(
+        json_response=True,
+        stateless_http=True,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=False))
+except TypeError:
+    app = mcp.streamable_http_app()
+
+# Route HTTP pour le Docker Healthcheck
+
+
+async def healthcheck_ping(request):
+    return PlainTextResponse("pong")
+app.add_route("/ping", healthcheck_ping)
+
+# Définition dynamique des schémas d'authentification des services MCP
+SERVICE_SCHEMAS = {
+    "corporate": {
+        "category": "mcp_native",
+        "name": "Corporate (Sirene/Pappers)",
+        "fields": [
+            {
+                "id": "sirene_key",
+                "label": "Clé API Sirene",
+                "type": "password",
+                "help": "Token Bearer obtenu sur l'INSEE.",
+            },
+            {
+                "id": "pappers_key",
+                "label": "Clé API Pappers",
+                "type": "password",
+                "help": "Clé API obtenue sur pappers.fr (Espace Développeurs).",
+            },
+        ]
+    },
+    "jobs_omnisearch": {
+        "category": "mcp_native",
+        "name": "Emplois & Carrières (Omnisearch)",
+        "user_required_instructions": (
+            "DIRECTIVES DE CONFIGURATION DU SERVICE JOBS OMNISEARCH :\n\n"
+            "1. FRANCE TRAVAIL (FRANCETRAVAIL.IO) :\n"
+            "   1. Se rendre sur https://francetravail.io/ et se connecter (compte développeur gratuit).\n"
+            "   2. Dans 'Mes applications', créer une application et associer le package 'Offres d'emploi v2'.\n"
+            "   3. Consigner dans l'Identity Vault pour le service 'jobs_omnisearch' :\n"
+            "      - 'FRANCE_TRAVAIL_CLIENT_ID' : Votre Client ID\n"
+            "      - 'FRANCE_TRAVAIL_CLIENT_SECRET' : Votre Client Secret\n\n"
+            "2. WELCOME TO THE JUNGLE (WTTJ) :\n"
+            "   - Pleinement opérationnel nativement via la clé publique Algolia intégrée.\n"
+            "   - En cas de rotation d'index, renseigner optionnellement 'WTTJ_ALGOLIA_API_KEY'.\n\n"
+            "3. APEC :\n"
+            "   - Les offres cadres de l'APEC sont automatiquement indexées dans le flux France Travail.\n"
+            "   - En direct, apec.fr applique un défi anti-bot (DataDome). "
+            "Pour débloquer l'accès direct, enregistrer optionnellement le cookie sous 'APEC_DATADOME_COOKIE'.\n\n"
+            "4. LINKEDIN :\n"
+            "   - Opérationnel en mode public invité.\n"
+            "   - Pour un volume accru, enregistrer optionnellement le cookie sous 'LINKEDIN_SESSION_COOKIE'."
+        ),
+        "fields": [
+            {
+                "id": "FRANCE_TRAVAIL_CLIENT_ID",
+                "label": "Client ID France Travail",
+                "type": "text",
+                "required": False,
+                "help": "Obtenu sur francetravail.io"
+            },
+            {
+                "id": "FRANCE_TRAVAIL_CLIENT_SECRET",
+                "label": "Client Secret France Travail",
+                "type": "password",
+                "required": False,
+                "help": "Obtenu sur francetravail.io"
+            },
+            {
+                "id": "WTTJ_ALGOLIA_API_KEY",
+                "label": "Clé Algolia WTTJ (Optionnelle)",
+                "type": "password",
+                "required": False,
+                "help": "Clé publique WTTJ (si rotation)"
+            },
+            {
+                "id": "APEC_DATADOME_COOKIE",
+                "label": "Cookie DataDome APEC (Optionnel)",
+                "type": "password",
+                "required": False,
+                "help": "Valeur du cookie 'datadome' issu d'apec.fr (contournement défi anti-bot)"
+            },
+            {
+                "id": "LINKEDIN_SESSION_COOKIE",
+                "label": "Cookie Session LinkedIn li_at (Optionnel)",
+                "type": "password",
+                "required": False,
+                "help": "Cookie de session li_at pour requêtes LinkedIn authentifiées"
+            }
+        ]
+    },
+    "academic": {
+        "category": "mcp_native",
+        "name": "Academic",
+        "fields": [
+            {"id": "api_key", "label": "Clé API (Optionnelle)", "type": "password"}
+        ]
+    },
+    "google_workspace": {
+        "category": "mcp_resident",
+        "name": "Google Workspace MCP (Résident)",
+        "command": "workspace-mcp",
+        "user_required_instructions": (
+            "DIRECTIVES IMPÉRATIVES D'AUTHENTIFICATION GOOGLE WORKSPACE :\n"
+            "1. PROSCRIPTION LOCALE : Le Modèle a l'INTERDICTION STRICTE de proposer ou d'afficher "
+            "des URLs de redirection locales (ex: http://localhost:8001/oauth2callback). "
+            "L'infrastructure opère dans un conteneur headless isolé inaccessible depuis le navigateur "
+            "de l'Utilisateur.\n"
+            "2. PRÉREQUIS GOOGLE CLOUD CONSOLE (SI PREMIÈRE CONFIGURATION) :\n"
+            "   a. L'Utilisateur DOIT créer un projet sur Google Cloud Console et activer les APIs requises "
+            "(Calendar, Gmail, Drive, Google People API [Contacts], Sheets, Docs, Slides, Tasks).\n"
+            "   b. Dans 'Identifiants', créer un ID client OAuth de type 'Application Web' et déclarer "
+            "impérativement l'URI de redirection autorisée : https://developers.google.com/oauthplayground\n"
+            "3. PÉRENNITÉ DU JETON (ANTI-EXPIRATION 7 JOURS) :\n"
+            "   Dans Google Cloud Console > 'Écran de consentement OAuth' (Google Auth Platform > Audience), "
+            "l'Utilisateur DOIT basculer le statut de publication de 'Testing' (Test) à 'In production' "
+            "(En production). Sans cette action, Google invalide déterministement "
+            "le Refresh Token tous les 7 jours (erreur invalid_grant).\n"
+            "4. GÉNÉRATION / RÉGÉNÉRATION DU REFRESH TOKEN (OAuth Playground) :\n"
+            "   a. L'Utilisateur DOIT accéder à https://developers.google.com/oauthplayground\n"
+            "   b. Ouvrir les paramètres (icône engrenage en haut à droite), cocher 'Use your own OAuth credentials' "
+            "et renseigner le 'OAuth Client ID' et le 'OAuth Client secret'.\n"
+            "   c. Dans 'Step 1 - Select & authorize APIs' > champ 'Input your own scopes', coller la liste "
+            "exhaustive suivante :\n"
+            "      openid https://www.googleapis.com/auth/userinfo.profile "
+            "https://www.googleapis.com/auth/userinfo.email "
+            "https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/drive "
+            "https://www.googleapis.com/auth/gmail.modify "
+            "https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/contacts "
+            "https://www.googleapis.com/auth/spreadsheets "
+            "https://www.googleapis.com/auth/documents https://www.googleapis.com/auth/presentations "
+            "https://www.googleapis.com/auth/tasks\n"
+            "   d. Cliquer sur 'Authorize APIs' et valider l'accès avec le compte Google cible.\n"
+            "   e. Dans 'Step 2 - Exchange authorization code for tokens', cliquer sur "
+            "'Exchange authorization code for tokens' et copier la valeur de 'Refresh token'.\n"
+            "5. CONSIGNATION DANS L'IDENTITY VAULT :\n"
+            "   Les 4 clés exactes suivantes DOIVENT être enregistrées dans l'Identity Vault sous le service "
+            "'google_workspace' (ou mettre à jour 'GOOGLE_OAUTH_REFRESH_TOKEN' s'il s'agit d'un simple "
+            "renouvellement) : "
+            "'USER_GOOGLE_EMAIL', 'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', "
+            "'GOOGLE_OAUTH_REFRESH_TOKEN'."
+        ),
+        "fields": [
+            {
+                "id": "USER_GOOGLE_EMAIL",
+                "label": "Email Google",
+                "type": "text",
+                "required": True,
+                "help": "Email du compte (ex: john.doe@gmail.com)",
+            },
+            {
+                "id": "GOOGLE_OAUTH_CLIENT_ID",
+                "label": "Client ID",
+                "type": "text",
+                "required": True,
+                "help": "ID Client OAuth2 Google",
+            },
+            {
+                "id": "GOOGLE_OAUTH_CLIENT_SECRET",
+                "label": "Client Secret",
+                "type": "password",
+                "required": True,
+                "help": "Secret Client OAuth2 Google",
+            },
+            {
+                "id": "GOOGLE_OAUTH_REFRESH_TOKEN",
+                "label": "Refresh Token",
+                "type": "password",
+                "required": True,
+                "help": "Généré via OAuth Playground",
+            },
+        ]
+    },
+    "microsoft_365": {
+        "category": "mcp_resident",
+        "name": "Microsoft 365 MCP (Résident)",
+        "command": "microsoft-mcp",
+        "user_required_instructions": (
+            "Le Modèle DOIT guider l'Utilisateur pour configurer Microsoft 365 si les identifiants "
+            "sont manquants ou invalides : "
+            "1. Demander à l'Utilisateur de créer une application sur le portail Azure (Entra ID) avec la "
+            "plateforme 'Application mobile et de bureau' (Redirect URI natif) et d'ajouter les permissions "
+            "Microsoft Graph déléguées requises : "
+            "Mail.ReadWrite, Mail.Send, Calendars.ReadWrite, User.Read, Files.ReadWrite.All, offline_access "
+            "(et optionnellement Contacts.ReadWrite si l'accès au carnet d'adresses Outlook est souhaité). "
+            "2. L'Utilisateur doit enregistrer dans l'Identity Vault pour le service 'microsoft_365' "
+            "les deux clés exactes suivantes : "
+            "'MICROSOFT_MCP_CLIENT_ID' (Client ID / Application ID Azure) et 'MICROSOFT_MCP_TENANT_ID' "
+            "(Tenant ID, ex: 'consumers' pour les comptes personnels @outlook/@hotmail, ou l'ID d'annuaire "
+            "de l'organisation). "
+            "3. Une fois les clés renseignées dans le Vault, le Modèle DOIT appeler la fonction "
+            "'authenticate_account' du MCP Microsoft. "
+            "4. Le Modèle DOIT restituer à l'Utilisateur l'URL de vérification ainsi que le 'User Code' "
+            "fournis par le MCP, et inviter l'Utilisateur à valider la connexion. "
+            "5. Après confirmation de l'Utilisateur, le Modèle DOIT appeler la fonction "
+            "'complete_authentication' avec un objet d'arguments vide {} "
+            "(le cache Device Flow étant persisté automatiquement par le Broker) "
+            "pour clore l'authentification MSAL."
+        ),
+        "fields": [
+            {
+                "id": "MICROSOFT_MCP_CLIENT_ID",
+                "label": "App ID Azure",
+                "type": "text",
+                "required": True,
+                "help": "ID de l'application enregistrée sur Azure",
+            },
+            {
+                "id": "MICROSOFT_MCP_TENANT_ID",
+                "label": "Tenant ID",
+                "type": "text",
+                "required": True,
+                "help": "ID du Tenant (consumers, common, etc.)",
+            },
+        ]
+    },
+    "remote_mcp": {
+        "category": "mcp_remote",
+        "name": "Serveurs MCP Distants (HTTP/SSE)",
+        "fields": [
+            {
+                "id": "url",
+                "label": "URL du Serveur",
+                "type": "text",
+                "help": "ex: https://locataire-averti.com/mcp/sse",
+            },
+            {
+                "id": "transport",
+                "label": "Type de Transport",
+                "type": "text",
+                "help": "Saisir obligatoirement 'sse' ou 'streamable_http'.",
+            },
+            {
+                "id": "headers",
+                "label": "En-têtes (JSON)",
+                "type": "text",
+                "help": "ex: {\"Authorization\": \"Bearer XXX\"}",
+            },
+            {
+                "id": "description",
+                "label": "Rôle",
+                "type": "text",
+                "help": "Sert au LLM pour savoir quand l'utiliser.",
+            },
+        ]
+    },
+    "stdio_mcp": {
+        "category": "mcp_ephemeral",
+        "name": "Serveurs MCP Locaux (Stdio)",
+        "fields": [
+            {
+                "id": "command",
+                "label": "Commande",
+                "type": "text",
+                "help": "ex: npx ou uvx",
+            },
+            {
+                "id": "args",
+                "label": "Arguments (JSON)",
+                "type": "text",
+                "help": "ex: [\"-y\", \"@modelcontextprotocol/server-postgres\"]",
+            },
+            {
+                "id": "description",
+                "label": "Rôle",
+                "type": "text",
+                "help": "Sert au LLM pour savoir quand l'utiliser.",
+            },
+        ]
+    },
+    "ssh": {
+        "category": "orchestration",
+        "name": "Serveurs SSH Distants",
+        "user_required_instructions": (
+            "Pour autoriser l'Agent à administrer un serveur via SSH (ssh_executor), "
+            "L'Utilisateur DOIT saisir ses identifiants de manière sécurisée dans l'onglet "
+            "'Coffre' (Identity Vault) sous le service 'Serveurs SSH Distants' ('ssh'), "
+            "avec un alias de compte explicite (ex: 'vps-prod', 'nas-local'). "
+            "Renseigner 'host', 'user', 'description', ainsi que 'password' (ou passphrase) "
+            "et/ou 'private_key'. Ne jamais transmettre de secrets en clair dans le chat (MPSI)."
+        ),
+        "fields": [
+            {
+                "id": "host",
+                "label": "Hôte (IP ou Domaine)",
+                "type": "text",
+                "required": True,
+                "help": "ex: 192.168.1.50 ou srv.exemple.fr",
+            },
+            {
+                "id": "port",
+                "label": "Port SSH",
+                "type": "text",
+                "placeholder": "22",
+                "help": "Port TCP du serveur SSH (22 par défaut).",
+            },
+            {
+                "id": "user",
+                "label": "Utilisateur SSH",
+                "type": "text",
+                "required": True,
+                "help": "ex: ubuntu, root, debian",
+            },
+            {
+                "id": "password",
+                "label": "Mot de passe (ou passphrase)",
+                "type": "password",
+                "help": "Mot de passe du compte SSH ou passphrase de la clé privée.",
+            },
+            {
+                "id": "private_key",
+                "label": "Clé privée SSH (PEM / OpenSSH)",
+                "type": "password",
+                "help": "Optionnel : coller la clé privée complète (-----BEGIN ... PRIVATE KEY-----).",
+            },
+            {
+                "id": "description",
+                "label": "Rôle du serveur",
+                "type": "text",
+                "required": True,
+                "help": "Description visible par l'agent via list_identities('ssh').",
+            },
+        ],
+    },
+}
+
+
+async def get_schemas(request):
+    return JSONResponse(SERVICE_SCHEMAS)
+app.add_route("/schemas", get_schemas)
+
+
+class WebUIUserMiddleware:
+    """
+    Middleware pur ASGI qui intercepte chaque requête entrante (y compris POST /messages de l'outil MCP)
+    et extrait l'identité de l'utilisateur envoyée par Open WebUI pour l'injecter dans le contexte global.
+    L'utilisation d'ASGI pur (au lieu de BaseHTTPMiddleware) est obligatoire pour ne pas bloquer les flux SSE.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            headers = dict(scope.get("headers", []))
+            user_id = headers.get(b"x-openwebui-user-id", b"").decode("utf-8")
+
+            if not user_id:
+                user_id = headers.get(b"x-echo-user-id", b"").decode("utf-8")
+
+            if user_id:
+                user_id_var.set(user_id)
+
+            chat_id = headers.get(b"x-openwebui-chat-id", b"").decode("utf-8")
+            if not chat_id:
+                chat_id = headers.get(b"x-echo-chat-id", b"").decode("utf-8")
+
+            if chat_id:
+                chat_id_var.set(chat_id)
+
+            b64_creds = headers.get(b"x-echo-credentials", b"").decode("utf-8")
+            parsed_creds = {}
+            if b64_creds:
+                try:
+                    raw_creds = base64.b64decode(b64_creds).decode("utf-8")
+                    if raw_creds:
+                        try:
+                            parsed_creds = json.loads(raw_creds)
+                            if not isinstance(parsed_creds, dict):
+                                parsed_creds = {"OAUTH2_TOKEN": str(parsed_creds)}
+                        except Exception:
+                            parsed_creds = {"OAUTH2_TOKEN": raw_creds}
+                except Exception:
+                    parsed_creds = {}
+            credentials_var.set(parsed_creds)
+
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(WebUIUserMiddleware)
+
+# Nouveau routeur pour proxy_mcp
+
+
+def _build_broker_exception_response(exc: Exception, service_name: str = "") -> JSONResponse:
+    if isinstance(exc, AuthRequiredError):
+        logger.warning(f"Erreur de prérequis Proxy MCP : {exc}")
+        schema_def = SERVICE_SCHEMAS.get(service_name, {})
+        instructions = schema_def.get("user_required_instructions", "")
+        return JSONResponse({
+            "status": "error",
+            "source": "auth_required",
+            "service": service_name,
+            "message": str(exc),
+            "user_required_instructions": instructions,
+        }, status_code=400)
+
+    if isinstance(exc, ValueError):
+        return JSONResponse({
+            "status": "error",
+            "source": "validation_error",
+            "service": service_name,
+            "message": str(exc),
+        }, status_code=400)
+
+    logger.exception("Erreur Proxy MCP globale :")
+    status_code = 500
+    message = repr(exc) if not str(exc).strip() else str(exc)
+    error_payload = {"status": "error", "source": "broker_internal", "message": message}
+
+    if type(exc).__name__ == "HTTPStatusError":
+        status_code = 502
+        remote_status = getattr(exc.response, "status_code", "Inconnu") if hasattr(exc, "response") else "Inconnu"
+        remote_url = getattr(exc.request, "url", "Inconnue") if hasattr(exc, "request") else "Inconnue"
+        message = f"La cible distante ({remote_url}) a rejeté la requête avec le code {remote_status}."
+        error_payload = {
+            "status": "error",
+            "source": "remote_server",
+            "http_code": remote_status,
+            "message": message,
+        }
+
+    return JSONResponse(error_payload, status_code=status_code)
+
+
+async def proxy_mcp_route(request: Request):
+    payload = {}
+    try:
+        payload = await request.json()
+        result = await proxy_mcp_request(payload)
+        return JSONResponse(result)
+    except Exception as e:
+        return _build_broker_exception_response(e, service_name=payload.get("service", ""))
+
+
+async def upload_drive_route(request: Request):
+    service_name = ""
+    try:
+        raw_meta = request.headers.get("x-echo-upload-meta", "").strip()
+        if not raw_meta:
+            raise ValueError("En-tête x-echo-upload-meta manquant.")
+        meta = json.loads(base64.b64decode(raw_meta).decode("utf-8"))
+        if not isinstance(meta, dict):
+            raise ValueError("Métadonnées x-echo-upload-meta invalides.")
+
+        user_id = str(meta.get("user_id") or user_id_var.get() or "").strip()
+        if not user_id or user_id == "anonymous":
+            raise ValueError("user_id obligatoire et authentifié pour l'upload Drive.")
+
+        service_name = str(meta.get("service") or "").strip()
+        if service_name not in ("google_workspace", "microsoft_365"):
+            raise ValueError(f"Service non supporté pour /upload_drive : {service_name}")
+
+        creds_hdr = request.headers.get("x-echo-credentials", "").strip()
+        creds_str = base64.b64decode(creds_hdr).decode("utf-8") if creds_hdr else (credentials_var.get() or "")
+        _, credentials = _parse_and_validate_credentials(service_name, creds_str)
+
+        provider = get_service_provider(service_name)
+        result = await provider.upload_file_stream(
+            user_id=user_id,
+            chat_id=str(meta.get("chat_id") or chat_id_var.get() or ""),
+            credentials=credentials,
+            byte_stream=request.stream(),
+            filename=str(meta.get("filename") or ""),
+            total_size=int(meta.get("total_size") or 0),
+            mime_type=str(meta.get("mime_type") or "application/octet-stream"),
+            folder_id=meta.get("folder_id"),
+            overwrite_file_id=meta.get("overwrite_file_id"),
+            convert_to_native=bool(meta.get("convert_to_native", False)),
+            conflict_behavior=str(meta.get("conflict_behavior") or "replace"),
+            account_id=meta.get("account_id"),
+        )
+        return JSONResponse(result)
+    except Exception as e:
+        return _build_broker_exception_response(e, service_name=service_name)
+
+
+app.add_route("/proxy_mcp", proxy_mcp_route, methods=["POST"])
+app.add_route("/upload_drive", upload_drive_route, methods=["POST"])
+
+if __name__ == "__main__":
+    # Démarrage du serveur sur le port 8000
+    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)

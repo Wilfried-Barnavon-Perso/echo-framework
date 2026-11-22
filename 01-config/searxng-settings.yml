@@ -1,0 +1,258 @@
+# Copyright (c) 2025-2026 Wilfried BARNAVON
+# SPDX-License-Identifier: Apache-2.0
+# ==============================================================================
+# ECHO FRAMEWORK - Configuration SearXNG (Souveraineté)
+# VERSION : 6.18.2.1
+# ==============================================================================
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 6.18.2.1: Refonte déclarative résiliente Watchtower (contact_url, outgoing, plugins SXNGPlugin, 79 arbitrages moteurs sur 12 catégories, désactivation torrents).
+# 5.226.18.0: Configuration initiale SearXNG pour ECHO Framework.
+
+use_default_settings: true
+
+general:
+  instance_name: "ECHO SearXNG"
+  # Surchargé dynamiquement par SEARXNG_CONTACT_URL dans stack-echo.yml (requis par wikipedia, wikidata, openstreetmap)
+  contact_url: "mailto:admin@echo.local"
+
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  # secret_key injecté via variable d'environnement SEARXNG_SECRET
+  base_url: false
+  image_proxy: true
+  limiter: false
+  public_instance: false
+
+search:
+  safe_search: 1
+  autocomplete: "duckduckgo"
+  formats:
+    - html
+    - json
+
+outgoing:
+  request_timeout: 5.0
+  max_request_timeout: 12.0
+  pool_connections: 100
+  enable_http2: true
+
+ui:
+  default_locale: "fr"
+  center_alignment: true
+
+plugins:
+  searx.plugins.calculator.SXNGPlugin:
+    active: true
+  searx.plugins.hash_plugin.SXNGPlugin:
+    active: true
+  searx.plugins.self_info.SXNGPlugin:
+    active: true
+  searx.plugins.unit_converter.SXNGPlugin:
+    active: true
+  searx.plugins.ahmia_filter.SXNGPlugin:
+    active: true
+  searx.plugins.hostnames.SXNGPlugin:
+    active: true
+  searx.plugins.time_zone.SXNGPlugin:
+    active: true
+  searx.plugins.tracker_url_remover.SXNGPlugin:
+    active: true
+  searx.plugins.oa_doi_rewrite.SXNGPlugin:
+    active: true
+  searx.plugins.infinite_scroll.SXNGPlugin:
+    active: false
+  searx.plugins.tor_check.SXNGPlugin:
+    active: false
+
+# RÈGLE DE RÉSILIENCE WATCHTOWER :
+# Ne JAMAIS redéfinir 'engine:' ni 'shortcut:' sur un moteur natif afin de préserver
+# les évolutions internes upstream lors des mises à jour automatiques de searxng:latest.
+engines:
+  # --- 1. GENERAL (Web, Savoir, Calcul & Galaxie Wikimédia) ---
+  - name: duckduckgo
+    disabled: false
+  - name: google
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: qwant
+    disabled: false
+  - name: yahoo
+    disabled: false
+  - name: yep
+    disabled: false
+  - name: mwmbl
+    disabled: false
+  - name: crowdview
+    disabled: false
+  - name: wikipedia
+    disabled: false
+    display_type: ["infobox", "list"]
+  - name: wikidata
+    disabled: false
+    display_type: ["infobox", "list"]
+  - name: wolframalpha
+    disabled: false
+  - name: ddg definitions
+    disabled: false
+  - name: encyclosearch
+    disabled: false
+  - name: wikibooks
+    disabled: false
+  - name: wikisource
+    disabled: false
+  - name: wikiquote
+    disabled: false
+  - name: wikiversity
+    disabled: false
+  - name: wikivoyage
+    disabled: false
+  - name: wikispecies
+    disabled: false
+
+  # --- 2. IT, IA/ML, ÉCOSYSTÈMES LANGAGES, SÉCURITÉ & FORGES ---
+  # (Complètent les natifs actifs : github, stackoverflow, superuser, askubuntu, mdn, pypi, docker hub, arch linux wiki, gentoo, hoogle, mankier)
+  - name: huggingface
+    disabled: false
+  - name: huggingface datasets
+    disabled: false
+  - name: huggingface spaces
+    disabled: false
+  - name: ollama
+    disabled: false
+  - name: npm
+    disabled: false
+  - name: crates.io
+    disabled: false
+  - name: lib.rs
+    disabled: false
+  - name: pkg.go.dev
+    disabled: false
+  - name: nuget
+    disabled: false
+  - name: microsoft learn
+    disabled: false
+  - name: discuss.python
+    disabled: false
+  - name: packagist
+    disabled: false
+  - name: rubygems
+    disabled: false
+  - name: national vulnerability database
+    disabled: false
+  - name: gitlab
+    disabled: false
+  - name: codeberg
+    disabled: false
+  - name: bitbucket
+    disabled: false
+  - name: sourcehut
+    disabled: false
+  - name: gitea.com
+    disabled: false
+  - name: hackernews
+    disabled: false
+  - name: lobste.rs
+    disabled: false
+  - name: nixos wiki
+    disabled: false
+  - name: alpine linux packages
+    disabled: false
+  - name: fdroid
+    disabled: false
+  - name: apk mirror
+    disabled: false
+  - name: apple app store
+    disabled: false
+  - name: google play apps
+    disabled: false
+
+  # --- 3. SCIENCE ---
+  # (Complètent les natifs actifs : arxiv, pubmed, google scholar, semantic scholar, europepmc, openairedatasets, openairepublications, pdbe)
+  - name: crossref
+    disabled: false
+    timeout: 10.0
+  - name: openalex
+    disabled: false
+
+  # --- 4. NEWS ---
+  # (Complètent les natifs actifs : google news, bing news, duckduckgo news, brave.news, reuters, wikinews)
+  - name: qwant news
+    disabled: false
+  - name: tagesschau
+    disabled: false
+  - name: ansa
+    disabled: false
+  - name: il post
+    disabled: false
+  - name: tusksearch news
+    disabled: false
+  - name: fireball news
+    disabled: false
+  - name: naver news
+    disabled: false
+
+  # --- 5. IMAGES & STOCK ---
+  # (Complètent les natifs actifs : bing images, duckduckgo images, brave.images, google cse images, pinterest, wikicommons.images, unsplash, pexels, 500px, picjumbo, stocksnap, shopify stock, 1x)
+  - name: google images
+    disabled: false
+  - name: qwant images
+    disabled: false
+  - name: openverse
+    disabled: false
+  - name: artic
+    disabled: false
+  - name: pixabay images
+    disabled: false
+
+  # --- 6. VIDEOS ---
+  # (Complètent les natifs actifs : youtube, google videos, bing videos, duckduckgo videos, brave.videos, dailymotion, vimeo, sepiasearch, wikicommons.videos)
+  - name: qwant videos
+    disabled: false
+  - name: ina
+    disabled: false
+  - name: media.ccc.de
+    disabled: false
+  - name: pixabay videos
+    disabled: false
+  - name: odysee
+    disabled: false
+
+  # --- 7. MUSIC ---
+  # (Complète les natifs actifs : youtube, soundcloud, bandcamp, genius, mixcloud, radio browser, wikicommons.audio)
+  - name: deezer
+    disabled: false
+
+  # --- 8. FILES (Activation archives & désactivation des moteurs BitTorrent par défaut) ---
+  - name: annas archive
+    disabled: false
+  - name: findfiles
+    disabled: false
+  - name: piratebay
+    disabled: true
+  - name: kickass
+    disabled: true
+  - name: solidtorrents
+    disabled: true
+  - name: bt4g
+    disabled: true
+
+  # --- 9. MAP (Complète openstreetmap et photon) ---
+  - name: apple maps
+    disabled: false
+
+  # --- 10. MOVIES & WEATHER ---
+  - name: imdb
+    disabled: false
+  - name: tmdb
+    disabled: false
+  - name: rottentomatoes
+    disabled: false
+  - name: senscritique
+    disabled: false
+  - name: wttr.in
+    disabled: false
+  - name: openmeteo
+    disabled: false

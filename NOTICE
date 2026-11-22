@@ -1,0 +1,73 @@
+ECHO Framework
+Copyright 2025-2026 Wilfried BARNAVON
+
+This product includes software developed by Wilfried BARNAVON for the ECHO Framework.
+Pursuant to Section 4(d) of the Apache License, Version 2.0, any redistribution or
+fork of this Work must retain a readable copy of this attribution notice.
+
+================================================================================
+1. DUAL LICENSING SCOPE
+================================================================================
+
+- ECHO Framework original components (pipes, filters, tools, actions, shared
+  libraries, orchestration scripts, configuration manifests, and dedicated
+  Docker workers outside `16-docker-echo-webui/`) are licensed under the
+  Apache License, Version 2.0 (see root `LICENSE`).
+
+- The `16-docker-echo-webui/` directory (`ECHO-UI`) is a derivative work based on
+  Open WebUI v0.13.2 and is governed by the Open WebUI License
+  (`16-docker-echo-webui/LICENSE`) and prior upstream license terms preserved in
+  `16-docker-echo-webui/LICENSE_HISTORY`.
+
+================================================================================
+2. OPEN WEBUI LICENSE — CLAUSE 4 COMPLIANCE NOTICE (`16-docker-echo-webui/`)
+================================================================================
+
+`ECHO-UI` (`16-docker-echo-webui/`) enforces a default technical cap of 50 user
+accounts (to preserve compliance with Clause 4's limit of 50 active end users
+within any rolling 30-day period for `ECHO-UI` branding adaptation).
+
+Removing or raising this 50-user threshold while retaining the `ECHO-UI`
+branding (or any other alteration, removal, or replacement of Open WebUI
+branding) is legally subject to obtaining prior official written permission or
+an executed Enterprise license from Open WebUI Inc., or restoring the original
+Open WebUI branding.
+
+================================================================================
+3. THIRD-PARTY ATTRIBUTIONS
+================================================================================
+
+This distribution incorporates or relies upon the following third-party software:
+
+- Open WebUI (Open WebUI License — `16-docker-echo-webui/LICENSE`,
+  `16-docker-echo-webui/LICENSE_HISTORY`)
+  Copyright (c) 2023- Open WebUI Inc. [Created by Timothy Jaeryang Baek]
+
+- Twemoji (CC-BY 4.0 — https://github.com/jdecked/twemoji)
+  Emoji graphics licensed under Creative Commons Attribution 4.0 International.
+
+- Dulwich (Apache License 2.0 / GPL-2.0-or-later)
+- Qdrant (Apache License 2.0)
+- Playwright (Apache License 2.0)
+- Watchtower (Apache License 2.0)
+
+- edge-tts (LGPL-3.0)
+- paramiko (LGPL-2.1-or-later)
+
+- WebAssembly encryption crates (`16-docker-echo-webui/src/lib/encryption/vendor/THIRD_PARTY_LICENSES.txt`,
+  including MPL-2.0 dependencies)
+
+- n8n (Sustainable Use License — `26-docker-n8n-worker`)
+- BunkerWeb (AGPL-3.0)
+- SearXNG (AGPL-3.0)
+- MariaDB (GPL-2.0)
+
+- CodeMirror 6 (MIT License)
+- Harrier-OSS (MIT License)
+- llama.cpp (MIT License)
+- ONNX Runtime (MIT License)
+- MarkItDown (MIT License)
+- Pydub (MIT License)
+- Bootstrap 5.3 (MIT License)
+
+- httpx (BSD-3-Clause)

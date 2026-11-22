@@ -1,0 +1,30 @@
+# ==============================================================================
+# GIT ATTRIBUTES - ECHO FRAMEWORK
+#
+# Force LF line endings for scripts to prevent Windows CRLF issues in Linux VM
+# ==============================================================================
+
+# Scripts Bash & Python : Toujours en LF
+*.sh text eol=lf
+*.py text eol=lf
+
+# Configs & Documentation
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+.gitignore text eol=lf
+.editorconfig text eol=lf
+Dockerfile text eol=lf
+requirements.txt text eol=lf
+
+# Le fichier VERSION doit être strict
+VERSION text eol=lf
+
+# PowerShell force CRLF (Windows Native)
+*.ps1 text eol=crlf
+
+# Images (Binaires)
+*.png binary
+*.jpg binary
+*.ico binary

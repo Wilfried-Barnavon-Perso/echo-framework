@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "component": "16-docker-echo-webui",
+  "fail_on_unaccepted_severities": ["high", "critical"],
+  "pinned_majors": {
+    "vite": 5,
+    "@sveltejs/kit": 2,
+    "@huggingface/transformers": 3,
+    "mermaid": 11,
+    "katex": 0
+  },
+  "accepted_exceptions": [
+    {
+      "packages": ["@sveltejs/kit"],
+      "max_severity": "high",
+      "scope": "build",
+      "reason": "ECHO-UI compile en SPA statique (@sveltejs/adapter-static) servie par FastAPI sans serveur SSR Node SvelteKit ; correctif complet en SvelteKit 3 (breaking major).",
+      "review_after": "2027-06-01"
+    },
+    {
+      "packages": ["xlsx"],
+      "max_severity": "high",
+      "scope": "prod",
+      "reason": "SheetJS ne publie plus au-dela de 0.18.5 sur npmjs ; usage client lecture seule.",
+      "review_after": "2027-06-01"
+    },
+    {
+      "packages": ["@huggingface/transformers", "sharp"],
+      "max_severity": "high",
+      "scope": "prod",
+      "reason": "Correctif en v4.x (breaking API WebGPU EchoEdgeEmbedding) ; sharp est Node-only et absent du bundle navigateur.",
+      "review_after": "2027-06-01"
+    },
+    {
+      "packages": ["vite", "esbuild", "@sveltejs/vite-plugin-svelte", "@sveltejs/vite-plugin-svelte-inspector"],
+      "max_severity": "high",
+      "scope": "build",
+      "reason": "Affecte uniquement le serveur vite dev local, jamais le bundle statique de production ; lie au palier majeur Vite 5.",
+      "review_after": "2027-06-01"
+    },
+    {
+      "packages": ["vitest", "tinypool", "vite-node"],
+      "max_severity": "critical",
+      "scope": "dev",
+      "reason": "Outil de test unitaire dev-only absent de la production ; lie au palier majeur Vite 5.",
+      "review_after": "2027-06-01"
+    }
+  ],
+  "allowed_deprecated_transitives": [
+    "boolean"
+  ]
+}

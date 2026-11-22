@@ -1,0 +1,665 @@
+# Copyright (c) 2025-2026 Wilfried BARNAVON
+# SPDX-License-Identifier: Apache-2.0
+# ==============================================================================
+# ECHO FRAMEWORK
+# VERSION : 6.18.2.1
+# ==============================================================================
+# Ce fichier ne gere QUE la couche applicative "ECHO".
+# ==============================================================================
+# ==============================================================================
+# 🗺️ DOMAIN-DRIVEN IPAM (PLAN D'ADRESSAGE IP STATIQUE)
+# ==============================================================================
+# 1. Briques Core & Externes (Plage .100 - .199) :
+#    - echo-webui       : .100
+#    - searxng          : .101
+#    - watchtower       : .102
+#    - qdrant           : .103
+#
+# 2. Workers ECHO (Reflet strict du numéro de dossier source) :
+#    - admin-manager    : .20  (Dossier 20-)
+#    - coding-worker    : .21  (Dossier 21-)
+#    - browser-worker   : .22  (Dossier 22-)
+#    - mcp-broker       : .23  (Dossier 23-)
+#    - auth-manager     : .24  (Dossier 24- -> voir bunkerweb-stack.yml)
+#    - download-broker  : .25  (Dossier 25-)
+#    - n8n-worker       : .26  (Dossier 26-)
+#    - user-manager     : .27  (Dossier 27- -> voir bunkerweb-stack.yml)
+#    - embedding        : .30  (Dossier 30-)
+# ==============================================================================
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 6.18.2.1: Ajout de SEARXNG_CONTACT_URL, FORCE_OWNERSHIP=false et sonde légère /healthz sur echo-searxng.
+# 6.17.3.1: Exemption statique /audio dans CUSTOM_CONF_SERVER_HTTP_statics pour servir /audio/*.mp3 sans détour /api/verify.
+# 6.16.0.2: Préfixe /echo/ dans les règles Nginx JSON et location /echo/v1/wm/app/ (auth_request off, HTTP/1.1 + WS Upgrade) pour apps HMAC.
+# 6.14.1.1: Ajout de DATABASE_SQLITE_PRAGMA_BUSY_TIMEOUT=30000 sur echo-webui pour résorber la contention SQLite sur conversations volumineuses.
+# 6.14.0.1: Augmentation de la tolérance de démarrage du healthcheck echo-searxng (start_period: 60s, retries: 10) sous contention CPU.
+
+name: echo
+
+services:
+
+  # 1. Open WebUI (Le Cœur d'ECHO - Fork Natif ECHO V6)
+  echo-webui:
+    image: echo-webui:latest
+    build:
+      context: /opt/ECHO/docker-echo-webui
+      dockerfile: Dockerfile
+    container_name: echo-webui
+    restart: always
+    networks:
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.100
+      echo-sandbox:
+        ipv4_address: ${ECHO_NET_SANDBOX_PREFIX}.100
+    ports:
+      - "3000:8080"
+      - "8020-8024:8020-8024"  # SSH tunnel ephemere PKCE - ports SSH uniquement (5 sessions max)
+      # Ports callback 8025-8034 : internes uniquement - accessibles via tunnel SSH, JAMAIS exposes
+    environment:
+      - WEBUI_AUTH=True
+      - WEBUI_AUTH_TRUSTED_EMAIL_HEADER=${ECHO_DOMAIN:+X-Webui-User}
+      - WEBUI_AUTH_TRUSTED_NAME_HEADER=${ECHO_DOMAIN:+X-Webui-Name}
+      - JWT_EXPIRES_IN=${ECHO_JWT_EXPIRES_IN:-4w}
+      - WEBUI_NAME=ECHO-UI
+      - PIP_CACHE_DIR=/app/backend/data/.cache/pip
+      # - CSRF_TRUSTED_ORIGINS=https://ui.${ECHO_DOMAIN:-localhost}
+      - FORWARDED_ALLOW_IPS=*
+      - TZ=Europe/Paris
+      # Configuration Reverse Proxy (Doc Officielle)
+      - "WEBUI_URL=https://ui.${ECHO_DOMAIN:-localhost}"
+      # 🛡️ ECHO AUTH : Redirection après déconnexion (Bounce local pour purger le Service Worker)
+      - WEBUI_AUTH_SIGNOUT_REDIRECT_URL=https://ui.${ECHO_DOMAIN:-localhost}/sso-logout
+      # ATTENTION : Séparateur point-virgule (;) obligatoire pour Open WebUI
+      - "CORS_ALLOW_ORIGIN=https://ui.${ECHO_DOMAIN:-localhost};https://www.${ECHO_DOMAIN:-localhost};http://localhost:3000;http://127.0.0.1:3000;https://${ECHO_DOMAIN:-localhost};${ECHO_DETECTED_ORIGINS:-}"
+
+      # Sécurité Cookies (Recommandé Doc Officielle)
+      - "WEBUI_SESSION_COOKIE_SECURE=true"
+      - "WEBUI_AUTH_COOKIE_SECURE=true"
+      - "WEBUI_SESSION_COOKIE_SAME_SITE=lax"
+      - "WEBUI_AUTH_COOKIE_SAME_SITE=lax"
+
+      - DATA_DIR=/app/backend/data
+      - TMPDIR=/app/backend/data/.tmp_uploads
+      - DATABASE_SQLITE_PRAGMA_BUSY_TIMEOUT=30000
+      # Désactivation RAG natif au boot
+      - VECTOR_DB=qdrant
+      - QDRANT_URI=http://echo-qdrant:6333
+      - RAG_EMBEDDING_ENGINE=openai
+      - RAG_EMBEDDING_MODEL=dummy_model
+      - ENABLE_RAG_WEB_SEARCH=false
+      - ENABLE_CONTEXT_COMPACTION=false
+      - ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS=false
+      - ECHO_PLUGIN_ROOT=/opt/ECHO
+      - WEBUI_ADMIN_EMAIL=admin@echo.local
+      - WEBUI_ADMIN_NAME=ECHO Architect
+      - WEBUI_ADMIN_PASSWORD=${ECHO_ADMIN_PASSWORD:-}
+      - ECHO_VERSION_PATH=/app/backend/data/ECHO_VERSION
+      - ENABLE_FORWARD_USER_INFO_HEADERS=true
+      - ECHO_VAULT_ENCRYPTION_KEY=${ECHO_VAULT_ENCRYPTION_KEY:-}
+    volumes:
+      - /opt/ECHO/ECHO_VERSION:/app/backend/data/ECHO_VERSION:ro
+      - /opt/ECHO/owui-libs:/app/backend/echo_libs:ro
+      - /opt/ECHO/owui-libs:/opt/ECHO/owui-libs:ro
+      - /opt/ECHO/owui-pipes:/opt/ECHO/owui-pipes:ro
+      - /opt/ECHO/owui-filters:/opt/ECHO/owui-filters:ro
+      - /opt/ECHO/owui-tools:/opt/ECHO/owui-tools:ro
+      - /opt/ECHO/owui-actions:/opt/ECHO/owui-actions:ro
+      - /opt/ECHO/owui-events:/opt/ECHO/owui-events:ro
+      - /opt/ECHO/config:/opt/ECHO/config:ro
+      - /opt/ECHO/echo-images:/opt/ECHO/echo-images:ro
+      - /opt/ECHO/config/system-prompt.xml:/app/backend/data/system-prompt.xml:ro
+      - echo-webui-data:/app/backend/data
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+      # 🛡️ TUNING SECURE EDGE (BunkerWeb)
+      - "bunkerweb.SERVER_NAME=ui.${ECHO_DOMAIN:-localhost}"
+      - "bunkerweb.USE_REVERSE_PROXY=yes"
+      - "bunkerweb.REVERSE_PROXY_URL=/"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_main=set $$upstream_main http://echo-webui:8080;"
+      - "bunkerweb.REVERSE_PROXY_HOST=$$upstream_main"
+      - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=no"
+      # 1. OPTIMISATIONS STREAMING & UPLOAD
+      - "bunkerweb.REVERSE_PROXY_BUFFERING=no"
+      - "bunkerweb.REVERSE_PROXY_REQUEST_BUFFERING=no"
+      - "bunkerweb.MAX_CLIENT_SIZE=4096m"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_buffers=proxy_buffer_size 128k; proxy_buffers 4 256k; proxy_busy_buffers_size 256k;"
+      - "bunkerweb.REVERSE_PROXY_READ_TIMEOUT=600s"
+      - "bunkerweb.REVERSE_PROXY_SEND_TIMEOUT=600s"
+      - "bunkerweb.REVERSE_PROXY_CONNECT_TIMEOUT=60s"
+
+      # 2. WEBSOCKETS & ENTÊTES
+      - "bunkerweb.REVERSE_PROXY_WS=yes"
+      - "bunkerweb.REVERSE_PROXY_PRESERVE_HOST=yes"
+      - "bunkerweb.KEEP_UPSTREAM_HEADERS=*"
+
+      # 🛡️ ROUTAGE WEBSOCKET POUR LE EDGE EMBEDDING
+      # Priorité absolue Nginx via "location =" pour surpasser le proxy générique
+      - |
+        bunkerweb.CUSTOM_CONF_SERVER_HTTP_edgeembed=location = /ws/edge-embed {
+            set $$upstream_embed http://echo-embedding:7997;
+            proxy_pass $$upstream_embed;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade "websocket";
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+        }
+
+      # 🛡️ ECHO AUTH : Forward Auth
+      - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST=/api/verify"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @api_403_reject; error_page 429 = @api_429_reject; error_page 500 501 502 503 504 = @api_5xx_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/(api|echo|ollama|openai|audio|images|v1)/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_x_sveltekit_data) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @api_403_reject { if ($$request_uri ~* ^/(api|echo|ollama|openai|audio|images|v1)/) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } if ($$http_accept ~* application/json) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } if ($$http_x_sveltekit_data) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403 Forbidden)\"}'; } default_type text/html; return 403 '<html><body><center><h1>403 Forbidden</h1></center></body></html>'; } location @api_429_reject { if ($$request_uri ~* ^/(api|echo|ollama|openai|audio|images|v1)/) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } if ($$http_accept ~* application/json) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } if ($$http_x_sveltekit_data) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } default_type text/html; return 429 '<html><body><center><h1>429 Too Many Requests</h1></center></body></html>'; } location @api_5xx_reject { if ($$request_uri ~* ^/api/version) { return 200 '{\"version\":\"booting\",\"deployment_id\":\"startup\"}'; } if ($$request_uri ~* ^/(api|echo|ollama|openai|audio|images|v1)/) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } if ($$http_accept ~* application/json) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } if ($$http_sec_fetch_dest = \"empty\") { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } if ($$http_x_sveltekit_data) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } default_type text/html; return 500 '<html><body><center><h1>500 Internal Server Error</h1><p>Le backend de l\\'application est temporairement indisponible.</p></center></body></html>'; }"
+      - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$webui_name $$upstream_http_x_webui_name;$$webui_gender $$upstream_http_x_webui_gender"
+      - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name;X-Webui-Gender $$webui_gender"
+
+      # 🔓 EXCLUSION UPLOADS (WORKAROUND FETCH) : Empêche le 401 WAF sur les uploads multimédias tout en conservant la sécurité du Bearer Token applicatif
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_media=location ~ ^/api/v1/(files|audio|images) { auth_request off; set $$upstream_owui http://echo-webui:8080; proxy_pass $$upstream_owui; proxy_http_version 1.1; proxy_set_header Connection \"\"; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
+
+      # 🔓 SANDBOX APP PROXY (CAPABILITY TICKET HMAC SANS COOKIE, HTTP + WEBSOCKET)
+      - |
+        bunkerweb.CUSTOM_CONF_SERVER_HTTP_wmapp=location ^~ /echo/v1/wm/app/ {
+            auth_request off;
+            set $$upstream_owui http://echo-webui:8080;
+            proxy_pass $$upstream_owui;
+            proxy_http_version 1.1;
+            set $$conn_hdr "";
+            if ($$http_upgrade != "") {
+                set $$conn_hdr "upgrade";
+            }
+            proxy_set_header Upgrade $$http_upgrade;
+            proxy_set_header Connection $$conn_hdr;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+        }
+
+      # 🛡️ ECHO AUTH BACKEND (Nginx internal proxy_pass sécurisé contre le transfert de Content-Length)
+      # On crée manuellement la location Nginx sans passer par la macro REVERSE_PROXY_URL_2
+      # pour garantir l'absence de buffering et de Content-Length sur l'appel d'auth.
+      - |
+        bunkerweb.CUSTOM_CONF_SERVER_HTTP_authbackend=location = /api/verify {
+            internal;
+            proxy_intercept_errors off;
+            set $$upstream_auth http://echo-auth-manager:8000;
+            proxy_pass $$upstream_auth;
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+            proxy_set_header X-Original-URI $$request_uri;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+        }
+
+      # (Les intercepteurs /auth ont été supprimés car ils provoquaient une boucle infinie)
+
+      # 💀 SERVICE WORKER KILL-SWITCH (PROPRE) : Retourne 404 pour forcer le navigateur à désenregistrer la PWA en silence, sans causer de race condition au rechargement.
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_sw=location = /sw.js { auth_request off; return 404; }"
+
+      # 🧹 PURGE SW VIA LOGOUT : Point de chute de la déconnexion avec purge cache PWA (Clear-Site-Data)
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_ssologout=location = /sso-logout { auth_request off; add_header Clear-Site-Data '\"cache\"' always; return 302 https://auth.${ECHO_DOMAIN:-localhost}/logout?next=https://ui.${ECHO_DOMAIN:-localhost}; }"
+
+
+      # 🔓 EXCLUSION API PUBLIQUES : Permet au frontend de s'initialiser avant de rediriger proprement
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_bypass=location ~ ^/api/(version|config) { auth_request off; set $$upstream_owui http://echo-webui:8080; proxy_pass $$upstream_owui; proxy_http_version 1.1; proxy_set_header Connection \"\"; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; }"
+
+      # 🔓 EXCLUSION FICHIERS STATIQUES : Requis pour la PWA, les assets et la mise à jour du Service Worker
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_statics=location ~ ^/(assets|static|audio|_app|wasm|manifest\\.json|favicon.*\\.png|robots\\.txt) { auth_request off; set $$upstream_owui http://echo-webui:8080; proxy_pass $$upstream_owui; proxy_http_version 1.1; proxy_set_header Connection \"\"; proxy_set_header Host $$host; proxy_set_header X-Real-IP $$remote_addr; proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $$scheme; }"
+
+
+      # 🚫 ANTI-CACHE DYNAMIQUE (Pour forcer l'interception SSO sur le HTML)
+      - "bunkerweb.CUSTOM_CONF_HTTP_mapcache=map $$sent_http_content_type $$html_cache_control { default \"\"; \"~*text/html\" \"no-store, no-cache, must-revalidate, max-age=0\"; }"
+      - "bunkerweb.CUSTOM_HEADER_cache=Cache-Control: $$html_cache_control"
+
+      # 3. RATE LIMITING (Stratégie SPA Robuste)
+      - "bunkerweb.USE_LIMIT_REQ=yes"
+      - "bunkerweb.LIMIT_REQ_RATE=300r/s"
+      - "bunkerweb.LIMIT_CONN_MAX_HTTP2=200"
+
+      # 4. SECURITE (Anti-Ban)
+      - "bunkerweb.USE_MODSECURITY=no"
+      - "bunkerweb.USE_BAD_BEHAVIOR=yes"
+      - "bunkerweb.BAD_BEHAVIOR_THRESHOLD=50"
+      - "bunkerweb.BAD_BEHAVIOR_BAN_TIME=300"
+      # EXCLUSION CRITIQUE : Ne pas bannir sur les erreurs 5xx (timeout ou surcharge applicative)
+      # 400 retiré : les SPA génèrent légitimement des 400 sur les preflight CORS
+      - "bunkerweb.BAD_BEHAVIOR_STATUS_CODES=405 444"
+      # ⚡ EXCLUSION 401, 400, 404, 405, 413 : Empêche BunkerWeb d'écraser le JSON natif du backend
+      # pour les erreurs applicatives. Le WAF intercepte les autres (403, 429, 5xx) et les formatte en JSON.
+      - "bunkerweb.INTERCEPTED_ERROR_CODES=403 429 500 501 502 503 504"
+
+      # Autoriser les verbes HTTP pour l'API (Suppression de chat, édition, etc.)
+      - "bunkerweb.ALLOWED_METHODS=GET|POST|HEAD|PUT|DELETE|PATCH|OPTIONS"
+
+
+      # 5. UX & PERFORMANCE
+      - "bunkerweb.USE_BROTLI=yes"
+      
+      # 🩹 AUTO-HEAL SPA : Injection JS pour détecter le routage interne vers /auth et forcer un hard-reload vers BunkerWeb
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_autoheal=sub_filter '</head>' '<script>setInterval(function(){if(window.location.pathname===\"/auth\"){window.location.replace(\"/\");}},500);</script></head>'; sub_filter_once on;"
+      
+      # 📍 Autoriser la géolocalisation pour ce serveur spécifique (Standard BunkerWeb)
+      - "bunkerweb.PERMISSIONS_POLICY=geolocation=(self), camera=(self), microphone=(self)"      
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --fail http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      echo-qdrant:
+        condition: service_healthy
+      echo-embedding:
+        condition: service_healthy
+      echo-searxng:
+        condition: service_healthy
+      echo-mcp-broker:
+        condition: service_healthy
+
+  # 2. Admin Manager (Dashboard Système ECHO)
+  echo-admin-manager:
+    image: echo-admin-manager:latest
+    build:
+      context: /opt/ECHO/docker-admin-manager
+      dockerfile: Dockerfile
+    container_name: echo-admin-manager
+    restart: always
+    networks:
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.20
+    environment:
+      - TZ=Europe/Paris
+      - ECHO_SSO_SECRET=${ECHO_SSO_SECRET:-}
+      - ECHO_DOMAIN=${ECHO_DOMAIN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    
+    # Intégration BunkerWeb
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+      - "bunkerweb.SERVER_NAME=am.${ECHO_DOMAIN:-localhost}"
+      - "bunkerweb.USE_REVERSE_PROXY=yes"
+      - "bunkerweb.REVERSE_PROXY_URL=/"
+      - "bunkerweb.REVERSE_PROXY_HOST=http://echo-admin-manager:3001"
+      - "bunkerweb.REVERSE_PROXY_INTERCEPT_ERRORS=yes"
+      # 🛡️ ECHO AUTH : Forward Auth + SSO Secret (Syntaxe Officielle BunkerWeb 1.6)
+      - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST=/api/verify"
+      - "bunkerweb.CUSTOM_CONF_SERVER_HTTP_auth-error=error_page 401 = @auth_soft_reject; error_page 403 = @api_403_reject; error_page 429 = @api_429_reject; error_page 500 501 502 503 504 = @api_5xx_reject; location @auth_soft_reject { default_type application/json; if ($$request_uri ~* ^/sw\\\\.js) { return 401 'Unauthorized'; } if ($$request_uri ~* ^/api/) { return 401 '{\"detail\":\"Unauthorized\"}'; } if ($$http_accept ~* application/json) { return 401 '{\"detail\":\"Unauthorized\"}'; } return 302 https://auth.${ECHO_DOMAIN:-localhost}/login?next=https://$$host$$request_uri; } location @api_403_reject { if ($$request_uri ~* ^/api/) { return 403 '{\"detail\":\"Action bloquée par le pare-feu (403)\"}'; } default_type text/html; return 403 '<html><body><center><h1>403 Forbidden</h1></center></body></html>'; } location @api_429_reject { if ($$request_uri ~* ^/api/) { return 429 '{\"detail\":\"Trop de requêtes (429 Rate Limit)\"}'; } default_type text/html; return 429 '<html><body><center><h1>429 Too Many Requests</h1></center></body></html>'; } location @api_5xx_reject { default_type application/json; if ($$request_uri ~* ^/api/) { return 502 '{\"detail\":\"Internal Proxy Error (502)\"}'; } return 500 '{\"detail\":\"Internal Error (500)\"}'; }"
+      - "bunkerweb.REVERSE_PROXY_AUTH_REQUEST_SET=$$webui_user $$upstream_http_x_webui_user;$$webui_name $$upstream_http_x_webui_name;$$dummy $$upstream_http_dummy"
+      - "bunkerweb.REVERSE_PROXY_HEADERS=X-Webui-User $$webui_user;X-Webui-Name $$webui_name;X-Echo-Sso-Secret ${ECHO_SSO_SECRET:-}"
+      
+      # 🛡️ ECHO AUTH BACKEND (Nginx internal proxy_pass sécurisé contre le transfert de Content-Length)
+      # On crée manuellement la location Nginx sans passer par la macro REVERSE_PROXY_URL_2
+      # pour garantir l'absence de buffering et de Content-Length sur l'appel d'auth.
+      - |
+        bunkerweb.CUSTOM_CONF_SERVER_HTTP_authbackend=location = /api/verify {
+            internal;
+            proxy_intercept_errors off;
+            set $$upstream_auth http://echo-auth-manager:8000;
+            proxy_pass $$upstream_auth;
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
+            proxy_set_header X-Original-URI $$request_uri;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+        }
+      # 🛡️ SECURITE ADMIN : Assouplissement WAF pour l'Admin (Burst toléré)
+      - "bunkerweb.USE_BAD_BEHAVIOR=yes"
+      - "bunkerweb.BAD_BEHAVIOR_STATUS_CODES=405 444"
+      - "bunkerweb.BAD_BEHAVIOR_THRESHOLD=50"
+      - "bunkerweb.BAD_BEHAVIOR_BAN_TIME=300"
+      - "bunkerweb.USE_LIMIT_REQ=yes"
+      - "bunkerweb.LIMIT_REQ_RATE=50r/s"
+      - "bunkerweb.LIMIT_REQ_BURST=150"
+      # ⚡ EXCLUSION 401, 400, 404, 405, 413 : Empêche BunkerWeb d'écraser le JSON natif du backend
+      # pour les erreurs applicatives. Le WAF intercepte les autres (403, 429, 5xx) et les formatte en JSON.
+      - "bunkerweb.INTERCEPTED_ERROR_CODES=403 429 500 501 502 503 504"
+      
+      # 🚫 ANTI-BOTS & INDEXATION
+      - "bunkerweb.CUSTOM_HEADER_1=X-Robots-Tag: noindex, nofollow"
+    
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/ECHO/docker-admin-manager/server.py:/app/server.py:ro
+      - /opt/ECHO/docker-admin-manager/core:/app/core:ro
+      - /opt/ECHO/docker-admin-manager/services:/app/services:ro
+      - /opt/ECHO/docker-admin-manager/routes:/app/routes:ro
+      - /opt/ECHO/docker-admin-manager/templates:/app/templates:ro
+      - /opt/ECHO/owui-libs:/app/echo_libs:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
+      - /opt/ECHO/echo-images:/app/static:ro
+      - echo-backups:/backups
+      - echo-webui-data:/app/backend/data
+      - echo-qdrant-data:/qdrant/storage
+      - echo-auth-data:/app/auth-data
+      - /opt/ECHO/.secrets:/app/secrets:ro
+      - /opt/ECHO/.env:/app/host_env/.env:ro
+      - /opt/ECHO/ECHO_VERSION:/app/ECHO_VERSION:ro
+      - echo-download-broker-data:/app/downloads:rw
+      - echo-n8n-data:/app/n8n-data:rw
+      - echo-mcp-cache:/app/mcp_cache:rw
+    
+    # EXPOSITION : Port 3001 ouvert pour le Reverse Proxy distant
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:3001/\")' 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      echo-webui:
+        condition: service_healthy
+
+  # ============================================================================
+  # SECTION 2 : WORKERS INTERNES (BACKEND)
+  # ============================================================================
+  
+  echo-mcp-broker:
+    image: echo-mcp-broker:latest
+    build:
+      context: /opt/ECHO/docker-mcp-broker
+      dockerfile: Dockerfile
+    container_name: echo-mcp-broker
+    restart: always
+    networks:
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.23
+    environment:
+      - TZ=Europe/Paris
+    volumes:
+      - /opt/ECHO/docker-mcp-broker/server.py:/app/server.py:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
+      - /opt/ECHO/docker-mcp-broker/core:/app/core:ro
+      - /opt/ECHO/docker-mcp-broker/modules:/app/modules:ro
+      - echo-mcp-cache:/app/mcp_cache:rw
+      - echo-download-broker-data:/app/downloads:rw
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:8000/ping\")' 2>/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  echo-coding-worker:
+    image: echo-coding-worker:latest
+    build:
+      context: /opt/ECHO/docker-coding-worker
+      dockerfile: Dockerfile
+    container_name: echo-coding-worker
+    restart: always
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+    cap_add:
+      - SYS_ADMIN
+    networks:
+      echo-sandbox:
+        ipv4_address: ${ECHO_NET_SANDBOX_PREFIX}.21
+    environment:
+      - TZ=Europe/Paris
+    volumes:
+      - /opt/ECHO/docker-coding-worker/worker_api.py:/app/app.py:ro
+      - /opt/ECHO/docker-coding-worker/echo_libs_sandbox:/app/echo_libs_sandbox:ro
+      - /opt/ECHO/docker-coding-worker/sandbox-agent-readme.md:/app/sandbox-agent-readme.md:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
+      - echo-webui-data:/app/backend/data:rw
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:5000/health\")' 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  echo-browser-worker:
+    image: echo-browser-worker:latest
+    build:
+      context: /opt/ECHO/docker-browser-worker
+      dockerfile: Dockerfile
+    container_name: echo-browser-worker
+    restart: always
+    networks:
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.22
+    ipc: host
+    environment:
+      - PIP_ROOT_USER_ACTION=ignore
+      - TZ=Europe/Paris
+    volumes:
+      - /opt/ECHO/docker-browser-worker/browser_api.py:/app/browser_api.py:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
+      - echo-download-broker-data:/app/downloads:rw
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:5002/health\")' 2>/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
+
+  echo-n8n-worker:
+    image: echo-n8n-worker:latest
+    build:
+      context: /opt/ECHO/docker-n8n-worker
+      dockerfile: Dockerfile
+    container_name: echo-n8n-worker
+    restart: always
+    networks:
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.26
+    environment:
+      - TZ=Europe/Paris
+      - N8N_ENCRYPTION_KEY
+      - N8N_INSTANCE_OWNER_MANAGED_BY_ENV
+      - N8N_INSTANCE_OWNER_EMAIL
+      - N8N_INSTANCE_OWNER_FIRST_NAME
+      - N8N_INSTANCE_OWNER_LAST_NAME
+      - N8N_INSTANCE_OWNER_PASSWORD
+      # Figeage des futures dépréciations pour maintenir la compatibilité ECHO
+      - N8N_UNVERIFIED_PACKAGES_ENABLED=true
+      - N8N_RUNNERS_TASK_TIMEOUT=300
+      - N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES=2147483648
+      - N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES=5000
+      # Relâchement des permissions de fichiers pour le Volume Docker
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=false
+      # Désactivation de la sécurité environnementale bloquant l'accès au Vault d'identité ECHO
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+    volumes:
+      - /opt/ECHO/docker-n8n-worker/n8n_api.py:/app/n8n_api.py:ro
+      - /opt/ECHO/docker-n8n-worker/start.sh:/app/start.sh:ro
+      - /opt/ECHO/docker-n8n-worker/n8n_architecture.md:/app/n8n_architecture.md:ro
+      - echo-download-broker-data:/home/node/.n8n-files:rw
+      - echo-n8n-data:/home/node/.n8n:rw
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:5003/health\")' 2>/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # 3. SearxNG (Métamoteur de recherche souverain)
+  echo-searxng:
+    image: searxng/searxng:latest
+    container_name: echo-searxng
+    restart: always
+    networks:
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.101
+    volumes:
+      - /opt/ECHO/config/searxng-settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      - TZ=Europe/Paris
+      - SEARXNG_SETTINGS_PATH=/etc/searxng/settings.yml
+      - SEARXNG_SECRET=${SEARXNG_SECRET:-}
+      - SEARXNG_CONTACT_URL=mailto:${ECHO_ADMIN_EMAIL:-admin@echo.local}
+      - FORCE_OWNERSHIP=false
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    labels:
+      - "echo.hot-reload=true"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # 5. Watchtower (Auto-Update)
+  echo-watchtower:
+    image: containrrr/watchtower:latest
+    container_name: echo-watchtower
+    restart: always
+    networks:
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.102
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TZ=Europe/Paris
+      - DOCKER_API_VERSION=1.44
+    command: --interval 3600 --cleanup
+
+  # ============================================================================
+  # SECTION 3 : INFRASTRUCTURE RAG & AUTOMATISATION
+  # ============================================================================
+
+  # 4. Qdrant (Base Vectorielle)
+  echo-qdrant:
+    image: qdrant/qdrant:v1.19.1
+    container_name: echo-qdrant
+    restart: always
+    networks:
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.103
+    volumes:
+      - echo-qdrant-data:/qdrant/storage
+    environment:
+      - TZ=Europe/Paris
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q ':18BD' /proc/net/tcp || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # 6. ECHO Embedding Worker (microsoft/Harrier-OSS-v1-0.6B — Text RAG, multilingue, 1024d)
+  echo-embedding:
+    image: echo-embedding:latest
+    build:
+      context: /opt/ECHO/docker-embedding-worker
+      dockerfile: Dockerfile
+    container_name: echo-embedding
+    restart: always
+    networks:
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.30
+    environment:
+      - TZ=Europe/Paris
+      - MODEL_ID=microsoft/Harrier-OSS-v1-0.6B
+      - GGUF_FILE=harrier-oss-v1-0.6b.f16.gguf
+      - MAX_LENGTH=4096
+    volumes:
+      - /opt/ECHO/docker-embedding-worker/app.py:/app/app.py:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
+      - echo-embedding-cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://localhost:7997/health\")' 2>/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+      start_period: 300s
+    depends_on:
+      echo-qdrant:
+        condition: service_healthy
+
+  # 7. ECHO Download Broker (Ingestion asynchrone Playwright)
+  echo-download-broker:
+    image: echo-download-broker:latest
+    build:
+      context: /opt/ECHO/docker-download-broker
+      dockerfile: Dockerfile
+    container_name: echo-download-broker
+    restart: always
+    networks:
+      echo-network:
+        ipv4_address: ${ECHO_NET_MAIN_PREFIX}.25
+    environment:
+      - TZ=Europe/Paris
+    volumes:
+      - echo-webui-data:/app/backend/data:rw
+      - echo-download-broker-data:/app/downloads:rw
+      - /opt/ECHO/owui-libs:/app/backend/echo_libs:ro
+      - /opt/ECHO/docker-download-broker/download_broker.py:/app/download_broker.py:ro
+      - ${ECHO_CONFIG}/logging.json:/app/logging.json:ro
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+      - "echo.hot-reload=true"
+    depends_on:
+      echo-browser-worker:
+        condition: service_healthy
+
+# ==============================================================================
+# NETWORKS & VOLUMES
+# ==============================================================================
+
+networks:
+  echo-network:
+    external: true
+  echo-sandbox:
+    external: true
+
+
+volumes:
+  echo-webui-data:
+    external: true
+  echo-download-broker-data:
+    external: true
+  echo-backups:
+    external: true
+  echo-qdrant-data:
+    external: true
+  echo-embedding-cache:
+    external: true
+  echo-auth-data:
+    external: true
+  echo-n8n-data:
+    external: true
+  echo-mcp-cache:
+    external: true

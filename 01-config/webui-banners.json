@@ -1,0 +1,10 @@
+[
+  {
+    "id": "echo-banner-welcome-v6-20261116",
+    "type": "info",
+    "title": "Bienvenue dans ECHO v6",
+    "content": "**Bienvenue dans ECHO v6** : Votre environnement souverain est prêt. Profitez de la nouvelle architecture découplée, des 4 paliers cognitifs et de vos espaces de travail intégrés.",
+    "dismissible": true,
+    "timestamp": 1794854791
+  }
+]

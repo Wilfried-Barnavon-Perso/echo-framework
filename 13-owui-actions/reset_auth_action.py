@@ -1,0 +1,60 @@
+# Copyright (c) 2025-2026 Wilfried BARNAVON
+# SPDX-License-Identifier: Apache-2.0
+"""
+title: Réinitialiser Authentification Gemini /!\
+author: Wilfried BARNAVON
+version: 5.235.5.1
+description: Révocation d'urgence : déconnecte la session et purge les tokens OAuth2 Google.
+icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxyZWN0IHdpZHRoPSIxOCIgaGVpZ2h0PSIxMSIgeD0iMyIgeT0iMTEiIHJ4PSIyIiByeT0iMiIvPjxwYXRoIGQ9Ik03IDExVjdhNSA1IDAgMCAxIDEwIDB2NCIvPjwvc3ZnPg==
+"""
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 5.235.5.1: Délégation de la réinitialisation d'authentification à EchoAuth.delete_auth_data_by_prefixes sur identity.db.
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+# 4.9: Ajout de la purge des clés d'authentification PKCE.
+# 4.8: Nettoyage et mise à jour.
+# 4.7: Mise à jour de la priorité d'affichage à 10.
+
+import os
+from typing import Optional
+import sys
+from pydantic import BaseModel, Field
+
+# Importations ECHO Strictes (Volume Docker)
+sys.path.append("/app/backend/echo_libs")
+from echo_events import EchoEvents
+from echo_auth import EchoAuth
+from echo_paths import get_echo_identity_db_path
+
+class Action:
+    class Valves(BaseModel):
+        priority: int = Field(default=10, description="Priorité d'affichage (10 = Premier).")
+
+    def __init__(self):
+        self.valves = self.Valves()
+
+    async def action(self, body: dict, __user__=None, __event_emitter__=None, __event_call__=None, __metadata__: Optional[dict] = None, **kwargs):
+        events = EchoEvents(__event_emitter__, __event_call__)
+        if not __user__ or "id" not in __user__:
+            await events.toast("❌ Erreur : Utilisateur non identifié.", "error")
+            return None
+
+        user_id = __user__["id"]
+        db_path = get_echo_identity_db_path(user_id)
+
+        if not await events.confirm("🔴 Réinitialiser votre Authentification Google ?", "Cela supprimera vos clés et jetons d'accès Google de la base ECHO. Vous devrez vous identifier à nouveau."):
+            return None
+
+        if not os.path.exists(db_path):
+            await events.toast("Aucune configuration d'authentification trouvée.", "info")
+            return None
+
+        try:
+            # Purge de toutes les données d'authentification Google (Clés, OAuth, Priorité, Identité, Tier)
+            # Note : auth_pkce_context supprimée (migration Antigravity 2.1 — Device Flow)
+            EchoAuth(user_id=user_id).delete_auth_data_by_prefixes(("google_", "pkce_"))
+            await events.toast("✅ Succès ! Votre configuration d'authentification a été effacée.", "success")
+        except Exception as e:
+            await events.toast(f"❌ Erreur SQLite : {str(e)}", "error")
+
+        return None

@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+websockets
+llama-cpp-python
+huggingface-hub
+pillow
+pydantic
+orjson
+pybase64

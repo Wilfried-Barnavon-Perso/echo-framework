@@ -1,0 +1,2537 @@
+<!-- Copyright (c) 2025-2026 Wilfried BARNAVON | SPDX-License-Identifier: Apache-2.0 -->
+<script lang="ts">
+	import { onDestroy, onMount, tick } from 'svelte';
+	import { toast } from 'svelte-sonner';
+	import Spinner from '$lib/components/common/Spinner.svelte';
+	import Markdown from '$lib/components/chat/Messages/Markdown.svelte';
+	import {
+		getEchoToken,
+		getEchoCodexChats,
+		getEchoCodexTree,
+		getEchoCodexFile,
+		saveEchoCodexFile,
+		deleteEchoCodexFile,
+		getEchoCodexLog,
+		getEchoCodexDiff,
+		downloadEchoCodexFileBlob,
+		mkdirEchoCodex,
+		renameEchoCodex,
+		restoreEchoCodexFile,
+		uploadEchoCodexFile,
+		aiEditEchoCodexFile,
+		type EchoCodexChatEntry,
+		type EchoCodexAiEditPayload
+	} from '$lib/apis/echo';
+	import { ECHO_COGNITIVE_MODELS, echoCodexTarget } from '$lib/stores/echo';
+	import EchoCodexEditor from './EchoCodexEditor.svelte';
+	import {
+		SELECTABLE_CODEX_LANGUAGES,
+		detectCodexLanguage,
+		getCanonicalExtForLanguage,
+		getCodexLanguageSpec
+	} from './codexLanguages';
+
+	export let chatId: string = '';
+
+	let currentChatId = '';
+	let crossReadChatId = '';
+	let currentChatTitle = 'Conversation actuelle';
+	let otherChats: EchoCodexChatEntry[] = [];
+	let workspaces = [
+		{ id: 'main', label: 'Main', writable: true, versioned: true },
+		{ id: 'sandbox', label: 'Sandbox', writable: true, versioned: false },
+		{ id: 'plans', label: 'Plans', writable: false, versioned: true },
+		{ id: 'generated', label: 'Generated', writable: false, versioned: true },
+		{ id: 'files', label: 'Fichiers', writable: false, versioned: false }
+	];
+
+	let selectedWorkspace = 'main';
+	let currentDirPath = '';
+	let selectedPath = '';
+	let fileContent = '';
+	let savedFileContent = '';
+	let fileMeta: {
+		is_binary?: boolean;
+		mime?: string;
+		size_bytes?: number;
+		hex_preview?: string;
+		language?: string;
+		total_lines?: number;
+	} | null = null;
+	let viewMode: 'code' | 'preview' = 'code';
+	let previewBlobUrl = '';
+
+	let codexEditorRef: EchoCodexEditor | null = null;
+	let editorSelection = '';
+	let manualLanguageOverride = '';
+	let editorWordWrap = true;
+	let cursorInfo = { line: 1, col: 1, lineCount: 0, selectionChars: 0, selectionLines: 0 };
+	let aiInstruction = '';
+	let aiModel = 'MODEL_APOLLO';
+	let isAiEditing = false;
+	let aiPendingContent: string | null = null;
+	let aiLastInstruction = '';
+	let aiUsedModel = '';
+	let aiDiffViewMode: 'diff' | 'full' = 'diff';
+
+	const AI_MODELS = [
+		ECHO_COGNITIVE_MODELS.MODEL_APOLLO,
+		ECHO_COGNITIVE_MODELS.MODEL_PROMETHEUS,
+		ECHO_COGNITIVE_MODELS.MODEL_ATHENA,
+		ECHO_COGNITIVE_MODELS.MODEL_ZEPHYR
+	].map((m) => ({ id: m.key, label: m.label }));
+
+	type QuickActionId = NonNullable<EchoCodexAiEditPayload['quick_action']>;
+	const QUICK_ACTIONS: Array<{ id: QuickActionId; label: string }> = [
+		{ id: 'shorter', label: '✂️ Raccourcir' },
+		{ id: 'longer', label: '📝 Développer' },
+		{ id: 'comment', label: '💬 Commenter' },
+		{ id: 'uncomment', label: '🧹 Décommenter' },
+		{ id: 'refactor', label: '♻️ Refactoriser' },
+		{ id: 'fix', label: '🐛 Corriger' },
+		{ id: 'tests', label: '🧪 Tests' },
+		{ id: 'optimize', label: '⚡ Optimiser' }
+	];
+
+	let commitMessage = '';
+	let currentCommit = '';
+	let activeSubView: 'editor' | 'log' | 'diff' = 'editor';
+
+	let treeEntries: any[] = [];
+	let logEntries: any[] = [];
+	let diffText = '';
+
+	let loadingTree = false;
+	let loadingFile = false;
+	let isSaving = false;
+	let isDeleting = false;
+	let isMutating = false;
+	let isUploading = false;
+	let isDraggingOver = false;
+
+	let splitWidth = 0;
+	let showTreePanel = true;
+	let userTreeWidth: number | null = null;
+	let resizingTree = false;
+	let resizeStartX = 0;
+	let resizeStartWidth = 240;
+	let fileUploadInput: HTMLInputElement | null = null;
+	let previewLoadSeq = 0;
+
+	let renamingEntryPath = '';
+	let renamingDraftName = '';
+	let renameInputRef: HTMLInputElement | null = null;
+	let isSubmittingRename = false;
+
+	let editorViewportRef: HTMLDivElement | null = null;
+	let previewContainerRef: HTMLDivElement | null = null;
+	let pdfIframeRef: HTMLIFrameElement | null = null;
+	let htmlIframeRef: HTMLIFrameElement | null = null;
+	let activePrintIframe: HTMLIFrameElement | null = null;
+	let domSelectionText = '';
+	let copySuccess = false;
+	let copySuccessTimer: ReturnType<typeof setTimeout> | null = null;
+
+	const getEffectiveChatId = () => crossReadChatId || chatId;
+	$: effectiveChatId = crossReadChatId || chatId;
+	$: isCrossRead = Boolean(crossReadChatId && crossReadChatId !== chatId);
+	$: crossReadChatTitle = isCrossRead
+		? otherChats.find((c) => c.id === crossReadChatId)?.title || `Chat ${crossReadChatId.slice(0, 8)}`
+		: '';
+	$: currentWsObj = workspaces.find((w) => w.id === selectedWorkspace) || workspaces[0];
+	$: isWritable = currentWsObj.writable && !isCrossRead;
+	$: isDirty = Boolean(
+		selectedPath && isWritable && !fileMeta?.is_binary && fileContent !== savedFileContent
+	);
+	$: detectedLanguage = selectedPath
+		? detectCodexLanguage({
+				path: selectedPath,
+				backendLang: fileMeta?.language || null,
+				mime: fileMeta?.mime || null,
+				isBinary: fileMeta?.is_binary,
+				content: fileMeta?.is_binary ? null : fileContent
+			})
+		: 'plaintext';
+	$: activeLanguage = manualLanguageOverride || detectedLanguage;
+	$: activeLangSpec = getCodexLanguageSpec(activeLanguage);
+	$: isEditableTextLanguage = Boolean(
+		selectedPath &&
+			!fileMeta?.is_binary &&
+			(activeLangSpec.category === 'code' ||
+				(activeLangSpec.category === 'document' && activeLangSpec.id !== 'pdf'))
+	);
+
+	const resetEditorLanguageState = () => {
+		manualLanguageOverride = '';
+		cursorInfo = { line: 1, col: 1, lineCount: 0, selectionChars: 0, selectionLines: 0 };
+	};
+
+	const resetAiState = () => {
+		editorSelection = '';
+		domSelectionText = '';
+		renamingEntryPath = '';
+		renamingDraftName = '';
+		copySuccess = false;
+		aiPendingContent = null;
+		aiLastInstruction = '';
+		aiUsedModel = '';
+		aiDiffViewMode = 'diff';
+	};
+
+	const revokePreviewBlob = () => {
+		if (previewBlobUrl) {
+			try {
+				URL.revokeObjectURL(previewBlobUrl);
+			} catch {
+				// ignore
+			}
+			previewBlobUrl = '';
+		}
+	};
+
+	onDestroy(() => {
+		revokePreviewBlob();
+		if (typeof document !== 'undefined') {
+			document.removeEventListener('selectionchange', updateDomSelection);
+		}
+		if (copySuccessTimer) {
+			clearTimeout(copySuccessTimer);
+			copySuccessTimer = null;
+		}
+		if (activePrintIframe) {
+			activePrintIframe.remove();
+			activePrintIframe = null;
+		}
+	});
+
+	$: if (chatId && chatId !== currentChatId) {
+		currentChatId = chatId;
+		crossReadChatId = '';
+		currentChatTitle = 'Conversation actuelle';
+		otherChats = [];
+		currentDirPath = '';
+		selectedPath = '';
+		fileContent = '';
+		savedFileContent = '';
+		fileMeta = null;
+		viewMode = 'code';
+		logEntries = [];
+		diffText = '';
+		currentCommit = '';
+		aiInstruction = '';
+		resetEditorLanguageState();
+		resetAiState();
+		revokePreviewBlob();
+		void loadChats();
+		if ($echoCodexTarget?.chatId !== chatId) {
+			void loadTree('');
+		}
+	}
+
+	const getExt = (path: string): string => {
+		const idx = path.lastIndexOf('.');
+		return idx >= 0 ? path.slice(idx + 1).toLowerCase() : '';
+	};
+
+	const getEntryPath = (entry: any): string =>
+		typeof entry === 'string'
+			? entry.replace(/^\/+/, '')
+			: String(entry?.path || entry?.filename || entry?.name || '').replace(/^\/+/, '');
+
+	const getEntryName = (entry: any): string => {
+		if (typeof entry === 'string') return entry.split('/').pop() || entry;
+		const p = getEntryPath(entry);
+		return String(entry?.name || (p ? p.split('/').pop() : '') || '');
+	};
+
+	const isDirEntry = (entry: any): boolean =>
+		typeof entry === 'object' &&
+		entry !== null &&
+		['directory', 'dir', 'folder'].includes(String(entry?.type || '').toLowerCase());
+
+	$: maxTreeWidth =
+		splitWidth > 0 ? Math.max(200, Math.min(420, splitWidth - 260, Math.floor(splitWidth * 0.45))) : 420;
+	$: autoTreeWidth = (() => {
+		const maxChars = treeEntries.reduce((acc, entry) => Math.max(acc, getEntryName(entry).length), 14);
+		return Math.max(200, Math.min(maxTreeWidth, Math.round(maxChars * 7.4 + (isWritable ? 112 : 68))));
+	})();
+	$: effectiveTreeWidth = Math.max(180, Math.min(maxTreeWidth, userTreeWidth ?? autoTreeWidth));
+
+	const startTreeResize = (event: PointerEvent) => {
+		if (event.button !== 0) return;
+		event.preventDefault();
+		(event.currentTarget as HTMLElement)?.setPointerCapture?.(event.pointerId);
+		resizingTree = true;
+		resizeStartX = event.clientX;
+		resizeStartWidth = effectiveTreeWidth;
+	};
+
+	const moveTreeResize = (event: PointerEvent) => {
+		if (!resizingTree) return;
+		userTreeWidth = Math.max(180, Math.min(maxTreeWidth, resizeStartWidth + event.clientX - resizeStartX));
+	};
+
+	const endTreeResize = () => {
+		resizingTree = false;
+	};
+
+	const resetTreeResize = () => {
+		userTreeWidth = null;
+	};
+
+	const handleResizerKeydown = (event: KeyboardEvent) => {
+		if (event.key === 'Enter') {
+			event.preventDefault();
+			resetTreeResize();
+			return;
+		}
+		if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+			event.preventDefault();
+			const next =
+				event.key === 'Home'
+					? 180
+					: event.key === 'End'
+						? maxTreeWidth
+						: effectiveTreeWidth + (event.key === 'ArrowRight' ? 16 : -16);
+			userTreeWidth = Math.max(180, Math.min(maxTreeWidth, next));
+		}
+	};
+
+	const parseCsvRows = (text: string, delimiter: string): string[][] => {
+		const rows: string[][] = [];
+		let row: string[] = [];
+		let field = '';
+		let inQuotes = false;
+		for (let i = 0; i < text.length; i++) {
+			const ch = text[i];
+			if (inQuotes) {
+				if (ch === '"') {
+					if (text[i + 1] === '"') {
+						field += '"';
+						i++;
+					} else {
+						inQuotes = false;
+					}
+				} else {
+					field += ch;
+				}
+			} else if (ch === '"') {
+				inQuotes = true;
+			} else if (ch === delimiter) {
+				row.push(field);
+				field = '';
+			} else if (ch === '\n' || (ch === '\r' && text[i + 1] === '\n')) {
+				if (ch === '\r') i++;
+				row.push(field);
+				field = '';
+				if (row.some((c) => c !== '')) rows.push(row);
+				row = [];
+			} else {
+				field += ch;
+			}
+		}
+		row.push(field);
+		if (row.some((c) => c !== '')) rows.push(row);
+		return rows;
+	};
+
+	type PreviewKind = 'image' | 'pdf' | 'audio' | 'video' | 'markdown' | 'svg' | 'html' | 'csv' | 'none';
+
+	const computePreviewCapabilities = (
+		path: string,
+		meta: { is_binary?: boolean; mime?: string } | null
+	) => {
+		const ext = getExt(path);
+		const mime = String(meta?.mime || '').toLowerCase();
+		const isBinary = Boolean(meta?.is_binary);
+
+		const isImage =
+			mime.startsWith('image/') ||
+			['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif'].includes(ext);
+		const isPdf = mime === 'application/pdf' || ext === 'pdf';
+		const isAudio =
+			mime.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext);
+		const isVideo =
+			mime.startsWith('video/') || ['mp4', 'webm', 'ogv', 'mov'].includes(ext);
+		const isMarkdown = !isBinary && ['md', 'markdown'].includes(ext);
+		const isSvg = !isBinary && ext === 'svg';
+		const isHtml = !isBinary && ['html', 'htm'].includes(ext);
+		const isCsv = !isBinary && ['csv', 'tsv'].includes(ext);
+
+		let kind: PreviewKind = 'none';
+		if (isImage) kind = 'image';
+		else if (isPdf) kind = 'pdf';
+		else if (isAudio) kind = 'audio';
+		else if (isVideo) kind = 'video';
+		else if (isMarkdown) kind = 'markdown';
+		else if (isSvg) kind = 'svg';
+		else if (isHtml) kind = 'html';
+		else if (isCsv) kind = 'csv';
+
+		const needsBlob = isImage || isPdf || isAudio || isVideo;
+		const canPreview = kind !== 'none';
+
+		return {
+			kind,
+			needsBlob,
+			canPreview,
+			isImage,
+			isPdf,
+			isAudio,
+			isVideo,
+			isMarkdown,
+			isSvg,
+			isHtml,
+			isCsv
+		};
+	};
+
+	$: fileExt = getExt(selectedPath);
+	$: previewCaps = computePreviewCapabilities(selectedPath, fileMeta);
+	$: canPreview = previewCaps.canPreview;
+	$: csvRows = previewCaps.kind === 'csv' ? parseCsvRows(fileContent, fileExt === 'tsv' ? '\t' : ',') : [];
+
+	const loadPreviewBlob = async (cid: string, ws: string, path: string) => {
+		const seq = ++previewLoadSeq;
+		revokePreviewBlob();
+		const token = getEchoToken();
+		if (!token || !cid || !path) return;
+		try {
+			const blob = await downloadEchoCodexFileBlob(token, cid, ws, path);
+			if (seq !== previewLoadSeq) return;
+			previewBlobUrl = URL.createObjectURL(blob);
+		} catch {
+			// ignore
+		}
+	};
+
+	let treeLoadSeq = 0;
+	let fileLoadSeq = 0;
+	let chatsLoadSeq = 0;
+
+	const loadChats = async () => {
+		const token = getEchoToken();
+		if (!token || !chatId) return;
+		const seq = ++chatsLoadSeq;
+		try {
+			const res = await getEchoCodexChats(token, chatId);
+			if (seq !== chatsLoadSeq) return;
+			currentChatTitle = res?.current?.title || 'Conversation actuelle';
+			otherChats = Array.isArray(res?.others) ? res.others : [];
+		} catch {
+			// Non bloquant
+		}
+	};
+
+	const loadTree = async (
+		dirPath: string = currentDirPath,
+		autoFallbackWorkspace: boolean = false
+	) => {
+		const token = getEchoToken();
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
+		const seq = ++treeLoadSeq;
+		loadingTree = true;
+		try {
+			const res = await getEchoCodexTree(token, targetCid, selectedWorkspace, dirPath);
+			if (seq !== treeLoadSeq) return;
+			let entries = res?.entries || res || [];
+			if (autoFallbackWorkspace && !dirPath && entries.length === 0) {
+				for (const candidate of workspaces) {
+					if (candidate.id === selectedWorkspace) continue;
+					const candRes = await getEchoCodexTree(token, targetCid, candidate.id, '');
+					if (seq !== treeLoadSeq) return;
+					const candEntries = candRes?.entries || candRes || [];
+					if (Array.isArray(candEntries) && candEntries.length > 0) {
+						selectedWorkspace = candidate.id;
+						entries = candEntries;
+						break;
+					}
+				}
+			}
+			treeEntries = entries;
+		} catch (e: any) {
+			if (seq !== treeLoadSeq) return;
+			toast.error('Erreur de chargement Codex: ' + (e.message || ''));
+		} finally {
+			if (seq === treeLoadSeq) {
+				loadingTree = false;
+			}
+		}
+	};
+
+	const navigateToDir = async (dirPath: string) => {
+		currentDirPath = dirPath;
+		await loadTree(dirPath);
+	};
+
+	const selectFile = async (path: string, forceCodeMode = false) => {
+		if (!path) return;
+		const seq = ++fileLoadSeq;
+		selectedPath = path;
+		activeSubView = 'editor';
+		viewMode = 'code';
+		fileMeta = null;
+		savedFileContent = '';
+		resetEditorLanguageState();
+		resetAiState();
+		revokePreviewBlob();
+		if (splitWidth > 0 && splitWidth < 480) {
+			showTreePanel = false;
+		}
+		const token = getEchoToken();
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
+
+		loadingFile = true;
+		try {
+			const res = await getEchoCodexFile(token, targetCid, selectedWorkspace, path);
+			if (seq !== fileLoadSeq) return;
+			if (typeof res === 'string') {
+				fileContent = res;
+				savedFileContent = res;
+				const caps = computePreviewCapabilities(path, null);
+				if (!forceCodeMode && caps.canPreview) {
+					viewMode = 'preview';
+				}
+			} else {
+				const nextMeta = {
+					is_binary: Boolean(res?.is_binary),
+					mime: res?.mime_type || res?.mime,
+					size_bytes: res?.size_bytes,
+					hex_preview: res?.hex_preview,
+					language: res?.language,
+					total_lines: res?.total_lines
+				};
+				fileMeta = nextMeta;
+				fileContent = res?.content ?? '';
+				savedFileContent = fileContent;
+				const caps = computePreviewCapabilities(path, nextMeta);
+				if (!forceCodeMode && caps.canPreview) {
+					viewMode = 'preview';
+					if (caps.needsBlob) {
+						void loadPreviewBlob(targetCid, selectedWorkspace, path);
+					}
+				}
+			}
+		} catch (e: any) {
+			if (seq !== fileLoadSeq) return;
+			toast.error('Erreur lecture fichier: ' + (e.message || ''));
+		} finally {
+			if (seq === fileLoadSeq) {
+				loadingFile = false;
+			}
+		}
+	};
+
+	const handleToggleViewMode = (mode: 'code' | 'preview') => {
+		viewMode = mode;
+		domSelectionText = '';
+		const targetCid = getEffectiveChatId();
+		if (mode === 'preview' && previewCaps.needsBlob && !previewBlobUrl && selectedPath && targetCid) {
+			void loadPreviewBlob(targetCid, selectedWorkspace, selectedPath);
+		}
+	};
+
+	const handleLanguageChange = async (newLang: string) => {
+		manualLanguageOverride = newLang;
+		if (!isWritable || !selectedPath) return;
+		const newExt = getCanonicalExtForLanguage(newLang);
+		if (!newExt) return;
+		const lastSlash = selectedPath.lastIndexOf('/');
+		const dir = lastSlash >= 0 ? selectedPath.slice(0, lastSlash + 1) : '';
+		const base = lastSlash >= 0 ? selectedPath.slice(lastSlash + 1) : selectedPath;
+		const dotIdx = base.lastIndexOf('.');
+		const currentExt = dotIdx > 0 ? base.slice(dotIdx).toLowerCase() : '';
+		if (currentExt === newExt.toLowerCase()) return;
+		const stem = dotIdx > 0 ? base.slice(0, dotIdx) : base;
+		const newPath = `${dir}${stem}${newExt}`;
+		if (!confirm(`Renommer « ${selectedPath} » en « ${newPath} » ?`)) return;
+		const token = getEchoToken();
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
+		isMutating = true;
+		try {
+			await renameEchoCodex(token, targetCid, selectedWorkspace, selectedPath, newPath);
+			selectedPath = newPath;
+			manualLanguageOverride = '';
+			toast.success(`Renommé en ${newPath}`);
+			await loadTree(currentDirPath);
+		} catch (e: any) {
+			toast.error('Échec renommage: ' + (e.message || ''));
+		} finally {
+			isMutating = false;
+		}
+	};
+
+	const handleSave = async () => {
+		if (!isWritable || !selectedPath) return;
+		const token = localStorage?.token;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
+
+		isSaving = true;
+		try {
+			await saveEchoCodexFile(token, targetCid, {
+				workspace: selectedWorkspace,
+				path: selectedPath,
+				content: fileContent,
+				message: commitMessage.trim() || `Update ${selectedPath} via Codex UI`
+			});
+			savedFileContent = fileContent;
+			toast.success(
+				currentWsObj.versioned
+					? 'Fichier enregistré et commité avec succès'
+					: 'Fichier enregistré avec succès'
+			);
+			commitMessage = '';
+			await loadTree();
+		} catch (e: any) {
+			toast.error('Échec enregistrement: ' + (e.message || ''));
+		} finally {
+			isSaving = false;
+		}
+	};
+
+	const handleDeleteEntry = async (targetPath: string, isDir = false, event?: MouseEvent) => {
+		event?.stopPropagation();
+		if (!isWritable || !targetPath || isDeleting) return;
+		if (!confirm(`Confirmer la suppression ${isDir ? 'du dossier' : 'du fichier'} « ${targetPath} » ?`)) return;
+		const token = getEchoToken();
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
+
+		isDeleting = true;
+		try {
+			await deleteEchoCodexFile(token, targetCid, selectedWorkspace, targetPath);
+			toast.success(isDir ? 'Dossier supprimé' : 'Fichier supprimé');
+			if (selectedPath === targetPath || (isDir && selectedPath.startsWith(targetPath + '/'))) {
+				selectedPath = '';
+				fileContent = '';
+				savedFileContent = '';
+				fileMeta = null;
+				resetEditorLanguageState();
+				resetAiState();
+				revokePreviewBlob();
+			}
+			await loadTree(currentDirPath);
+		} catch (e: any) {
+			toast.error('Échec suppression: ' + (e.message || ''));
+		} finally {
+			isDeleting = false;
+		}
+	};
+
+	const handleMkdir = async () => {
+		if (!isWritable) return;
+		const defaultPrefix = currentDirPath ? `${currentDirPath}/` : '';
+		const folderPath = prompt('Nom ou chemin du nouveau dossier :', defaultPrefix);
+		if (!folderPath || !folderPath.trim()) return;
+		const cleanFolder = folderPath.trim().replace(/^\/+|\/+$/g, '');
+		if (!cleanFolder) return;
+		const token = localStorage?.token;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
+
+		isMutating = true;
+		try {
+			await mkdirEchoCodex(token, targetCid, selectedWorkspace, cleanFolder);
+			toast.success(`Dossier créé : ${cleanFolder}`);
+			await loadTree(currentDirPath);
+		} catch (e: any) {
+			toast.error('Échec création dossier: ' + (e.message || ''));
+		} finally {
+			isMutating = false;
+		}
+	};
+
+	const handleNewFile = async () => {
+		if (!isWritable) return;
+		const defaultPrefix = currentDirPath ? `${currentDirPath}/` : '';
+		const filePath = prompt('Nom ou chemin du nouveau fichier :', defaultPrefix);
+		if (!filePath || !filePath.trim()) return;
+		const trimmed = filePath.trim().replace(/^\/+/, '');
+		if (!trimmed || trimmed.endsWith('/')) {
+			toast.error('Chemin de fichier invalide.');
+			return;
+		}
+		const token = localStorage?.token;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
+
+		isMutating = true;
+		try {
+			await saveEchoCodexFile(token, targetCid, {
+				workspace: selectedWorkspace,
+				path: trimmed,
+				content: '',
+				message: `Création UI : ${trimmed}`
+			});
+			toast.success(`Fichier créé : ${trimmed}`);
+			await loadTree(currentDirPath);
+			await selectFile(trimmed, true);
+		} catch (e: any) {
+			toast.error('Échec création fichier: ' + (e.message || ''));
+		} finally {
+			isMutating = false;
+		}
+	};
+
+	const uploadFilesList = async (files: FileList | File[]) => {
+		if (!isWritable || !files || files.length === 0) return;
+		const token = localStorage?.token;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
+
+		isUploading = true;
+		let uploadedCount = 0;
+		let lastUploadedPath = '';
+		try {
+			for (const file of Array.from(files)) {
+				const res = await uploadEchoCodexFile(
+					token,
+					targetCid,
+					selectedWorkspace,
+					file,
+					currentDirPath
+				);
+				uploadedCount += 1;
+				lastUploadedPath = res?.path || (currentDirPath ? `${currentDirPath}/${file.name}` : file.name);
+			}
+			if (uploadedCount > 0) {
+				toast.success(
+					uploadedCount === 1
+						? `Fichier importé : ${lastUploadedPath}`
+						: `${uploadedCount} fichiers importés`
+				);
+				await loadTree(currentDirPath);
+				if (lastUploadedPath) {
+					await selectFile(lastUploadedPath);
+				}
+			}
+		} catch (e: any) {
+			toast.error('Échec importation: ' + (e.message || ''));
+		} finally {
+			isUploading = false;
+		}
+	};
+
+	const handleUploadChange = async (event: Event) => {
+		const input = event.currentTarget as HTMLInputElement;
+		if (input?.files?.length) {
+			await uploadFilesList(input.files);
+		}
+		if (input) input.value = '';
+	};
+
+	const handleTreeDrop = async (event: DragEvent) => {
+		event.preventDefault();
+		isDraggingOver = false;
+		if (!isWritable) return;
+		const files = event.dataTransfer?.files;
+		if (files && files.length > 0) {
+			await uploadFilesList(files);
+		}
+	};
+
+	const startInlineRename = async (entryPath: string, entryName: string, event?: MouseEvent) => {
+		event?.stopPropagation();
+		if (!isWritable || isMutating) return;
+		renamingEntryPath = entryPath;
+		renamingDraftName = entryName;
+		await tick();
+		renameInputRef?.focus();
+		renameInputRef?.select();
+	};
+
+	const cancelInlineRename = () => {
+		renamingEntryPath = '';
+		renamingDraftName = '';
+	};
+
+	const commitInlineRename = async (oldPath: string, oldName: string, isDir = false) => {
+		if (isSubmittingRename || renamingEntryPath !== oldPath) return;
+		const rawNew = renamingDraftName.trim().replace(/^\/+|\/+$/g, '');
+		if (!rawNew || rawNew === oldName || rawNew === oldPath) {
+			cancelInlineRename();
+			return;
+		}
+		let cleanNew = rawNew;
+		if (!rawNew.includes('/')) {
+			const lastSlash = oldPath.lastIndexOf('/');
+			cleanNew = lastSlash >= 0 ? `${oldPath.slice(0, lastSlash)}/${rawNew}` : rawNew;
+		}
+		if (cleanNew === oldPath) {
+			cancelInlineRename();
+			return;
+		}
+		const token = getEchoToken();
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) {
+			cancelInlineRename();
+			return;
+		}
+
+		isSubmittingRename = true;
+		isMutating = true;
+		renamingEntryPath = '';
+		renamingDraftName = '';
+		try {
+			await renameEchoCodex(token, targetCid, selectedWorkspace, oldPath, cleanNew);
+			toast.success(`Renommé en ${cleanNew}`);
+			if (selectedPath === oldPath) {
+				selectedPath = cleanNew;
+				resetEditorLanguageState();
+			} else if (isDir && selectedPath.startsWith(oldPath + '/')) {
+				selectedPath = cleanNew + selectedPath.slice(oldPath.length);
+				resetEditorLanguageState();
+			}
+			await loadTree(currentDirPath);
+		} catch (e: any) {
+			toast.error('Échec renommage: ' + (e.message || ''));
+		} finally {
+			isSubmittingRename = false;
+			isMutating = false;
+		}
+	};
+
+	const handleRestore = async (commitHash: string) => {
+		if (!isWritable || !commitHash) return;
+		const targetFile = selectedPath || prompt('Chemin du fichier à restaurer depuis ce commit :', '');
+		if (!targetFile || !targetFile.trim()) return;
+		if (!confirm(`Restaurer "${targetFile.trim()}" à l'état du commit ${commitHash.slice(0, 8)} ?`)) {
+			return;
+		}
+		const token = localStorage?.token;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
+
+		isMutating = true;
+		try {
+			await restoreEchoCodexFile(token, targetCid, selectedWorkspace, targetFile.trim(), commitHash);
+			toast.success(`Fichier restauré depuis ${commitHash.slice(0, 8)}`);
+			await loadTree();
+			await selectFile(targetFile.trim());
+		} catch (e: any) {
+			toast.error('Échec restauration: ' + (e.message || ''));
+		} finally {
+			isMutating = false;
+		}
+	};
+
+	const handleDownload = async () => {
+		const targetCid = getEffectiveChatId();
+		if (!selectedPath || loadingFile || !targetCid) return;
+		try {
+			let blob: Blob;
+			if (!fileMeta?.is_binary && isDirty) {
+				blob = new Blob([fileContent], {
+					type: fileMeta?.mime || 'text/plain;charset=utf-8'
+				});
+			} else {
+				const token = getEchoToken();
+				if (!token) return;
+				blob = await downloadEchoCodexFileBlob(token, targetCid, selectedWorkspace, selectedPath);
+			}
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = selectedPath.split('/').pop() || 'download';
+			document.body.appendChild(a);
+			a.click();
+			a.remove();
+			URL.revokeObjectURL(url);
+		} catch (e: any) {
+			toast.error('Échec téléchargement: ' + (e.message || ''));
+		}
+	};
+
+	const updateDomSelection = () => {
+		const sel = window.getSelection();
+		if (!sel || sel.isCollapsed || !editorViewportRef) {
+			domSelectionText = '';
+			return;
+		}
+		const anchorEl = sel.anchorNode
+			? sel.anchorNode instanceof Element
+				? sel.anchorNode
+				: sel.anchorNode.parentElement
+			: null;
+		if (
+			sel.anchorNode &&
+			editorViewportRef.contains(sel.anchorNode) &&
+			!anchorEl?.closest('.cm-editor')
+		) {
+			domSelectionText = sel.toString();
+		} else {
+			domSelectionText = '';
+		}
+	};
+
+	$: activeTextareaSelection =
+		viewMode === 'code' && !fileMeta?.is_binary && aiPendingContent === null ? editorSelection : '';
+	$: activeSelectionText = activeTextareaSelection || domSelectionText;
+	$: activeSelectionLength = activeSelectionText.length;
+	$: canCopy = Boolean(
+		selectedPath &&
+			!loadingFile &&
+			!(viewMode === 'preview' && ['pdf', 'audio', 'video'].includes(previewCaps.kind)) &&
+			!(
+				fileMeta?.is_binary &&
+				!(viewMode === 'preview' && previewCaps.kind === 'image') &&
+				!fileMeta?.hex_preview
+			)
+	);
+	$: canPrint = Boolean(
+		selectedPath &&
+			!loadingFile &&
+			!(viewMode === 'preview' && ['audio', 'video'].includes(previewCaps.kind)) &&
+			!(
+				fileMeta?.is_binary &&
+				!(viewMode === 'preview' && ['image', 'pdf'].includes(previewCaps.kind)) &&
+				!fileMeta?.hex_preview
+			)
+	);
+	$: copyButtonTitle = !selectedPath
+		? 'Copier (sélectionnez un fichier)'
+		: activeSelectionLength > 0
+			? `Copier la sélection (${activeSelectionLength} car.)`
+			: viewMode === 'preview' && previewCaps.kind === 'image'
+				? "Copier l'image PNG"
+				: viewMode === 'preview' && previewCaps.kind === 'markdown'
+					? 'Copier le rendu'
+					: 'Copier le fichier entier';
+
+	const triggerCopyFeedback = () => {
+		copySuccess = true;
+		if (copySuccessTimer) clearTimeout(copySuccessTimer);
+		copySuccessTimer = setTimeout(() => {
+			copySuccess = false;
+			copySuccessTimer = null;
+		}, 1500);
+	};
+
+	const writePlainTextClipboard = async (text: string): Promise<boolean> => {
+		if (navigator.clipboard?.writeText && window.isSecureContext) {
+			try {
+				await navigator.clipboard.writeText(text);
+				return true;
+			} catch {
+				// fallback below
+			}
+		}
+		const ta = document.createElement('textarea');
+		ta.value = text;
+		ta.style.position = 'fixed';
+		ta.style.left = '-9999px';
+		ta.style.opacity = '0';
+		document.body.appendChild(ta);
+		ta.focus();
+		ta.select();
+		let ok = false;
+		try {
+			ok = document.execCommand('copy');
+		} catch {
+			ok = false;
+		} finally {
+			ta.remove();
+		}
+		return ok;
+	};
+
+	const writeRichHtmlClipboard = async (html: string, plainText: string): Promise<boolean> => {
+		if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined' && window.isSecureContext) {
+			try {
+				await navigator.clipboard.write([
+					new ClipboardItem({
+						'text/html': new Blob([html], { type: 'text/html' }),
+						'text/plain': new Blob([plainText], { type: 'text/plain' })
+					})
+				]);
+				return true;
+			} catch {
+				// fallback below
+			}
+		}
+		const container = document.createElement('div');
+		container.innerHTML = html;
+		container.style.position = 'fixed';
+		container.style.left = '-9999px';
+		container.style.opacity = '0';
+		container.style.pointerEvents = 'none';
+		document.body.appendChild(container);
+		let ok = false;
+		try {
+			const range = document.createRange();
+			range.selectNodeContents(container);
+			const sel = window.getSelection();
+			if (sel) {
+				sel.removeAllRanges();
+				sel.addRange(range);
+				ok = document.execCommand('copy');
+				sel.removeAllRanges();
+			}
+		} catch {
+			ok = false;
+		} finally {
+			container.remove();
+		}
+		if (ok) return true;
+		return writePlainTextClipboard(plainText);
+	};
+
+	const handleCopy = async () => {
+		if (!canCopy || !selectedPath) return;
+
+		if (viewMode === 'preview' && previewCaps.kind === 'image') {
+			if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined' || !window.isSecureContext) {
+				toast.error("La copie d'image nécessite un contexte sécurisé (HTTPS).");
+				return;
+			}
+			const token = getEchoToken();
+			const targetCid = getEffectiveChatId();
+			const pngBlobPromise: Promise<Blob> = (async () => {
+				let rawBlob: Blob;
+				if (previewBlobUrl) {
+					const resp = await fetch(previewBlobUrl);
+					rawBlob = await resp.blob();
+				} else if (token && targetCid) {
+					rawBlob = await downloadEchoCodexFileBlob(token, targetCid, selectedWorkspace, selectedPath);
+				} else {
+					throw new Error('Source image indisponible');
+				}
+				if (rawBlob.type === 'image/png') {
+					return rawBlob;
+				}
+				const objUrl = URL.createObjectURL(rawBlob);
+				try {
+					const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+						const image = new Image();
+						image.onload = () => resolve(image);
+						image.onerror = () => reject(new Error('Chargement image impossible'));
+						image.src = objUrl;
+					});
+					const canvas = document.createElement('canvas');
+					canvas.width = img.naturalWidth || img.width;
+					canvas.height = img.naturalHeight || img.height;
+					const ctx = canvas.getContext('2d');
+					if (!ctx) throw new Error('Contexte canvas indisponible');
+					ctx.drawImage(img, 0, 0);
+					const pngBlob = await new Promise<Blob | null>((resolve) =>
+						canvas.toBlob((b) => resolve(b), 'image/png')
+					);
+					if (!pngBlob) throw new Error('Conversion PNG échouée');
+					return pngBlob;
+				} finally {
+					URL.revokeObjectURL(objUrl);
+				}
+			})();
+			try {
+				await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlobPromise })]);
+				triggerCopyFeedback();
+				toast.success('Image copiée dans le presse-papiers');
+			} catch (e: any) {
+				toast.error("Échec copie de l'image: " + (e?.message || ''));
+			}
+			return;
+		}
+
+		if (viewMode === 'preview' && previewCaps.kind === 'markdown') {
+			const sel = window.getSelection();
+			if (
+				sel &&
+				!sel.isCollapsed &&
+				sel.rangeCount > 0 &&
+				previewContainerRef &&
+				sel.anchorNode &&
+				previewContainerRef.contains(sel.anchorNode)
+			) {
+				const selText = sel.toString();
+				const div = document.createElement('div');
+				div.appendChild(sel.getRangeAt(0).cloneContents());
+				div.querySelectorAll('button').forEach((b) => b.remove());
+				const ok = await writeRichHtmlClipboard(div.innerHTML, selText);
+				if (ok) {
+					triggerCopyFeedback();
+					toast.success(`Sélection copiée (${selText.length} car.)`);
+				} else {
+					toast.error('Échec copie dans le presse-papiers');
+				}
+				return;
+			}
+			if (previewContainerRef) {
+				const clone = previewContainerRef.cloneNode(true) as HTMLDivElement;
+				clone.querySelectorAll('button').forEach((b) => b.remove());
+				const ok = await writeRichHtmlClipboard(clone.innerHTML, clone.innerText || fileContent);
+				if (ok) {
+					triggerCopyFeedback();
+					toast.success('Rendu copié');
+				} else {
+					toast.error('Échec copie dans le presse-papiers');
+				}
+				return;
+			}
+		}
+
+		if (viewMode === 'code' && !fileMeta?.is_binary && aiPendingContent === null) {
+			const liveSel = codexEditorRef?.getSelection() || editorSelection;
+			if (liveSel) {
+				const ok = await writePlainTextClipboard(liveSel);
+				if (ok) {
+					triggerCopyFeedback();
+					toast.success(`Sélection copiée (${liveSel.length} car.)`);
+				} else {
+					toast.error('Échec copie dans le presse-papiers');
+				}
+			} else {
+				const ok = await writePlainTextClipboard(fileContent);
+				if (ok) {
+					triggerCopyFeedback();
+					toast.success('Fichier copié');
+				} else {
+					toast.error('Échec copie dans le presse-papiers');
+				}
+			}
+			return;
+		}
+
+		if (domSelectionText) {
+			const ok = await writePlainTextClipboard(domSelectionText);
+			if (ok) {
+				triggerCopyFeedback();
+				toast.success(`Sélection copiée (${domSelectionText.length} car.)`);
+			} else {
+				toast.error('Échec copie dans le presse-papiers');
+			}
+		} else {
+			const fullText = aiPendingContent ?? (fileMeta?.is_binary ? fileMeta.hex_preview || '' : fileContent);
+			const ok = await writePlainTextClipboard(fullText);
+			if (ok) {
+				triggerCopyFeedback();
+				toast.success('Fichier copié');
+			} else {
+				toast.error('Échec copie dans le presse-papiers');
+			}
+		}
+	};
+
+	const escapeHtml = (text: string): string =>
+		text
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#39;');
+
+	const buildHtmlPreviewSrcdoc = (rawHtml: string): string => {
+		const printHook =
+			'<' +
+			'script>' +
+			"window.addEventListener('message',function(e){if(e&&e.data==='echo-codex-print')window.print();});" +
+			'<' +
+			'/script>';
+		return `${printHook}${rawHtml}`;
+	};
+
+	const printViaHiddenIframe = (docTitle: string, bodyHtml: string, waitImages = false) => {
+		if (activePrintIframe) {
+			activePrintIframe.remove();
+			activePrintIframe = null;
+		}
+		const iframe = document.createElement('iframe');
+		iframe.style.position = 'fixed';
+		iframe.style.right = '0';
+		iframe.style.bottom = '0';
+		iframe.style.width = '0';
+		iframe.style.height = '0';
+		iframe.style.border = '0';
+		iframe.style.visibility = 'hidden';
+		activePrintIframe = iframe;
+
+		const headLinks = Array.from(document.head.querySelectorAll('link[rel="stylesheet"]'))
+			.map((link) => link.outerHTML)
+			.join('\n');
+
+		const cleanup = () => {
+			if (activePrintIframe === iframe) {
+				activePrintIframe = null;
+			}
+			iframe.remove();
+		};
+
+		let printed = false;
+		const triggerPrint = () => {
+			if (printed) return;
+			printed = true;
+			const win = iframe.contentWindow;
+			if (!win) {
+				cleanup();
+				return;
+			}
+			win.addEventListener('afterprint', cleanup, { once: true });
+			setTimeout(cleanup, 60000);
+			win.focus();
+			win.print();
+		};
+
+		iframe.onload = () => {
+			const doc = iframe.contentDocument;
+			if (!waitImages || !doc) {
+				triggerPrint();
+				return;
+			}
+			const imgs = Array.from(doc.querySelectorAll('img'));
+			if (imgs.length === 0) {
+				triggerPrint();
+				return;
+			}
+			let pending = imgs.length;
+			const doneOne = () => {
+				pending -= 1;
+				if (pending <= 0) triggerPrint();
+			};
+			for (const img of imgs) {
+				if (img.complete) {
+					doneOne();
+				} else {
+					img.addEventListener('load', doneOne, { once: true });
+					img.addEventListener('error', doneOne, { once: true });
+				}
+			}
+		};
+
+		iframe.srcdoc = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>${escapeHtml(docTitle)}</title>
+${headLinks}
+<style>
+@page { margin: 15mm; }
+html, body { background: #ffffff !important; color: #111827 !important; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+.print-header { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; color: #374151; border-bottom: 1px solid #d1d5db; padding-bottom: 6px; margin-bottom: 12px; }
+pre { background: #f9fafb !important; color: #111827 !important; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+table { width: 100%; border-collapse: collapse; font-size: 11px; }
+thead { display: table-header-group; }
+th, td { border: 1px solid #d1d5db; padding: 4px 8px; text-align: left; color: #111827 !important; }
+th { background: #f3f4f6 !important; font-weight: 600; }
+blockquote { border-left: 3px solid #d1d5db; padding-left: 10px; color: #374151; }
+img, svg { max-width: 100%; height: auto; }
+.prose { color: #111827 !important; max-width: none !important; }
+</style>
+</head>
+<body>${bodyHtml}</body>
+</html>`;
+		document.body.appendChild(iframe);
+	};
+
+	const handlePrint = () => {
+		if (!canPrint || !selectedPath) return;
+
+		if (viewMode === 'preview' && previewCaps.kind === 'pdf') {
+			if (pdfIframeRef?.contentWindow) {
+				pdfIframeRef.contentWindow.focus();
+				pdfIframeRef.contentWindow.print();
+			}
+			return;
+		}
+
+		if (viewMode === 'preview' && previewCaps.kind === 'html') {
+			if (htmlIframeRef?.contentWindow) {
+				htmlIframeRef.contentWindow.postMessage('echo-codex-print', '*');
+			}
+			return;
+		}
+
+		if (viewMode === 'preview' && previewCaps.kind === 'markdown' && previewContainerRef) {
+			const clone = previewContainerRef.cloneNode(true) as HTMLDivElement;
+			clone.querySelectorAll('button').forEach((b) => b.remove());
+			printViaHiddenIframe(selectedPath, `<div class="prose">${clone.innerHTML}</div>`);
+			return;
+		}
+
+		if (viewMode === 'preview' && previewCaps.kind === 'csv') {
+			if (csvRows.length === 0) {
+				printViaHiddenIframe(selectedPath, `<div class="print-header">${escapeHtml(selectedPath)}</div><p>Tableau vide.</p>`);
+				return;
+			}
+			const thead = `<thead><tr>${csvRows[0].map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead>`;
+			const tbody = `<tbody>${csvRows
+				.slice(1)
+				.map((r) => `<tr>${r.map((c) => `<td>${escapeHtml(c)}</td>`).join('')}</tr>`)
+				.join('')}</tbody>`;
+			printViaHiddenIframe(
+				selectedPath,
+				`<div class="print-header">${escapeHtml(selectedPath)}</div><table>${thead}${tbody}</table>`
+			);
+			return;
+		}
+
+		if (viewMode === 'preview' && previewCaps.kind === 'image' && previewBlobUrl) {
+			printViaHiddenIframe(
+				selectedPath,
+				`<div style="text-align:center;"><img src="${escapeHtml(previewBlobUrl)}" alt="${escapeHtml(selectedPath)}" /></div>`,
+				true
+			);
+			return;
+		}
+
+		if (viewMode === 'preview' && previewCaps.kind === 'svg') {
+			printViaHiddenIframe(selectedPath, `<div style="text-align:center;">${fileContent}</div>`);
+			return;
+		}
+
+		const text = aiPendingContent ?? (fileMeta?.is_binary ? fileMeta.hex_preview || '' : fileContent);
+		printViaHiddenIframe(
+			selectedPath,
+			`<div class="print-header">${escapeHtml(selectedPath)}</div><pre>${escapeHtml(text)}</pre>`
+		);
+	};
+
+	const loadLog = async () => {
+		activeSubView = 'log';
+		const token = localStorage?.token;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
+		try {
+			const res = await getEchoCodexLog(token, targetCid, selectedWorkspace, selectedPath, 30);
+			logEntries = res?.logs || res?.commits || (Array.isArray(res) ? res : []);
+		} catch (e: any) {
+			toast.error('Erreur historique: ' + (e.message || ''));
+		}
+	};
+
+	const loadDiff = async (commitHash: string) => {
+		activeSubView = 'diff';
+		currentCommit = commitHash;
+		const token = localStorage?.token;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
+		try {
+			const res = await getEchoCodexDiff(token, targetCid, selectedWorkspace, commitHash);
+			diffText = typeof res === 'string' ? res : res?.diff || '';
+		} catch (e: any) {
+			toast.error('Erreur diff: ' + (e.message || ''));
+		}
+	};
+
+	const handleChatSwitch = (targetCid: string) => {
+		const nextCross = targetCid && targetCid !== chatId ? targetCid : '';
+		if (nextCross === crossReadChatId) return;
+		crossReadChatId = nextCross;
+		currentDirPath = '';
+		selectedPath = '';
+		fileContent = '';
+		savedFileContent = '';
+		fileMeta = null;
+		activeSubView = 'editor';
+		viewMode = 'code';
+		logEntries = [];
+		diffText = '';
+		currentCommit = '';
+		resetEditorLanguageState();
+		resetAiState();
+		revokePreviewBlob();
+		void loadTree('', Boolean(nextCross));
+	};
+
+	const exitCrossRead = () => {
+		handleChatSwitch('');
+	};
+
+	const handleAiEdit = async (quickAction?: QuickActionId, quickLabel?: string) => {
+		if (!isWritable || !selectedPath || fileMeta?.is_binary || isAiEditing) return;
+		const instr = quickAction ? quickLabel || quickAction : aiInstruction.trim();
+		if (!instr && !quickAction) return;
+		const token = localStorage?.token;
+		const targetCid = getEffectiveChatId();
+		if (!token || !targetCid) return;
+
+		isAiEditing = true;
+		try {
+			const res = await aiEditEchoCodexFile(token, targetCid, {
+				workspace: selectedWorkspace,
+				path: selectedPath,
+				instruction: quickAction ? undefined : instr,
+				quick_action: quickAction,
+				content: fileContent,
+				selection: editorSelection ? editorSelection : null,
+				model: aiModel,
+				language: activeLanguage
+			});
+			aiLastInstruction = instr;
+			aiUsedModel = res.model_used || aiModel;
+			if (res.model_used && res.model_used !== aiModel && AI_MODELS.some((m) => m.id === res.model_used)) {
+				aiModel = res.model_used;
+				const usedLabel = AI_MODELS.find((m) => m.id === res.model_used)?.label || res.model_used;
+				toast.success(`Proposition générée par ${usedLabel} (cascade)`);
+			}
+			aiPendingContent = res.modified_content;
+			aiDiffViewMode = 'diff';
+			if (!quickAction) {
+				aiInstruction = '';
+			}
+		} catch (e: any) {
+			toast.error('Échec édition IA: ' + (e.message || ''));
+		} finally {
+			isAiEditing = false;
+		}
+	};
+
+	const acceptAiDiffAndSave = async () => {
+		if (aiPendingContent === null) return;
+		fileContent = aiPendingContent;
+		if (currentWsObj.versioned) {
+			commitMessage = `AI: ${aiLastInstruction.slice(0, 60)}`;
+		}
+		resetAiState();
+		await handleSave();
+	};
+
+	const applyAiDiffToEditor = () => {
+		if (aiPendingContent === null) return;
+		fileContent = aiPendingContent;
+		if (currentWsObj.versioned && !commitMessage.trim()) {
+			commitMessage = `AI: ${aiLastInstruction.slice(0, 60)}`;
+		}
+		resetAiState();
+	};
+
+	const rejectAiDiff = () => {
+		resetAiState();
+	};
+
+	interface DiffLine {
+		type: 'same' | 'add' | 'del';
+		text: string;
+		oldLine?: number;
+		newLine?: number;
+	}
+
+	const computeLineDiff = (beforeText: string, afterText: string): DiffLine[] => {
+		const aLines = beforeText.split('\n');
+		const bLines = afterText.split('\n');
+		const n = aLines.length;
+		const m = bLines.length;
+
+		// Fallback simple si > 2500 lignes ou matrice trop grande
+		if (n > 2500 || m > 2500 || n * m > 2_500_000) {
+			const out: DiffLine[] = [];
+			const maxLen = Math.max(n, m);
+			for (let i = 0; i < maxLen; i++) {
+				const a = aLines[i];
+				const b = bLines[i];
+				if (a === b && a !== undefined) {
+					out.push({ type: 'same', text: a, oldLine: i + 1, newLine: i + 1 });
+				} else {
+					if (a !== undefined) out.push({ type: 'del', text: a, oldLine: i + 1 });
+					if (b !== undefined) out.push({ type: 'add', text: b, newLine: i + 1 });
+				}
+			}
+			return out;
+		}
+
+		// LCS DP compacte (Int32Array par ligne)
+		const dp: Int32Array[] = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+		for (let i = n - 1; i >= 0; i--) {
+			const row = dp[i];
+			const nextRow = dp[i + 1];
+			const aLine = aLines[i];
+			for (let j = m - 1; j >= 0; j--) {
+				if (aLine === bLines[j]) {
+					row[j] = nextRow[j + 1] + 1;
+				} else {
+					row[j] = nextRow[j] >= row[j + 1] ? nextRow[j] : row[j + 1];
+				}
+			}
+		}
+
+		const result: DiffLine[] = [];
+		let i = 0;
+		let j = 0;
+		while (i < n && j < m) {
+			if (aLines[i] === bLines[j]) {
+				result.push({ type: 'same', text: aLines[i], oldLine: i + 1, newLine: j + 1 });
+				i++;
+				j++;
+			} else if (dp[i + 1][j] >= dp[i][j + 1]) {
+				result.push({ type: 'del', text: aLines[i], oldLine: i + 1 });
+				i++;
+			} else {
+				result.push({ type: 'add', text: bLines[j], newLine: j + 1 });
+				j++;
+			}
+		}
+		while (i < n) {
+			result.push({ type: 'del', text: aLines[i], oldLine: i + 1 });
+			i++;
+		}
+		while (j < m) {
+			result.push({ type: 'add', text: bLines[j], newLine: j + 1 });
+			j++;
+		}
+		return result;
+	};
+
+	$: aiDiffLines = aiPendingContent !== null ? computeLineDiff(fileContent, aiPendingContent) : [];
+
+	interface UnifiedDiffLine {
+		text: string;
+		oldLine?: number;
+		newLine?: number;
+	}
+
+	const parseUnifiedDiffLines = (rawDiff: string): UnifiedDiffLine[] => {
+		const lines = rawDiff.split('\n');
+		const result: UnifiedDiffLine[] = [];
+		let oldLine = 0;
+		let newLine = 0;
+		let inHunk = false;
+
+		for (const line of lines) {
+			const hunkMatch = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+			if (hunkMatch) {
+				oldLine = parseInt(hunkMatch[1], 10);
+				newLine = parseInt(hunkMatch[2], 10);
+				inHunk = true;
+				result.push({ text: line });
+				continue;
+			}
+			if (
+				!inHunk ||
+				line.startsWith('diff ') ||
+				line.startsWith('index ') ||
+				line.startsWith('---') ||
+				line.startsWith('+++')
+			) {
+				if (line.startsWith('diff ')) inHunk = false;
+				result.push({ text: line });
+				continue;
+			}
+			if (line.startsWith('-')) {
+				result.push({ text: line, oldLine: oldLine++ });
+			} else if (line.startsWith('+')) {
+				result.push({ text: line, newLine: newLine++ });
+			} else if (line.startsWith('\\')) {
+				result.push({ text: line });
+			} else {
+				result.push({ text: line, oldLine: oldLine++, newLine: newLine++ });
+			}
+		}
+		return result;
+	};
+
+	const getDiffLineClass = (line: string): string => {
+		if (line.startsWith('+++') || line.startsWith('---')) {
+			return 'text-gray-300 font-bold';
+		}
+		if (line.startsWith('@@')) {
+			return 'text-cyan-400 bg-cyan-950/30';
+		}
+		if (line.startsWith('diff ') || line.startsWith('index ')) {
+			return 'text-amber-300 font-semibold';
+		}
+		if (line.startsWith('+')) {
+			return 'text-emerald-300 bg-emerald-950/35';
+		}
+		if (line.startsWith('-')) {
+			return 'text-rose-300 bg-rose-950/35';
+		}
+		return 'text-gray-300';
+	};
+
+	// Réaction au routage ciblé ($echoCodexTarget)
+	$: if ($echoCodexTarget && $echoCodexTarget.chatId === chatId) {
+		const target = $echoCodexTarget;
+		echoCodexTarget.set(null);
+		if (target.targetChatId && target.targetChatId !== chatId) {
+			crossReadChatId = target.targetChatId;
+		} else {
+			crossReadChatId = '';
+		}
+		if (target.workspace && workspaces.some((w) => w.id === target.workspace)) {
+			selectedWorkspace = target.workspace;
+		}
+		const targetFile = target.file ? String(target.file).replace(/^\/+/, '') : '';
+		const lastSlash = targetFile.lastIndexOf('/');
+		currentDirPath = lastSlash > 0 ? targetFile.slice(0, lastSlash) : '';
+		void (async () => {
+			await loadChats();
+			await loadTree(
+				currentDirPath,
+				!target.workspace && !targetFile && Boolean(crossReadChatId)
+			);
+			if (targetFile) {
+				await selectFile(targetFile);
+			}
+			if (target.commitHash) {
+				await loadDiff(target.commitHash);
+			}
+		})();
+	}
+
+	onMount(() => {
+		document.addEventListener('selectionchange', updateDomSelection);
+		if (getEffectiveChatId() && $echoCodexTarget?.chatId !== chatId) {
+			void loadChats();
+			void loadTree(currentDirPath);
+		}
+	});
+</script>
+
+<div class="flex flex-col h-full bg-white dark:bg-gray-900 text-gray-800 dark:text-gray-100 overflow-hidden">
+	<input
+		type="file"
+		multiple
+		class="hidden"
+		bind:this={fileUploadInput}
+		on:change={handleUploadChange}
+	/>
+	<!-- Bannière lecture croisée -->
+	{#if isCrossRead}
+		<div class="flex items-center justify-between gap-2 px-4 py-1.5 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200 shrink-0">
+			<span class="font-medium truncate">
+				Lecture croisée (lecture seule) — Session « <span class="font-semibold">{crossReadChatTitle}</span> » (<code class="font-mono">{crossReadChatId.slice(0, 8)}</code>)
+			</span>
+			<button
+				type="button"
+				on:click={exitCrossRead}
+				class="px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-700 text-white font-semibold shrink-0"
+			>
+				Revenir à cette session
+			</button>
+		</div>
+	{/if}
+
+	<!-- Barre de contrôle supérieure -->
+	<div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-850 shrink-0">
+		<div class="flex flex-wrap items-center gap-2 min-w-0">
+			<button
+				type="button"
+				on:click={() => (showTreePanel = !showTreePanel)}
+				title={showTreePanel ? "Masquer l'explorateur de fichiers" : "Afficher l'explorateur de fichiers"}
+				aria-label={showTreePanel ? "Masquer l'explorateur de fichiers" : "Afficher l'explorateur de fichiers"}
+				aria-pressed={showTreePanel}
+				class="p-1.5 rounded-lg border text-xs transition shrink-0 {showTreePanel
+					? 'bg-sky-500/10 border-sky-500/30 text-sky-600 dark:text-sky-400'
+					: 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'}"
+			>
+				<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<rect x="3" y="3" width="18" height="18" rx="2" />
+					<line x1="9" y1="3" x2="9" y2="21" />
+				</svg>
+			</button>
+			<span class="font-bold text-sm text-gray-900 dark:text-white flex items-center gap-1.5">
+				<svg class="w-4 h-4 text-sky-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M16.5 9.4 7.55 4.24a1.78 1.78 0 0 0-2.5 1.55v12.42a1.78 1.78 0 0 0 2.5 1.55L16.5 14.6a1.78 1.78 0 0 0 0-3.2z" />
+				</svg>
+				Codex Git
+			</span>
+
+			<!-- Sélecteur de Conversation (Multi-Chat) -->
+			<select
+				aria-label="Sélecteur de conversation Codex"
+				title="Naviguer entre le dépôt de la session active et ceux des autres conversations (lecture seule)"
+				class="text-xs bg-white dark:bg-gray-800 border rounded-lg px-2 py-1 font-semibold max-w-[240px] truncate focus:outline-none focus:ring-1 focus:ring-sky-500 {isCrossRead
+					? 'border-amber-500/60 text-amber-600 dark:text-amber-400'
+					: 'border-gray-300 dark:border-gray-700 text-gray-700 dark:text-gray-200'}"
+				value={crossReadChatId}
+				on:change={(e) => handleChatSwitch(e.currentTarget.value)}
+			>
+				<option value="">💬 {currentChatTitle} (actuelle)</option>
+				{#if isCrossRead && !otherChats.some((c) => c.id === crossReadChatId)}
+					<option value={crossReadChatId}>📂 {crossReadChatTitle} [RO]</option>
+				{/if}
+				{#if otherChats.length > 0}
+					<optgroup label="Autres conversations (Lecture seule)">
+						{#each otherChats as c (c.id)}
+							<option value={c.id}>📂 {c.title} [RO]</option>
+						{/each}
+					</optgroup>
+				{/if}
+			</select>
+
+			<!-- Sélecteur de Workspace -->
+			<select
+				class="text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1 font-semibold text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-500"
+				bind:value={selectedWorkspace}
+				on:change={() => {
+					currentDirPath = '';
+					selectedPath = '';
+					fileContent = '';
+					savedFileContent = '';
+					fileMeta = null;
+					viewMode = 'code';
+					resetEditorLanguageState();
+					resetAiState();
+					revokePreviewBlob();
+					void loadTree('');
+				}}
+			>
+				{#each workspaces as ws}
+					<option value={ws.id}>{ws.label} {ws.writable && !isCrossRead ? '[RW]' : '[RO]'}</option>
+				{/each}
+			</select>
+
+			<span
+				class="text-[10px] px-1.5 py-0.5 rounded font-mono font-bold {isWritable
+					? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+					: 'bg-gray-200 dark:bg-gray-700 text-gray-500'}"
+			>
+				{isWritable ? 'LECTURE-ÉCRITURE' : 'LECTURE SEULE'}
+			</span>
+		</div>
+
+		<!-- Boutons sous-vues -->
+		<div class="flex items-center gap-1 bg-gray-200 dark:bg-gray-800 p-0.5 rounded-lg text-xs font-medium">
+			<button
+				type="button"
+				class="px-2.5 py-1 rounded-md transition {activeSubView === 'editor' ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-400'}"
+				on:click={() => (activeSubView = 'editor')}
+			>
+				Éditeur
+			</button>
+			<button
+				type="button"
+				class="px-2.5 py-1 rounded-md transition {activeSubView === 'log' ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-400'}"
+				on:click={loadLog}
+			>
+				Historique Git
+			</button>
+			{#if activeSubView === 'diff'}
+				<button
+					type="button"
+					class="px-2.5 py-1 rounded-md bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white font-mono text-[11px]"
+				>
+					Diff ({currentCommit.slice(0, 7)})
+				</button>
+			{/if}
+		</div>
+	</div>
+
+	<!-- Corps splité : Arborescence à gauche, contenu au centre -->
+	<div class="flex flex-1 overflow-hidden" bind:clientWidth={splitWidth}>
+		{#if showTreePanel}
+		<!-- Explorateur arborescent (gauche) -->
+		<div
+			role="region"
+			aria-label="Explorateur de fichiers Codex"
+			style="width: {effectiveTreeWidth}px"
+			class="shrink-0 border-r border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-950/40 flex flex-col relative transition-colors {isDraggingOver
+				? 'ring-2 ring-inset ring-sky-500 bg-sky-500/5'
+				: ''}"
+			on:dragover={(e) => {
+				if (!isWritable) return;
+				e.preventDefault();
+				isDraggingOver = true;
+			}}
+			on:dragleave={() => (isDraggingOver = false)}
+			on:drop={handleTreeDrop}
+		>
+			<div class="p-2 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center text-xs font-semibold text-gray-600 dark:text-gray-400 gap-1">
+				<span class="truncate">Fichiers</span>
+				<div class="flex items-center gap-0.5 shrink-0">
+					{#if isWritable}
+						<button
+							type="button"
+							class="px-1.5 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-800 text-[11px]"
+							on:click={handleNewFile}
+							disabled={isMutating || isUploading}
+							title="Nouveau fichier"
+						>
+							📄+
+						</button>
+						<button
+							type="button"
+							class="px-1.5 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-800 text-[11px]"
+							on:click={handleMkdir}
+							disabled={isMutating || isUploading}
+							title="Nouveau dossier"
+						>
+							📁+
+						</button>
+					{/if}
+					<button
+						type="button"
+						class="p-1 hover:text-sky-500"
+						on:click={() => {
+							void loadChats();
+							void loadTree(currentDirPath);
+						}}
+						title="Rafraîchir l'arbre"
+					>
+						<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+							<path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+						</svg>
+					</button>
+				</div>
+			</div>
+
+			{#if currentDirPath}
+				{@const dirSegments = currentDirPath.split('/').filter(Boolean)}
+				<div class="px-2 py-1 border-b border-gray-200 dark:border-gray-800 bg-gray-100/60 dark:bg-gray-900/60 flex items-center gap-1 text-[11px] font-mono overflow-x-auto shrink-0">
+					<button
+						type="button"
+						class="px-1 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-800 text-sky-600 dark:text-sky-400 font-bold shrink-0"
+						on:click={() => void navigateToDir(dirSegments.slice(0, -1).join('/'))}
+						title="Remonter d'un niveau"
+					>
+						..
+					</button>
+					<button
+						type="button"
+						class="px-1 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 shrink-0"
+						on:click={() => void navigateToDir('')}
+						title="Racine"
+					>
+						/
+					</button>
+					{#each dirSegments as seg, idx}
+						{@const segPath = dirSegments.slice(0, idx + 1).join('/')}
+						<span class="text-gray-400">/</span>
+						<button
+							type="button"
+							class="px-1 py-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-800 truncate {idx === dirSegments.length - 1
+								? 'text-gray-900 dark:text-gray-100 font-semibold'
+								: 'text-gray-600 dark:text-gray-400'}"
+							on:click={() => void navigateToDir(segPath)}
+							title={segPath}
+						>
+							{seg}
+						</button>
+					{/each}
+				</div>
+			{/if}
+
+			<div class="flex-1 overflow-y-auto p-1 space-y-0.5">
+				{#if loadingTree}
+					<div class="p-4 flex justify-center">
+						<Spinner className="w-5 h-5 text-sky-500" />
+					</div>
+				{:else if treeEntries.length === 0}
+					<div class="p-4 text-center text-xs text-gray-400 space-y-2">
+						<div>{currentDirPath ? 'Dossier vide.' : 'Aucun fichier dans ce workspace.'}</div>
+						{#if isWritable}
+							<div class="flex items-center justify-center gap-1.5">
+								<button
+									type="button"
+									class="px-2 py-1 rounded bg-sky-500/10 hover:bg-sky-500/20 text-sky-600 dark:text-sky-400 text-[11px] font-medium"
+									on:click={handleNewFile}
+								>
+									+ Fichier
+								</button>
+								<button
+									type="button"
+									class="px-2 py-1 rounded bg-gray-200/70 dark:bg-gray-800 hover:bg-gray-300/70 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 text-[11px] font-medium"
+									on:click={() => fileUploadInput?.click()}
+								>
+									Importer
+								</button>
+							</div>
+						{/if}
+					</div>
+				{:else}
+					{#each treeEntries as entry}
+						{@const entryPath = getEntryPath(entry)}
+						{@const entryName = getEntryName(entry)}
+						{@const isDir = isDirEntry(entry)}
+						<div
+							class="group flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-mono transition {selectedPath === entryPath
+								? 'bg-sky-500/10 text-sky-600 dark:text-sky-400 font-semibold'
+								: 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'}"
+						>
+							{#if renamingEntryPath === entryPath}
+								{#if isDir}
+									<span class="text-xs flex-shrink-0">📁</span>
+								{:else}
+									<svg class="w-3.5 h-3.5 text-gray-400 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+										<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+										<polyline points="14 2 14 8 20 8" />
+									</svg>
+								{/if}
+								<input
+									type="text"
+									bind:this={renameInputRef}
+									bind:value={renamingDraftName}
+									class="flex-1 min-w-0 bg-white dark:bg-gray-900 border border-sky-500 rounded px-1.5 py-0.5 text-xs font-mono text-gray-900 dark:text-gray-100 focus:outline-none"
+									on:click|stopPropagation
+									on:keydown={(e) => {
+										if (e.key === 'Enter') {
+											e.preventDefault();
+											void commitInlineRename(entryPath, entryName, isDir);
+										} else if (e.key === 'Escape') {
+											e.preventDefault();
+											cancelInlineRename();
+										}
+									}}
+									on:blur={() => void commitInlineRename(entryPath, entryName, isDir)}
+								/>
+							{:else}
+								<button
+									type="button"
+									class="flex-1 min-w-0 text-left flex items-center gap-1.5 truncate"
+									on:click={() => (isDir ? navigateToDir(entryPath) : selectFile(entryPath))}
+									title={!isDir
+										? `${entryPath} (${getCodexLanguageSpec(detectCodexLanguage({ path: entryPath, backendLang: entry?.lang, mime: entry?.mime })).label})`
+										: entryPath}
+								>
+									{#if isDir}
+										<span class="text-xs flex-shrink-0">📁</span>
+									{:else}
+										<svg class="w-3.5 h-3.5 text-gray-400 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+											<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+											<polyline points="14 2 14 8 20 8" />
+										</svg>
+									{/if}
+									<span class="truncate">{entryName || entryPath}</span>
+								</button>
+								{#if isWritable}
+									<div
+										class="flex items-center gap-0.5 shrink-0 transition-opacity {selectedPath === entryPath
+											? 'opacity-100'
+											: 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'}"
+									>
+										<button
+											type="button"
+											title="Renommer"
+											aria-label="Renommer"
+											disabled={isMutating}
+											on:click={(e) => void startInlineRename(entryPath, entryName, e)}
+											class="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 hover:text-sky-600 dark:text-gray-400 dark:hover:text-sky-400 disabled:opacity-40 transition"
+										>
+											<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+												<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+											</svg>
+										</button>
+										<button
+											type="button"
+											title="Supprimer"
+											aria-label="Supprimer"
+											disabled={isDeleting}
+											on:click={(e) => void handleDeleteEntry(entryPath, isDir, e)}
+											class="p-1 rounded hover:bg-red-500/15 text-gray-500 hover:text-red-500 dark:text-gray-400 dark:hover:text-red-400 disabled:opacity-40 transition"
+										>
+											<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+												<polyline points="3 6 5 6 21 6" />
+												<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+											</svg>
+										</button>
+									</div>
+								{/if}
+							{/if}
+						</div>
+					{/each}
+				{/if}
+			</div>
+		</div>
+
+		<!-- Poignée de redimensionnement -->
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
+		<div
+			role="separator"
+			aria-orientation="vertical"
+			aria-label="Redimensionner la colonne Fichiers"
+			aria-valuemin={180}
+			aria-valuemax={maxTreeWidth}
+			aria-valuenow={Math.round(effectiveTreeWidth)}
+			tabindex="0"
+			class="w-1.5 shrink-0 cursor-col-resize hover:bg-sky-500/40 active:bg-sky-500/60 transition-colors {resizingTree
+				? 'bg-sky-500/60'
+				: 'bg-transparent'}"
+			on:pointerdown={startTreeResize}
+			on:pointermove={moveTreeResize}
+			on:pointerup={endTreeResize}
+			on:pointercancel={endTreeResize}
+			on:lostpointercapture={endTreeResize}
+			on:dblclick={resetTreeResize}
+			on:keydown={handleResizerKeydown}
+			title="Glisser pour redimensionner • Double-clic pour ajustement automatique"
+		></div>
+		{/if}
+
+		<!-- Zone Principale (droite) -->
+		<div class="flex-1 min-w-0 flex flex-col overflow-hidden bg-white dark:bg-gray-900">
+			{#if activeSubView === 'editor'}
+				<!-- Barre d'actions fichier -->
+				<div class="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-850/50 shrink-0">
+					<div class="flex items-center gap-2 min-w-0">
+						{#if selectedPath}
+							<span class="font-mono text-xs font-semibold text-gray-800 dark:text-gray-200 truncate">
+								{selectedPath}
+							</span>
+							{#if isDirty}
+								<span
+									class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-300 text-[10px] font-semibold shrink-0"
+									title="Modifications non enregistrées (Ctrl+S pour enregistrer)"
+								>
+									● Modifié
+								</span>
+							{/if}
+							{#if selectedPath && !loadingFile}
+								{#if isEditableTextLanguage}
+									<select
+										aria-label="Langage du document"
+										value={activeLanguage}
+										on:change={(e) => void handleLanguageChange(e.currentTarget.value)}
+										class="text-[11px] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-1.5 py-0.5 font-mono text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-500 shrink-0"
+									>
+										{#if !SELECTABLE_CODEX_LANGUAGES.some((l) => l.id === activeLanguage)}
+											<option value={activeLanguage}>{activeLangSpec.label}</option>
+										{/if}
+										{#each SELECTABLE_CODEX_LANGUAGES as lang (lang.id)}
+											<option value={lang.id}>{lang.label}</option>
+										{/each}
+									</select>
+								{:else}
+									<span class="px-1.5 py-0.5 rounded bg-gray-200/80 dark:bg-gray-800 text-gray-600 dark:text-gray-300 text-[10px] font-mono shrink-0">
+										{activeLangSpec.label}
+									</span>
+								{/if}
+							{/if}
+						{:else}
+							<span class="font-mono text-xs text-gray-400 dark:text-gray-500 truncate">
+								Aucun fichier sélectionné
+							</span>
+						{/if}
+					</div>
+
+					<div class="flex flex-wrap items-center gap-1.5">
+						{#if selectedPath && !loadingFile && canPreview}
+							<div class="flex items-center bg-gray-200/80 dark:bg-gray-800 p-0.5 rounded text-[11px] font-medium mr-1">
+								{#if !fileMeta?.is_binary}
+									<button
+										type="button"
+										on:click={() => handleToggleViewMode('code')}
+										class="px-2 py-0.5 rounded transition {viewMode === 'code' ? 'bg-white dark:bg-gray-700 shadow-xs text-gray-900 dark:text-white' : 'text-gray-500'}"
+									>
+										Code
+									</button>
+								{/if}
+								<button
+									type="button"
+									on:click={() => handleToggleViewMode('preview')}
+									class="px-2 py-0.5 rounded transition {viewMode === 'preview' ? 'bg-white dark:bg-gray-700 shadow-xs text-gray-900 dark:text-white' : 'text-gray-500'}"
+								>
+									👁️ Aperçu
+								</button>
+							</div>
+						{/if}
+
+						<div class="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200/80 dark:border-gray-700/80">
+							{#if isWritable}
+								<button
+									type="button"
+									disabled={isMutating || isUploading}
+									on:click={() => fileUploadInput?.click()}
+									title="Importer (PC → Codex)"
+									aria-label="Importer des fichiers"
+									class="p-1.5 rounded-md text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white disabled:opacity-40 disabled:pointer-events-none transition"
+								>
+									{#if isUploading}
+										<Spinner className="w-3.5 h-3.5 text-sky-500" />
+									{:else}
+										<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+											<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+											<polyline points="17 8 12 3 7 8" />
+											<line x1="12" y1="3" x2="12" y2="15" />
+										</svg>
+									{/if}
+								</button>
+							{/if}
+
+							<button
+								type="button"
+								disabled={!selectedPath || loadingFile}
+								on:click={handleDownload}
+								title={!selectedPath ? 'Exporter (sélectionnez un fichier)' : isDirty ? 'Exporter le contenu modifié (Codex → PC)' : 'Exporter / Télécharger (Codex → PC)'}
+								aria-label="Exporter le fichier"
+								class="p-1.5 rounded-md text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white disabled:opacity-40 disabled:pointer-events-none transition"
+							>
+								<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+									<polyline points="7 10 12 15 17 10" />
+									<line x1="12" y1="15" x2="12" y2="3" />
+								</svg>
+							</button>
+
+							<button
+								type="button"
+								disabled={!canCopy}
+								on:mousedown|preventDefault
+								on:click={handleCopy}
+								title={copyButtonTitle}
+								aria-label={copyButtonTitle}
+								class="p-1.5 rounded-md disabled:opacity-40 disabled:pointer-events-none transition {copySuccess ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10' : activeSelectionLength > 0 ? 'text-sky-600 dark:text-sky-400 bg-sky-500/15 ring-1 ring-inset ring-sky-500/30' : 'text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-700 hover:text-sky-600 dark:hover:text-sky-400'}"
+							>
+								{#if copySuccess}
+									<svg class="w-3.5 h-3.5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+										<polyline points="20 6 9 17 4 12" />
+									</svg>
+								{:else}
+									<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+										<rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+										<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+									</svg>
+								{/if}
+							</button>
+
+							<button
+								type="button"
+								disabled={!canPrint}
+								on:click={handlePrint}
+								title={selectedPath ? 'Imprimer / Exporter en PDF' : 'Imprimer (sélectionnez un fichier)'}
+								aria-label="Imprimer le fichier"
+								class="p-1.5 rounded-md text-gray-600 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white disabled:opacity-40 disabled:pointer-events-none transition"
+							>
+								<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+									<polyline points="6 9 6 2 18 2 18 9" />
+									<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+									<rect x="6" y="14" width="12" height="8" />
+								</svg>
+							</button>
+						</div>
+
+						{#if isWritable && selectedPath && !loadingFile && !fileMeta?.is_binary}
+							<button
+								type="button"
+								class="px-3 py-1 rounded bg-sky-500 hover:bg-sky-600 text-white text-xs font-medium shadow-sm transition"
+								on:click={handleSave}
+								disabled={isSaving}
+							>
+								{isSaving
+									? 'Enregistrement...'
+									: currentWsObj.versioned
+										? 'Enregistrer (Commit)'
+										: 'Enregistrer'}
+							</button>
+						{/if}
+					</div>
+				</div>
+
+				{#if !selectedPath}
+					<div class="flex-1 flex flex-col items-center justify-center text-gray-400 text-xs">
+						<svg class="w-12 h-12 mb-2 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+							<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+							<polyline points="14 2 14 8 20 8" />
+						</svg>
+						Sélectionnez un fichier dans l'arborescence à gauche.
+					</div>
+				{:else if loadingFile}
+					<div class="flex-1 flex items-center justify-center">
+						<Spinner className="w-6 h-6 text-sky-500" />
+					</div>
+				{:else}
+					{#if isWritable && currentWsObj.versioned && !fileMeta?.is_binary && viewMode === 'code'}
+						<div class="px-4 py-1.5 border-b border-gray-100 dark:border-gray-800 bg-gray-50/20">
+							<input
+								type="text"
+								class="w-full text-xs font-mono bg-transparent border-none focus:outline-none text-gray-600 dark:text-gray-400 placeholder-gray-400"
+								placeholder="Message de commit optionnel (ex: 'Update {selectedPath}')"
+								bind:value={commitMessage}
+							/>
+						</div>
+					{/if}
+
+					<!-- Zone d'édition / visualisation -->
+					<div bind:this={editorViewportRef} class="flex-1 p-2 overflow-hidden flex flex-col">
+						{#if viewMode === 'preview' && canPreview}
+							{#if previewCaps.kind === 'image'}
+								<div class="flex-1 flex items-center justify-center bg-gray-950/90 rounded-lg p-4 overflow-auto">
+									{#if previewBlobUrl}
+										<img src={previewBlobUrl} alt={selectedPath} class="max-w-full max-h-full object-contain rounded shadow-lg" />
+									{:else}
+										<Spinner className="w-6 h-6 text-sky-400" />
+									{/if}
+								</div>
+							{:else if previewCaps.kind === 'pdf'}
+								<div class="flex-1 flex flex-col rounded-lg border border-gray-200 dark:border-gray-800 overflow-hidden bg-gray-900">
+									{#if previewBlobUrl}
+										<iframe bind:this={pdfIframeRef} title={selectedPath} src={previewBlobUrl} class="w-full h-full border-0"></iframe>
+									{:else}
+										<div class="flex-1 flex items-center justify-center">
+											<Spinner className="w-6 h-6 text-sky-400" />
+										</div>
+									{/if}
+								</div>
+							{:else if previewCaps.kind === 'audio'}
+								<div class="flex-1 flex flex-col items-center justify-center gap-3 bg-gray-50 dark:bg-gray-950 rounded-lg border border-gray-200 dark:border-gray-800 p-6">
+									<span class="font-mono text-xs text-gray-500">{selectedPath}</span>
+									{#if previewBlobUrl}
+										<audio controls src={previewBlobUrl} class="w-full max-w-md"></audio>
+									{:else}
+										<Spinner className="w-6 h-6 text-sky-400" />
+									{/if}
+								</div>
+							{:else if previewCaps.kind === 'video'}
+								<div class="flex-1 flex items-center justify-center bg-gray-950 rounded-lg p-4 overflow-auto">
+									{#if previewBlobUrl}
+										<!-- svelte-ignore a11y_media_has_caption -->
+										<video controls src={previewBlobUrl} class="max-w-full max-h-full rounded shadow-lg"></video>
+									{:else}
+										<Spinner className="w-6 h-6 text-sky-400" />
+									{/if}
+								</div>
+							{:else if previewCaps.kind === 'markdown'}
+								<div bind:this={previewContainerRef} class="flex-1 overflow-y-auto p-4 prose prose-sm dark:prose-invert max-w-none bg-white dark:bg-gray-950 rounded-lg border border-gray-200 dark:border-gray-800">
+									<Markdown id={`codex-${selectedPath}`} content={fileContent} />
+								</div>
+							{:else if previewCaps.kind === 'svg'}
+								<iframe
+									title={selectedPath}
+									sandbox=""
+									srcdoc={`<!DOCTYPE html><html><body style="margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#111827;">${fileContent}</body></html>`}
+									class="w-full h-full border border-gray-200 dark:border-gray-800 rounded-lg bg-gray-900"
+								></iframe>
+							{:else if previewCaps.kind === 'html'}
+								<iframe
+									bind:this={htmlIframeRef}
+									title={selectedPath}
+									sandbox="allow-scripts allow-modals"
+									srcdoc={buildHtmlPreviewSrcdoc(fileContent)}
+									class="w-full h-full border border-gray-200 dark:border-gray-800 rounded-lg bg-white"
+								></iframe>
+							{:else if previewCaps.kind === 'csv'}
+								<div bind:this={previewContainerRef} class="flex-1 overflow-auto bg-white dark:bg-gray-950 rounded-lg border border-gray-200 dark:border-gray-800">
+									{#if csvRows.length === 0}
+										<div class="p-4 text-xs text-gray-400">Tableau vide.</div>
+									{:else}
+										<table class="table-auto w-full border-collapse text-xs">
+											<thead class="bg-gray-100 dark:bg-gray-900 sticky top-0">
+												<tr>
+													{#each csvRows[0] as header}
+														<th class="px-3 py-1.5 text-left font-semibold border-b border-r border-gray-200 dark:border-gray-800 text-gray-700 dark:text-gray-200 whitespace-nowrap">
+															{header}
+														</th>
+													{/each}
+												</tr>
+											</thead>
+											<tbody>
+												{#each csvRows.slice(1) as row}
+													<tr class="hover:bg-gray-50 dark:hover:bg-gray-900/50">
+														{#each row as cell}
+															<td class="px-3 py-1 border-b border-r border-gray-100 dark:border-gray-800/70 font-mono text-gray-700 dark:text-gray-300 whitespace-nowrap">
+																{cell}
+															</td>
+														{/each}
+													</tr>
+												{/each}
+											</tbody>
+										</table>
+									{/if}
+								</div>
+							{/if}
+						{:else if fileMeta?.is_binary}
+							<div class="flex-1 flex flex-col p-4 overflow-auto space-y-3 bg-gray-50 dark:bg-gray-950 rounded-lg border border-gray-200 dark:border-gray-800">
+								<div class="flex items-center justify-between text-xs text-gray-600 dark:text-gray-300">
+									<span class="font-semibold">Fichier binaire ({fileMeta.mime || 'application/octet-stream'})</span>
+									{#if fileMeta.size_bytes !== undefined}
+										<span class="font-mono text-[11px] text-gray-400">{fileMeta.size_bytes} octets</span>
+									{/if}
+								</div>
+								{#if fileMeta.hex_preview}
+									<pre class="flex-1 overflow-auto p-3 font-mono text-[11px] leading-relaxed bg-gray-900 text-emerald-300 rounded-lg border border-gray-800">{fileMeta.hex_preview}</pre>
+								{:else}
+									<div class="text-xs text-gray-400">
+										Aperçu hexadécimal indisponible. Utilisez « Télécharger » pour récupérer ce fichier.
+									</div>
+								{/if}
+							</div>
+						{:else if aiPendingContent !== null}
+							<div class="flex-1 flex flex-col overflow-hidden rounded-lg border border-sky-500/40 bg-gray-950">
+								<div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-gray-900 border-b border-gray-800 text-xs shrink-0">
+									<div class="flex items-center gap-2 min-w-0">
+										<span class="font-semibold text-sky-400">✨ Proposition IA</span>
+										{#if aiUsedModel}
+											<span class="px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 font-mono text-[10px]">
+												{AI_MODELS.find((m) => m.id === aiUsedModel)?.label || aiUsedModel}
+											</span>
+										{/if}
+										{#if aiLastInstruction}
+											<span class="text-gray-400 truncate max-w-[260px]" title={aiLastInstruction}>
+												« {aiLastInstruction} »
+											</span>
+										{/if}
+									</div>
+									<div class="flex flex-wrap items-center gap-1.5">
+										<div class="flex items-center bg-gray-800 p-0.5 rounded text-[11px] mr-1">
+											<button
+												type="button"
+												on:click={() => (aiDiffViewMode = 'diff')}
+												class="px-2 py-0.5 rounded transition {aiDiffViewMode === 'diff'
+													? 'bg-gray-700 text-white'
+													: 'text-gray-400 hover:text-gray-200'}"
+											>
+												Diff IA
+											</button>
+											<button
+												type="button"
+												on:click={() => (aiDiffViewMode = 'full')}
+												class="px-2 py-0.5 rounded transition {aiDiffViewMode === 'full'
+													? 'bg-gray-700 text-white'
+													: 'text-gray-400 hover:text-gray-200'}"
+											>
+												Texte complet
+											</button>
+										</div>
+										<button
+											type="button"
+											on:click={() => void acceptAiDiffAndSave()}
+											disabled={isSaving}
+											class="px-2.5 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition"
+										>
+											✅ Accepter & {currentWsObj.versioned ? 'Commiter' : 'Enregistrer'}
+										</button>
+										<button
+											type="button"
+											on:click={applyAiDiffToEditor}
+											disabled={isSaving}
+											class="px-2.5 py-1 rounded bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition"
+										>
+											✏️ Appliquer dans l'éditeur
+										</button>
+										<button
+											type="button"
+											on:click={rejectAiDiff}
+											disabled={isSaving}
+											class="px-2.5 py-1 rounded bg-rose-600/80 hover:bg-rose-600 text-white text-xs font-medium transition"
+										>
+											❌ Rejeter
+										</button>
+									</div>
+								</div>
+
+								{#if aiDiffViewMode === 'diff'}
+									<div class="flex-1 overflow-auto p-2 font-mono text-xs leading-relaxed">
+										{#each aiDiffLines as line}
+											<div
+												class="flex items-start px-2 whitespace-pre-wrap break-all {line.type === 'add'
+													? 'bg-emerald-950/45 text-emerald-300'
+													: line.type === 'del'
+														? 'bg-rose-950/45 text-rose-300'
+														: 'text-gray-400'}"
+											>
+												<span class="inline-block w-10 pr-1.5 text-right select-none opacity-50 shrink-0">{line.oldLine ?? ''}</span>
+												<span class="inline-block w-10 pr-2 text-right select-none opacity-50 shrink-0">{line.newLine ?? ''}</span>
+												<span class="inline-block w-4 select-none opacity-70 shrink-0">{line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' '}</span>
+												<span class="flex-1 min-w-0">{line.text}</span>
+											</div>
+										{/each}
+									</div>
+								{:else}
+									<div class="flex-1 min-h-0 overflow-hidden">
+										<EchoCodexEditor
+											value={aiPendingContent}
+											filePath={selectedPath}
+											language={activeLanguage}
+											readOnly={true}
+											wordWrap={editorWordWrap}
+											ariaLabel="Aperçu texte complet proposition IA"
+										/>
+									</div>
+								{/if}
+							</div>
+						{:else}
+							<div class="flex-1 min-h-0 flex flex-col overflow-hidden">
+								<div class="flex-1 min-h-0 overflow-hidden rounded-lg border border-gray-200 dark:border-gray-800">
+									<EchoCodexEditor
+										bind:this={codexEditorRef}
+										bind:value={fileContent}
+										filePath={selectedPath}
+										language={activeLanguage}
+										readOnly={!isWritable}
+										wordWrap={editorWordWrap}
+										gitBaseContent={savedFileContent}
+										onSave={handleSave}
+										onSelectionChange={(sel) => (editorSelection = sel)}
+										onCursorChange={(info) => (cursorInfo = info)}
+									/>
+								</div>
+								<div class="px-2.5 py-1 text-[11px] font-mono text-gray-500 dark:text-gray-400 flex items-center justify-between gap-2 shrink-0">
+									<div class="flex items-center gap-2 truncate">
+										<span>Ln {cursorInfo.line}, Col {cursorInfo.col}</span>
+										<span>·</span>
+										<span>{cursorInfo.lineCount} ligne{cursorInfo.lineCount > 1 ? 's' : ''}</span>
+										{#if cursorInfo.selectionChars > 0}
+											<span>·</span>
+											<span>{cursorInfo.selectionChars} car. ({cursorInfo.selectionLines} l.)</span>
+										{/if}
+									</div>
+									<div class="flex items-center gap-2 shrink-0">
+										<span>{activeLangSpec.label}</span>
+										<button
+											type="button"
+											on:click={() => (editorWordWrap = !editorWordWrap)}
+											class="px-1.5 py-0.5 rounded border border-gray-300 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition {editorWordWrap ? 'text-sky-600 dark:text-sky-400 border-sky-500/40' : ''}"
+											title="Activer/désactiver le retour à la ligne"
+										>
+											Retour ligne
+										</button>
+									</div>
+								</div>
+							</div>
+						{/if}
+					</div>
+
+					{#if isWritable && !fileMeta?.is_binary && viewMode === 'code' && selectedPath && aiPendingContent === null}
+						<div class="px-3 py-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50/80 dark:bg-gray-900/90 space-y-1.5 shrink-0">
+							<!-- Quick Actions -->
+							<div class="flex flex-wrap items-center gap-1">
+								{#each QUICK_ACTIONS as qa}
+									<button
+										type="button"
+										disabled={isAiEditing}
+										on:click={() => void handleAiEdit(qa.id, qa.label)}
+										class="px-2 py-0.5 rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 hover:bg-sky-500/10 hover:border-sky-500/40 text-[11px] text-gray-700 dark:text-gray-300 disabled:opacity-50 transition"
+									>
+										{qa.label}
+									</button>
+								{/each}
+							</div>
+
+							<!-- Barre d'instruction IA one-shot -->
+							<div class="flex flex-wrap items-center gap-1.5">
+								<select
+									bind:value={aiModel}
+									disabled={isAiEditing}
+									title="Modèle IA"
+									class="text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md px-2 py-1 text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-sky-500"
+								>
+									{#each AI_MODELS as m}
+										<option value={m.id}>{m.label}</option>
+									{/each}
+								</select>
+
+								{#if editorSelection}
+									<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-500/15 text-sky-600 dark:text-sky-300 text-[11px] font-medium shrink-0">
+										Sélection ({editorSelection.length} car.)
+										<button
+											type="button"
+											on:click={() => (editorSelection = '')}
+											class="hover:text-sky-800 dark:hover:text-white font-bold leading-none"
+											title="Repasser au fichier entier"
+										>
+											×
+										</button>
+									</span>
+								{:else}
+									<span class="px-2 py-0.5 rounded bg-gray-200/70 dark:bg-gray-800 text-gray-500 dark:text-gray-400 text-[11px] shrink-0">
+										Fichier entier
+									</span>
+								{/if}
+
+								<input
+									type="text"
+									bind:value={aiInstruction}
+									disabled={isAiEditing}
+									placeholder="Instruction IA one-shot (ex: Ajoute la gestion d'erreurs)..."
+									class="flex-1 min-w-[180px] text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-md px-2.5 py-1 text-gray-800 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-sky-500"
+									on:keydown={(e) => {
+										if (e.key === 'Enter' && !e.shiftKey) {
+											e.preventDefault();
+											void handleAiEdit();
+										}
+									}}
+								/>
+
+								<button
+									type="button"
+									disabled={isAiEditing || !aiInstruction.trim()}
+									on:click={() => void handleAiEdit()}
+									class="inline-flex items-center gap-1.5 px-3 py-1 rounded-md bg-sky-500 hover:bg-sky-600 disabled:opacity-50 text-white text-xs font-semibold transition shrink-0"
+								>
+									{#if isAiEditing}
+										<Spinner className="w-3.5 h-3.5" />
+										<span>Édition...</span>
+									{:else}
+										<span>✨ Éditer</span>
+									{/if}
+								</button>
+							</div>
+						</div>
+					{/if}
+				{/if}
+			{:else if activeSubView === 'log'}
+				<div class="flex-1 overflow-y-auto p-4 space-y-2">
+					<h3 class="text-xs font-bold text-gray-700 dark:text-gray-300 mb-2">Historique des modifications</h3>
+					{#if !currentWsObj.versioned}
+						<div class="p-3 rounded-lg border border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 text-xs text-gray-500 dark:text-gray-400">
+							L'espace « {currentWsObj.label} » n'est pas versionné par Git (aucun historique de commits).
+						</div>
+					{:else if logEntries.length === 0}
+						<div class="text-gray-400 text-xs">Aucun commit trouvé pour ce chemin.</div>
+					{:else}
+						{#each logEntries as c}
+							{@const commitId = c.hash_full || c.hash || c.commit_id || c.sha || ''}
+							<div class="p-3 border border-gray-200 dark:border-gray-800 rounded-xl bg-gray-50/50 dark:bg-gray-850/50 font-mono text-xs space-y-1">
+								<div class="flex justify-between items-center gap-2">
+									<button
+										type="button"
+										class="text-sky-500 font-bold hover:underline"
+										on:click={() => loadDiff(commitId)}
+									>
+										{c.short_hash || commitId.slice(0, 8)}
+									</button>
+									<div class="flex items-center gap-2">
+										<span class="text-[11px] text-gray-400">{c.author || ''}</span>
+										{#if isWritable && commitId}
+											<button
+												type="button"
+												on:click={() => void handleRestore(commitId)}
+												disabled={isMutating}
+												class="px-2 py-0.5 rounded bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 font-sans text-[11px] font-medium transition"
+											>
+												⏮️ Restaurer ce commit
+											</button>
+										{/if}
+									</div>
+								</div>
+								<div class="text-gray-800 dark:text-gray-200 font-sans font-medium">{c.message}</div>
+								{#if c.timestamp}
+									<div class="text-[10px] text-gray-400">{new Date(c.timestamp * 1000).toLocaleString()}</div>
+								{/if}
+							</div>
+						{/each}
+					{/if}
+				</div>
+			{:else if activeSubView === 'diff'}
+				<div class="flex-1 flex flex-col p-4 overflow-hidden">
+					<div class="flex justify-between items-center mb-2">
+						<span class="text-xs font-bold text-gray-700 dark:text-gray-300">Modifications ({currentCommit.slice(0, 8)})</span>
+						<div class="flex items-center gap-3">
+							{#if isWritable && currentCommit}
+								<button
+									type="button"
+									on:click={() => void handleRestore(currentCommit)}
+									disabled={isMutating}
+									class="px-2.5 py-1 rounded bg-amber-500/15 hover:bg-amber-500/25 text-amber-700 dark:text-amber-300 text-xs font-medium transition"
+								>
+									⏮️ Restaurer ce commit
+								</button>
+							{/if}
+							<button
+								type="button"
+								class="text-xs text-sky-500 hover:underline"
+								on:click={() => (activeSubView = 'log')}
+							>
+								Retour aux logs
+							</button>
+						</div>
+					</div>
+					<div class="flex-1 overflow-auto p-3 font-mono text-xs bg-gray-950 rounded-xl border border-gray-800 leading-relaxed">
+						{#if !diffText}
+							<div class="text-gray-400">Aucune différence ou diff vide.</div>
+						{:else}
+							{#each parseUnifiedDiffLines(diffText) as diffLine}
+								<div class="flex items-start px-1.5 whitespace-pre-wrap break-all {getDiffLineClass(diffLine.text)}">
+									<span class="inline-block w-10 pr-1.5 text-right select-none opacity-50 shrink-0">{diffLine.oldLine ?? ''}</span>
+									<span class="inline-block w-10 pr-2 text-right select-none opacity-50 shrink-0">{diffLine.newLine ?? ''}</span>
+									<span class="flex-1 min-w-0">{diffLine.text}</span>
+								</div>
+							{/each}
+						{/if}
+					</div>
+				</div>
+			{/if}
+		</div>
+	</div>
+</div>

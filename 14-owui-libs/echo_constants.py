@@ -1,0 +1,1520 @@
+# Copyright (c) 2025-2026 Wilfried BARNAVON
+# SPDX-License-Identifier: Apache-2.0
+"""
+title: ECHO Constants
+author: ECHO Framework
+version: 6.18.1.1
+description: Composant système interne : ECHO Constants.
+"""
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 6.18.1.1: Enrichissement SSOT CODEX_LANG_MAP (.txt canonique, csv/tsv, svelte/vue/scss/less, audio/vidéo, diff/latex/hcl/elixir) et exclusion audio/video dans CODEX_LANG_TO_EXT.
+# 6.16.0.2: Ajout ECHO_CODING_WORKER_BASE_URL/WS_BASE_URL, vidage CODEX_SANDBOX_INTERNAL_PREFIXES et purge constantes polling/heartbeat Canvas.
+# 6.15.2.1: Ajout des constantes SSOT Option A Canvas (ECHO_CANVAS_READY_TIMEOUT_SEC, ECHO_CANVAS_IDLE_TTL_SEC, ECHO_CANVAS_MAX_LIFETIME_SEC, ECHO_CANVAS_POLL_WAIT_SEC, ECHO_CANVAS_UNKNOWN_GRACE_POLLS, ECHO_CANVAS_ROUTER_WORKERS).
+# 6.15.1.1: Ajout de BROWSER_TRANSIENT_GRACE_SEC = 1800.0 et relèvement des plafonds clips navigateur (BROWSER_MAX_TRANSIENT_CLIPS_PER_CHAT = 50, BROWSER_MAX_TRANSIENT_CLIPS_MB = 60).
+# 6.13.1.2: Ajout des constantes SSOT clips vidéo navigateur (BROWSER_CLIP_MIME, BROWSER_CLIP_EXT, BROWSER_MAX_TRANSIENT_CLIPS_PER_CHAT, BROWSER_MAX_TRANSIENT_CLIPS_MB).
+
+import os
+import contextvars
+from typing import Literal, Optional
+
+# Information à ne pas effacer : Ce ContextVar permet de transmettre l'identité du sous-agent
+# à travers les frontières asynchrones (asyncio) de manière "télépathique", sans avoir à modifier
+# les signatures des fonctions. Cela permet de contourner le blocage silencieux (falsification 
+# de signature) effectué par Open WebUI lors de l'encapsulation des outils.
+# Par défaut, le dictionnaire est vide (contexte Orchestrateur).
+ECHO_SUBAGENT_CONTEXT: contextvars.ContextVar = contextvars.ContextVar("ECHO_SUBAGENT_CONTEXT", default={})
+
+# Contexte du tour courant (posé par l'orchestrateur) : provenance des productions
+# {"chat_id": str, "user_message_id": str | None, "assistant_message_id": str | None}
+ECHO_TURN_CONTEXT: contextvars.ContextVar = contextvars.ContextVar("ECHO_TURN_CONTEXT", default={})
+
+# Contexte d'automatisation planifiée (posé par @echo_tool ou le runtime)
+# {"is_automation": bool, "automation_id": str | None}
+ECHO_AUTOMATION_CONTEXT: contextvars.ContextVar = contextvars.ContextVar("ECHO_AUTOMATION_CONTEXT", default={})
+
+ECHO_AUTOMATION_QUEUE_MAX_WAIT_SEC = 10800
+
+
+def is_automation_context(metadata: Optional[dict] = None) -> bool:
+    """Retourne True si l'exécution courante appartient à une automatisation planifiée."""
+    if (ECHO_AUTOMATION_CONTEXT.get() or {}).get("is_automation"):
+        return True
+    if not isinstance(metadata, dict):
+        return False
+    if metadata.get("automation_id"):
+        return True
+    if str(metadata.get("session_id") or "").startswith("automation:"):
+        return True
+    user_msg = metadata.get("user_message")
+    if isinstance(user_msg, dict):
+        msg_meta = user_msg.get("meta")
+        if isinstance(msg_meta, dict) and msg_meta.get("automation_id"):
+            return True
+    return False
+
+
+def get_headless_block_reason(metadata: Optional[dict] = None) -> Optional[str]:
+    """Retourne le motif de blocage d'une interaction UI en contexte headless ou automatisé, sinon None."""
+    if (ECHO_SUBAGENT_CONTEXT.get() or {}).get("is_subagent"):
+        return "Action interactive interdite en contexte sous-agent autonome (Headless)."
+    if is_automation_context(metadata):
+        return "Action interactive interdite lors d'une automatisation planifiée sans opérateur interactif."
+    return None
+
+try:
+    import pybase64 as base64
+except ImportError:
+    import base64
+import mimetypes
+try:
+    import filetype
+except ImportError:
+    filetype = None
+
+# ==============================================================================
+# 0. TOPOLOGIE SYSTÈME (ENVIRONNEMENT DOCKER)
+# ==============================================================================
+
+# Racine unique de l'infrastructure de données
+ECHO_BASE_DATA_DIR = "/app/backend/data"
+
+# --- LIMITES MÉMOIRE GLOBALES ---
+# Définit le nombre maximum de sessions de chat gardées activement en RAM pour le 
+# pont des outils (Bridge _TOOLS_CACHE). Au-delà, un mécanisme LRU/FIFO éjecte
+# les anciennes sessions. Limite de sécurité "anti-memory leak" pour Uvicorn.
+# Fixé à 100 pour couvrir largement les usages simultanés sans saturer la RAM.
+ECHO_TOOLS_CACHE_MAX_SIZE = 100
+
+# 131 Ko (~32K tokens) : Limite anti-OOM, utilisé par api_client et injecté dynamiquement au worker_api
+ECHO_MAX_TOOL_TEXT_OUTPUT_CHARS = 131072
+
+# HIÉRARCHIE ECHO SOUVERAINE (Standardisé)
+ECHO_USERS_ROOT = f"{ECHO_BASE_DATA_DIR}/users"
+# Délai de grâce (s) protégeant les écritures en vol (uploads, générations) contre les GC (FS & branches mortes)
+ECHO_GC_GRACE_PERIOD_SEC = 900
+ECHO_UPLOADS_TRANSIT_DIR = f"{ECHO_BASE_DATA_DIR}/uploads"
+
+ECHO_VERSION_PATH = f"{ECHO_BASE_DATA_DIR}/ECHO_VERSION"
+ECHO_PLUGIN_ROOT = "/opt/ECHO"
+ECHO_CONFIG_DIR = f"{ECHO_PLUGIN_ROOT}/config"
+ECHO_SYSTEM_PROMPT_FILENAME = "system-prompt.xml"
+ECHO_SYSTEM_COMMANDS_FILENAME = "system-commands.xml"
+
+BROWSER_VIEWS_DIR_NAME = "browserviews"
+ECHO_SESSION_DOMAINS = ["codex", "files", BROWSER_VIEWS_DIR_NAME, "db", "n8n_workflows", "dependencies", "tools_output"]
+ECHO_GLOBAL_DOMAINS = ["skills", "files", "chats", "n8n_workflow_templates"]
+
+# Identité Réseau (Antigravity 2.32.0 — aligné sur Antigravity Hub agy.exe package.json & language_server --stamp)
+# Format natif AGY Hub : "antigravity/hub/{ideVersion} (os_type=...; arch=...; cl=...; auth_method=personal_consumer; proxy_client=antigravity/{ideVersion})"
+# ECHO tourne sous Docker Linux — on émet l'identité réelle de la plateforme hôte.
+#_AGY_IDE_VERSION = "2.32.0"
+_AGY_IDE_VERSION = "2.33.0"      # Miroir de package.json:version — à synchroniser lors des mises à jour (trouvé dans agy.exe à 0xbd24556)
+# _AGY_LS_CL       = "1021519450"  # Changelist language_server (--stamp)
+_AGY_LS_CL       = "1024904911" # (agy.exe à 0xbc635b0)
+ECHO_USER_AGENT             = f"antigravity/{_AGY_IDE_VERSION}"
+ECHO_AGY_USER_AGENT         = (
+    f"antigravity/hub/{_AGY_IDE_VERSION} "
+    f"(os_type=linux; arch=amd64; cl={_AGY_LS_CL}; auth_method=personal_consumer; proxy_client=antigravity/{_AGY_IDE_VERSION})"
+)
+ECHO_STEALTH_USER_AGENT     = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+
+# Points d'accès Locaux (Souveraineté)
+ECHO_EMBEDDING_BASE_URL = "http://echo-embedding:7997"
+ECHO_EMBEDDING_URL = f"{ECHO_EMBEDDING_BASE_URL}/v1"
+ECHO_N8N_WORKER_URL = "http://echo-n8n-worker:5003"
+MODEL_EMBEDDING = "microsoft/Harrier-OSS-v1-0.6B"
+
+# ==============================================================================
+# 1. PROTOCOLE ANTIGRAVITY 2.1 — AUTH UNIFIÉE
+# ==============================================================================
+
+# --- IDENTIFIANTS TECHNIQUES DES MÉTHODES ---
+AUTH_METHOD_KEY_PRIMARY   = "google_api_key"
+AUTH_METHOD_OAUTH2        = "google_oauth2"
+AUTH_METHOD_KEY_SECONDARY = "google_api_key_secondary"
+
+# --- IDENTIFIANTS ANTIGRAVITY 2.1 (certifiés source : main.js — out-build/vs/platform/cloudCode/common/oauthClient.js) ---
+# Encodage : base64(reversed(value)) — casse les signatures connues de GitHub Secret Scanning.
+# Décodage : base64.b64decode(b).decode()[::-1]
+#
+# ARCHITECTURE DUAL-CLIENT AGY :
+#   - Desktop (z9e/1071...) : comptes Google PERSONNELS (isGcpTos=false). Utilisé par ECHO.
+#   - LS      (Fze/884...)  : comptes ENTERPRISE GCP TOS (isGcpTos=true). Non supporté par ECHO.
+#   Le language_server.exe (Go, 142 Mo) embarque les deux en clair. AGY IDE bascule via isGcpTos.
+#   ECHO utilise exclusivement le client Desktop pour le flow PKCE (comptes personnels).
+_d = lambda b: base64.b64decode(b).decode()[::-1]
+
+# Client Desktop (variable z9e/$9e — oauthClient.js) — SEUL client utilisé par ECHO (comptes perso)
+ANTIGRAVITY_DESKTOP_CLIENT_ID     = _d("bW9jLnRuZXRub2NyZXN1ZWxnb29nLnNwcGEucGUzMDRnNGhqb2xvdHY1MzJlcmNsMTJoMm5pc3NobXQtMTk1MDYwNjAwMTcwMQ==")
+ANTIGRAVITY_DESKTOP_CLIENT_SECRET = _d("ZkFEcTZ6NENYczhCTG0xSkxkTDY4NFJXRjg1Sy1YUFNDT0c=")
+
+# Client Language Server (variable Fze/Vze — oauthClient.js) — comptes Enterprise GCP TOS uniquement.
+# Conservé pour traçabilité. NON UTILISÉ dans les flows ECHO (aucun branchement isGcpTos).
+ANTIGRAVITY_OAUTH_CLIENT_ID       = _d("bW9jLnRuZXRub2NyZXN1ZWxnb29nLnNwcGEuaGxiNWM4NjJkb2M2dm8yM2NhaXVndDNiamoxY3J0NjMtMjUwOTE5NDUzNDg4")
+ANTIGRAVITY_OAUTH_CLIENT_SECRET   = _d("WHN0WjBSd01LeFktamRUUTBDRFdSN0ZwV1FZOS1YUFNDT0c=")
+
+# Scopes exigés par Google pour Cloud Code — alignement strict sur AGY IDE oauthClient.js (variable Ats)
+ECHO_OAUTH_SCOPES = [
+    "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+    "https://www.googleapis.com/auth/cclog",                    # Télémétrie completion log
+    "https://www.googleapis.com/auth/experimentsandconfigs",    # Feature flags et config serveur
+]
+
+# --- PKCE + AUTHORIZATION CODE FLOW (RFC 7636) ---
+# redirect_uri : générée dynamiquement dans initiate_pkce_flow().
+#   Format : http://localhost:{callback_port}/callback
+#   Google accepte n'importe quel port loopback (RFC 8252 §7.3).
+# Ports alloués dynamiquement dans ECHO_AUTH_PORT_RANGE_* — multi-user natif.
+GOOGLE_AUTH_URL         = "https://accounts.google.com/o/oauth2/auth"
+
+# --- SSH TUNNEL ÉPHÉMÈRE PKCE (authentification OAuth2) ---
+# Serveur SSH asyncssh dans le container open-webui.
+# Un pair de ports (SSH + callback) alloué dynamiquement par session.
+# Docker expose uniquement la plage SSH 8020-8024 (stack-echo.yml).
+# Les ports callback 8025-8034 restent internes au container.
+ECHO_SSH_TUNNEL_USER = "echo-auth"  # Utilisateur SSH jetable
+ECHO_SSH_TUNNEL_TIMEOUT = 120       # Secondes avant auto-stop
+
+# Plage des ports SSH server (exposes par Docker dans stack-echo.yml)
+# Le client SSH se connecte sur l'un de ces ports.
+ECHO_SSH_PORT_RANGE_START = 8020    # Premier port SSH expose
+ECHO_SSH_PORT_RANGE_END   = 8024    # Dernier port SSH expose (5 sessions max)
+
+# Plage des ports callback OAuth2 (JAMAIS exposes par Docker - internes uniquement)
+# Accessibles uniquement via le tunnel SSH authentifie.
+# redirect_uri = http://localhost:{cb_port}/callback (port cote client, resolu par le tunnel)
+ECHO_CALLBACK_PORT_RANGE_START = 8025  # Premier port callback interne
+ECHO_CALLBACK_PORT_RANGE_END   = 8034  # Dernier port callback interne (10 slots)
+
+
+# Endpoints standards Google (inchangés)
+GOOGLE_OAUTH_TOKEN_URL  = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL     = "https://www.googleapis.com/oauth2/v2/userinfo"
+
+# --- CONFIGURATION API ANTIGRAVITY (PROVISIONING) ---
+# Standalone Antigravity — cloudcode-pa (Circuit Breaker Pool)
+AGY_BASE_URLS = [
+    "https://cloudcode-pa.googleapis.com/v1internal",       # Standard (Prod)
+    "https://daily-cloudcode-pa.googleapis.com/v1internal"  # Canary (Daily)
+]
+ECHO_ENDPOINT_LOCK_TIMEOUT_MIN = 5  # Temps de verrouillage agnostique (Surcharge Serveur ou TPM)
+# Metadata client envoyée dans loadCodeAssist
+# Alignement sur AGY IDE main.js (clientMetadata getter) :
+#   ideName="antigravity", ideType=TTe.ANTIGRAVITY (enum 9), pluginType=GEMINI (enum 2)
+#   platform calculé dynamiquement — ECHO tourne sous Linux (Docker).
+#   ideVersion = version AGY IDE émulée (product.json:ideVersion).
+ECHO_CLIENT_METADATA = {
+    "ideName":    "antigravity",
+    "ideType":    "ANTIGRAVITY",
+    "ideVersion": _AGY_IDE_VERSION,
+    "platform":   "LINUX_AMD64",
+    "pluginType": "GEMINI"
+}
+
+AUTH_DATA_PROJECT_ID  = "google_project_id"
+ECHO_GLOBAL_TENANT_PROJECT_ID = "aicode-consumers"
+AUTH_DATA_USER_EMAIL  = "google_user_email"
+AUTH_DATA_USER_TIER   = "google_user_tier"
+
+# --- CONFIGURATION AI STUDIO (Fallback clés API) ---
+GOOGLE_API_BASE_URL      = "https://generativelanguage.googleapis.com/v1beta"
+GOOGLE_AI_STUDIO_WEB_URL = "https://aistudio.google.com/app/apikey"
+GOOGLE_API_KEY_REGEX     = r"(?:AIza|AQ\.)[0-9A-Za-z_-]{35,}"
+GOOGLE_API_KEY_PATTERN   = GOOGLE_API_KEY_REGEX
+
+# --- TIMING (certifiés par logs natifs IDE) ---
+# Token TTL proactif : 55 min exact (confirmé par auth.log "token changed, handleAuthRefresh")
+GOOGLE_OAUTH_TOKEN_LIFETIME = 3300  # secondes
+
+# PKCE auth flow : timeout serveur callback (5 min pour que l'utilisateur ouvre l'URL)
+PKCE_CALLBACK_TIMEOUT = 300  # secondes
+
+# --- GESTION DES QUOTAS GOOGLE CLOUD (Anti-spam / Anti-429) ---
+ECHO_QUOTA_REFRESH_THROTTLE_SEC = 60            # Période minimale entre deux requêtes Cloud de rafraîchissement
+ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC = 0     # Seuil en secondes résiduelles pour qualifier le reset d'imminent (<= 0)
+ECHO_QUOTA_RESET_IMMINENT_LABEL = "Imminent"    # Label d'affichage et de détection d'imminence
+
+# ==============================================================================
+# MARQUEURS & TITRES D'AUTHENTIFICATION (SSOT ÉMISSION / DÉTECTION)
+# ==============================================================================
+ECHO_AUTH_PENDING_MARKER = "(ECHO_SESSION_AUTH_PENDING)"
+ECHO_AUTH_TITLE_CONFIG = "Configuration de l'Authentification ECHO"
+ECHO_AUTH_TITLE_PENDING = "Authentification en attente"
+
+ECHO_AUTH_NOTICE_MARKERS = frozenset({
+    ECHO_AUTH_PENDING_MARKER,
+    ECHO_AUTH_TITLE_CONFIG,
+    ECHO_AUTH_TITLE_PENDING,
+})
+
+
+# ==============================================================================
+# 1.2 RÉSILIENCE ET RETRIES (API)
+# ==============================================================================
+
+ECHO_API_KEY_RETRIES   = 2
+ECHO_API_MAX_RETRIES     = 5
+ECHO_RETRY_BASE_DELAY    = 3.0   # Base backoff exponentiel — réduit de 5.0 à 3.0 (v5.50)
+                                  # Raison : avec base=5.0 et 5 retries, le backoff cumulé (~155s)
+                                  # dépassait GUNICORN_TIMEOUT (60s) et causait des crashes SSE
+                                  # silencieux via SIGKILL du worker uvicorn.
+                                  # Avec base=3.0 et 5 retries : total max ~39s.
+                                  # Historique : base augmentée à 5.0 (v5.166.6) pour les rafales
+                                  # consult_council sur Code Assist. Ces appels passent par call()
+                                  # non-streaming, non impactés par ce changement.
+ECHO_RETRY_MULTIPLIER    = 1.5
+ECHO_RETRY_JITTER_MIN    = 0.7
+ECHO_RETRY_JITTER_MAX    = 1.3
+ECHO_LLM_CONNECT_TIMEOUT = 15.0  # Timeout d'établissement TCP/TLS (s)
+ECHO_LLM_WRITE_TIMEOUT   = 30.0  # Timeout d'écriture de requête HTTP/2 (s)
+ECHO_LLM_POOL_TIMEOUT    = 15.0  # Timeout d'acquisition de connexion du pool (s)
+ECHO_LLM_CALL_TIMEOUT    = 600   # Timeout de lecture Non-Stream (s) dimensionné pour Neon / Carbon
+ECHO_LLM_STREAM_TIMEOUT  = 300   # Timeout d'inactivité inter-chunks Stream SSE (s)
+ECHO_RETRY_SERVER_MAX_WAIT_SEC = 60.0  # Plafond (s) d'attente sur Retry-After / RetryInfo serveur
+
+# Seuils SSOT de délestage (spillover tools_output) et de lecture paginée (alignés AGY)
+ECHO_TOOL_OUTPUT_PREVIEW_CHARS = 32768  # Seuil d'aperçu inline Head+Tail (~10k tokens) avant délestage dans tools_output/
+ECHO_COGNITIVE_OUTPUT_PREVIEW_CHARS = 524288  # Seuil inline étendu (512 Ko / ~160k tokens) pour les livrables de distillation cognitive et sous-agents
+ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS = ECHO_TOOL_OUTPUT_PREVIEW_CHARS
+ECHO_CODEX_MAX_READ_LINES = 800    # Nombre maximum de lignes retournées par appel read_codex / read_tool_output
+ECHO_CODEX_MAX_READ_BYTES = 46080  # Volume maximum (45 Ko) retourné par appel read_codex / read_tool_output
+
+# Registres déclaratifs SSOT des régimes de troncature par outil (@echo_tool & StandardToolDispatcher)
+ECHO_PAGINATED_READER_TOOLS: frozenset = frozenset({
+    "read_codex",
+    "read_tool_output",
+    "delete_tool_output",
+})
+
+ECHO_COGNITIVE_DISTILLATION_TOOLS: frozenset = frozenset({
+    "read_multimedia_file",
+    "semantic_probe",
+    "analyze_web_page",
+    "summarize_codex",
+    "delegate_to_agent",
+    "control_subagents",
+    "consult_council",
+    "consult_supervised_workers",
+    "delegate_deep_research",
+    "delegate_web_browsing",
+    "delegate_to_n8n_grapher",
+    "ask_data_broker",
+    "build_plan",
+    "read_plan",
+    "analyze_plan",
+    "tool_advisor",
+    "query_n8n_documentation",
+    "read_skill",
+})
+
+
+def get_tool_truncation_limit(
+    tool_name: str,
+    skip_truncation: bool = False,
+    is_subagent: bool = False,
+) -> Optional[int]:
+    """Résout le plafond de caractères inline avant délestage dans tools_output/ selon le régime SSOT de l'outil."""
+    if skip_truncation or tool_name in ECHO_PAGINATED_READER_TOOLS:
+        return None
+    if tool_name in ECHO_COGNITIVE_DISTILLATION_TOOLS:
+        return ECHO_COGNITIVE_OUTPUT_PREVIEW_CHARS
+    return ECHO_SUBAGENT_MAX_TOOL_RESPONSE_CHARS if is_subagent else ECHO_TOOL_OUTPUT_PREVIEW_CHARS
+
+
+def build_httpx_timeout(read_timeout: float):
+    """Construit un objet httpx.Timeout granulaire (connect/write/pool courts, read adapté au mode LLM)."""
+    import httpx
+    return httpx.Timeout(
+        connect=ECHO_LLM_CONNECT_TIMEOUT,
+        read=float(read_timeout),
+        write=ECHO_LLM_WRITE_TIMEOUT,
+        pool=ECHO_LLM_POOL_TIMEOUT,
+    )
+
+# ==============================================================================
+# 1.25 GOUVERNANCE DU CONTEXTE ET COMPACTION IN-PLACE (% DE ECHO_MAX_CONTEXT_SIZE)
+# ==============================================================================
+# Limite Physique de Contexte Gemini (1M tokens) - Source Unique de Vérité (SSOT)
+ECHO_MAX_CONTEXT_SIZE = 1048576
+MAX_CONTEXT_TOKENS = ECHO_MAX_CONTEXT_SIZE
+
+# --- PARAMÈTRES DE COMPACTION CONTEXTUELLE IN-PLACE (EN % DE ECHO_MAX_CONTEXT_SIZE) ---
+# Seuil de déclenchement automatique : 60% de CONTEXT_MAX (~629 145 tokens).
+# Laisse la conversation se dérouler confortablement jusqu'à 600k tokens avant de compacter.
+COMPACTION_TRIGGER_THRESHOLD_PCT = 0.60
+
+# Enveloppe totale maximale visée post-compaction : < 20% de CONTEXT_MAX (~209 715 tokens).
+# Garantit une libération immédiate de > 300 000 tokens de marge libre (hystérésis forte).
+COMPACTION_TARGET_CONTEXT_PCT    = 0.20
+
+# Part de l'enveloppe cible allouée au Checkpoint compressé HEAD : 31.25% de 20% = 6.25% de CONTEXT_MAX.
+# Soit un budget de 65 535 tokens, parfaitement aligné sur le plafond matériel Gemini (maxOutputTokens = 65 535).
+COMPACTION_COMPRESSED_SHARE_PCT  = 0.3125
+
+# Part de l'enveloppe cible allouée aux tours récents gardés bruts TAIL : 68.75% de 20% = 13.75% de CONTEXT_MAX.
+# Dérivée dynamiquement par construction (1 - COMPACTION_COMPRESSED_SHARE_PCT) = ~144 179 tokens max.
+COMPACTION_KEPT_SHARE_PCT        = round(1.0 - COMPACTION_COMPRESSED_SHARE_PCT, 4)
+
+# Minimum de tours complets passés requis pour autoriser une compaction
+COMPACTION_MIN_TURNS_REQUIRED    = 1
+
+
+def get_compaction_shares(compressed_share: float = COMPACTION_COMPRESSED_SHARE_PCT) -> tuple[float, float]:
+    """
+    Retourne (compressed_share, kept_share) garantissant que leur somme vaut strictement 1.0 (1 - compressed_share).
+    Par exemple, pour l'enveloppe cible (20% de CONTEXT_MAX = 209 715 tokens) :
+    - Part compressée HEAD : 31.25% de l'enveloppe cible (6.25% de CONTEXT_MAX, soit 65 535 tokens max budget, aligné sur le plafond API)
+    - Part gardée brute TAIL : 68.75% de l'enveloppe cible (13.75% de CONTEXT_MAX, soit ~144 179 tokens max budget)
+    """
+    val = float(compressed_share)
+    if val > 1.0:
+        val = val / 100.0
+    c = round(max(0.05, min(0.95, val)), 4)
+    return (c, round(1.0 - c, 4))
+
+
+# ==============================================================================
+# 1.3 RAPPELS COGNITIFS (DÉFIBRILLATEUR ATTENTIONNEL MULTI-AXES EN % DE CONTEXT_MAX)
+# ==============================================================================
+AEC_REMINDERS = [
+    {
+        "id": "context_hygiene",
+        "context_pct": 0.30,
+        "token_threshold": int(ECHO_MAX_CONTEXT_SIZE * 0.30),  # 30% (~314 572 tokens)
+        "tool_calls_threshold": 65,
+        "message": "Rappel : Charge contextuelle élevée. Le Modèle DOIT recentrer son attention sur le vecteur thématique principal et consolider le Méta-Artéfact Résumé. Appliquer le PGCU."
+    },
+    {
+        "id": "kernel",
+        "context_pct": 0.20,
+        "token_threshold": int(ECHO_MAX_CONTEXT_SIZE * 0.20),  # 20% (~209 715 tokens)
+        "tool_calls_threshold": 50,
+        "message": "Rappel : L'alignement sur le Kernel et la rigueur d'analyse sont FONDAMENTAUX."
+    },
+    {
+        "id": "factuality",
+        "context_pct": 0.15,
+        "token_threshold": int(ECHO_MAX_CONTEXT_SIZE * 0.15),  # 15% (~157 286 tokens)
+        "tool_calls_threshold": 35,
+        "message": "Rappel : Toute hypothèse non vérifiée est présumée incertaine. Le Modèle DOIT sourcer rigoureusement et vérifier via recherche Web ou inspection de code si un doute subsiste. Appliquer le PRAF."
+    },
+    {
+        "id": "strategy",
+        "context_pct": 0.12,
+        "token_threshold": int(ECHO_MAX_CONTEXT_SIZE * 0.12),  # 12% (~125 829 tokens)
+        "tool_calls_threshold": 30,
+        "message": "Rappel : Le Modèle DOIT s'assurer de mettre à jour judicieusement, et appliquer, ses Hypothèses d'Apprentissage et le plan stratégique en cours pour éviter la vision tunnel. Appliquer le PRAC."
+    },
+    {
+        "id": "alignment",
+        "context_pct": 0.10,
+        "token_threshold": int(ECHO_MAX_CONTEXT_SIZE * 0.10),  # 10% (~104 857 tokens)
+        "tool_calls_threshold": 28,
+        "message": "Rappel : Le Modèle DOIT s'assurer de maintenir et respecter scrupuleusement le Profil d'Alignement et les préférences de l'Utilisateur. Appliquer le PACP."
+    },
+    {
+        "id": "efficiency",
+        "context_pct": 0.08,
+        "token_threshold": int(ECHO_MAX_CONTEXT_SIZE * 0.08),  # 8% (~83 886 tokens)
+        "tool_calls_threshold": 18,
+        "message": "Rappel : Le Modèle DOIT privilégier l'usage de Sous-Agents pour économiser son contexte. Appliquer le PARE."
+    }
+]
+
+# ==============================================================================
+# 1.1 MODULE : CONSTANTES ET DEFAULTS ECHO (CENTRALISATION)
+# VERSION : 5.999.4
+# ==============================================================================
+
+
+# ==============================================================================
+# REGISTRE COGNITIF ECHO (SINGLE SOURCE OF TRUTH)
+# ==============================================================================
+ECHO_MODELS_REGISTRY = {
+    "MODEL_ATHENA": {
+        "ai_studio_id": "gemini-4-carbon",
+        "ca_model_id":  "gemini-4-carbon-high",
+        "hierarchy": 3,
+        "generationConfig": {
+            "maxOutputTokens": 65535,
+            "thinkingConfig": {"thinkingLevel": "high"}
+        }
+    },
+    "MODEL_PROMETHEUS": {
+        "ai_studio_id": "gemini-4-neon",
+        "ca_model_id":  "gemini-4-neon-medium",
+        "hierarchy": 2,
+        "generationConfig": {
+            "maxOutputTokens": 65535,
+            "thinkingConfig": {"thinkingLevel": "medium"}
+        }
+    },
+    "MODEL_APOLLO": {
+        "ai_studio_id": "gemini-4-hydrogen",
+        "ca_model_id":  "gemini-4-hydrogen-high",
+        "hierarchy": 1,
+        "generationConfig": {
+            "maxOutputTokens": 65535,
+            "thinkingConfig": {"thinkingLevel": "high"}
+        }
+    },
+    "MODEL_ZEPHYR": {
+        "ai_studio_id": "gemini-3.5-flash-lite",
+        "ca_model_id":  "gemini-3.5-flash-lite",
+        "hierarchy": 0,
+        "generationConfig": {
+            "temperature": 1.0,
+            "topP": 0.9,
+            "maxOutputTokens": 65535,
+            "thinkingConfig": {"thinkingLevel": "high"}
+        }
+    },
+    "MODEL_DISTILLATION": {
+        "ai_studio_id": "gemini-3.5-flash-lite",
+        "ca_model_id":  "gemini-3.5-flash-lite",
+        "hierarchy": None,
+        "generationConfig": {
+            "temperature": 0.0,
+            "topP": 0.1,
+            "maxOutputTokens": 65535,
+            "thinkingConfig": {"thinkingLevel": "low"}
+        }
+    },
+    "MODEL_IMAGE_GEN": {
+        "ai_studio_id": "gemini-3.1-flash-image",
+        "ca_model_id":  "gemini-3.1-flash-image",
+        "hierarchy": None,
+        "request_type": "image_gen",
+        "generationConfig": {
+            "temperature": 1.0,
+            "maxOutputTokens": 65535,
+            "responseModalities": ["TEXT", "IMAGE"],
+            "imageConfig": {
+                "aspectRatio": "1:1"
+            }
+        }
+    }
+}
+
+# L'Abstraction pure
+MODEL_ATHENA       = "MODEL_ATHENA"
+MODEL_PROMETHEUS          = "MODEL_PROMETHEUS"
+MODEL_APOLLO        = "MODEL_APOLLO"
+MODEL_ZEPHYR         = "MODEL_ZEPHYR"
+MODEL_DISTILLATION = "MODEL_DISTILLATION"
+MODEL_IMAGE_GEN    = "MODEL_IMAGE_GEN"
+
+# Paramètres SSOT du Sous-Agent de Génération et Retouche d'Images (Stochastique : 3 essais requis pour la galerie)
+GEN_IMG_MAX_TRIES = 3
+IMAGE_GEN_VALID_RATIOS = ("1:1", "3:4", "4:3", "9:16", "16:9")
+IMAGE_GEN_MAX_INPUT_IMAGES = 10
+
+# Paramètres SSOT du Moteur de Rendu Visuel Supervisé (Schémas & Diagrammes DSL : 2 essais suffisent)
+GEN_SCHEMA_MAX_TRIES = 2
+EPHEMERAL_RENDER_ENDPOINT = "/render_ephemeral_view"
+EPHEMERAL_RENDER_VIEWPORT_W = 1200
+EPHEMERAL_RENDER_VIEWPORT_H = 800
+EPHEMERAL_RENDER_SETTLE_MS = 250
+
+# Modèle Maître d'orchestration dans Open WebUI (Pipe maître ECHO)
+# Distinct des modèles cognitifs LLM (ECHO_MODELS_REGISTRY) : identifiant d'enregistrement du pipe dans Open WebUI.
+OWUI_ORCHESTRATOR_MODEL   = "echo_orchestrator"
+
+ECHO_SAFETY_SETTINGS = [
+    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+]
+
+EMBEDDING_DIM      = 1024               # Dimension Harrier-OSS
+COLLECTION_META_ARTIFACTS = "echo_meta_artifacts"
+COLLECTION_SESSION_RAG    = "echo_session_rag"
+SESSION_RAG_CONVERSATION_SOURCE_ID = "conversation_history"
+
+# Poids de reranking par niveau d'importance mémorielle.
+MEMORY_IMPORTANCE_WEIGHTS: dict[int, float] = {
+    1: 0.55,   # Trivial
+    2: 0.75,   # Mineur
+    3: 1.00,   # Utile
+    4: 1.30,   # Majeur
+    5: 1.70,   # Axiome
+}
+
+MEMORY_IMPORTANCE_LABELS: dict[int, str] = {
+    1: "Trivial",
+    2: "Mineur",
+    3: "Utile",
+    4: "Majeur",
+    5: "Axiome",
+}
+
+def get_model_identity(model_str: str) -> str:
+    """Retourne la clé abstraite (ex: MODEL_PROMETHEUS) à partir de n'importe quel ID."""
+    registry = globals().get("ECHO_MODELS_REGISTRY", {})
+    if model_str in registry: return model_str
+    for k, v in registry.items():
+        if model_str in (v.get("ai_studio_id"), v.get("ca_model_id")): return k
+    return "UNKNOWN"
+
+def get_generation_config(
+    model_key: str = "MODEL_ZEPHYR",
+    override_thinking: str = None,
+    is_fallback_cascade: bool = False,
+    include_thoughts: bool = None,
+) -> dict:
+    """
+    Extrait le generationConfig depuis le SSOT.
+    Permet de surcharger dynamiquement le thinkingLevel (ex: MINIMAL pour le grounding)
+    et force obligatoirement thinkingLevel="high" lors d'une cascade descendante (429).
+    """
+    import copy
+    # Récupération sécurisée du dictionnaire global
+    registry = globals().get("ECHO_MODELS_REGISTRY", {})
+    base_gen = copy.deepcopy(registry.get(model_key, registry.get("MODEL_ZEPHYR", {})).get("generationConfig", {}))
+    if "thinkingConfig" in base_gen:
+        if is_fallback_cascade:
+            base_gen["thinkingConfig"]["thinkingLevel"] = "high"
+        elif override_thinking:
+            base_gen["thinkingConfig"]["thinkingLevel"] = override_thinking
+        if include_thoughts is not None:
+            base_gen["thinkingConfig"]["includeThoughts"] = include_thoughts
+    return base_gen
+
+
+def get_descending_cascade(start_model_key: str, include_start: bool = False) -> list:
+    """
+    Calcule dynamiquement la séquence de cascade descendante depuis ECHO_MODELS_REGISTRY.
+    Si include_start=True, inclut le modèle de départ en tête de liste (usage call_cascade).
+    Si include_start=False, retourne uniquement les modèles strictement inférieurs (usage echo_orchestrator).
+    """
+    registry = globals().get("ECHO_MODELS_REGISTRY", {})
+    identity = get_model_identity(start_model_key)
+    if identity == "UNKNOWN":
+        identity = "MODEL_APOLLO"
+    start_h = registry.get(identity, {}).get("hierarchy")
+    start_h = start_h if start_h is not None else 1
+    candidates = [
+        k for k, v in registry.items()
+        if v.get("hierarchy") is not None
+        and (v.get("hierarchy") <= start_h if include_start else v.get("hierarchy") < start_h)
+    ]
+    return sorted(candidates, key=lambda k: registry[k]["hierarchy"], reverse=True)
+
+# ----------------------------
+
+# ==============================================================================
+# 1.3 PLAN STRATÉGIQUE — STATUTS & TÂCHES
+# ==============================================================================
+
+# Modèles par défaut pour l'agent de planification stratégique
+PLANNER_MODEL_BUILD = "MODEL_PROMETHEUS"
+PLANNER_MODEL_UPDATE = "MODEL_APOLLO"
+
+# Statuts globaux d'un plan (champ `status:` du frontmatter YAML)
+PLAN_STATUS = {
+    "proposed":  "proposed",    # Généré par l'agent, proposé à l'utilisateur (remplace draft/ready)
+    "executing": "executing",   # En cours d'application
+    "success":   "success",     # Objectif atteint
+    "partial":   "partial",     # Réussi partiellement
+    "failed":    "failed",      # Échec constaté
+    "abandoned": "abandoned",   # Abandonné volontairement
+}
+
+# Notation Markdown des tâches individuelles dans le plan
+PLAN_TASK_STATUS = {
+    "pending":  "[ ]",   # En attente
+    "active":   "[/]",   # En cours
+    "done":     "[x]",   # Terminée
+    "failed":   "[!]",   # Échouée
+    "skipped":  "[-]",   # Ignorée/passée
+}
+
+# Types de ressources du Registre Unifié (echo_resources)
+RESOURCE_TYPES = {
+    "codex":  "codex",   # Fichiers texte/code (Git)
+    "plan":   "plan",    # Plans stratégiques
+    "media":  "media",   # Images, vidéos, PDF
+    "binary": "binary",  # Fichiers non assimilables
+    "weburl": "weburl",  # Pages web distillées
+    "n8n_template": "n8n_template", # Modèles N8N
+    "n8n_workflow": "n8n_workflow", # Workflows N8N
+}
+
+# ==============================================================================
+# 1.8 STATUTS D'INGESTION DES FICHIERS
+# ==============================================================================
+# Définit l'état cognitif d'un fichier tel que perçu par le modèle.
+FILE_INGESTION_STATUS = {
+    "PUT_IN_CONTEXT":    "put_in_context",    # Injection directe dans le prompt (brut ou base64)
+    "VECTORIZED_SUM_UP": "vectorized_sum_up", # Résumé via Smart Context (RAG)
+    "INDEXED":           "indexed",           # Stockage SQLite seul (Fallback ou Image Web)
+    "PENDING_INGESTION": "pending_ingestion", # En attente d'ingestion (ex: Téléchargements Playwright)
+}
+
+# Cycle de vie strict d'un workflow N8N en session
+N8N_WORKFLOW_STATUS = {
+    "READY":     "ready",       # Installé, prêt
+    "EXECUTING": "executing",   # En cours d'appel API
+    "ERROR":     "error",       # Échec de l'appel
+    "DEPLOYED":  "deployed"     # Démon persistant
+}
+
+BROWSER_VIEW_STATUS = {
+    "TRANSIENT": "transient",
+    "RETAINED":  "retained",
+}
+
+BROWSER_CLIP_MIME = "video/mp4"
+BROWSER_CLIP_EXT = "_clip.mp4"
+BROWSER_TRANSIENT_GRACE_SEC = 1800.0
+BROWSER_MAX_TRANSIENT_CLIPS_PER_CHAT = 50
+BROWSER_MAX_TRANSIENT_CLIPS_MB = 60
+
+# Mapping Ultime : Quel type supporte quels statuts ?
+RESOURCE_STATUS_MAP = {
+    "media":        list(FILE_INGESTION_STATUS.values()),
+    "binary":       list(FILE_INGESTION_STATUS.values()),
+    "weburl":       list(FILE_INGESTION_STATUS.values()), # Flux d'ingestion textuelle
+    "codex":        list(FILE_INGESTION_STATUS.values()), # Utilisé par echo_codex_tool (PUT_IN_CONTEXT)
+    "plan":         list(PLAN_STATUS.values()),
+    "n8n_workflow": list(N8N_WORKFLOW_STATUS.values()),
+    "n8n_template": [], # Hub global statique, pas de statut
+    "browserview":  list(BROWSER_VIEW_STATUS.values()),
+}
+
+# ==============================================================================
+# 1.4 ECHO CODEX — CONSTANTES
+# ==============================================================================
+
+# --- CONSTANTES DE L'ÉDITEUR CODEX ---
+ECHO_CODEX_EDIT_TIMEOUT = 300       # Timeout sub-chat édition (secondes)
+ECHO_CODEX_MAX_AI_PASSES = 5        # Nombre max de passes auto-continue IA (0 à 5)
+
+# Nom du sous-dossier Codex dans le vault utilisateur
+CODEX_DIR_NAME = "codex"
+CODEX_WORKSPACE_MAIN = "main"
+CODEX_WORKSPACE_PLANS = "plans"
+CODEX_WORKSPACE_GENERATED = "generated"
+CODEX_WORKSPACE_SANDBOX = "sandbox"
+CODEX_DEFAULT_WORKSPACE = CODEX_WORKSPACE_MAIN
+
+# Protocole URN & Ancres UI Codex (Inlet / Outlet / Bridge JS)
+CODEX_URN_SCHEME = "codex:"
+CODEX_ANCHOR_PREFIX = "#codex:"
+CODEX_SCOPE_CURRENT = "current"
+CODEX_ICON_LOCAL = "✏️"
+CODEX_ICON_REMOTE = "👁️"
+CODEX_URN_PATTERN = (
+    r"\[(?P<label>(?:[^\[\]\n]|\[[^\[\]\n]*\])+)\]\(codex:(?P<scope>current|[a-zA-Z0-9_\-]+):(?P<ws>[a-zA-Z0-9_\-]+)/(?P<path>(?:[^\(\)\n]|\([^\(\)\n]*\))+)\)"
+)
+CODEX_ANCHOR_PATTERN = (
+    r"\[(?P<icon>✏️|👁️)\s+(?P<label>(?:[^\[\]\n]|\[[^\[\]\n]*\])+)\]\(#codex:(?P<target_chat>[a-zA-Z0-9_\-]+):(?P<ws>[a-zA-Z0-9_\-]+):(?P<path>[^\)\s]+)\)"
+)
+ECHO_CODE_FENCE_PATTERN = r"```[\s\S]*?```"
+
+# Mapping extension → langage Monaco Editor
+CODEX_LANG_MAP = {
+    ".py": "python",
+    ".js": "javascript", ".jsx": "javascript", ".mjs": "javascript", ".cjs": "javascript",
+    ".ts": "typescript", ".tsx": "typescript", ".mts": "typescript", ".cts": "typescript",
+    ".c": "c", ".cpp": "cpp", ".h": "c", ".hpp": "cpp",
+    ".java": "java", ".go": "go", ".rs": "rust", ".rb": "ruby",
+    ".php": "php", ".swift": "swift", ".kt": "kotlin",
+    ".cs": "csharp", ".vb": "vb",
+    ".sh": "shell", ".bash": "shell", ".zsh": "shell",
+    ".ps1": "powershell", ".bat": "bat", ".cmd": "bat",
+    ".html": "html", ".htm": "html", ".css": "css", ".scss": "scss", ".less": "less",
+    ".svelte": "svelte", ".vue": "vue",
+    ".json": "json", ".xml": "xml", ".svg": "xml", ".yaml": "yaml", ".yml": "yaml",
+    ".toml": "toml", ".ini": "ini", ".env": "ini",
+    ".md": "markdown", ".markdown": "markdown",
+    ".txt": "plaintext", ".conf": "plaintext", ".log": "plaintext",
+    ".csv": "csv", ".tsv": "tsv",
+    ".diff": "diff", ".patch": "diff", ".tex": "latex",
+    ".tf": "hcl", ".hcl": "hcl", ".ex": "elixir", ".exs": "elixir",
+    ".dart": "dart", ".scala": "scala", ".groovy": "groovy", ".proto": "protobuf",
+    ".pdf": "pdf",
+    ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image",
+    ".webp": "image", ".bmp": "image", ".ico": "image", ".avif": "image",
+    ".mp3": "audio", ".wav": "audio", ".ogg": "audio", ".flac": "audio",
+    ".aac": "audio", ".m4a": "audio", ".opus": "audio",
+    ".mp4": "video", ".webm": "video", ".mov": "video", ".avi": "video", ".ogv": "video",
+    ".sql": "sql", ".r": "r", ".lua": "lua", ".pl": "perl",
+    ".dockerfile": "dockerfile",
+}
+CODEX_DEFAULT_LANG = "plaintext"
+
+# Mapping inversé langage Monaco → extension (première extension canonique trouvée)
+CODEX_LANG_TO_EXT: dict[str, str] = {}
+for _ext, _lang in CODEX_LANG_MAP.items():
+    if _lang not in CODEX_LANG_TO_EXT and _lang not in ("pdf", "image", "audio", "video"):
+        CODEX_LANG_TO_EXT[_lang] = _ext
+
+# Les prompts de la librairie CODEX ont été migrés vers 14-owui-libs/echo_prompts.py
+
+# Actions rapides prédéfinies (boutons HUD)
+CODEX_QUICK_ACTIONS = {
+    "shorter":    "Le Modèle DOIT raccourcir ce code/texte sans changer la logique ni le comportement.",
+    "longer":     "Le Modèle DOIT développer avec plus de détails, commentaires et documentation.",
+    "comment":    "Le Modèle DOIT ajouter des commentaires explicatifs clairs et concis.",
+    "uncomment":  "Le Modèle DOIT supprimer tous les commentaires du code et ne conserver que le code exécutable.",
+    "refactor":   "Le Modèle DOIT refactoriser pour plus de lisibilité, maintenabilité et respect des conventions.",
+    "fix":        "Le Modèle DOIT identifier et corriger les bugs potentiels, et expliquer chaque correction dans un commentaire.",
+    "tests":      "Le Modèle DOIT générer les tests unitaires pertinents pour ce code.",
+    "optimize":   "Le Modèle DOIT optimiser les performances sans changer l'interface publique.",
+}
+
+# ----------------------------
+
+# --- INJECTION ET SMART CONTEXT (MÉMOIRE VECTORISÉE DE SESSION) ---
+MAX_DIRECT_TEXT_INJECT_SIZE   = 32768    # 32 Ko : Plafond d'injection directe pour le texte
+MAX_DIRECT_MMEDIA_INJECT_SIZE = 1048576  # 1 Mo  : Plafond d'injection directe base64 multimédia
+ECHO_SESSION_RAG_CHUNK_SIZE   = 4000     # ~1000 tokens Harrier : Seuil de densité sémantique pour le RAG (Contexte 32k)
+
+# ----------------------------
+
+# ==============================================================================
+# 1.5 DELEGATE SUB-AGENT — Blacklist et appendice système
+# ==============================================================================
+
+# ==============================================================================
+# 1.5b PARALLÉLISME & SUPERVISION PAR TRANCHES DES SOUS-AGENTS (SSOT V6.7)
+# ==============================================================================
+ECHO_MAX_PARALLEL_TOOLS_PER_TURN = 5      # Sémaphore max d'outils exécutés en parallèle dans un même tour (Orchestrateur & Sous-Agent)
+ECHO_MAX_PARALLEL_SUBAGENTS = 4           # Sémaphore max de sous-agents simultanés en vol par chat_id
+ECHO_MAX_CONCURRENT_BROWSERS = 2          # Sémaphore global max d'instances Playwright Chromium actives simultanément
+ECHO_MAX_CONCURRENT_MULTIMODAL_SEGMENTS = 3  # Sémaphore global max de segments multimodaux (<= 30 Mo) analysés en parallèle vers Gemini
+ECHO_SUBAGENT_CHECKPOINT_TURNS = 8        # Nombre de tours d'outils LLM par tranche supervisée avant point de contrôle coopératif (suspended_checkpoint)
+ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC = 120 # Durée max (secondes) d'une tranche supervisée avant point de contrôle coopératif en fin de tour
+ECHO_SUBAGENT_MAX_CONSECUTIVE_ERRORS = 3  # Disjoncteur PARE : 3 erreurs d'outils consécutives -> pause immédiate (suspended_pare_alert)
+ECHO_AUTONOMOUS_MAX_TURNS = 15            # Garde-fou max de tours d'outils LLM par passe autonome fermée (consult_supervised_workers, delegate_deep_research)
+ECHO_AUTONOMOUS_TIMEOUT_SEC = 300         # Durée max (secondes) d'une passe autonome fermée (5 min max)
+ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND = 3  # Tours d'outils LLM par défaut par round de participant dans consult_council
+ECHO_COUNCIL_ROUND_TIMEOUT_SEC = 120      # Garde-fou temporel anti-straggler (secondes) par round Delphi dans consult_council
+
+# Alias de rétrocompatibilité
+ECHO_SUBAGENT_CHECKPOINT_CALLS = ECHO_SUBAGENT_CHECKPOINT_TURNS
+ECHO_AUTONOMOUS_ROUND_MAX_CALLS = ECHO_AUTONOMOUS_MAX_TURNS
+ECHO_COUNCIL_DEFAULT_CALLS_PER_ROUND = ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND
+
+# Registre SSOT des moteurs de sous-agents et de leurs métadonnées UI/télémétrie
+ECHO_SUBAGENT_ENGINES_REGISTRY: dict = {
+    "delegate": {
+        "thread_type": "expert",
+        "icon": "🎓",
+        "color": "emerald",
+        "member_role": "agent",
+        "role_order": 100,
+        "has_tool_loop": True,
+        "is_addressable": True,
+        "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_TURNS,
+        "default_slice_timeout_sec": ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+        "default_label": "Sous-agent Expert",
+    },
+    "council": {
+        "thread_type": "council",
+        "icon": "🏛️",
+        "color": "purple",
+        "member_role": "participant",
+        "role_order": 100,
+        "has_tool_loop": True,
+        "is_addressable": True,
+        "default_slice_limit": ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND,
+        "default_slice_timeout_sec": ECHO_COUNCIL_ROUND_TIMEOUT_SEC,
+        "default_label": "Participant Conseil",
+    },
+    "council_synthesis": {
+        "thread_type": "council",
+        "icon": "🏛️",
+        "color": "purple",
+        "member_role": "synthesis",
+        "role_order": 999,
+        "has_tool_loop": False,
+        "is_addressable": False,
+        "default_slice_limit": 0,
+        "default_slice_timeout_sec": 0,
+        "default_label": "Synthèse du Conseil",
+    },
+    "supervisor": {
+        "thread_type": "supervisor",
+        "icon": "📋",
+        "color": "amber",
+        "member_role": "worker",
+        "role_order": 100,
+        "has_tool_loop": True,
+        "is_addressable": True,
+        "default_slice_limit": ECHO_AUTONOMOUS_MAX_TURNS,
+        "default_slice_timeout_sec": ECHO_AUTONOMOUS_TIMEOUT_SEC,
+        "default_label": "Worker Supervisé",
+    },
+    "supervisor_critic": {
+        "thread_type": "supervisor",
+        "icon": "⚖️",
+        "color": "amber",
+        "member_role": "critic",
+        "role_order": 900,
+        "has_tool_loop": False,
+        "is_addressable": False,
+        "default_slice_limit": 0,
+        "default_slice_timeout_sec": 0,
+        "default_label": "Critique",
+    },
+    "supervisor_consolidator": {
+        "thread_type": "supervisor",
+        "icon": "📑",
+        "color": "amber",
+        "member_role": "consolidator",
+        "role_order": 999,
+        "has_tool_loop": False,
+        "is_addressable": False,
+        "default_slice_limit": 0,
+        "default_slice_timeout_sec": 0,
+        "default_label": "Consolidation",
+    },
+    "navigator": {
+        "thread_type": "web",
+        "icon": "🌐",
+        "color": "cyan",
+        "member_role": "agent",
+        "role_order": 100,
+        "has_tool_loop": True,
+        "is_addressable": True,
+        "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_TURNS,
+        "default_slice_timeout_sec": ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+        "default_label": "Navigateur Web",
+    },
+    "deep_research": {
+        "thread_type": "deep_research",
+        "icon": "🕵️",
+        "color": "cyan",
+        "member_role": "agent",
+        "role_order": 100,
+        "has_tool_loop": True,
+        "is_addressable": True,
+        "default_slice_limit": ECHO_AUTONOMOUS_MAX_TURNS,
+        "default_slice_timeout_sec": ECHO_AUTONOMOUS_TIMEOUT_SEC,
+        "default_label": "Recherche Profonde",
+    },
+    "n8n_grapher": {
+        "thread_type": "n8n_grapher",
+        "icon": "⚡",
+        "color": "amber",
+        "member_role": "agent",
+        "role_order": 100,
+        "has_tool_loop": True,
+        "is_addressable": True,
+        "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_TURNS,
+        "default_slice_timeout_sec": ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+        "default_label": "Architecte N8N",
+    },
+    "data_broker": {
+        "thread_type": "data_broker",
+        "icon": "🔌",
+        "color": "cyan",
+        "member_role": "agent",
+        "role_order": 100,
+        "has_tool_loop": True,
+        "is_addressable": True,
+        "default_slice_limit": ECHO_SUBAGENT_CHECKPOINT_TURNS,
+        "default_slice_timeout_sec": ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC,
+        "default_label": "Data Broker",
+    },
+    "image_gen": {
+        "thread_type": "image_gen",
+        "icon": "🎨",
+        "color": "purple",
+        "member_role": "agent",
+        "role_order": 100,
+        "has_tool_loop": False,
+        "is_addressable": False,
+        "default_slice_limit": 0,
+        "default_slice_timeout_sec": 0,
+        "default_label": "Studio Visuel IA",
+    },
+}
+
+# ⚠️  MAINTENANCE OBLIGATOIRE
+# À chaque création, modification ou suppression d'une function call dans les
+# tools ECHO, évaluer si elle doit figurer dans cette blacklist.
+#
+# Critères d'exclusion (4 catégories) :
+#   1. Récursion     : crée un sub_sid persistant (depth=1 guard absolu)
+#   2. Écriture RAG  : modifie Qdrant (mémoire long terme ou éphémère)
+#                      L'agent lit uniquement — il ne consolide pas.
+#   3. Rendu UI      : génère du HTML/JS pour le stream principal OWUI
+#   4. Méta-session  : gère les sessions du tool delegate lui-même
+#
+# NB : Le budget (MAX_AGENT_FUNCTION_CALLS) compte les DÉCISIONS d'appel
+#      de l'agent — pas les opérations internes des outils appelés.
+# ==============================================================================
+# OUTILS SYSTÈME PERMANENTS DES SOUS-AGENTS (WHITELIST SYSTÈME)
+# ==============================================================================
+# Outils vitaux injectés d'office à tout sous-agent (prévalent sur allowed_tools,
+# mais strictement subordonnés aux interdictions absolues de DELEGATE_AGENT_BLACKLIST).
+DELEGATE_AGENT_SYSTEM_TOOLS: frozenset = frozenset({
+    "tool_advisor",
+    "read_tool_output",
+    "delete_tool_output",
+})
+
+#      consult_council appelé par l'agent = 1 unité de budget,
+#      quelles que soient les itérations internes du conseil.
+DELEGATE_AGENT_BLACKLIST: frozenset = frozenset({
+    # 1. Récursion (depth=1 guard — le seul guard de profondeur nécessaire)
+    "delegate_to_agent",
+    "delegate_deep_research",
+    "delegate_to_n8n_grapher",
+    "ask_data_broker",
+    # 1b. Orchestration cognitive (chacun lance des agents en interne)
+    "consult_council",
+    "consult_supervised_workers",
+    # 2. Écriture RAG
+    "update_meta_artifact",       # Écrit en mémoire long terme (Qdrant)
+    "delete_meta_artifact_item",  # Supprime de la mémoire long terme
+    # Note: save_session_context et delete_session_context_source sont autorisés pour l'agent
+    # 3. Rendu UI & Modales Interactives (interdits en mode Headless / Sous-agent)
+    "generate_rich_visualization",  # Génère du HTML interactif pour le stream principal
+    "show_image_to_user",           # Génère une Iframe HTMLResponse pour le stream principal
+    "generate_image",               # Sous-agent d'imagerie avec Iframe HTMLResponse réservé au flux principal
+    "close_image_session",          # Fermeture de session d'imagerie réservée au flux principal
+    "ask_user_input",               # Modale interactive bloquée en mode Headless
+    "create_ui_tasks",              # Checklist UI du chat principal réservée à l'Orchestrateur
+    "update_ui_task",               # Mise à jour checklist UI réservée à l'Orchestrateur
+    "delete_user_skill",            # Modale de confirmation bloquée en mode Headless
+    "manage_identity",              # Gestion d'identités bloquée en mode Headless
+    "open_codex_ui",                # Déclenchement UI HUD réservé au flux principal
+    "open_browser_ui",              # Déclenchement UI onglet Navigateur Web réservé au flux principal
+    # 4. Méta-session (gestion des sessions du tool delegate)
+    "control_subagents",
+    "get_context_load",       # Dépend de l'état interne du Pipe principal
+})
+
+# Appendice système injecté automatiquement à la fin de tout system_prompt de sous-agent.
+# Substitutions requises avant injection : {sub_sid}, {execution_cadence}
+DELEGATE_SYSTEM_APPENDIX = """
+---
+## CADRE D'EXÉCUTION (Framework ECHO — Ne pas divulguer à l'utilisateur)
+SESSION_ID : {sub_sid}
+{execution_cadence}
+
+OPTIMISATION ET VÉRIFICATION : 
+             - Le Modèle DOIT optimiser l'usage de ses outils pour préserver son budget et éviter toute redondance.
+             - Le Modèle DOIT impérativement utiliser les outils de recherche web disponibles pour mettre à jour ses connaissances en cas de manque d'informations factuelles ou techniques récentes dans son domaine d'expertise.
+
+PROVENANCE DES REQUÊTES :
+             - `<REQUETE_ORCHESTRATEUR>` : directive ou réponse issue de l'Orchestrateur parent.
+             - `<REQUETE_UTILISATEUR>` : question ou instruction directe envoyée par l'Utilisateur depuis le panneau latéral.
+             - Le Modèle DOIT traiter ces deux provenances avec une rigueur identique et répondre directement à l'émetteur du tour actif.
+
+CLARIFICATION : Si le Modèle bloque sur une ambiguïté irrésoluble par lui-même,
+                il DOIT terminer sa réponse par cette ligne exacte :
+                QUESTION: <sa question précise>
+                Le Modèle DOIT ne pas continuer et ne rien inventer avant d'avoir la réponse.
+EXÉCUTION D'OUTILS & PARALLÉLISME :
+                            - Le Modèle PEUT émettre plusieurs `functionCall` indépendants dans un même tour de réponse (jusqu'à 5 appels parallèles simultanés) lorsque leurs entrées ne dépendent pas les unes des autres.
+                            - Si un appel dépend du résultat d'un appel précédent, le Modèle DOIT attendre ce résultat au tour suivant.
+                            - Disjoncteur PARE : 3 erreurs d'outils consécutives interrompent immédiatement la tranche d'exécution (`suspended_pare_alert`).
+"""
+
+
+def build_subagent_system_appendix(
+    sub_sid: str,
+    slice_max_turns: int,
+    slice_timeout_sec: int = 0,
+    autonomous_slice: bool = False,
+) -> str:
+    """Construit l'appendice système adapté à la cadence d'exécution (supervisée ou autonome)."""
+    timeout_clause = (
+        f" (ou {slice_timeout_sec}s)"
+        if slice_timeout_sec and slice_timeout_sec > 0
+        else ""
+    )
+    if not autonomous_slice:
+        execution_cadence = (
+            "SUPERVISION : Aucune limite préalable de mission n'est imposée au Modèle.\n"
+            f"              L'exécution s'effectue par tranches coopératives de {slice_max_turns} tours d'outils{timeout_clause} afin de synchroniser l'avancement avec l'Orchestrateur.\n"
+            "              Chaque tour peut regrouper jusqu'à 5 appels d'outils indépendants en parallèle sans troncature.\n"
+            "              Le Modèle NE DOIT JAMAIS écourter ni bâcler sa mission par anticipation d'une fin de tranche : si un point de contrôle survient avant l'achèvement, il restitue un rapport d'étape factuel (acquis, état courant, suite prévue) et l'Orchestrateur accordera une nouvelle tranche (`resume`) ou ajustera la trajectoire (`steer`)."
+        )
+    elif slice_max_turns > 0:
+        execution_cadence = (
+            f"CADENCE     : Passe autonome bornée à {slice_max_turns} tours d'outils maximum{timeout_clause} (jusqu'à 5 appels d'outils indépendants en parallèle par tour).\n"
+            "              À l'approche du dernier tour disponible, le Modèle DOIT consolider ses résultats et produire sa synthèse complète."
+        )
+    else:
+        execution_cadence = (
+            "CADENCE     : Délibération directe sans appel d'outil sur ce tour. "
+            "Le Modèle DOIT formuler immédiatement sa contribution."
+        )
+    return DELEGATE_SYSTEM_APPENDIX.format(
+        sub_sid=sub_sid, execution_cadence=execution_cadence
+    )
+
+# 2. REGISTRE COGNITIF ECHO (UNIFIÉ & STATIQUE)
+
+# ROUTAGE : Clé Entrée (UI ou Cascade) -> ID Technique
+
+
+
+# ENUM MODÈLES PAR POLITIQUE — utilisé par convert_owui_tools() pour filtrage dynamique
+MODEL_ENUM_BY_POLICY = {
+    "AUTO:MODEL_ZEPHYR":       ["MODEL_ZEPHYR"],
+    "AUTO:MODEL_APOLLO":       ["MODEL_ZEPHYR", "MODEL_APOLLO"],
+    "AUTO:MODEL_PROMETHEUS":   ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"],
+    "AUTO:MODEL_ATHENA":       ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"],
+    "MANUAL:MODEL_ZEPHYR":     ["MODEL_ZEPHYR"],
+    "MANUAL:MODEL_APOLLO":     ["MODEL_APOLLO"],
+    "MANUAL:MODEL_PROMETHEUS": ["MODEL_PROMETHEUS"],
+    "MANUAL:MODEL_ATHENA":     ["MODEL_ATHENA"],
+    # Rétrocompatibilité legacy (MODEL_SELECTION)
+    "MODEL_ZEPHYR":  ["MODEL_ZEPHYR"],
+    "MODEL_APOLLO": ["MODEL_APOLLO"],
+    "MODEL_PROMETHEUS":   ["MODEL_PROMETHEUS"],
+    "MODEL_ATHENA": ["MODEL_ATHENA"],
+    "AUTO":        ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"],
+    "AUTO_PROM":    ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS"],
+    "AUTO_ATHENA":  ["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"],
+}
+
+# Set de référence pour détecter les enum modèle dans les specs d'outils
+MODEL_ENUM_REFERENCE = {"MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"}
+
+
+def parse_model_policy(policy: str) -> tuple[str, str]:
+    """
+    Normalise toute chaîne de politique cognitive ('MODE:MODEL' ou format legacy)
+    en un tuple canonique (mode, model_key) où mode ∈ {'AUTO', 'MANUAL'}.
+    """
+    raw = (policy or "").strip()
+    if ":" in raw:
+        mode_part, model_part = raw.split(":", 1)
+        mode_part = mode_part.strip().upper()
+        model_part = model_part.strip()
+        if mode_part in ("AUTO", "MANUAL") and model_part in MODEL_ENUM_REFERENCE:
+            return (mode_part, model_part)
+    if raw == "AUTO":
+        return ("AUTO", "MODEL_ATHENA")
+    if raw == "AUTO_PROM":
+        return ("AUTO", "MODEL_PROMETHEUS")
+    if raw == "AUTO_ATHENA":
+        return ("AUTO", "MODEL_ATHENA")
+    if raw in MODEL_ENUM_REFERENCE:
+        return ("MANUAL", raw)
+    return ("AUTO", "MODEL_ATHENA")
+
+
+def get_allowed_models(policy: str) -> list[str]:
+    """
+    Retourne la liste ordonnée par hiérarchie croissante des modèles autorisés
+    pour une politique donnée (mode MANUAL -> [model_key], mode AUTO -> [0 .. plafond]).
+    """
+    mode, model_key = parse_model_policy(policy)
+    if mode == "MANUAL":
+        return [model_key]
+    registry = globals().get("ECHO_MODELS_REGISTRY", {})
+    ceil_h = registry.get(model_key, {}).get("hierarchy")
+    ceil_h = ceil_h if ceil_h is not None else 1
+    allowed = [
+        k for k, v in registry.items()
+        if v.get("hierarchy") is not None and v.get("hierarchy") <= ceil_h
+    ]
+    return sorted(allowed, key=lambda k: registry[k]["hierarchy"])
+
+# ==============================================================================
+# 1.6 INFRASTRUCTURE & RÉSEAU (CENTRALISATION V5)
+# ==============================================================================
+
+# --- URLs Internes de l'Infrastructure Docker ---
+# Anciennement définies comme Valves individuelles dans chaque outil/filtre.
+# Centralisées ici pour garantir une configuration unique au sein de la Stack ECHO.
+# ECHO_QDRANT_URL : Utilisée par memory_and_rag_tool et conversation_memory_filter pour le stockage vectoriel.
+ECHO_QDRANT_URL = "http://echo-qdrant:6333"
+
+# --- CONFIGURATION DES ESPACES DE TRAVAIL (CODEX) ---
+# Définit de manière déclarative les sous-dossiers Codex (label UI, versionnement Git, indexation SQLite, montage Sandbox, écriture générique, resource_type).
+ECHO_CODEX_WORKSPACES = {
+    CODEX_WORKSPACE_MAIN: {
+        "label": "Main",
+        "versioning": "yes",
+        "indexed": "yes",
+        "sandbox_mount": "ro",
+        "generic_writable": "yes",
+        "resource_type": "codex",
+    },
+    CODEX_WORKSPACE_PLANS: {
+        "label": "Plans",
+        "versioning": "yes",
+        "indexed": "yes",
+        "sandbox_mount": "ro",
+        "generic_writable": "no",
+        "resource_type": "plan",
+    },
+    CODEX_WORKSPACE_GENERATED: {
+        "label": "Generated",
+        "versioning": "yes",
+        "indexed": "yes",
+        "sandbox_mount": "ro",
+        "generic_writable": "no",
+        "resource_type": "generated",
+    },
+    CODEX_WORKSPACE_SANDBOX: {
+        "label": "Sandbox",
+        "versioning": "no",
+        "indexed": "no",
+        "sandbox_mount": "rw",
+        "generic_writable": "yes",
+        "resource_type": None,
+    },
+}
+
+# Sous-ensemble strict des espaces Codex autorisés à être indexés dans SQLite echo_resources.
+CODEX_INDEXED_WORKSPACES: frozenset[str] = frozenset(
+    ws for ws, spec in ECHO_CODEX_WORKSPACES.items()
+    if isinstance(spec, dict) and spec.get("indexed") == "yes"
+)
+
+# Sous-ensemble strict des espaces Codex ouverts aux écritures génériques ('main', 'sandbox').
+CODEX_WRITABLE_WORKSPACES: tuple[str, ...] = tuple(
+    ws for ws, spec in ECHO_CODEX_WORKSPACES.items()
+    if isinstance(spec, dict) and spec.get("generic_writable") == "yes"
+)
+
+# Domaines de session additionnels autorisés uniquement en lecture seule comme source vers 'sandbox'.
+CODEX_FILES_DOMAIN_NAME: str = "files"
+CODEX_TRANSFER_EXTRA_SOURCES: tuple[str, ...] = (CODEX_FILES_DOMAIN_NAME, BROWSER_VIEWS_DIR_NAME)
+CODEX_TRANSFER_SOURCES: tuple[str, ...] = tuple(ECHO_CODEX_WORKSPACES.keys()) + CODEX_TRANSFER_EXTRA_SOURCES
+
+# Types Literal dynamiques SSOT pour les schémas OpenAPI Pydantic des outils Codex
+CODEX_WORKSPACE_LITERAL = Literal[tuple(ECHO_CODEX_WORKSPACES.keys())]
+CODEX_WRITABLE_WORKSPACE_LITERAL = Literal[CODEX_WRITABLE_WORKSPACES]
+CODEX_TRANSFER_SOURCE_LITERAL = Literal[CODEX_TRANSFER_SOURCES]
+
+
+def is_codex_workspace_indexed(workspace: str) -> bool:
+    """Retourne True si l'espace de travail Codex est configuré avec indexed='yes' dans ECHO_CODEX_WORKSPACES."""
+    ws = (workspace or CODEX_DEFAULT_WORKSPACE).strip()
+    spec = ECHO_CODEX_WORKSPACES.get(ws)
+    if isinstance(spec, dict):
+        return spec.get("indexed") == "yes"
+    return ws in CODEX_INDEXED_WORKSPACES
+
+
+def is_codex_workspace_versioned(workspace: str) -> bool:
+    """Retourne True si l'espace de travail Codex est configuré avec versioning='yes' (Git Dulwich)."""
+    ws = (workspace or CODEX_DEFAULT_WORKSPACE).strip()
+    spec = ECHO_CODEX_WORKSPACES.get(ws)
+    if isinstance(spec, dict):
+        return spec.get("versioning") == "yes"
+    return False
+
+
+def is_codex_workspace_generic_writable(workspace: str) -> bool:
+    """Retourne True si l'espace de travail Codex autorise l'écriture via les outils génériques (create/edit/delete_codex)."""
+    ws = (workspace or CODEX_DEFAULT_WORKSPACE).strip()
+    spec = ECHO_CODEX_WORKSPACES.get(ws)
+    if isinstance(spec, dict):
+        return spec.get("generic_writable") == "yes"
+    return False
+
+
+def get_codex_workspace_resource_type(workspace: str):
+    """Retourne le resource_type echo_resources associé au workspace ('codex', 'plan', 'generated', None)."""
+    ws = (workspace or CODEX_DEFAULT_WORKSPACE).strip()
+    spec = ECHO_CODEX_WORKSPACES.get(ws)
+    if isinstance(spec, dict):
+        return spec.get("resource_type")
+    return None
+
+
+def get_codex_workspaces_ui_map() -> dict[str, str]:
+    """Retourne le dictionnaire {workspace_key: label} pour les sélecteurs UI du Codex."""
+    return {
+        ws: (spec.get("label", ws.capitalize()) if isinstance(spec, dict) else str(spec))
+        for ws, spec in ECHO_CODEX_WORKSPACES.items()
+    }
+
+# Liste stricte des dossiers et fichiers à ignorer lors de la synchronisation ou de l'exploration UI.
+# Cette constante agit comme un bouclier critique pour le Codex (Plan A) : elle empêche le `os.walk` 
+# de parcourir des dossiers de dépendances massifs, évitant ainsi le gel (Layout Thrashing) du moteur 
+# de rendu JavaScript lors de la génération de la treeMap.
+ECHO_SYNC_EXCLUDE_LIST = [".venv", "node_modules", "__pycache__", ".git", ".pytest_cache", "venv"]
+
+# Sécurité d'arborescence & Quotas de transfert Codex
+CODEX_FORBIDDEN_PATH_SEGMENTS: frozenset[str] = frozenset({".git", ".", ".."})
+CODEX_SANDBOX_INTERNAL_PREFIXES: tuple[str, ...] = ()
+CODEX_SANDBOX_INTERNAL_NAMES: frozenset[str] = frozenset({".tmp"})
+CODEX_MAX_PATH_DEPTH: int = 16
+CODEX_LIST_MAX_ENTRIES: int = 200
+CODEX_TRANSFER_CHUNK_BYTES: int = 1024 * 1024
+CODEX_TRANSFER_MAX_FILES_MAIN: int = 200
+CODEX_TRANSFER_MAX_FILE_BYTES_MAIN: int = 25 * 1024 * 1024
+CODEX_TRANSFER_MAX_TOTAL_BYTES_MAIN: int = 100 * 1024 * 1024
+CODEX_TRANSFER_MAX_FILES_SANDBOX: int = 500
+CODEX_TRANSFER_MAX_FILE_BYTES_SANDBOX: int = 512 * 1024 * 1024
+CODEX_TRANSFER_MAX_TOTAL_BYTES_SANDBOX: int = 1024 * 1024 * 1024
+
+# ECHO_CODING_WORKER_URL : Utilisée pour isoler l'exécution de code (Python, JS, etc.).
+ECHO_CODING_WORKER_BASE_URL = "http://echo-coding-worker:5000"
+ECHO_CODING_WORKER_WS_BASE_URL = "ws://echo-coding-worker:5000"
+ECHO_CODING_WORKER_URL = "http://echo-coding-worker:5000/execute"
+ECHO_DEFAULT_CODE_EXECUTION_TIMEOUT = 900
+ECHO_MAX_CODE_EXECUTION_TIMEOUT = 3600
+SANDBOX_MAX_CONCURRENT_JOBS_PER_CHAT = 4
+SANDBOX_MAX_CONCURRENT_JOBS_GLOBAL = 8
+SANDBOX_FINISHED_JOBS_MAX_PER_CHAT = 20
+SANDBOX_FINISHED_JOBS_TTL_SEC = 900
+SANDBOX_LISTEN_MAX_WAIT_SEC = 60
+ECHO_CANVAS_READY_TIMEOUT_SEC = 8.0
+ECHO_CANVAS_IDLE_TTL_SEC = 1800.0
+ECHO_CANVAS_MAX_LIFETIME_SEC = 14400.0
+
+# NAVIGATION_ENGINE_URL : Utilisée par navigation_engine_tool pour le pilotage Playwright/Chrome.
+NAVIGATION_ENGINE_URL = "http://echo-browser-worker:5002"
+
+# ECHO_SEARXNG_BASE_URL : Utilisée par sovereign_web_search pour les recherches web profond.
+ECHO_SEARXNG_BASE_URL = "http://echo-searxng:8080"
+
+# Sécurité Réseau (SSRF)
+# ECHO_ALLOWED_DOMAINS : Domaines autorisés pour api_client (* = tous sauf RFC 1918 locaux).
+ECHO_ALLOWED_DOMAINS = "*"
+
+# --- Configuration HTTP/2 & Connexions (Pool httpx partagé) ---
+# Anciennement Valves dans echo_orchestrator, elles pilotent le client global _get_global_client() dans echo_utils.py.
+# Optimisation du pool de connexion HTTP(2) pour éviter la saturation réseau sous forte charge.
+ECHO_HTTP_CLIENT_TIMEOUT = 600       # Délai d'abandon (600s) si Google API ne répond pas.
+ECHO_HTTP_MAX_CONNECTIONS = 100      # Nombre max de connexions simultanées.
+ECHO_HTTP_MAX_KEEPALIVE = 20         # Nombre max de connexions Keep-Alive maintenues.
+ECHO_HTTP_KEEPALIVE_EXPIRY = 300     # Expiration des connexions Keep-Alive (en secondes).
+ECHO_UCTP_CHUNK_SIZE = 256000        # Taille des fragments UCTP Python <-> JS (256 Ko)
+
+# Timeout d'attente pour le chargement du modèle d'embedding WebGPU (Edge Embedding)
+DEFAULT_EDGE_EMBEDDING_TIMEOUT = 180
+
+# Limite Physique de Contexte (ECHO_MAX_CONTEXT_SIZE définie en section 1.25)
+CONTEXT_WARNING_THRESHOLD = 0.80  # Alerte jaune
+CONTEXT_TRUNCATE_THRESHOLD = 0.90 # Alerte rouge et Troncature
+PRUNE_CONTENT_THRESHOLD = 60000   # Seuil de tolérance (caractères) pour la troncature des UI brutes (env. 15k tokens)
+DEFAULT_VISION_GRID_STEP = 48     # Pas du maillage (pixels) pour la grille de vision spatiale (Anti-bot/Captcha)
+CHARS_PER_TOKEN = 3.2             # Heuristique calibrée Gemini (FR / JSON / Code)
+
+# Limite maximale (en secondes) pour le Wait Timer Généraliste
+ECHO_MAX_WAIT_TIMER = 180
+
+# ==============================================================================
+# 1.7 CONVERSION DE FICHIERS NON SUPPORTÉS
+# ==============================================================================
+
+# Extensions convertibles en texte Markdown par MarkItDown.
+# Mapping ext → MIME réel (utilisé par get_gemini_mime pour attribution rapide
+# et par le filtre pour le logging/registre).
+CONVERTIBLE_OFFICE_EXTENSIONS: dict[str, str] = {
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".docm": "application/vnd.ms-word.document.macroEnabled.12",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+}
+
+# Extensions OOXML contenant potentiellement des images embarquées
+# (archives ZIP avec dossier */media/)
+OOXML_IMAGE_EXTENSIONS: frozenset = frozenset({".docx", ".docm", ".pptx"})
+
+# Plafond par défaut pour la taille du fichier source (en Mo)
+# Surchargeable par UserValve MAX_OFFICE_FILE_SIZE_MB
+DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB = 100
+
+# ==============================================================================
+# 2. MAPPING MIME TYPES
+# ==============================================================================
+
+MIME_MAPPING_TXT = {
+    "text/plain": [
+        ".bat", ".c", ".conf", ".cpp", ".cs", ".css", ".csv", ".dockerfile",
+        ".editorconfig", ".env", ".gitignore", ".go", ".h", ".hpp", ".ini",
+        ".java", ".js", ".json", ".kt", ".log", ".lua", ".md", ".php", ".pl",
+        ".ps1", ".py", ".r", ".rb", ".rs", ".sh", ".sql", ".swift", ".toml",
+        ".ts", ".tsx", ".jsx", ".txt", ".vb", ".xml", ".svg", ".yaml", ".yml", "dockerfile", "makefile"
+    ],
+    "text/html": [".html", ".htm"]
+}
+
+MIME_MAPPING_BIN = {
+    "application/pdf": [".pdf"],
+    "image/png": [".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".bmp", ".gif", ".tiff", ".ico"],
+    "audio/mpeg": [".mp3"],
+    "audio/wav": [".wav"],
+    "audio/mp3": [".aac", ".flac", ".ogg", ".m4a", ".opus"],
+    "video/mp4": [".bit-perfect", ".mov", ".mpeg", ".mpg", ".webm", ".wmv", ".flv", ".3gpp"]
+}
+
+# ==============================================================================
+# 3. HELPER FUNCTIONS
+# ==============================================================================
+
+# ==============================================================================
+# 9. SEUILS COGNITIFS ET DÉFENSE PASSIVE (V5)
+# ==============================================================================
+# Seuils de saturation pour l'outil context_gauge (déclencheurs d'escalade)
+CONTEXT_LOAD_WARNING_THRESHOLD = 40.0
+CONTEXT_LOAD_CRITICAL_THRESHOLD = 60.0
+
+
+def get_gemini_mime(file_path: str) -> tuple[str, bool]:
+    """
+    Analyse universelle et robuste du type MIME d'un fichier.
+    Retourne un tuple (mime_type, est_supporte_par_gemini).
+    Intègre une détection par extension, par signature binaire (Magic Numbers),
+    et par épreuve textuelle (Null-Byte Sniffing), avec un fallback sécurisé.
+    """
+    if not os.path.exists(file_path):
+        return "application/octet-stream", False
+
+    ext = os.path.splitext(file_path)[1].lower().strip()
+    filename = os.path.basename(file_path).lower()
+    raw_mime = None
+
+    # 1. Vérification rapide par mappings pré-définis (Priorité absolue ECHO)
+    for mime, extensions in MIME_MAPPING_TXT.items():
+        if ext in extensions or filename in extensions: return mime, True
+
+    for mime, extensions in MIME_MAPPING_BIN.items():
+        if ext in extensions: return mime, True
+
+    # 1b. Fichiers Office convertibles — MIME réel mais non supporté nativement par Gemini
+    #     Court-circuite le crible binaire et fournit un MIME correct au registre.
+    if ext in CONVERTIBLE_OFFICE_EXTENSIONS:
+        return CONVERTIBLE_OFFICE_EXTENSIONS[ext], False
+
+    # 2. Vérification par bibliothèque standard (basée sur l'extension)
+    raw_mime, _ = mimetypes.guess_type(file_path)
+
+    # 3. Le Crible Binaire (Fichier sans extension ou type inconnu)
+    if not raw_mime:
+        if filetype:
+            kind = filetype.guess(file_path)
+            if kind:
+                raw_mime = kind.mime
+            
+    if not raw_mime:
+        raw_mime = "unknown/unknown"
+
+    # 4. Liste Blanche Native Gemini (Médias complexes & JSON)
+    if raw_mime.startswith("image/") or \
+       raw_mime.startswith("video/") or \
+       raw_mime.startswith("audio/") or \
+       raw_mime.startswith("text/") or \
+       raw_mime in ["application/pdf", "application/json"]:
+        return raw_mime, True
+
+    # 5. L'Épreuve Textuelle (Text-Sniffing) pour le code source et configs obscurs
+    # Si on arrive ici, c'est un format inconnu ou un "application/quelquechose" non supporté (ex: zip, dll, py)
+    try:
+        with open(file_path, 'rb') as f:
+            chunk = f.read(1024)
+        if not chunk or b'\x00' not in chunk:
+            # Aucun caractère nul = C'est du texte pur ou du code source lisible
+            return "text/plain", True
+    except:
+        pass
+
+    # 6. Le Rejet et Fallback Sécuritaire (Binaires purs)
+    return "application/octet-stream", False
+
+
+def is_text_mime(mime: str, ext: str = "") -> bool:
+    """Détermine de manière unifiée si un type MIME (et extension optionnelle) correspond à un contenu textuel."""
+    if not mime:
+        return False
+    m = mime.lower()
+    e = ext.lower() if ext else ""
+    return (
+        m.startswith("text/")
+        or m in ("application/json", "application/xml", "application/javascript", "image/svg+xml")
+        or "xml" in m
+        or e in (".md", ".csv", ".svg", ".json", ".xml", ".yaml", ".yml", ".toml", ".ini", ".conf", ".env")
+    )
+
+
+def is_binary_file(file_path: str = "", raw_bytes: bytes = None) -> tuple[bool, str]:
+    """
+    Détermine de manière unifiée (SSOT) si un fichier (sur disque ou en mémoire) est binaire.
+    Retourne le tuple (is_binary: bool, mime_type: str).
+    """
+    ext = os.path.splitext(file_path)[1].lower().strip() if file_path else ""
+    filename = os.path.basename(file_path).lower() if file_path else ""
+
+    # 1. Résolution MIME déterministe (priorité au registre SSOT ECHO)
+    mime = None
+    for m, exts in MIME_MAPPING_TXT.items():
+        if ext in exts or filename in exts:
+            mime = m
+            break
+    if not mime:
+        for m, exts in MIME_MAPPING_BIN.items():
+            if ext in exts:
+                mime = m
+                break
+    if not mime and ext in CONVERTIBLE_OFFICE_EXTENSIONS:
+        mime = CONVERTIBLE_OFFICE_EXTENSIONS[ext]
+    if not mime and file_path:
+        mime, _ = mimetypes.guess_type(file_path)
+
+    # Lecture d'un échantillon de 8 Ko si nécessaire
+    sample = raw_bytes[:8192] if raw_bytes is not None else None
+    if sample is None and file_path and os.path.isfile(file_path):
+        try:
+            with open(file_path, "rb") as f:
+                sample = f.read(8192)
+        except Exception:
+            sample = b""
+
+    if not mime and sample and filetype:
+        kind = filetype.guess(sample[:2048])
+        if kind:
+            mime = kind.mime
+    if not mime:
+        mime = "text/plain"
+
+    # 2. Si le MIME est explicitement non-textuel (ex: application/pdf, image/*, audio/*, video/*, octet-stream)
+    if not is_text_mime(mime, ext):
+        return True, mime
+
+    # 3. Épreuve sur les octets bruts (octet nul 0x00 ou octets de contrôle C0 binaires 0x01..0x08, 0x0E..0x1F hors ESC)
+    # Préserve intégralement l'UTF-8 et les caractères accentués ISO-8859-1 / Windows-1252 (>= 0x80)
+    if sample:
+        if b"\x00" in sample or any((1 <= b <= 8) or (14 <= b <= 31 and b != 27) for b in sample):
+            return True, "application/octet-stream"
+
+    return False, mime
+
+# ==============================================================================
+# 11. SCHÉMAS GEMINI (API Validation)
+# ==============================================================================
+# Dictionnaire des clés JSON Schema autorisées par le validateur Protobuf de l'API Gemini.
+# Utilisé par clean_gemini_schema() dans echo_utils.py pour purger les objets Pydantic générés.
+GEMINI_ALLOWED_SCHEMA_KEYS = {
+    "type",
+    "format",
+    "description",
+    "nullable",
+    "enum",
+    "properties",
+    "required",
+    "items"
+}
+
+# ==============================================================================
+# 12. ECHO AUDIO IN-PROCESS BRIDGE (STT & TTS)
+# ==============================================================================
+ECHO_AUDIO_PREFIX: str = "/echo/v1"
+ECHO_AUDIO_DEFAULT_TTS_VOICE: str = "fr-FR-VivienneMultilingualNeural"
+ECHO_AUDIO_DEFAULT_TTS_SPEED: float = 1.0
+ECHO_AUDIO_DEFAULT_TTS_PITCH: str = "-2Hz"
+ECHO_AUDIO_DEFAULT_STT_MODEL: str = "MODEL_ZEPHYR"
+ECHO_AUDIO_MAX_UPLOAD_SIZE: int = 14 * 1024 * 1024  # 14 Mo max pour transcriptions
+# Plafond strict 4 Go aligné BunkerWeb
+ECHO_MAX_FILE_UPLOAD_SIZE_MB: int = 4096

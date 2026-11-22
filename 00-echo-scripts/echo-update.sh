@@ -1,0 +1,77 @@
+#!/bin/bash
+# Copyright (c) 2025-2026 Wilfried BARNAVON
+# SPDX-License-Identifier: Apache-2.0
+# ==============================================================================
+# SCRIPT : echo-update.sh
+# VERSION : 6.0.0.1
+# AUTEUR : Wilfried BARNAVON
+# ==============================================================================
+# ROLE : MISE À JOUR RAPIDE (CODE ONLY) + HOT RELOAD
+# ==============================================================================
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 6.0.0.1: Retrait de l'appel post-restart à config-owui.sh.
+# 5.231.42.1: Passage explicite de --env-file "$ECHO_ENV_FILE" à docker compose lors de la vérification du conteneur echo-open-webui.
+# 5.231.39.1: Renommage en echo-update.sh et ciblage de echo-sync.sh.
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+
+# --- INITIALISATION : CORE ECHO GLOBALS ---
+ECHO_ROOT="/opt/ECHO"
+GLOBALS_FILE="$ECHO_ROOT/echo-scripts/echo-globals.sh"
+if [ -f "$GLOBALS_FILE" ]; then
+    source "$GLOBALS_FILE"
+else
+    echo "❌ CRITIQUE : Fichier global introuvable ($GLOBALS_FILE)."
+    exit 1
+fi
+# ------------------------------------------
+
+DOCKER_COMPOSE_CMD="docker-compose"
+if ! command -v $DOCKER_COMPOSE_CMD &> /dev/null; then
+    DOCKER_COMPOSE_CMD="docker compose"
+fi
+
+COMPOSE_FILE="$ECHO_CONFIG/stack-echo.yml"
+SYNC_SCRIPT="$ECHO_SCRIPTS/echo-sync.sh"
+export COMPOSE_PROJECT_NAME="echo"
+
+if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
+
+# --- SELF RUN (Protection) ---
+CURRENT_SCRIPT=$(readlink -f "$0"); TMP_SCRIPT="/tmp/${CURRENT_SCRIPT##*/}"
+MY_OWN_ORIGIN="$ECHO_SCRIPTS/${CURRENT_SCRIPT##*/}"
+if [[ "$CURRENT_SCRIPT" != "/tmp/"* ]]; then
+    cp "$CURRENT_SCRIPT" "$TMP_SCRIPT"; chmod +x "$TMP_SCRIPT"
+    exec "$TMP_SCRIPT" "$@"; exit 0
+fi
+
+
+echo "🚀 DÉMARRAGE MISE À JOUR RAPIDE (UPDATE)..."
+
+# --- 1. SYNC & DEPLOY (Centralisé) ---
+if [ -f "$SYNC_SCRIPT" ]; then
+    /bin/bash "$SYNC_SCRIPT" || exit 1
+else
+    echo "⚠️  Script de sync introuvable ($SYNC_SCRIPT). Installation corrompue ?"
+    exit 1
+fi
+
+# RELANCE DU SCRIPT SI MIS A JOUR
+if [ -f "$MY_OWN_ORIGIN" ] && ! diff "$MY_OWN_ORIGIN" "$CURRENT_SCRIPT" > /dev/null 2>&1 ; then
+    exec "$MY_OWN_ORIGIN" "$@"; exit 0
+fi
+
+# --- 2. HOT RELOAD ---
+echo "⚡ [UPDATE] Redémarrage des services Python..."
+CONTAINERS_TO_RELOAD=$(docker ps \
+    --filter "label=echo.hot-reload=true" \
+    --format "{{.Names}}")
+if [ -n "$CONTAINERS_TO_RELOAD" ]; then
+    echo "$CONTAINERS_TO_RELOAD" | xargs -n 1 -P 2 docker restart >/dev/null 2>&1
+    FORMATTED_LIST=$(echo "$CONTAINERS_TO_RELOAD" | tr '\n' ' ')
+    echo "   ✅ Services rechargés : $FORMATTED_LIST"
+else
+    echo "   ⚠️  Aucun service marqué echo.hot-reload=true trouvé."
+fi
+
+echo "✨ UPDATE TERMINÉ."

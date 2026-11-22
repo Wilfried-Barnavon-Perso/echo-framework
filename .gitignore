@@ -1,0 +1,59 @@
+# --- Fichiers Système Windows ---
+[Dd]esktop.ini
+Thumbs.db
+$RECYCLE.BIN/
+*.lnk
+
+# --- Fichiers Système Mac ---
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# --- Fichiers VM & Disques ---
+*.vhdx
+*.vhd
+*.iso
+*.qcow2
+*.vmdk
+
+# --- Secrets & Configuration Locale ---
+settings.json
+gemini_official_token.json
+gemini_pkce_verifier.txt
+gemini_internal_project.txt
+.env
+.env.local
+
+# --- Python & Logs ---
+*.log
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+.pytest_cache/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Autres ---
+# Vérifiez si "i_internal_project.txt" n'est pas une typo de "gemini_internal_project.txt"
+i_internal_project.txtt
+
+# Audit technique & Reverse Engineering (jamais synchronisé)
+# Contient des données sensibles (clés, secrets, plans d'implémentation).
+.tmp_audit/
+.hygiene-owui/reports/
+
+# --- Scratch & Temporaires ---
+scratch/
+scratch_openwebui/
+
+# --- Node / SvelteKit (16-docker-echo-webui) ---
+node_modules/
+.svelte-kit/
+16-docker-echo-webui/build/
+16-docker-echo-webui/static/pyodide/
+

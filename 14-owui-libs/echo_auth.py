@@ -1,0 +1,1690 @@
+# -*- coding: utf-8 -*-
+# Copyright (c) 2025-2026 Wilfried BARNAVON
+# SPDX-License-Identifier: Apache-2.0
+"""
+title: ECHO Echo Auth
+author: Wilfried BARNAVON
+version: 6.6.10.1
+description: Gestion de l'authentification et OAuth2.
+"""
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 6.6.10.1: Filtrage strict des modèles Code Assist sur ECHO_MODELS_REGISTRY et unification de la jauge Gemini.
+# 6.5.1.1: Mise à jour du modèle de repli HUD par défaut vers gemini-4-hydrogen-high dans get_ui_quota_snapshot.
+# 6.5.0.2: Ajout de tenant_id (ECHO_GLOBAL_TENANT_PROJECT_ID) dans get_ui_quota_snapshot pour le HUD.
+# 6.5.0.1: Commande SSH interactive sans flag -N, propagation du statut final d'authentification au serveur tunnel SSH éphémère et extinction propre.
+# 5.236.5.1: Rectification du prompt get_auth_prompt documentant le support simultané et le failover transparent OAuth2 / Clés API.
+import os
+import time
+from contextlib import closing
+import re
+from echo_http import _get_global_client
+
+import asyncio
+import hashlib
+from typing import Tuple, Dict, List, Optional
+from urllib.parse import urlencode
+import orjson as std_json
+import base64
+import httpx
+from echo_state_manager import EchoStateManager
+from echo_db_schema import EchoDbMissingError, open_db
+from echo_paths import get_echo_identity_db_path
+
+from echo_constants import (
+    GOOGLE_API_BASE_URL, ECHO_USER_AGENT, ECHO_AGY_USER_AGENT, GOOGLE_API_KEY_PATTERN,
+    GOOGLE_AI_STUDIO_WEB_URL, GOOGLE_USERINFO_URL, ECHO_OAUTH_SCOPES, GOOGLE_AUTH_URL,
+    AGY_BASE_URLS, ECHO_CLIENT_METADATA, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN,
+    AUTH_DATA_USER_EMAIL, ECHO_SSH_TUNNEL_USER, ECHO_SSH_TUNNEL_TIMEOUT,
+    ECHO_SSH_PORT_RANGE_START, ECHO_SSH_PORT_RANGE_END,
+    ECHO_CALLBACK_PORT_RANGE_START, ECHO_CALLBACK_PORT_RANGE_END,
+    ANTIGRAVITY_DESKTOP_CLIENT_ID, ANTIGRAVITY_DESKTOP_CLIENT_SECRET, AUTH_DATA_PROJECT_ID,
+    AUTH_DATA_USER_TIER, AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_KEY_SECONDARY, AUTH_METHOD_OAUTH2,
+    ECHO_USERS_ROOT, GOOGLE_OAUTH_TOKEN_URL, GOOGLE_OAUTH_TOKEN_LIFETIME,
+    ECHO_QUOTA_REFRESH_THROTTLE_SEC, ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC,
+    ECHO_QUOTA_RESET_IMMINENT_LABEL, ECHO_AUTH_PENDING_MARKER, ECHO_AUTH_TITLE_CONFIG,
+    ECHO_GLOBAL_TENANT_PROJECT_ID
+)
+class EchoAuth:
+    def __init__(self, user_id: str = "system"):
+        """
+        NOTE ARCHITECTURALE : EchoAuth réside dans echo_utils pour permettre au transporteur EchoGeminiClient
+        d'accéder au maillage d'authentification sans créer de dépendance circulaire avec echo_auth.py.
+        """
+        if user_id and "/" in str(user_id): self.user_id = "system"
+        else: self.user_id = user_id
+        safe_uid = "".join(x for x in str(self.user_id) if x.isalnum() or x in "-_")
+        self.user_dir = os.path.join(ECHO_USERS_ROOT, safe_uid)
+        os.makedirs(self.user_dir, exist_ok=True)
+
+    def _get_db_path(self, user_id: str = None) -> str:
+        return get_echo_identity_db_path(user_id or self.user_id)
+
+    def get_api_keys(self, user_id: str = None) -> List[str]:
+        db_path = self._get_db_path(user_id)
+        try:
+            with closing(open_db(db_path, readonly=True, timeout=5.0)) as conn:
+                rows = conn.execute("SELECT key FROM auth_data").fetchall()
+                return [r[0] for r in rows]
+        except EchoDbMissingError:
+            return []
+        except Exception as e:
+            print(f"[EchoAuth] Erreur lecture clés API: {e}")
+            return []
+
+    def get_auth_data(self, key_name: str, user_id: str = None) -> Optional[str]:
+        db_path = self._get_db_path(user_id)
+        try:
+            with closing(open_db(db_path, readonly=True, timeout=5.0)) as conn:
+                row = conn.execute("SELECT value FROM auth_data WHERE key = ?", (key_name,)).fetchone()
+                return row[0] if row else None
+        except EchoDbMissingError:
+            return None
+        except Exception as e:
+            print(f"[EchoAuth] Erreur lecture auth_data {key_name}: {e}")
+            return None
+
+    def get_model_quota(self, ca_model_id: str) -> dict:
+        """
+        Retourne {remainingFraction, resetTime} pour un modèle CA donné.
+        Source : google_quota_by_model (JSON) persisté par AuthService.fetch_available_models.
+        """
+        import json as _j
+        raw = self.get_auth_data("google_quota_by_model")
+        if not raw:
+            return {}
+        return _j.loads(raw).get(ca_model_id, {})
+
+    def get_quota_summary(self, ca_model_id: str = "") -> dict:
+        """Récupère le résumé de quota unifié (5h et hebdomadaire) commun aux modèles Gemini d'ECHO."""
+        import json as _j
+        raw = self.get_auth_data("google_quota_summary")
+        if not raw:
+            return {}
+        try:
+            summary = _j.loads(raw)
+            return (summary.get("gemini") or {}) if isinstance(summary, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def format_quota_reset_time(raw_iso: str) -> str:
+        """Convertit un timestamp ISO UTC en délai relatif lisible pour le HUD."""
+        if not raw_iso or "T" not in raw_iso:
+            return raw_iso or "N/A"
+        try:
+            from datetime import datetime, timezone
+            reset_dt = datetime.fromisoformat(raw_iso.replace("Z", "+00:00"))
+            diff_sec = (reset_dt - datetime.now(timezone.utc)).total_seconds()
+            if diff_sec <= ECHO_QUOTA_RESET_IMMINENT_THRESHOLD_SEC:
+                return ECHO_QUOTA_RESET_IMMINENT_LABEL
+            diff_min = int(diff_sec / 60)
+            if diff_min >= 1440:
+                days, hours = diff_min // 1440, (diff_min % 1440) // 60
+                return f"{reset_dt.strftime('%d/%m %H:%M')} ({days}j {hours}h)"
+            if diff_min >= 60:
+                hours, mins = diff_min // 60, diff_min % 60
+                return f"{reset_dt.strftime('%H:%M')} ({hours}h{mins:02d})"
+            return f"{reset_dt.strftime('%H:%M')} ({diff_min}')"
+        except Exception:
+            return raw_iso
+
+    def get_active_auth_providers(self, user_id: str = None) -> List[Dict]:
+        """Résout de manière synchrone le registre des fournisseurs d'accès depuis identity.db."""
+        uid = user_id or self.user_id
+        providers = []
+        refresh_token = self.get_auth_data("google_oauth2_refresh_token", uid)
+        if refresh_token:
+            providers.append({
+                "type": AUTH_METHOD_OAUTH2,
+                "refresh_token": refresh_token,
+                "user_id": uid,
+                "project_id": self.get_auth_data(AUTH_DATA_PROJECT_ID, uid),
+                "tier_id": self.get_auth_data(AUTH_DATA_USER_TIER, uid),
+                "g1_credits": self.get_auth_data("google_g1_credits", uid)
+            })
+        for method in [AUTH_METHOD_KEY_PRIMARY, AUTH_METHOD_KEY_SECONDARY]:
+            key_val = self.get_auth_data(method, uid)
+            if key_val:
+                providers.append({"type": method, "key": key_val})
+        return providers
+
+    async def get_ordered_auth_providers(self, user_id: str) -> List[Dict]:
+        """Résout le registre des fournisseurs d'accès aux modèles par priorité (OAuth2 > Clé Primaire > Clé Secondaire)."""
+        return self.get_active_auth_providers(user_id)
+
+    def get_ui_quota_snapshot(self, ca_model_id: str = "", auth_providers: Optional[List[Dict]] = None) -> dict:
+        """Fournit le snapshot consolidé et prêt à l'emploi des quotas et de l'identité pour le HUD."""
+        from echo_constants import ECHO_MODELS_REGISTRY
+
+        providers = auth_providers if auth_providers is not None else self.get_active_auth_providers()
+        allowed_ca_models = {
+            cfg.get("ca_model_id")
+            for cfg in ECHO_MODELS_REGISTRY.values()
+            if cfg.get("ca_model_id")
+        }
+        resolved_ca_model = ca_model_id if ca_model_id in allowed_ca_models else ""
+        if not resolved_ca_model:
+            raw_models = self.get_auth_data("google_quota_by_model")
+            if raw_models:
+                try:
+                    import json as _j
+                    models_dict = _j.loads(raw_models)
+                    if isinstance(models_dict, dict) and models_dict:
+                        resolved_ca_model = next((k for k in models_dict.keys() if k in allowed_ca_models), "")
+                except Exception:
+                    pass
+            if not resolved_ca_model:
+                resolved_ca_model = ECHO_MODELS_REGISTRY.get("MODEL_ATHENA", {}).get("ca_model_id", "gemini-4-carbon-high")
+
+        model_quota = self.get_model_quota(resolved_ca_model) if resolved_ca_model else {}
+        q_summary = self.get_quota_summary(resolved_ca_model)
+
+        q5_info = q_summary.get("5h", {})
+        qw_info = q_summary.get("weekly", {})
+        q5_disabled = bool(q5_info.get("quotaDisabled", q5_info.get("disabled", False)))
+        q5_frac = float(q5_info.get("remainingFraction", 1.0)) if q5_info else None
+        q5_reset = self.format_quota_reset_time(str(q5_info.get("resetTime", "N/A"))) if q5_info else "N/A"
+        qw_frac = float(qw_info.get("remainingFraction", 1.0)) if qw_info else None
+        qw_reset = self.format_quota_reset_time(str(qw_info.get("resetTime", "N/A"))) if qw_info else "N/A"
+
+        active_fracs = []
+        if q5_frac is not None and not q5_disabled:
+            active_fracs.append(q5_frac)
+        if qw_frac is not None:
+            active_fracs.append(qw_frac)
+
+        if active_fracs:
+            q_fraction = min(active_fracs)
+            q_reset = qw_reset if (qw_frac is not None and q_fraction == qw_frac) else q5_reset
+        else:
+            q_fraction = float(model_quota.get("remainingFraction", float(self.get_auth_data("google_quota_fraction") or 1.0)))
+            q_reset = self.format_quota_reset_time(str(model_quota.get("resetTime", self.get_auth_data("google_quota_reset") or "N/A")))
+
+        credits_raw = self.get_auth_data("google_credits_total") or self.get_auth_data("google_g1_credits")
+        return {
+            "auth_sources": [s["type"].replace("google_", "").replace("_", " ").upper() for s in providers] if providers else [],
+            "user_email": self.get_auth_data(AUTH_DATA_USER_EMAIL),
+            "user_tier": self.get_auth_data(AUTH_DATA_USER_TIER),
+            "project_id": self.get_auth_data(AUTH_DATA_PROJECT_ID),
+            "tenant_id": ECHO_GLOBAL_TENANT_PROJECT_ID,
+            "credits_val": str(credits_raw) if (credits_raw is not None and credits_raw != "") else "0",
+            "quota_fraction": q_fraction,
+            "quota_reset": q_reset,
+            "quota_type": self.get_auth_data("google_quota_type") or "CODE_ASSIST",
+            "quota_model": resolved_ca_model or "—",
+            "quota_rpd_rem": str(model_quota.get("requestsPerDayRemaining", "N/A")),
+            "quota_rpd_lim": str(model_quota.get("requestsPerDayLimit", "N/A")),
+            "quota_rpm_rem": str(model_quota.get("requestsPerMinuteRemaining", "N/A")),
+            "quota_rpm_lim": str(model_quota.get("requestsPerMinuteLimit", "N/A")),
+            "quota_5h_fraction": q5_frac,
+            "quota_5h_reset": q5_reset,
+            "quota_5h_disabled": q5_disabled,
+            "quota_weekly_fraction": qw_frac,
+            "quota_weekly_reset": qw_reset,
+        }
+
+    async def refresh_google_oauth_token(self, refresh_token: str, user_id: str = None) -> Optional[str]:
+        """Rafraîchit silencieusement le jeton d'accès Google OAuth2."""
+        client = await _get_global_client()
+        payload = {
+            "client_id":     ANTIGRAVITY_DESKTOP_CLIENT_ID,   # PKCE emis par le client Desktop
+            "client_secret": ANTIGRAVITY_DESKTOP_CLIENT_SECRET,
+            "refresh_token": refresh_token,
+            "grant_type":    "refresh_token"
+        }
+        try:
+            resp = await client.post(GOOGLE_OAUTH_TOKEN_URL, data=payload, timeout=20)
+            if resp.status_code == 200:
+                data = resp.json()
+                new_access_token = data.get("access_token")
+                if new_access_token:
+                    self.save_api_key("google_oauth2_access_token", new_access_token, user_id)
+                    self.save_api_key("google_oauth2_last_refresh", str(time.time()), user_id)
+                    return new_access_token
+        except Exception as e:
+            print(f"[EchoAuth] Erreur Refresh OAuth2: {type(e).__name__}: {str(e) or repr(e)}")
+        return None
+
+    def save_api_key(self, key_name: str, value: str, user_id: str = None):
+        db_path = self._get_db_path(user_id)
+        try:
+            with closing(open_db(db_path, timeout=10.0)) as conn:
+                conn.execute("INSERT OR REPLACE INTO auth_data (key, value, updated_at) VALUES (?, ?, ?)", (key_name, value, int(time.time())))
+                conn.commit()
+        except Exception as e:
+            print(f"[EchoAuth] Erreur sauvegarde clé {key_name}: {e}")
+
+    save_auth_data = save_api_key
+
+    def delete_api_key(self, key_name: str, user_id: str = None):
+        db_path = self._get_db_path(user_id)
+        try:
+            with closing(open_db(db_path, timeout=10.0)) as conn:
+                conn.execute("DELETE FROM auth_data WHERE key = ?", (key_name,))
+                conn.commit()
+        except EchoDbMissingError:
+            return
+        except Exception as e:
+            print(f"[EchoAuth] Erreur suppression clé {key_name}: {e}")
+
+    delete_auth_data = delete_api_key
+
+    def delete_auth_data_by_prefixes(self, prefixes: Tuple[str, ...], user_id: str = None) -> int:
+        """Supprime les entrées auth_data dont la clé commence par l'un des préfixes fournis."""
+        if not prefixes:
+            return 0
+        db_path = self._get_db_path(user_id)
+        clauses = " OR ".join("key LIKE ?" for _ in prefixes)
+        params = tuple(f"{p}%" for p in prefixes)
+        try:
+            with closing(open_db(db_path, timeout=10.0)) as conn:
+                cur = conn.execute(f"DELETE FROM auth_data WHERE {clauses}", params)
+                conn.commit()
+                return cur.rowcount if cur.rowcount is not None and cur.rowcount >= 0 else 0
+        except EchoDbMissingError:
+            return 0
+        except Exception as e:
+            print(f"[EchoAuth] Erreur suppression préfixes {prefixes}: {e}")
+            return 0
+
+
+class AuthService:
+
+    def __init__(self, user_id: str):
+
+        self.user_id = user_id
+
+        self.base_url = GOOGLE_API_BASE_URL
+
+        self.echo_auth = EchoAuth(user_id=user_id)
+
+
+
+    # ==========================================================================
+
+    # PKCE + AUTHORIZATION CODE FLOW (RFC 7636 + RFC 6749)
+
+    # Client Desktop Antigravity.
+
+    # Tunnel SSH éphémère via asyncssh (echo_ssh_tunnel.py).
+
+    # Callback TCP via echo_pkce_server.py sur localhost uniquement.
+
+    # Ports alloués dynamiquement — multi-user natif.
+
+    # ==========================================================================
+
+
+
+    def _pkce_generate(self) -> Tuple[str, str]:
+
+        """
+
+        Génère un couple (code_verifier, code_challenge) conforme RFC 7636.
+
+        code_verifier : 64 octets random en base64url (sans padding)
+
+        code_challenge : SHA-256(code_verifier) en base64url (sans padding)
+
+        """
+
+        raw          = os.urandom(64)
+
+        verifier     = base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+        digest       = hashlib.sha256(verifier.encode()).digest()
+
+        challenge    = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+
+        return verifier, challenge
+
+
+
+    def build_auth_url(self, code_challenge: str, state: str, redirect_uri: str) -> str:
+
+        """
+
+        Construit l'URL d'autorisation Google avec PKCE (RFC 7636 + RFC 8252).
+
+        redirect_uri = localhost:{callback_port}/callback — port alloué dynamiquement.
+
+        Google accepte n'importe quel port loopback (RFC 8252 §7.3).
+
+        """
+
+        params = {
+
+            "client_id":             ANTIGRAVITY_DESKTOP_CLIENT_ID,
+
+            "redirect_uri":          redirect_uri,
+
+            "response_type":         "code",
+
+            "scope":                 " ".join(ECHO_OAUTH_SCOPES),
+
+            "code_challenge":        code_challenge,
+
+            "code_challenge_method": "S256",
+
+            "access_type":           "offline",
+
+            "prompt":                "consent",
+
+            "state":                 state,
+
+        }
+
+        return f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
+
+
+
+    async def initiate_pkce_flow(self, request=None) -> Tuple[bool, str, str, int, int, str]:
+
+        """
+
+        Lance le flow PKCE :
+
+        1. Démarre le serveur SSH éphémère (echo_ssh_tunnel.py) — ports dynamiques
+
+        2. Génère code_verifier + code_challenge (RFC 7636 S256)
+
+        3. Construit l'URL OAuth2 avec redirect_uri dynamique
+
+        4. Persiste verifier + state en SQLite
+
+        Retourne (True, auth_url, server_ip, ssh_port, callback_port, temp_password).
+
+        """
+
+        import secrets as _secrets
+
+        from echo_ssh_tunnel import EchoSSHTunnelServer  # type: ignore
+
+
+
+        self._ssh_server = EchoSSHTunnelServer(
+
+            ssh_range_start      = ECHO_SSH_PORT_RANGE_START,
+
+            ssh_range_end        = ECHO_SSH_PORT_RANGE_END,
+
+            callback_range_start = ECHO_CALLBACK_PORT_RANGE_START,
+
+            callback_range_end   = ECHO_CALLBACK_PORT_RANGE_END,
+
+            tunnel_user          = ECHO_SSH_TUNNEL_USER,
+
+            timeout              = ECHO_SSH_TUNNEL_TIMEOUT,
+
+        )
+
+        server_ip, ssh_port, cb_port, temp_pwd = await self._ssh_server.start(request=request)
+
+        self._cb_port = cb_port
+
+        redirect_uri  = f"http://localhost:{cb_port}/callback"
+
+
+
+        code_verifier, code_challenge = self._pkce_generate()
+
+        state    = _secrets.token_urlsafe(16)
+
+        auth_url = self.build_auth_url(code_challenge, state, redirect_uri=redirect_uri)
+
+
+
+        # Persistance SQLite (survit à la durée du flow)
+
+        self.echo_auth.save_api_key("pkce_code_verifier", code_verifier)
+
+        self.echo_auth.save_api_key("pkce_state",         state)
+
+        self.echo_auth.save_api_key("pkce_status",        "pending")
+
+        self.echo_auth.save_api_key("pkce_redirect_uri",  redirect_uri)
+
+
+
+        return True, auth_url, server_ip, ssh_port, cb_port, temp_pwd
+
+
+
+    async def await_pkce_callback(self) -> Tuple[bool, str]:
+
+        """
+
+        Démarre le serveur de callback TCP (echo_pkce_server.py) sur localhost:{cb_port}.
+
+        Attend le code OAuth2 via asyncio.Queue (timeout ECHO_SSH_TUNNEL_TIMEOUT).
+
+        À la fin : arrête le serveur SSH et le serveur callback.
+
+        Retourne (succès: bool, message: str).
+
+        """
+
+        from echo_pkce_server import EchoPKCECallbackServer  # type: ignore
+
+
+
+        code_verifier  = self.echo_auth.get_auth_data("pkce_code_verifier")
+
+        expected_state = self.echo_auth.get_auth_data("pkce_state")
+
+        redirect_uri   = self.echo_auth.get_auth_data("pkce_redirect_uri") or ""
+
+        cb_port        = getattr(self, "_cb_port", 0)
+
+
+
+        if not code_verifier or not expected_state or not cb_port:
+
+            return False, "Session PKCE expirée ou absente. Relancez l'authentification."
+
+
+
+        pkce_srv = EchoPKCECallbackServer()
+
+        code_queue = await pkce_srv.start(
+
+            callback_port  = cb_port,
+
+            expected_state = expected_state,
+
+        )
+
+
+
+        auth_code: Optional[str] = None
+        error_msg: Optional[str] = None
+        final_ssh_msg: str = "Authentification OAuth2 : OK"
+        try:
+            try:
+                result = await asyncio.wait_for(
+                    code_queue.get(),
+                    timeout=ECHO_SSH_TUNNEL_TIMEOUT,
+                )
+                if result.startswith("ERROR:"):
+                    error_msg = result[6:]  # strip "ERROR:"
+                    final_ssh_msg = f"Authentification OAuth2 : NOK ({error_msg})"
+                else:
+                    auth_code = result
+            except asyncio.TimeoutError:
+                error_msg = f"Timeout — aucune réponse en {ECHO_SSH_TUNNEL_TIMEOUT}s."
+                final_ssh_msg = "Authentification OAuth2 : Délai dépassé"
+            finally:
+                # Le serveur de callback HTTP local n'est plus nécessaire dès réception du code ou timeout
+                await pkce_srv.stop()
+
+            if error_msg or not auth_code:
+                if hasattr(self, "_ssh_server"):
+                    await self._ssh_server.stop(message=final_ssh_msg)
+                return False, f"Erreur d'authentification : {error_msg or 'Code manquant'}. Relancez en envoyant un message."
+
+            # Échange du code PKCE contre les tokens Google OAuth2
+            success, exchange_msg = await self._exchange_pkce_code(auth_code, code_verifier, redirect_uri)
+            if success:
+                final_ssh_msg = "Authentification OAuth2 : OK"
+            else:
+                final_ssh_msg = f"Authentification OAuth2 : NOK ({exchange_msg})"
+
+            if hasattr(self, "_ssh_server"):
+                await self._ssh_server.stop(message=final_ssh_msg)
+
+            return success, exchange_msg
+        finally:
+            # Sécurité absolue : garantir la libération du port SSH et du serveur
+            if hasattr(self, "_ssh_server") and getattr(self._ssh_server, "is_active", False):
+                await self._ssh_server.stop(message=final_ssh_msg)
+
+            # Nettoyage SQLite
+            self.echo_auth.save_api_key("pkce_code_verifier", "")
+            self.echo_auth.save_api_key("pkce_state",         "")
+            self.echo_auth.save_api_key("pkce_status",        "" if error_msg else "done")
+            self.echo_auth.save_api_key("pkce_redirect_uri",  "")
+
+
+
+    async def _exchange_pkce_code(
+
+        self,
+
+        auth_code:     str,
+
+        code_verifier: str,
+
+        redirect_uri:  str,
+
+    ) -> Tuple[bool, str]:
+
+        """Échange le code OAuth2 contre access_token + refresh_token, puis provisioning."""
+
+        client = await _get_global_client()
+
+        try:
+
+            resp = await client.post(
+
+                GOOGLE_OAUTH_TOKEN_URL,
+
+                data={
+
+                    "client_id":     ANTIGRAVITY_DESKTOP_CLIENT_ID,
+
+                    "client_secret": ANTIGRAVITY_DESKTOP_CLIENT_SECRET,
+
+                    "code":          auth_code,
+
+                    "code_verifier": code_verifier,
+
+                    "redirect_uri":  redirect_uri,
+
+                    "grant_type":    "authorization_code",
+
+                },
+
+                timeout=20
+
+            )
+
+            resp.raise_for_status()
+
+            data = resp.json()
+
+        except Exception as e:
+
+            return False, f"Erreur lors de l'échange du code : {e}"
+
+
+
+        access_token  = data.get("access_token")
+
+        refresh_token = data.get("refresh_token")
+
+
+
+        if not access_token:
+
+            return False, f"Tokens absents dans la réponse Google : {data}"
+
+
+
+        # Persistance
+
+        if refresh_token:
+
+            self.echo_auth.save_api_key("google_oauth2_refresh_token", refresh_token)
+
+        self.echo_auth.save_api_key("google_oauth2_access_token",  access_token)
+
+        self.echo_auth.save_api_key("google_oauth2_last_refresh",   str(time.time()))
+
+
+
+        # Identité & Provisioning
+
+        email      = await self._fetch_google_user_info(access_token)
+
+        project_id, tier_id = await self._provision_google_account(access_token)
+
+
+
+        if email:      self.echo_auth.save_api_key(AUTH_DATA_USER_EMAIL, email)
+
+        if tier_id:    self.echo_auth.save_api_key(AUTH_DATA_USER_TIER,  tier_id)
+
+        if project_id:
+
+            self.echo_auth.save_api_key(AUTH_DATA_PROJECT_ID, project_id)
+
+        else:
+
+            return False, "Provisioning échoué : aucun Project ID obtenu depuis loadCodeAssist."
+
+
+
+        self.echo_auth.save_api_key("google_auth_priority", AUTH_METHOD_OAUTH2)
+
+
+
+        # Quota initial + modèles disponibles
+
+        await self.fetch_user_quota(access_token, project_id)
+
+        models = await self.fetch_available_models(access_token, project_id)
+
+        if models:
+
+            try:
+                models_str = std_json.dumps(models).decode('utf-8')
+            except AttributeError:
+                models_str = std_json.dumps(models)
+            self.echo_auth.save_api_key("google_available_models", models_str)
+
+
+
+        msg = f"✅ Authentification PKCE réussie pour {email or 'Compte inconnu'}."
+
+        if tier_id:    msg += f" Tier : {tier_id}."
+
+        if project_id: msg += f" Projet : {project_id}."
+
+        return True, msg
+
+
+
+    def get_auth_prompt(
+
+        self,
+
+        auth_url:  str = "",
+
+        server_ip: str = "",
+
+        ssh_port:  int = 0,
+
+        cb_port:   int = 0,
+
+        temp_pwd:  str = "",
+
+    ) -> str:
+
+        """
+
+        Message d'instruction unifié affiché dans le chat ECHO.
+
+        Quand auth_url est fourni : affiche commande SSH + mot de passe + lien Google.
+
+        Sinon : invite à envoyer un message pour générer le lien.
+
+        """
+
+        if auth_url and server_ip and ssh_port and cb_port and temp_pwd:
+
+            # -o StrictHostKeyChecking=no : obligatoire - la cle hote SSH est ephemere
+
+            # (regeneree a chaque session). Sans cette option le client SSH bloque sur
+
+            # "Are you sure you want to continue connecting (yes/no/[fingerprint])?"
+
+            # -o UserKnownHostsFile=/dev/null : evite les conflits dans ~/.ssh/known_hosts
+
+            ssh_cmd = (
+
+                f"ssh "
+
+                f"-o StrictHostKeyChecking=no "
+
+                f"-o UserKnownHostsFile=/dev/null "
+
+                f"-L {cb_port}:localhost:{cb_port} "
+
+                f"{ECHO_SSH_TUNNEL_USER}@{server_ip} -p {ssh_port}"
+
+            )
+
+            pkce_section = (
+
+                f"1. **Authentification Google (OAuth2 \u2014 Recommandé)**\n\n"
+
+                f"> 🖥️ **Étape 1** \u2014 Ouvrez un terminal et exécutez :\n"
+
+                f"> ```\n"
+
+                f"> {ssh_cmd}\n"
+
+                f"> ```\n"
+
+                f"> Mot de passe : `{temp_pwd}` \u00a0 ⏱️ *Valide {ECHO_SSH_TUNNEL_TIMEOUT}\u00a0secondes*\n\n"
+
+                f"> 🔗 **Étape 2** \u2014 [Autoriser ECHO avec Google]({auth_url})\n\n"
+
+                f"> *L'adresse IP et les ports sont détectés automatiquement depuis votre connexion.*\n"
+
+            )
+
+        else:
+
+            pkce_section = (
+
+                "1. **Authentification Google (OAuth2 \u2014 Recommandé)** \u2014 "
+
+                "Envoyez n'importe quel message pour générer le lien d'autorisation.\n"
+
+            )
+
+
+
+        return (
+
+            f"\U0001f510 **{ECHO_AUTH_TITLE_CONFIG}**\n\n"
+
+            "ℹ️ **Priorisation des accès :** L'authentification Google (OAuth2) est prioritaire lors des requêtes. "
+
+            "Vous pouvez enregistrer simultanément des clés d'API Google AI Studio : elles serviront de relais "
+
+            "de secours (failover) automatique en cas d'indisponibilité ou d'épuisement des quotas OAuth2.\n\n"
+
+            f"{pkce_section}\n"
+
+            f"2. **Clés d'API Google AI Studio** : [Créez vos clés ici]({GOOGLE_AI_STUDIO_WEB_URL}). "
+
+            "*(L'ordre de saisie définit la priorité Principale/Secondaire)*\n\n"
+
+            "**Action :** Collez directement une clé `AIza\u2026` ou `AQ.\u2026` dans ce chat \u2014 "
+
+            "ECHO la détecte, la valide et l'enregistre automatiquement.\n\n"
+
+            f"*{ECHO_AUTH_PENDING_MARKER}*"
+
+        )
+
+
+
+
+
+
+
+    # ==========================================================================
+
+    # IDENTITÉ & PROVISIONING
+
+    # ==========================================================================
+
+
+
+    async def _fetch_google_user_info(self, access_token: str) -> Optional[str]:
+
+        """Récupère l'adresse email du compte Google lié."""
+
+        client = await _get_global_client()
+
+        try:
+
+            resp = await client.get(
+
+                GOOGLE_USERINFO_URL,
+
+                headers={"Authorization": f"Bearer {access_token}"},
+
+                timeout=10
+
+            )
+
+            if resp.status_code == 200:
+
+                return resp.json().get("email")
+
+        except Exception as e:
+
+            print(f"[AuthService] Erreur UserInfo: {e}")
+
+        return None
+
+
+
+    async def fetch_user_quota(self, access_token: str, project_id: str):
+
+        """Récupère et persiste les quotas (5h et semaine) et crédits API Antigravity (Truth Source)."""
+        import json as _j
+        client = await _get_global_client()
+
+        headers = {
+
+            "Authorization": f"Bearer {access_token}",
+
+            "Content-Type":  "application/json",
+
+            "User-Agent":    ECHO_AGY_USER_AGENT
+
+        }
+
+
+
+        # 1. RAFRAÎCHISSEMENT DU TIER ET DES CRÉDITS (Mode HEALTH_CHECK)
+
+        health_payload = {
+
+            "cloudaicompanionProject": project_id,
+
+            "metadata": {**ECHO_CLIENT_METADATA, "duetProject": project_id},
+
+            "mode": "HEALTH_CHECK"
+
+        }
+
+        state_mgr = EchoStateManager(user_id=self.user_id)
+
+        
+
+        for attempt in range(len(AGY_BASE_URLS)):
+
+            idx, base_url = state_mgr.get_agy_endpoint()
+
+            try:
+
+                h_resp = await client.post(
+
+                    f"{base_url}:loadCodeAssist",
+
+                    json=health_payload, headers=headers, timeout=15
+
+                )
+
+
+
+                if h_resp.status_code in [429, 500, 503]:
+
+                    from datetime import datetime, timedelta, timezone
+
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+
+                    state_mgr.lock_agy_endpoint(idx, reset)
+
+                    continue
+
+
+
+                if h_resp.status_code == 200:
+
+                    data  = h_resp.json()
+
+                    t_obj = data.get("paidTier") or data.get("paid_tier") or data.get("currentTier") or data.get("current_tier")
+
+                    if isinstance(t_obj, dict):
+
+                        t_id   = t_obj.get("id")
+                        t_name = t_obj.get("name")
+                        if t_name and t_id and t_name.lower() != t_id.lower():
+                            tier_label = f"{t_name} ({t_id})"
+                        else:
+                            tier_label = t_id or t_name
+                        if tier_label:
+                            self.echo_auth.save_api_key(AUTH_DATA_USER_TIER, str(tier_label))
+
+                        avail = t_obj.get("availableCredits") or t_obj.get("available_credits") or []
+
+                        # Capture de tous les crédits disponibles (y compris passage à 0)
+
+                        total = sum(int(c.get("creditAmount", 0)) for c in avail if c.get("creditAmount"))
+
+                        self.echo_auth.save_api_key("google_credits_total", str(total))
+
+                        # Backward compat : clé spécifique GOOGLE_ONE_AI
+                        g1_found = False
+                        for c in avail:
+
+                            if c.get("creditType") == "GOOGLE_ONE_AI":
+
+                                self.echo_auth.save_api_key("google_g1_credits", str(c.get("creditAmount", "0")))
+                                g1_found = True
+
+                                break
+                        if not g1_found:
+                            self.echo_auth.save_api_key("google_g1_credits", "0")
+
+            except Exception as e:
+                print(f"[AuthService] Erreur HealthCheck ({base_url}): {type(e).__name__}: {str(e) or repr(e)}")
+                if isinstance(e, httpx.RequestError):
+                    from datetime import datetime, timedelta, timezone
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+                    state_mgr.lock_agy_endpoint(idx, reset)
+                    continue
+
+            
+
+            # 2. RAFRAÎCHISSEMENT DES QUOTAS 5H ET SEMAINE (retrieveUserQuotaSummary)
+
+            try:
+
+                q_resp = await client.post(
+
+                    f"{base_url}:retrieveUserQuotaSummary",
+
+                    json={"project": project_id}, headers=headers, timeout=15
+
+                )
+
+
+
+                if q_resp.status_code in [429, 500, 503]:
+
+                    from datetime import datetime, timedelta, timezone
+
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+
+                    state_mgr.lock_agy_endpoint(idx, reset)
+
+                    continue
+
+
+
+                if q_resp.status_code == 200:
+
+                    data     = q_resp.json()
+                    state_mgr.unlock_agy_endpoint(idx)
+
+                    # Structure Protobuf JSON de retrieveUserQuotaSummary :
+                    # { groups: [ { displayName, description, buckets: [ { bucketId, window, remainingFraction, resetTime, disabled, description } ] } ] }
+
+                    response = data.get("response", data)
+
+                    groups   = response.get("groups", [])
+
+                    if groups:
+
+                        summary_map = {}
+
+                        for g in groups:
+
+                            g_name = str(g.get("displayName") or "").lower()
+                            if "claude" in g_name or "gpt" in g_name:
+                                continue
+                            g_key = "gemini"
+
+                            buckets = g.get("buckets") or []
+
+                            g_buckets = {}
+
+                            if buckets:
+
+                                for b in buckets:
+
+                                    bid = str(b.get("bucketId") or "").lower()
+
+                                    win = str(b.get("window") or "").lower()
+
+                                    w_key = "5h" if (win == "5h" or "5h" in bid) else "weekly"
+
+                                    rem = b.get("remaining")
+
+                                    if isinstance(rem, dict) and rem.get("case") == "remainingFraction":
+
+                                        frac = float(rem.get("value", 0.0))
+
+                                    elif isinstance(rem, (int, float)):
+
+                                        frac = float(rem)
+
+                                    elif "remainingFraction" in b:
+
+                                        frac = float(b.get("remainingFraction", 0.0))
+
+                                    else:
+
+                                        frac = 0.0 if b.get("resetTime") else 1.0
+
+                                    g_buckets[w_key] = {
+
+                                        "remainingFraction": frac,
+
+                                        "resetTime":         str(b.get("resetTime", "N/A")),
+
+                                        "disabled":          bool(b.get("disabled", False)),
+
+                                        "description":       str(b.get("description", "N/A")),
+
+                                    }
+
+                            else:
+
+                                # Fallback si un groupe plat sans sous-buckets est renvoyé
+
+                                rem = g.get("remaining", {})
+
+                                if isinstance(rem, dict) and rem.get("case") == "remainingFraction":
+
+                                    frac = float(rem.get("value", 1.0))
+
+                                elif isinstance(rem, (int, float)):
+
+                                    frac = float(rem)
+
+                                else:
+
+                                    frac = float(g.get("remainingFraction", 1.0))
+
+                                g_buckets["weekly"] = {
+
+                                    "remainingFraction": frac,
+
+                                    "resetTime":         str(g.get("resetTime") or g.get("description") or "N/A"),
+
+                                    "disabled":          bool(g.get("disabled", False)),
+
+                                    "description":       str(g.get("description", "N/A")),
+
+                                }
+
+                            summary_map[g_key] = g_buckets
+
+
+
+                        if summary_map:
+
+                            self.echo_auth.save_api_key("google_quota_summary", _j.dumps(summary_map))
+
+                            gem_b = summary_map.get("gemini") or next(iter(summary_map.values()), {})
+
+                            active_b = [v for v in gem_b.values() if isinstance(v, dict) and not v.get("disabled")]
+
+                            if active_b:
+
+                                min_b = min(active_b, key=lambda x: float(x.get("remainingFraction", 1.0)))
+
+                                self.echo_auth.save_api_key("google_quota_fraction", str(min_b["remainingFraction"]))
+
+                                self.echo_auth.save_api_key("google_quota_reset",    str(min_b["resetTime"]))
+
+
+
+                        self.echo_auth.save_api_key("google_quota_type",       "CODE_ASSIST")
+
+                        self.echo_auth.save_api_key("google_quota_last_fetch", str(time.time()))
+
+                    break
+
+            except Exception as e:
+
+                print(f"[AuthService] Erreur récupération quota ({base_url}): {type(e).__name__}: {str(e) or repr(e)}")
+
+                if isinstance(e, httpx.RequestError):
+                    from datetime import datetime, timedelta, timezone
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+                    state_mgr.lock_agy_endpoint(idx, reset)
+                    continue
+
+
+
+    async def fetch_available_models(self, access_token: str, project_id: str) -> list:
+
+        """
+
+        Appel post-provisioning : récupère la liste dynamique des modèles disponibles
+
+        et capture le quotaInfo par modèle CA.
+
+        L'API retourne models comme dict {ca_model_id: {quotaInfo, displayName, ...}}.
+
+        """
+
+        import json as _j
+
+        client = await _get_global_client()
+
+        headers = {
+
+            "Authorization": f"Bearer {access_token}",
+
+            "Content-Type":  "application/json",
+
+            "User-Agent":    ECHO_AGY_USER_AGENT,
+
+        }
+
+        
+
+        state_mgr = EchoStateManager(user_id=self.user_id)
+
+        for attempt in range(len(AGY_BASE_URLS)):
+
+            idx, base_url = state_mgr.get_agy_endpoint()
+
+            try:
+
+                resp = await client.post(
+
+                    f"{base_url}:fetchAvailableModels",
+
+                    json={"project": project_id},
+
+                    headers=headers, timeout=15
+
+                )
+
+                
+
+                if resp.status_code in [429, 500, 503]:
+
+                    from datetime import datetime, timedelta, timezone
+
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+
+                    state_mgr.lock_agy_endpoint(idx, reset)
+
+                    continue
+
+
+
+                if resp.status_code == 200:
+
+                    raw = resp.json()
+                    state_mgr.unlock_agy_endpoint(idx)
+
+                    print(f"[AuthService] fetchAvailableModels raw response: {str(raw)[:300]}")
+
+
+
+                    from echo_constants import ECHO_MODELS_REGISTRY
+
+                    allowed_ca_models = {
+                        cfg.get("ca_model_id")
+                        for cfg in ECHO_MODELS_REGISTRY.values()
+                        if cfg.get("ca_model_id")
+                    }
+
+                    # L'API retourne {"models": {ca_model_id: {...}}} (dict, pas liste)
+
+                    models_raw = raw.get("models") or raw.get("availableModels") or {}
+
+                    if isinstance(models_raw, dict):
+
+                        model_ids = [mid for mid in models_raw.keys() if mid in allowed_ca_models]
+
+                        # Capture quotaInfo par modèle CA (en Protobuf v3, remainingFraction=0.0 est omis lorsque resetTime est présent)
+
+                        quota_map = {}
+                        for mid, mdata in models_raw.items():
+                            if mid in allowed_ca_models and isinstance(mdata, dict) and mdata.get("quotaInfo"):
+                                qi = mdata["quotaInfo"]
+                                if "remainingFraction" in qi:
+                                    q_frac = float(qi["remainingFraction"])
+                                elif qi.get("resetTime"):
+                                    q_frac = 0.0
+                                else:
+                                    q_frac = 1.0
+                                quota_map[mid] = {
+                                    "remainingFraction": q_frac,
+                                    "resetTime": str(qi.get("resetTime", "N/A"))
+                                }
+
+                    elif isinstance(models_raw, list):
+
+                        # Format liste (compaté future)
+
+                        model_ids = [
+                            mid
+                            for m in models_raw
+                            if isinstance(m, dict)
+                            for mid in [m.get("id") or m.get("name") or m.get("model")]
+                            if mid and mid in allowed_ca_models
+                        ]
+
+                        quota_map = {}
+
+                    else:
+
+                        model_ids = []
+
+                        quota_map = {}
+
+
+
+                    # Persistance du quota par modèle
+
+                    if quota_map:
+
+                        self.echo_auth.save_api_key("google_quota_by_model", _j.dumps(quota_map))
+
+                        # Fallback legacy uniquement si retrieveUserQuotaSummary n'a pas déjà renseigné google_quota_summary
+                        if not self.echo_auth.get_auth_data("google_quota_summary"):
+
+                            gemini_qis = [
+                                v for k, v in quota_map.items()
+                                if k.lower().startswith("gemini")
+                            ]
+                            first_qi = gemini_qis[0] if gemini_qis else next(iter(quota_map.values()))
+
+                            self.echo_auth.save_api_key("google_quota_fraction",   str(first_qi["remainingFraction"]))
+
+                            self.echo_auth.save_api_key("google_quota_reset",      first_qi["resetTime"])
+
+                            self.echo_auth.save_api_key("google_quota_type",       "CODE_ASSIST")
+
+                            self.echo_auth.save_api_key("google_quota_last_fetch", str(time.time()))
+
+
+
+                    return [mid for mid in model_ids if mid]
+
+            except Exception as e:
+
+                print(f"[AuthService] Erreur fetch_available_models ({base_url}): {type(e).__name__}: {str(e) or repr(e)}")
+
+                if isinstance(e, httpx.RequestError):
+                    from datetime import datetime, timedelta, timezone
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+                    state_mgr.lock_agy_endpoint(idx, reset)
+
+        return []
+
+
+
+    async def refresh_quota_if_needed(self, force: bool = False):
+
+        """Rafraîchit les métriques si OAuth2 est actif (Threshold: 60s ou échéance Imminent)."""
+
+        refresh_token = self.echo_auth.get_auth_data("google_oauth2_refresh_token")
+
+        if not refresh_token:
+
+            return
+
+
+
+        try:
+
+            last_fetch = float(self.echo_auth.get_auth_data("google_quota_last_fetch") or 0)
+
+        except Exception:
+
+            last_fetch = 0
+
+
+
+        snap = self.echo_auth.get_ui_quota_snapshot()
+        is_imminent = (
+            snap.get("quota_5h_reset") == ECHO_QUOTA_RESET_IMMINENT_LABEL
+            or snap.get("quota_weekly_reset") == ECHO_QUOTA_RESET_IMMINENT_LABEL
+        )
+        if not force and not is_imminent and (time.time() - last_fetch < ECHO_QUOTA_REFRESH_THROTTLE_SEC):
+
+            return
+
+
+
+        access_token = self.echo_auth.get_auth_data("google_oauth2_access_token")
+
+        try:
+
+            last_refresh = float(self.echo_auth.get_auth_data("google_oauth2_last_refresh") or 0)
+
+        except Exception:
+
+            last_refresh = 0
+
+
+
+        if not access_token or (time.time() - last_refresh) > GOOGLE_OAUTH_TOKEN_LIFETIME:
+
+            access_token = await self.echo_auth.refresh_google_oauth_token(refresh_token, self.user_id)
+
+
+
+        project_id = self.echo_auth.get_auth_data(AUTH_DATA_PROJECT_ID)
+
+
+
+        if access_token and project_id:
+
+            await self.fetch_user_quota(access_token, project_id)
+
+            await self.fetch_available_models(access_token, project_id)
+
+
+
+    async def _provision_google_account(self, access_token: str) -> Tuple[Optional[str], Optional[str]]:
+
+        """Séquence de Provisioning Protocolée : Découverte du Tier et Capture de l'ID Projet."""
+
+        client = await _get_global_client()
+
+        headers = {
+
+            "Authorization": f"Bearer {access_token}",
+
+            "Content-Type":  "application/json",
+
+            "User-Agent":    ECHO_AGY_USER_AGENT
+
+        }
+
+
+
+        project_id = None
+
+        tier_id    = None
+
+
+
+        def _extract_project_id(data: Dict) -> Optional[str]:
+
+            """Gère le polymorphisme Google (String vs Dictionnaire {'id': '...'}) pour le projectId."""
+
+            raw = data.get("cloudaicompanionProject")
+
+            if isinstance(raw, dict): return raw.get("id")
+
+            return raw  # Cas String ou None
+
+
+
+        async def _extract_tier_info(data: Dict) -> Tuple[Optional[str], int]:
+
+            """Extrait l'ID/Nom du Tier et le solde des crédits AI."""
+
+            t_obj = data.get("paidTier") or data.get("paid_tier") or data.get("currentTier") or data.get("current_tier")
+
+            tier_id = None
+
+            credits = 0
+
+            if isinstance(t_obj, dict):
+
+                t_id   = t_obj.get("id")
+                t_name = t_obj.get("name")
+                if t_name and t_id and t_name.lower() != t_id.lower():
+                    tier_id = f"{t_name} ({t_id})"
+                else:
+                    tier_id = t_id or t_name
+
+                avail   = t_obj.get("availableCredits") or t_obj.get("available_credits") or []
+
+                for c in avail:
+
+                    if c.get("creditType") == "GOOGLE_ONE_AI":
+
+                        try: credits += int(c.get("creditAmount", 0))
+
+                        except: pass
+
+            return tier_id, credits
+
+
+
+        state_mgr = EchoStateManager(user_id=self.user_id)
+
+        
+
+        for attempt in range(len(AGY_BASE_URLS)):
+
+            idx, base_url = state_mgr.get_agy_endpoint()
+
+            try:
+
+                # 1. DÉCOUVERTE (loadCodeAssist)
+
+                load_payload = {"metadata": {**ECHO_CLIENT_METADATA, "duetProject": None}}
+
+                resp = await client.post(
+
+                    f"{base_url}:loadCodeAssist",
+
+                    json=load_payload, headers=headers, timeout=20
+
+                )
+
+
+
+                if resp.status_code in [429, 500, 503]:
+
+                    from datetime import datetime, timedelta, timezone
+
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+
+                    state_mgr.lock_agy_endpoint(idx, reset)
+
+                    continue
+
+
+
+                if resp.status_code == 200:
+
+                    data       = resp.json()
+                    state_mgr.unlock_agy_endpoint(idx)
+
+                    project_id = _extract_project_id(data)
+
+                    tier_id, g1_credits = await _extract_tier_info(data)
+
+
+
+                    if g1_credits > 0:
+
+                        self.echo_auth.save_api_key("google_g1_credits", str(g1_credits))
+
+
+
+                    if project_id:
+
+                        return project_id, tier_id or "standard-tier"
+
+
+
+                    # 2. SÉLECTION DU TIER PAR DÉFAUT
+
+                    allowed_tiers = data.get("allowedTiers") or data.get("allowed_tiers") or []
+
+                    selected_tier = None
+
+                    for t in allowed_tiers:
+
+                        if t.get("isDefault") or t.get("is_default"):
+
+                            selected_tier = t.get("id")
+
+                            break
+
+
+
+                    tier_id = selected_tier or "free-tier"
+
+
+
+                    # 3. ONBOARDING CHIRURGICAL
+
+                    onboard_payload = {
+
+                        "tierId":   tier_id,
+
+                        "metadata": {**ECHO_CLIENT_METADATA, "duetProject": project_id}
+
+                    }
+
+                    if tier_id != "free-tier":
+
+                        onboard_payload["cloudaicompanionProject"] = None
+
+
+
+                    onboard_resp = await client.post(
+
+                        f"{base_url}:onboardUser",
+
+                        json=onboard_payload, headers=headers, timeout=20
+
+                    )
+
+
+
+                    if onboard_resp.status_code == 200:
+
+                        lro = onboard_resp.json()
+
+                        if lro.get("done") and lro.get("response"):
+
+                            project_id = _extract_project_id(lro["response"])
+
+                            return project_id, tier_id
+
+
+
+                        # 4. RÉSOLUTION DE L'OPÉRATION (Long Running Operation)
+
+                        op_name = lro.get("name")
+
+                        if op_name:
+
+                            for _ in range(12):
+
+                                await asyncio.sleep(5)
+
+                                op_resp = await client.get(
+
+                                    f"{base_url}/{op_name}",
+
+                                    headers=headers, timeout=10
+
+                                )
+
+                                if op_resp.status_code == 200:
+
+                                    op_data = op_resp.json()
+
+                                    if op_data.get("done"):
+
+                                        res_obj = op_data.get("response", {})
+
+                                        project_id = _extract_project_id(res_obj)
+
+                                        final_tier, final_credits = await _extract_tier_info(res_obj)
+
+                                        if final_credits > 0:
+
+                                            self.echo_auth.save_api_key("google_g1_credits", str(final_credits))
+
+                                        return project_id, final_tier or tier_id
+
+                    return project_id, tier_id
+
+            except Exception as e:
+
+                print(f"[AuthService] Erreur Provisioning Critique ({base_url}): {type(e).__name__}: {str(e) or repr(e)}")
+
+                if isinstance(e, httpx.RequestError):
+                    from datetime import datetime, timedelta, timezone
+                    reset = (datetime.now(timezone.utc) + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)).isoformat()
+                    state_mgr.lock_agy_endpoint(idx, reset)
+
+
+
+        return project_id, tier_id
+
+
+
+    # ==========================================================================
+
+    # VALIDATION & SAUVEGARDE (Clés API AI Studio — Fallback)
+
+    # ==========================================================================
+
+
+
+    async def validate_and_save_api_key(self, raw_input: str) -> Tuple[bool, str]:
+
+        """
+
+        Traitement des clés API AI Studio (fallback OAuth2).
+
+        Le Device Flow est déclenché séparément via la commande /auth start dans le pipe.
+
+        """
+
+        tokens     = raw_input.split()
+
+        found_keys = []
+
+
+
+        for t in tokens:
+
+            if re.match(GOOGLE_API_KEY_PATTERN, t):
+
+                if len(found_keys) < 2:
+
+                    found_keys.append(t)
+
+
+
+        if not found_keys:
+
+            return False, "Aucune clé API valide détectée (format attendu : `AIza…` ou `AQ.…`). Pour l'authentification OAuth2, tapez `/auth start`."
+
+
+
+        # Validation des clés API
+
+        success_msgs = []
+
+        error_msgs   = []
+
+        valid_keys   = []
+
+
+
+        async with httpx.AsyncClient() as client:
+
+            for i, k in enumerate(found_keys):
+
+                test_url = f"{GOOGLE_API_BASE_URL}/models?key={k}"
+
+                try:
+
+                    resp = await client.get(
+
+                        test_url,
+
+                        headers={"User-Agent": ECHO_USER_AGENT},
+
+                        timeout=10
+
+                    )
+
+                    if resp.status_code == 200:
+
+                        label = "Primaire" if len(valid_keys) == 0 else "Secondaire"
+
+                        valid_keys.append(k)
+
+                        success_msgs.append(f"Clé d'API {label} validée.")
+
+                    else:
+
+                        error_msgs.append(f"Clé {i+1} rejetée (HTTP {resp.status_code}).")
+
+                except Exception as e:
+
+                    error_msgs.append(f"Erreur réseau Clé {i+1} ({str(e)}).")
+
+
+
+        if valid_keys:
+
+            self.echo_auth.save_api_key(AUTH_METHOD_KEY_PRIMARY, valid_keys[0])
+
+            priority = [AUTH_METHOD_KEY_PRIMARY]
+
+            
+
+            if len(valid_keys) > 1:
+
+                self.echo_auth.save_api_key(AUTH_METHOD_KEY_SECONDARY, valid_keys[1])
+
+                priority.append(AUTH_METHOD_KEY_SECONDARY)
+
+            else:
+
+                self.echo_auth.delete_api_key(AUTH_METHOD_KEY_SECONDARY)
+
+                
+
+            self.echo_auth.save_api_key("google_auth_priority", ",".join(priority))
+
+
+
+            msg_final = "✅ Clé(s) d'API activée(s). | " + " | ".join(success_msgs)
+
+            if error_msgs:
+
+                msg_final += " | ⚠️ Avertissements : " + " | ".join(error_msgs)
+
+                
+
+            return True, msg_final
+
+
+
+        return False, "Échec de la validation. " + " | ".join(error_msgs)
+

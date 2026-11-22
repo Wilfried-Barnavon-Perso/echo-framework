@@ -1,0 +1,230 @@
+# Copyright (c) 2025-2026 Wilfried BARNAVON
+# SPDX-License-Identifier: Apache-2.0
+"""
+title: ECHO Identity Vault Tool
+author: ECHO
+version: 6.10.0.1
+description: Outil permettant à l'Agent de gérer le Identity Vault (ajout/suppression de serveurs distants ou N8N).
+"""
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 6.10.0.1: Mutualisation du blocage headless/automatisation via get_headless_block_reason dans manage_identity.
+# 5.233.0.1: Généralisation de l'encapsulation @echo_tool sur les 3 outils et typage du schéma de sortie IdentityServicesCatalogOutput.
+# 5.231.21.2: Délégation CRUD chiffré à EchoStateManager, masquage des secrets bruts dans list_identities, schéma n8n_workflows et échappement HTML.
+# 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
+# 5.226.18.0: Alignement sur le versioning global ECHO.
+import sys
+import html
+import json
+from typing import Any, Dict, List, Literal, Union
+from pydantic import BaseModel
+
+sys.path.append("/app/backend/echo_libs")
+from echo_core import echo_tool  # noqa: E402
+from echo_state_manager import EchoStateManager  # noqa: E402
+from echo_ui import EchoUI  # noqa: E402
+from echo_events import EchoEvents  # noqa: E402
+from echo_constants import get_headless_block_reason  # noqa: E402
+
+
+class IdentityServicesCatalogOutput(BaseModel):
+    """Schéma de sortie structuré du catalogue des services de l'Identity Vault."""
+    categories_services: Dict[str, str]
+    services_disponibles_via_mcp_broker: List[Dict[str, Any]]
+    services_avec_identites_configurees: List[str]
+
+
+class Tools:
+    class Valves(BaseModel):
+        pass
+
+    def __init__(self):
+        self.valves = self.Valves()
+
+    def _init_vault(self, user_id: str) -> EchoStateManager:
+        return EchoStateManager(user_id=user_id)
+
+    @echo_tool
+    async def list_identities_services(
+        self,
+        category_filter: Literal["all", "mcp_native", "mcp_resident", "mcp_ephemeral", "mcp_remote", "orchestration", "uncategorized"] = "all",
+        __user__: dict = None
+    ) -> Union[IdentityServicesCatalogOutput, str]:
+        """Liste le catalogue des services disponibles et configurés dans l'Identity Vault."""
+        if not __user__:
+            return "Erreur: Auth requise."
+
+        import httpx
+        schemas = {}
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get("http://echo-mcp-broker:8000/schemas", timeout=2.0)
+                if resp.status_code == 200:
+                    schemas = resp.json()
+        except Exception:
+            pass
+
+        schemas.setdefault(
+            "n8n_workflows",
+            {"category": "orchestration", "name": "N8N Orchestration"}
+        )
+
+        available_services_list = []
+        for svc_id, data in schemas.items():
+            cat = data.get("category", "uncategorized")
+            if category_filter == "all" or cat == category_filter:
+                svc_data = {
+                    "service": svc_id,
+                    "category": cat,
+                    "name": data.get("name", svc_id)
+                }
+                if "user_required_instructions" in data:
+                    svc_data["user_required_instructions"] = data["user_required_instructions"]
+                available_services_list.append(svc_data)
+
+        state = self._init_vault(__user__["id"])
+        services = state.list_vault_services()
+
+        configured_services = []
+        for svc in services:
+            if category_filter == "all" or schemas.get(svc, {}).get("category", "uncategorized") == category_filter:
+                configured_services.append(svc)
+
+        categories_dict = {
+            "mcp_native": "Services natifs vers des serveurs MCP distants",
+            "mcp_resident": "Services résidents de serveurs MCP préinstallés",
+            "mcp_ephemeral": "Services de serveurs MCP installés à la volée (npx/uvx)",
+            "mcp_remote": "Services MCP via connexions distantes (HTTP/SSE)",
+            "orchestration": "Services et leurs identifiants orchestrés par N8N",
+            "uncategorized": "Autres services et leurs identifiants, non catégorisés"
+        }
+
+        return IdentityServicesCatalogOutput(
+            categories_services=categories_dict,
+            services_disponibles_via_mcp_broker=available_services_list,
+            services_avec_identites_configurees=configured_services
+        )
+
+    @echo_tool
+    async def list_identities(self, service: str, __user__: dict = None) -> str:
+        """Liste les comptes et identifiants configurés pour un service spécifique de l'Identity Vault."""
+        if not __user__:
+            return "Erreur: Utilisateur inconnu."
+        if not service:
+            return "Erreur: L'argument 'service' est strictement requis. Invoquez 'list_identities_services' en cas de doute."
+        state = self._init_vault(__user__["id"])
+        rows = state.list_vault_credentials(service)
+
+        result = []
+        for account, creds in rows:
+            desc = "Identifiants configurés (masqués)"
+            try:
+                data = json.loads(creds)
+                if isinstance(data, dict) and data.get("description"):
+                    desc = str(data["description"])
+            except Exception:
+                pass
+            result.append(f"[Compte: {account} : {desc}]")
+
+        if not result:
+            return f"Aucun compte trouvé pour '{service}'."
+        return f"[{service}] " + ", ".join(result)
+
+    @echo_tool
+    async def manage_identity(
+        self,
+        action: str,
+        service: str,
+        account_id: str,
+        credentials_json: str = "",
+        __user__: dict = None,
+        __metadata__: dict = None,
+        __event_emitter__: Any = None,
+        __event_call__: Any = None
+    ) -> str:
+        """Ajoute (`add`), met à jour (`update`) ou supprime (`delete`) une identité dans l'Identity Vault après accord utilisateur."""
+        if not __user__:
+            return "Erreur: Contexte OWUI manquant."
+        block_reason = get_headless_block_reason(__metadata__)
+        if block_reason:
+            return f"Erreur : {block_reason}"
+
+        events = EchoEvents(__event_emitter__, __event_call__)
+
+        safe_acc = html.escape(str(account_id))
+        safe_svc = html.escape(str(service))
+
+        if action in ["add", "update"]:
+            try:
+                payload_dict = json.loads(credentials_json)
+                items = [
+                    f"<li><i>{html.escape(str(k))}</i> : {html.escape(str(v))}</li>"
+                    for k, v in payload_dict.items()
+                ]
+                payload_html = "<ul>" + "".join(items) + "</ul>"
+            except Exception:
+                payload_html = f"<code>{html.escape(str(credentials_json))}</code>"
+
+            if action == "add":
+                action_fr = "ajouter"
+            else:
+                action_fr = "mettre à jour"
+
+            if service == "mcp":
+                action_desc = f"L'Agent souhaite <b>{action_fr}</b> le Serveur MCP distant nommé <b>{safe_acc}</b> :"
+            else:
+                action_desc = f"L'Agent souhaite <b>{action_fr}</b> les identifiants d'API pour <b>{safe_acc}</b> ({safe_svc}) :"
+
+            js_msg = (
+                f"🛡️ <b>Demande d'autorisation système</b><br><br>"
+                f"{action_desc}<br><br>"
+                f"<b>Détails de la configuration :</b><br>"
+                f"{payload_html}<br>"
+                f"Autoriser cette modification sur votre environnement ?"
+            )
+            js_msg_escaped = json.dumps(js_msg)
+
+            confirm_js = f"""
+            {EchoUI.get_custom_modals_js()}
+            return await new Promise((resolve) => {{
+                window.echoCustomConfirm({js_msg_escaped}, (agreed) => resolve(agreed));
+            }});
+            """
+            user_consent = await events.call_execute(confirm_js)
+
+            if not user_consent:
+                return "Opération annulée : L'utilisateur a refusé la modification."
+
+            state = self._init_vault(__user__["id"])
+            state.save_vault_credential(service, account_id, credentials_json)
+            return f"Succès: Source '{account_id}' ({service}) configurée avec succès."
+
+        elif action == "delete":
+            if service == "mcp":
+                action_desc = f"L'Agent demande la <b>suppression définitive</b> du Serveur MCP distant nommé <b>{safe_acc}</b>."
+            else:
+                action_desc = f"L'Agent demande la <b>suppression définitive</b> des identifiants pour <b>{safe_acc}</b> ({safe_svc})."
+
+            js_msg = (
+                f"⚠️ <b>Action Destructive Requise</b><br><br>"
+                f"{action_desc}<br><br>"
+                f"Cette action est irréversible. Confirmer la suppression ?"
+            )
+            js_msg_escaped = json.dumps(js_msg)
+
+            confirm_js = f"""
+            {EchoUI.get_custom_modals_js()}
+            return await new Promise((resolve) => {{
+                window.echoCustomConfirm({js_msg_escaped}, (agreed) => resolve(agreed));
+            }});
+            """
+            user_consent = await events.call_execute(confirm_js)
+
+            if not user_consent:
+                return "Opération annulée : L'utilisateur a refusé la suppression."
+
+            state = self._init_vault(__user__["id"])
+            state.delete_vault_credential(service, account_id)
+            return f"Succès: Source '{account_id}' supprimée."
+
+        return "Erreur: action invalide (utiliser add, update, ou delete)."

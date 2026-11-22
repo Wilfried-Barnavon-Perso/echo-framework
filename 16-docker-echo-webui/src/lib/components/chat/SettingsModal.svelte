@@ -1,0 +1,566 @@
+<script lang="ts">
+	import english from '$lib/i18n/locales/en-US/translation.json';
+	import {
+		buildSettingsSearchIndex,
+		searchSettingsTabs,
+		type SettingsTab
+	} from '$lib/utils/settings-search';
+	import { browser } from '$app/environment';
+	import { getContext, tick } from 'svelte';
+	import type { Writable } from 'svelte/store';
+	import { toast } from 'svelte-sonner';
+	import { config, mobile, models, settings, user } from '$lib/stores';
+	import type { SettingsModalRequest } from '$lib/stores';
+	import { getUserSettings, updateUserSettings } from '$lib/apis/users';
+	import { getModels as _getModels } from '$lib/apis';
+
+	import Modal from '../common/Modal.svelte';
+	import Account from './Settings/Account.svelte';
+	import About from './Settings/About.svelte';
+	import General from './Settings/General.svelte';
+	import Interface from './Settings/Interface.svelte';
+	import Notifications from './Settings/Notifications.svelte';
+	import Shortcuts from './Settings/Shortcuts.svelte';
+	import Audio from './Settings/Audio.svelte';
+	import DataControls from './Settings/DataControls.svelte';
+	import ArchivedChats from './Settings/ArchivedChats.svelte';
+	import Search from '../icons/Search.svelte';
+	import DatabaseSettings from '../icons/DatabaseSettings.svelte';
+	import SettingsAlt from '../icons/SettingsAlt.svelte';
+	import UserCircle from '../icons/UserCircle.svelte';
+	import SoundHigh from '../icons/SoundHigh.svelte';
+	import InfoCircle from '../icons/InfoCircle.svelte';
+	import AppNotification from '../icons/AppNotification.svelte';
+	import AdjustmentsHorizontal from '../icons/AdjustmentsHorizontal.svelte';
+	import ArchiveBox from '../icons/ArchiveBox.svelte';
+	import ChevronLeft from '../icons/ChevronLeft.svelte';
+	import Keyboard from '../icons/Keyboard.svelte';
+
+	const i18n: Writable<any> = getContext('i18n');
+
+	export let show: boolean | string | SettingsModalRequest = false;
+	let modalShow = false;
+	let lastShow: boolean | string | SettingsModalRequest = false;
+	let tabState: Record<string, unknown> | null = null;
+	let personalUiSettings: Record<string, any> = {};
+
+	const mergeUiSettings = (defaults: Record<string, any>, userSettings: Record<string, any>) => {
+		const merged = { ...defaults };
+		for (const [key, value] of Object.entries(userSettings)) {
+			const defaultValue = merged[key];
+			merged[key] =
+				defaultValue &&
+				value &&
+				typeof defaultValue === 'object' &&
+				typeof value === 'object' &&
+				!Array.isArray(defaultValue) &&
+				!Array.isArray(value)
+					? mergeUiSettings(defaultValue, value)
+					: value;
+		}
+		return merged;
+	};
+
+	const loadPersonalUiSettings = async () => {
+		const userSettings = await getUserSettings(localStorage.token, true).catch((error) => {
+			console.error(error);
+			return null;
+		});
+		personalUiSettings =
+			userSettings?.ui && typeof userSettings.ui === 'object' && !Array.isArray(userSettings.ui)
+				? userSettings.ui
+				: {};
+	};
+
+	$: if (show !== lastShow) {
+		lastShow = show;
+		search = '';
+		showSearch = false;
+		if (show && typeof show === 'object') {
+			selectedTab = show.tab.replace(/^admin:/, '');
+			tabState = show.state ?? null;
+			show = true;
+			lastShow = true;
+			modalShow = true;
+			loadPersonalUiSettings();
+		} else if (typeof show === 'string') {
+			selectedTab = show.replace(/^admin:/, '');
+			show = true;
+			lastShow = true;
+			modalShow = true;
+			loadPersonalUiSettings();
+		} else {
+			modalShow = show;
+			if (show) {
+				loadPersonalUiSettings();
+			}
+			if (!show) {
+				selectedTab = 'general';
+				tabState = null;
+			}
+		}
+	}
+
+	$: if (!modalShow && show !== false) {
+		show = false;
+		search = '';
+		showSearch = false;
+		lastShow = false;
+		selectedTab = 'general';
+		tabState = null;
+	}
+
+	let personalSettingGroups: Record<string, string> = {};
+
+	$: personalSettingGroups = {
+		general: $i18n.t('Basics'),
+		interface: $i18n.t('Basics'),
+		notifications: $i18n.t('Basics'),
+		shortcuts: $i18n.t('Basics'),
+		audio: $i18n.t('Preferences'),
+		data_controls: $i18n.t('Data'),
+		archived_chats: $i18n.t('Data'),
+		account: $i18n.t('Profile'),
+		about: $i18n.t('Profile')
+	};
+	// $i18n.t('Experience');
+	const settingGroupTitle = (tabId: string) =>
+		personalSettingGroups[tabId] ?? $i18n.t('General');
+	const shouldShowSettingGroup = (tabIds: string[], index: number) =>
+		index === 0 || settingGroupTitle(tabIds[index]) !== settingGroupTitle(tabIds[index - 1]);
+	const settingGroupHeadingClass = (first: boolean) =>
+		`hidden md:block shrink-0 text-[0.625rem] text-gray-600 dark:text-gray-500 px-2 ${
+			first ? 'mt-0.5' : 'mt-2'
+		} mb-0.5`;
+
+	let allSettings: SettingsTab[];
+	$: allSettings = [
+		{
+			id: 'general',
+			titleKey: 'settings.personal.general.title',
+			title: $i18n.t('settings.personal.general.title'),
+			searchPrefixes: ['settings.personal.general.']
+		},
+		{
+			id: 'interface',
+			titleKey: 'settings.personal.interface.title',
+			title: $i18n.t('settings.personal.interface.title'),
+			searchPrefixes: ['settings.personal.interface.']
+		},
+		{
+			id: 'notifications',
+			titleKey: 'settings.personal.notifications.title',
+			title: $i18n.t('settings.personal.notifications.title'),
+			searchPrefixes: ['settings.personal.notifications.']
+		},
+		{
+			id: 'shortcuts',
+			titleKey: 'settings.personal.shortcuts.title',
+			title: $i18n.t('settings.personal.shortcuts.title'),
+			searchPrefixes: ['settings.personal.shortcuts.']
+		},
+		{
+			id: 'audio',
+			titleKey: 'settings.personal.audio.title',
+			title: $i18n.t('settings.personal.audio.title'),
+			searchPrefixes: ['settings.personal.audio.']
+		},
+		{
+			id: 'data_controls',
+			titleKey: 'settings.personal.dataControls.title',
+			title: $i18n.t('settings.personal.dataControls.title'),
+			searchPrefixes: ['settings.personal.dataControls.']
+		},
+		{
+			id: 'archived_chats',
+			titleKey: 'settings.personal.archivedChats.title',
+			title: $i18n.t('settings.personal.archivedChats.title'),
+			searchPrefixes: ['settings.personal.archivedChats.']
+		},
+		{
+			id: 'account',
+			titleKey: 'settings.personal.account.title',
+			title: $i18n.t('settings.personal.account.title'),
+			searchPrefixes: ['settings.personal.account.']
+		},
+		{
+			id: 'about',
+			titleKey: 'settings.personal.about.title',
+			title: $i18n.t('settings.personal.about.title'),
+			searchPrefixes: ['settings.personal.about.']
+		}
+	];
+	let availableSettings: SettingsTab[] = [];
+	let filteredSettings: string[] = [];
+
+	let search = '';
+	let showSearch = false;
+	let searchInput: HTMLInputElement;
+	let searchButton: HTMLButtonElement;
+	let englishRequested = false;
+	$: if (modalShow && !englishRequested) {
+		englishRequested = true;
+		$i18n.loadLanguages('en-US').catch((error: unknown) => {
+			console.error(error);
+		});
+	}
+
+	const getAvailableSettings = (personalTabs: SettingsTab[]) => {
+		return personalTabs.filter((tab) => {
+			if (tab.id === 'interface') {
+				return $user?.role === 'admin' || ($user?.permissions?.settings?.interface ?? true);
+			}
+
+			if (tab.id === 'audio') {
+				return (
+					$user?.role === 'admin' ||
+					($user?.permissions?.chat?.stt ?? true) ||
+					($user?.permissions?.chat?.tts ?? true) ||
+					($user?.permissions?.chat?.call ?? true)
+				);
+			}
+
+			return true;
+		});
+	};
+
+	$: searchIndex = buildSettingsSearchIndex(availableSettings, english, $i18n, {
+		user: $user,
+		config: $config
+	});
+	$: filteredSettings = searchSettingsTabs(searchIndex, search);
+
+	const selectTab = (id: string) => {
+		if (!availableSettings.some((tab) => tab.id === id)) return;
+		selectedTab = id;
+	};
+
+	const toggleSearch = async () => {
+		showSearch = !(showSearch || search);
+		if (!showSearch) search = '';
+		await tick();
+		(showSearch ? searchInput : searchButton)?.focus();
+	};
+
+	const searchKeydown = (event: KeyboardEvent) => {
+		if (event.key === 'Escape' && (search || $mobile)) {
+			event.preventDefault();
+			event.stopPropagation();
+			if (search) search = '';
+			else toggleSearch();
+		} else if (event.key === 'Enter') {
+			event.preventDefault();
+			if (filteredSettings.length) selectTab(filteredSettings[0]);
+		}
+	};
+
+	const saveSettings = async (updated: Record<string, any>) => {
+		const saved = await updateUserSettings(localStorage.token, {
+			ui: updated
+		}).catch((error) => {
+			toast.error(`${error}`);
+			throw error;
+		});
+		personalUiSettings =
+			saved?.ui && typeof saved.ui === 'object' && !Array.isArray(saved.ui) ? saved.ui : {};
+		await settings.set(
+			mergeUiSettings($config?.ui?.default_interface_settings ?? {}, personalUiSettings)
+		);
+		await models.set(await getModels());
+	};
+
+	const getModels = async () => {
+		return await _getModels(
+			localStorage.token,
+			$config?.features?.enable_direct_connections ? ($settings?.directConnections ?? null) : null
+		);
+	};
+
+	const tabButtonClass = (active: boolean) =>
+		`flex items-center gap-1.5 h-7 px-2 md:w-full shrink-0 rounded-lg text-xs text-left transition-colors duration-75 ${
+			active
+				? 'font-medium text-gray-900 dark:text-white bg-gray-50 dark:bg-white/[0.04]'
+				: 'text-gray-600 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+		}`;
+
+	let selectedTab = 'general';
+	const scrollToSelectedTab = async () => {
+		if (!browser || !modalShow || !selectedTab) {
+			return;
+		}
+
+		await tick();
+		const tabElement = document.querySelector<HTMLElement>(
+			'#settings-tabs-container [role="tab"][aria-selected="true"]'
+		);
+		tabElement?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'start' });
+	};
+
+	$: if (
+		$config &&
+		$user &&
+		availableSettings.length &&
+		!availableSettings.some((tab) => tab.id === selectedTab)
+	) {
+		selectedTab = 'general';
+	}
+
+	$: if (modalShow && selectedTab) {
+		scrollToSelectedTab();
+	}
+
+	$: if ($config && $user) {
+		availableSettings = getAvailableSettings(allSettings);
+	}
+</script>
+
+<Modal
+	size="full"
+	containerClassName="p-4 sm:p-6 lg:p-8"
+	className="!w-[calc(100vw-2rem)] sm:!w-[calc(100vw-3rem)] lg:!w-[calc(100vw-4rem)] h-[calc(100dvh-4rem)] max-h-[calc(100dvh-4rem)] flex flex-col md:flex-row bg-white dark:bg-gray-900 rounded-4xl overflow-hidden"
+	ariaLabel={$i18n.t('Settings')}
+	bind:show={modalShow}
+>
+	<nav
+		id="settings-tabs-container"
+		class="shrink-0 min-w-0 md:min-h-0 flex flex-col border-b md:border-b-0 md:border-r border-gray-100/30 dark:border-white/[0.02] md:w-[15rem]"
+	>
+		<div class="flex items-center gap-1 m-1 md:mb-0 shrink-0">
+			<button
+				class="flex flex-1 items-center gap-1.5 h-7 px-2 rounded-lg text-xs text-gray-600 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors duration-75"
+				type="button"
+				on:click={() => {
+					show = false;
+				}}
+			>
+				<ChevronLeft className="size-3" strokeWidth="2" />
+				<span>{$i18n.t('Back')}</span>
+			</button>
+			<button
+				bind:this={searchButton}
+				type="button"
+				class="flex md:hidden size-7 shrink-0 items-center justify-center rounded-lg text-gray-600 hover:bg-gray-50 hover:text-gray-700 dark:text-gray-500 dark:hover:bg-white/[0.04] dark:hover:text-gray-300"
+				aria-label={$i18n.t('Search')}
+				aria-expanded={showSearch || !!search}
+				aria-controls="search-input-settings-modal"
+				on:click={toggleSearch}
+			>
+				<Search className="size-3.5" strokeWidth="1.5" />
+			</button>
+		</div>
+
+		{#if !$mobile || showSearch || search}
+			<div
+				class="flex items-center gap-1.5 h-7 px-2 mx-1 md:mt-1 mb-0.5 shrink-0 rounded-lg text-xs bg-gray-50/70 dark:bg-white/[0.03]"
+			>
+				<div class="self-center rounded-l-xl bg-transparent">
+					<Search className="size-3.5" strokeWidth="1.5" />
+				</div>
+				<label class="sr-only" for="search-input-settings-modal">{$i18n.t('Search')}</label>
+				<input
+					bind:this={searchInput}
+					data-settings-search
+					class="w-full text-xs bg-transparent py-1 outline-hidden placeholder:text-gray-600 dark:text-gray-300 dark:placeholder:text-gray-500"
+					bind:value={search}
+					id="search-input-settings-modal"
+					on:keydown={searchKeydown}
+					placeholder={$i18n.t('Search')}
+				/>
+			</div>
+		{/if}
+
+		<div class="sr-only" role="status" aria-live="polite">
+			{search
+				? filteredSettings.length
+					? $i18n.t('Matching tabs: {{count}}', { count: filteredSettings.length })
+					: $i18n.t('No matches')
+				: ''}
+		</div>
+
+		<div
+			class="tabs scrollbar-none max-h-32 md:max-h-none flex min-w-0 flex-1 min-h-0 overflow-x-auto md:overflow-x-hidden md:overflow-y-auto md:flex-col p-1 pl-0 md:pl-1 gap-px"
+		>
+			{#if filteredSettings.length > 0}
+				<div role="tablist" aria-label={$i18n.t('Settings')} class="contents">
+					{#each filteredSettings as tabId, index (tabId)}
+						{#if shouldShowSettingGroup(filteredSettings, index)}
+							<span class={settingGroupHeadingClass(index === 0)}>
+								{settingGroupTitle(tabId)}
+							</span>
+						{/if}
+
+						{#if tabId === 'general'}
+							<button
+								role="tab"
+								aria-controls="tab-general"
+								aria-selected={selectedTab === 'general'}
+								class={tabButtonClass(selectedTab === 'general')}
+								on:click={() => {
+									selectTab('general');
+								}}
+							>
+								<SettingsAlt className="size-3.5" strokeWidth="2" />
+								<span>{$i18n.t('settings.personal.general.title')}</span>
+							</button>
+						{:else if tabId === 'interface'}
+							<button
+								role="tab"
+								aria-controls="tab-interface"
+								aria-selected={selectedTab === 'interface'}
+								class={tabButtonClass(selectedTab === 'interface')}
+								on:click={() => {
+									selectTab('interface');
+								}}
+							>
+								<AdjustmentsHorizontal className="size-3.5" strokeWidth="2" />
+								<span>{$i18n.t('settings.personal.interface.title')}</span>
+							</button>
+						{:else if tabId === 'notifications'}
+							<button
+								role="tab"
+								aria-controls="tab-notifications"
+								aria-selected={selectedTab === 'notifications'}
+								class={tabButtonClass(selectedTab === 'notifications')}
+								on:click={() => {
+									selectTab('notifications');
+								}}
+							>
+								<AppNotification className="size-3.5" strokeWidth="2" />
+								<span>{$i18n.t('settings.personal.notifications.title')}</span>
+							</button>
+						{:else if tabId === 'shortcuts'}
+							<button
+								role="tab"
+								aria-controls="tab-shortcuts"
+								aria-selected={selectedTab === 'shortcuts'}
+								class={tabButtonClass(selectedTab === 'shortcuts')}
+								on:click={() => {
+									selectTab('shortcuts');
+								}}
+							>
+								<Keyboard className="size-3.5" strokeWidth="2" />
+								<span>{$i18n.t('settings.personal.shortcuts.title')}</span>
+							</button>
+						{:else if tabId === 'audio'}
+							<button
+								role="tab"
+								aria-controls="tab-audio"
+								aria-selected={selectedTab === 'audio'}
+								class={tabButtonClass(selectedTab === 'audio')}
+								on:click={() => {
+									selectTab('audio');
+								}}
+							>
+								<SoundHigh className="size-3.5" strokeWidth="2" />
+								<span>{$i18n.t('settings.personal.audio.title')}</span>
+							</button>
+						{:else if tabId === 'data_controls'}
+							<button
+								role="tab"
+								aria-controls="tab-data-controls"
+								aria-selected={selectedTab === 'data_controls'}
+								class={tabButtonClass(selectedTab === 'data_controls')}
+								on:click={() => {
+									selectTab('data_controls');
+								}}
+							>
+								<DatabaseSettings className="size-3.5" strokeWidth="2" />
+								<span>{$i18n.t('settings.personal.dataControls.title')}</span>
+							</button>
+						{:else if tabId === 'archived_chats'}
+							<button
+								role="tab"
+								aria-controls="tab-archived-chats"
+								aria-selected={selectedTab === 'archived_chats'}
+								class={tabButtonClass(selectedTab === 'archived_chats')}
+								on:click={() => {
+									selectTab('archived_chats');
+								}}
+							>
+								<ArchiveBox className="size-3.5" strokeWidth="2" />
+								<span>{$i18n.t('settings.personal.archivedChats.title')}</span>
+							</button>
+						{:else if tabId === 'account'}
+							<button
+								role="tab"
+								aria-controls="tab-account"
+								aria-selected={selectedTab === 'account'}
+								class={tabButtonClass(selectedTab === 'account')}
+								on:click={() => {
+									selectTab('account');
+								}}
+							>
+								<UserCircle className="size-3.5" strokeWidth="2" />
+								<span>{$i18n.t('settings.personal.account.title')}</span>
+							</button>
+						{:else if tabId === 'about'}
+							<button
+								role="tab"
+								aria-controls="tab-about"
+								aria-selected={selectedTab === 'about'}
+								class={tabButtonClass(selectedTab === 'about')}
+								on:click={() => {
+									selectTab('about');
+								}}
+							>
+								<InfoCircle className="size-3.5" strokeWidth="2" />
+								<span>{$i18n.t('settings.personal.about.title')}</span>
+							</button>
+						{/if}
+					{/each}
+				</div>
+			{/if}
+
+			{#if filteredSettings.length === 0}
+				<div class="px-2 py-1 text-xs text-gray-600 dark:text-gray-500">
+					{$i18n.t('No matches')}
+				</div>
+			{/if}
+		</div>
+	</nav>
+
+	<div class="flex-1 min-w-0 min-h-0 p-4 md:px-5 flex flex-col">
+		<div class="flex-1 min-h-0 overflow-hidden">
+			{#if selectedTab === 'general'}
+				<General
+					{getModels}
+					{saveSettings}
+					on:save={() => {
+						toast.success($i18n.t('Settings saved successfully!'));
+					}}
+				/>
+			{:else if selectedTab === 'interface'}
+				<Interface
+					{saveSettings}
+					personalSettingsValue={personalUiSettings}
+					on:save={() => {
+						toast.success($i18n.t('Settings saved successfully!'));
+					}}
+				/>
+			{:else if selectedTab === 'notifications'}
+				<Notifications {saveSettings} />
+			{:else if selectedTab === 'shortcuts'}
+				<Shortcuts {saveSettings} />
+			{:else if selectedTab === 'audio'}
+				<Audio
+					{saveSettings}
+					on:save={() => {
+						toast.success($i18n.t('Settings saved successfully!'));
+					}}
+				/>
+			{:else if selectedTab === 'data_controls'}
+				<DataControls {saveSettings} />
+			{:else if selectedTab === 'archived_chats'}
+				<ArchivedChats />
+			{:else if selectedTab === 'account'}
+				<Account
+					saveHandler={() => {
+						toast.success($i18n.t('Settings saved successfully!'));
+					}}
+				/>
+			{:else if selectedTab === 'about'}
+				<About />
+			{/if}
+		</div>
+	</div>
+</Modal>

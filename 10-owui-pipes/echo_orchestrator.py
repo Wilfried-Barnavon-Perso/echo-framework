@@ -1,0 +1,1526 @@
+# Copyright (c) 2025-2026 Wilfried BARNAVON
+# SPDX-License-Identifier: Apache-2.0
+"""
+title: Écho
+author: Wilfried BARNAVON
+version: 6.7.20.1
+requirements: asyncssh
+description: ECHO - Orchestrateur
+"""
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 6.7.20.1: Assemblage hot-reload de systemInstruction via load_assembled_system_prompt (system-prompt.xml + system-commands.xml) préservant le cache de préfixe Gemini.
+# 6.7.16.1: Synchronisation en fin de tour du statut final et du résumé VECTORIZED_SUM_UP des ressources de session vers identity.db.
+# 6.7.5.1: Garde-fous None-safe sur content, auto-guérison _sanitize_shadow_none_parts, fallback meta["message_id"] sur sous-tour actif et filtrage tamponné "None"+functionCall dans StreamProcessor.
+# 6.7.1.1: Mise en conformité PAS des prompts et directives.
+# 6.6.30.1: Centralisation et délégation de _TOOLS_CACHE à register_chat_tools (echo_subagent_hub).
+
+
+# ==============================================================================
+# SECTION 0 : IMPORTS & CONFIGURATION
+# ==============================================================================
+import sys
+import asyncio
+import secrets
+import re
+import time
+import codecs
+import json
+import orjson as std_json
+from datetime import datetime, timedelta
+from typing import List, Dict, Optional, AsyncGenerator, Literal, Any, Union
+
+# Importations ECHO Strictes (Volume Docker)
+sys.path.append("/app/backend/echo_libs")
+
+# --- IMPORTATIONS ECHO STRICTES (Consolidées) ---
+from echo_events import EchoEvents
+from echo_state_manager import EchoStateManager
+from echo_core import (
+    split_thought_process,
+    estimate_token_size,
+    smart_truncate_history,
+    build_model_identity,
+    resolve_placeholders,
+    ensure_gemini_parts,
+    unbox_tool_output,
+    convert_owui_tools,
+    attach_thought_signature,
+    load_assembled_system_prompt,
+    EchoCompactionEngine,
+)
+from echo_gemini_client import EchoGeminiClient
+from echo_http import FatalAPIError
+from echo_logger import DebugLogger
+from echo_constants import (
+    MODEL_ZEPHYR,
+    get_allowed_models, parse_model_policy,
+    FILE_INGESTION_STATUS,
+    CONTEXT_WARNING_THRESHOLD, CONTEXT_TRUNCATE_THRESHOLD, ECHO_MAX_CONTEXT_SIZE,
+    ECHO_MODELS_REGISTRY, get_model_identity, get_generation_config,
+    get_descending_cascade, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN,
+    AEC_REMINDERS,
+    ECHO_AUTH_PENDING_MARKER,
+    ECHO_AUTH_TITLE_PENDING,
+    ECHO_AUTH_NOTICE_MARKERS,
+    ECHO_TURN_CONTEXT,
+)
+from echo_auth import EchoAuth
+from echo_paths import resolve_upload_file_path
+from echo_protocol import FAST_TRACK_TASK_SCHEMAS, normalize_response_schema
+from echo_subagent_hub import _TOOLS_CACHE, register_chat_tools  # noqa: E402
+
+
+# --- IMPORTATIONS TIERCES CRITIQUES ---
+try:
+    import httpx  # noqa: F401
+    from pydantic import BaseModel, Field, model_validator
+    # Protocole HTTP/2 obligatoire (h2)
+    import h2  # noqa: F401
+    import logging
+    log = logging.getLogger("echo.echo_orchestrator")
+except ImportError as e:
+    missing_module = e.name or "inconnu"
+    raise ImportError(f"❌ Module critique manquant : '{missing_module}'. ECHO exige httpx, orjson, pybase64 et h2 (HTTP/2).") from e
+
+MAGIC_KEY_SKIP_VALIDATION = "context_engineering_is_the_way_to_go"
+
+# ==============================================================================
+# SECTION 4 : USER DATA MANAGER (PROXY)
+# ==============================================================================
+class UserDataManager:
+    def __init__(self, user_id: str = "system", chat_id: Optional[str] = None, debug_mode: bool = False):
+        self.state_manager = EchoStateManager(user_id=user_id, chat_id=chat_id)
+        self.identity_manager = EchoStateManager(user_id=user_id, chat_id=None)
+        self.debug_mode = debug_mode
+
+    @staticmethod
+    def _sanitize_shadow_none_parts(shadow: Optional[List[dict]]) -> Optional[List[dict]]:
+        """Purge auto-cicatrisante des parts parasites {'text': 'None'} scellées devant un functionCall."""
+        if not isinstance(shadow, list):
+            return shadow
+        for item in shadow:
+            if isinstance(item, dict) and item.get("role") in ("model", "assistant") and isinstance(item.get("parts"), list):
+                parts = item["parts"]
+                if any(isinstance(p, dict) and "functionCall" in p for p in parts):
+                    item["parts"] = [
+                        p for p in parts
+                        if not (isinstance(p, dict) and "text" in p and "functionCall" not in p and str(p.get("text") or "").strip() == "None")
+                    ]
+        return shadow
+
+    def get_shadow(self, message_id: str, updated_at: Optional[int] = None) -> Optional[List[dict]]:
+        """Restauration Bit-Perfect par ID physique (et Timestamp optionnel pour user)."""
+        return self._sanitize_shadow_none_parts(self.state_manager.get_shadow(message_id, updated_at))
+
+    def save_shadow(self, message_id: str, updated_at: Optional[int], parts: List[dict], chat_id: str, role: str, model_id: Optional[str] = None):
+        """Scellement définitif de l'ombre d'un message."""
+        self.state_manager.save_message_shadow(message_id, chat_id, role, parts, updated_at, model_id=model_id)
+
+    def get_signature_by_id(self, message_id: str) -> Optional[str]:
+        return self.state_manager.get_signature_by_id(message_id)
+
+    def get_call_bridge(self, call_id: str) -> Optional[dict]:
+        return self.state_manager.get_call_bridge(call_id)
+
+    def get_last_active_model(self) -> Optional[str]:
+        return self.state_manager.get_last_active_model()
+
+    def save_call_bridge(self, call_id: str, sig: str, func_name: str, args: dict = None, message_id: str = None):
+        self.state_manager.save_call_bridge(call_id, sig, func_name, args, message_id=message_id)
+
+    def save_session_setting(self, key: str, value: str):
+        self.state_manager.save_session_setting(key, value)
+
+    def get_session_setting(self, key: str) -> Optional[str]:
+        return self.state_manager.get_session_setting(key)
+
+    def save_context_stats(self, stats: dict):
+        self.state_manager.save_context_stats(stats)
+
+    def get_last_context_stats(self) -> dict:
+        return self.state_manager.get_last_context_stats()
+
+# ==============================================================================
+# SECTION 5 : ORCHESTRATEUR (SUTURE & PROTOCOLE)
+# ==============================================================================
+class Orchestrator:
+    def __init__(self, valves, user_valves, data_dir: str, user_id: str, chat_id: str = None, model_origin: str = "unknown"):
+        self.valves = valves; self.user_valves = user_valves
+        self.user_data_manager = UserDataManager(user_id, chat_id, valves.DEBUG_MODE)
+        self.tool_map = {}; self.logger = DebugLogger(data_dir, chat_id) if valves.DEBUG_MODE else None
+        self.model_origin = model_origin
+
+    def _mutate_context_identity(self, context: List[Dict], new_model: str, old_model: str):
+        """
+        Mutation chirurgicale de l'AEC XML dans le contexte (<artifact id="AEC_modele">).
+        Patche exclusivement la dernière occurrence (tour courant) afin de préserver
+        le cache des préfixes de l'API Gemini sur les tours historiques.
+        Met à jour self.model_origin pour les prochains resolve_placeholders.
+        """
+        new_identity = build_model_identity(new_model)
+        old_identity = build_model_identity(old_model)
+
+        found = False
+        for msg in reversed(context):
+            for part in msg.get("parts", []):
+                if "text" in part and '<artifact id="AEC_modele">' in part["text"]:
+                    part["text"] = re.sub(
+                        r'(<modele_actuel>)(.*?)(</modele_actuel>)',
+                        rf'\g<1>{new_identity}\g<3>',
+                        part["text"]
+                    )
+                    part["text"] = re.sub(
+                        r'(<modele_origine>)(.*?)(</modele_origine>)',
+                        rf'\g<1>{old_identity}\g<3>',
+                        part["text"]
+                    )
+                    found = True
+                    break
+            if found:
+                break
+
+        self.model_origin = old_model
+
+    async def prepare_context(self, body: Dict, chat_id: str, target_model: str, __metadata__: Optional[Dict] = None, events: Optional[EchoEvents] = None) -> List[Dict]:
+        """RESTAURATION Bit-Perfect avec Contrôle Temporel Strict (Anti-Ghosting)."""
+        messages = body.get("messages", [])
+        meta = {**(__metadata__ or {}), **body.get("metadata", {})}
+        model_id = target_model
+
+        branch_messages = None
+        if chat_id and messages:
+            try:
+                branch_messages = await EchoCompactionEngine.load_active_branch_messages(chat_id)
+                if branch_messages:
+                    EchoCompactionEngine.rehydrate_messages_metadata(messages, branch_messages)
+            except Exception as e:
+                log.warning(f"[PipeEngine] Réhydratation branch_messages ignorée: {e}")
+
+        # Nettoyage des AEC orphelins postérieurs au dernier tour reçu (gestion des retouches de messages)
+        if messages:
+            t_pivot = max([m.get("updated_at") or 0 for m in messages] + [0])
+            if t_pivot > 0:
+                from echo_aec import EchoAEC
+                EchoAEC.purge_orphaned_events(self.user_data_manager.state_manager, t_pivot)
+
+        # --- [NOUVEAU] Rappels Cognitifs Multi-Axes par Charge (Tokens Exacts) ---
+        # Évaluation avant la boucle pour intégration native dans la Suture Bit-Perfect.
+        last_stats = self.user_data_manager.get_last_context_stats()
+        if last_stats and messages and messages[-1].get("role") == "user":
+            current_tokens = last_stats.get("promptTokenCount", 0)
+            sys_events_to_inject = []
+
+            from echo_aec import EchoAEC
+            for reminder in AEC_REMINDERS:
+                threshold = reminder.get("token_threshold", 0)
+                if threshold > 0:
+                    current_tier = current_tokens // threshold
+                    if current_tier > 0:
+                        setting_key = f"aec_tier_{reminder['id']}"
+                        last_tier_str = self.user_data_manager.get_session_setting(setting_key)
+                        last_tier = int(last_tier_str) if last_tier_str else 0
+
+                        if current_tier > last_tier:
+                            event_id = EchoAEC.record_event(
+                                state_manager=self.user_data_manager.state_manager,
+                                event_name=reminder["id"],
+                                status="active",
+                                summary=reminder["message"],
+                                resource_type="aec_directive"
+                            )
+                            sys_events_to_inject.append({
+                                "id": event_id,
+                                "type": "rappel_cognitif",
+                                "message": reminder["message"],
+                                "tier": current_tier
+                            })
+                            self.user_data_manager.save_session_setting(setting_key, str(current_tier))
+
+                            if events:
+                                await events.status(f"🛤️ Alignement du Modèle : {reminder['id']}", done=True)
+
+            if sys_events_to_inject:
+                aec_text = EchoAEC.render_system_events(sys_events=sys_events_to_inject)
+                messages[-1]["content"] = aec_text + str(messages[-1].get("content") or "")
+
+        # --- RÉSOLUTION DU CHECKPOINT DE COMPACTION CONTEXTUELLE IN-PLACE ---
+        ckpt_prefix = []
+        cut_msg_idx = 0
+        raw_ckpt = self.user_data_manager.get_session_setting("context_checkpoint")
+        if raw_ckpt:
+            try:
+                ckpt_data = std_json.loads(raw_ckpt)
+                if branch_messages is None:
+                    branch_messages = await EchoCompactionEngine.load_active_branch_messages(
+                        chat_id
+                    )
+                ckpt_prefix, cut_msg_idx = EchoCompactionEngine.resolve_active_window(
+                    messages, ckpt_data, branch_messages
+                )
+            except Exception as e:
+                log.warning(f"[PipeEngine] Lecture context_checkpoint ignorée: {e}")
+
+        final_contents = list(ckpt_prefix)
+        active_turns = EchoCompactionEngine.split_into_turns(messages[cut_msg_idx:])
+
+        for t_idx, turn in enumerate(active_turns):
+            is_in_flight_tool_turn = (
+                t_idx == len(active_turns) - 1
+                and bool(messages)
+                and messages[-1].get("role") == "tool"
+            )
+
+            # A. Messages user réels du tour
+            u_msgs = [m for m in turn["messages"] if EchoCompactionEngine.is_real_user_turn(m)]
+            for u_idx, m in enumerate(u_msgs):
+                msg_id = m.get("id")
+                updated_at = m.get("updated_at")
+                u_parts = self.user_data_manager.get_shadow(msg_id) if msg_id else None
+                if u_parts:
+                    if not (m is messages[-1] and meta.get("_echo_user_parts_draft") is not None):
+                        raw_c = m.get("content") or ""
+                        if isinstance(raw_c, list):
+                            curr_txt = "".join(str(it.get("text", "")) for it in raw_c if isinstance(it, dict) and it.get("type") == "text")
+                        else:
+                            curr_txt = str(raw_c or "")
+                        curr_txt = re.sub(r'^\s*<artifact\s+id="AEC_evenement_systeme">.*?</artifact>\s*', '', curr_txt, flags=re.DOTALL)
+                        m_req = re.search(r'<REQUETE_UTILISATEUR>(.*?)</REQUETE_UTILISATEUR>', curr_txt, flags=re.DOTALL)
+                        if m_req:
+                            curr_txt = m_req.group(1)
+                        resolved_curr = resolve_placeholders(curr_txt, model_id, self.model_origin).strip()
+                        if resolved_curr:
+                            sh_mod = False
+                            for p in u_parts:
+                                if isinstance(p, dict) and "text" in p and "<REQUETE_UTILISATEUR>" in p["text"]:
+                                    m_sh = re.search(r'<REQUETE_UTILISATEUR>(.*?)</REQUETE_UTILISATEUR>', p["text"], flags=re.DOTALL)
+                                    if m_sh and m_sh.group(1).strip() != resolved_curr:
+                                        p["text"] = re.sub(
+                                            r'<REQUETE_UTILISATEUR>.*?</REQUETE_UTILISATEUR>',
+                                            f'<REQUETE_UTILISATEUR>\n{resolved_curr}\n</REQUETE_UTILISATEUR>',
+                                            p["text"],
+                                            flags=re.DOTALL,
+                                        )
+                                        sh_mod = True
+                                        break
+                            if sh_mod and msg_id:
+                                self.user_data_manager.save_shadow(msg_id, updated_at or int(time.time()), u_parts, chat_id, "user")
+                else:
+                    if m is messages[-1] and meta.get("_echo_user_parts_draft") is not None:
+                        u_parts = ensure_gemini_parts(meta.get("_echo_user_parts_draft"), model_id, self.model_origin)
+                    else:
+                        content = m.get("content") or ""
+                        u_parts = ensure_gemini_parts(content, model_id, self.model_origin)
+                        for p in u_parts:
+                            if "text" in p and "<REQUETE_UTILISATEUR>" not in p["text"] and not p["text"].strip().startswith("<artifact"):
+                                p["text"] = f"<REQUETE_UTILISATEUR>\n{p['text']}\n</REQUETE_UTILISATEUR>"
+                    u_parts = ensure_gemini_parts(u_parts, model_id, self.model_origin)
+                    if msg_id and updated_at and u_parts:
+                        self.user_data_manager.save_shadow(msg_id, updated_at, u_parts, chat_id, "user")
+
+                if u_idx > 0 and final_contents and final_contents[-1].get("role") == "user":
+                    final_contents[-1]["parts"] = EchoCompactionEngine.merge_consecutive_user_parts(
+                        final_contents[-1]["parts"], u_parts
+                    )
+                else:
+                    final_contents.append({"role": "user", "parts": u_parts})
+
+            # B. Sous-messages non-user du tour (assistant, tool, ou user image synthétique)
+            non_u_msgs = [
+                m for m in turn["messages"]
+                if not EchoCompactionEngine.is_real_user_turn(m)
+                and m.get("role") != "system"
+                and not (
+                    m.get("role") in ("assistant", "model")
+                    and any(marker in str(m.get("content") or "") for marker in ECHO_AUTH_NOTICE_MARKERS)
+                )
+            ]
+            if not non_u_msgs:
+                continue
+
+            turn_asst_id = next(
+                (m.get("_echo_turn_asst_id") or m.get("id") for m in reversed(non_u_msgs) if m.get("_echo_turn_asst_id") or m.get("id")),
+                meta.get("message_id") if is_in_flight_tool_turn else None,
+            )
+            turn_asst_ts = next((m.get("_echo_turn_asst_ts") or m.get("updated_at") for m in reversed(non_u_msgs) if m.get("_echo_turn_asst_ts") or m.get("updated_at")), None)
+
+            existing_asst_sh = self.user_data_manager.get_shadow(turn_asst_id) if turn_asst_id else None
+            is_multi_sh = isinstance(existing_asst_sh, list) and len(existing_asst_sh) > 0 and isinstance(existing_asst_sh[0], dict) and "role" in existing_asst_sh[0]
+            has_tool_msgs = any(m.get("role") == "tool" for m in non_u_msgs)
+            sh_has_tool_resp = is_multi_sh and any(
+                any(
+                    isinstance(p, dict) and "functionResponse" in p and p["functionResponse"].get("name") != "new_cognitive_level"
+                    for p in msg.get("parts", [])
+                )
+                for msg in existing_asst_sh
+            )
+
+            if not is_in_flight_tool_turn and is_multi_sh and (not has_tool_msgs or sh_has_tool_resp):
+                last_owui_asst = next(
+                    (m for m in reversed(non_u_msgs) if m.get("role") in ("assistant", "model")),
+                    None,
+                )
+                if last_owui_asst:
+                    c_raw = last_owui_asst.get("content") or ""
+                    c_clean, _ = split_thought_process(c_raw if isinstance(c_raw, str) else str(c_raw or ""))
+                    owui_clean = resolve_placeholders(c_clean, model_id, self.model_origin).strip()
+                    last_sh_model = next(
+                        (m for m in reversed(existing_asst_sh) if m.get("role") == "model"),
+                        None,
+                    )
+                    if last_sh_model and owui_clean:
+                        sh_parts = last_sh_model.get("parts", [])
+                        sh_text = "".join(
+                            str(p.get("text", "")) for p in sh_parts if isinstance(p, dict) and "text" in p
+                        ).strip()
+                        if sh_text != owui_clean:
+                            old_sig = next(
+                                (p.get("thoughtSignature") for p in sh_parts if isinstance(p, dict) and p.get("thoughtSignature")),
+                                None,
+                            )
+                            fc_parts = [p for p in sh_parts if isinstance(p, dict) and "functionCall" in p]
+                            new_text_parts = ensure_gemini_parts(owui_clean, model_id, self.model_origin)
+                            updated_parts = new_text_parts + fc_parts
+                            attach_thought_signature(
+                                updated_parts,
+                                old_sig,
+                                fallback_magic_key=MAGIC_KEY_SKIP_VALIDATION if fc_parts else None,
+                            )
+                            last_sh_model["parts"] = ensure_gemini_parts(updated_parts, model_id, self.model_origin)
+                            if turn_asst_id:
+                                self.user_data_manager.save_shadow(
+                                    turn_asst_id,
+                                    turn_asst_ts or int(time.time()),
+                                    existing_asst_sh,
+                                    chat_id,
+                                    "assistant",
+                                )
+                final_contents.extend(existing_asst_sh)
+                continue
+
+            last_asst_idx = -1
+            for i_m, m_cand in enumerate(non_u_msgs):
+                if m_cand.get("role") in ("assistant", "model"):
+                    last_asst_idx = i_m
+
+            turn_asst_msgs: List[Dict] = []
+            k = 0
+            if (
+                is_in_flight_tool_turn
+                and is_multi_sh
+                and last_asst_idx >= 0
+                and existing_asst_sh[-1].get("role") == "model"
+                and any(isinstance(p, dict) and "functionCall" in p for p in existing_asst_sh[-1].get("parts", []))
+            ):
+                turn_asst_msgs = list(existing_asst_sh)
+                k = last_asst_idx + 1
+            elif is_multi_sh:
+                for msg in existing_asst_sh:
+                    parts = msg.get("parts", [])
+                    is_ncl = any(
+                        isinstance(p, dict) and (
+                            p.get("functionCall", {}).get("name") == "new_cognitive_level"
+                            or p.get("functionResponse", {}).get("name") == "new_cognitive_level"
+                        )
+                        for p in parts
+                    )
+                    if is_ncl:
+                        turn_asst_msgs.append(msg)
+                    else:
+                        break
+                k = 0
+            while k < len(non_u_msgs):
+                cur_m = non_u_msgs[k]
+                cur_role = cur_m.get("role")
+                if cur_role == "tool":
+                    aggregated_tool_parts = []
+                    while k < len(non_u_msgs) and non_u_msgs[k].get("role") == "tool":
+                        m_tool = non_u_msgs[k]
+                        content_tool = m_tool.get("content") or ""
+                        call_id = m_tool.get("tool_call_id")
+                        bridge = self.user_data_manager.get_call_bridge(call_id) if call_id else None
+                        func_name = bridge["name"] if bridge else "unknown"
+                        rich_tool_parts = unbox_tool_output(func_name, content_tool, model_id, self.model_origin, call_id)
+                        aggregated_tool_parts.extend(rich_tool_parts)
+                        k += 1
+                    turn_asst_msgs.append({"role": "user", "parts": ensure_gemini_parts(aggregated_tool_parts, model_id, self.model_origin)})
+                elif cur_role == "user":
+                    # Image synthétique d'outil
+                    turn_asst_msgs.append({"role": "user", "parts": ensure_gemini_parts(cur_m.get("content") or "", model_id, self.model_origin)})
+                    k += 1
+                else:
+                    # assistant / model
+                    content_raw = cur_m.get("content") or ""
+                    content_clean, _ = split_thought_process(content_raw if isinstance(content_raw, str) else str(content_raw or ""))
+                    tool_calls = cur_m.get("tool_calls", [])
+                    sig = None
+                    if tool_calls:
+                        for tc in tool_calls:
+                            cb = self.user_data_manager.get_call_bridge(tc.get("id")) if tc.get("id") else None
+                            if cb and cb.get("signature"):
+                                sig = cb["signature"]
+                                break
+                    if not sig and turn_asst_id:
+                        sig = self.user_data_manager.get_signature_by_id(turn_asst_id)
+
+                    text_parts = ensure_gemini_parts(content_clean, model_id, self.model_origin)
+                    parsed_tc = []
+                    if tool_calls:
+                        for tc in tool_calls:
+                            raw_args = tc.get("function", {}).get("arguments", "{}")
+                            if not raw_args:
+                                raw_args = "{}"
+                            try:
+                                args = std_json.loads(raw_args)
+                            except Exception:
+                                args = {}
+                            call_part = {"name": tc.get("function", {}).get("name"), "args": args}
+                            if "id" in tc:
+                                call_part["id"] = tc["id"]
+                            parsed_tc.append({"functionCall": call_part})
+
+                    restored_parts = text_parts + parsed_tc
+                    attach_thought_signature(
+                        restored_parts,
+                        sig,
+                        fallback_magic_key=MAGIC_KEY_SKIP_VALIDATION if tool_calls else None,
+                    )
+                    restored_parts = ensure_gemini_parts(restored_parts, model_id, self.model_origin)
+                    turn_asst_msgs.append({"role": "model", "parts": restored_parts})
+                    k += 1
+
+            final_contents.extend(turn_asst_msgs)
+            if is_in_flight_tool_turn:
+                body["_echo_in_flight_asst_prefix"] = list(turn_asst_msgs)
+            elif turn_asst_id and turn_asst_msgs:
+                self.user_data_manager.save_shadow(turn_asst_id, turn_asst_ts, turn_asst_msgs, chat_id, "assistant")
+
+        # --- SATURATION ET TRONCATURE ---
+        if events:
+            size = estimate_token_size(final_contents)
+            max_tokens = getattr(self.valves, "MAX_CONTEXT_SIZE", ECHO_MAX_CONTEXT_SIZE)
+
+            if size > max_tokens * CONTEXT_WARNING_THRESHOLD:
+                await events.toast("⚠️ Approche de la limite contextuelle. Migration de session recommandée (Action 'Poursuivre dans une nouvelle conversation').", "warning", "ECHO V5")
+
+            if size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD:
+                system_parts = final_contents[0] if final_contents and final_contents[0].get("role") == "system" else None
+                while size > max_tokens * CONTEXT_TRUNCATE_THRESHOLD and len(final_contents) > 3:
+                    idx = 1 if (system_parts and final_contents[0].get("role") == "system") else 0
+                    removed = smart_truncate_history(final_contents, idx)
+                    if not removed:
+                        break
+                    size -= removed
+                await events.toast("🚨 Troncature active : les messages les plus anciens sont ignorés pour éviter le crash.", "error", "ECHO V5")
+
+        if self.logger:
+            self.logger.log("context_reconstructed", final_contents)
+        return final_contents
+
+# ==============================================================================
+# SECTION 6 : STREAM PROCESSOR
+# ==============================================================================
+class StreamProcessor:
+    def __init__(self, user_data_manager: UserDataManager, chat_id=None, events=None, logger=None):
+        self.user_data_manager = user_data_manager; self.chat_id = chat_id
+        self.events = events or EchoEvents(); self.logger = logger
+        self.usage_stats = None; self.captured_sig = None; self.accumulated_text = ""
+        self.accumulated_calls = []; self.full_raw_accumulator = []
+        self.escalation_requested = None
+        # [AUTO-CONTINUE] Suivi granulaire de l'état du flux pour la détection des troncatures
+        self.last_finish_reason = None; self.is_generating_tool = False
+
+    def _create_tool_call_part(self, func_call: dict, tool_index: int) -> Optional[dict]:
+        name = func_call["name"]
+        args = func_call.get("args", {})
+        if name == "new_cognitive_level":
+            self.escalation_requested = args
+            return None
+        tc_id = f"echo-{secrets.token_hex(8)}"
+        self.accumulated_calls.append({"id": tc_id, "name": name, "args": args})
+        return self._build_openai_tool_call(tool_index, tc_id, name, args)
+
+    def _build_openai_tool_call(self, tool_index: int, tc_id: str, name: str, args: dict) -> dict:
+        return {"index": tool_index, "id": tc_id, "type": "function", "function": {"name": name, "arguments": std_json.dumps(args).decode('utf-8')}}
+
+    def _filter_cascade_for_shadow(self, cascade_history: List[Dict]) -> List[Dict]:
+        """
+        Analyse l'historique de la cascade pour la sauvegarde du shadow.
+        - Retourne la cascade entière si erreurs complexes (Tool Error, Cascade Cognitive).
+        - Retourne les parties fusionnées du modèle si uniquement auto-continue (MAX_TOKENS).
+        """
+        is_complex = False
+        for msg in cascade_history:
+            if msg["role"] == "user":
+                part_text = msg.get("parts", [{}])[0].get("text", "") if msg.get("parts") else ""
+                if "MAX_TOKENS" not in part_text:
+                    is_complex = True
+                    break
+
+        if is_complex:
+            return cascade_history
+
+        fused_parts = []
+        for msg in cascade_history:
+            if msg["role"] in ["model", "assistant"]:
+                fused_parts.extend(msg.get("parts", []))
+        if not fused_parts:
+            return []
+        return [{"role": "model", "parts": fused_parts}]
+
+    async def process(self, response) -> AsyncGenerator[Union[str, Dict], None]:
+        in_think = False; buffer = ""; decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
+        buffered_lines = []
+        pending_tool_deltas = []
+        buffered_none_text = ""
+        async for chunk in response.aiter_bytes():
+            buffer += decoder.decode(chunk, final=False)
+            while "\n" in buffer:
+                line, buffer = buffer.split("\n", 1); line = line.strip()
+                if line.startswith("data:"):
+                    buffered_lines.append(line[6:].strip())
+                elif line == "" and buffered_lines:
+                    # Fin d'un bloc SSE : accumulation et parsing du JSON complet
+                    full_json_str = "\n".join(buffered_lines)
+                    buffered_lines = []
+                    try:
+                        data = std_json.loads(full_json_str); self.full_raw_accumulator.append(data)
+                        target = data.get("response", {}) if "response" in data else data
+                        if "error" in target or "error" in data:
+                            err_info = target.get("error") or data.get("error") or {}
+                            err_code = err_info.get("code", "UNKNOWN")
+                            err_msg = err_info.get("message", "Erreur API non spécifiée")
+                            log.error(f"[StreamProcessor] Erreur reçue dans la trame SSE : {err_code} - {err_msg}")
+                            if in_think:
+                                in_think = False
+                            yield f"\n\n> ❌ **Erreur API Google** (`{err_code}`) : {err_msg}\n"
+                            return
+                        if "usageMetadata" in target:
+                            if self.usage_stats is None:
+                                self.usage_stats = {}
+                            self.usage_stats.update(target["usageMetadata"])
+
+                        cand = data.get("candidates", []) or data.get("response", {}).get("candidates", [])
+                        if cand:
+                            finish_reason = cand[0].get("finishReason")
+                            content = cand[0].get("content")
+                            if finish_reason:
+                                # [AUTO-CONTINUE] Capture systématique de la raison d'arrêt pour déclenchement ultérieur
+                                self.last_finish_reason = finish_reason
+                                if finish_reason == "STOP":
+                                    # Libération immédiate de l'interface Open WebUI pendant que l'API Google calcule l'usageMetadata
+                                    yield ""
+                                elif not content and finish_reason != "MAX_TOKENS":
+                                    yield f"\n\n> ⚠️ï¸  **Interruption de génération par Google API** (Motif : `{finish_reason}`)\n"
+                                    return
+                            if content:
+                                for part in content.get("parts", []):
+                                    if "thoughtSignature" in part:
+                                        self.captured_sig = part["thoughtSignature"]
+                                    if part.get("thought"):
+                                        if not in_think:
+                                            in_think = True
+                                        chunk_text = part.get("text", "").replace("<think>", "").replace("</think>", "")
+                                        if chunk_text:
+                                            yield {"choices": [{"index": 0, "delta": {"reasoning_content": chunk_text}}]}
+                                    elif part.get("functionCall"):
+                                        # [AUTO-CONTINUE] Verrouillage d'état lors de la construction d'un appel d'outil
+                                        self.is_generating_tool = True
+                                        if in_think:
+                                            in_think = False
+                                        if self.escalation_requested:
+                                            self.is_generating_tool = False
+                                            continue
+                                        tool_call = self._create_tool_call_part(part["functionCall"], len(self.accumulated_calls))
+                                        if tool_call:
+                                            pending_tool_deltas.append({"choices": [{"index": 0, "delta": {"tool_calls": [tool_call]}}]})
+                                        # [AUTO-CONTINUE] Libération du verrou après complétion de l'appel d'outil
+                                        self.is_generating_tool = False
+                                    elif "text" in part:
+                                        if self.escalation_requested:
+                                            continue
+                                        if in_think:
+                                            in_think = False
+                                        raw_t = part["text"].replace("<think>", "").replace("</think>", "")
+                                        if "<EPHEMERAL_MESSAGE>" in raw_t or "CRITICAL INSTRUCTION" in raw_t:
+                                            continue
+                                        if not self.accumulated_text:
+                                            candidate = buffered_none_text + raw_t
+                                            if candidate.strip() in ("N", "No", "Non", "None"):
+                                                buffered_none_text = candidate
+                                                continue
+                                            if buffered_none_text:
+                                                raw_t = candidate
+                                                buffered_none_text = ""
+                                        self.accumulated_text += raw_t; yield raw_t
+                    except std_json.JSONDecodeError:
+                        # Trame réseau probablement fragmentée, réintégration dans le tampon d'attente
+                        buffered_lines = [full_json_str]
+                        continue
+                    except Exception as e:
+                        if self.logger:
+                            self.logger.log("stream_decode_error", {"error": str(e), "chunk": full_json_str})
+                        log.error(f"[StreamProcessor] Erreur de décodage du flux: {e} - Chunk: {full_json_str[:200]}")
+                        if in_think:
+                            in_think = False
+                        yield f"\n\n> ❌ **Erreur critique de décodage du flux API** : {str(e)}\n"
+        if in_think:
+            in_think = False
+        if buffered_none_text:
+            if (pending_tool_deltas or self.escalation_requested) and buffered_none_text.strip() == "None":
+                pass
+            else:
+                self.accumulated_text += buffered_none_text
+                yield buffered_none_text
+        if not self.escalation_requested and pending_tool_deltas:
+            for delta_chunk in pending_tool_deltas:
+                yield delta_chunk
+        if self.logger:
+            self.logger.log("api_response", self.full_raw_accumulator)
+
+# ==============================================================================
+# SECTION 8 : LE PIPE
+# ==============================================================================
+
+# =============================================================================
+# BRIDGE TOOLS : _TOOLS_CACHE
+# =============================================================================
+# Problème fondamental OWUI :
+#   OWUI injecte __tools__ (dict {fn_name: {callable, spec, tool_id}}) dans le
+#   Pipe lorsque des outils sont associés au modèle. Ce dict contient les
+#   callables Python réels prêts à être appelés.
+#
+#   En revanche, OWUI NE propage PAS ces callables aux tool callables (ex:
+#   delegate_to_agent). Chaque outil reçoit un __metadata__ vierge, déconnecté
+#   des modifications faites par le Pipe.
+#
+# Solution : le Pipe stocke __tools__[chat_id] dans ce dict module-level.
+#   Comme le Pipe et tous les outils s'exécutent dans le même processus Python,
+#   agent_engine_tool peut accéder à ce cache via sys.modules["function_echo_orchestrator"].
+#
+# Durée de vie : le cache persiste tant que le processus uvicorn tourne.
+#   En cas de redémarrage, il est reconstitué au premier message de chaque chat.
+# =============================================================================
+
+
+class Pipe:
+    class Valves(BaseModel):
+        DEBUG_MODE: bool = Field(default=False, description="Active le mode de débogage avancé (logs détaillés dans data_dir).")
+        MAX_CONTEXT_SIZE: int = Field(default=1048576, description="Taille maximale du contexte absorbable en tokens.")
+
+    class UserValves(BaseModel):
+        COGNITIVE_MODE: Literal["AUTO", "MANUAL"] = Field(
+            default="AUTO",
+            description="Mode : AUTO (dynamique) ou MANUAL (fixe)."
+        )
+        COGNITIVE_MODEL: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = Field(
+            default="MODEL_ATHENA",
+            description="Cible : plafond en AUTO, forcé en MANUAL."
+        )
+        ENABLE_PAID_CREDITS: bool = Field(default=False, description="Autoriser les crédits Google One AI (OAuth2).")
+        MAX_CASCADE_ATTEMPTS: int = Field(default=5, ge=3, le=10, description="Cascades maximales par tour.")
+        ECHO_AUTO_CONTINUE_MAX: int = Field(default=2, ge=1, le=10, description="Relances max sur interruption (MAX_TOKENS).")
+
+        @model_validator(mode="before")
+        @classmethod
+        def _migrate_legacy_model_selection(cls, data: Any) -> Any:
+            if isinstance(data, dict) and "MODEL_SELECTION" in data:
+                data = dict(data)
+                legacy_val = data.pop("MODEL_SELECTION")
+                if "COGNITIVE_MODE" not in data or "COGNITIVE_MODEL" not in data:
+                    mode, mod = parse_model_policy(str(legacy_val))
+                    data.setdefault("COGNITIVE_MODE", mode)
+                    data.setdefault("COGNITIVE_MODEL", mod)
+            return data
+
+    def __init__(self):
+        self.valves, self.data_dir = self.Valves(), "/app/backend/data"
+
+    async def pipe(self, body: dict, __user__: dict = None, __metadata__: dict = None, __event_emitter__: Optional[any] = None, __event_call__: Optional[Any] = None, __request__: Optional[Any] = None, __tools__: list = None, **kwargs) -> AsyncGenerator[Union[str, Dict], None]:
+
+        # ==============================================================================
+        # COUPE-CIRCUIT (FAST-TRACK) : Tâches d'arrière-plan Open WebUI
+        # ==============================================================================
+        safe_metadata = __metadata__ or {}
+        if safe_metadata.get("task") is not None:
+            gemini_contents = []
+            for msg in body.get("messages", []):
+                if msg.get("role") == "system":
+                    continue
+                role = "user" if msg.get("role") == "user" else "model"
+                parts = ensure_gemini_parts(msg.get("content") or "")
+
+                if gemini_contents and gemini_contents[-1]["role"] == role:
+                    # Fusion des rôles consécutifs (Gemini API l'exige)
+                    gemini_contents[-1]["parts"].extend([{"text": "\n\n"}] + parts)
+                else:
+                    gemini_contents.append({
+                        "role": role,
+                        "parts": parts
+                    })
+
+            generation_config = {
+                "maxOutputTokens": 8192,
+                "thinkingConfig": {"thinkingLevel": "low"},
+            }
+            task_id = str(safe_metadata.get("task", ""))
+            if "." in task_id:
+                task_id = task_id.split(".")[-1].lower()
+
+            # Force la sortie JSON pour les Titres, Tags et Follow-ups
+            # Indispensable car Open WebUI parse la sortie via JSONCodec.loads()
+            if task_id in FAST_TRACK_TASK_SCHEMAS:
+                generation_config["responseMimeType"] = "application/json"
+                generation_config["responseSchema"] = normalize_response_schema(FAST_TRACK_TASK_SCHEMAS[task_id])
+
+            if task_id == "tags_generation":
+                user_id = __user__.get("id") if __user__ else None
+                chat_id = safe_metadata.get("chat_id")
+                known_user_tags = []
+                current_chat_tags = []
+                try:
+                    from open_webui.models.tags import Tags
+                    from open_webui.models.chats import Chats
+                    if user_id:
+                        user_tag_objs = await Tags.get_tags_by_user_id(user_id) if hasattr(Tags, "get_tags_by_user_id") else []
+                        known_user_tags = [t.name for t in user_tag_objs]
+                    if chat_id and user_id:
+                        chat_obj = await Chats.get_chat_by_id_and_user_id(chat_id, user_id) if hasattr(Chats, "get_chat_by_id_and_user_id") else None
+                        current_chat_tags = (chat_obj.meta or {}).get("tags", []) if chat_obj else []
+                except Exception as tag_ctx_err:
+                    log.warning(f"[ECHO-ORCHESTRATOR] Impossible de charger le contexte tags: {tag_ctx_err}")
+
+                reconcile_directive = (
+                    "\n\n### Réconciliation et Cohérence des Étiquettes\n"
+                    f"- Catalogue des étiquettes existantes de l'Utilisateur : {json.dumps(known_user_tags, ensure_ascii=False)}\n"
+                    f"- Étiquettes actuelles de cette discussion : {json.dumps(current_chat_tags, ensure_ascii=False)}\n"
+                    "Directives strictes :\n"
+                    "1. Rédiger TOUTES les étiquettes EXCLUSIVEMENT en anglais (minuscules, tiret du bas '_' au singulier).\n"
+                    "2. Granularité : Privilégier des étiquettes informatives et distinctives (technologies, méthodes, outils, concepts métiers, objets d'étude).\n"
+                    "3. Le catalogue sert de référence d'harmonisation pour réutiliser les termes exacts et éviter les quasi-synonymes, mais DOIT laisser place à de NOUVELLES étiquettes distinctives dès qu'un concept clé distinct le justifie.\n"
+                    "4. CONSERVER les étiquettes actuelles de cette discussion si les thèmes correspondants demeurent pertinents dans l'échange.\n"
+                    "5. Quota : retourner un objet JSON contenant entre 2 et 16 étiquettes au total."
+                )
+                if gemini_contents and gemini_contents[-1]["parts"]:
+                    gemini_contents[-1]["parts"].append({"text": reconcile_directive})
+
+            payload = {
+                "contents": gemini_contents,
+                "generationConfig": generation_config
+            }
+
+            try:
+                # Appel direct au modèle ZEPHYR, by-pass total de l'agent ECHO (sans streaming)
+                res = await EchoGeminiClient.call(
+                    target_model=MODEL_ZEPHYR,
+                    payload=payload,
+                    user_id=__user__["id"] if __user__ else "system",
+                    events=None,
+                    chat_id="stateless_bypass",
+                    enable_paid_credits=False
+                )
+                try:
+                    parts_out = res.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                    raw_text = "".join(
+                        p.get("text", "") for p in parts_out
+                        if isinstance(p, dict) and not p.get("thought")
+                    )
+                    text, _ = split_thought_process(raw_text)
+                    if text:
+                        yield text
+                except (KeyError, IndexError):
+                    pass
+            except Exception as e:
+                yield f"ECHO Fast-Track Error: {str(e)}"
+            return
+
+        # ==============================================================================
+        # SUITE NORMALE DU PIPE ECHO (Agentivité, RAG, Outils...)
+        # ==============================================================================
+        if not __user__:
+            yield "❌ Identité manquante."; return
+        user_valves = __user__.get("valves") or self.UserValves()
+        chat_id = kwargs.get("__chat_id__") or body.get("chat_id") or (__metadata__.get("chat_id") if __metadata__ else None)
+        events = EchoEvents(__event_emitter__, user_id=__user__["id"], chat_id=chat_id)
+        orch = Orchestrator(self.valves, user_valves, self.data_dir, __user__["id"], chat_id)
+        # auth = AuthService(user_id=__user__["id"])  # [192.36] DÉSACTIVÉ : AuthService n'existe plus.
+        echo_auth = EchoAuth(user_id=__user__["id"])
+
+        # Injection politiques Pipe → __metadata__ (non propagé aux outils par OWUI, conservé pour usage interne pipe)
+        if __metadata__ is None:
+            __metadata__ = {}
+        model_policy = f"{user_valves.COGNITIVE_MODE}:{user_valves.COGNITIVE_MODEL}"
+        __metadata__["_echo_model_policy"] = model_policy
+        __metadata__["_echo_enable_paid_credits"] = user_valves.ENABLE_PAID_CREDITS
+
+        # -----------------------------------------------------------------------
+        # INJECTION DES OUTILS (bridge __tools__ → _TOOLS_CACHE)
+        # -----------------------------------------------------------------------
+        # OWUI injecte __tools__ dans le Pipe sous deux formes selon la version :
+        #   1. dict {fn_name: {tool_id, callable, spec, metadata}}  ← observé en production
+        #   2. list[ToolUserModel] avec attribut .specs             ← doc officielle
+        #      Contient les specs OpenAI mais PAS les callables.
+        #
+        # Dans le cas 1 (dict), on stocke dans _TOOLS_CACHE[chat_id] pour que
+        # agent_engine_tool puisse y accéder sans passer par __metadata__.
+        # Dans le cas 2 (list), on extrait les specs pour construire _echo_body_tools,
+        # mais les callables devront être reconstruits via sys.modules dans agent_engine_tool.
+        import logging as _plog
+        _log_pipe = _plog.getLogger("echo.pipe")
+
+        if isinstance(__tools__, dict) and __tools__:
+            # Cas 1 — dict avec callables (production ECHO)
+            __metadata__["_echo_tools_dict"] = __tools__          # Conservé pour compatibilité
+            __metadata__["_echo_body_tools"] = [                  # Specs format OpenAI
+                {"type": "function", "function": v["spec"]}
+                for v in __tools__.values()
+                if isinstance(v, dict) and "spec" in v
+            ]
+            # Bridge principal : stockage dans le cache module-level
+            if chat_id:
+                register_chat_tools(chat_id, __tools__)
+                _log_pipe.debug("_TOOLS_CACHE[%s] = %d outils", chat_id, len(__tools__))
+
+        elif isinstance(__tools__, list) and __tools__:
+            # Cas 2 — list[ToolUserModel] sans callables
+            __metadata__["_echo_tools_dict"] = {}
+            _specs: list = []
+            for _tm in __tools__:
+                for _sp in (getattr(_tm, "specs", None) or (_tm.get("specs") if isinstance(_tm, dict) else []) or []):
+                    _specs.append({"type": "function", "function": _sp})
+            __metadata__["_echo_body_tools"] = _specs
+
+        else:
+            # Aucun outil injecté (modèle sans outils associés ou fallback OpenAI)
+            __metadata__["_echo_tools_dict"] = {}
+            __metadata__["_echo_body_tools"] = body.get("tools", [])
+
+        # Rafraîchissement des closures de tour sur les callables cachés dans _TOOLS_CACHE[chat_id]
+        if chat_id and chat_id in _TOOLS_CACHE and isinstance(_TOOLS_CACHE[chat_id], dict):
+            fresh_closures = {
+                "__user__": __user__,
+                "__metadata__": __metadata__,
+                "__event_emitter__": __event_emitter__,
+                "__event_call__": __event_call__ or kwargs.get("__event_call__"),
+            }
+            register_chat_tools(chat_id, None, fresh_closures=fresh_closures)
+
+        # Log diagnostic (DEBUG uniquement, ne pas laisser en WARNING en production)
+        if isinstance(__tools__, dict):
+            _tools_info = f"dict({len(__tools__)} keys) — sample: {list(__tools__.keys())[:3]}"
+        elif isinstance(__tools__, list):
+            _first_type = type(__tools__[0]).__name__ if __tools__ else "empty"
+            _tools_info = f"list({len(__tools__)} items, item[0]={_first_type})"
+        else:
+            _tools_info = f"{type(__tools__).__name__}: {__tools__}"
+        _log_pipe.debug(
+            "pipe [tools]: %s | _body_tools=%s | cache=%s",
+            _tools_info,
+            len(__metadata__.get("_echo_body_tools", [])),
+            len(_TOOLS_CACHE.get(chat_id, {})),
+        )
+
+        # Persistance identity.db → lu par clamp_model() côté outils (fallback SQLite)
+        _settings = EchoStateManager(user_id=__user__["id"])
+        _settings.save_setting("model_policy", model_policy)
+        _settings.save_setting("enable_paid_credits", str(user_valves.ENABLE_PAID_CREDITS))
+
+        # --- [NOUVEAU] DETECTION ET INTERCEPTION DE CLÉ API ---
+        api_key_from_filter = body.get("_api_key")
+
+        # auth = AuthService(user_id=__user__["id"])  # [192.36] DÉSACTIVÉ : AuthService n'existe plus.
+        from echo_auth import AuthService
+        auth = AuthService(user_id=__user__["id"])
+        echo_auth = EchoAuth(user_id=__user__["id"])
+
+        if api_key_from_filter:
+            await events.status("🔒  Validation de l'authentification Google...")
+            success, msg = await auth.validate_and_save_api_key(api_key_from_filter)
+            if success:
+                yield (
+                    "✅ **Configuration d'accès ECHO Configurée avec Succès**\n\n"
+                    f"{msg}\n\n"
+                    "Vos accès Google ont été validés et enregistrés de manière sécurisée dans votre Espace Personnel ECHO.\n\n"
+                    "Vous pouvez maintenant poser votre question."
+                )
+                return
+            else:
+                yield f"❌ **Échec de validation**\n\n{msg}\n\n" + auth.get_auth_prompt()
+                return
+
+        # Résolution du Registre des Fournisseurs d'Accès (Cache local pour ce tour de pipe)
+        auth_providers = await echo_auth.get_ordered_auth_providers(__user__["id"])
+
+        # --- AUTHENTIFICATION PKCE (Authorization Code + PKCE RFC 7636) ---
+        # Tunnel SSH ephemere asyncssh - ports dynamiques - multi-user natif.
+        if not auth_providers:
+            _ea = EchoAuth(user_id=__user__["id"])
+            pkce_pending = _ea.get_auth_data("pkce_status") == "pending"
+
+            try:
+                if pkce_pending:
+                    # Flow deja en cours - reafficher les instructions
+                    stored_url = _ea.get_auth_data("pkce_auth_url") or ""
+                    yield (
+                        f"\U0001f510 **{ECHO_AUTH_TITLE_PENDING}**\n\n"
+                        f"Le lien est toujours valide.\n\n"
+                        f"[\U0001f517 **Autoriser ECHO avec Google**]({stored_url})\n\n"
+                        f"---\n"
+                        f"*Ou collez directement une cl\u00e9 `AIza\u2026` / `AQ.\u2026` pour utiliser AI Studio.*\n\n"
+                        f"*{ECHO_AUTH_PENDING_MARKER}*"
+                    )
+                    return
+
+                await events.status("\U0001f510 Lancement authentification PKCE...")
+                ok, auth_url, server_ip, ssh_port, cb_port, temp_pwd = \
+                    await auth.initiate_pkce_flow(request=__request__)
+                if not ok:
+                    yield "\u274c Impossible de lancer le flow PKCE.\n\n" + auth.get_auth_prompt()
+                    return
+
+                # Persister l'URL pour les messages suivants
+                _ea.save_api_key("pkce_auth_url", auth_url)
+
+                # Lancer le serveur callback en background (non bloquant)
+                # Préservation de la référence pour éviter le Garbage Collection de la tâche
+                global _BACKGROUND_TASKS
+                if '_BACKGROUND_TASKS' not in globals():
+                    _BACKGROUND_TASKS = set()
+
+                pkce_task = asyncio.create_task(auth.await_pkce_callback())
+                _BACKGROUND_TASKS.add(pkce_task)
+                pkce_task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+                yield auth.get_auth_prompt(
+                    auth_url=auth_url,
+                    server_ip=server_ip,
+                    ssh_port=ssh_port,
+                    cb_port=cb_port,
+                    temp_pwd=temp_pwd
+                )
+
+            except Exception as e:
+                yield f"\u274c Erreur PKCE : {str(e)}\n\n" + auth.get_auth_prompt()
+            return
+
+        # --- [NOUVEAU] ROUTAGE DYNAMIQUE (Fluctuation Continue) ---
+        is_auto = user_valves.COGNITIVE_MODE == "AUTO"
+        selected_model = user_valves.COGNITIVE_MODEL
+        last_model = orch.user_data_manager.get_last_active_model()
+
+        # Reverse-lookup (Auto-heal SQLite)
+        if last_model and last_model != "aucun" and last_model not in ECHO_MODELS_REGISTRY:
+            _found_model = False
+            for logical_key, config in ECHO_MODELS_REGISTRY.items():
+                if last_model in [config.get("ai_studio_id"), config.get("ca_model_id")]:
+                    last_model = logical_key
+                    _found_model = True
+                    break
+            if not _found_model:
+                last_model = MODEL_ZEPHYR  # Fallback sécurisé pour les orphelins
+
+        def _get_ui_display(model_key: str) -> str:
+            config = ECHO_MODELS_REGISTRY.get(model_key, {})
+            ai_id = config.get("ai_studio_id")
+            ca_id = config.get("ca_model_id")
+            if ai_id and ca_id and ai_id != ca_id:
+                tech_str = f"{ai_id} | {ca_id}"
+            else:
+                tech_str = ai_id or ca_id or ""
+            return f"{model_key} [{tech_str}]" if tech_str else model_key
+
+        incoming_msgs = body.get("messages", [])
+        is_tool_continuation = bool(incoming_msgs and incoming_msgs[-1].get("role") == "tool")
+
+        if is_tool_continuation:
+            # Sous-tour d'outil : Le modèle actif poursuit le traitement de son propre outil.
+            # L'origine du tour utilisateur est préservée via le Verrou de Tour (interdiction d'écraser avec last_model).
+            target_model = (last_model or MODEL_ZEPHYR) if is_auto else selected_model
+            saved_turn_origin = orch.user_data_manager.state_manager.get_session_setting("turn_origin_model")
+            origine_model = saved_turn_origin if saved_turn_origin else (last_model or "aucun")
+        elif is_auto:
+            # Nouveau tour utilisateur : Calcul normal de la cible et fixation du Verrou de Tour
+            ceiling = selected_model
+            if last_model and last_model != "aucun":
+                # Clamping dynamique via la hiérarchie du SSOT
+                last_hierarchy = ECHO_MODELS_REGISTRY.get(last_model, {}).get("hierarchy")
+                ceiling_hierarchy = ECHO_MODELS_REGISTRY.get(ceiling, {}).get("hierarchy")
+                last_hierarchy = last_hierarchy if last_hierarchy is not None else -1
+                ceiling_hierarchy = ceiling_hierarchy if ceiling_hierarchy is not None else -1
+                if last_hierarchy > ceiling_hierarchy:
+                    target_model = ceiling
+                else:
+                    target_model = last_model
+                origine_model = last_model
+                await events.status(f"🧠  Reprise du contexte ({_get_ui_display(target_model)})...")
+            else:
+                target_model = MODEL_ZEPHYR
+                origine_model = "aucun"
+                await events.status(f"🧠  Initialisation de session ({_get_ui_display(MODEL_ZEPHYR)})...")
+            # Enregistrement du Verrou de Tour pour les sous-tours d'outils subséquents
+            orch.user_data_manager.state_manager.save_session_setting("turn_origin_model", origine_model)
+        else:
+            target_model = selected_model
+            origine_model = last_model if last_model else "aucun"
+            orch.user_data_manager.state_manager.save_session_setting("turn_origin_model", origine_model)
+            await events.status(f"Model Fixé : {_get_ui_display(target_model)}")
+
+        # L'origine est passée à l'Orchestrateur pour la résolution des placeholders
+        orch.model_origin = origine_model
+
+        # Reconstruction contexte (Bit-Perfect)
+        context = await orch.prepare_context(body, chat_id, target_model, __metadata__, events)
+
+        if target_model and origine_model and target_model != origine_model and origine_model != "aucun":
+            orch._mutate_context_identity(context, target_model, origine_model)
+
+        # --- [NOUVEAU] CONFIGURATION CASCADE ---
+        allowed_for_policy = get_allowed_models(model_policy)
+
+        max_cascade_attempts = user_valves.MAX_CASCADE_ATTEMPTS
+        cascade_attempt = 0
+        # [AUTO-CONTINUE] Initialisation des compteurs de relance pour sécuriser la boucle de génération
+        max_auto_continue = user_valves.ECHO_AUTO_CONTINUE_MAX
+        auto_continue_attempts = 0
+        cumulative_usage_stats = {"promptTokenCount": 0, "cachedContentTokenCount": 0, "candidatesTokenCount": 0, "totalTokenCount": 0}
+
+        # [NOUVEAU] HISTORIQUE DE CASCADE POUR SUTURE & SHADOW
+        cascade_history = []
+        meta_init = {**(__metadata__ or {}), **body.get("metadata", {})}
+        user_msg_id = meta_init.get("_echo_user_msg_id") or meta_init.get("user_message_id")
+        asst_msg_id = kwargs.get("__message_id__") or meta_init.get("message_id")
+        suture_msg_id = asst_msg_id or user_msg_id
+        ECHO_TURN_CONTEXT.set({
+            "chat_id": chat_id,
+            "user_message_id": user_msg_id,
+            "assistant_message_id": asst_msg_id,
+        })
+        failed_models_this_turn = set()
+        applied_model = target_model
+        is_fallback_cascade = False
+
+        while cascade_attempt < max_cascade_attempts:
+            cascade_attempt += 1
+
+            # 1. Synchronisation de l'AEC d'identité si le modèle actif a divergé
+            if target_model != applied_model:
+                orch._mutate_context_identity(context, target_model, applied_model)
+                applied_model = target_model
+
+            # 2. Drainage des directives et événements système en attente
+            from echo_aec import EchoAEC
+            aec_directive_xml, drained_raw = EchoAEC.drain_pending_directives(orch.user_data_manager.state_manager)
+            if aec_directive_xml:
+                directive_part = [{"text": aec_directive_xml}]
+                directive_msg = {"role": "user", "parts": directive_part}
+                context.append(directive_msg)
+                cascade_history.append(directive_msg)
+
+            # --- [NOUVEAU] RÉSOLUTION DYNAMIQUE DES INSTRUCTIONS SYSTÈME ---
+            sys_instr_raw = "\n".join([m.get("content") or "" for m in body.get("messages", []) if m.get("role") == "system"]) or "Le Modèle est ECHO."
+            sys_instr_raw = load_assembled_system_prompt(fallback_raw=sys_instr_raw)
+            resolved_sys = resolve_placeholders(sys_instr_raw, target_model, orch.model_origin)
+            sys_instr = {"parts": [{"text": resolved_sys}]}
+
+            gen_config = get_generation_config(
+                target_model,
+                is_fallback_cascade=is_fallback_cascade,
+                include_thoughts=True,
+            )
+
+            payload = {
+                "contents": context,
+                "systemInstruction": sys_instr,
+                "generationConfig": gen_config
+            }
+
+            tools = convert_owui_tools(body.get("tools"), model_policy)
+
+            # --- [NOUVEAU] INJECTION OUTIL CHANGEMENT COGNITIF (BIDIRECTIONNEL) ---
+            if is_auto:
+                target_identity = get_model_identity(target_model)
+                failed_identities = {get_model_identity(fm) for fm in failed_models_this_turn}
+                menu_escalade = [
+                    m for m in allowed_for_policy
+                    if m != target_identity and m not in failed_identities
+                ]
+
+                if menu_escalade:
+                    escalation_tool = {
+                        "name": "new_cognitive_level",
+                        "description": (
+                            "Outil de transition cognitive dynamique exécutant le Protocole PCD (le niveau actuel est exclu de l'enum `niveau_requis`).\n\n"
+                            "**Exclusivité d'appel d'outil** : Le Modèle doit circonscrire l'appel à `new_cognitive_level` au sein d'un appel isolé de tout autre appel parallèle à un autre outil."
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "niveau_requis": {
+                                    "type": "string",
+                                    "enum": menu_escalade,
+                                    "description": "Identifiant du modèle cognitif cible requis dans le contexte actuel.",
+                                },
+                                "plan_de_transfert": {
+                                    "type": "string",
+                                    "description": (
+                                        "Plan de relais Markdown à haut SNR transmis au niveau cible. DOIT structurer : "
+                                        "1) Objectif, 2) Analyse de l'état courant, 3) Amorce de stratégie, 4) Contraintes repérées."
+                                    ),
+                                },
+                                "raison": {
+                                    "type": "string",
+                                    "description": "Justification synthétique du changement de niveau cognitif.",
+                                },
+                            },
+                            "required": ["niveau_requis", "plan_de_transfert"],
+                        },
+                    }
+                    if not tools:
+                        tools = [{"functionDeclarations": []}]
+                    decl_key = "functionDeclarations" if "functionDeclarations" in tools[0] else "function_declarations"
+                    tools[0][decl_key].append(escalation_tool)
+
+            if tools:
+                payload["tools"] = tools
+                payload["tool_config"] = {"functionCallingConfig": {"mode": "AUTO"}}
+
+            if orch.logger:
+                orch.logger.log("google_request", payload, metadata={"cascade_attempt": cascade_attempt, "model": target_model})
+            proc = StreamProcessor(orch.user_data_manager, chat_id, events, logger=orch.logger)
+
+            # Tentative d'appel au moteur Gemini
+            try:
+                # Appel au client factorisé (Agnostique)
+                async for chunk in EchoGeminiClient.stream(
+                    target_model=target_model,
+                    payload=payload,
+                    user_id=__user__["id"],
+                    events=events,
+                    process_callback=proc.process,
+                    chat_id=chat_id,
+                    enable_paid_credits=user_valves.ENABLE_PAID_CREDITS,
+                ):
+                    # On ne yield le texte que si aucune escalade n'est en cours (Gateway Pattern)
+                    if isinstance(chunk, dict) or not proc.escalation_requested:
+                        yield chunk
+            except Exception as e:
+                log.error(f"[PipeEngine] Erreur API lors de l'appel Gemini: {e}")
+                # Payload rejeté (400) : le contexte est invalide pour TOUS les modèles.
+                # Une cascade ne peut pas corriger l'erreur et masquerait la cause réelle.
+                if isinstance(e, FatalAPIError):
+                    yield f"❌ Requête rejetée par l'API (400, payload invalide), sans cascade. ({str(e)})"
+                    break
+                # GESTION DES ÉCHECS TECHNIQUES — CASCADE DESCENDANTE
+                if is_auto and cascade_attempt < max_cascade_attempts:
+                    cascade_order = get_descending_cascade(target_model, include_start=False)
+                    if cascade_order:
+                        prev_model = target_model
+                        target_model = cascade_order[0]
+                        failed_models_this_turn.add(prev_model)
+                        is_fallback_cascade = True
+
+                        await events.status(f"⚡ {prev_model} indisponible → cascade vers {target_model}")
+                        await events.toast(f"⚡ Cascade : {prev_model} → {target_model} (erreur: {str(e)[:80]})", "warning")
+
+                        # Inscription de la directive épurée (drainée au début du tour suivant)
+                        from echo_aec import EchoAEC
+                        err_summary = str(e)[:60]
+                        msg_directive = f"Le modèle {prev_model} est indisponible ({err_summary}). Repli forcé vers {target_model}."
+                        EchoAEC.record_event(
+                            state_manager=orch.user_data_manager.state_manager,
+                            event_name=f"cascade_{prev_model}_to_{target_model}",
+                            summary=msg_directive,
+                            resource_type="aec_directive"
+                        )
+                    else:
+                        # Plus de modèle inférieur → échec terminal
+                        resume_time = datetime.now().astimezone() + timedelta(minutes=ECHO_ENDPOINT_LOCK_TIMEOUT_MIN)
+                        time_str = resume_time.strftime("%H:%M:%S")
+                        yield f"❌ Cascade épuisée : tous les modèles sont indisponibles. Reprise estimée dans {ECHO_ENDPOINT_LOCK_TIMEOUT_MIN} min (vers {time_str}). ({str(e)})"
+                        break
+                    continue
+                else:
+                    yield f"❌ Erreur critique lors de la communication API : {str(e)}"
+                    break
+
+            # --- [NOUVEAU] ACCUMULATION DES TOKENS (SOUVERAINETÉ) ---
+            if proc.usage_stats:
+                # Sanctuarisation du promptTokenCount conversationnel initial :
+                # Ne pas écraser avec le prompt temporaire gonflé des cascades cognitives internes (relais, schémas).
+                if cumulative_usage_stats["promptTokenCount"] == 0:
+                    cumulative_usage_stats["promptTokenCount"] = proc.usage_stats.get("promptTokenCount", 0)
+                cumulative_usage_stats["cachedContentTokenCount"] = proc.usage_stats.get("cachedContentTokenCount", cumulative_usage_stats["cachedContentTokenCount"])
+                cumulative_usage_stats["candidatesTokenCount"] += proc.usage_stats.get("candidatesTokenCount", 0)
+                cumulative_usage_stats["totalTokenCount"] = (
+                    cumulative_usage_stats["promptTokenCount"]
+                    + cumulative_usage_stats["candidatesTokenCount"]
+                )
+
+            # --- [NOUVEAU] GESTION DE LA CASCADE ---
+            if is_auto and proc.escalation_requested:
+                req = proc.escalation_requested
+                target_req = req.get("niveau_requis")
+
+                # Mapping explicite pour gérer la montée ET la redescente
+                new_target = get_model_identity(target_req)
+
+                if not new_target or new_target == "UNKNOWN":
+                    sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
+                    valid_choices = ", ".join(allowed_for_policy)
+                    # Signalement d'erreur de paramètre au modèle actuel
+                    context.append({
+                        "role": "model",
+                        "parts": [{"functionCall": {"name": "new_cognitive_level", "args": req, "id": sys_tc_id}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
+                    })
+                    context.append({
+                        "role": "user",
+                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "message": f"ERREUR : Niveau '{target_req}' inconnu. Le Modèle DOIT choisir parmi {valid_choices}."}, "id": sys_tc_id}}]
+                    })
+                    continue
+
+                # Vérification des droits (Valve)
+                if new_target not in allowed_for_policy:
+                    await events.status(f"⚠️  Transfert vers {new_target} refusé (Plafond {selected_model}).")
+                    sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
+                    # Signalement de refus au modèle actuel
+                    context.append({
+                        "role": "model",
+                        "parts": [{"functionCall": {"name": "new_cognitive_level", "args": req, "id": sys_tc_id}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
+                    })
+                    context.append({
+                        "role": "user",
+                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "model_requested": target_req, "model_used": target_model, "warning": f"{target_req} unavailable (policy)", "message": f"Transfert vers {target_req} refusé. Le Modèle DOIT traiter la requête avec {target_model}."}, "id": sys_tc_id}}]
+                    })
+                    continue  # On reboucle avec le MÊME target_model
+
+                if new_target == target_model:
+                    sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
+                    await events.status(f"⚠️ï¸  Auto-transfert annulé ({target_req}).")
+                    context.append({
+                        "role": "model",
+                        "parts": [{"functionCall": {"name": "new_cognitive_level", "args": req, "id": sys_tc_id}, "thoughtSignature": proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION}]
+                    })
+                    context.append({
+                        "role": "user",
+                        "parts": [{"functionResponse": {"name": "new_cognitive_level", "response": {"status": "error", "model_requested": target_req, "model_used": target_model, "warning": "Déjà sur le modèle", "message": f"ERREUR : Le système est déjà sur le modèle {target_req}. Le Modèle DOIT poursuivre sa tâche."}, "id": sys_tc_id}}]
+                    })
+                    continue
+
+                await events.status(f"🚀 Transfert cognitif vers {_get_ui_display(new_target)}...")
+
+                if proc.captured_sig:
+                    orch.user_data_manager.save_call_bridge(f"esc-{secrets.token_hex(4)}", proc.captured_sig, "new_cognitive_level", req, message_id=suture_msg_id)
+
+                plan_md = req.get("plan_de_transfert", "Exécution du relais.")
+
+                # 1. Mutation Chirurgicale de l'identité dans le contexte
+                orch._mutate_context_identity(context, new_target, target_model)
+                # Mise à jour du Verrou de Tour : l'ancien modèle devient l'origine scellée pour la suite du tour
+                orch.user_data_manager.state_manager.save_session_setting("turn_origin_model", target_model)
+
+                # 2. Suture Sémantique (Relais Protocolé avec réinjection signée du texte précédent)
+                sig_to_apply = proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION
+                model_parts = []
+                if proc.accumulated_text:
+                    model_parts.append({"text": proc.accumulated_text})
+
+                sys_tc_id = f"echo-sys-{secrets.token_hex(4)}"
+                model_parts.append({"functionCall": {"name": "new_cognitive_level", "args": req, "id": sys_tc_id}})
+
+                # Récupération des appels parallèles orphelins
+                if proc.accumulated_calls:
+                    for c in proc.accumulated_calls:
+                        call_part = {"name": c["name"], "args": c["args"]}
+                        if "id" in c:
+                            call_part["id"] = c["id"]
+                        model_parts.append({"functionCall": call_part})
+
+                # Injection de la thoughtSignature requise par l'API Gemini 3+
+                # Selon la spec, pour des appels parallèles, seul le PREMIER functionCall doit recevoir la signature.
+                # (https://ai.google.dev/gemini-api/docs/thinking#signatures)
+                attach_thought_signature(model_parts, sig_to_apply)
+
+                # [NOUVEAU] INDEXATION INTERMÉDIAIRE (SUTURE)
+                model_msg = {"role": "model", "parts": model_parts}
+                cascade_history.append(model_msg)
+
+                # Structure status alignée sur wrap_tool_output (KEYs uniquement)
+                escalation_status = {
+                    "status": "success",
+                    "model_requested": target_req,
+                    "model_used": target_req,  # À ce stade l'escalade est approuvée (clamping fait en amont)
+                }
+                msg = f"Transfert effectué vers {target_req}."
+                if proc.accumulated_text and proc.accumulated_text.strip():
+                    msg += (
+                        " Le préambule textuel précédent a déjà été affiché à l'Utilisateur : "
+                        "Le Modèle DOIT poursuivre directement le traitement de la requête sans répéter les salutations ni l'annonce de transition."
+                    )
+                user_resp_parts = [{"functionResponse": {"name": "new_cognitive_level", "response": {**escalation_status, "message": msg, "plan": plan_md}, "id": sys_tc_id}}]
+
+                # Annulation formelle des appels parallèles orphelins pour préserver le schéma strict
+                if proc.accumulated_calls:
+                    for c in proc.accumulated_calls:
+                        cancel_resp = {
+                            "name": c["name"],
+                            "response": {"status": "error", "message": "Exécution annulée (Adaptation cognitive prioritaire). Le Modèle DOIT relancer cet outil."},
+                        }
+                        if "id" in c:
+                            cancel_resp["id"] = c["id"]
+                        user_resp_parts.append({"functionResponse": cancel_resp})
+
+                user_msg = {"role": "user", "parts": user_resp_parts}
+                cascade_history.append(user_msg)
+
+                context.append(model_msg)
+                context.append(user_msg)
+
+                target_model = new_target
+                orch.user_data_manager.save_session_setting("last_model_id", target_model)
+                applied_model = new_target
+                is_fallback_cascade = False
+                continue
+            else:
+                # [NOUVEAU] INDEXATION FINALE (SUTURE)
+                orch.user_data_manager.save_session_setting("last_model_id", target_model)
+                sig_to_apply = proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION
+                model_parts = []
+                if proc.accumulated_text:
+                    model_parts.append({"text": proc.accumulated_text})
+                if proc.accumulated_calls:
+                    for c in proc.accumulated_calls:
+                        call_part = {"name": c["name"], "args": c["args"]}
+                        if "id" in c:
+                            call_part["id"] = c["id"]
+                        model_parts.append({"functionCall": call_part})
+
+                if model_parts:
+                    attach_thought_signature(model_parts, sig_to_apply)
+                    model_msg = {"role": "model", "parts": model_parts}
+                    cascade_history.append(model_msg)
+
+                # [NOUVEAU] GESTION DE L'AUTO-CONTINUE (MAX_TOKENS)
+                # Mécanisme de relance encapsulée empêchant l'arrêt prématuré de la génération.
+                if proc.last_finish_reason == "MAX_TOKENS" and auto_continue_attempts < max_auto_continue:
+                    auto_continue_attempts += 1
+                    if proc.is_generating_tool:
+                        # Cas 1 : L'interruption a eu lieu durant la structuration JSON d'un appel de fonction.
+                        # Le payload partiel est rejeté par le StreamProcessor. On injecte une directive punitive pour forcer la concision.
+                        await events.status("⚠️ Appel d'outil tronqué (MAX_TOKENS). Reprise et correction...")
+                        await events.toast("Appel d'outil trop volumineux : Reprise automatique de la génération.", "warning")
+                        texte_outil = "Erreur : L'appel d'outil précédent a échoué car les arguments étaient trop volumineux (limite MAX_TOKENS atteinte). Le Modèle DOIT relancer l'outil avec des paramètres strictement plus concis ou expliquer la situation."
+                        xml_outil = f'<artifact id="AEC_directive" source="Système">\\n{texte_outil}\\n</artifact>'
+                        user_resp_parts = [{"text": xml_outil}]
+                    else:
+                        # Cas 2 : L'interruption a eu lieu sur du texte brut.
+                        # Le texte existant a déjà été indexé. On injecte une directive de continuation pure.
+                        await events.status("🔄 Reprise automatique de la génération (MAX_TOKENS)...")
+                        await events.toast("Limite de contexte (MAX_TOKENS) atteinte : Reprise automatique.", "info")
+                        texte_gene = "Erreur : La génération a été interrompue car la limite de tokens (MAX_TOKENS) a été atteinte. Le Modèle DOIT poursuivre la génération du texte à partir du point de troncature exact, sans introduction."
+                        xml_gene = f'<artifact id="AEC_directive" source="Système">\\n{texte_gene}\\n</artifact>'
+                        user_resp_parts = [{"text": xml_gene}]
+
+                    # Suture sémantique de l'événement système pour maintenir l'invariant cognitif bit-perfect
+                    user_msg = {"role": "user", "parts": user_resp_parts}
+                    cascade_history.append(user_msg)
+
+                    # Mise à jour du contexte pour la boucle suivante
+                    context.append(model_msg)
+                    context.append(user_msg)
+                    continue
+
+                # Pas d'escalade demandée, on sort de la boucle de cascade
+                break
+
+        # --- SCELLEMENT FINAL (SUTURE DÉFINITIVE) ---
+
+        if chat_id:
+            meta = {**(__metadata__ or {}), **body.get("metadata", {})}
+
+            # 1. Scellement message Utilisateur (Le Draft complet)
+            user_updated_at = meta.get("_echo_user_msg_updated_at")
+            user_draft = meta.get("_echo_user_parts_draft")
+            if user_msg_id and user_draft:
+                user_text = body['messages'][-1].get('content') or ""
+                full_user_parts = ensure_gemini_parts(user_draft, target_model, orch.model_origin)
+                # Guard : si content est une liste (multipart OWUI), le texte est déjà dans user_draft.
+                # Sans ce guard, la liste entière serait passée à resolve_placeholders, corrompant le shadow.
+                has_req_tag = any(
+                    isinstance(p, dict) and "<REQUETE_UTILISATEUR>" in str(p.get("text", ""))
+                    for p in full_user_parts
+                )
+                if isinstance(user_text, str) and user_text.strip() and not has_req_tag:
+                    full_user_parts.append({"text": resolve_placeholders(user_text, target_model, orch.model_origin)})
+                orch.user_data_manager.save_shadow(user_msg_id, user_updated_at, full_user_parts, chat_id, "user")
+
+            # 2. Scellement du Registre Unifié et Rangement
+            files_to_seal = meta.get("_echo_files_to_seal", [])
+            for f in files_to_seal:
+                if f.get("status") == "success":
+                    content_to_save = None
+                    if f.get("type") == FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"]:
+                        content_to_save = f.get("content")
+                    elif f.get("type") == FILE_INGESTION_STATUS["PUT_IN_CONTEXT"] and f.get("sub_type") == "text":
+                        content_to_save = f.get("content")
+                    # Résolution du resource_type depuis le MIME et le type de traitement
+                    mime = f.get('mime', '')
+                    if f.get('sub_type') == 'text' or 'text/' in mime or 'json' in mime:
+                        res_type = 'codex'
+                    elif f.get('type') == 'indexed':
+                        res_type = 'binary'
+                    else:
+                        res_type = 'media'
+                    orch.user_data_manager.state_manager.save_resource(
+                        id=f['fid'], name=f['name'], resource_type=res_type,
+                        status=f['type'], mime=f['mime'], summary=content_to_save,
+                        storage_path=f.get('storage_path'), git_tracked=(res_type == 'codex'),
+                        message_id=user_msg_id
+                    )
+                    # Déplacement dans le Vault uniquement pour les non-Codex
+                    if res_type != 'codex':
+                        orch.user_data_manager.state_manager.move_to_vault(f['fid'], f['name'])
+
+                    # Synchronisation dans le registre global (identity.db) pour réutilisation inter-chats
+                    try:
+                        uid = orch.user_data_manager.identity_manager.user_id
+                        global_storage_path = resolve_upload_file_path(uid, f['fid'], chat_id=None) or f.get('storage_path')
+                        global_summary = content_to_save if f.get("type") == FILE_INGESTION_STATUS["VECTORIZED_SUM_UP"] else None
+                        orch.user_data_manager.identity_manager.save_resource(
+                            id=f['fid'],
+                            name=f['name'],
+                            resource_type=res_type,
+                            status=f['type'],
+                            mime=f['mime'],
+                            summary=global_summary,
+                            storage_path=global_storage_path,
+                            git_tracked=False,
+                            message_id=user_msg_id,
+                        )
+                    except Exception as g_exc:
+                        log.warning(f"[ECHO-ORCHESTRATOR] Erreur sync registre global pour {f.get('fid')}: {g_exc}")
+
+            # 3. Scellement Ombre de l'Assistant
+            in_flight_prefix = body.get("_echo_in_flight_asst_prefix") or []
+            current_step_msgs = proc._filter_cascade_for_shadow(cascade_history) if cascade_history else []
+            full_asst_shadow = list(in_flight_prefix) + list(current_step_msgs)
+            if asst_msg_id and full_asst_shadow:
+                orch.user_data_manager.save_shadow(
+                    asst_msg_id,
+                    int(time.time()),
+                    full_asst_shadow,
+                    chat_id,
+                    "assistant",
+                    model_id=target_model,
+                )
+
+            # Sauvegarde des ponts d'outils pour la navigation future
+            for c in proc.accumulated_calls:
+                orch.user_data_manager.save_call_bridge(c["id"], proc.captured_sig or MAGIC_KEY_SKIP_VALIDATION, c["name"], c["args"], message_id=suture_msg_id)
+
+        # --- PERSISTANCE DES MÉTRIQUES CONTEXTUELLES ---
+        if user_msg_id:
+            cumulative_usage_stats["last_turn_msg_id"] = user_msg_id
+        if cumulative_usage_stats.get("totalTokenCount", 0) > 0:
+            orch.user_data_manager.save_context_stats(cumulative_usage_stats)
+            yield {"usage": {"prompt_tokens": cumulative_usage_stats.get("promptTokenCount", 0), "completion_tokens": cumulative_usage_stats.get("candidatesTokenCount", 0), "total_tokens": cumulative_usage_stats.get("totalTokenCount", 0)}}
+        yield ""

@@ -1,0 +1,32 @@
+{
+    "id": "echo_orchestrator",
+    "name": "Écho",
+    "base_model_id": null,
+    "local_image_filename": "logo-echo.png",
+    "params": {
+        "function_calling": "native"
+    },
+    "meta": {
+        "description": "ECHO - Orchestrateur",
+        "capabilities": {
+            "file_context": false,
+            "vision": true,
+            "file_upload": true,
+            "web_search": false,
+            "image_generation": false,
+            "code_interpreter": false,
+            "terminal": false,
+            "citations": true,
+            "status_updates": true,
+            "usage": true,
+            "builtin_tools": false
+        }
+    },
+    "access_grants": [
+        {
+            "principal_type": "user",
+            "principal_id": "*",
+            "permission": "read"
+        }
+    ]
+}

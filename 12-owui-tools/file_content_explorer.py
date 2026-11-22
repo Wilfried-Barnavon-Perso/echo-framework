@@ -1,0 +1,1354 @@
+# Copyright (c) 2025-2026 Wilfried BARNAVON
+# SPDX-License-Identifier: Apache-2.0
+"""
+title: ECHO Explorateur de l'Espace Personnel
+author: Wilfried BARNAVON
+version: 6.14.2.1
+description: Composant système interne : ECHO Explorateur de l'Espace Personnel.
+"""
+# Règle : Conserver uniquement les 5 dernières versions dans l'historique.
+# Historique des versions :
+# 6.14.2.1: Externalisation binaire des images de show_image_to_user via save_embed_binary_asset (echo-asset://).  # noqa: E501
+# 6.7.18.1: Télémétrie événementielle ciblée aux jalons réels (suppression des heartbeats 15s) et clôture done=True garantie.  # noqa: E501
+# 6.7.13.1: Parallélisation intra-appel Map-Reduce avec backpressure global (MAX_CONCURRENT_SEGMENTS), streaming PDF incrémental O(1) RAM, fail-fast, heartbeat agrégé et verrou FFmpeg loop-safe.  # noqa: E501
+# 6.6.5.2: Filtrage des pensées via extract_response_parts_and_text dans _call_apollo_with_heartbeat.  # noqa: E501
+# 6.6.5.1: Extension du paramètre workspace de show_image_to_user au domaine "browserviews".  # noqa: E501
+
+import io
+import os
+import re
+import sys
+import struct
+import shutil
+import base64
+import hashlib
+import asyncio
+import contextlib
+from typing import AsyncGenerator, Dict, List, Any, Literal, Optional, Tuple, Union
+from pydantic import BaseModel, Field
+from fastapi.responses import HTMLResponse
+
+# Importations ECHO Standard
+sys.path.append("/app/backend/echo_libs")
+from echo_events import EchoEvents  # noqa: E402
+from echo_core import wrap_tool_output, echo_tool  # noqa: E402
+from echo_paths import (  # noqa: E402
+    extract_clean_filename,
+    resolve_extended_file_path,
+    save_embed_binary_asset,
+)
+from echo_gemini_client import EchoGeminiClient  # noqa: E402
+from echo_http import load_image_as_base64  # noqa: E402
+from echo_ui import EchoUI  # noqa: E402
+from echo_constants import (  # noqa: E402
+    ECHO_API_KEY_RETRIES,
+    ECHO_API_MAX_RETRIES,
+    ECHO_MAX_CONCURRENT_MULTIMODAL_SEGMENTS,
+    ECHO_MAX_CONTEXT_SIZE,
+    ECHO_UPLOADS_TRANSIT_DIR,
+    get_generation_config,
+    get_gemini_mime,
+    is_text_mime,
+)
+from echo_prompts import SYS_EXPLORE_SENSORY, SYS_EXPLORER_PROBE, USR_EXPLORE_SENSORY  # noqa: E402
+from echo_subagent_hub import extract_response_parts_and_text  # noqa: E402
+
+
+class Tools:
+    class Valves(BaseModel):
+        PROBE_TIMEOUT: int = Field(default=120, description="Délai d'attente maximum (secondes) pour le sondage sémantique.")
+        MAX_READ_SIZE_KB: int = Field(default=16, description="Taille maximale (en Ko) pour la lecture brute (RAW).")
+        MAX_MULTIMODAL_SIZE_KB: int = Field(default=30720, description="Taille maximale (en Ko) pour l'injection multimédia (défaut: 30 Mo).")
+        MAX_CONCURRENT_TRANSCODES: int = Field(default=1, description="Nombre maximal de transcodages FFmpeg simultanés (anti-saturation CPU/RAM multi-chat).")
+        MAX_CONCURRENT_SEGMENTS: int = Field(
+            default=ECHO_MAX_CONCURRENT_MULTIMODAL_SEGMENTS,
+            description="Nombre maximal global de segments multimodaux (<= 30 Mo) analysés en parallèle vers Gemini.",
+        )
+
+    def __init__(self):
+        self.valves = self.Valves()
+        self.uploads_dir = ECHO_UPLOADS_TRANSIT_DIR
+
+    def _resolve_extended_file_path(
+        self,
+        uid: str,
+        cid: Optional[str],
+        target: str,
+        workspace: Optional[str] = None,
+    ) -> Optional[str]:
+        """Résout le chemin d'un fichier local (ID Registre, ID Upload, Nom de fichier ou Workspace 'main'/'plans'/'generated'/'sandbox')."""
+        return resolve_extended_file_path(
+            user_id=uid,
+            chat_id=cid,
+            target=target,
+            workspace=workspace,
+            uploads_dir=self.uploads_dir,
+        )
+
+    @echo_tool
+    async def read_raw_file_content(
+        self,
+        file_id: str,
+        start_line: int = 1,
+        end_line: int = 100,
+        output_mode: Literal["text", "base64", "hex"] = "text",
+        byte_offset: int = 0,
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None,
+    ) -> Any:
+        """Lit un fichier de l'Espace Personnel (Uploads, Codex `main`, `plans`, `generated` ou `sandbox`) par lignes ou offset binaire."""
+        events = EchoEvents(__event_emitter__, __event_call__)
+        uid = __user__.get("id", "anonymous")
+        cid = __metadata__.get("chat_id") if __metadata__ else None
+        fpath = self._resolve_extended_file_path(uid, cid, file_id)
+        if not fpath:
+            return "❌ Fichier introuvable."
+
+        size = os.path.getsize(fpath)
+        if byte_offset > size:
+            return "❌ Offset invalide."
+
+        MAX_CHARS = self.valves.MAX_READ_SIZE_KB * 1024
+        safe_name = extract_clean_filename(fpath)
+        await events.status(f"📂 Lecture : {safe_name}...")
+
+        try:
+            new_offset = byte_offset
+            mime, _ = get_gemini_mime(fpath)
+            ext = os.path.splitext(fpath)[1].lower()
+            is_text = is_text_mime(mime, ext)
+
+            warning_msg = ""
+            if output_mode == "text" and not is_text:
+                warning_msg = (
+                    f"\n\n[ATTENTION SYSTÈME ECHO]\n"
+                    f"Ce fichier est un binaire ({mime}). Si le texte extrait ci-dessus est illisible, incomplet ou ne correspond pas aux attentes, "
+                    f"le Modèle a la STRICTE INTERDICTION de boucler en rappelant l'outil avec d'autres lignes/offsets.\n"
+                    f"=> Le Modèle DOIT utiliser output_mode='base64' pour une injection multimodale native (PDF/Images/Media), "
+                    f"ou déléguer l'analyse via `semantic_probe` (extraction ciblée) ou `read_multimedia_file` (distillation descriptive complète)."
+                )
+
+            if output_mode == "text":
+                lines = []
+                with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                    f.seek(byte_offset)
+
+                    if byte_offset == 0:
+                        if start_line > 1:
+                            for _ in range(start_line - 1):
+                                if not f.readline(MAX_CHARS):
+                                    break
+
+                        total_read = 0
+                        for i in range(start_line, end_line + 1):
+                            line = f.readline(MAX_CHARS)
+                            if not line:
+                                break
+
+                            # Détection de la troncature d'une ligne trop longue
+                            if len(line) == MAX_CHARS and not line.endswith("\n"):
+                                f.readline()  # purge le reste de la ligne dans le flux
+                                line += " [...tronqué]"
+
+                            total_read += len(line)
+                            clean_line = line.replace("\x00", "").rstrip("\r\n")
+                            lines.append(f"{i} | {clean_line}")
+                            if total_read >= MAX_CHARS:
+                                lines.append(f"... [Tronqué : limite de {self.valves.MAX_READ_SIZE_KB} Ko atteinte]")
+                                break
+                        new_offset = f.tell()
+                        res_text = (
+                            f"--- CONTENU TEXTE (Lignes {start_line} à {end_line}, Offset 0 à {new_offset}) ---\n\n"
+                            + "\n".join(lines)
+                            + warning_msg
+                        )
+                    else:
+                        # Lecture brute par offset (évite l'hallucination des lignes virtuelles)
+                        raw_chunk = f.read(MAX_CHARS).replace("\x00", "")
+                        lines.append(raw_chunk)
+                        new_offset = f.tell()
+                        res_text = f"--- CONTENU TEXTE (Offset {byte_offset} à {new_offset}) ---\n\n" + raw_chunk + warning_msg
+            elif output_mode == "base64":
+                with open(fpath, "rb") as f:
+                    f.seek(byte_offset)
+                    content = base64.b64encode(f.read(12288)).decode("utf-8")
+                    new_offset = f.tell()
+                res_text = f"--- CONTENU BASE64 ---\n\n{content}"
+            else:
+                with open(fpath, "rb") as f:
+                    f.seek(byte_offset)
+                    import binascii
+                    content = binascii.hexlify(f.read(8192), sep=" ", bytes_per_sep=2).decode("utf-8")
+                    new_offset = f.tell()
+                res_text = f"--- CONTENU HEXADECIMAL ---\n\n{content}"
+
+            await events.status("Lecture terminée.", done=True)
+            return wrap_tool_output(
+                text=res_text,
+                status={"status": "success", "new_offset": str(new_offset), "total_size": str(size)},
+            )
+        except Exception as e:
+            return f"❌ Erreur : {str(e)}"
+
+    @staticmethod
+    def _format_hms(seconds: float) -> str:
+        """Formate un nombre de secondes en HH:MM:SS."""
+        total = max(0, int(round(seconds)))
+        h, rem = divmod(total, 3600)
+        m, s = divmod(rem, 60)
+        return f"{h:02d}:{m:02d}:{s:02d}"
+
+    @classmethod
+    def _shift_timestamps(cls, text: str, offset_sec: float) -> str:
+        """Recale dynamiquement les horodatages [HH:MM:SS] ou [MM:SS] d'un rapport selon l'offset temporel du segment."""
+        if not text or offset_sec <= 0:
+            return text
+        delta = int(round(offset_sec))
+
+        def _parse_and_shift(ts_str: str) -> str:
+            parts = [int(p) for p in ts_str.split(":")]
+            if len(parts) == 3:
+                sec = parts[0] * 3600 + parts[1] * 60 + parts[2]
+            else:
+                sec = parts[0] * 60 + parts[1]
+            return cls._format_hms(sec + delta)
+
+        def _replacer(match: re.Match) -> str:
+            t1 = _parse_and_shift(match.group(1))
+            t2 = match.group(2)
+            if t2:
+                return f"[{t1} - {_parse_and_shift(t2)}]"
+            return f"[{t1}]"
+
+        return re.sub(
+            r"\[(\d{1,2}:\d{2}(?::\d{2})?)(?:\s*-\s*(\d{1,2}:\d{2}(?::\d{2})?))?\]",
+            _replacer,
+            text,
+        )
+
+    _FFMPEG_BIN: Optional[str] = None
+    _FFMPEG_SEMAPHORES: Dict[int, Tuple[int, asyncio.Semaphore]] = {}
+    _SEGMENT_SEMAPHORES: Dict[int, Tuple[int, asyncio.Semaphore]] = {}
+    _FFMPEG_INIT_LOCKS: Dict[int, asyncio.Lock] = {}
+
+    @staticmethod
+    def _get_loop_semaphore(
+        registry: Dict[int, Tuple[int, asyncio.Semaphore]], limit: int
+    ) -> asyncio.Semaphore:
+        """Retourne un sémaphore lié à la boucle événementielle courante, recréé si la limite change."""
+        safe_limit = max(1, int(limit))
+        loop_id = id(asyncio.get_running_loop())
+        entry = registry.get(loop_id)
+        if entry is None or entry[0] != safe_limit:
+            sem = asyncio.Semaphore(safe_limit)
+            registry[loop_id] = (safe_limit, sem)
+            return sem
+        return entry[1]
+
+    def _get_ffmpeg_semaphore(self) -> asyncio.Semaphore:
+        """
+        Retourne le sémaphore global de régulation des transcodages FFmpeg concurrents.
+        Empêche l'effondrement CPU et les pics OOM RAM (N * 30 Mo) en environnement multi-utilisateur / multi-chat
+        en sérialisant les extractions lourdes à l'échelle du worker Open WebUI.
+        """
+        limit = max(1, int(getattr(self.valves, "MAX_CONCURRENT_TRANSCODES", 1)))
+        return self._get_loop_semaphore(Tools._FFMPEG_SEMAPHORES, limit)
+
+    def _get_segment_semaphore(self) -> asyncio.Semaphore:
+        """Retourne le sémaphore global de régulation des segments multimodaux analysés en parallèle."""
+        limit = max(
+            1,
+            int(getattr(self.valves, "MAX_CONCURRENT_SEGMENTS", ECHO_MAX_CONCURRENT_MULTIMODAL_SEGMENTS)),
+        )
+        return self._get_loop_semaphore(Tools._SEGMENT_SEMAPHORES, limit)
+
+    @classmethod
+    def _get_ffmpeg_init_lock(cls) -> asyncio.Lock:
+        """Retourne le verrou d'initialisation FFmpeg lié à la boucle événementielle courante."""
+        loop_id = id(asyncio.get_running_loop())
+        lock = cls._FFMPEG_INIT_LOCKS.get(loop_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            cls._FFMPEG_INIT_LOCKS[loop_id] = lock
+        return lock
+
+    @staticmethod
+    async def _acquire_or_abort(sem: asyncio.Semaphore, abort_event: asyncio.Event) -> bool:
+        """Tente d'acquérir `sem` tout en interrompant l'attente si `abort_event` est déclenché."""
+        if abort_event.is_set():
+            return False
+        acq_task = asyncio.create_task(sem.acquire())
+        abort_task = asyncio.create_task(abort_event.wait())
+        try:
+            _, pending = await asyncio.wait(
+                {acq_task, abort_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for p in pending:
+                p.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
+            if abort_event.is_set():
+                if (
+                    acq_task.done()
+                    and not acq_task.cancelled()
+                    and acq_task.exception() is None
+                    and acq_task.result()
+                ):
+                    sem.release()
+                return False
+            return True
+        except BaseException:
+            for t in (acq_task, abort_task):
+                if not t.done():
+                    t.cancel()
+            await asyncio.gather(acq_task, abort_task, return_exceptions=True)
+            if (
+                acq_task.done()
+                and not acq_task.cancelled()
+                and acq_task.exception() is None
+                and acq_task.result()
+            ):
+                sem.release()
+            raise
+
+    @staticmethod
+    def _lower_posix_priority() -> None:
+        """Abaisse la priorité d'ordonnancement CPU du sous-processus au niveau le plus bas (nice +19) sous Linux/POSIX."""
+        try:
+            os.nice(19)
+        except Exception:
+            pass
+
+    @classmethod
+    def _get_low_priority_subprocess_kwargs(cls) -> dict:
+        """
+        Construit les arguments plateforme de `asyncio.create_subprocess_exec` pour exécuter FFmpeg
+        en priorité CPU minimale (`os.nice(19)` sous Linux/Docker, `IDLE_PRIORITY_CLASS` sous Windows),
+        garantissant que la boucle événementielle Open WebUI, FastAPI et SQLite restent toujours prioritaires.
+        """
+        if os.name == "nt":
+            return {"creationflags": 0x00000040}  # IDLE_PRIORITY_CLASS
+        if hasattr(os, "nice"):
+            return {"preexec_fn": cls._lower_posix_priority}
+        return {}
+
+    async def _ensure_ffmpeg_bin(self) -> str:
+        """
+        Résout le chemin de l'exécutable ffmpeg (natif ou statique via imageio-ffmpeg).
+        Sur open-webui:main-slim dépourvu de /usr/bin/ffmpeg, provisionne imageio-ffmpeg à chaud si nécessaire.
+        """
+        if Tools._FFMPEG_BIN and os.path.exists(Tools._FFMPEG_BIN):
+            return Tools._FFMPEG_BIN
+
+        async with self._get_ffmpeg_init_lock():
+            if Tools._FFMPEG_BIN and os.path.exists(Tools._FFMPEG_BIN):
+                return Tools._FFMPEG_BIN
+
+            sys_ffmpeg = shutil.which("ffmpeg")
+            if sys_ffmpeg:
+                Tools._FFMPEG_BIN = sys_ffmpeg
+                return sys_ffmpeg
+
+            try:
+                import imageio_ffmpeg
+                exe = await asyncio.to_thread(imageio_ffmpeg.get_ffmpeg_exe)
+                if exe and os.path.exists(exe):
+                    Tools._FFMPEG_BIN = exe
+                    return exe
+            except ImportError:
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        sys.executable, "-m", "pip", "install", "--quiet",
+                        "--break-system-packages", "imageio-ffmpeg",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    await asyncio.wait_for(proc.communicate(), timeout=60.0)
+                    import imageio_ffmpeg
+                    exe = await asyncio.to_thread(imageio_ffmpeg.get_ffmpeg_exe)
+                    if exe and os.path.exists(exe):
+                        Tools._FFMPEG_BIN = exe
+                        return exe
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+            return "ffmpeg"
+
+    async def _probe_media_duration(self, fpath: str) -> Optional[float]:
+        """Sonde la durée exacte (en secondes) d'un flux audio ou vidéo via ffprobe ou ffmpeg."""
+        ffprobe_bin = shutil.which("ffprobe")
+        if ffprobe_bin:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    ffprobe_bin,
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    fpath,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+                val = stdout.decode("utf-8", errors="ignore").strip()
+                if val and val != "N/A":
+                    dur = float(val)
+                    if dur > 0:
+                        return dur
+            except Exception:
+                pass
+
+        ffmpeg_bin = await self._ensure_ffmpeg_bin()
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                ffmpeg_bin, "-hide_banner", "-i", fpath,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+            err_txt = stderr.decode("utf-8", errors="ignore")
+            m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", err_txt)
+            if m:
+                return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _get_ffmpeg_muxer_and_mime(mime: str, ext: str) -> Tuple[List[str], str]:
+        """Sélectionne le conteneur streamable sur stdout (pipe:1) adapté au flux audio ou vidéo."""
+        if mime.startswith("audio/"):
+            if mime in ("audio/mp3", "audio/mpeg") or ext == ".mp3":
+                return ["-f", "mp3"], "audio/mp3"
+            if mime in ("audio/aac", "audio/mp4", "audio/x-m4a") or ext in (".aac", ".m4a"):
+                return ["-f", "adts"], "audio/aac"
+            if mime in ("audio/ogg", "audio/opus") or ext in (".ogg", ".opus"):
+                return ["-f", "ogg"], "audio/ogg"
+            if mime == "audio/flac" or ext == ".flac":
+                return ["-f", "flac"], "audio/flac"
+            if mime in ("audio/wav", "audio/x-wav") or ext == ".wav":
+                return ["-f", "wav"], "audio/wav"
+            return ["-f", "matroska"], "audio/webm"
+
+        if mime == "video/webm" or ext in (".webm", ".mkv"):
+            return ["-f", "matroska"], "video/webm"
+        if mime in ("video/mpeg", "video/mp2t") or ext in (".mpeg", ".mpg", ".ts"):
+            return ["-f", "mpegts"], "video/mpeg"
+        return [
+            "-f", "mp4",
+            "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+            "-frag_duration", "5000000",
+        ], "video/mp4"
+
+    @staticmethod
+    def _trim_fmp4_to_max_bytes(buf: bytearray, max_bytes: int) -> Tuple[Optional[bytes], float]:
+        """
+        Tronque un buffer fMP4 en mémoire vive exactement à la fin du dernier couple complet
+        (moof + mdat) inférieur ou égal à max_bytes, et calcule la durée vidéo exacte extraite (1 trame = 1s à 1 fps).
+        """
+        pos = 0
+        last_valid_end = 0
+        video_frames = 0
+        has_moov = False
+        buf_len = len(buf)
+
+        while pos + 8 <= buf_len and pos <= max_bytes:
+            sz, btype = struct.unpack(">I4s", buf[pos:pos + 8])
+            if sz < 8 or pos + sz > max_bytes or pos + sz > buf_len:
+                break
+            if btype == b"moov":
+                has_moov = True
+            elif btype == b"moof":
+                mpos = pos + 8
+                mend = pos + sz
+                frag_vframes = 0
+                while mpos + 8 <= mend:
+                    msz, mtype = struct.unpack(">I4s", buf[mpos:mpos + 8])
+                    if msz < 8 or mpos + msz > mend:
+                        break
+                    if mtype == b"traf":
+                        tpos = mpos + 8
+                        tend = mpos + msz
+                        is_vid = False
+                        while tpos + 8 <= tend:
+                            tsz, ttype = struct.unpack(">I4s", buf[tpos:tpos + 8])
+                            if tsz < 8 or tpos + tsz > tend:
+                                break
+                            if ttype == b"tfhd" and tsz >= 16:
+                                tid = struct.unpack(">I", buf[tpos + 12:tpos + 16])[0]
+                                is_vid = (tid == 1)
+                            elif ttype == b"trun" and is_vid and tsz >= 16:
+                                frag_vframes += struct.unpack(">I", buf[tpos + 12:tpos + 16])[0]
+                            tpos += tsz
+                    mpos += msz
+
+                if pos + sz + 8 <= buf_len:
+                    next_sz, next_type = struct.unpack(">I4s", buf[pos + sz:pos + sz + 8])
+                    frag_end = pos + sz + next_sz
+                    if next_type == b"mdat" and next_sz >= 8 and frag_end <= max_bytes and frag_end <= buf_len:
+                        video_frames += frag_vframes
+                        last_valid_end = frag_end
+                        pos = frag_end
+                        continue
+                break
+            pos += sz
+
+        if has_moov and last_valid_end > 0 and video_frames > 0:
+            return bytes(buf[:last_valid_end]), float(video_frames)
+        return None, 0.0
+
+    async def _extract_media_segment_bytes(
+        self,
+        fpath: str,
+        mime: str,
+        start_sec: float,
+        end_sec: float,
+        max_bytes: int,
+        allow_overflow: bool = False,
+    ) -> Tuple[Optional[bytes], str, int, float]:
+        """
+        Extrait une tranche [start_sec, end_sec] 100% en mémoire vive via FFmpeg (pipe:1) sous régulation CPU/RAM :
+        - Vidéo : décimation temporelle à 1 fps (-vf fps=1) en résolution spatiale native intacte + piste audio copiée bit-à-bit (-c:a copy),
+          saut natif des trames non-référencées au décodage (-skip_frame noref), bridage strict à 2 threads CPU (-threads 2, -filter_threads 1),
+          priorité OS minimale (nice 19 / IDLE_PRIORITY_CLASS) et sérialisation inter-chats via sémaphore (_get_ffmpeg_semaphore).
+        - Audio : copie binaire directe (-c copy).
+        Retourne (raw_bytes, out_mime, status_code, actual_duration_sec) où status_code vaut :
+          0 = succès, 1 = dépassement max_bytes (overflow VBR), -1 = EOF ou erreur.
+        """
+        ext = os.path.splitext(fpath)[1].lower()
+        muxer_args, out_mime = self._get_ffmpeg_muxer_and_mime(mime, ext)
+        ffmpeg_bin = await self._ensure_ffmpeg_bin()
+        seg_duration = max(0.1, end_sec - start_sec)
+        is_video = mime.startswith("video/")
+        # Optimisation CPU : en entrée vidéo, -skip_frame noref court-circuite le décodage des B-frames non-référencées
+        # (~19% d'économie CPU), et -threads 2 borne le décodeur pour préserver au moins 2 vCPU sur 4 pour Open WebUI.
+        input_args = ["-threads", "2", "-skip_frame", "noref"] if is_video else []
+        codec_args = (
+            [
+                "-filter_threads", "1",
+                "-vf", "fps=1,scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                "-pix_fmt", "yuv420p",
+                "-c:v", "libx264",
+                "-preset", "veryfast",
+                "-qp", "26",
+                "-g", "10",
+                "-bf", "0",
+                "-threads", "2",
+                "-c:a", "copy",
+            ]
+            if is_video
+            else ["-c", "copy"]
+        )
+        prio_kwargs = self._get_low_priority_subprocess_kwargs()
+
+        async def _run_ffmpeg(m_args: List[str], fmt_mime: str) -> Tuple[Optional[bytes], int, float]:
+            cmd = [
+                ffmpeg_bin,
+                "-hide_banner",
+                "-loglevel", "error",
+                "-ss", f"{start_sec:.3f}",
+                "-t", f"{seg_duration:.3f}",
+                *input_args,
+                "-i", fpath,
+                *codec_args,
+                *m_args,
+                "pipe:1",
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                **prio_kwargs,
+            )
+            buf = bytearray()
+            overflow = False
+            try:
+                while True:
+                    chunk = await proc.stdout.read(65536)
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
+                    if not allow_overflow and len(buf) > max_bytes:
+                        overflow = True
+                        proc.kill()
+                        break
+                await proc.wait()
+            except Exception:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except Exception:
+                    pass
+                return None, -1, 0.0
+
+            if overflow:
+                if fmt_mime == "video/mp4":
+                    trimmed, trimmed_dur = self._trim_fmp4_to_max_bytes(buf, max_bytes)
+                    if trimmed is not None and trimmed_dur >= 5.0:
+                        return trimmed, 0, trimmed_dur
+                return None, 1, 0.0
+            if proc.returncode != 0 or len(buf) == 0:
+                return None, -1, 0.0
+            return bytes(buf), 0, seg_duration
+
+        async with self._get_ffmpeg_semaphore():
+            data, code, actual_dur = await _run_ffmpeg(muxer_args, out_mime)
+            if code == 1:
+                return None, out_mime, 1, 0.0
+            if data is None and is_video and muxer_args[1] != "matroska":
+                # Fallback conteneur universel Matroska (conservant strictement -c:a copy) si le codec audio source est incompatible avec fMP4
+                out_mime = "video/webm"
+                data, code, actual_dur = await _run_ffmpeg(["-f", "matroska"], out_mime)
+                if code == 1:
+                    return None, out_mime, 1, 0.0
+            return data, out_mime, code, actual_dur
+
+    async def _iter_pdf_memory_segments(
+        self, fpath: str, max_bytes: int
+    ) -> AsyncGenerator[Tuple[str, str, float, Optional[str], bool], None]:
+        """Segmente un PDF volumineux (> MAX_MULTIMODAL_SIZE_KB) par lots de pages en O(1) RAM (io.BytesIO)."""
+        fh = None
+        yielded_any = False
+        try:
+            def _open_pdf():
+                from pypdf import PdfReader
+                stream = open(fpath, "rb")
+                try:
+                    reader = PdfReader(stream)
+                    return stream, reader, len(reader.pages)
+                except Exception:
+                    stream.close()
+                    raise
+
+            fh, reader, total_pages = await asyncio.to_thread(_open_pdf)
+            if total_pages == 0:
+                yield f"___ECHO_STREAM_FILE___{fpath}___", "application/pdf", 0.0, None, False
+                return
+
+            def _build_next_batch(start_idx: int) -> Tuple[bytes, str, int]:
+                from pypdf import PdfWriter
+                writer = PdfWriter()
+                last_valid_bytes = b""
+                for idx in range(start_idx, total_pages):
+                    writer.add_page(reader.pages[idx])
+                    bio = io.BytesIO()
+                    writer.write(bio)
+                    cur_bytes = bio.getvalue()
+                    if len(cur_bytes) > max_bytes and len(writer.pages) > 1:
+                        return last_valid_bytes, f"Pages {start_idx + 1}-{idx}/{total_pages}", idx
+                    last_valid_bytes = cur_bytes
+                return last_valid_bytes, f"Pages {start_idx + 1}-{total_pages}/{total_pages}", total_pages
+
+            cur_idx = 0
+            while cur_idx < total_pages:
+                raw_pdf, label, cur_idx = await asyncio.to_thread(_build_next_batch, cur_idx)
+                has_more = cur_idx < total_pages
+                marker = EchoGeminiClient.register_memory_stream(raw_pdf)
+                yielded_any = True
+                yield marker, "application/pdf", 0.0, label, has_more
+        except Exception:
+            if not yielded_any:
+                yield f"___ECHO_STREAM_FILE___{fpath}___", "application/pdf", 0.0, None, False
+            else:
+                raise
+        finally:
+            if fh is not None:
+                try:
+                    fh.close()
+                except Exception:
+                    pass
+
+    async def _iter_in_memory_segments(
+        self, fpath: str, mime: str
+    ) -> AsyncGenerator[Tuple[str, str, float, Optional[str], bool], None]:
+        """
+        Générateur JIT de segments multimodaux en mémoire vive :
+        - Fast-Path Zéro-RAM sur fichier direct si Taille <= MAX_MULTIMODAL_SIZE_KB et Durée <= 45 min / 1M tokens.
+        - Segmentation en mémoire vive (FFmpeg pipe:1 ou pypdf BytesIO) avec troncature fMP4 zéro-perte ou dichotomie sinon.
+        """
+        max_bytes = self.valves.MAX_MULTIMODAL_SIZE_KB * 1024
+        max_duration_sec = int(2700 * (ECHO_MAX_CONTEXT_SIZE / 1048576))
+        file_size = os.path.getsize(fpath)
+
+        is_av = mime.startswith(("audio/", "video/"))
+        duration = await self._probe_media_duration(fpath) if is_av else None
+
+        # 1. Fast-Path : Le fichier respecte à la fois le plafond d'octets (30 Mo) et le plafond temporel (45 min / 1M tokens)
+        if file_size <= max_bytes and (duration is None or duration <= max_duration_sec):
+            yield f"___ECHO_STREAM_FILE___{fpath}___", mime, 0.0, None, False
+            return
+
+        # 2. Segmentation PDF en mémoire vive
+        if mime == "application/pdf" and file_size > max_bytes:
+            async with contextlib.aclosing(self._iter_pdf_memory_segments(fpath, max_bytes)) as pdf_iter:
+                async for seg in pdf_iter:
+                    yield seg
+            return
+
+        # 3. Segmentation Audio/Vidéo en mémoire vive (sans recouvrement : overlap = 0)
+        if is_av:
+            is_video = mime.startswith("video/")
+            if duration and duration > 0:
+                if is_video:
+                    # Pour la vidéo, les 30 Mo s'appliquent au flux décimé à 1 fps + audio copy :
+                    # on découpe initialement uniquement selon le plafond temporel (45 min / 1M tokens).
+                    step_sec = float(max_duration_sec)
+                else:
+                    bps = file_size / duration
+                    safe_target_bytes = int(max_bytes * 0.85)
+                    step_by_size = (safe_target_bytes / bps) if bps > 0 else float(max_duration_sec)
+                    step_sec = max(15.0, min(float(max_duration_sec), step_by_size))
+
+                queue: List[Tuple[float, float]] = []
+                cur = 0.0
+                while cur < duration:
+                    nxt = min(duration, cur + step_sec)
+                    queue.append((cur, nxt))
+                    if nxt >= duration:
+                        break
+                    cur = nxt
+            else:
+                # Si la durée d'en-tête est absente (Duration: N/A), progresse par fenêtres bout-à-bout jusqu'à EOF
+                step_sec = float(max_duration_sec) if is_video else 300.0
+                queue = [(0.0, step_sec)]
+
+            unknown_dur = not (duration and duration > 0)
+            while queue:
+                s_sec, e_sec = queue.pop(0)
+                span = e_sec - s_sec
+                can_split = span > 10.0
+                raw_bytes, seg_mime, status_code, actual_dur = await self._extract_media_segment_bytes(
+                    fpath, mime, s_sec, e_sec, max_bytes, allow_overflow=not can_split
+                )
+                if status_code == 1 and can_split:
+                    # Subdivision dichotomique bout-à-bout (sans recouvrement) si le flux non-fMP4 extrait dépasse 30 Mo
+                    mid = (s_sec + e_sec) / 2.0
+                    queue.insert(0, (mid, e_sec))
+                    queue.insert(0, (s_sec, mid))
+                    continue
+                if raw_bytes:
+                    effective_end = min(e_sec, s_sec + actual_dur) if actual_dur > 0 else e_sec
+                    if can_split and (e_sec - effective_end) > 1.0:
+                        queue.insert(0, (effective_end, e_sec))
+                    is_full_single = (
+                        (not unknown_dur)
+                        and (s_sec == 0.0)
+                        and (effective_end >= duration - 1.0)
+                        and (len(queue) == 0)
+                    )
+                    if unknown_dur and not queue and len(raw_bytes) > 4096:
+                        queue.append((effective_end, effective_end + step_sec))
+                    has_more = bool(queue)
+                    marker = EchoGeminiClient.register_memory_stream(raw_bytes)
+                    label = None if is_full_single else f"Segment [{self._format_hms(s_sec)} - {self._format_hms(effective_end)}]"
+                    yield marker, seg_mime, s_sec, label, has_more
+            return
+
+        # 4. Fallback de sécurité si un binaire non-segmentable dépasse MAX_MULTIMODAL_SIZE_KB
+        if file_size > max_bytes:
+            raise ValueError(
+                f"Max Size Exceeded : Le fichier ({file_size / (1024 * 1024):.1f} Mo) dépasse la limite autorisée "
+                f"de {self.valves.MAX_MULTIMODAL_SIZE_KB / 1024:.1f} Mo et son format ({mime}) ne supporte pas la segmentation."
+            )
+        yield f"___ECHO_STREAM_FILE___{fpath}___", mime, 0.0, None, False
+
+    async def _call_apollo_with_heartbeat(
+        self,
+        payload: dict,
+        uid: str,
+        metadata: dict,
+        events: EchoEvents,
+    ) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[str]]:
+        """
+        Exécute de façon factorisée l'appel EchoGeminiClient.call_cascade sur MODEL_APOLLO
+        avec gestion des timeouts et extraction des pensées.
+        Retourne (clean_text, thought_text, model_used, reason, error_msg).
+        """
+        cascade_task = asyncio.create_task(
+            EchoGeminiClient.call_cascade(
+                target_model_key="MODEL_APOLLO",
+                payload=payload,
+                user_id=uid,
+                metadata=metadata,
+                events=events,
+                threshold=ECHO_API_KEY_RETRIES,
+                max_retries=ECHO_API_MAX_RETRIES,
+                timeout=self.valves.PROBE_TIMEOUT,
+                include_thoughts=True,
+            )
+        )
+
+        try:
+            await cascade_task
+        except asyncio.CancelledError:
+            if not cascade_task.done():
+                cascade_task.cancel()
+            await asyncio.gather(cascade_task, return_exceptions=True)
+            raise
+        except Exception as e:
+            return None, None, None, None, str(e)
+
+        if cascade_task.exception():
+            return None, None, None, None, str(cascade_task.exception())
+
+        data, model_used, reason = cascade_task.result()
+        if not data:
+            return None, None, model_used, reason, "Cascade épuisée : aucun modèle disponible."
+
+        target = data.get("response", {}) if "response" in data else data
+        candidates = target.get("candidates", [])
+        if not candidates:
+            return None, None, model_used, reason, "Réponse vide du modèle."
+        parts, clean = extract_response_parts_and_text({"candidates": candidates})
+        thought = "\n\n".join(
+            p.get("text", "").strip()
+            for p in parts
+            if p.get("thought") and p.get("text")
+        ) or None
+        return clean, thought, model_used, reason, None
+
+    async def _execute_multimodal_analysis(
+        self,
+        file_id: str,
+        user_prompt: str,
+        mode: Literal["probe", "sensory"],
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None,
+    ) -> Any:
+        """
+        Pipeline maître factorisé pour semantic_probe ("probe") et read_multimedia_file ("sensory").
+        Gère la résolution multi-espaces, le streaming Zéro-RAM ou la segmentation Map-Reduce 100% en mémoire vive,
+        le recalage chronologique des timestamps et la synthèse de consolidation.
+        """
+        events = EchoEvents(__event_emitter__, __event_call__)
+        uid = __user__.get("id", "system") if __user__ else "system"
+        cid = __metadata__.get("chat_id") if __metadata__ else None
+        fpath = self._resolve_extended_file_path(uid, cid, file_id)
+        if not fpath:
+            return "❌ Fichier introuvable."
+
+        mime, supported = get_gemini_mime(fpath)
+        if not supported:
+            return f"❌ Type {mime} non supporté."
+
+        safe_name = extract_clean_filename(fpath)
+
+        system_prompt = (
+            SYS_EXPLORE_SENSORY.format(filename=safe_name)
+            if mode == "sensory"
+            else SYS_EXPLORER_PROBE
+        )
+
+        seg_sem = self._get_segment_semaphore()
+        abort_event = asyncio.Event()
+        first_error: Optional[str] = None
+        segment_results: Dict[int, dict] = {}
+        segment_tasks: List[asyncio.Task] = []
+        launched_count = 0
+        completed_count = 0
+        is_multi_segment = False
+        prefix_err = "❌ Erreur de l'agent sensoriel" if mode == "sensory" else "❌ Erreur Sonde"
+
+        try:
+            init_hb = (
+                f"👁️ Préparation et analyse multimodale de {safe_name}..."
+                if mode == "sensory"
+                else f"🤖 Préparation et sondage sémantique de {safe_name}..."
+            )
+            await events.status(init_hb, False)
+
+            last_status_msg: Optional[str] = None
+
+            async def _emit_progress(msg: str) -> None:
+                nonlocal last_status_msg
+                if msg != last_status_msg:
+                    last_status_msg = msg
+                    await events.status(msg, False)
+
+            def _launch_segment_task(
+                cur_idx: int,
+                data_marker: str,
+                seg_mime: str,
+                start_offset_sec: float,
+                seg_label: Optional[str],
+                seg_prompt: str,
+            ) -> asyncio.Task:
+                released = False
+
+                def _release_resources() -> None:
+                    nonlocal released
+                    if released:
+                        return
+                    released = True
+                    if data_marker.startswith("___ECHO_STREAM_MEM___"):
+                        EchoGeminiClient.release_memory_stream(data_marker)
+                    seg_sem.release()
+
+                async def _process_segment() -> None:
+                    nonlocal first_error, completed_count
+                    try:
+                        payload = {
+                            "contents": [
+                                {
+                                    "role": "user",
+                                    "parts": [
+                                        {"text": seg_prompt},
+                                        {"inline_data": {"mime_type": seg_mime, "data": data_marker}},
+                                    ],
+                                }
+                            ],
+                            "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="medium"),
+                            "systemInstruction": {"parts": [{"text": system_prompt}]},
+                        }
+                        meta_copy = dict(__metadata__) if isinstance(__metadata__, dict) else __metadata__
+                        clean, thought, model_used, reason, err = await self._call_apollo_with_heartbeat(
+                            payload=payload,
+                            uid=uid,
+                            metadata=meta_copy,
+                            events=events,
+                        )
+                        if err:
+                            if first_error is None:
+                                first_error = err
+                            abort_event.set()
+                            return
+                        segment_results[cur_idx] = {
+                            "label": seg_label,
+                            "clean": self._shift_timestamps(clean or "", start_offset_sec),
+                            "thought": thought,
+                            "model_used": model_used,
+                            "reason": reason,
+                        }
+                        completed_count += 1
+                        if is_multi_segment:
+                            await _emit_progress(
+                                f"👁️ Analyse multimodale de {safe_name} ({completed_count}/{launched_count} terminés)..."
+                                if mode == "sensory"
+                                else (
+                                    f"🤖 Sondage sémantique de {safe_name} "
+                                    f"({completed_count}/{launched_count} terminés)..."
+                                )
+                            )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        if first_error is None:
+                            first_error = str(exc)
+                        abort_event.set()
+                    finally:
+                        _release_resources()
+
+                try:
+                    task = asyncio.create_task(_process_segment())
+                except BaseException:
+                    _release_resources()
+                    raise
+                task.add_done_callback(lambda _fut: _release_resources())
+                return task
+
+            seg_iter = self._iter_in_memory_segments(fpath, mime).__aiter__()
+            try:
+                while True:
+                    acquired = await self._acquire_or_abort(seg_sem, abort_event)
+                    if not acquired:
+                        break
+                    try:
+                        data_marker, seg_mime, start_offset_sec, seg_label, has_more = await seg_iter.__anext__()
+                    except StopAsyncIteration:
+                        seg_sem.release()
+                        break
+                    except BaseException:
+                        seg_sem.release()
+                        raise
+
+                    if abort_event.is_set():
+                        if data_marker.startswith("___ECHO_STREAM_MEM___"):
+                            EchoGeminiClient.release_memory_stream(data_marker)
+                        seg_sem.release()
+                        break
+
+                    launched_count += 1
+                    if seg_label is not None or launched_count > 1:
+                        is_multi_segment = True
+
+                    if is_multi_segment:
+                        await _emit_progress(
+                            f"👁️ Analyse multimodale de {safe_name} ({completed_count}/{launched_count} terminés)..."
+                            if mode == "sensory"
+                            else (
+                                f"🤖 Sondage sémantique de {safe_name} "
+                                f"({completed_count}/{launched_count} terminés)..."
+                            )
+                        )
+                    else:
+                        await _emit_progress(
+                            f"👁️ Analyse multimodale de {safe_name}..."
+                            if mode == "sensory"
+                            else f"🤖 Sondage sémantique de {safe_name}..."
+                        )
+
+                    seg_prompt = (
+                        f"[CONTEXTE DE SEGMENTATION : {seg_label} du fichier '{safe_name}'. "
+                        f"Pour tout horodatage, partir de 00:00:00 au début de cet extrait ; le système recalera automatiquement l'offset.]\n\n"
+                        f"{user_prompt}"
+                        if seg_label
+                        else user_prompt
+                    )
+                    task = _launch_segment_task(
+                        cur_idx=launched_count - 1,
+                        data_marker=data_marker,
+                        seg_mime=seg_mime,
+                        start_offset_sec=start_offset_sec,
+                        seg_label=seg_label,
+                        seg_prompt=seg_prompt,
+                    )
+                    segment_tasks.append(task)
+                    if not has_more:
+                        break
+
+                pending_set = {t for t in segment_tasks if not t.done()}
+                if pending_set and not abort_event.is_set():
+                    abort_waiter = asyncio.create_task(abort_event.wait())
+                    try:
+                        _, remaining_set = await asyncio.wait(
+                            pending_set | {abort_waiter},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        while not abort_event.is_set() and (remaining_set - {abort_waiter}):
+                            _, remaining_set = await asyncio.wait(
+                                remaining_set,
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                    finally:
+                        if not abort_waiter.done():
+                            abort_waiter.cancel()
+                        await asyncio.gather(abort_waiter, return_exceptions=True)
+
+                if abort_event.is_set():
+                    for t in segment_tasks:
+                        if not t.done():
+                            t.cancel()
+                if segment_tasks:
+                    await asyncio.gather(*segment_tasks, return_exceptions=True)
+            finally:
+                await seg_iter.aclose()
+                for t in segment_tasks:
+                    if not t.done():
+                        t.cancel()
+                if segment_tasks:
+                    await asyncio.gather(*segment_tasks, return_exceptions=True)
+
+            if first_error:
+                await events.status(prefix_err, True)
+                return f"{prefix_err} : {first_error}"
+
+            segment_outputs: List[Tuple[Optional[str], str]] = []
+            thoughts_acc: List[str] = []
+            last_model_used = "MODEL_APOLLO"
+            last_reason = None
+            for idx in sorted(segment_results.keys()):
+                res = segment_results[idx]
+                lbl = res["label"]
+                segment_outputs.append((lbl, res["clean"]))
+                if res["thought"]:
+                    thoughts_acc.append(f"[{lbl}] {res['thought']}" if lbl else res["thought"])
+                if res["model_used"]:
+                    last_model_used = res["model_used"]
+                if res["reason"]:
+                    last_reason = res["reason"]
+
+            if not segment_outputs:
+                await events.status("❌ Aucun segment exploitable.", True)
+                return "❌ Aucun segment exploitable n'a pu être extrait du fichier."
+
+            # Assemblage final (Fast-Path mono-segment vs Map-Reduce multi-segments)
+            if len(segment_outputs) == 1 and segment_outputs[0][0] is None:
+                final_clean = segment_outputs[0][1]
+                if mode == "sensory":
+                    final_text = f"### 👁️ Rapport de Distillation ({safe_name})\n{final_clean}"
+                else:
+                    final_text = final_clean
+            else:
+                if mode == "sensory":
+                    blocks = [
+                        f"#### ⏱️ {lbl}\n{txt}" if lbl else txt
+                        for lbl, txt in segment_outputs
+                    ]
+                    final_text = (
+                        f"### 👁️ Rapport de Distillation ({safe_name} — {len(segment_outputs)} segments)\n\n"
+                        + "\n\n---\n\n".join(blocks)
+                    )
+                else:
+                    # Consolidation Map-Reduce pour semantic_probe : synthèse chirurgicale unifiée répondant à query
+                    compiled_notes = "\n\n".join(
+                        [f"=== {lbl or f'Segment {i + 1}'} ===\n{txt}" for i, (lbl, txt) in enumerate(segment_outputs)]
+                    )
+                    reduce_prompt = (
+                        f"Requête d'extraction initiale : {user_prompt}\n\n"
+                        f"Voici les relevés extraits segment par segment du fichier '{safe_name}' (horodatages déjà recalés) :\n\n"
+                        f"{compiled_notes}\n\n"
+                        "Le Modèle DOIT synthétiser et consolider ces relevés en une réponse unique, directe, précise et rigoureuse "
+                        "répondant exactement à la requête initiale, en conservant les citations, données et repères temporels ou paginés pertinents."
+                    )
+                    reduce_payload = {
+                        "contents": [{"role": "user", "parts": [{"text": reduce_prompt}]}],
+                        "generationConfig": get_generation_config("MODEL_APOLLO", override_thinking="medium"),
+                        "systemInstruction": {"parts": [{"text": SYS_EXPLORER_PROBE}]},
+                    }
+                    await _emit_progress(
+                        f"🤖 Consolidation Map-Reduce des {len(segment_outputs)} segments de {safe_name}..."
+                    )
+                    red_clean, red_thought, red_model, red_reason, red_err = await self._call_apollo_with_heartbeat(
+                        payload=reduce_payload,
+                        uid=uid,
+                        metadata=__metadata__,
+                        events=events,
+                    )
+                    if not red_err and red_clean:
+                        final_text = red_clean
+                        if red_thought:
+                            thoughts_acc.append(f"[Consolidation] {red_thought}")
+                        if red_model:
+                            last_model_used = red_model
+                        if red_reason:
+                            last_reason = red_reason
+                    else:
+                        final_text = compiled_notes
+
+            done_msg = "✅ Distillation sensorielle terminée." if mode == "sensory" else "✅ Analyse terminée."
+            await events.status(done_msg, True)
+            combined_thought = "\n\n".join(thoughts_acc) if thoughts_acc else None
+
+            return wrap_tool_output(
+                text=final_text,
+                model_requested="MODEL_APOLLO",
+                model_used=last_model_used,
+                status={"status": "success", "segments": len(segment_outputs)},
+                echo_tool_multiparts=[{"type": "thought", "content": combined_thought}] if combined_thought else [],
+                reason=last_reason,
+            )
+        except Exception as e:
+            await events.status(prefix_err, True)
+            return f"{prefix_err} : {str(e)}"
+
+    @echo_tool
+    async def semantic_probe(
+        self,
+        file_id: str,
+        query: str,
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None,
+    ) -> Any:
+        """Extrait de manière chirurgicale les données, réponses ou concepts ciblés (query) d'un document ou média volumineux."""
+        return await self._execute_multimodal_analysis(
+            file_id=file_id,
+            user_prompt=query,
+            mode="probe",
+            __user__=__user__,
+            __metadata__=__metadata__,
+            __event_emitter__=__event_emitter__,
+            __event_call__=__event_call__,
+        )
+
+    @echo_tool
+    async def read_multimedia_file(
+        self,
+        file_id: str,
+        instruction: Optional[str] = None,
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None,
+    ) -> Any:
+        """Génère un rapport textuel descriptif complet et horodaté d'un fichier multimédia (image, audio, vidéo)."""
+        user_prompt = instruction.strip() if instruction and instruction.strip() else USR_EXPLORE_SENSORY
+        return await self._execute_multimodal_analysis(
+            file_id=file_id,
+            user_prompt=user_prompt,
+            mode="sensory",
+            __user__=__user__,
+            __metadata__=__metadata__,
+            __event_emitter__=__event_emitter__,
+            __event_call__=__event_call__,
+        )
+
+    @echo_tool
+    async def show_image_to_user(
+        self,
+        target: str,
+        workspace: Optional[Literal["main", "plans", "generated", "sandbox", "browserviews"]] = None,
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+        __event_call__: Any = None,
+    ) -> Union[str, dict, Tuple[HTMLResponse, Any]]:
+        """Affiche une image locale (ID Registre, Nom de fichier ou Workspace) ou distante (URL http/https) dans une Iframe interactive intégrée à la réponse."""
+        events = EchoEvents(__event_emitter__, __event_call__)
+        uid = __user__.get("id", "anonymous")
+        cid = __metadata__.get("chat_id") if __metadata__ else None
+        is_url = target.lower().startswith(("http://", "https://"))
+
+        # Sécurité anti-chemins absolus
+        if not is_url and (target.startswith("/") or (len(target) > 1 and target[1] == ":")):
+            return "❌ Sécurité : Accès restreint."
+
+        try:
+            max_bytes = int(self.valves.MAX_MULTIMODAL_SIZE_KB) * 1024
+            if is_url:
+                await events.status("🌐 Vérification et récupération de l'image distante...")
+            loaded = await load_image_as_base64(
+                target=target,
+                user_id=uid,
+                chat_id=cid,
+                workspace=workspace,
+                max_bytes=max_bytes,
+            )
+            if loaded.get("ok"):
+                fname = loaded["filename"]
+                mime = loaded["mime"]
+                b64 = loaded["b64"]
+                data_uri = f"data:{mime};base64,{b64}"
+                if cid:
+                    try:
+                        raw_bytes = base64.b64decode(b64)
+                        viewer_src = save_embed_binary_asset(uid, cid, raw_bytes, mime, fname)
+                    except Exception:
+                        viewer_src = data_uri
+                else:
+                    viewer_src = data_uri
+                if is_url:
+                    title = f"Image Distante : {fname}"
+                    await events.status("✅ Image distante intégrée.", done=True)
+                    return (
+                        EchoUI.image_viewer(viewer_src, title=title, filename=fname, is_remote_fallback=False),
+                        (
+                            f"✅ Image distante `{fname}` ({mime}) vérifiée et rendue dans l'Iframe de la "
+                            "réponse destinée à L'Utilisateur. L'affichage visuel étant déjà assuré par Le "
+                            "Système, il est ABSOLUMENT INTERDIT pour Le Modèle d'émettre une balise Markdown "
+                            "`![...](...)` ou un lien d'image redondant dans sa réponse."
+                        ),
+                    )
+                title = f"Espace Personnel : {fname}"
+                await events.status("✅ Image affichée.", done=True)
+                return (
+                    EchoUI.image_viewer(viewer_src, title=title, filename=fname, is_remote_fallback=False),
+                    (
+                        f"✅ Image locale `{fname}` ({mime}, titre : `{title}`) rendue dans l'Iframe de la "
+                        "réponse destinée à L'Utilisateur. L'affichage visuel étant déjà assuré par Le "
+                        "Système, il est ABSOLUMENT INTERDIT pour Le Modèle d'émettre une balise Markdown "
+                        "`![...](...)` ou un lien d'image redondant dans sa réponse."
+                    ),
+                )
+
+            err_code = loaded.get("error_code", "")
+            if err_code == "ssrf_blocked":
+                await events.status("❌ URL bloquée par la politique de sécurité.", done=True)
+                return "❌ Sécurité SSRF : L'accès aux adresses locales, privées ou internes est strictement interdit."
+            if err_code == "too_large":
+                await events.status("❌ Image trop volumineuse.", done=True)
+                return f"❌ L'image dépasse la limite autorisée ({self.valves.MAX_MULTIMODAL_SIZE_KB} Ko)."
+            if err_code == "invalid_mime" and is_url:
+                content_type = loaded.get("content_type", "")
+                await events.status("❌ Le lien ne pointe pas vers une image valide.", done=True)
+                return (
+                    f"❌ Ressource distante rejetée : type MIME détecté `{content_type or 'inconnu'}` "
+                    "invalide (image requise). Il est ABSOLUMENT INTERDIT pour Le Modèle d'injecter "
+                    "cette URL dans la réponse destinée à L'Utilisateur."
+                )
+            if err_code == "http_404":
+                await events.status("❌ Image introuvable (404).", done=True)
+                return (
+                    "❌ Ressource distante introuvable (HTTP 404). Lien mort : il est ABSOLUMENT "
+                    "INTERDIT pour Le Modèle d'injecter cette URL dans la réponse destinée à "
+                    "L'Utilisateur."
+                )
+            if loaded.get("remote_fallback"):
+                fname = loaded.get("filename") or "image_distante.png"
+                title = f"Image Distante : {fname}"
+                http_status = loaded.get("http_status")
+                if http_status:
+                    await events.status(f"⚠️ Accès serveur restreint ({http_status}), affichage direct dans l'Iframe...", done=True)
+                    msg_txt = (
+                        f"⚠️ Requête serveur filtrée par l'hôte distant (HTTP {http_status}) : "
+                        f"l'image `{fname}` est montée en lien direct dans l'Iframe du navigateur de "
+                        "L'Utilisateur. L'affichage visuel étant pris en charge par Le Système, il est "
+                        "ABSOLUMENT INTERDIT pour Le Modèle d'émettre une balise Markdown `![...](...)` "
+                        "redondante dans sa réponse."
+                    )
+                else:
+                    await events.status("⚠️ Délai serveur dépassé, affichage direct dans l'Iframe...", done=True)
+                    msg_txt = (
+                        f"⚠️ Délai de téléchargement serveur expiré : l'image `{fname}` est montée en "
+                        "lien direct dans l'Iframe du navigateur de L'Utilisateur. L'affichage visuel "
+                        "étant pris en charge par Le Système, il est ABSOLUMENT INTERDIT pour Le Modèle "
+                        "d'émettre une balise Markdown `![...](...)` redondante dans sa réponse."
+                    )
+                return (
+                    EchoUI.image_viewer(target, title=title, filename=fname, is_remote_fallback=True),
+                    wrap_tool_output(
+                        text=msg_txt,
+                        status={"status": "warning"},
+                    ),
+                )
+            return f"❌ {loaded.get('error', 'Ressource image introuvable.')}"
+
+        except Exception as e:
+            return f"❌ Échec affichage : {str(e)}"
+
+    @echo_tool
+    async def get_file_metadata(
+        self,
+        file_id: str,
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+    ) -> Any:
+        """Récupère la taille et le type MIME d'un fichier de l'Espace Personnel."""
+        uid = __user__.get("id", "anonymous")
+        cid = __metadata__.get("chat_id") if __metadata__ else None
+        fpath = self._resolve_extended_file_path(uid, cid, file_id)
+        if not fpath:
+            return "❌ Fichier introuvable."
+        stat = os.stat(fpath)
+        mime, _ = get_gemini_mime(fpath)
+        return f"📊 **{extract_clean_filename(fpath)}**\nTaille: {stat.st_size} octets\nType: {mime}"
+
+    @echo_tool
+    async def calculate_file_hashes(
+        self,
+        file_ids: List[str],
+        algorithm: Literal["sha256", "md5", "sha1", "sha512", "blake2b", "crc32"] = "sha256",
+        __user__: dict = {},
+        __metadata__: dict = {},
+        __event_emitter__: Any = None,
+    ) -> Any:
+        """Calcule les empreintes cryptographiques (SHA256, MD5, etc.) d'une liste de fichiers."""
+        import zlib
+        uid = __user__.get("id", "anonymous")
+        cid = __metadata__.get("chat_id") if __metadata__ else None
+        res = []
+        for fid in file_ids:
+            p = self._resolve_extended_file_path(uid, cid, fid)
+            if p:
+                clean_n = extract_clean_filename(p)
+                if algorithm == "crc32":
+                    crc = 0
+                    with open(p, "rb") as f:
+                        for chunk in iter(lambda: f.read(65536), b""):
+                            crc = zlib.crc32(chunk, crc)
+                    res.append(f"{clean_n} ({algorithm.upper()}): {crc & 0xFFFFFFFF:08x}")
+                else:
+                    h = hashlib.new(algorithm)
+                    with open(p, "rb") as f:
+                        for chunk in iter(lambda: f.read(65536), b""):
+                            h.update(chunk)
+                    res.append(f"{clean_n} ({algorithm.upper()}): {h.hexdigest()}")
+        return "\n".join(res)

@@ -1,0 +1,9 @@
+flask
+flask-cors
+docker
+psutil
+paramiko
+APScheduler
+schedule
+passlib[argon2]
+httpx
