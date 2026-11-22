@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Délégation multi-agents, tables rondes Delphi, ouvriers supervisés, compétences réutilisables, automatisations N8N, connecteurs MCP et Coffre d'identité chiffré dans ECHO v6.">
+  <title>ECHO v6 - 14. Agents &amp; Automatisation</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>14. Agents &amp; Automatisation</h1>
+
+    <div class="didactic-box">
+      <h4>Déléguer, contrôler et connecter vos services externes en toute souveraineté</h4>
+      <p>
+        Pour les travaux longs, les analyses contradictoires ou l'intégration avec vos outils externes (messageries,
+        espaces Cloud, recherche académique ou d'emploi, workflows d'automatisation et serveurs distants), ECHO
+        mobilise des sous-agents spécialisés observables en direct et protège l'ensemble de vos accès dans un coffre
+        chiffré.
+      </p>
+    </div>
+
+    <h2>1. Sous-Agents, Conseils et Ouvriers Supervisés</h2>
+
+    <p>
+      Lorsque l'assistant délègue une tâche complexe, vous pouvez suivre chaque étape de son raisonnement et de ses
+      appels d'outils en temps réel dans l'onglet <strong>Sous-Agents &amp; Outils</strong> du panneau latéral droit.
+    </p>
+
+    <figure class="doc-figure">
+      <img src="images/v6_onglet_sous_agents.png" alt="Onglet Sous-Agents et Outils d'ECHO-UI affichant une Table Ronde Delphi en cours d'exécution avec suivi en direct" class="doc-screenshot">
+      <p class="doc-caption">Onglet <strong>Sous-Agents &amp; Outils</strong> : délibération d'une <strong>Table Ronde</strong> Delphi en cours d'exécution, suivi par participant et contrôles temps réel.</p>
+    </figure>
+
+    <figure class="doc-figure">
+      <img src="images/v6_sous_agents_outils_log.png" alt="Onglet Appels d'outils exposant le journal détaillé des invocations consult_council et forge_skill" class="doc-screenshot">
+      <p class="doc-caption">Vue <strong>Appels d'outils</strong> : journal horodaté et détaillé des invocations d'outils (<code>consult_council</code>, <code>forge_skill</code>) exécutées durant l'orchestration.</p>
+    </figure>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Mode d'orchestration</th>
+          <th>Fonctionnement</th>
+          <th>Usage recommandé</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Sous-Agent autonome</strong></td>
+          <td>Exécuté par tranches supervisées (jusqu'à 4 sous-agents en parallèle), avec arrêt automatique après 3 erreurs d'outils consécutives.</td>
+          <td>Sous-tâche technique isolée, audit d'un module, recherche ou traitement parallèle sans saturer le fil principal.</td>
+        </tr>
+        <tr>
+          <td><strong>Table Ronde (Conseil)</strong></td>
+          <td>De 1 à 7 profils d'expertise (démultipliables de 1 à 5 pour la contradiction interne) débattent sur 3 à 10 tours avant une synthèse consolidée.</td>
+          <td>Décision d'architecture, analyse stratégique ou question ouverte exigeant plusieurs points de vue contradictoires.</td>
+        </tr>
+        <tr>
+          <td><strong>Ouvriers Supervisés</strong></td>
+          <td>Plusieurs ouvriers réalisent un livrable en parallèle, puis un critique vérifie le résultat face à l'objectif et déclenche des cycles de correction.</td>
+          <td>Code critique, rédaction technique multi-parties ou livrables nécessitant un contrôle qualité itératif.</td>
+        </tr>
+        <tr>
+          <td><strong>Collecteur de données</strong></td>
+          <td>Agent spécialisé combinant recherche Web, consultation des connecteurs et envoi direct de fichiers vers votre Cloud.</td>
+          <td>Collecte et transfert de gros volumes externes sans encombrer la conversation principale.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="note-box">
+      <h4>Pilotage interactif depuis l'onglet Sous-Agents &amp; Outils</h4>
+      <p>
+        Vous disposez d'onglets par participant, d'un filtre <code>Ce groupe</code> / <code>Tous</code>, d'une bascule
+        <strong>Live / Pause</strong> avec compteur de nouvelles étapes, de boutons <strong>Pause</strong>,
+        <strong>Reprendre (+N tours)</strong>, <strong>Stop</strong> et <strong>Fermer</strong>, ainsi que d'une zone
+        de saisie permettant d'adresser directement une consigne à un agent précis (<code>@nom</code>) ou à tout le
+        groupe (<code>📢 Tous</code>).
+      </p>
+    </div>
+
+    <h2>2. Compétences métier (Skills)</h2>
+
+    <p>
+      Les <strong>Compétences</strong> sont des fiches d'instructions structurées qui spécialisent le comportement des
+      sous-agents (rôle, règles méthodologiques, obligation éventuelle de vérifier des informations récentes sur le Web).
+      Elles sont gérées depuis <strong>Espace de travail &rarr; Compétences</strong>.
+    </p>
+
+    <figure class="doc-figure">
+      <img src="images/v6_workspace_competences.png" alt="Interface Workspace Compétences d'ECHO-UI présentant le catalogue de compétences métier" class="doc-screenshot">
+      <p class="doc-caption">Espace de travail <strong>Compétences</strong> : consultation, édition et création de profils d'expertise pour les sous-agents.</p>
+    </figure>
+
+    <p>
+      Avant de créer une nouvelle compétence, l'assistant recherche toujours si une compétence adaptée existe déjà dans
+      votre catalogue. Toute suppression demandée via le chat déclenche obligatoirement une modale de confirmation.
+    </p>
+
+    <h2>3. Workflows d'automatisation (N8N)</h2>
+
+    <p>
+      ECHO embarque un moteur d'automatisation capable de rechercher des modèles communautaires, de concevoir des
+      workflows multi-étapes (via un architecte délégué dédié dès qu'un graphe dépasse deux nœuds), de les tester
+      ponctuellement puis de les déployer en tâche de fond permanente.
+    </p>
+
+    <ul>
+      <li><strong>Test ponctuel vs Démon permanent</strong> : tout nouveau workflow doit d'abord être validé par une exécution de test isolée avant d'être activé en continu.</li>
+      <li><strong>Protection des secrets</strong> : aucun mot de passe ou jeton n'est écrit en dur dans la définition du workflow ; des marqueurs sécurisés sont remplacés dynamiquement à l'exécution depuis votre Coffre.</li>
+      <li><strong>Récupération automatique des fichiers</strong> : les rapports ou fichiers produits par un workflow sont automatiquement rapatriés et indexés dans votre conversation.</li>
+    </ul>
+
+    <h2>4. Connecteurs externes (MCP) et Coffre &amp; Identité</h2>
+
+    <p>
+      Grâce au protocole standardisé MCP et à l'onglet <strong>Coffre &amp; Identité</strong>, l'assistant interagit
+      avec des services externes sans jamais recevoir vos secrets en clair dans son contexte.
+    </p>
+
+    <figure class="doc-figure">
+      <img src="images/v6_coffre_connecteurs.png" alt="Onglet Coffre et Identité d'ECHO-UI affichant le catalogue des connecteurs" class="doc-screenshot">
+      <p class="doc-caption">Onglet <strong>Coffre &amp; Identité</strong> : vue des connecteurs configurés et gestion sécurisée des comptes et secrets.</p>
+    </figure>
+
+    <div class="grid-container">
+      <div class="card">
+        <h3>Services intégrés prêts à l'emploi</h3>
+        <p>
+          Données légales d'entreprises (Sirene / Pappers), agrégateur multi-sources d'offres d'emploi (APEC, LinkedIn,
+          France Travail, Welcome to the Jungle) et recherche scientifique (arXiv, Semantic Scholar, CrossRef).
+        </p>
+      </div>
+      <div class="card">
+        <h3>Suites Cloud (Google &amp; Microsoft 365)</h3>
+        <p>
+          Lecture et gestion d'e-mails, agendas, contacts et espaces de stockage (Google Drive, Docs, Sheets, Slides,
+          OneDrive), avec envoi direct de fichiers locaux volumineux sans passage par du texte encodé.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Connecteurs à la demande &amp; SSH</h3>
+        <p>
+          Ajout de serveurs MCP distants, de connecteurs locaux éphémères ou d'alias SSH. Chaque connecteur affiche
+          directement dans l'onglet les instructions détaillées requises pour sa configuration.
+        </p>
+      </div>
+    </div>
+
+    <div class="warning-box">
+      <h4>Sécurité des identifiants dans le Coffre</h4>
+      <p>
+        Chaque secret enregistré dans <strong>Coffre &amp; Identité</strong> est chiffré individuellement par utilisateur
+        et par service. Lorsque vous disposez de plusieurs comptes pour un même service (par exemple deux messageries),
+        précisez l'identifiant du compte souhaité : ECHO refuse toute sélection ambiguë par défaut.
+      </p>
+    </div>
+
+    <details class="tech-spec" id="dossier-ingenierie">
+      <summary>Dossier d'Ingénierie : EchoSubagentController (11 Moteurs), Orchestration Delphi/Critique, N8N, MCP Broker &amp; AEAD</summary>
+
+      <h3>1. Contrôleur Unifié des Sous-Agents (<code>echo_subagent_hub.py</code> v6.16.0.2 &amp; <code>agent_engine_tool.py</code> v6.7.7.1)</h3>
+      <ul>
+        <li><strong>Registre SSOT (11 moteurs)</strong> : <code>ECHO_SUBAGENT_ENGINES_REGISTRY</code> dans <code>echo_constants.py</code> (v6.18.1.1) répertorie <code>delegate</code>, <code>council</code>, <code>council_synthesis</code>, <code>supervisor</code>, <code>supervisor_critic</code>, <code>supervisor_consolidator</code>, <code>navigator</code>, <code>deep_research</code>, <code>n8n_grapher</code>, <code>data_broker</code> et <code>image_gen</code> (avec <code>role_order</code>, <code>has_tool_loop</code>, <code>is_addressable</code>, <code>default_slice_limit</code> et <code>default_slice_timeout_sec</code>).</li>
+        <li><strong>Cadence, Parallélisme &amp; Disjoncteur PARE</strong> : Maximum <code>ECHO_MAX_PARALLEL_SUBAGENTS = 4</code> sous-agents simultanés ; tranches coopératives de <code>ECHO_SUBAGENT_CHECKPOINT_TURNS = 8</code> tours d'outils (<code>ECHO_MAX_PARALLEL_TOOLS_PER_TURN = 5</code> par tour) ou <code>ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC = 120s</code> ; arrêt automatique en <code>suspended_pare_alert</code> après <code>ECHO_SUBAGENT_MAX_CONSECUTIVE_ERRORS = 3</code> erreurs consécutives ; verrou <code>asyncio</code> scopé par <code>sub_sid</code>, file FIFO SQLite (<code>steer</code>) avec balises <code>&lt;REQUETE_ORCHESTRATEUR&gt;</code> / <code>&lt;REQUETE_UTILISATEUR&gt;</code>, et scellement synthétique HTTP 400-safe sur <code>kill</code>.</li>
+        <li><strong>Outils &amp; Interface</strong> : <code>delegate_to_agent</code>, outil polymorphe unifié <code>control_subagents</code> (<code>status</code>, <code>collect</code>, <code>steer</code>, <code>resume</code> parallèle, <code>suspend</code>, <code>kill</code>, <code>summarize</code>, <code>close</code>), et <code>ask_data_broker</code> (<code>delegate_to_data_broker.py</code> v6.11.0.1). Côté UI : <code>EchoCognitionTab.svelte</code> et routeur lecture/pilotage <code>routers/cognition.py</code> (v6.16.0.1, flux SSE réactif <code>/{chat_id}/stream</code> piloté par <code>_COGNITION_SEQ</code>).</li>
+      </ul>
+
+      <h3>2. Conseil Delphi, Ouvriers Supervisés &amp; Skills (<code>agent_orchestration_tool.py</code> v6.10.0.1 &amp; <code>echo_skills.py</code> v5.231.20.1)</h3>
+      <ul>
+        <li><strong><code>consult_council</code></strong> : Jusqu'à <code>COUNCIL_MAX_SKILLS = 7</code> profils démultipliés par <code>multiplier</code> &isin; <code>[1..5]</code> sur <code>rounds</code> &isin; <code>[3..10]</code> bornés par l'invariant arithmétique <code>(len(participants) * multiplier) * rounds &lt;= COUNCIL_MAX_PR_COMPLEXITY (60)</code>. Budget par tour Delphi : <code>COUNCIL_EXPERT_MAX_TOOL_TURNS_PER_ROUND = 3</code> (plage <code>0..6</code>) / <code>120s</code>, suivi d'une synthèse <code>EchoSubagentController.run_cognitive_step</code> (<code>MODEL_PROMETHEUS</code>, <code>override_thinking="high"</code>).</li>
+        <li><strong><code>consult_supervised_workers</code></strong> : Phases 1 et 3 parallélisées via <code>asyncio.gather</code> (<code>ECHO_AUTONOMOUS_MAX_TURNS = 15</code> tours / <code>300s</code>), critique structurée <code>SupervisorCriticOutput</code> (<code>MODEL_PROMETHEUS</code>, <code>override_thinking="high"</code>) et consolidation (<code>MODEL_APOLLO</code>, <code>override_thinking="medium"</code>) jusqu'à <code>max_correction_rounds</code> (1..5, défaut 3).</li>
+        <li><strong>Gestion des Compétences</strong> : <code>forge_skill</code>, <code>list_skills</code>, <code>read_skill</code>, <code>search_skill</code> (<code>MODEL_APOLLO</code>), <code>delete_user_skill</code> (bloqué en headless). Stockage protégé par <code>get_user_skill_lock</code> et <code>_resolve_safe_skill_dir</code>, servi par <code>routers/skills.py</code> (v6.6.9.1) et <code>EchoSkills.svelte</code>.</li>
+      </ul>
+
+      <h3>3. Orchestration N8N (<code>n8n_orchestrator_tool.py</code> v6.7.7.1 &amp; <code>26-docker-n8n-worker</code>)</h3>
+      <ul>
+        <li><strong>12 outils</strong> : <code>create_n8n_template</code>, <code>modify_n8n_template</code>, <code>delete_n8n_template</code>, <code>prepare_n8n_workflow</code>, <code>modify_n8n_workflow</code>, <code>delete_n8n_workflow</code>, <code>run_n8n_oneshot_workflow</code>, <code>deploy_n8n_daemon</code>, <code>search_n8n_hub</code>, <code>download_n8n_hub_template</code>, <code>query_n8n_documentation</code>, <code>delegate_to_n8n_grapher</code> (<code>MODEL_PROMETHEUS</code>, tranches <code>8 tours / 120s</code>).</li>
+        <li><strong>Sandbox Oneshot vs Démon (<code>n8n_api.py</code> v5.231.42.2)</strong> : Base SQLite n8n dédiée (volume <code>echo-n8n-data</code>). Oneshot isolé exigeant <code>Execute Workflow Trigger</code> et plafonné à <strong>8 Ko</strong> (<code>8192</code> octets) de sortie synchrone ; Démon déployé en 2 étapes sous préfixe <code>[ECHO:&lt;user_id&gt;]</code> ; injection dynamique des macros <code>__ECHO_SECRET_&lt;KEY&gt;__</code> avec masquage dans les journaux (<code>_redact_injected_secrets</code>) et écriture disque contrainte à <code>__ECHO_DOWNLOAD_DIR__/</code>.</li>
+      </ul>
+
+      <h3>4. MCP Broker &amp; Identity Vault (<code>echo_mcp_tool.py</code> v6.11.0.1, <code>23-docker-mcp-broker</code> &amp; <code>echo_crypto.py</code> v5.231.21.3)</h3>
+      <ul>
+        <li><strong>Proxy &amp; Providers (<code>server.py</code> v6.11.0.1, <code>m5_providers.py</code> v6.11.0.1, <code>m5_proxy_mcp.py</code> v6.7.18.1)</strong> : Exposition StreamableHTTP/REST sans accès BDD ; propagation par en-têtes ASGI <code>x-openwebui-user-id</code>, <code>x-openwebui-chat-id</code>, <code>x-echo-credentials</code>. Cache de sessions <code>_SessionHolder</code> indexé sur <code>(user_id, service, cred_hash[:12])</code> (start <code>60s</code>, call <code>55s</code>, close <code>15s</code>).</li>
+        <li><strong>Catalogue des 9 Services (<code>SERVICE_SCHEMAS</code> + <code>n8n_workflows</code>)</strong> : <code>mcp_native</code> (<code>corporate</code>, <code>jobs_omnisearch</code>, <code>academic</code>), <code>mcp_resident</code> (<code>google_workspace</code>, <code>microsoft_365</code>), <code>mcp_remote</code> (<code>remote_mcp</code>), <code>mcp_ephemeral</code> (<code>stdio_mcp</code> via <code>npx</code>/<code>uvx</code> sous Node.js 22.x LTS) et <code>orchestration</code> (<code>ssh</code>, <code>n8n_workflows</code>). Transfert Cloud <code>upload_file_to_drive</code> en streaming résumable par tranches PPCM de <strong>5 MiB</strong> (jusqu'à 4 Go). Routage automatique des fichiers téléchargés vers <code>25-docker-download-broker</code>.</li>
+        <li><strong>Chiffrement AEAD du Coffre (<code>identity_vault_tool.py</code> v6.10.0.1 &amp; <code>routers/vault.py</code> v6.6.9.1)</strong> : Chiffrement applicatif au niveau champ <strong>AES-256-GCM</strong> (<code>enc:v1:&lt;nonce_b64&gt;:&lt;ciphertext_b64&gt;:&lt;tag_b64&gt;</code>) dans <code>identity.db::identity_vault</code>, clé par utilisateur dérivée via <strong>HKDF-SHA256</strong> (<code>salt=user_id</code>, <code>info=b"echo-identity-vault"</code>) depuis <code>ECHO_VAULT_ENCRYPTION_KEY</code>, authentification contextuelle liée <code>AAD = f"{user_id}:{service}:{account_id}"</code> (politique <em>Fail-Closed</em>), et masquage strict des secrets dans <code>list_identities</code> et <code>EchoVaultTab.svelte</code>.</li>
+      </ul>
+    </details>
+
+    <div class="transition-text">
+      <a href="13_memoire_actions.html">&larr; 13. Mémoire &amp; Actions</a>
+      &nbsp;&nbsp;
+      <a href="15_deploiement.html">15. Déploiement &amp; Infra &rarr;</a>
+    </div>
+
+    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+
+</html>

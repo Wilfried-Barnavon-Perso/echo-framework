@@ -81,8 +81,7 @@
         la garde des clés d'API tierces, de la gestion des comptes et de la sauvegarde des bases de données.
       </li>
       <li>
-        <strong>L'Utilisateur Final :</strong> Toute personne physique accédant à l'interface conversationnelle (Open
-        WebUI) d'une instance. L'Utilisateur est seul responsable des instructions, données, documents et secrets qu'il
+        <strong>L'Utilisateur Final :</strong> Toute personne physique accédant à l'interface conversationnelle (ECHO-UI) d'une instance. L'Utilisateur est seul responsable des instructions, données, documents et secrets qu'il
         transmet au système.
       </li>
     </ul>
@@ -160,7 +159,7 @@
     <h3>Inférence Vectorielle Déportée (Edge Computing)</h3>
     <p>
       Pour la vectorisation des documents et de l'historique conversationnel (RAG), ECHO privilégie l'inférence
-      directement sur le poste de l'utilisateur via la passerelle <code>edge_embed_bridge_filter.py</code>. Sur tout
+      directement sur le poste de l'utilisateur via le composant natif <code>EchoEdgeEmbedding</code> d'ECHO-UI. Sur tout
       navigateur compatible WebGPU, le modèle d'embedding (Harrier ONNX FP16) s'exécute dans la mémoire GPU locale du
       client. Aucun texte n'est transmis à un service externe pour la génération d'embeddings. En cas d'indisponibilité
       matérielle, le traitement bascule sur le conteneur CPU local de l'hôte.
@@ -210,9 +209,9 @@
     <ul>
       <li>Auprès de l'<strong>Opérateur de l'instance</strong> concernée, qui détient l'accès d'administration aux bases
         de données.</li>
-      <li>Via les fonctionnalités natives intégrées dans ECHO, notamment l'action <code>purge_memory_action</code>
+      <li>Via le portail self-service <strong>ECHO User Manager</strong> (<code>my.&lt;domaine&gt;</code>) permettant l'export intégral <code>.tar.xz</code> et la suppression autonome du compte, ainsi que via les fonctionnalités natives intégrées dans ECHO, notamment l'action <code>purge_memory_action</code>
         permettant à l'utilisateur de purger ses souvenirs vectoriels dans Qdrant, ou les options de suppression
-        d'historique dans Open WebUI.</li>
+        d'historique dans ECHO-UI.</li>
     </ul>
     <p>
       L'Auteur du Framework ne détenant aucun accès aux environnements privés déployés, il est techniquement et
@@ -275,51 +274,107 @@
           <tr>
             <td><strong>BunkerWeb</strong></td>
             <td>Logs fichiers / Cache Nginx</td>
-            <td><code>bw_data</code></td>
-            <td>IPs clientes, User-Agents, requêtes d'accès</td>
-            <td>Exposé WAN/LAN (Ports 80, 443)</td>
+            <td><code>bw-data</code> / <code>bw-db-data</code></td>
+            <td>IPs clientes, User-Agents, requêtes d'accès, configuration WAF MariaDB</td>
+            <td><code>bw-universe</code> (<code>10.20.30.0/24</code>), <code>echo-network</code> (<code>10.20.40.0/24</code>) — Exposé WAN/LAN (Ports 80, 443)</td>
           </tr>
           <tr>
-            <td><strong>Open WebUI</strong></td>
-            <td>SQLite (WAL mode)</td>
-            <td><code>/app/backend/data</code></td>
-            <td>Comptes, mots de passe salés, chats, réglages</td>
-            <td>Réseau interne Docker bridge</td>
+            <td><strong>ECHO-UI (<code>echo-webui</code>)</strong></td>
+            <td>SQLite (WAL mode) + Système de fichiers</td>
+            <td><code>/app/backend/data</code> (<code>webui.db</code>)</td>
+            <td>Comptes, réglages interface, fichiers versés, historique brut</td>
+            <td><code>echo-network</code> (<code>10.20.40.0/24</code>), <code>echo-sandbox</code> (<code>10.20.50.0/24</code>)</td>
           </tr>
           <tr>
-            <td><strong>Session State</strong></td>
+            <td><strong>Identité &amp; Coffre (<code>identity.db</code>)</strong></td>
+            <td>SQLite (WAL mode) + AEAD AES-256-GCM</td>
+            <td><code>/app/backend/data/users/{uid}/identity.db</code></td>
+            <td>Préférences utilisateur, ressources globales, secrets chiffrés <code>identity_vault</code></td>
+            <td><code>echo-network</code> (<code>10.20.40.0/24</code>) — Confiné par utilisateur</td>
+          </tr>
+          <tr>
+            <td><strong>Session State (<code>session.db</code>)</strong></td>
             <td>SQLite (WAL mode)</td>
             <td><code>/app/backend/data/users/{uid}/chats/{cid}/session.db</code></td>
-            <td>Shadows de messages, métriques tokens, HUDs WM</td>
-            <td>Réseau interne Docker bridge</td>
+            <td>Shadows de messages, métriques tokens, threads cognitifs, HUDs WM</td>
+            <td><code>echo-network</code> (<code>10.20.40.0/24</code>) — Confiné par session</td>
           </tr>
           <tr>
-            <td><strong>Mémoire Vectorielle</strong></td>
-            <td>Qdrant (Vecteurs + Payload)</td>
-            <td><code>/qdrant/storage</code></td>
-            <td>Souvenirs, vecteurs PACP/PRAC, smart context</td>
-            <td>Port interne 6333 isolé</td>
+            <td><strong>Mémoire Vectorielle (<code>echo-qdrant</code>)</strong></td>
+            <td>Qdrant (Vecteurs 1024-d + Payload)</td>
+            <td><code>/qdrant/storage</code> (collections <code>echo_meta_artifacts</code> et <code>echo_session_rag</code>)</td>
+            <td>Souvenirs PACP/PRAC, résumés vectorisés et indexation sémantique des échanges</td>
+            <td><code>echo-network</code> (<code>10.20.40.0/24</code>) — Port interne 6333 isolé</td>
           </tr>
           <tr>
             <td><strong>Codex Git</strong></td>
-            <td>Système de fichiers / Git</td>
+            <td>Système de fichiers / Git (Dulwich)</td>
             <td><code>/app/backend/data/users/{uid}/chats/{cid}/codex</code></td>
             <td>Code source projets, documents de travail, plans</td>
-            <td>Montage local sécurisé</td>
+            <td><code>echo-network</code> (<code>10.20.40.0/24</code>) — Montage local sécurisé</td>
+          </tr>
+          <tr>
+            <td><strong>ECHO Auth Manager (<code>echo-auth-manager</code>)</strong></td>
+            <td>SQLite (WAL mode) + Argon2id / TOTP</td>
+            <td><code>echo-auth-data</code> (<code>auth.db</code>)</td>
+            <td>Identités SSO, empreintes Argon2id, secrets MFA TOTP, sessions actives</td>
+            <td><code>bw-universe</code> (<code>10.20.30.0/24</code>), <code>echo-network</code> (<code>10.20.40.0/24</code>)</td>
+          </tr>
+          <tr>
+            <td><strong>ECHO User Manager (<code>echo-user-manager</code>)</strong></td>
+            <td>Portail Flask (lecture/export scopé)</td>
+            <td><code>echo-webui-data</code>, <code>echo-auth-data</code></td>
+            <td>Statistiques personnelles, révocation de sessions, archives d'export <code>.tar.xz</code></td>
+            <td><code>bw-universe</code> (<code>10.20.30.0/24</code>), <code>echo-network</code> (<code>10.20.40.0/24</code>)</td>
+          </tr>
+          <tr>
+            <td><strong>ECHO Admin Manager (<code>echo-admin-manager</code>)</strong></td>
+            <td>Console Flask + Backups chiffrables</td>
+            <td><code>echo-backups</code>, volumes data &amp; socket Docker</td>
+            <td>Supervision système, sauvegardes <code>tar.xz</code>, élagage sémantique et purge RGPD</td>
+            <td><code>echo-network</code> (<code>10.20.40.0/24</code>) — Port 3001 (ou derrière WAF)</td>
+          </tr>
+          <tr>
+            <td><strong>Browser Worker (<code>echo-browser-worker</code>)</strong></td>
+            <td>Sessions Playwright éphémères</td>
+            <td><code>echo-download-broker-data</code> (<code>/browser/</code>)</td>
+            <td>Captures, clips et téléchargements web sandboxés</td>
+            <td><code>echo-network</code> (<code>10.20.40.0/24</code>)</td>
+          </tr>
+          <tr>
+            <td><strong>MCP Broker (<code>echo-mcp-broker</code>)</strong></td>
+            <td>Cache de sessions &amp; proxy MCP</td>
+            <td><code>echo-mcp-cache</code>, <code>echo-download-broker-data</code> (<code>/mcp/</code>)</td>
+            <td>Relais d'appels vers suites Cloud/connecteurs via en-têtes chiffrés à la volée</td>
+            <td><code>echo-network</code> (<code>10.20.40.0/24</code>)</td>
+          </tr>
+          <tr>
+            <td><strong>Download Broker (<code>echo-download-broker</code>)</strong></td>
+            <td>Démon de collecte Drop-Zone</td>
+            <td><code>echo-download-broker-data</code>, <code>echo-webui-data</code></td>
+            <td>Ingestion atomique des fichiers produits par N8N, Browser et MCP vers le Vault</td>
+            <td><code>echo-network</code> (<code>10.20.40.0/24</code>)</td>
+          </tr>
+          <tr>
+            <td><strong>Embedding Worker (<code>echo-embedding</code>)</strong></td>
+            <td>Cache GGUF + Proxy WebSocket</td>
+            <td><code>echo-embedding-cache</code></td>
+            <td>Relais WebGPU <code>/ws/edge-embed</code> et repli CPU local Harrier-OSS</td>
+            <td><code>echo-network</code> (<code>10.20.40.0/24</code>)</td>
           </tr>
           <tr>
             <td><strong>Inférence Edge</strong></td>
             <td>Mémoire GPU Client (VRAM)</td>
             <td>Cache navigateur (IndexedDB ONNX)</td>
-            <td>Modèle Harrier ONNX 0.6B FP16, chunks textuels</td>
+            <td>Modèle Harrier ONNX 0.6B FP16/FP32, chunks textuels</td>
             <td>Strictement local au navigateur</td>
           </tr>
           <tr>
-            <td><strong>Sandbox Exécution</strong></td>
+            <td><strong>Sandbox Exécution (<code>echo-coding-worker</code>)</strong></td>
             <td>Conteneur éphémère</td>
             <td>Volume temporaire sandbox</td>
             <td>Scripts Python / Bash générés et exécutés</td>
-            <td>Réseau Docker isolé sans accès hôte direct</td>
+            <td><code>echo-sandbox</code> (<code>10.20.50.0/24</code>) — Isolé sans accès hôte direct</td>
           </tr>
         </tbody>
       </table>
@@ -345,7 +400,7 @@
     </div>
 
     <footer>
-      ECHO Framework - Version 6.18.13 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
+      ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0
     </footer>
   </main>
 

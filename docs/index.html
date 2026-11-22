@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Documentation officielle d'ECHO Framework v6 : espace cognitif souverain, manuel utilisateur, architecture et outils.">
+  <title>ECHO v6 - Accueil</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>ECHO Framework v6</h1>
+
+    <p>
+      <strong>ECHO</strong> (<em>Espace Cognitif Heuristique Opérationnel</em>) est une plateforme d'assistance
+      cognitive auto-hébergée conçue pour exécuter des tâches complexes dans un environnement privé et vérifiable.
+      Contrairement à un simple agent conversationnel, ECHO associe le raisonnement des modèles Gemini à des espaces
+      d'action persistants : un éditeur de documents et de code avec historique, un navigateur web autonome observable en
+      direct, un coffre de connecteurs chiffré, une mémoire à long terme et un bac à sable d'exécution isolé.
+    </p>
+
+    <div class="didactic-box">
+      <h4>À quoi sert ECHO au quotidien ?</h4>
+      <p>
+        Lorsque vous travaillez avec un assistant classique, vos échanges restent figés dans une bulle de texte :
+        impossible de suivre ce que l'assistant consulte sur le web, difficile de modifier un document sans tout
+        régénérer, et risqué de lui confier des accès ou des fichiers volumineux. ECHO résout ce problème en vous
+        donnant un poste de travail complet où vous voyez ce que l'assistant fait, où vos préférences et vos fichiers
+        restent sous votre contrôle, et où chaque fait annoncé est soumis à une vérification rigoureuse.
+      </p>
+    </div>
+
+    <figure class="doc-figure">
+      <img src="images/v6_accueil_compositeur.png" alt="Interface d'accueil ECHO-UI v6 montrant la barre latérale, les onglets de conversation et le compositeur enrichi" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        L'interface ECHO-UI v6 : navigation latérale, barre de saisie avec jauge de contexte, indicateur WebGPU et sélecteur Écho unifié.
+      </figcaption>
+    </figure>
+
+    <h2>1. Les Quatre Capacités Fondamentales</h2>
+
+    <div class="grid-container">
+      <div class="card">
+        <h3>Souveraineté &amp; Contrôle</h3>
+        <p>
+          Vos conversations, fichiers, clés d'accès et souvenirs sont hébergés sur votre propre infrastructure. Un
+          portail personnel dédié permet à tout moment de consulter votre empreinte, de révoquer vos sessions ou
+          d'exporter l'intégralité de vos données.
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>Cognition Adaptative</h3>
+        <p>
+          Vous échangez avec un interlocuteur unique, <strong>Écho</strong>, dont le moteur ajuste automatiquement sa
+          profondeur de réflexion sur quatre paliers (Zéphyr, Apollon, Prométhée, Athéna) selon la difficulté réelle de
+          votre demande.
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>Espaces d'Action Intégrés</h3>
+        <p>
+          Cinq onglets latéraux dédiés accompagnent chaque discussion : suivi des sous-agents, éditeur Codex avec
+          historique, navigateur web en direct avec ralenti vidéo, coffre d'identités chiffré et applications
+          interactives.
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>Rigueur &amp; Transparence</h3>
+        <p>
+          Écho distingue explicitement les faits vérifiés de ses propres déductions. Si les preuves manquent ou se
+          contredisent, elle le déclare clairement au lieu d'improviser une réponse plausible mais inexacte.
+        </p>
+      </div>
+    </div>
+
+    <h2>2. Comment Parcourir Cette Documentation</h2>
+
+    <p>
+      Chaque chapitre de cette documentation suit une structure en deux niveaux : un <strong>tronc utilisateur</strong>
+      centré sur l'usage concret et la compréhension des mécanismes, suivi en bas de page d'un
+      <strong>Dossier d'Ingénierie</strong> dépliable réservé aux détails d'implémentation.
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Votre besoin</th>
+          <th>Chapitres recommandés</th>
+          <th>Objectif</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Découvrir et bien utiliser ECHO</strong></td>
+          <td><a href="01_fondations.html">1. Fondations</a>, <a href="02_manuel_utilisateur.html">2. Manuel Utilisateur</a></td>
+          <td>Comprendre le comportement d'Écho, les écrans, les onglets et les commandes <code>/</code>.</td>
+        </tr>
+        <tr>
+          <td><strong>Formuler de meilleures demandes</strong></td>
+          <td><a href="03_exemples_prompts.html">3. Exemples de Prompts</a>, <a href="04_tutoriel_pratique.html">4. Tutoriel Pratique</a></td>
+          <td>Réutiliser des modèles prêts à l'emploi et suivre un cas complet de bout en bout.</td>
+        </tr>
+        <tr>
+          <td><strong>Comprendre la mécanique interne</strong></td>
+          <td><a href="05_hld_architecture.html">5. Architecture HLD</a>, <a href="06_communication_gemini.html">6. Communication Gemini</a>, <a href="07_hud_ui.html">7. HUD &amp; UI</a>, <a href="08_cerveau_cognitif.html">8. La Cognition</a></td>
+          <td>Maîtriser la gestion des quotas, l'interface réactive, la compaction et les paliers cognitifs.</td>
+        </tr>
+        <tr>
+          <td><strong>Explorer les outils et l'infrastructure</strong></td>
+          <td><a href="09_arsenal_outils.html">9. L'Arsenal des Outils</a> à <a href="17_edge_inference.html">17. Inférence Distante</a></td>
+          <td>Approfondir la planification, le navigateur, le Codex, la mémoire et le déploiement.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="note-box">
+      <h4>Repère de lecture</h4>
+      <p>
+        Pour une prise en main immédiate, lisez les chapitres 1 à 4 dans l'ordre. Les chapitres suivants peuvent être
+        consultés à la carte selon vos usages (gestion des quotas, rédaction, programmation ou administration).
+      </p>
+    </div>
+
+    <div class="transition-text">
+      Prochaine étape :
+      <a href="01_fondations.html">1. Fondations &amp; Philosophie &rarr;</a>
+    </div>
+
+    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+
+</html>

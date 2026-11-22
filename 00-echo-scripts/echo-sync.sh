@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # SCRIPT : echo-sync.sh
-# VERSION : 6.6.20.1
+# VERSION : 6.18.15.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -12,11 +12,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.15.1: Garde d'existence /etc/cron.daily lors du nettoyage des liens symboliques.
 # 6.6.20.1: Purge automatique des liens symboliques orphelins (/usr/local/bin et /etc/cron.daily) pointant vers $ECHO_SCRIPTS.
 # 6.5.3.1: Renommage des références echo-open-webui vers echo-webui.
 # 6.5.0.1: Garantie d'initialisation préventive du fichier maître /opt/ECHO/.env (chmod 600) avant montage Docker.
 # 5.231.39.1: Renommage en echo-sync.sh et mise à jour du lien symbolique echo-rebuild.
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 
 # --- 0. INITIALISATION CORE ---
 ECHO_ROOT="/opt/ECHO"
@@ -228,7 +228,7 @@ done
 # Lien symboliques
 echo "   🔗 Création des liens symboliques globaux..."
 find /usr/local/bin -maxdepth 1 -xtype l -lname "$ECHO_SCRIPTS/*" -delete
-find /etc/cron.daily -maxdepth 1 -xtype l -lname "$ECHO_SCRIPTS/*" -delete
+if [ -d /etc/cron.daily ]; then find /etc/cron.daily -maxdepth 1 -xtype l -lname "$ECHO_SCRIPTS/*" -delete; fi
 for script_path in "$ECHO_SCRIPTS"/*.sh; do
     [ -e "$script_path" ] || continue
     script_name=$(basename "$script_path" .sh)

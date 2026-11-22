@@ -31,7 +31,7 @@ Tous les composants d'ECHO (Pipes, Filtres, Outils, Actions, Librairies partagé
    * Services et Workers Docker (`20` à `30`) via la directive `VERSION :` d'en-tête.
    * Fichiers `Dockerfile` (`16-docker-echo-webui/Dockerfile`, `20` à `30`, `docker-python-base`) : doivent obligatoirement porter le bloc `LABEL` (`maintainer`, `version="A.B.C.X"`, `description`) positionné **tout en bas du fichier** (après le dernier `RUN` et `COPY`, juste avant `EXPOSE` / `CMD` / `ENTRYPOINT`) pour aligner le versioning sans invalider le cache BuildKit amont.
    * Scripts d'infrastructure (`00-echo-scripts/*.sh`, `install-hyperv.ps1`, `install-linux.sh`, `install-wsl2.sh`) et manifestes (`01-config/stack-echo.yml`, `01-config/bunkerweb-stack.yml`).
-   * Variables runtime internes liées à la version du composant (`SCRIPT_VERSION` dans `edge_embed_bridge_filter.py` et `install-hyperv.ps1`, `FastAPI(..., version=...)` dans `30-docker-embedding-worker/app.py`).
+   * Variables runtime internes liées à la version du composant (`SCRIPT_VERSION` dans `install-hyperv.ps1`, `FastAPI(..., version=...)` dans `30-docker-embedding-worker/app.py`).
 2. **Exclusions strictes** :
    * Les constantes protocolaires ou de schémas tiers (`_AGY_IDE_VERSION`, `MODEL_CACHE_VERSION`, `"version"` des fichiers JSON de configuration).
 
@@ -114,6 +114,6 @@ Lors de toute intervention sur le code, l'agent doit exécuter rigoureusement ce
    * **Incrément de la Version Globale (`VERSION`)** : Incrémenter le fichier `VERSION` qui synthétise cette nouvelle mouture de la stack :
      * **Patch (`A.B.C+1`)** : corrections de bugs, débogage, refactorisation, optimisations ou retouches de composants.
      * **Mineur (`A.B+1.0`)** : nouvelles fonctionnalités majeures ou évolutions architecturales structurantes.
-   * **Synchronisation Documentaire Globale** : Répercuter la nouvelle version globale (`A.B.C+1` ou `A.B+1.0`) dans `README.md` (titre et badge), le pied de page de `AGENTS.md` racine, et les pieds de page des 21 fichiers `docs/*.html`.
+   * **Synchronisation Documentaire Globale** : Répercuter la nouvelle version globale (`A.B.C+1` ou `A.B+1.0`) dans `README.md` (titre et badge), le pied de page de `AGENTS.md` racine, et les pieds de page des 22 fichiers `docs/*.html`.
 
 *Document de référence pour l'équipe ECHO Architecture.*

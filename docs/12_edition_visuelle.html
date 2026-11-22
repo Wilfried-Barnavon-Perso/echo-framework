@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Visualisations interactives sur 17 moteurs, génération et retouche d'images supervisées, et gestionnaire documentaire versionné Codex & Fichiers dans ECHO v6.">
+  <title>ECHO v6 - 12. Édition &amp; Visuel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>12. Édition &amp; Visuel</h1>
+
+    <div class="didactic-box">
+      <h4>Produire, visualiser et versionner au même endroit</h4>
+      <p>
+        Au-delà du texte, ECHO permet de concevoir des schémas interactifs, de générer et retoucher des images à partir
+        de vos références visuelles, puis de conserver, relire, éditer et restaurer l'ensemble des documents et codes
+        produits au sein d'un gestionnaire intégré : l'onglet <strong>Codex &amp; Fichiers</strong>.
+      </p>
+    </div>
+
+    <h2>1. Visualisations et schémas interactifs (17 moteurs)</h2>
+
+    <p>
+      Lorsque vous demandez un graphique, un organigramme, un planning ou une représentation scientifique, l'assistant
+      transmet uniquement les données brutes structurées à un module visuel dédié. Chaque rendu est contrôlé
+      visuellement avant d'être affiché dans une vue interactive intégrée à la conversation (sans duplication de code
+      inutile dans le texte de la réponse).
+    </p>
+
+    <figure class="doc-figure">
+      <img src="images/v6_visuel_interactif.png" alt="Visualisation interactive ECharts dans la conversation comparant quatre architectures de qubits" class="doc-screenshot">
+      <p class="doc-caption">Rendu visuel interactif <strong>ECharts</strong> généré, vérifié et affiché directement dans le fil de conversation.</p>
+    </figure>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Famille de rendu</th>
+          <th>Exemples d'usages</th>
+          <th>Moteurs disponibles</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Diagrammes &amp; Processus</strong></td>
+          <td>Organigrammes, séquences, croquis à main levée, cartes mentales, processus métier, graphes relationnels</td>
+          <td><code>mermaid</code>, <code>sketch</code>, <code>markmap</code>, <code>bpmn</code>, <code>cytoscape</code></td>
+        </tr>
+        <tr>
+          <td><strong>Temps &amp; Planification</strong></td>
+          <td>Plannings de projet, frises historiques, chronogrammes de signaux numériques</td>
+          <td><code>gantt</code>, <code>timeline</code>, <code>wavedrom</code></td>
+        </tr>
+        <tr>
+          <td><strong>Statistiques &amp; Cartes</strong></td>
+          <td>Tableaux de bord 2D/3D, graphiques déclaratifs, cartes géographiques avec repères, illustrations vectorielles</td>
+          <td><code>echarts</code>, <code>vega</code>, <code>leaflet</code>, <code>svg</code></td>
+        </tr>
+        <tr>
+          <td><strong>Sciences, 3D &amp; Molécules</strong></td>
+          <td>Courbes et surfaces mathématiques 2D/3D, maquettes spatiales 3D, voûte céleste, molécules 3D et formules chimiques 2D</td>
+          <td><code>science</code>, <code>aframe</code>, <code>astro</code>, <code>bio</code>, <code>chem</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>2. Génération, fusion et retouche d'images</h2>
+
+    <p>
+      Pour créer ou modifier une image, un sous-agent visuel spécialisé enchaîne génération et contrôle qualité (jusqu'à
+      3 essais automatiques) sans encombrer le fil principal avec des images intermédiaires brutes :
+    </p>
+
+    <ul>
+      <li><strong>Références multiples</strong> : vous pouvez fournir jusqu'à <strong>10 images de référence</strong> (fichiers déposés, images du Codex ou URL publiques) pour fusionner des éléments, transférer un style ou modifier un décor.</li>
+      <li><strong>Formats géométriques</strong> : choix du cadrage cible (<code>1:1</code>, <code>3:4</code>, <code>4:3</code>, <code>9:16</code>, <code>16:9</code>).</li>
+      <li><strong>Retouches itératives versionnées</strong> : chaque essai et chaque modification demandée sur une image sont enregistrés comme une nouvelle révision du même fichier dans l'espace <code>generated</code>, avec galerie de comparaison dans l'afficheur intégré.</li>
+      <li><strong>Clôture propre</strong> : une fois que vous confirmez que le visuel vous convient (ou demandez de repartir de zéro), l'assistant ferme la session de retouche associée.</li>
+    </ul>
+
+    <h2>3. Le gestionnaire documentaire : Codex &amp; Fichiers</h2>
+
+    <p>
+      L'onglet latéral droit <strong>Codex &amp; Fichiers</strong> centralise les fichiers de la session selon leur rôle
+      et leur niveau de protection.
+    </p>
+
+    <figure class="doc-figure">
+      <img src="images/v6_onglet_codex.png" alt="Onglet Codex et Fichiers d'ECHO-UI ouvrant estimateur_vram.py dans l'éditeur CodeMirror 6 avec boutons d'édition IA" class="doc-screenshot">
+      <p class="doc-caption">Onglet <strong>Codex &amp; Fichiers</strong> : édition colorisée de <code>estimateur_vram.py</code> sous CodeMirror 6 avec barre d'actions assistées par IA.</p>
+    </figure>
+
+    <figure class="doc-figure">
+      <img src="images/v6_codex_diff_git.png" alt="Historique Git et vue Diff unifiée numérotée de synthese_qubits.md dans l'onglet Codex et Fichiers" class="doc-screenshot">
+      <p class="doc-caption">Suivi des révisions dans <strong>Codex &amp; Fichiers</strong> : historique Git complet et comparatif Diff unifié numéroté de <code>synthese_qubits.md</code>.</p>
+    </figure>
+
+    <h3>Les cinq espaces disponibles</h3>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Espace</th>
+          <th>Historique des versions</th>
+          <th>Rôle et règles d'accès</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>main</code></td>
+          <td>Versionné</td>
+          <td>Espace principal des livrables, rapports et codes source produits pour vous. Éditable manuellement et par l'assistant.</td>
+        </tr>
+        <tr>
+          <td><code>plans</code></td>
+          <td>Versionné</td>
+          <td>Plans stratégiques et listes de tâches associées. Protégé contre l'édition libre pour préserver le cycle de validation.</td>
+        </tr>
+        <tr>
+          <td><code>generated</code></td>
+          <td>Versionné</td>
+          <td>Images générées et retouchées. Chaque itération forme une révision consultable.</td>
+        </tr>
+        <tr>
+          <td><code>sandbox</code></td>
+          <td>Disque direct</td>
+          <td>Zone technique dédiée aux scripts d'exécution et calculs temporaires. Les livrables validés peuvent être promus vers <code>main</code>.</td>
+        </tr>
+        <tr>
+          <td><code>files</code></td>
+          <td>Lecture seule</td>
+          <td>Pièces jointes téléversées dans la conversation.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>Fonctions d'édition, de prévisualisation et de navigation</h3>
+
+    <div class="grid-container">
+      <div class="card">
+        <h3>Éditeur &amp; Prévisualisation universelle</h3>
+        <p>
+          Éditeur de code avec coloration syntaxique, numéros de lignes et sauvegarde <code>Ctrl+S</code> ; aperçu
+          intégré pour Markdown, HTML, SVG, CSV/TSV, images, PDF, audio, vidéo, et visionneuse hexadécimale pour les
+          fichiers binaires.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Édition assistée &amp; Contrôle Diff</h3>
+        <p>
+          Depuis l'onglet, vous pouvez demander une modification ciblée par consigne libre ou action rapide et inspecter
+          le comparatif ligne par ligne avant d'accepter le changement.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Voyage temporel &amp; Multi-conversations</h3>
+        <p>
+          Consultation de l'historique des révisions, comparaison entre versions, restauration d'un état antérieur, et
+          exploration en <strong>lecture seule</strong> des dépôts appartenant à vos autres conversations.
+        </p>
+      </div>
+    </div>
+
+    <div class="note-box">
+      <h4>Actions rapides et liens cliquables dans le chat</h4>
+      <p>
+        Chaque bloc de code affiché dans une réponse dispose d'un bouton <strong>Envoyer au Codex</strong> pour
+        l'enregistrer immédiatement dans <code>main</code>. De même, les références de fichiers cliquables insérées par
+        l'assistant ouvrent directement l'onglet <strong>Codex &amp; Fichiers</strong> sur le document ciblé (et sont
+        neutralisées si le fichier n'existe pas réellement). Une barre d'outils unifiée permet également d'importer (y
+        compris par glisser-déposer), exporter, copier ou imprimer un document ou une sélection.
+      </p>
+    </div>
+
+    <figure class="doc-figure">
+      <img src="images/v6_chat_liens_codex.png" alt="Liens Codex cliquables vers synthese_qubits.md et estimateur_vram.py générés dans une réponse du chat ECHO-UI" class="doc-screenshot">
+      <p class="doc-caption">Liens Codex cliquables générés directement dans le chat pour ouvrir <code>synthese_qubits.md</code> ou <code>estimateur_vram.py</code> d'un clic.</p>
+    </figure>
+
+    <details class="tech-spec" id="dossier-ingenierie">
+      <summary>Dossier d'Ingénierie : Moteurs Visuels, Boucle Image, Codex Dulwich (14 Outils) &amp; CodeMirror 6</summary>
+
+      <h3>1. Rendu Visuel Interactif &amp; Imagerie (<code>universal_visual_generator.py</code> v6.14.2.1 &amp; <code>echo_visuals.py</code> v5.237.19.1)</h3>
+      <ul>
+        <li><strong><code>generate_rich_visualization</code> (17 moteurs)</strong> : Pilote par Data Islands isolés sous <code>MODEL_APOLLO</code> (<code>thinking="medium"</code>) les 17 moteurs (<code>mermaid</code>, <code>sketch</code>, <code>markmap</code>, <code>bpmn</code>, <code>gantt</code>, <code>cytoscape</code>, <code>timeline</code>, <code>vega</code>, <code>wavedrom</code>, <code>leaflet</code>, <code>svg</code>, <code>echarts</code> 2D/3D-GL, <code>science</code> Plotly 2D/3D, <code>aframe</code>, <code>astro</code>, <code>bio</code> 3Dmol.js, <code>chem</code>).</li>
+        <li><strong>Contrôle Qualité Zéro-Disque</strong> : Boucle jusqu'à <code>GEN_SCHEMA_MAX_TRIES = 2</code> essais : assemblage <code>EchoUI.build_rich_view_html</code>, rasterisation incognito 100 % RAM via <code>render_ephemeral_html</code> &rarr; <code>POST /render_ephemeral_view</code> (<code>browser_api.py</code> v6.16.0.1, viewport <code>1200&times;800</code>, settle <code>250 ms</code>, capture erreurs JS/DOM), et audit multimodal par <code>_run_visual_critic</code> (<code>SYS_VISUAL_SCHEMA_CRITIC</code>, <code>response_schema=VisualCriticOutput</code>, approbation dès <code>score &gt;= 6</code>).</li>
+        <li><strong><code>generate_image</code> &amp; <code>close_image_session</code></strong> : Fil multimodal persistant <code>dlg_img_&lt;hex8&gt;</code> dans <code>cognitive_threads</code>. Accepte jusqu'à <code>IMAGE_GEN_MAX_INPUT_IMAGES = 10</code> images sources encodées via <code>load_image_as_base64</code>. Boucle générateur <code>MODEL_IMAGE_GEN</code> (<code>SYS_VISUAL_IMAGE_GEN</code>, ratios <code>1:1</code>, <code>3:4</code>, <code>4:3</code>, <code>9:16</code>, <code>16:9</code>) &harr; critique <code>MODEL_APOLLO</code> (<code>SYS_VISUAL_IMAGE_CRITIC</code>, <code>VisualCriticOutput</code>, <code>GEN_IMG_MAX_TRIES = 3</code>). Nom court <code>&lt; 15</code> caractères (<code>_sanitize_image_short_name</code>), commits Git séquentiels sur <code>CODEX_WORKSPACE_GENERATED</code> (<code>"generated"</code>), indexation <code>echo_resources</code> (<code>resource_type="generated"</code>), externalisation <code>echo-asset://</code> dans <code>tools_output/embeds/</code> et affichage via <code>EchoUI.image_viewer</code> avec galerie multi-essais.</li>
+      </ul>
+
+      <h3>2. Noyau Codex &amp; Arsenal Git (<code>echo_codex_tool.py</code> v6.15.0.1 &amp; <code>echo_codex_git.py</code> v6.18.1.1)</h3>
+      <ul>
+        <li><strong>14 outils exposés</strong> : <code>create_codex</code>, <code>read_codex</code>, <code>edit_codex</code>, <code>delete_codex</code>, <code>create_codex_directory</code>, <code>move_codex</code>, <code>transfer_codex</code>, <code>list_codex</code>, <code>list_other_chats_ids</code>, <code>search_codex</code>, <code>history_codex</code>, <code>restore_codex</code>, <code>summarize_codex</code>, <code>open_codex_ui</code>.</li>
+        <li><strong>Gouvernance &amp; Concurrence</strong> : Registre SSOT <code>ECHO_CODEX_WORKSPACES</code> (<code>main</code>, <code>plans</code>, <code>generated</code> versionnés via <code>dulwich</code> avec <code>core.autocrlf = false</code> ; <code>sandbox</code> non versionné). Verrou asynchrone partagé <code>get_codex_lock(user_id, chat_id)</code> couvrant mutations et synchronisation SQLite (<code>sync_codex_registry_save</code> / <code>delete</code> / <code>relocate</code>).</li>
+        <li><strong>Édition &amp; Garde OCC SHA-256</strong> : Dans <code>edit_codex</code>, les paramètres <code>new_content</code> (remplacement direct) et <code>instructions</code> (édition assistée par <code>MODEL_APOLLO</code>) sont mutuellement exclusifs ; le mode assisté applique un contrôle optimiste <code>pre_sha256</code> vs <code>post_sha256</code> (<code>concurrent_modification_conflict</code>) et refuse les binaires (<code>binary_edit_not_supported</code>).</li>
+        <li><strong>Pagination, Binaires &amp; Transferts</strong> : <code>read_codex</code> (exempté du délestage) pagine sur <code>HEAD</code> et <code>commit_hash</code> à <code>ECHO_CODEX_MAX_READ_LINES = 800</code> lignes et <code>ECHO_CODEX_MAX_READ_BYTES = 46 080</code> octets via <code>paginate_lines_window</code>, et intercepte les binaires (<code>binary_content_omitted</code> + blocs de 16 octets). <code>transfer_codex</code> applique la matrice <code>CODEX_TRANSFER_SOURCES &rarr; CODEX_WRITABLE_WORKSPACES</code> avec quotas (<code>main</code> : 200 fichiers / 25 Mo unitaire / 100 Mo total ; <code>sandbox</code> : 500 fichiers / 512 Mo unitaire / 1 Go total).</li>
+        <li><strong>Multi-Chat Read-Only</strong> : <code>list_other_chats_ids</code> parcourt les dépôts via <code>os.walk(..., followlinks=False)</code> ; <code>list_codex</code> (<code>CODEX_LIST_MAX_ENTRIES = 200</code>) et <code>read_codex(target_chat_id=...)</code> n'injectent aucune entrée dans la base SQLite locale.</li>
+      </ul>
+
+      <h3>3. Interface SvelteKit, API Codex &amp; Liens Cliquables</h3>
+      <ul>
+        <li><strong>Routeur &amp; Éditeur (<code>routers/codex.py</code> v6.18.18.1 &amp; <code>EchoCodexTab.svelte</code>)</strong> : Intégration CodeMirror 6 (<code>EchoCodexEditor.svelte</code> + <code>codexLanguages.ts</code>), édition IA one-shot (<code>POST /{chat_id}/ai-edit</code> via <code>EchoGeminiClient.call_cascade</code> et <code>SYS_CODEX_EDIT</code>), visionneuse hexadécimale (<code>_format_hex_preview</code>), téléchargement sécurisé (<code>GET /download</code> avec <code>resolve_confined_codex_path</code>, <code>X-Content-Type-Options: nosniff</code> et défense XSS HTML/SVG en <code>application/octet-stream</code>).</li>
+        <li><strong>Bijection des Liens (<code>codex_links_filter.py</code> v6.6.9.1)</strong> : Exécuté en priorité <code>80</code>. En Outlet, valide l'existence physique via <code>check_codex_file_exists</code> hors blocs de code et transforme les URN <code>[label](codex:scope:ws/path)</code> en ancres <code>#codex:...</code> interceptées par <code>(app)/+layout.svelte</code> (<code>window.echoOpenCodex</code>), ou neutralise en texte brut les références inexistantes. En Inlet, restaure l'URN canonique pour préserver la suture bit-perfect.</li>
+      </ul>
+    </details>
+
+    <div class="transition-text">
+      <a href="11_recherche_navigation.html">&larr; 11. Recherche &amp; Navigation</a>
+      &nbsp;&nbsp;
+      <a href="13_memoire_actions.html">13. Mémoire &amp; Actions &rarr;</a>
+    </div>
+
+    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+
+</html>

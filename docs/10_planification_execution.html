@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Planification stratégique, exécution de scripts en sandbox isolée, applications web temps réel, accès SSH, calendrier et automatisations dans ECHO v6.">
+  <title>ECHO v6 - 10. Planification &amp; Exécution</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>10. Planification &amp; Exécution</h1>
+
+    <div class="didactic-box">
+      <h4>Passer de l'intention à l'exécution contrôlée</h4>
+      <p>
+        Lorsque vous confiez à ECHO un projet structuré, une analyse de données nécessitant du calcul réel, une
+        application interactive ou une tâche récurrente, quatre mécanismes prennent le relais : la planification
+        stratégique validée, la zone d'exécution isolée (Sandbox), l'agenda intégré et les automatisations programmées.
+      </p>
+    </div>
+
+    <h2>1. Planification stratégique et suivi des tâches</h2>
+
+    <p>
+      Pour les chantiers en plusieurs étapes, ECHO sépare la réflexion stratégique de l'exécution concrète. Un plan est
+      d'abord rédigé dans un espace dédié (<strong>plans</strong>), soumis à votre lecture, puis exécuté étape par étape
+      avec pointage en temps réel d'une liste de tâches associée.
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Étape du cycle</th>
+          <th>Comportement dans ECHO-UI</th>
+          <th>Effet pour l'utilisateur</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>1. Proposition</strong></td>
+          <td>Rédaction de la stratégie et de la liste de tâches initiale dans l'espace <code>plans</code>.</td>
+          <td>Vous examinez la feuille de route complète avant qu'aucune modification de fond ne démarre.</td>
+        </tr>
+        <tr>
+          <td><strong>2. Audit &amp; Ajustement</strong></td>
+          <td>Relecture critique préalable et révision de la stratégie tant que le plan est en attente.</td>
+          <td>Détection des oublis, dépendances ou contraintes manquantes avant le lancement.</td>
+        </tr>
+        <tr>
+          <td><strong>3. Approbation &amp; Lancement</strong></td>
+          <td>Boîte de confirmation interactive pour autoriser le passage en exécution.</td>
+          <td>Verrouillage de la stratégie approuvée ; aucune dérive silencieuse en cours de route.</td>
+        </tr>
+        <tr>
+          <td><strong>4. Pointage &amp; Clôture</strong></td>
+          <td>Mise à jour continue des cases à cocher puis rédaction d'une synthèse finale datée.</td>
+          <td>Traçabilité exacte de ce qui a réussi, échoué, été ignoré ou abandonné.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="note-box">
+      <h4>Suivi léger vs Plan stratégique</h4>
+      <p>
+        Pour une demande courante de quelques étapes au sein d'un même tour, l'assistant affiche une simple liste de
+        contrôle visuelle dans la conversation. Le planificateur complet est réservé aux projets durables devant
+        survivre à plusieurs tours et conserver un historique versionné.
+      </p>
+    </div>
+
+    <h2>2. Zone d'exécution sécurisée, Applications et Terminal</h2>
+
+    <p>
+      L'assistant dispose d'un environnement d'exécution cloisonné capable d'exécuter des scripts Python, JavaScript et
+      Bash, d'installer des bibliothèques à la volée et de lire (sans pouvoir les altérer) vos fichiers déposés,
+      documents Codex ou captures de navigation.
+    </p>
+
+    <div class="grid-container">
+      <div class="card">
+        <h3>Scripts &amp; Traitements batch</h3>
+        <p>
+          Calculs scientifiques, conversion de fichiers volumineux, génération de PDF, nettoyage de données CSV ou tests
+          automatisés. Les livrables validés peuvent ensuite être promus vers votre espace principal du Codex.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Onglet Applications en direct</h3>
+        <p>
+          L'assistant peut afficher dans l'onglet <strong>Applications</strong> soit une vue HTML statique (tableau de
+          bord, rapport interactif), soit une véritable application web client-serveur dotée d'API et de mises à jour en
+          temps réel, accessible uniquement pendant votre session.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Terminal interactif &amp; SSH</h3>
+        <p>
+          Dès qu'une conversation est enregistrée, vous pouvez ouvrir un terminal shell interactif depuis le menu
+          <code>+</code> (<strong>Nouveau terminal</strong>). Pour administrer un serveur distant, l'assistant utilise
+          les alias configurés dans <strong>Coffre &amp; Identité</strong> sans jamais exposer vos mots de passe ou clés
+          privées dans le chat.
+        </p>
+      </div>
+    </div>
+
+    <figure class="doc-figure">
+      <img src="images/v6_onglet_applications.png" alt="Onglet Applications affichant l'application interactive Estimateur dynamique de VRAM pour LLM avec état Actif et bouton Arrêter" class="doc-screenshot">
+      <p class="doc-caption">Onglet <strong>Applications</strong> : exécution en direct de l'application web interactive <em>Estimateur dynamique de VRAM pour LLM</em> (statut <code>Actif</code> et contrôle d'arrêt immédiat).</p>
+    </figure>
+
+    <figure class="doc-figure">
+      <img src="images/v6_onglet_terminal.png" alt="Onglet Terminal 1 connecté au conteneur sandbox confiné affichant la version Python 3.14.10 et la liste des fichiers de /main" class="doc-screenshot">
+      <p class="doc-caption">Onglet <strong>Terminal 1</strong> : session shell interactive connectée à l'environnement confiné sous Python <code>3.14.10</code> avec accès en lecture aux livrables de la conversation.</p>
+    </figure>
+
+    <div class="warning-box">
+      <h4>Règle de confidentialité pour les accès distants</h4>
+      <p>
+        Ne collez jamais un mot de passe ou une clé privée SSH dans la zone de saisie d'une conversation. Enregistrez
+        vos accès dans l'onglet <strong>Coffre &amp; Identité</strong> : l'assistant ne voit que le nom de l'alias et sa
+        description, jamais le secret déchiffré.
+      </p>
+    </div>
+
+    <h2>3. Agenda et Automatisations planifiées</h2>
+
+    <p>
+      ECHO intègre directement un <strong>Calendrier</strong> et un gestionnaire d'<strong>Automatisations</strong>
+      accessibles depuis la barre latérale gauche. L'assistant peut consulter vos disponibilités, créer ou modifier des
+      rendez-vous avec rappels, et programmer des missions autonomes récurrentes (quotidiennes, hebdomadaires, horaires
+      ou ponctuelles).
+    </p>
+
+    <figure class="doc-figure">
+      <img src="images/v6_calendrier.png" alt="Interface du calendrier intégré ECHO-UI" class="doc-screenshot">
+      <p class="doc-caption">Vue de l'agenda intégré accessible depuis la barre latérale gauche d'ECHO-UI.</p>
+    </figure>
+
+    <p>
+      Lors de la création d'une automatisation (ou depuis le menu contextuel <code>...</code> d'une conversation),
+      trois modes de destination permettent de choisir où apparaîtront les résultats :
+    </p>
+
+    <ul>
+      <li><strong>Nouvelle conversation</strong> : crée un fil distinct dans le dossier cible à chaque exécution.</li>
+      <li><strong>Conversation existante</strong> : ajoute les comptes rendus périodiques à la suite d'une discussion déjà ouverte.</li>
+      <li><strong>Conversation dédiée réutilisée</strong> : crée une conversation unique au premier déclenchement puis y regroupe tous les passages suivants.</li>
+    </ul>
+
+    <figure class="doc-figure">
+      <img src="images/v6_automatisations_cibles.png" alt="Modale de configuration des automatisations avec sélection de cible dans ECHO-UI" class="doc-screenshot">
+      <p class="doc-caption">Configuration d'une automatisation planifiée et choix de sa conversation cible.</p>
+    </figure>
+
+    <details class="tech-spec" id="dossier-ingenierie">
+      <summary>Dossier d'Ingénierie : Planificateur Git, Sandbox Bubblewrap, CanvasRunHub IPC &amp; Automatisations RRULE</summary>
+
+      <h3>1. Planification Stratégique (<code>strategic_planner.py</code> v6.15.0.1)</h3>
+      <ul>
+        <li><strong>Surface d'outils (8 méthodes)</strong> : <code>build_plan</code> (<code>MODEL_PROMETHEUS</code>, <code>override_thinking="high"</code>), <code>read_plan</code>, <code>update_plan</code>, <code>update_tasks</code> (<code>MODEL_APOLLO</code>), <code>process_plan</code>, <code>close_plan</code> (déterministe zéro-LLM), <code>delete_plan</code>, <code>analyze_plan</code> (<code>MODEL_PROMETHEUS</code>, <code>override_thinking="high"</code>).</li>
+        <li><strong>Stockage &amp; Concurrence</strong> : Génère deux fichiers couplés dans le workspace Git dédié <code>CODEX_WORKSPACE_PLANS</code> (<code>"plans"</code>) : <code>{plan_id}_{slug}.md</code> (avec suffixe UUID anti-collision) et <code>tasks_{plan_id}_{slug}.md</code>, indexés dans <code>echo_resources</code> (<code>storage_path="codex/plans/{filename}"</code>) sous le verrou asynchrone partagé <code>get_codex_lock(user_id, chat_id)</code>.</li>
+        <li><strong>Machine à états &amp; Gatekeepers</strong> : Transitions autorisées <code>proposed</code> &rarr; <code>executing</code> (uniquement via <code>process_plan</code> ; bloqué en contexte headless/automatisation si <code>user_already_validated=False</code> via <code>get_headless_block_reason</code>) et <code>executing</code> &rarr; <code>success | partial | failed | abandoned</code> (ou <code>proposed</code> &rarr; <code>abandoned</code>) uniquement via <code>close_plan</code> avec écriture idempotente de <code>## Synthèse d'exécution</code>. Codification tactique stricte des tâches : <code>[ ]</code>, <code>[/]</code>, <code>[x]</code>, <code>[!]</code>, <code>[-]</code>.</li>
+      </ul>
+
+      <h3>2. Sandbox d'Exécution &amp; Terminal PTY (<code>code_executor_tool.py</code> v6.17.4.1 &amp; <code>21-docker-coding-worker</code>)</h3>
+      <ul>
+        <li><strong>Confinement Bubblewrap (<code>worker_api.py</code> v6.17.4.1)</strong> : Exécution ASGI/WSGI hybride (Starlette + Flask + <code>uvicorn</code> sur port <code>5000</code>, Python 3.14, Node.js 22.x LTS, Bash avec pré-validation <code>bash -n</code>). Isolation par namespaces (<code>--unshare-user --uid 65534 --gid 65534</code>, <code>--unshare-ipc</code>, <code>--unshare-uts</code>, <code>--unshare-cgroup</code>, <code>--die-with-parent</code>), <code>/sandbox</code> en RW, montages RO stricts de <code>/main</code>, <code>/plans</code>, <code>/generated</code>, <code>/files</code>, <code>/browserviews</code> et <code>/echo_libs_sandbox</code>, et dépendances dynamiques <code>pip</code>/<code>npm</code> dans <code>/.deps</code> sous verrou <code>_get_session_deps_lock</code>.</li>
+        <li><strong>Quotas, Isolation &amp; Contrôle</strong> : Isolation des jobs par <code>(uid, cid, sub_sid)</code> via <code>ECHO_SUBAGENT_CONTEXT</code> ; maximum <strong>4 jobs par chat</strong> et <strong>8 jobs globaux</strong> sur le Worker. Modes <code>background=False</code> (synchrone, <code>timeout_sec</code> max <code>3600s</code>, garde pré-vol bloquant <code>echo_monitor.expose_app()</code>) et <code>background=True</code> (<code>GET /wait_ready</code> jusqu'à <code>ECHO_CANVAS_READY_TIMEOUT_SEC = 8.0s</code>, <code>idle_ttl_sec = 1800s</code>, <code>max_lifetime_sec = 14400s</code>). Pilotage incrémental via <code>control_sandbox_execution(action="status"|"listen"|"kill")</code> et <code>kill_sandbox_execution</code>.</li>
+        <li><strong>Bus IPC <code>CanvasRunHub</code> &amp; <code>echo_monitor</code> (v6.17.4.1)</strong> : Serveur Socket Unix <code>AF_UNIX</code> (<code>/tmp/echo_ipc/{safe_rid}/ipc.sock</code> monté sur <code>/run/echo_ipc.sock</code>) avec framing binaire <code>[uint32 BE meta_len][uint32 BE bin_len][UTF-8 JSON meta][raw bin]</code>. Pattern A <code>echo_monitor.display()</code> (mode <code>srcdoc</code>) vs Pattern B <code>echo_monitor.expose_app()</code> (écoute sur <code>/run/echo_app/http.sock</code> ou port TCP éphémère vérifié par <code>_verify_job_owns_tcp_port</code>, proxy interne <code>/app_proxy/{run_id}</code> + <code>/ws/app/{run_id}</code>). Relais vers <code>EchoCanvasTab.svelte</code> via webhook HMAC <code>POST /echo/v1/wm/internal/sandbox_event</code> et proxy HTTP/WS sans cookie SSO par capability ticket HMAC <code>/echo/v1/wm/app/{ticket}</code> (<code>routers/wm.py</code> v6.17.4.1, avec shim HTML et polyfill RAM <code>localStorage</code>/<code>sessionStorage</code> face à l'origine nulle).</li>
+        <li><strong>SSH &amp; Terminal PTY</strong> : <code>ssh_executor</code> déclenche <code>POST /ssh</code> sous <code>bwrap</code> éphémère en injectant côté serveur la clé privée (<code>chmod 0o600</code>) ou <code>sshpass -e</code> déchiffrée depuis l'Identity Vault (<code>service="ssh"</code>). Le terminal interactif utilise <code>WS /api/terminals/{session_id}</code> avec PTY <code>preexec_fn</code> (<code>os.setsid()</code> + <code>TIOCSCTTY</code>), buffer circulaire 64 Ko et <code>XTerminal.svelte</code>.</li>
+      </ul>
+
+      <h3>3. Agenda &amp; Automatisations CRON (<code>generalist_tools.py</code> v6.17.2.1)</h3>
+      <ul>
+        <li><strong>Calendrier UI</strong> : 6 outils (<code>create_ui_calendar_event</code>, <code>update_ui_calendar_event</code>, <code>read_ui_calendar_events</code>, <code>list_ui_calendar_events</code>, <code>search_ui_calendar_events</code>, <code>delete_ui_calendar_event</code>) opérant directement sur la table <code>calendar</code> de <code>webui.db</code> avec dates ISO 8601 alignées sur <code>AEC_temporalite</code>.</li>
+        <li><strong>Automatisations RRULE</strong> : 6 outils (<code>create_ui_automation</code>, <code>update_ui_automation</code>, <code>toggle_ui_automation</code>, <code>read_ui_automations</code>, <code>list_ui_automations</code>, <code>delete_ui_automation</code>) imposant la syntaxe iCalendar RFC 5545 (clause <code>DTSTART:YYYYMMDDTHHMMSS</code> requise avec <code>COUNT</code>), forçant le modèle cible sur <code>OWUI_ORCHESTRATOR_MODEL</code> (<code>echo_orchestrator</code>), et gérant les 3 modes <code>new_chat</code>, <code>existing_chat</code> (<code>target_chat_id="current"</code>) et <code>persistent_chat</code> avec file d'attente anti-chevauchement (coalescing) plafonnée à <code>ECHO_AUTOMATION_QUEUE_MAX_WAIT_SEC = 10800s</code> (3 heures).</li>
+      </ul>
+    </details>
+
+    <div class="transition-text">
+      <a href="09_arsenal_outils.html">&larr; 9. L'Arsenal des Outils</a>
+      &nbsp;&nbsp;
+      <a href="11_recherche_navigation.html">11. Recherche &amp; Navigation &rarr;</a>
+    </div>
+
+    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+
+</html>

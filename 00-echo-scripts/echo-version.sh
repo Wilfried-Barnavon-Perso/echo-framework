@@ -3,13 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # SCRIPT : echo-version.sh
-# VERSION : 6.7.2.1
+# VERSION : 6.18.16.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : Afficher la version et l'état de versioning du framework ECHO
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.16.1: Décodage des préfixes linux: et wsl2: de echo_deploy_script_version avec rétrocompatibilité Hyper-V.
 # 6.7.2.1: Création du script echo-version.sh affichant la version et l'état de versioning ECHO.
 
 set -u
@@ -194,7 +195,17 @@ case "$OUTPUT_MODE" in
             fi
         fi
         if [ -n "$deploy_script_version" ]; then
-            printf 'Script Hyper-V : %s\n' "$deploy_script_version"
+            case "$deploy_script_version" in
+                linux:*)
+                    printf 'Script Linux : %s\n' "${deploy_script_version#linux:}"
+                    ;;
+                wsl2:*)
+                    printf 'Script WSL2 : %s\n' "${deploy_script_version#wsl2:}"
+                    ;;
+                *)
+                    printf 'Script Hyper-V : %s\n' "$deploy_script_version"
+                    ;;
+            esac
         fi
         if [ "$version_source" = "installed" ] && [ -n "$source_version" ] && [ "$source_version" != "$version" ]; then
             printf 'Attention : version source (%s) différente de la version installée (%s).\n' "$source_version" "$version"

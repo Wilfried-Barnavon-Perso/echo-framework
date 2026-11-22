@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Écosystème HUD et interface ECHO-UI v6 : vue partagée, 5 onglets natifs, jauge de contexte, cartes interactives et mode vocal.">
+  <title>ECHO v6 - 7. Écosystème HUD &amp; UI</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>7. Écosystème HUD &amp; UI</h1>
+
+    <p>
+      ECHO-UI repose sur une interface unifiée à écran partagé : plutôt que d'encombrer le fil de discussion avec des
+      blocs interminables ou des fenêtres flottantes dispersées, chaque catégorie d'information (sous-agents, fichiers,
+      navigateur web, identifiants chiffrés et applications) dispose de son propre onglet natif dans le panneau latéral
+      droit, synchronisé en temps réel avec la conversation.
+    </p>
+
+    <div class="didactic-box">
+      <h4>Confort de lecture et absence de vol de focus</h4>
+      <p>
+        Lorsque Écho lance une navigation web ou ouvre un fichier dans le Codex, l'onglet correspondant s'ouvre
+        proprement en arrière-plan dans le panneau latéral sans interrompre votre frappe au clavier. Sur écran plus
+        étroit, la barre de saisie se réorganise automatiquement sur deux rangées pour rester lisible.
+      </p>
+    </div>
+
+    <h2>1. Vue Partagée et Indicateurs Permanents (HUD)</h2>
+
+    <figure class="doc-figure">
+      <img src="images/v6_onglets_split_vault.png" alt="Vue partagée ECHO-UI montrant la conversation à gauche avec repli du compositeur sur 2 rangées et les onglets du panneau latéral à droite" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        Mode écran partagé : la discussion reste lisible à gauche (barre compositeur repliée sur 2 rangées) pendant que les onglets spécialisés opèrent à droite.
+      </figcaption>
+    </figure>
+
+    <p>
+      Quatre indicateurs compacts restent visibles en permanence autour du compositeur et de la barre supérieure :
+    </p>
+
+    <ul>
+      <li><strong>Jauge de contexte et quotas :</strong> barre redimensionnable affichant l'occupation en pourcentage et ouvrant au clic le détail complet (cache, prompt actif, génération, compte Google et quotas 5h / hebdomadaire).</li>
+      <li><strong>Badge d'inférence locale (<code>WebGPU</code>) :</strong> indique l'état du moteur local de vectorisation sur votre poste, directement dans la barre de saisie.</li>
+      <li><strong>Indicateur de sous-agents :</strong> situé en haut à droite, il signale l'activité cognitive en cours et bascule d'un clic vers l'onglet <em>Sous-Agents &amp; Outils</em>.</li>
+      <li><strong>Boîte de réception et compteur d'onglets :</strong> un badge affiche le nombre d'onglets ouverts sur le panneau latéral ; le panneau de notifications permet de supprimer un avis précis ou de tout effacer d'un clic.</li>
+    </ul>
+
+    <h2>2. Les Cinq Onglets Natifs et le Terminal</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Onglet</th>
+          <th>Usage principal</th>
+          <th>Contrôles directs disponibles</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Sous-Agents &amp; Outils</strong></td>
+          <td>Suivi en direct des experts, Conseils (tables rondes) et ouvriers supervisés.</td>
+          <td>Onglets par rôle, filtre <em>Ce groupe / Tous</em>, pause d'affichage locale, actions <em>Pause / Reprendre (+N tours) / Stop / Fermer</em>, messagerie directe <code>@nom</code> ou <code>📢 Tous</code>.</td>
+        </tr>
+        <tr>
+          <td><strong>Codex &amp; Fichiers</strong></td>
+          <td>Exploration et édition des fichiers de la session ou d'autres conversations (en lecture seule).</td>
+          <td>Espaces <code>main</code>, <code>plans</code>, <code>generated</code>, <code>sandbox</code>, <code>files</code> ; prévisualisation multi-format ; éditeur avec <code>Ctrl+S</code> ; édition assistée par IA ; historique et diff ; <em>Importer / Exporter / Copier / Imprimer</em> ; action <em>Envoyer au Codex</em> depuis les blocs de code du chat.</td>
+        </tr>
+        <tr>
+          <td><strong>Navigateur Web</strong></td>
+          <td>Observation en temps réel et relecture des navigations web autonomes.</td>
+          <td>Flux <code>🔴 EN DIRECT</code> avec curseur, navigation temporelle DVR, lecture/export de clips <code>MP4</code>, bouton <strong>📌 Conserver</strong>, zoom, recadrage 8 poignées et export <code>PNG</code>.</td>
+        </tr>
+        <tr>
+          <td><strong>Coffre &amp; Identité</strong></td>
+          <td>Gestion sécurisée des clés d'accès, comptes et connecteurs externes.</td>
+          <td>Catalogue de connecteurs avec guides dépliables, statut masqué des comptes actifs, ajout, modification et suppression chiffrée.</td>
+        </tr>
+        <tr>
+          <td><strong>Applications</strong></td>
+          <td>Affichage de graphiques dynamiques et d'applications web interactives générées pour vous.</td>
+          <td>Pastille d'état (<code>Actif</code> / <code>Arrêté</code>), bouton explicite <em>Arrêter</em> et fermeture <code>×</code>, dans un cadre isolé sans accès à vos cookies.</td>
+        </tr>
+        <tr>
+          <td><strong>Terminal</strong></td>
+          <td>Console shell interactive isolée dans le bac à sable de la session.</td>
+          <td>Ouverture via <code>+</code> &rarr; <em>Nouveau terminal</em> dès que la conversation est sauvegardée.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>3. Cartes Interactives, Son et Réglages</h2>
+
+    <ul>
+      <li>
+        <strong>Cartes interactives dans la discussion :</strong> lorsqu'Écho a besoin d'une précision ou d'un choix
+        avant de poursuivre, elle affiche une carte interactive dédiée (saisie libre, choix rapides, confirmation Oui/Non
+        ou questionnaire multi-étapes accompagné d'un compte à rebours visible).
+      </li>
+      <li>
+        <strong>Identité sonore et mode vocal :</strong> ECHO-UI intègre un signal d'ouverture discret, une tonalité de
+        notification dédiée, la dictée vocale au micro et le mode appel vocal complet en français.
+      </li>
+      <li>
+        <strong>Réglages personnels unifiés (9 onglets) :</strong> accessibles via le menu profil ou la commande
+        <code>/reglages</code> (<em>Général</em>, <em>Interface</em>, <em>Notifications</em>, <em>Raccourcis</em>,
+        <em>Audio</em>, <em>Contrôle des données</em>, <em>Conversations archivées</em>, <em>Compte</em> avec sélecteur
+        de genre grammatical et avatar assorti, <em>À propos</em>). Les paramètres système globaux sont regroupés dans
+        <em>Administration &rarr; Réglages</em>.
+      </li>
+    </ul>
+
+    <div class="warning-box">
+      <h4>Précautions d'usage dans le panneau latéral</h4>
+      <p>
+        Fermer un onglet <strong>Applications</strong> avec la croix <code>×</code> retire l'application active et
+        libère son exécution associée. De même, pour consulter les fichiers d'une ancienne conversation sans risquer de
+        modifier la vôtre, utilisez le sélecteur de conversation en haut de <strong>Codex &amp; Fichiers</strong> (mode
+        lecture seule automatique).
+      </p>
+    </div>
+
+    <details class="tech-spec" id="dossier-ingenierie">
+      <summary>Dossier d'Ingénierie : Gestionnaire de Fenêtres (WM), WebSocket, Proxy App &amp; Routeurs</summary>
+      <h4>1. Bus Temps Réel &amp; Window Manager (<code>routers/wm.py</code> &amp; <code>echo_window_manager.py</code>)</h4>
+      <ul>
+        <li><strong>WebSocket unifié (<code>/echo/v1/wm/ws</code>) :</strong> Authentifié par handshake <em>First-Message Auth</em> (<code>{"type": "auth"}</code>, aucun JWT dans l'URL) via <code>authenticate_echo_websocket</code> (<code>http_utils.py</code>), avec keepalive <code>20s</code>, RPC full-duplex (<code>rpc</code> / <code>rpc_ack</code>, timeout <code>10 000 ms</code>) et reconnexion côté client à backoff exponentiel (<code>1 000 ms</code> à <code>8 000 ms</code> + jitter).</li>
+        <li><strong>Proxy applicatif ticketé HMAC (<code>/echo/v1/wm/app/{ticket}</code>) :</strong> Sert les applications client-serveur de l'onglet <em>Applications</em> (<code>EchoCanvasTab.svelte</code>) sans cookie SSO (suppression de <code>Cookie</code>/<code>Authorization</code>/<code>X-Webui-*</code>), sous CSP sandbox strict (<code>ECHO_IFRAME_SANDBOX</code> sans <code>allow-same-origin</code>), relais WebSocket full-duplex via <code>aiohttp</code> et injection d'un shim HTML autonome (<code>_inject_app_proxy_html_shim</code> avec polyfill <code>localStorage</code>/<code>sessionStorage</code> en mémoire).</li>
+        <li><strong>Webhook Sandbox &amp; UCTP :</strong> Les événements des applications sandbox (<code>frame_upsert</code>, <code>run_finished</code>) transitent par <code>POST /echo/v1/wm/internal/sandbox_event</code> signé par HMAC-SHA256. Le transport UCTP (<code>echo_events.py</code>) opère en double canal non-destructif (Socket.IO natif + <code>wm_uctp_chunk</code> / <code>wm_uctp_exec</code> par fragments de <code>256 Ko</code>).</li>
+      </ul>
+
+      <h4>2. Routeurs Spécialisés &amp; Intégration SvelteKit (<code>16-docker-echo-webui</code>)</h4>
+      <ul>
+        <li><strong><code>routers/cognition.py</code> (<code>v6.16.0.1</code>) :</strong> Snapshot lecture seule <code>/{chat_id}/snapshot</code>, flux SSE <code>/{chat_id}/stream</code> piloté par <code>get_cognition_seq</code>, flux WebSocket binaire <code>/{chat_id}/browser-ws</code> (header 16 octets Big-Endian <code>!BBHHHHIH</code> + JPEG), clips <code>/clip</code>, rétention <code>/retain</code> et pilotage <code>/message</code> / <code>/control</code>.</li>
+        <li><strong><code>routers/codex.py</code> (<code>v6.18.18.1</code>) :</strong> Opérations Git Dulwich déportées via <code>asyncio.to_thread</code> sous verrou <code>get_codex_lock</code>, édition CodeMirror 6 (<code>EchoCodexEditor.svelte</code> + <code>codexLanguages.ts</code>), téléchargement avec MIME IANA + <code>X-Content-Type-Options: nosniff</code> et défense XSS (<code>application/octet-stream</code> pour HTML/SVG).</li>
+        <li><strong><code>routers/embeds.py</code> &amp; <code>FullHeightIframe.svelte</code> :</strong> Externalisation des embeds et binaires via <code>echo-embed://</code> et <code>echo-asset://</code> avec pont <code>postMessage</code> (<code>echo:fetch-asset</code> &rarr; <code>echo:asset-blob</code>).</li>
+        <li><strong>Découplage DB en vol &amp; Composants UI :</strong> Les écritures intermédiaires passent par <code>ChatMessage</code> (<code>sync_chat_blob=False</code>) jusqu'au scellement final du tour ; les interactions utilisateur passent par <code>AskUserCard.svelte</code> (<code>request:user_input</code>) et les notifications par <code>InboxPanel.svelte</code> / <code>routers/notifications.py</code>.</li>
+      </ul>
+    </details>
+
+    <div class="transition-text">
+      <a href="06_communication_gemini.html">&larr; 6. Communication Gemini</a>
+      &nbsp;&nbsp;
+      <a href="08_cerveau_cognitif.html">8. La Cognition &rarr;</a>
+    </div>
+
+    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+
+</html>

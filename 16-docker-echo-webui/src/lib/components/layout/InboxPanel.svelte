@@ -11,6 +11,7 @@
 	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Loader from '$lib/components/common/Loader.svelte';
 	import Bell from '$lib/components/icons/Bell.svelte';
+	import XMark from '$lib/components/icons/XMark.svelte';
 	import ProfileImage from '$lib/components/chat/Messages/ProfileImage.svelte';
 	import { WEBUI_API_BASE_URL } from '$lib/constants';
 	export let active = false;
@@ -24,6 +25,8 @@
 	let loaded = false;
 	let error = '';
 	let selecting: string | null = null;
+	let deletingId: string | null = null;
+	let clearing = false;
 	let acknowledgedAt: string | undefined;
 	let opened = false;
 	let alive = true;
@@ -111,6 +114,40 @@
 			if (alive) selecting = null;
 		}
 	};
+	// [ECHO-V6-HOOK] Single & bulk inbox deletion handlers
+	const removeItem = async (item: InboxItem) => {
+		if (deletingId || clearing || selecting) return;
+		deletingId = item.id;
+		try {
+			const res = await inboxRequest<{ ok: boolean; id: string; count?: number }>(
+				`/${encodeURIComponent(item.id)}`,
+				'DELETE'
+			);
+			if (!alive) return;
+			items = items.filter((entry) => entry.id !== item.id);
+			if (typeof res.count === 'number') setInboxCount(res.count);
+			if (!items.length && cursor) void load();
+		} catch (e) {
+			if (alive) error = String(e instanceof Error ? e.message : e);
+		} finally {
+			if (alive) deletingId = null;
+		}
+	};
+	const clearAll = async () => {
+		if (clearing || deletingId || selecting || !items.length) return;
+		clearing = true;
+		try {
+			await inboxRequest<{ ok: boolean; deleted: number; count: number }>('', 'DELETE');
+			if (!alive) return;
+			items = [];
+			cursor = null;
+			setInboxCount(0);
+		} catch (e) {
+			if (alive) error = String(e instanceof Error ? e.message : e);
+		} finally {
+			if (alive) clearing = false;
+		}
+	};
 	const keydown = (event: KeyboardEvent) => {
 		if (
 			active &&
@@ -145,6 +182,21 @@
 	class="flex min-h-0 flex-1 flex-col pt-2.5"
 	style:display={active ? undefined : 'none'}
 >
+	{#if items.length > 0}
+		<div class="flex items-center justify-between px-3 pb-1.5">
+			<span class="text-xs font-medium text-gray-500 dark:text-gray-400">
+				{$i18n.t('Notifications')}
+			</span>
+			<button
+				type="button"
+				class="text-[0.6875rem] text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 transition-colors disabled:opacity-50"
+				disabled={clearing || !!selecting || !!deletingId}
+				on:click={clearAll}
+			>
+				{$i18n.t('Clear all')}
+			</button>
+		</div>
+	{/if}
 	<div
 		class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-1.5 pb-3"
 		class:flex={!items.length}
@@ -164,12 +216,15 @@
 				>
 					{$i18n.t(dateLabel(item.created_at))}
 				</div>{/if}
-			<button
-				type="button"
-				class="my-0.5 flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-start font-normal hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors duration-75 disabled:opacity-60"
-				disabled={!!selecting}
-				on:click={() => select(item)}
+			<div
+				class="group relative my-0.5 flex w-full items-start rounded-lg hover:bg-gray-100 dark:hover:bg-gray-900 transition-colors duration-75"
 			>
+				<button
+					type="button"
+					class="flex min-w-0 flex-1 items-start gap-2.5 px-2 py-2 text-start font-normal disabled:opacity-60"
+					disabled={!!selecting || clearing || deletingId === item.id}
+					on:click={() => select(item)}
+				>
 				<span class="sr-only">{$i18n.t(item.read_at ? 'Read' : 'Unread')}</span>
 				<span class="relative mt-0.5 flex size-5 shrink-0 items-center justify-center">
 					{#if item.actor}
@@ -227,7 +282,18 @@
 						</div>
 					{/if}
 				</div>
-			</button>
+				</button>
+				<button
+					type="button"
+					class="mt-1.5 me-1.5 shrink-0 rounded-md p-1 text-gray-400 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 hover:bg-gray-200 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200 transition-opacity disabled:opacity-40"
+					aria-label={$i18n.t('Delete notification')}
+					title={$i18n.t('Delete')}
+					disabled={!!selecting || clearing || deletingId === item.id}
+					on:click={() => removeItem(item)}
+				>
+					<XMark className="size-3.5" />
+				</button>
+			</div>
 		{/each}
 		{#if loading && !loaded}<div
 				class="flex flex-1 items-center justify-center px-4 py-6 text-gray-500 dark:text-gray-400"

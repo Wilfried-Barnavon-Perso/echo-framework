@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Recherche Web souveraine, recherche approfondie multi-sources, navigateur web autonome avec suivi vidéo DVR, exploration de fichiers multimédias et cartes Maps dans ECHO v6.">
+  <title>ECHO v6 - 11. Recherche &amp; Navigation</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>11. Recherche &amp; Navigation</h1>
+
+    <div class="didactic-box">
+      <h4>Observer le monde réel sans exposer vos requêtes</h4>
+      <p>
+        ECHO combine un méta-moteur de recherche privé, un chercheur autonome multi-sources, un véritable navigateur Web
+        observable en direct, des sondes capables d'examiner de longs documents ou médias, et un moteur cartographique.
+        Chaque niveau s'adapte à la complexité de la question afin d'éviter la saturation de la conversation.
+      </p>
+    </div>
+
+    <h2>1. Escalade progressive de la recherche Web</h2>
+
+    <p>
+      Selon le degré de précision attendu, l'assistant privilégie l'outil le plus léger et le plus direct avant de
+      mobiliser un navigateur complet :
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Niveau d'investigation</th>
+          <th>Usage typique</th>
+          <th>Ce que reçoit l'utilisateur</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>1. Réponse instantanée</strong></td>
+          <td>Définition, date établie ou fait encyclopédique statique.</td>
+          <td>Réponse immédiate sans multiplication de requêtes (hors actualité).</td>
+        </tr>
+        <tr>
+          <td><strong>2. Méta-recherche Web</strong></td>
+          <td>Actualités, documentation technique, publications scientifiques, code, images ou météo sur 12 catégories.</td>
+          <td>Jusqu'à 8 extraits sourcés et datés, filtrables par fraîcheur temporelle et langue.</td>
+        </tr>
+        <tr>
+          <td><strong>3. Recherche approfondie</strong></td>
+          <td>État de l'art complet ou vérification croisée sur plusieurs sites et publications.</td>
+          <td>Un agent dédié enchaîne recherches et lectures de pages puis restitue un rapport synthétique sourcé.</td>
+        </tr>
+        <tr>
+          <td><strong>4. Navigation interactive</strong></td>
+          <td>Sites dynamiques, formulaires, pagination, tableaux interactifs ou pages protégées.</td>
+          <td>Un navigateur autonome pilote la page avec vision de l'écran et restitue le résultat observé.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>2. Le navigateur Web autonome et le suivi en direct</h2>
+
+    <p>
+      Lorsqu'une URL connue doit simplement être lue, l'assistant privilégie une lecture ciblée ou un archivage dans la
+      mémoire de session. En revanche, dès qu'une interaction réelle avec la page est nécessaire, l'onglet
+      <strong>Navigateur Web</strong> s'ouvre en arrière-plan dans le panneau latéral droit pour vous permettre
+      d'observer chaque action.
+    </p>
+
+    <figure class="doc-figure">
+      <img src="images/v6_onglet_navigateur.png" alt="Onglet Navigateur Web d'ECHO-UI affichant une page Wikipédia annotée en direct avec repères Set-of-Marks et barre DVR Clips (2 / 2)" class="doc-screenshot">
+      <p class="doc-caption">Onglet <strong>Navigateur Web</strong> : page Wikipédia consultée et annotée en direct (repères visuels Set-of-Marks), barre DVR et sélecteur de séquences vidéo <strong>Clips (2 / 2)</strong>.</p>
+    </figure>
+
+    <figure class="doc-figure">
+      <img src="images/v6_split_navigateur.png" alt="Affichage partagé Split screen combinant la synthèse rédigée par ECHO à gauche et l'onglet Navigateur Web en direct à droite" class="doc-screenshot">
+      <p class="doc-caption">Mode d'affichage partagé (<strong>Split screen</strong>) : synthèse structurée rédigée par ECHO à gauche et navigateur web autonome observable en parallèle à droite.</p>
+    </figure>
+
+    <div class="grid-container">
+      <div class="card">
+        <h3>Flux en direct et curseur d'action</h3>
+        <p>
+          En mode <strong>En direct</strong>, vous visualisez les pages traversées et le pointeur rouge matérialisant
+          chaque clic ou survol effectué par l'agent de navigation.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Relecture temporelle &amp; Clips vidéo</h3>
+        <p>
+          La barre de navigation temporelle permet de revenir en arrière image par image, de basculer entre la capture
+          haute définition et le clip vidéo d'action (<strong>Voir l'action</strong>), ou de télécharger la séquence au
+          format MP4.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Épinglage et nettoyage automatique</h3>
+        <p>
+          Les captures temporaires sont purgées après fermeture ou expiration de la session navigateur. Le bouton
+          <strong>Conserver</strong> protège une capture et son clip vidéo contre ce nettoyage et les inclut lors d'une
+          duplication de conversation.
+        </p>
+      </div>
+    </div>
+
+    <div class="note-box">
+      <h4>Outils visuels intégrés à l'onglet</h4>
+      <p>
+        Depuis l'onglet <strong>Navigateur Web</strong>, vous pouvez zoomer, recadrer une zone précise par poignées,
+        copier l'image dans le presse-papiers ou l'exporter au format PNG sans quitter la conversation.
+      </p>
+    </div>
+
+    <h2>3. Exploration de fichiers locaux et médias volumineux</h2>
+
+    <p>
+      Pour analyser vos fichiers déposés (PDF de plusieurs centaines de pages, enregistrements audio, vidéos longues,
+      images haute résolution ou fichiers bruts), ECHO évite d'injecter aveuglément des mégaoctets de contenu dans le fil
+      de discussion :
+    </p>
+
+    <ul>
+      <li><strong>Sonde ciblée</strong> : extrait uniquement la réponse à une question précise sur un document ou média lourd, en découpant automatiquement les très gros fichiers en segments analysés en parallèle.</li>
+      <li><strong>Rapport multimédia horodaté</strong> : produit une description chronologique détaillée d'une vidéo, d'un audio ou d'un document visuel.</li>
+      <li><strong>Affichage d'image &amp; Inspection technique</strong> : affiche directement une image locale ou distante dans la réponse, lit des plages de lignes exactes sur un fichier texte ou calcule ses empreintes cryptographiques (SHA-256, MD5, etc.).</li>
+    </ul>
+
+    <h2>4. Géolocalisation et cartes interactives</h2>
+
+    <p>
+      Pour les recherches géographiques (lieux, adresses, horaires d'ouverture, itinéraires ou points d'intérêt), un outil
+      dédié interroge les données cartographiques en tenant compte de votre localisation contextuelle si elle est activée,
+      et peut afficher une carte interactive directement dans la réponse.
+    </p>
+
+    <details class="tech-spec" id="dossier-ingenierie">
+      <summary>Dossier d'Ingénierie : SearXNG, Playwright Zéro-Trace DOM, WebSocket Binaire &amp; Pipeline Multimédia</summary>
+
+      <h3>1. Méta-Recherche Souveraine (<code>sovereign_web_search.py</code> v6.18.2.1 &amp; <code>searxng-settings.yml</code> v6.18.2.1)</h3>
+      <ul>
+        <li><strong>Pool SearXNG</strong> : <strong>79 moteurs</strong> déclarés répartis sur <strong>12 catégories</strong> (<code>general</code>, <code>it</code>, <code>science</code>, <code>images</code>, <code>videos</code>, <code>social media</code>, <code>news</code>, <code>music</code>, <code>map</code>, <code>files</code>, <code>movies</code>, <code>weather</code>) avec sortie JSON enrichie (<code>answers</code>/<code>WeatherAnswer</code>, <code>infoboxes</code>, <code>publishedDate</code>, corroboration <code>engines</code>), couplés aux réponses instantanées DuckDuckGo via <code>search_instant_answer</code>.</li>
+        <li><strong>Régulation &amp; Recherche Profonde</strong> : <code>search_web</code> limite les appels simultanés (2 max par tour recommandé). <code>delegate_deep_research</code> s'appuie sur <code>EchoSubagentController.run_or_resume</code> (<code>ECHO_AUTONOMOUS_MAX_TURNS = 15</code> tours d'outils, <code>ECHO_AUTONOMOUS_TIMEOUT_SEC = 300s</code>, défaut <code>MODEL_PROMETHEUS</code>) avec fermeture explicite de session navigateur en fin de mission.</li>
+      </ul>
+
+      <h3>2. Navigateur Autonome Playwright (<code>navigation_engine_tool.py</code> v6.15.0.1, <code>echo_browser_lib.py</code> v6.18.0.1 &amp; <code>22-docker-browser-worker</code>)</h3>
+      <ul>
+        <li><strong>Concurrence &amp; Sessions</strong> : Sémaphore global limité à <code>ECHO_MAX_CONCURRENT_BROWSERS = 2</code> instances simultanées ; éviction LRU à 20 contextes dans <code>browser_api.py</code> (v6.16.0.1). Séparation stricte entre <code>chat_id</code> (persistance SQLite/<code>browserviews/</code> et drop-zone Download Broker <code>25-docker-download-broker</code>) et <code>browser_session_id</code> (<code>sub_sid</code> ou <code>chat_id</code> pour l'isolation Playwright).</li>
+        <li><strong>Zéro-Trace DOM &amp; Furtivité WAF</strong> : Calcul JS en mémoire de sélecteurs CSS déterministes (<code>GET_CSS_PATH_JS</code>) sans tatouage d'attributs DOM ; support WebGL SwiftShader, argument natif <code>--disable-blink-features=AutomationControlled</code>, alignement dynamique User-Agent / Client Hints (<code>Sec-CH-UA*</code>) et getters WebIDL sur <code>Navigator.prototype</code> / <code>Window.prototype</code>.</li>
+        <li><strong>Ciblage Hybride Lidar / Sniper</strong> : Recalibrage de bounding box post-scroll (<code>wait_for_settle</code> / Lidar Check), grille d'inspection fine (<code>DEFAULT_VISION_GRID_STEP = 48</code>) et action <code>action_zoom_in</code> via <code>Page.captureScreenshot(clip=...)</code> avec réticule rouge.</li>
+        <li><strong>Streaming WebSocket Binaire &amp; Clips MP4</strong> : CDP <code>Page.startScreencast</code> bridé à <strong>9 FPS</strong> sur <code>WS /ws/screencast/{session_id}</code> (relayé via <code>routers/cognition.py</code> <code>WS /{chat_id}/browser-ws</code>), trames JPEG préfixées d'un en-tête Big-Endian 16 octets (<code>struct.Struct("!BBHHHHIH")</code>), régulation par backpressure <code>ack</code> (<code>LIVE_MAX_IN_FLIGHT_FRAMES = 2</code>). À l'arrêt d'action (<code>POST /screencast/stop</code>), assemblage MP4 H.264 (<code>libx264 -preset ultrafast -crf 28 -pix_fmt yuv420p -movflags +faststart</code>) avec incrustation du curseur rouge.</li>
+        <li><strong>Cycle de vie <code>browserviews/</code> &amp; Outils</strong> : Captures et clips stockés dans <code>browserviews/</code> (<code>resource_type="browserview"</code>, statuts <code>"transient"</code>/<code>"retained"</code>). Budget N1 (<code>cleanup_expired_browserviews_sync</code>, grâce <code>BROWSER_TRANSIENT_GRACE_SEC = 1800.0s</code>) et budget N2 (<code>enforce_transient_clip_budget</code> : plafond FIFO de <code>BROWSER_MAX_TRANSIENT_CLIPS_PER_CHAT = 50</code> clips / <code>BROWSER_MAX_TRANSIENT_CLIPS_MB = 60 Mo</code>). Outils exposés : <code>delegate_web_browsing</code> (tranches <code>8 tours / 120s</code> via <code>BrowserToolDispatcher</code>), <code>analyze_web_page</code> (<code>MODEL_APOLLO</code>), <code>archive_web_page</code> (session éphémère isolée + indexation RAG), <code>web_browse_reset</code>, <code>get_browser_frames_history</code> (lecture seule non destructive), <code>retain_browser_frame</code> et <code>open_browser_ui</code>.</li>
+      </ul>
+
+      <h3>3. Exploration Multimédia &amp; Maps (<code>file_content_explorer.py</code> v6.14.2.1 &amp; <code>gemini_maps_grounding.py</code> v5.233.0.1)</h3>
+      <ul>
+        <li><strong>Pipeline Multimédia <code>semantic_probe</code> &amp; <code>read_multimedia_file</code></strong> : Traitement délégué à <code>MODEL_APOLLO</code> (<code>thinking="medium"</code>). Vidéos décimées par FFmpeg à <code>1 fps</code> en résolution paire <code>yuv420p</code> (<code>-c:v libx264 -preset veryfast -qp 26 -g 10 -bf 0 -c:a copy</code>) et fragmentées en fMP4 toutes les 5 s (<code>-frag_duration 5000000</code>).</li>
+        <li><strong>Segmentation Map-Reduce RAM &amp; Régulation</strong> : Au-delà de <strong>30 Mo</strong> (<code>MAX_MULTIMODAL_SIZE_KB</code>) ou <strong>45 min</strong> par million de tokens (<code>2700s</code> à <code>1 048 576</code> tokens), découpage sans recouvrement 100 % en mémoire vive (streaming PDF <code>O(1)</code> via <code>_iter_pdf_memory_segments</code>, troncature fMP4 sur frontière <code>moof+mdat</code>), régulé par sémaphores par boucle (<code>MAX_CONCURRENT_TRANSCODES = 1</code>, <code>ECHO_MAX_CONCURRENT_MULTIMODAL_SEGMENTS = 3</code>) et priorité OS basse (<code>os.nice(19)</code>).</li>
+        <li><strong>Outils complémentaires</strong> : <code>read_raw_file_content</code> (<code>text</code>, <code>base64</code> max 12 288 o, <code>hex</code> max 8 192 o), <code>show_image_to_user</code> (externalisation <code>echo-asset://</code> dans <code>tools_output/embeds/</code> via <code>EchoUI.image_viewer</code>), <code>get_file_metadata</code>, <code>calculate_file_hashes</code> et <code>search_maps</code> (<code>MODEL_ZEPHYR</code>, <code>thinking="minimal"</code>, outil natif <code>googleMaps</code>).</li>
+      </ul>
+    </details>
+
+    <div class="transition-text">
+      <a href="10_planification_execution.html">&larr; 10. Planification &amp; Exécution</a>
+      &nbsp;&nbsp;
+      <a href="12_edition_visuelle.html">12. Édition &amp; Visuel &rarr;</a>
+    </div>
+
+    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+
+</html>

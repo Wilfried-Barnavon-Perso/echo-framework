@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Tutoriel pratique de bout en bout dans ECHO v6 : planification, navigateur web, sous-agents, Codex et applications.">
+  <title>ECHO v6 - 4. Tutoriel Pratique</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>4. Tutoriel Pratique</h1>
+
+    <p>
+      Ce tutoriel propose un scénario complet, réalisable en une dizaine de minutes, pour observer comment les
+      différents espaces d'ECHO coopèrent sur une même mission : <strong>préparer une étude comparative vérifiée sur le
+      web, suivre l'équipe de sous-agents, réviser le rapport dans le Codex et visualiser les résultats dans
+      Applications</strong>.
+    </p>
+
+    <div class="didactic-box">
+      <h4>Prérequis et fil rouge du tutoriel</h4>
+      <p>
+        Vous devez disposer d'une session ECHO-UI connectée avec une authentification Google active. Aucune ligne de
+        code n'est à écrire : vous pilotez Écho en langage naturel et observez ses productions dans le panneau latéral.
+      </p>
+    </div>
+
+    <div class="mermaid-wrapper">
+      <div class="mermaid-header">
+        <span>FIL ROUGE DU TUTORIEL EN 4 PHASES</span>
+        <span>CLIQUER POUR ZOOMER</span>
+      </div>
+      <div class="mermaid">
+flowchart LR
+  P1["1. Cadrage (/plan)"] --> P2["2. Navigation Web (En direct + Captures)"]
+  P2 --> P3["3. Sous-Agents (Suivi & Réorientation)"]
+  P3 --> P4["4. Codex & Applications (Édition, Export & Visuel)"]
+      </div>
+    </div>
+
+    <h2>Phase 1 : Cadrer la Mission avec <code>/plan</code></h2>
+
+    <p>
+      Ouvrez une <em>Nouvelle conversation</em> et demandez d'abord un plan structuré afin de garder la maîtrise du
+      périmètre avant le lancement des recherches :
+    </p>
+
+    <div class="code-header">REQUÊTE INITIALE À SAISIR</div>
+    <pre><code>/plan Compare les licences Apache 2.0, MIT et GPL v3 pour un logiciel d'entreprise :
+1. Vérifie les clauses officielles récentes sur les sites de référence.
+2. Rédige un rapport comparatif structuré dans l'espace main du Codex.
+3. Génère un tableau comparatif interactif dans l'onglet Applications.
+Ne lance aucune exécution avant ma validation.</code></pre>
+
+    <p>
+      Écho passe sur un palier de réflexion adapté, conçoit le plan formel et l'enregistre dans l'espace
+      <code>plans</code>. Lorsque la carte de validation s'affiche (ou qu'Écho vous demande votre accord), vérifiez les
+      étapes proposées puis confirmez l'exécution.
+    </p>
+
+    <h2>Phase 2 : Observer le Navigateur Web en Direct</h2>
+
+    <p>
+      Dès que le plan est approuvé, Écho confie la consultation des pages de référence au navigateur autonome. L'onglet
+      <strong>Navigateur Web</strong> s'ouvre en arrière-plan dans le panneau latéral sans interrompre votre saisie.
+    </p>
+
+    <figure class="doc-figure">
+      <img src="images/v6_onglet_navigateur.png" alt="Onglet Navigateur Web affichant une page Wikipédia annotée en direct par Set-of-Marks avec la barre DVR Clips (2 / 2)" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        L'onglet Navigateur Web en action : page Wikipédia annotée avec repères visuels Set-of-Marks, indicateur <strong>EN DIRECT</strong>, barre temporelle DVR et sélecteur <strong>Clips (2 / 2)</strong>.
+      </figcaption>
+    </figure>
+
+    <ol>
+      <li>Cliquez sur l'onglet <strong>Navigateur Web</strong> pour observer l'indicateur <strong>🔴 EN DIRECT</strong> et le curseur virtuel.</li>
+      <li>Utilisez le curseur de la barre temporelle en bas pour revenir sur une capture antérieure (mode <strong>⏸️ DIFFÉRÉ</strong>), puis cliquez sur <strong>🔴 Retour au temps réel</strong>.</li>
+      <li>Activez l'affichage des actions vidéo avec le bouton <strong>🎬 Clips</strong> (ou basculez entre <strong>🎬 Voir l'action</strong> et <strong>🖼️ Image HD</strong>).</li>
+      <li>Sur une page contenant un tableau officiel important, cliquez sur <strong>📌 Conserver</strong> : le bouton passe à <strong>📌 Conservée</strong>, garantissant que cette preuve ne sera pas purgée automatiquement après la session.</li>
+    </ol>
+
+    <h2>Phase 3 : Superviser et Réorienter les Sous-Agents</h2>
+
+    <p>
+      Pendant la rédaction et la vérification croisée, l'indicateur d'activité en haut à droite signale que des
+      sous-agents travaillent. Ouvrez l'onglet <strong>Sous-Agents &amp; Outils</strong>.
+    </p>
+
+    <figure class="doc-figure">
+      <img src="images/v6_onglet_sous_agents.png" alt="Onglet Sous-Agents et Outils affichant la délibération active d'une Table Ronde Delphi (badge Apollon) avec contrôles Pause et Stop" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        L'onglet Sous-Agents &amp; Outils en action : délibération d'une <strong>Table Ronde</strong> Delphi (badge <strong>Apollon</strong>), suivi en direct et contrôles <strong>Pause</strong> / <strong>Stop</strong>.
+      </figcaption>
+    </figure>
+
+    <figure class="doc-figure">
+      <img src="images/v6_visuel_interactif.png" alt="Visualisation interactive ECharts inline comparant quatre architectures de qubits dans la conversation" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        Visualisation interactive ECharts générée dans la conversation pour comparer quatre architectures de qubits.
+      </figcaption>
+    </figure>
+
+    <ul>
+      <li>Basculez entre la vue <strong>Conversations</strong> (fil de réflexion et réponses du sous-agent) et <strong>Appels d'outils</strong> (actions unitaires exécutées).</li>
+      <li>Si le flux défile vite, activez la pause d'affichage locale pour lire tranquillement : un compteur indique le nombre de nouvelles étapes arrivées entre-temps.</li>
+      <li>Les sous-agents travaillent par tranches bornées (jusqu'à 8 tours d'outils ou 120 secondes par tranche). Vous pouvez à tout moment utiliser <strong>Pause</strong>, <strong>Reprendre (+N tours)</strong>, <strong>Stop</strong> ou adresser un message direct via <code>@nom</code> pour ajouter une précision (par exemple : <em>« Ajoute une colonne sur la compatibilité des brevets »</em>).</li>
+    </ul>
+
+    <h2>Phase 4 : Réviser dans le Codex et Ouvrir le Visuel</h2>
+
+    <p>
+      Une fois l'étude terminée, Écho vous fournit un lien cliquable vers le rapport créé dans le Codex ainsi qu'une
+      vue interactive dans <strong>Applications</strong>.
+    </p>
+
+    <figure class="doc-figure">
+      <img src="images/v6_onglet_codex.png" alt="Onglet Codex et Fichiers ouvrant estimateur_vram.py dans l'éditeur CodeMirror 6 colorisé avec la barre d'édition IA" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        L'onglet Codex &amp; Fichiers : fichier <code>estimateur_vram.py</code> ouvert dans l'éditeur CodeMirror 6 colorisé avec la barre d'édition assistée par IA et le sélecteur d'espace.
+      </figcaption>
+    </figure>
+
+    <figure class="doc-figure">
+      <img src="images/v6_onglet_applications.png" alt="Onglet Applications exécutant en direct la mini-application interactive Estimateur dynamique de VRAM pour LLM" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        L'onglet Applications : mini-application interactive <em>Estimateur dynamique de VRAM pour LLM</em> servie en direct avec statut <strong>Actif</strong> et bouton <strong>Arrêter</strong>.
+      </figcaption>
+    </figure>
+
+    <ol>
+      <li>Cliquez sur le lien Codex inséré dans la réponse d'Écho (ou ouvrez l'onglet <strong>Codex &amp; Fichiers</strong> dans l'espace <code>Main [RW]</code>).</li>
+      <li>Prévisualisez le rendu Markdown, puis passez en mode <strong>Éditeur</strong> pour corriger un passage et sauvegardez avec <code>Ctrl+S</code>.</li>
+      <li>Testez l'action d'édition assistée par IA pour reformuler un paragraphe en inspectant le diff proposé avant de valider.</li>
+      <li>Consultez l'onglet <strong>Historique Git</strong> pour comparer deux révisions ou restaurer une version antérieure, puis utilisez les boutons <strong>Exporter</strong>, <strong>Copier</strong> ou <strong>Imprimer</strong>.</li>
+      <li>Ouvrez enfin l'onglet <strong>Applications</strong> pour manipuler le tableau comparatif interactif.</li>
+    </ol>
+
+    <h2>Phase 5 : Capitaliser pour Vos Prochaines Sessions</h2>
+
+    <ul>
+      <li>Ouvrez <strong>Espace de travail &rarr; Mémoire</strong> pour vérifier les préférences éventuellement retenues par Écho et filtrer les <strong>Axiomes (Niveau 5)</strong>.</li>
+      <li>Si ce format d'audit vous sert chaque mois, ouvrez le menu <code>...</code> de la conversation dans la barre latérale et cliquez sur <strong>Planifier une automatisation</strong>.</li>
+      <li>Si la conversation continue longtemps et approche la charge de contexte critique, déclenchez <strong>Poursuivre dans une nouvelle conversation</strong> pour repartir sur un fil allégé tout en conservant le résumé et vos livrables.</li>
+    </ul>
+
+    <div class="warning-box">
+      <h4>Réflexe utile en fin de parcours</h4>
+      <p>
+        Pensez à épingler avec <strong>📌 Conserver</strong> toute capture du navigateur que vous souhaitez archiver,
+        et si vous avez activé un mode spécialisé comme <code>/prof</code> ou <code>/rédacteur</code> en cours de
+        route, saisissez <code>/persona</code> avant de changer de sujet.
+      </p>
+    </div>
+
+    <details class="tech-spec" id="dossier-ingenierie">
+      <summary>Dossier d'Ingénierie : Chaîne Technique du Fil Rouge</summary>
+      <h4>1. Planification &amp; Suivi</h4>
+      <ul>
+        <li><code>build_plan</code> et <code>process_plan</code> (<code>12-owui-tools/strategic_planner.py</code>) écrivent les fichiers <code>{plan_id}_{slug}.md</code> et <code>tasks_{plan_id}_{slug}.md</code> dans <code>CODEX_WORKSPACE_PLANS</code> (<code>codex/plans/</code>) sous verrou <code>get_codex_lock</code> avec synchronisation dans <code>session.db::echo_resources</code>.</li>
+      </ul>
+
+      <h4>2. Navigateur Live, Clips MP4 &amp; Rétention</h4>
+      <ul>
+        <li><code>delegate_web_browsing</code> (<code>navigation_engine_tool.py</code>) s'exécute via <code>BrowserToolDispatcher</code> et <code>EchoSubagentController</code> (<code>14-owui-libs/echo_subagent_hub.py</code>), sous sémaphore <code>ECHO_MAX_CONCURRENT_BROWSERS = 2</code>.</li>
+        <li><code>EchoBrowserTab.svelte</code> consomme le flux WebSocket binaire <code>/echo/v1/cognition/{chat_id}/browser-ws</code> (header Big-Endian 16 octets + JPEG brut rendu par <code>createImageBitmap</code> sur <code>&lt;canvas&gt;</code>) et les clips H.264 MP4 via <code>/clip</code>.</li>
+        <li>Les captures non épinglées (<code>status="transient"</code> dans <code>browserviews/</code>) sont soumises au délai de grâce <code>BROWSER_TRANSIENT_GRACE_SEC = 1800.0</code> et au plafond FIFO <code>50</code> clips / <code>60 Mo</code> ; <code>POST /retain</code> passe leur statut à <code>"retained"</code>.</li>
+      </ul>
+
+      <h4>3. Sous-Agents, Codex &amp; Applications</h4>
+      <ul>
+        <li>Les tranches supervisées (<code>ECHO_SUBAGENT_CHECKPOINT_TURNS = 8</code>, <code>ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC = 120</code>) sont observées via <code>/echo/v1/cognition/{chat_id}/stream</code> (SSE) et pilotées par <code>POST /{chat_id}/threads/{sub_sid}/message</code> et <code>/control</code>.</li>
+        <li><code>codex_links_filter.py</code> (Priorité 80) valide l'existence physique des fichiers via <code>check_codex_file_exists</code> et transforme les URN <code>codex:...</code> en ancres <code>#codex:</code> ouvertes nativement dans <code>EchoCodexTab.svelte</code> (éditeur CodeMirror 6 <code>EchoCodexEditor.svelte</code>).</li>
+        <li>Les vues riches et applications s'affichent dans <code>EchoCanvasTab.svelte</code> (attribut <code>sandbox</code> strict sans <code>allow-same-origin</code>).</li>
+      </ul>
+    </details>
+
+    <div class="transition-text">
+      <a href="03_exemples_prompts.html">&larr; 3. Exemples de Prompts</a>
+      &nbsp;&nbsp;
+      <a href="05_hld_architecture.html">5. High-Level Design (HLD) &rarr;</a>
+    </div>
+
+    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+  </main>
+
+  <script src="nav.js"></script>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'dark' });
+  </script>
+</body>
+
+</html>

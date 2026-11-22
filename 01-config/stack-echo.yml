@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # ECHO FRAMEWORK
-# VERSION : 6.18.2.1
+# VERSION : 6.18.15.1
 # ==============================================================================
 # Ce fichier ne gere QUE la couche applicative "ECHO".
 # ==============================================================================
@@ -28,11 +28,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.15.1: Sécurisation cookies WEBUI_SESSION_COOKIE_SECURE et WEBUI_AUTH_COOKIE_SECURE conditionnelle à ECHO_DOMAIN.
 # 6.18.2.1: Ajout de SEARXNG_CONTACT_URL, FORCE_OWNERSHIP=false et sonde légère /healthz sur echo-searxng.
 # 6.17.3.1: Exemption statique /audio dans CUSTOM_CONF_SERVER_HTTP_statics pour servir /audio/*.mp3 sans détour /api/verify.
 # 6.16.0.2: Préfixe /echo/ dans les règles Nginx JSON et location /echo/v1/wm/app/ (auth_request off, HTTP/1.1 + WS Upgrade) pour apps HMAC.
 # 6.14.1.1: Ajout de DATABASE_SQLITE_PRAGMA_BUSY_TIMEOUT=30000 sur echo-webui pour résorber la contention SQLite sur conversations volumineuses.
-# 6.14.0.1: Augmentation de la tolérance de démarrage du healthcheck echo-searxng (start_period: 60s, retries: 10) sous contention CPU.
 
 name: echo
 
@@ -72,9 +72,9 @@ services:
       # ATTENTION : Séparateur point-virgule (;) obligatoire pour Open WebUI
       - "CORS_ALLOW_ORIGIN=https://ui.${ECHO_DOMAIN:-localhost};https://www.${ECHO_DOMAIN:-localhost};http://localhost:3000;http://127.0.0.1:3000;https://${ECHO_DOMAIN:-localhost};${ECHO_DETECTED_ORIGINS:-}"
 
-      # Sécurité Cookies (Recommandé Doc Officielle)
-      - "WEBUI_SESSION_COOKIE_SECURE=true"
-      - "WEBUI_AUTH_COOKIE_SECURE=true"
+      # Sécurité Cookies (Actif en HTTPS Secure Edge via ECHO_DOMAIN, désactivé en HTTP local LAN)
+      - "WEBUI_SESSION_COOKIE_SECURE=${ECHO_DOMAIN:+true}"
+      - "WEBUI_AUTH_COOKIE_SECURE=${ECHO_DOMAIN:+true}"
       - "WEBUI_SESSION_COOKIE_SAME_SITE=lax"
       - "WEBUI_AUTH_COOKIE_SAME_SITE=lax"
 

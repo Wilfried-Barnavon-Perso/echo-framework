@@ -3,17 +3,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # SCRIPT : echo-globals.sh
-# VERSION : 6.0.0.2
+# VERSION : 6.18.15.1
 # AUTEUR : Wilfried BARNAVON
 # ROLE : Centralisation des constantes de chemins pour le framework ECHO
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.15.1: Factorisation détection WSL2/systemd, init_echo_compose_cmd, echo_compose, build_echo_compose_args, has_active_echo_domain, detect_echo_webui_port, compute_echo_detected_origins, restart_docker_daemon_and_wait.
 # 6.0.0.2: Remplacement de ECHO_SERVICE_ACCOUNT par ECHO_ADMIN_EMAIL et synchronisation bidirectionnelle .owui-admin-secret <-> ECHO_ADMIN_PASSWORD.
 # 6.0.0.1: Ajout de la constante ECHO_DOCKER_WEBUI pour le service docker-echo-webui.
 # 5.236.5.1: Ajout de la constante ECHO_DOCKER_USER pour le service 27-docker-user-manager.
 # 5.231.21.2: Factorisation de generate_secret (sans SIGPIPE sous pipefail) et ensure_echo_secrets incluant ECHO_VAULT_ENCRYPTION_KEY (64 chars).
-# 5.226.18.1: Ajout de la constante ECHO_OWUI_EVENTS pour le sous-système 15-owui-events.
 
 # Racine principale du framework
 export ECHO_ROOT="/opt/ECHO"
@@ -99,4 +99,127 @@ ensure_echo_secrets() {
         (umask 077 && printf "%s" "$admin_pwd" > "$admin_secret_file")
         chmod 400 "$admin_secret_file"
     fi
+}
+
+# --- DÉTECTION ENVIRONNEMENT & MOTEUR DOCKER COMPOSE (SSOT) ---
+is_wsl2() {
+    grep -qiE "(microsoft|wsl)" /proc/version 2>/dev/null
+}
+
+is_systemd_active() {
+    [ "$(ps -p 1 -o comm= 2>/dev/null)" = "systemd" ]
+}
+
+has_active_echo_domain() {
+    local target_env="${1:-${ENV_FILE:-$ECHO_ENV_FILE}}"
+    [ -f "$target_env" ] && [ -r "$target_env" ] || return 1
+    local domain_val
+    domain_val=$(grep -E '^ECHO_DOMAIN=' "$target_env" 2>/dev/null | tail -n 1 | cut -d '=' -f2- | tr -d "\"'[:space:]" || true)
+    [ -n "$domain_val" ]
+}
+
+ECHO_COMPOSE_CMD=()
+DOCKER_COMPOSE_CMD=""
+init_echo_compose_cmd() {
+    if docker compose version >/dev/null 2>&1; then
+        ECHO_COMPOSE_CMD=("docker" "compose")
+    elif command -v docker-compose >/dev/null 2>&1; then
+        ECHO_COMPOSE_CMD=("docker-compose")
+    else
+        echo "❌ CRITIQUE : Ni 'docker compose' (V2) ni 'docker-compose' (V1) n'est installé." >&2
+        return 1
+    fi
+    DOCKER_COMPOSE_CMD="${ECHO_COMPOSE_CMD[*]}"
+    export DOCKER_COMPOSE_CMD
+}
+
+echo_compose() {
+    [ "${#ECHO_COMPOSE_CMD[@]}" -gt 0 ] || init_echo_compose_cmd
+    "${ECHO_COMPOSE_CMD[@]}" "$@"
+}
+
+ECHO_COMPOSE_ARGS=()
+build_echo_compose_args() {
+    local target_env="${ENV_FILE:-$ECHO_ENV_FILE}"
+    local bw_file="${BW_STACK_FILE:-$ECHO_CONFIG/bunkerweb-stack.yml}"
+    local stack_file="${COMPOSE_FILE:-$ECHO_CONFIG/stack-echo.yml}"
+    ECHO_COMPOSE_ARGS=()
+    if [ -f "$target_env" ] && [ -r "$target_env" ]; then
+        ECHO_COMPOSE_ARGS+=(--env-file "$target_env")
+    fi
+    if [ -f "$bw_file" ] && has_active_echo_domain "$target_env"; then
+        ECHO_COMPOSE_ARGS+=(-f "$bw_file" -f "$stack_file")
+    else
+        ECHO_COMPOSE_ARGS+=(-f "$stack_file")
+    fi
+}
+
+detect_echo_webui_port() {
+    local compose_file="${1:-$ECHO_CONFIG/stack-echo.yml}"
+    local port=""
+    if [ -f "$compose_file" ]; then
+        if command -v yq >/dev/null 2>&1; then
+            port=$(yq '.services["echo-webui"].ports[0] // ""' "$compose_file" 2>/dev/null | tr -d "\"'[:space:]" | cut -d: -f1 || true)
+        fi
+        if [[ ! "$port" =~ ^[0-9]+$ ]]; then
+            port=$(awk '
+                /^  echo-webui:/ { in_svc=1; next }
+                in_svc && /^  [a-zA-Z0-9_-]+:/ { in_svc=0 }
+                in_svc && /^[[:space:]]*ports:/ { in_ports=1; next }
+                in_ports && /^[[:space:]]*[a-zA-Z0-9_-]+:/ { in_ports=0 }
+                in_ports && !/^[[:space:]]*#/ && match($0, /[0-9]+:[0-9]+/) {
+                    s = substr($0, RSTART, RLENGTH)
+                    sub(/:.*/, "", s)
+                    print s
+                    exit
+                }
+            ' "$compose_file" 2>/dev/null || true)
+        fi
+    fi
+    [[ "$port" =~ ^[0-9]+$ ]] || port="3000"
+    printf '%s' "$port"
+}
+
+compute_echo_detected_origins() {
+    local compose_file="${1:-$ECHO_CONFIG/stack-echo.yml}"
+    local owui_port
+    owui_port=$(detect_echo_webui_port "$compose_file")
+    local host_ips
+    host_ips=$(hostname -I 2>/dev/null || ip -4 addr show 2>/dev/null | awk '/inet / && $2 !~ /^127\./ {sub(/\/.*/, "", $2); print $2}' || true)
+    local origins=""
+    local ip
+    for ip in $host_ips; do
+        if [ -z "$origins" ]; then
+            origins="http://${ip}:${owui_port}"
+        else
+            origins="${origins};http://${ip}:${owui_port}"
+        fi
+    done
+    export OWUI_PORT="$owui_port"
+    export ECHO_DETECTED_ORIGINS="$origins"
+}
+
+restart_docker_daemon_and_wait() {
+    if is_systemd_active && command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet docker; then
+        systemctl restart docker
+    elif command -v service >/dev/null 2>&1 && service docker status >/dev/null 2>&1; then
+        service docker restart || true
+    elif pgrep -x dockerd >/dev/null 2>&1; then
+        pkill -TERM -x dockerd 2>/dev/null || true
+        local w=0
+        while pgrep -x dockerd >/dev/null 2>&1 && [ "$w" -lt 10 ]; do
+            sleep 1
+            w=$((w + 1))
+        done
+        nohup dockerd > /var/log/dockerd.log 2>&1 &
+    fi
+    local retries=30
+    until docker info >/dev/null 2>&1; do
+        retries=$((retries - 1))
+        if [ "$retries" -le 0 ]; then
+            echo "❌ CRITIQUE : Le démon Docker ne répond plus après redémarrage." >&2
+            return 1
+        fi
+        sleep 2
+    done
 }

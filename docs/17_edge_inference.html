@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Inférence Locale (Edge WebGPU) dans ECHO v6 : vectorisation sémantique dans le navigateur, badge d'état WebGPU et bascule CPU transparente.">
+  <title>ECHO v6 - 17. Inférence Locale (Edge)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>17. Inférence Locale (Edge)</h1>
+
+    <div class="didactic-box">
+      <h4>Mettre votre mémoire sémantique en vecteurs sans solliciter le Cloud</h4>
+      <p>
+        Pour retrouver instantanément vos documents et vos échanges passés par le sens, ECHO transforme les textes en
+        empreintes numériques (vecteurs). Grâce à l'inférence locale WebGPU intégrée directement dans votre navigateur,
+        ce calcul s'exécute sur la puce graphique de votre poste de travail, sans transmettre vos textes à un fournisseur
+        externe d'embedding.
+      </p>
+    </div>
+
+    <h2>1. Pourquoi calculer les vecteurs sur votre poste ?</h2>
+
+    <p>
+      Contrairement au raisonnement conversationnel assuré par les modèles Gemini, la mise en mémoire vectorielle porte
+      sur tous vos fragments de documents et l'ensemble de votre historique. L'exécuter localement dans le navigateur
+      apporte trois bénéfices concrets :
+    </p>
+
+    <div class="grid-container">
+      <div class="card">
+        <h3>Confidentialité de l'indexation</h3>
+        <p>
+          Aucun texte à vectoriser ne quitte votre infrastructure pour un service d'embedding tiers : tout est calculé
+          sur votre propre matériel ou sur le serveur local d'ECHO.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Soulagement du serveur</h3>
+        <p>
+          Le processeur de la machine hébergeant ECHO reste disponible pour vos outils, votre navigation et le traitement
+          des documents volumineux pendant que votre carte graphique absorbe l'indexation.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Continuité automatique</h3>
+        <p>
+          Si votre navigateur ne prend pas en charge WebGPU, si vous consultez ECHO depuis un smartphone ou si vous
+          fermez l'onglet en plein traitement, le serveur prend le relais sans interruption ni perte de données.
+        </p>
+      </div>
+    </div>
+
+    <h2>2. Comprendre le badge WebGPU dans ECHO-UI</h2>
+
+    <p>
+      Dans l'interface d'ECHO-UI, une pastille <strong>WebGPU</strong> indique en permanence si l'accélération locale de
+      votre navigateur est active. Un clic sur ce badge ouvre un panneau synthétique affichant l'état du matériel et le
+      modèle embarqué.
+    </p>
+
+    <figure class="doc-figure">
+      <img src="images/v6_webgpu_edge.png" alt="Badge WebGPU et popover Indexation locale WebGPU affichant Prêt (VRAM fp16) et le modèle Harrier ONNX" class="doc-screenshot">
+      <p class="doc-caption">Indicateur <strong>WebGPU</strong> dans ECHO-UI : état matériel en direct (<code>Prêt (VRAM fp16)</code>) et modèle d'indexation local chargé en mémoire graphique.</p>
+    </figure>
+
+    <table>
+      <thead>
+        <tr>
+          <th>État affiché</th>
+          <th>Signification pour l'utilisateur</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Sonde matérielle WebGPU...</strong></td>
+          <td>Au chargement de la page, ECHO vérifie si le navigateur dispose d'un contexte sécurisé et d'une puce graphique matérielle compatible.</td>
+        </tr>
+        <tr>
+          <td><strong>Téléchargement ONNX (%)</strong></td>
+          <td>Lors du premier usage sur ce navigateur, les poids du modèle d'indexation sont téléchargés et mis en cache localement pour les sessions suivantes.</td>
+        </tr>
+        <tr>
+          <td><strong>Prêt (VRAM fp16 / fp32)</strong></td>
+          <td>Le modèle est chargé en mémoire vidéo et prêt à vectoriser vos futurs échanges et documents.</td>
+        </tr>
+        <tr>
+          <td><strong>Vectorisation en cours...</strong></td>
+          <td>Un calcul d'empreinte sémantique est activement exécuté sur votre carte graphique.</td>
+        </tr>
+        <tr>
+          <td><strong>Indisponible</strong></td>
+          <td>Appareil mobile, navigateur sans WebGPU ou adaptateur logiciel détecté : ECHO bascule automatiquement sur le moteur CPU local du serveur.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="note-box">
+      <h4>Fonctionnement sur smartphone et tablette</h4>
+      <p>
+        Sur les appareils mobiles, l'accélération WebGPU est volontairement désactivée afin de préserver la batterie et la
+        mémoire vive du téléphone. L'indexation bascule immédiatement et silencieusement vers le serveur ECHO.
+      </p>
+    </div>
+
+    <h2>3. Bascule automatique vers le moteur serveur</h2>
+
+    <p>
+      Si votre onglet passe en arrière-plan, si la connexion temps réel est interrompue ou si votre poste tarde à
+      répondre lors d'une indexation, ECHO annule l'attente côté navigateur et confie aussitôt le lot de textes au moteur
+      CPU hébergé sur votre serveur, avec exactement le même modèle mathématique afin que tous les vecteurs restent
+      strictement compatibles.
+    </p>
+
+    <div class="mermaid-wrapper">
+      <div class="mermaid-header">
+        <span>Arbitrage dynamique entre accélération navigateur WebGPU et repli serveur CPU</span>
+        <span>CLIQUER POUR ZOOMER</span>
+      </div>
+      <div class="mermaid">
+flowchart TD
+    Q["Demande d'indexation sémantique"] --> C{"Poste client prêt en WebGPU ?"}
+    C -->|"Oui (onglet actif et VRAM prête)"| G["Calcul local sur GPU du navigateur"]
+    G -->|"Réponse reçue"| R["Vecteur normalisé enregistré"]
+    G -->|"Déconnexion ou délai dépassé"| F["Bascule immédiate sur serveur CPU"]
+    C -->|"Non (mobile ou WebGPU absent)"| F
+    F --> R
+      </div>
+    </div>
+
+    <details class="tech-spec" id="dossier-ingenierie">
+      <summary>Dossier d'Ingénierie : Composant Svelte WebGPU, Sonde Matérielle, WebSocket Proxy &amp; Worker llama.cpp</summary>
+
+      <h3>1. Module WebGPU Natif d'ECHO-UI (<code>EchoEdgeEmbedding.svelte</code> &amp; <code>src/lib/stores/echo/index.ts</code>)</h3>
+      <ul>
+        <li><strong>Sonde Matérielle Stricte (<code>probeEchoWebGPU</code>)</strong> : Exige <code>window.isSecureContext</code> (HTTPS ou <code>localhost</code>) et l'API <code>navigator.gpu</code>. Exécute <code>requestAdapter({ powerPreference: 'high-performance' })</code> puis <code>requestAdapter()</code> et <code>requestDevice()</code> sous timeout borné à <strong><code>EDGE_PROBE_TIMEOUT_MS = 3500 ms</code></strong>. Rejette explicitement tout adaptateur logiciel (<code>isFallbackAdapter</code>) ainsi que les cartes sous <code>128 Mo</code> de <code>maxBufferSize</code> / <code>maxStorageBufferBindingSize</code>, et détecte <code>shader-f16</code> pour sélectionner automatiquement la précision <code>fp16</code> ou <code>fp32</code>.</li>
+        <li><strong>Exclusion Mobile &amp; Singleton</strong> : Le démarrage (<code>startEchoEdgeEmbedding</code> / <code>stopEchoEdgeEmbedding</code>) est orchestré de façon singleton et bloque les terminaux mobiles via <code>isTrueMobileDevice()</code> (<code>userAgentData.mobile</code> ou motif User-Agent mobile).</li>
+        <li><strong>Assets Internalisés &amp; Inférence Locale</strong> : Charge le runtime internalisé <code>@huggingface/transformers</code> avec chemins WASM locaux forcés sur <code>/wasm/</code> (exemptés d'interception auth dans BunkerWeb). Charge le modèle <code>onnx-community/harrier-oss-v1-0.6b-ONNX</code> en <code>device: 'webgpu'</code>, calcule les embeddings <code>1024-d</code> normalisés L2 et gère la visibilité d'onglet via <code>visibilitychange</code> (<code>active</code> / <code>idle</code>).</li>
+      </ul>
+
+      <h3>2. Proxy WebSocket &amp; Worker de Repli CPU (<code>30-docker-embedding-worker/app.py</code> v5.230.1.1)</h3>
+      <ul>
+        <li><strong>Tunnel WebSocket (<code>/ws/edge-embed</code>)</strong> : Routé en priorité absolue par BunkerWeb (<code>location = /ws/edge-embed</code>) ou en direct vers <code>echo-embedding:7997</code>. Authentifié par JWT Open WebUI (query string ou cookie). Maintient le registre <code>active_edge_clients[user_id][client_id]</code> et notifie les changements d'état (<code>ready</code>, <code>visibility</code>, <code>incompatible</code>, <code>result</code>).</li>
+        <li><strong>Repli Instantané &amp; Timeout</strong> : Lors d'un appel <code>POST /v1/embeddings</code> ou <code>POST /embeddings</code>, le worker tente d'abord le client Edge actif sous un timeout strict de <strong>15,0 secondes</strong> (<code>asyncio.wait_for</code>). En cas de déconnexion WebSocket, les <code>asyncio.Future</code> en attente dans <code>pending_edge_requests</code> sont immédiatement annulées pour basculer sans délai sur le moteur CPU local.</li>
+        <li><strong>Moteur CPU <code>llama-cpp-python</code> (<code>Dockerfile</code> v6.18.6.1)</strong> : Exécute le modèle quantifié/précision <code>harrier-oss-v1-0.6b.f16.gguf</code> (<code>microsoft/Harrier-OSS-v1-0.6B</code>, <code>MAX_LENGTH = 4096</code> dans <code>stack-echo.yml</code>) avec <code>embedding=True</code> (<strong>CLS Token Pooling à l'index 0</strong>), normalisation L2 manuelle sur <code>1024</code> dimensions, sérialisation par <code>embedding_lock</code> dans <code>asyncio.to_thread</code> et plafond mémoire conteneur fixé à <strong>3 Go</strong> (<code>deploy.resources.limits.memory: 3g</code>).</li>
+      </ul>
+    </details>
+
+    <div class="transition-text">
+      <a href="16_infrastructure_globale.html">&larr; 16. Périphériques &amp; Infra</a>
+      &nbsp;&nbsp;
+      <a href="18_annexes.html">18. Annexes Techniques &rarr;</a>
+    </div>
+
+    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+  </main>
+
+  <script src="nav.js"></script>
+  <script type="module">import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs'; mermaid.initialize({ startOnLoad: true, theme: 'dark' });</script>
+</body>
+
+</html>

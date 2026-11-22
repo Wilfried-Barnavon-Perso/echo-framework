@@ -3,11 +3,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # SCRIPT : echo-clean.sh
-# VERSION : 5.239.1.1
+# VERSION : 6.18.16.1
 # ROLE   : Nettoyage système et gestion dynamique du cache Docker
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.16.1: Garde systemd autour de journalctl et tolérance sur drop_caches.
 # 5.239.1.1: Ajout de la purge quotidienne du Page Cache noyau (sync && drop_caches=1) en fin de maintenance.
 # 5.231.39.1: Renommage de clean-echo.sh en echo-clean.sh et alignement du fichier de log.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
@@ -25,7 +26,11 @@ apt-get autoremove --purge -y
 
 # 2. Nettoyage Journald
 echo "-> Compression des logs..."
-journalctl --vacuum-size=100M
+if command -v journalctl >/dev/null 2>&1 && [ "$(ps -p 1 -o comm= 2>/dev/null)" = "systemd" ]; then
+    journalctl --vacuum-size=100M
+else
+    echo "   (Journald inactif hors systemd, étape ignorée)"
+fi
 
 # 3. Évaluation Disque & Docker Prune
 DISK_USAGE=$(df / | awk 'NR==2 {print $5}' | sed 's/%//')
@@ -52,6 +57,6 @@ fi
 
 # 4. Purge du Page Cache Linux (évince les pages fichiers en RAM après les I/O lourds)
 echo "-> Purge du Page Cache noyau (drop_caches=1)..."
-sync && echo 1 > /proc/sys/vm/drop_caches
+sync && (echo 1 > /proc/sys/vm/drop_caches 2>/dev/null || true)
 
 echo "✅ Fin de la maintenance."

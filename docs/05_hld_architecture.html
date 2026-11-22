@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Architecture de haut niveau (HLD) du framework ECHO v6 : séparation en couches, chaîne contextuelle, mémoire duale et isolation des exécutions.">
+  <title>ECHO v6 - 5. High-Level Design (HLD)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>5. High-Level Design (HLD)</h1>
+
+    <div class="didactic-box">
+      <h4>Vue d'ensemble</h4>
+      <p>
+        ECHO v6 organise chaque interaction autour d'une séparation stricte des responsabilités : le contrôle d'accès,
+        l'interface de conversation, l'orchestration du raisonnement, la mémoire persistante et l'exécution d'outils
+        opèrent dans des couches distinctes. Cette organisation garantit que vos conversations, fichiers et identifiants
+        restent cloisonnés, traçables et récupérables même lors de tâches longues ou d'erreurs réseau.
+      </p>
+    </div>
+
+    <p>
+      Contrairement à un assistant conversationnel classique qui mélange interface web, historique brut et appels directs
+      au modèle, ECHO intercale une couche de médiation dédiée entre vous et l'intelligence artificielle. Chaque action
+      suit un circuit déterministe de préparation, de contrôle et de sauvegarde avant d'être affichée.
+    </p>
+
+    <h2>1. Les cinq couches fonctionnelles</h2>
+
+    <p>
+      Le système repose sur cinq strates complémentaires, depuis la porte d'entrée sécurisée jusqu'aux exécuteurs
+      isolés chargés d'agir sur des documents, du code ou le Web.
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Couche</th>
+          <th>Rôle pour l'utilisateur</th>
+          <th>Garantie associée</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>1. Protection d'accès &amp; Identité</strong></td>
+          <td>Authentification centralisée et portail personnel de gestion de compte, de sessions actives et d'export des données.</td>
+          <td>Aucune requête non authentifiée n'atteint votre espace ; vos identifiants et préférences de profil restent isolés.</td>
+        </tr>
+        <tr>
+          <td><strong>2. Interface unifiée (ECHO-UI)</strong></td>
+          <td>Espace de discussion linéaire complété par des onglets latéraux (Sous-Agents, Codex, Navigateur, Coffre, Applications) et un terminal interactif.</td>
+          <td>Suivi visuel en temps réel des actions en cours sans quitter la conversation ni perdre le fil du dialogue.</td>
+        </tr>
+        <tr>
+          <td><strong>3. Cortex &amp; Préparation du contexte</strong></td>
+          <td>Sélection du palier de raisonnement adapté à la difficulté, injection du contexte utile et condensation automatique en cas de charge élevée.</td>
+          <td>Continuité des échanges longs et reprise transparente sur un palier de secours en cas d'indisponibilité temporaire.</td>
+        </tr>
+        <tr>
+          <td><strong>4. Mémoire duale (Structurée &amp; Sémantique)</strong></td>
+          <td>Conservation exacte de chaque tour de parole, gestion des branches d'historique et recherche par le sens dans vos documents et échanges passés.</td>
+          <td>Zéro perte silencieuse lors d'une modification de message, d'une duplication ou d'un retour en arrière.</td>
+        </tr>
+        <tr>
+          <td><strong>5. Arsenal d'outils &amp; Exécuteurs isolés</strong></td>
+          <td>Planification, exécution de code confinée, navigation Web autonome, coffre de secrets chiffrés, connecteurs externes et automatisations.</td>
+          <td>Chaque traitement lourd s'exécute dans un périmètre cloisonné sans exposer le système hôte ni vos secrets.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>2. Circulation d'une requête (Pont pédagogique)</h2>
+
+    <p>
+      Lorsqu'un message ou un fichier est envoyé, la requête traverse une chaîne ordonnée : vérification d'identité,
+      préparation du contexte actif, appel au modèle de raisonnement, mobilisation éventuelle d'outils spécialisés, puis
+      indexation asynchrone pour les échanges futurs.
+    </p>
+
+    <div class="mermaid-wrapper">
+      <div class="mermaid-header">
+        <span>HLD — Flux d'une requête à travers les 5 couches ECHO</span>
+        <span>CLIQUER POUR ZOOMER</span>
+      </div>
+      <div class="mermaid">
+flowchart TD
+    U["Utilisateur (Navigateur Web)"] --> B["1. Bouclier Périmétrique &amp; Authentification"]
+    B --> UI["2. Interface ECHO-UI &amp; Gestionnaire d'Onglets"]
+    UI --> F["3. Chaîne de Préparation Contextuelle (8 Filtres)"]
+    F --> C["4. Cortex Cognitif (Routage 4 Paliers)"]
+    C --> M["5a. Mémoire Structurée &amp; Vectorielle"]
+    C --> A["5b. Arsenal d'Outils &amp; Exécuteurs Isolés"]
+    A --> UI
+    M --> F
+      </div>
+    </div>
+
+    <h2>3. Gestion du contexte, des fichiers et des branches</h2>
+
+    <p>
+      L'architecture HLD protège trois aspects sensibles de l'usage quotidien : l'import de fichiers volumineux,
+      l'allongement progressif des conversations et la modification ou duplication d'un fil de discussion.
+    </p>
+
+    <div class="grid-container">
+      <div class="card">
+        <h3>Import progressif jusqu'à 4 Go</h3>
+        <p>
+          Les pièces jointes volumineuses (documents longs, archives, enregistrements audio ou vidéo) sont réceptionnées
+          par flux progressif sans saturer la mémoire vive, puis enregistrées dans votre espace de session avant analyse.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Condensation automatique du contexte</h3>
+        <p>
+          À l'approche de 60 % de la capacité maximale de lecture du modèle, ECHO synthétise automatiquement la partie
+          ancienne de l'échange vers une empreinte cible de 20 %, tout en conservant intacts les tours récents.
+        </p>
+      </div>
+      <div class="card">
+        <h3>Branches propres et clonage fidèle</h3>
+        <p>
+          Si vous supprimez un message ou dupliquez une conversation à partir d'une étape précise, ECHO nettoie les
+          branches abandonnées de la mémoire conversationnelle tout en préservant les livrables déjà produits sur disque.
+        </p>
+      </div>
+    </div>
+
+    <div class="mermaid-wrapper">
+      <div class="mermaid-header">
+        <span>HLD — Préservation des productions lors du clonage ou de l'élagage d'une branche</span>
+        <span>CLIQUER POUR ZOOMER</span>
+      </div>
+      <div class="mermaid">
+flowchart LR
+    S["Conversation Source (Branche active + Historique)"] --> D{"Action Utilisateur"}
+    D -->|"Élagage ou suppression de message"| G["Nettoyage transactionnel de la branche morte"]
+    G --> P["Livrables conservés hors branche"]
+    D -->|"Duplication ou Fork partiel"| K["Copie atomique au point exact"]
+    K --> R["Nouvelle session autonome prête"]
+      </div>
+    </div>
+
+    <div class="note-box">
+      <h4>Cloisonnement strict par utilisateur et par session</h4>
+      <p>
+        Chaque utilisateur dispose de son propre coffre d'identité et de sa mémoire long terme. Chaque conversation
+        possède son propre espace de travail isolé pour ses documents, plans, scripts et indexations, empêchant toute
+        fuite d'information entre deux utilisateurs ou entre deux dossiers distincts.
+      </p>
+    </div>
+
+    <details class="tech-spec" id="dossier-ingenierie">
+      <summary>Dossier d'Ingénierie : Topologie Modulaire, Chaîne des 8 Filtres, Schéma SQLite v2 &amp; Persistance</summary>
+
+      <h3>1. Couche Périmétrique, Authentification &amp; Serveur Natif ECHO-UI</h3>
+      <ul>
+        <li><strong>Reverse-Proxy WAF (<code>01-config/bunkerweb-stack.yml</code> v6.5.3.1)</strong> : BunkerWeb v1.6.17 adossé à MariaDB 11.4 LTS. Forward Auth via <code>/api/verify</code> (<code>proxy_intercept_errors off</code>) propageant <code>X-Webui-User</code>, <code>X-Webui-Name</code> et <code>X-Webui-Gender</code> (<code>M</code>/<code>F</code>/<code>X</code>) vers <code>echo-webui</code>.</li>
+        <li><strong>Locations &amp; Streaming HTTP/1.1</strong> : <code>proxy_http_version 1.1</code> avec keepalive sur les assets statiques (incluant <code>/audio</code> et <code>/wasm</code>) et <code>/api/v1/(files|audio|images)</code> ; location dédiée <code>CUSTOM_CONF_SERVER_HTTP_wmapp</code> (<code>^~ /echo/v1/wm/app/</code>, <code>auth_request off</code>, HTTP/1.1 + WebSocket Upgrade) pour les applications sandboxées par capability ticket HMAC ; <code>REVERSE_PROXY_REQUEST_BUFFERING=no</code>, <code>LIMIT_REQ_RATE=300r/s</code>, <code>LIMIT_CONN_MAX_HTTP2=200</code>, <code>USE_ANTIBOT=no</code>, <code>USE_MODSECURITY=no</code> sur <code>echo-webui</code>, et <code>BAD_BEHAVIOR_STATUS_CODES=405 444</code>.</li>
+        <li><strong>Identité &amp; Portail Self-Service</strong> : <code>24-docker-echo-auth-manager</code> (IdP TOTP/Argon2id dans <code>auth.db</code>, politique de session Dual-Tier, redirections restreintes aux sous-domaines CSP <code>ui.*</code>, <code>am.*</code>, <code>my.*</code>) et <code>27-docker-user-manager</code> (portail public <code>my.${ECHO_DOMAIN}</code>, IP <code>.27</code>, port <code>3002</code>, export souverain <code>.tar.xz</code> sans accès Docker).</li>
+        <li><strong>Fork Natif ECHO-UI (<code>16-docker-echo-webui</code>)</strong> : Basé sur Open WebUI v0.13.2 avec package souverain <code>backend/open_webui/echo/</code> : <code>runtime.py</code> v6.0.0.1 (chargement direct sur disque indexé sur <code>st_mtime_ns</code>), <code>bootstrap.py</code> v6.18.9.1 (provisioning asynchrone au <code>lifespan</code>), <code>identity_bridge.py</code> v6.18.9.1 (pont SSO &harr; <code>webui.db</code> &harr; <code>identity.db</code>), <code>storage.py</code> v6.7.16.1 (<code>EchoStorageProvider</code> avec parseur multipart à staging nommé <code>O(1)</code> via <code>os.replace()</code> jusqu'à <code>4 Go</code> / <code>ECHO_MAX_FILE_UPLOAD_SIZE_MB = 4096</code>), et 7 routeurs FastAPI souverains (<code>skills</code>, <code>meta-artifacts</code>, <code>wm</code>, <code>cognition</code>, <code>codex</code>, <code>vault</code>, <code>embeds</code>).</li>
+      </ul>
+
+      <h3>2. Cortex &amp; Chaîne Ordonnée des 8 Filtres (<code>11-owui-filters/</code>)</h3>
+      <p>
+        Le moteur central <code>10-owui-pipes/echo_orchestrator.py</code> (v6.7.20.1) s'appuie sur la suite modulaire
+        <code>14-owui-libs/</code> (<code>echo_core.py</code> v6.10.0.1, <code>echo_constants.py</code> v6.18.1.1,
+        <code>echo_aec.py</code> v6.7.20.1, <code>echo_state_manager.py</code> v6.10.0.1,
+        <code>echo_gemini_client.py</code> v6.7.16.1) et sur les 8 filtres Open WebUI exécutés selon l'ordre déterministe suivant :
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Priorité</th>
+            <th>Module (<code>11-owui-filters/</code>)</th>
+            <th>Direction</th>
+            <th>Rôle technique</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>0</code></td>
+            <td><code>build_environment_domain.py</code></td>
+            <td>Inlet</td>
+            <td>Création de l'arborescence globale/session, initialisation Git Dulwich et application du schéma SQLite v2 (<code>ensure_db</code>).</td>
+          </tr>
+          <tr>
+            <td><code>20</code></td>
+            <td><code>window_manager_filter.py</code></td>
+            <td>Inlet / Outlet</td>
+            <td>Résolution du contexte propriétaire <code>(user_id, chat_id)</code> pour le bus WebSocket <code>/echo/v1/wm/ws</code>.</td>
+          </tr>
+          <tr>
+            <td><code>40</code></td>
+            <td><code>context_gauge_filter.py</code></td>
+            <td>Inlet / Outlet</td>
+            <td>Hydratation et mise à jour temps réel de <code>EchoContextGauge.svelte</code> (tokens, delta unitaire et quotas Cloud 5h/hebdo).</td>
+          </tr>
+          <tr>
+            <td><code>50</code></td>
+            <td><code>user_native_context_filter.py</code></td>
+            <td>Inlet</td>
+            <td>Injection dans <code>body["metadata"]</code> des préférences de nommage et surcharge de localisation.</td>
+          </tr>
+          <tr>
+            <td><code>60</code></td>
+            <td><code>context_compaction_filter.py</code></td>
+            <td>Inlet</td>
+            <td>Compaction in-place via <code>EchoCompactionEngine</code> dès <code>60 %</code> de <code>ECHO_MAX_CONTEXT_SIZE</code> (<code>1 048 576</code> tokens) vers une cible de <code>20 %</code> (<code>31,25 %</code> <code>HEAD</code> / <code>68,75 %</code> <code>TAIL</code>).</td>
+          </tr>
+          <tr>
+            <td><code>70</code></td>
+            <td><code>new_context_filter.py</code></td>
+            <td>Inlet / Outlet</td>
+            <td>Assemblage PGCU, ingestion des pièces jointes, extraction des commandes <code>/</code>, injection des rappels AEC et méta-artéfacts Qdrant.</td>
+          </tr>
+          <tr>
+            <td><code>80</code></td>
+            <td><code>codex_links_filter.py</code></td>
+            <td>Inlet / Outlet</td>
+            <td>Bijection URN <code>codex:scope:ws/path</code> &harr; ancre cliquable <code>#codex:...</code> avec contrôle physique anti-hallucination via <code>check_codex_file_exists</code>.</td>
+          </tr>
+          <tr>
+            <td><code>100</code></td>
+            <td><code>conversation_rag_filter.py</code></td>
+            <td>Outlet</td>
+            <td>Upsert idempotent O(1) à rebours des tours clôturés vers Qdrant (<code>COLLECTION_SESSION_RAG</code>) avec marquage différé dans <code>rag_index_state</code>.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>3. Schéma Déclaratif SQLite v2 &amp; Mémoire Vectorielle</h3>
+      <ul>
+        <li><strong>Séparation SQLite v2 (<code>echo_db_schema.py</code> v6.7.5.1)</strong> : PRAGMAs unifiés (<code>WAL</code>, <code>busy_timeout=15000</code>, <code>foreign_keys=ON</code>) et transactions d'écriture sous <code>_write_tx()</code> (<code>BEGIN IMMEDIATE</code>) pour éviter les deadlocks WAL.
+          <ul>
+            <li><code>identity.db</code> (<strong>4 tables</strong>) : <code>auth_data</code>, <code>identity_vault</code> (secrets chiffrés AES-256-GCM), <code>echo_settings</code>, <code>echo_resources</code>.</li>
+            <li><code>session.db</code> (<strong>6 tables actives</strong>) : <code>message_shadows</code>, <code>rag_index_state</code>, <code>call_bridge</code>, <code>cognitive_threads</code>, <code>echo_resources</code>, <code>echo_settings</code> (avec purge automatique des tables v1 <code>suture_index</code>, <code>cognitive_signatures</code> et <code>tool_journal</code>).</li>
+          </ul>
+        </li>
+        <li><strong>Clonage, Fork &amp; Garbage Collection</strong> : <code>echo_session_clone.py</code> (v6.14.2.2) et <code>echo_chat_cloned_event.py</code> (v5.235.5.1) assurent le backup SQLite atomique, l'élagage causal au point de fork et la copie Qdrant bornée (<code>RagCloneReport</code>). <code>echo_session_gc.py</code> (v5.237.20.2) résout <code>compute_dead_set</code> / <code>purge_dead_set</code> sous <code>SAVEPOINT echo_purge_dead</code> tout en conservant les productions disque en provenance <code>hors_branche</code>.</li>
+        <li><strong>Moteur Vectoriel &amp; Topologie Workers (<code>01-config/stack-echo.yml</code> v6.18.15.1)</strong> : Qdrant (<code>qdrant/qdrant:v1.19.1</code>, IP <code>.103</code>) couplé à <code>30-docker-embedding-worker</code> (IP <code>.30</code>, <code>microsoft/Harrier-OSS-v1-0.6B</code> 1024-d) et à l'Arsenal <code>12-owui-tools/</code> (19 modules) s'appuyant sur les microservices dédiés : <code>20-docker-admin-manager</code> (<code>.20</code>), <code>21-docker-coding-worker</code> (<code>.21</code>), <code>22-docker-browser-worker</code> (<code>.22</code>), <code>23-docker-mcp-broker</code> (<code>.23</code>), <code>25-docker-download-broker</code> (<code>.25</code>) et <code>26-docker-n8n-worker</code> (<code>.26</code>).</li>
+      </ul>
+    </details>
+
+    <div class="transition-text">
+      <a href="04_tutoriel_pratique.html">&larr; 4. Tutoriel Pratique</a>
+      &nbsp;&nbsp;
+      <a href="06_communication_gemini.html">6. Communication Gemini &rarr;</a>
+    </div>
+
+    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+  </main>
+
+  <script src="nav.js"></script>
+  <script type="module">import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs'; mermaid.initialize({ startOnLoad: true, theme: 'dark' });</script>
+</body>
+
+</html>

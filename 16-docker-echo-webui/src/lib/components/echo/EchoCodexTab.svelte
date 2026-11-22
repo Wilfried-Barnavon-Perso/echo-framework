@@ -337,6 +337,31 @@
 
 	type PreviewKind = 'image' | 'pdf' | 'audio' | 'video' | 'markdown' | 'svg' | 'html' | 'csv' | 'none';
 
+	const PREVIEW_BLOB_MIME_BY_EXT: Record<string, string> = {
+		pdf: 'application/pdf',
+		png: 'image/png',
+		jpg: 'image/jpeg',
+		jpeg: 'image/jpeg',
+		gif: 'image/gif',
+		webp: 'image/webp',
+		bmp: 'image/bmp',
+		ico: 'image/x-icon',
+		avif: 'image/avif',
+		mp3: 'audio/mpeg',
+		wav: 'audio/wav',
+		ogg: 'audio/ogg',
+		m4a: 'audio/mp4',
+		flac: 'audio/flac',
+		aac: 'audio/aac',
+		opus: 'audio/opus',
+		weba: 'audio/webm',
+		mp4: 'video/mp4',
+		m4v: 'video/mp4',
+		webm: 'video/webm',
+		ogv: 'video/ogg',
+		mov: 'video/quicktime'
+	};
+
 	const computePreviewCapabilities = (
 		path: string,
 		meta: { is_binary?: boolean; mime?: string } | null
@@ -345,26 +370,28 @@
 		const mime = String(meta?.mime || '').toLowerCase();
 		const isBinary = Boolean(meta?.is_binary);
 
+		const isSvg = !isBinary && (ext === 'svg' || mime === 'image/svg+xml');
 		const isImage =
-			mime.startsWith('image/') ||
-			['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif'].includes(ext);
+			!isSvg &&
+			((mime.startsWith('image/') && mime !== 'image/svg+xml') ||
+				['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'avif'].includes(ext));
 		const isPdf = mime === 'application/pdf' || ext === 'pdf';
 		const isAudio =
-			mime.startsWith('audio/') || ['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext);
+			mime.startsWith('audio/') ||
+			['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac', 'opus', 'weba'].includes(ext);
 		const isVideo =
-			mime.startsWith('video/') || ['mp4', 'webm', 'ogv', 'mov'].includes(ext);
-		const isMarkdown = !isBinary && ['md', 'markdown'].includes(ext);
-		const isSvg = !isBinary && ext === 'svg';
+			mime.startsWith('video/') || ['mp4', 'webm', 'ogv', 'mov', 'm4v'].includes(ext);
+		const isMarkdown = !isBinary && ['md', 'markdown', 'mkd'].includes(ext);
 		const isHtml = !isBinary && ['html', 'htm'].includes(ext);
 		const isCsv = !isBinary && ['csv', 'tsv'].includes(ext);
 
 		let kind: PreviewKind = 'none';
-		if (isImage) kind = 'image';
+		if (isSvg) kind = 'svg';
+		else if (isImage) kind = 'image';
 		else if (isPdf) kind = 'pdf';
 		else if (isAudio) kind = 'audio';
 		else if (isVideo) kind = 'video';
 		else if (isMarkdown) kind = 'markdown';
-		else if (isSvg) kind = 'svg';
 		else if (isHtml) kind = 'html';
 		else if (isCsv) kind = 'csv';
 
@@ -397,9 +424,20 @@
 		const token = getEchoToken();
 		if (!token || !cid || !path) return;
 		try {
-			const blob = await downloadEchoCodexFileBlob(token, cid, ws, path);
+			const rawBlob = await downloadEchoCodexFileBlob(token, cid, ws, path);
 			if (seq !== previewLoadSeq) return;
-			previewBlobUrl = URL.createObjectURL(blob);
+			const rawType = (rawBlob.type || '').split(';')[0].trim().toLowerCase();
+			const metaType = (fileMeta?.mime || '').split(';')[0].trim().toLowerCase();
+			const extType = PREVIEW_BLOB_MIME_BY_EXT[getExt(path)] || '';
+			const targetType =
+				rawType && rawType !== 'application/octet-stream'
+					? rawType
+					: extType || (metaType && metaType !== 'application/octet-stream' ? metaType : rawType);
+			const typedBlob =
+				targetType && rawType !== targetType
+					? new Blob([rawBlob], { type: targetType })
+					: rawBlob;
+			previewBlobUrl = URL.createObjectURL(typedBlob);
 		} catch {
 			// ignore
 		}

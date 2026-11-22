@@ -6,7 +6,7 @@ import time
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from open_webui.internal.db import get_async_session
 from open_webui.models.notifications import Notification, emit_changes
@@ -143,6 +143,43 @@ async def read_inbox_item(id: str, user=Depends(get_verified_user), db: AsyncSes
     await db.commit()
     await emit_changes({user.id})
     return response
+
+
+# [ECHO-V6-HOOK] Deletion endpoints for inbox notifications (single & bulk clear)
+@router.delete('/inbox/{id}')
+async def delete_inbox_item(id: str, user=Depends(get_verified_user), db: AsyncSession = Depends(get_async_session)):
+    await _check_notifications_enabled()
+    clause = await visible_clause(user, db=db)
+    deleted_id = await db.scalar(
+        delete(Notification)
+        .where(clause, Notification.id == id)
+        .returning(Notification.id)
+        .execution_options(synchronize_session=False)
+    )
+    if not deleted_id:
+        raise HTTPException(404, 'Notification not found')
+    await db.commit()
+    await emit_changes({user.id})
+    count = await db.scalar(
+        select(func.count()).select_from(Notification).where(clause, Notification.seen_at.is_(None))
+    )
+    return {'ok': True, 'id': deleted_id, 'count': count}
+
+
+@router.delete('/inbox')
+async def clear_inbox(user=Depends(get_verified_user), db: AsyncSession = Depends(get_async_session)):
+    await _check_notifications_enabled()
+    clause = await visible_clause(user, db=db)
+    result = await db.execute(
+        delete(Notification)
+        .where(clause)
+        .returning(Notification.id)
+        .execution_options(synchronize_session=False)
+    )
+    deleted = len(result.scalars().all())
+    await db.commit()
+    await emit_changes({user.id})
+    return {'ok': True, 'deleted': deleted, 'count': 0}
 
 
 class NotificationTargetForm(BaseModel):

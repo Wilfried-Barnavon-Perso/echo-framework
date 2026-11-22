@@ -11,7 +11,7 @@ Ce document recense les 5 chantiers architecturaux différés à l'issue de l'au
 - **Fragmentation SSE UCTP** : `14-owui-libs/echo_window_manager.py` (`EchoWindowManager._broadcast_execute` L297, L357, L394).
 - **Évaluateur JS client** : `16-docker-echo-webui/src/lib/components/chat/Chat.svelte` L1808 (`const asyncFunction = new Function(...)`).
 - **Modales JS injectées** : `14-owui-libs/echo_ui.py` (`EchoUI.get_custom_modals_js()` L2539), consommées via `call_execute` dans :
-  - `12-owui-tools/generalist_tools.py` L218, L255, L273 (`ask_user`) ;
+  - `12-owui-tools/generalist_tools.py` L218, L255, L273 (`ask_user`) *(Mis à jour : `ask_user_input` migré vers le composant Svelte natif `AskUserCard.svelte`)* ;
   - `12-owui-tools/agent_orchestration_tool.py` L251, L267 (`forge_skill`) ;
   - `12-owui-tools/identity_vault_tool.py` L184, L189, L212, L217 (`manage_identity`) ;
   - `12-owui-tools/strategic_planner.py` L566, L576 (`process_plan`).
@@ -27,8 +27,8 @@ Ce document recense les 5 chantiers architecturaux différés à l'issue de l'au
 - Surface d'exécution dynamique (`eval`/`new Function`) incompatible avec une politique CSP stricte (`script-src 'self'`), latence de fragmentation/réassemblage, et dépendance à l'état DOM impératif (`#echo-migration-hud`, `#echo-clone-hud`).
 
 ### Architecture cible
-- Remplacer `emit_execute` / `call_execute` et la fragmentation UCTP par des événements typés déclaratifs sur le bus SSE `/echo/v1/wm/stream` avec retour RPC JSON structuré sur `POST /echo/v1/wm/rpc` :
-  - `ui_modal_request` / `ui_modal_response` (Svelte natif) pour `ask_user`, `forge_skill`, `manage_identity`, `process_plan` et `purge_memory_action.py` ;
+- *(Mis à jour)* Le bus Window Manager a migré du SSE `/echo/v1/wm/stream` vers le WebSocket bidirectionnel `/echo/v1/wm/ws` (`16-docker-echo-webui/backend/open_webui/echo/routers/wm.py` v6.17.4.1). Remplacer les appels résiduels `emit_execute` / `call_execute` et la fragmentation UCTP par des événements typés déclaratifs sur `/echo/v1/wm/ws` avec retour RPC JSON structuré sur `POST /echo/v1/wm/rpc` :
+  - `ui_modal_request` / `ui_modal_response` (Svelte natif) pour `forge_skill`, `manage_identity`, `process_plan` et `purge_memory_action.py` *(déjà migré vers `AskUserCard.svelte` pour `ask_user_input`)* ;
   - ~~`monitor_frame_open` / `monitor_frame_event` pour `echo_monitor` dans `code_executor_tool.py`~~ *(Réalisé en 6.6.17 via `window_mounted` / `echo_canvas_event` et `canvas_ui_event`)* ;
   - `hud_progress` (`migration` / `clone`) rendu par un composant Svelte global dans `(app)/+layout.svelte` ;
   - Action d'export PDF portée par un handler client natif déclenché sur événement typé.
@@ -46,11 +46,11 @@ Ce document recense les 5 chantiers architecturaux différés à l'issue de l'au
 
 ### Cause racine & Risques
 - `get_cognition_stream` exécute un polling toutes les `0.25s` (`_get_cognition_state_sig` via `asyncio.to_thread`) ouvrant une connexion SQLite `readonly` sur `session.db` (3 requêtes `COUNT/MAX` par cycle et par client connecté).
-- Multiplie les ouvertures de descripteurs et les réveils CPU/I/O à vide hors activité cognitive, et maintient deux connexions SSE concurrentes côté navigateur (`/echo/v1/wm/stream` + `/echo/v1/cognition/{chat_id}/stream`).
+- Multiplie les ouvertures de descripteurs et les réveils CPU/I/O à vide hors activité cognitive, et maintient deux connexions persistantes concurrentes côté navigateur (`/echo/v1/wm/ws` + `/echo/v1/cognition/{chat_id}/stream`, *(Mis à jour : le bus Window Manager a migré du SSE `/echo/v1/wm/stream` vers le WebSocket bidirectionnel `/echo/v1/wm/ws` dans `routers/wm.py` v6.17.4.1)*).
 
 ### Architecture cible
 - Remplacer la boucle de polling `_get_cognition_state_sig` par un bus push asynchrone en mémoire (`asyncio.Queue` indexées par `chat_id`) déclenché directement par `bump_cognition_seq(chat_id)`.
-- Unifier la diffusion des deltas cognitifs dans le flux SSE unique `/echo/v1/wm/stream` (type d'événement `cognition_update`) pour réduire à 1 le nombre de connexions SSE permanentes par onglet.
+- Unifier la diffusion des deltas cognitifs dans le flux WebSocket bidirectionnel `/echo/v1/wm/ws` (ex-`/echo/v1/wm/stream`, type d'événement `cognition_update`) pour réduire à 1 le nombre de connexions permanentes par onglet.
 - **Contrainte multi-processus** : un bus `asyncio.Queue` en mémoire impose `UVICORN_WORKERS=1`. Si `UVICORN_WORKERS > 1` est activé ultérieurement, le bus devra être adossé à Redis Pub/Sub (déjà référencé via `REDIS_URL` dans `open_webui/main.py:838,2504`).
 
 ---

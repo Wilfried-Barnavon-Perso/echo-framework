@@ -3,18 +3,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # SCRIPT : enable-bunkerweb.sh
-# VERSION : 6.6.29.1
+# VERSION : 6.18.15.1
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Activation de la couche de sécurité BunkerWeb (Secure Edge).
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.15.1: Réparation détection Compose V2, extraction port/CORS via compute_echo_detected_origins, nettoyage valeurs ECHO_DOMAIN quotées.
 # 6.6.29.1: Suppression de la mention obsolète v4.1 dans la bannière d'affichage.
 # 6.5.3.1: Renommage du service echo-open-webui vers echo-webui.
 # 6.0.0.1: Retrait des appels à config-owui.sh au profit du bootstrap déclaratif lifespan.
 # 5.236.5.1: Affichage du sous-domaine my.$DOMAIN et vérification préalable de l'image echo-python-base:latest.
-# 5.231.21.2: Délégation de la génération des secrets .env (dont ECHO_VAULT_ENCRYPTION_KEY) à ensure_echo_secrets (y compris en sortie idempotente).
 
 set -euo pipefail
 
@@ -37,10 +37,7 @@ BW_STACK_FILE="$CONFIG_DIR/bunkerweb-stack.yml"
 ECHO_STACK_FILE="$CONFIG_DIR/stack-echo.yml"
 
 # Détection automatique du moteur Compose (V2 prioritaire)
-DOCKER_COMPOSE_CMD="docker compose"
-if ! command -v $DOCKER_COMPOSE_CMD &> /dev/null; then
-    DOCKER_COMPOSE_CMD="docker-compose"
-fi
+init_echo_compose_cmd
 
 # Vérification root
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
@@ -64,7 +61,7 @@ done
 if [ -z "$DOMAIN" ]; then
     DEFAULT_DOMAIN=""
     if [ -f "$ENV_FILE" ]; then
-        DEFAULT_DOMAIN=$(grep "^ECHO_DOMAIN=" "$ENV_FILE" 2>/dev/null | cut -d '=' -f2 || true)
+        DEFAULT_DOMAIN=$(grep "^ECHO_DOMAIN=" "$ENV_FILE" 2>/dev/null | tail -n 1 | cut -d '=' -f2- | tr -d "\"'[:space:]" || true)
     fi
 
     echo "Architecture cible :"
@@ -90,7 +87,7 @@ echo "🚀 Configuration pour : $DOMAIN"
 BW_RUNNING=$(docker ps --filter "name=bunkerweb" --filter "status=running" --format "{{.Names}}" 2>/dev/null | head -1 || true)
 CURRENT_DOMAIN=""
 if [ -f "$ENV_FILE" ]; then
-    CURRENT_DOMAIN=$(grep "^ECHO_DOMAIN=" "$ENV_FILE" 2>/dev/null | cut -d '=' -f2 || true)
+    CURRENT_DOMAIN=$(grep "^ECHO_DOMAIN=" "$ENV_FILE" 2>/dev/null | tail -n 1 | cut -d '=' -f2- | tr -d "\"'[:space:]" || true)
 fi
 
 if [ -n "$BW_RUNNING" ] && [ "$CURRENT_DOMAIN" = "$DOMAIN" ]; then
@@ -108,17 +105,7 @@ fi
 
 # --- 3. DÉTECTION CORS & IP ---
 echo "🌍 Calcul des origines CORS locales..."
-OWUI_PORT=$(grep -A 10 "echo-webui:" "$ECHO_STACK_FILE" | grep -m 1 "\- \"[0-9]*:[0-9]*\"" | cut -d'"' -f2 | cut -d: -f1)
-if [ -z "$OWUI_PORT" ]; then OWUI_PORT="3000"; fi
-HOST_IPS=$(hostname -I 2>/dev/null || ip addr show | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | cut -d/ -f1)
-ECHO_DETECTED_ORIGINS=""
-for ip in $HOST_IPS; do
-    if [ -z "$ECHO_DETECTED_ORIGINS" ]; then
-        ECHO_DETECTED_ORIGINS="http://$ip:$OWUI_PORT"
-    else
-        ECHO_DETECTED_ORIGINS="$ECHO_DETECTED_ORIGINS;http://$ip:$OWUI_PORT"
-    fi
-done
+compute_echo_detected_origins "$ECHO_STACK_FILE"
 
 # --- 4. MISE À JOUR .ENV ---
 echo "📝 Mise à jour du fichier d'environnement centralisé ($ENV_FILE)..."
@@ -159,10 +146,13 @@ if ! docker image inspect echo-python-base:latest >/dev/null 2>&1; then
 fi
 
 # Arrêt propre (ciblé sur le projet echo)
-$DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" -f "$BW_STACK_FILE" -f "$ECHO_STACK_FILE" down --remove-orphans
+export COMPOSE_DOCKER_CLI_BUILD=1
+export DOCKER_BUILDKIT=1
+export COMPOSE_PARALLEL_LIMIT=2
+echo_compose --env-file "$ENV_FILE" -f "$BW_STACK_FILE" -f "$ECHO_STACK_FILE" down --remove-orphans
 
 # Lancement (sans --quiet pour voir les erreurs critiques)
-$DOCKER_COMPOSE_CMD \
+echo_compose \
     --env-file "$ENV_FILE" \
     -f "$BW_STACK_FILE" \
     -f "$ECHO_STACK_FILE" \
@@ -183,7 +173,7 @@ fi
 # --- 8. FEEDBACK ÉTAT POST-DÉPLOIEMENT ---
 echo ""
 echo "📊 État des conteneurs :"
-$DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" \
+echo_compose --env-file "$ENV_FILE" \
     -f "$BW_STACK_FILE" -f "$ECHO_STACK_FILE" \
     ps --format "table {{.Name}}\t{{.Status}}" 2>/dev/null || docker ps --format "table {{.Names}}\t{{.Status}}" --filter "label=bunkerweb.INSTANCE=yes" || true
 

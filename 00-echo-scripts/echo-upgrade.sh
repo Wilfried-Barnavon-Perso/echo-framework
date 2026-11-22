@@ -3,13 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # SCRIPT : echo-upgrade.sh
-# VERSION : 6.8.1.1
+# VERSION : 6.18.16.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.16.1: Suppression des variables Compose inutilisées (DOCKER_COMPOSE_CMD, COMPOSE_FILE).
 # 6.8.1.1: Propagation du code d'échec de install-stack.sh (|| exit 1) afin de ne pas afficher 'UPGRADE TERMINÉ' en cas d'erreur.
 # 5.231.39.1: Renommage en echo-upgrade.sh, commande destructrice echo-rebuild et ciblage de echo-sync.sh.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
@@ -26,13 +27,7 @@ else
 fi
 # ------------------------------------------
 
-DOCKER_COMPOSE_CMD="docker-compose"
-if ! command -v $DOCKER_COMPOSE_CMD &> /dev/null; then
-    DOCKER_COMPOSE_CMD="docker compose"
-fi
-
 SYNC_SCRIPT="$ECHO_SCRIPTS/echo-sync.sh"
-COMPOSE_FILE="$ECHO_CONFIG/stack-echo.yml"
 export COMPOSE_PROJECT_NAME="echo"
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi

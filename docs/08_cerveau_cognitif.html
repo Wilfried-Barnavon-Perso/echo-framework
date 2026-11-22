@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Cognition dynamique d'ECHO v6 : 4 paliers cognitifs, proprioception environnementale, compaction in-place sur 1 million de tokens et intégrité conversationnelle.">
+  <title>ECHO v6 - 8. La Cognition</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>8. La Cognition</h1>
+
+    <p>
+      Le cerveau d'ECHO ne se limite pas à transmettre vos messages à un modèle figé. À chaque tour de parole, il
+      évalue la difficulté réelle de votre demande, adapte automatiquement la puissance de raisonnement mobilisée,
+      maintient la perception du présent (identité, heure, fichiers, actions manuelles) et compresse intelligemment
+      l'historique lorsque vos conversations deviennent très longues.
+    </p>
+
+    <div class="didactic-box">
+      <h4>Pourquoi une cognition élastique et une compaction dédiée ?</h4>
+      <p>
+        Utiliser en permanence le modèle de raisonnement le plus lourd ralentit inutilement les échanges simples et
+        consomme vos quotas trop vite. À l'inverse, confier un débogage critique à un modèle léger augmente le risque
+        d'erreur. De plus, lorsqu'une longue discussion approche de la capacité maximale d'un million de tokens, une
+        compaction structurée évite de couper brutalement vos premiers échanges ou de perdre le fil de vos fichiers.
+      </p>
+    </div>
+
+    <h2>1. Les Quatre Paliers Cognitifs et le Routage Dynamique</h2>
+
+    <figure class="doc-figure">
+      <img src="images/v6_selecteur_paliers.png" alt="Sélecteur Écho v6 affichant Cortex Cognitif Dynamique et les 4 paliers Zéphyr, Apollon, Prométhée et Athéna" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        Les quatre paliers du Cortex Cognitif Dynamique exposés dans ECHO-UI.
+      </figcaption>
+    </figure>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Palier</th>
+          <th>Niveau</th>
+          <th>Cas d'usage privilégiés</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Zéphyr</strong></td>
+          <td>Niveau 0 &mdash; Rapidité</td>
+          <td>Échanges conversationnels courants, reformulations simples, consultation directe de la mémoire et orientation vers un palier supérieur.</td>
+        </tr>
+        <tr>
+          <td><strong>Apollon</strong></td>
+          <td>Niveau 1 &mdash; Exécution</td>
+          <td>Utilisation standard des outils, navigation web, génération de schémas, tâches de code courantes et résolution modérée à complexe.</td>
+        </tr>
+        <tr>
+          <td><strong>Prométhée</strong></td>
+          <td>Niveau 2 &mdash; Architecture</td>
+          <td>Analyses profondes, synthèse de gros volumes d'informations, planification stratégique et problèmes multi-niveaux.</td>
+        </tr>
+        <tr>
+          <td><strong>Athéna</strong></td>
+          <td>Niveau 3 &mdash; Raisonnement critique</td>
+          <td>Problèmes algorithmiques ou scientifiques extrêmes, débogage systémique profond, audits critiques et conception complexe.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <figure class="doc-figure">
+      <img src="images/v6_vannes_modele.png" alt="Modale Vannes configurant le mode cognitif AUTO ou MANUAL et le plafond de modèle" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        Le réglage des Vannes permet de laisser Écho moduler entre les paliers (AUTO) ou de verrouiller un palier donné (MANUAL).
+      </figcaption>
+    </figure>
+
+    <p>
+      En mode <strong>AUTO</strong> (par défaut avec plafond <em>Athéna</em>), Écho démarre au niveau le plus adapté et
+      peut décider elle-même de monter ou de redescendre d'un palier avant de répondre ou d'appeler des outils. Un mode
+      intermédiaire (plafonné à <em>Prométhée</em>) et un mode <strong>MANUAL</strong> permettent d'imposer une limite
+      selon vos préférences.
+    </p>
+
+    <h2>2. Comment Écho Perçoit le Présent (Proprioception)</h2>
+
+    <p>
+      À chaque message, l'infrastructure fournit silencieusement à Écho neuf types de repères structurés afin qu'elle
+      reste alignée sur votre situation réelle sans que vous ayez à la rappeler :
+    </p>
+
+    <ul>
+      <li><strong>Qui vous êtes :</strong> votre nom et votre genre grammatical (afin d'accorder ses réponses).</li>
+      <li><strong>Où et quand vous êtes :</strong> la date, l'heure exacte avec fuseau horaire, le numéro du tour et la localisation si vous l'avez activée.</li>
+      <li><strong>Quel moteur la porte :</strong> son palier actif, son palier d'origine sur le tour et la version du framework.</li>
+      <li><strong>Vos commandes certifiées :</strong> toute commande <code>/</code> officielle saisie en tête de requête.</li>
+      <li><strong>Vos documents résumés et événements récents :</strong> la synthèse des fichiers joints volumineux et la trace des actions que vous avez effectuées manuellement dans l'interface (par exemple une modification de fichier dans le Codex).</li>
+      <li><strong>Ses repères de continuité :</strong> les consignes système urgentes et les points de reprise issus d'une compaction antérieure.</li>
+    </ul>
+
+    <h2>3. Longues Conversations : 1 Million de Tokens et Compaction</h2>
+
+    <p>
+      ECHO exploite une fenêtre contextuelle d'environ <strong>un million de tokens</strong> (1&nbsp;048&nbsp;576 tokens)
+      avec une capacité de génération allant jusqu'à 65&nbsp;535 tokens par réponse. Pour éviter que l'attention ne se
+      dilue dans les sessions très denses, deux mécanismes automatiques prennent le relais :
+    </p>
+
+    <div class="mermaid-wrapper">
+      <div class="mermaid-header">
+        <span>CYCLE COGNITIF ET GESTION DE LA CHARGE CONTEXTUELLE</span>
+        <span>CLIQUER POUR ZOOMER</span>
+      </div>
+      <div class="mermaid">
+flowchart TD
+  U["Message utilisateur"] --> E["Injection du contexte présent et de la mémoire"]
+  E --> C{"Charge >= 60 % ?"}
+  C -- "Oui" --> K["Compaction automatique en place : synthèse structurée + tours récents conservés intacts (< 20 %)"]
+  C -- "Non" --> R["Rappels cognitifs progressifs (8 % à 30 %) si besoin"]
+  K --> M["Arbitrage du palier cognitif (Zéphyr / Apollon / Prométhée / Athéna)"]
+  R --> M
+  M --> A["Réponse et scellement exact de la session"]
+      </div>
+    </div>
+
+    <ol>
+      <li>
+        <strong>Rappels attentionnels progressifs (8&nbsp;% à 30&nbsp;%) :</strong> à mesure que la conversation grandit
+        ou enchaîne de nombreux appels d'outils, de discrets rappels internes recentrent Écho sur la délégation aux
+        sous-agents (8&nbsp;%), vos préférences (10&nbsp;%), la stratégie (12&nbsp;%), la rigueur factuelle (15&nbsp;%),
+        les règles du noyau (20&nbsp;%) et l'hygiène du résumé (30&nbsp;%).
+      </li>
+      <li>
+        <strong>Compaction automatique à 60&nbsp;% :</strong> dès que la charge atteint 60&nbsp;% (~629&nbsp;145 tokens),
+        ECHO synthétise les tours anciens en un point de reprise structuré tout en conservant intacts les tours les plus
+        récents (environ deux tiers de la nouvelle enveloppe, ramenée sous 20&nbsp;% soit ~209&nbsp;715 tokens). Tous vos
+        anciens messages restent néanmoins interrogeables à la demande via la mémoire de session.
+      </li>
+      <li>
+        <strong>Alerte de migration à 80&nbsp;% :</strong> si une session reste très dense au-delà de 80&nbsp;%, une
+        notification vous invite à utiliser <strong>Poursuivre dans une nouvelle conversation</strong> pour repartir
+        proprement sur un fil neuf.
+      </li>
+    </ol>
+
+    <h2>4. Édition, Suppression et Branches de Conversation</h2>
+
+    <p>
+      Si vous modifiez un ancien message, supprimez une réponse intermédiaire ou dupliquez une conversation à partir
+      d'un message précis (<em>fork</em>), ECHO réaligne l'historique exact de la branche active. Les fichiers que vous
+      ou Écho aviez déjà produits dans le Codex restent conservés sur disque : s'ils proviennent d'une ancienne branche,
+      Écho sait qu'ils ont été créés hors de la branche courante.
+    </p>
+
+    <details class="tech-spec" id="dossier-ingenierie">
+      <summary>Dossier d'Ingénierie : Registre des Modèles, Suture Bit-Perfect, AEC &amp; Compaction</summary>
+      <h4>1. Registre Cognitif &amp; Verrou de Tour (<code>echo_constants.py</code> &amp; <code>echo_orchestrator.py</code>)</h4>
+      <ul>
+        <li><strong>Mapping Dual-Backend (<code>ECHO_MODELS_REGISTRY</code>, <code>echo_constants.py</code> v6.18.1.1) :</strong>
+          <code>MODEL_ATHENA</code> (<code>gemini-4-carbon</code> / <code>gemini-4-carbon-high</code>, <code>hierarchy: 3</code>, <code>thinkingLevel: "high"</code>) ;
+          <code>MODEL_PROMETHEUS</code> (<code>gemini-4-neon</code> / <code>gemini-4-neon-medium</code>, <code>hierarchy: 2</code>, <code>thinkingLevel: "medium"</code>) ;
+          <code>MODEL_APOLLO</code> (<code>gemini-4-hydrogen</code> / <code>gemini-4-hydrogen-high</code>, <code>hierarchy: 1</code>, <code>thinkingLevel: "high"</code>) ;
+          <code>MODEL_ZEPHYR</code> (<code>gemini-3.5-flash-lite</code>, <code>hierarchy: 0</code>, <code>thinkingLevel: "high"</code>) ;
+          <code>MODEL_DISTILLATION</code> (<code>gemini-3.5-flash-lite</code>, <code>thinkingLevel: "low"</code>) ;
+          <code>MODEL_IMAGE_GEN</code> (<code>gemini-3.1-flash-image</code>, <code>request_type: "image_gen"</code>).
+        </li>
+        <li><strong>Élasticité <code>new_cognitive_level</code> &amp; <code>StreamProcessor</code> :</strong> Appel d'outil exclusif sans appels parallèles dans le même tour (tamponnage de <code>pending_tool_deltas</code> et de <code>buffered_none_text</code> pour éviter toute fuite d'appel orphelin en cas d'escalade). Verrou <code>turn_origin_model</code> en base <code>session.db::echo_settings</code> et mutation chirurgicale de la seule dernière balise <code>AEC_modele</code> (<code>_mutate_context_identity</code>) pour préserver le cache de préfixes Gemini.</li>
+        <li><strong>Fast-Track Système :</strong> <code>title_generation</code>, <code>tags_generation</code> (avec réconciliation active des tags existants) et <code>follow_up_generation</code> sont routés en <code>stateless_bypass</code> vers <code>MODEL_ZEPHYR</code> via <code>FAST_TRACK_TASK_SCHEMAS</code>.</li>
+      </ul>
+
+      <h4>2. Suture Bit-Perfect, Signatures &amp; Les 9 Balises AEC</h4>
+      <ul>
+        <li><strong>Shadow Suture (<code>session.db</code>) :</strong> <code>UserDataManager</code> persiste et restaure les messages multi-parts (incluant appels d'outils, images et sorties multimodales) dans <code>message_shadows</code> et <code>call_bridge</code>, avec auto-guérison <code>_sanitize_shadow_none_parts</code> et fusion déterministe <code>merge_consecutive_user_parts</code>.</li>
+        <li><strong><code>thoughtSignature</code> :</strong> Centralisée par <code>attach_thought_signature()</code> (<code>echo_core.py</code> v6.10.0.1) sur le seul premier <code>functionCall</code> du tour (ou sur la première part texte en l'absence d'outil), conformément à la norme Gemini 3/4.</li>
+        <li><strong>Les 9 Artéfacts Environnementaux Contextuels (<code>echo_aec.py</code> v6.7.20.1) :</strong> <code>AEC_directive</code>, <code>AEC_commande</code> (Priorité 4), <code>AEC_modele</code>, <code>AEC_identite</code>, <code>AEC_temporalite</code>, <code>AEC_localisation</code>, <code>AEC_smart_context</code>, <code>AEC_context_checkpoint</code> et <code>AEC_evenement_systeme</code> (Priorité 5). Les directives/événements en attente sont consommés et purgés atomiquement par <code>drain_pending_directives()</code>.</li>
+      </ul>
+
+      <h4>3. Compaction Contextuelle &amp; Rappels (<code>context_compaction_filter.py</code>)</h4>
+      <ul>
+        <li><strong>Seuils SSOT :</strong> <code>ECHO_MAX_CONTEXT_SIZE = 1 048 576</code> ; déclenchement à <code>COMPACTION_TRIGGER_THRESHOLD_PCT = 0.60</code> (~629 145 tokens) ; cible <code>COMPACTION_TARGET_CONTEXT_PCT = 0.20</code> (~209 715 tokens) répartie via <code>get_compaction_shares()</code> en <code>31.25 %</code> compressé <code>HEAD</code> (budget <code>65 535</code> tokens) et <code>68.75 %</code> de tours récents bruts <code>TAIL</code> (~144 179 tokens), avec isolement de branche <code>head_last_msg_id</code>. Seuil d'alerte UI <code>CONTEXT_WARNING_THRESHOLD</code> à <code>80 %</code>.</li>
+        <li><strong><code>AEC_REMINDERS</code> :</strong> Paliers indexés sur <code>ECHO_MAX_CONTEXT_SIZE</code> et nombre d'appels d'outils : <code>efficiency</code> (8 % / 18), <code>alignment</code> (10 % / 28), <code>strategy</code> (12 % / 30), <code>factuality</code> (15 % / 35), <code>kernel</code> (20 % / 50), <code>context_hygiene</code> (30 % / 65).</li>
+        <li><strong>Gestion des branches :</strong> <code>echo_session_gc.py</code> (<code>compute_dead_set</code> / <code>purge_dead_set</code>) et <code>echo_session_clone.py</code> (<code>v6.14.2.2</code>) assurent l'élagage exact des branches mortes et la préservation des productions sous provenance <code>hors_branche</code>.</li>
+      </ul>
+    </details>
+
+    <div class="transition-text">
+      <a href="07_hud_ui.html">&larr; 7. Écosystème HUD &amp; UI</a>
+      &nbsp;&nbsp;
+      <a href="09_arsenal_outils.html">9. L'Arsenal des Outils &rarr;</a>
+    </div>
+
+    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+  </main>
+
+  <script src="nav.js"></script>
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    mermaid.initialize({ startOnLoad: true, theme: 'dark' });
+  </script>
+</body>
+
+</html>

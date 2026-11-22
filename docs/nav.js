@@ -10,7 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
      ============================================================ */
   const mobileHeader = document.createElement('div');
   mobileHeader.className = 'mobile-header';
-  mobileHeader.innerHTML = '<button class="menu-toggle">☰</button><span>ECHO v5 Docs</span>';
+  mobileHeader.innerHTML = '<button class="menu-toggle">☰</button><span>ECHO v6 Docs</span>';
   document.body.prepend(mobileHeader);
 
   const sidebarOverlay = document.createElement('div');
@@ -60,7 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
     items: [
       { text: "15. Déploiement & Infra", href: "15_deploiement.html" },
       { text: "16. Périphériques & Infra", href: "16_infrastructure_globale.html" },
-      { text: "17. Inférence Distante", href: "17_edge_inference.html" },
+      { text: "17. Inférence Locale (Edge)", href: "17_edge_inference.html" },
       { text: "18. Annexes Techniques", href: "18_annexes.html" },
       { text: "19. Crédits", href: "19_credits.html" },
       { text: "20. Registre d'Audit", href: "20_registre_audit.html" },
@@ -73,7 +73,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="logo-container">
         <img src="logo-echo-medium.png" alt="ECHO Logo">
       </div>
-      <h2>ECHO v5</h2>
+      <h2>ECHO v6</h2>
       <div class="valve-container notranslate">
         <div class="valve-toggle" id="lang-toggle">
           <div class="valve-slider" id="valve-slider"></div>

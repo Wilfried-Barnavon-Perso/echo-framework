@@ -3,18 +3,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # SCRIPT : install-stack.sh (VERSION COMPOSE STANDARDISÉE)
-# VERSION : 6.8.0.1
+# VERSION : 6.18.15.1
 # AUTEUR  : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : PROVISIONING ET LANCEMENT VIA DOCKER COMPOSE (ARCHITECTURE STANDALONE)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.15.1: Alignement helpers echo-globals.sh, attente Docker post-restart, garde /etc/cron.daily, exemption /swapfile WSL2 + chattr +C Btrfs.
 # 6.8.0.1: Arrêt gracieux temporaire de echo-watchtower (trap EXIT) avant build/up et purge des conteneurs temporaires Compose en état Created.
 # 6.6.12.1: Factorisation COMPOSE_ARGS et pré-construction isolée de echo-webui (protection RAM V8 6 Go).
 # 6.5.3.1: Renommage de l'image et du conteneur echo-open-webui vers echo-webui.
 # 6.5.1.2: Ajout de ensure_swap_and_vm_tuning (filet swap 4 Go et vm.swappiness=25).
-# 6.0.0.1: Retrait de l'appel à config-owui.sh au profit du bootstrap déclaratif lifespan ECHO V6.
 
 set -e # Arrêt en cas d'erreur critique
 
@@ -55,10 +55,7 @@ if [ -f "$BRANCH_FILE" ]; then
 fi
 
 # Détection automatique du moteur Compose (V1 vs V2)
-DOCKER_COMPOSE_CMD="docker-compose"
-if ! command -v $DOCKER_COMPOSE_CMD &> /dev/null; then
-    DOCKER_COMPOSE_CMD="docker compose"
-fi
+init_echo_compose_cmd
 
 echo "🚀 ECHO FRAMEWORK [COMPOSE LAUNCHER] v$ECHO_VERSION (Branche: $TARGET_BRANCH)"
 echo "   Moteur Compose : $DOCKER_COMPOSE_CMD"
@@ -144,11 +141,7 @@ ensure_docker_autosafety() {
         if ! cmp -s "$daemon_file" "$temp_file"; then
             echo "   🔄 Mise à jour de la politique de logs Docker (10 Mo)..."
             cat "$temp_file" > "$daemon_file"
-            if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet docker; then
-                systemctl restart docker
-            elif command -v service >/dev/null 2>&1; then
-                service docker restart || true
-            fi
+            restart_docker_daemon_and_wait
         else
             echo "   ✅ Politique de logs déjà conforme (10 Mo)."
         fi
@@ -163,6 +156,7 @@ ensure_docker_autosafety() {
     if [ -f "$ECHO_SCRIPTS/echo-clean.sh" ]; then
         # Le script a été copié physiquement ici par echo-sync.sh
         # Nous l'injectons dans le moteur cron pour l'exécution automatique chaque nuit
+        mkdir -p /etc/cron.daily
         ln -sf "$ECHO_SCRIPTS/echo-clean.sh" "$cron_target"
         echo "   ✅ Cron quotidien configuré ($cron_target)."
     else
@@ -172,19 +166,25 @@ ensure_docker_autosafety() {
 
 ensure_swap_and_vm_tuning() {
     echo "🧠 Vérification du Swap et du tuning mémoire noyau..."
-    if [ -z "$(swapon --show --noheadings 2>/dev/null)" ]; then
+    if is_wsl2; then
+        echo "   ℹ️  WSL2 détecté : swap gouverné par l'hôte Windows (.wslconfig), création de /swapfile ignorée."
+    elif [ -z "$(swapon --show --noheadings 2>/dev/null)" ]; then
         if [ ! -f /swapfile ]; then
             echo "   🆕 Aucun swap actif détecté. Création de /swapfile (4 Go)..."
+            : > /swapfile
+            chattr +C /swapfile 2>/dev/null || true
             fallocate -l 4G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=4096 status=none
             chmod 600 /swapfile
             mkswap /swapfile >/dev/null
         fi
         swapon /swapfile 2>/dev/null || true
+        [ -f /etc/fstab ] || touch /etc/fstab
         grep -q "/swapfile" /etc/fstab || echo "/swapfile none swap sw 0 0" >> /etc/fstab
     else
         echo "   ✅ Swap existant actif ($(swapon --show=NAME,SIZE --noheadings | tr '\n' ' '))."
     fi
     sysctl -w vm.swappiness=25 >/dev/null 2>&1 || true
+    mkdir -p /etc/sysctl.d
     echo "vm.swappiness=25" > /etc/sysctl.d/99-echo-vm.conf
 }
 
@@ -293,25 +293,7 @@ fi
 
 # --- 2.3 Détection Dynamique des Origines CORS ---
 echo "🌍 Calcul des origines CORS locales..."
-if command -v yq >/dev/null 2>&1; then
-    OWUI_PORT=$(yq '.services["echo-webui"].ports[0]' "$COMPOSE_FILE" | cut -d: -f1)
-else
-    OWUI_PORT=$(grep -A 10 "echo-webui:" "$COMPOSE_FILE" | grep -m 1 "\- \"[0-9]*:[0-9]*\"" | cut -d'"' -f2 | cut -d: -f1)
-fi
-
-if [ -z "$OWUI_PORT" ]; then OWUI_PORT="3000"; fi
-HOST_IPS=$(hostname -I 2>/dev/null || ip addr show | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | cut -d/ -f1)
-
-ECHO_DETECTED_ORIGINS=""
-for ip in $HOST_IPS; do
-    if [ -z "$ECHO_DETECTED_ORIGINS" ]; then
-        ECHO_DETECTED_ORIGINS="http://$ip:$OWUI_PORT"
-    else
-        ECHO_DETECTED_ORIGINS="$ECHO_DETECTED_ORIGINS;http://$ip:$OWUI_PORT"
-    fi
-done
-
-export ECHO_DETECTED_ORIGINS="$ECHO_DETECTED_ORIGINS"
+compute_echo_detected_origins "$COMPOSE_FILE"
 echo "   ✅ Port détecté : $OWUI_PORT"
 echo "   ✅ Origines IP  : $ECHO_DETECTED_ORIGINS"
 
@@ -338,7 +320,7 @@ export DOCKER_BUILDKIT=1
 export COMPOSE_PARALLEL_LIMIT=2
 
 COMPOSE_ARGS=(--env-file "$ENV_FILE")
-if [ -f "$BW_STACK_FILE" ] && [ -f "$ENV_FILE" ] && grep -qE "^ECHO_DOMAIN=.+" "$ENV_FILE"; then
+if [ -f "$BW_STACK_FILE" ] && has_active_echo_domain "$ENV_FILE"; then
     echo "🔒 Mode SECURE EDGE détecté. Lancement de l'infrastructure complète (ECHO + BunkerWeb)..."
     COMPOSE_ARGS+=(-f "$BW_STACK_FILE" -f "$COMPOSE_FILE")
 else
@@ -347,10 +329,10 @@ else
 fi
 
 echo "🎨 Pré-construction isolée de echo-webui (protection mémoire V8 6 Go)..."
-$DOCKER_COMPOSE_CMD "${COMPOSE_ARGS[@]}" build $PULL_FLAG echo-webui
-$DOCKER_COMPOSE_CMD "${COMPOSE_ARGS[@]}" build $PULL_FLAG
+echo_compose "${COMPOSE_ARGS[@]}" build $PULL_FLAG echo-webui
+echo_compose "${COMPOSE_ARGS[@]}" build $PULL_FLAG
 cleanup_compose_staging_containers
-$DOCKER_COMPOSE_CMD "${COMPOSE_ARGS[@]}" up -d --remove-orphans
+echo_compose "${COMPOSE_ARGS[@]}" up -d --remove-orphans
 
 if [ $? -eq 0 ]; then
     echo "✅ Stack Docker Compose active."

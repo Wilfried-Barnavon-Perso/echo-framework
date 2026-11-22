@@ -3,13 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # SCRIPT : echo-os-upgrade.sh
-# VERSION : 6.5.0.1
+# VERSION : 6.18.16.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU DU SYSTÈME HÔTE (UBUNTU) VIA APT + MAINTENANCE ECHO
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.16.1: Garde fuser sur verrous APT et redirection WSL2 vers wsl --shutdown sans appel reboot.
 # 6.5.0.1: Création initiale du script de mise à niveau OS sécurisée avec flush Docker et détection reboot noyau.
 
 # --- JOURNALISATION ---
@@ -73,16 +74,20 @@ fi
 echo "⏳ Vérification et attente des verrous APT..."
 MAX_WAIT=120
 WAIT_COUNT=0
-while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
-    echo "   Verrou APT actif (autre processus en cours). Attente 5s ($WAIT_COUNT/$MAX_WAIT)..."
-    sleep 5
-    WAIT_COUNT=$((WAIT_COUNT + 5))
-    if [ "$WAIT_COUNT" -ge "$MAX_WAIT" ]; then
-        echo "❌ DÉLAI DÉPASSÉ : Les verrous APT sont toujours actifs. Abandon."
-        exit 1
-    fi
-done
-echo "   ✅ Verrous APT disponibles."
+if command -v fuser >/dev/null 2>&1; then
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+        echo "   Verrou APT actif (autre processus en cours). Attente 5s ($WAIT_COUNT/$MAX_WAIT)..."
+        sleep 5
+        WAIT_COUNT=$((WAIT_COUNT + 5))
+        if [ "$WAIT_COUNT" -ge "$MAX_WAIT" ]; then
+            echo "❌ DÉLAI DÉPASSÉ : Les verrous APT sont toujours actifs. Abandon."
+            exit 1
+        fi
+    done
+    echo "   ✅ Verrous APT disponibles."
+else
+    echo "   ⚠️  fuser introuvable, vérification des verrous APT ignorée."
+fi
 
 # --- 2. ARRÊT PROPRE DES CONTENEURS DOCKER ---
 ACTIVE_CONTAINERS=$(docker ps -q 2>/dev/null || true)
@@ -119,7 +124,9 @@ fi
 if [ -f /var/run/reboot-required ]; then
     echo ""
     echo "🚨 REBOOT REQUIS : Un nouveau noyau Linux ou un composant critique du système a été installé."
-    if [ "$ASSUME_YES" = false ]; then
+    if is_wsl2; then
+        echo "⚠️  Environnement WSL2 détecté : pour appliquer la mise à jour système/noyau, exécutez 'wsl --shutdown' depuis PowerShell sur l'hôte Windows après la relance."
+    elif [ "$ASSUME_YES" = false ]; then
         read -p "Souhaitez-vous redémarrer la VM maintenant ? [O/n] : " REBOOT_CONFIRM
         if [[ ! "$REBOOT_CONFIRM" =~ ^[nN]$ ]]; then
             echo "🔄 Redémarrage de la machine en cours..."

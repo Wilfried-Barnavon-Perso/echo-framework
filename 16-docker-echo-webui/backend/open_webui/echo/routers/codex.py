@@ -3,16 +3,16 @@
 """
 title: ECHO V6 Codex Router
 author: Wilfried BARNAVON
-version: 6.18.1.1
+version: 6.18.18.1
 description: Routeur FastAPI pour dépôts Codex et conteneurs de session (/echo/v1/codex).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.18.1: Résolution MIME IANA explicite + X-Content-Type-Options: nosniff dans GET /{chat_id}/download (fix aperçu PDF et médias, défense XSS sur HTML/SVG).
 # 6.18.1.1: Exposition du langage/type détecté (`lang` dans `_list_files_entries_sync`, `language` dans `GET /{chat_id}/file` tous workspaces) via `CodexRepo.detect_language`.
 # 6.12.0.1: Factorisation vers echo_codex_git/echo_paths (suppression helpers/validations dupliqués), confinement symlinks _resolve_safe_files_path, support delete récursif, move_entry et sync SQLite atomique sous get_codex_lock.
 # 6.6.13.1: Ajout de l'endpoint GET /{chat_id}/chats (get_codex_chats) exposant CodexRepo.get_user_codex_chats(..., include_files=True).
 # 6.6.9.1: Déportation asyncio.to_thread sur les opérations FS et Git Dulwich synchrones (tree, file, log, diff, download, mkdir, rename).
-# 6.6.6.1: Ajout de POST /{chat_id}/ai-edit (édition LLM one-shot), verrous get_codex_lock sur save/delete et synchro SQLite echo_resources.
 
 from __future__ import annotations
 
@@ -131,6 +131,36 @@ class AiEditPayload(BaseModel):
 
 
 _ALLOWED_AI_EDIT_MODELS = ("MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA", "MODEL_ZEPHYR")
+
+_CODEX_FALLBACK_MIME_BY_EXT: dict[str, str] = {
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
+    ".avif": "image/avif",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".m4a": "audio/mp4",
+    ".flac": "audio/flac",
+    ".aac": "audio/aac",
+    ".opus": "audio/opus",
+    ".weba": "audio/webm",
+    ".mp4": "video/mp4",
+    ".m4v": "video/mp4",
+    ".webm": "video/webm",
+    ".ogv": "video/ogg",
+    ".mov": "video/quicktime",
+}
+_UNSAFE_INLINE_MIMES = frozenset({
+    "text/html",
+    "application/xhtml+xml",
+    "image/svg+xml",
+})
 
 
 def _format_hex_preview(raw_bytes: bytes, limit: int = 4096) -> str:
@@ -611,10 +641,19 @@ async def download_codex_file(
     else:
         raise HTTPException(status_code=400, detail=f"Espace de travail invalide : '{ws}'")
 
+    ext = os.path.splitext(target_path)[1].lower()
+    guessed_mime = _CODEX_FALLBACK_MIME_BY_EXT.get(ext) or mimetypes.guess_type(target_path)[0]
+    # Conserver application/octet-stream pour les documents actifs (HTML/SVG) en defense-in-depth XSS.
+    if not guessed_mime or guessed_mime.lower() in _UNSAFE_INLINE_MIMES:
+        media_type = "application/octet-stream"
+    else:
+        media_type = guessed_mime
+
     return FileResponse(
         path=target_path,
         filename=os.path.basename(target_path),
-        media_type="application/octet-stream",
+        media_type=media_type,
+        headers={"X-Content-Type-Options": "nosniff"},
     )
 
 

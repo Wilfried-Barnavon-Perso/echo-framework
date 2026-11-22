@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Annexes d'ECHO v6 : glossaire fonctionnel, limites d'utilisation et dossier d'ingénierie de la plateforme.">
+  <title>ECHO v6 - 18. Annexes Techniques</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>18. Annexes Techniques</h1>
+
+    <div class="didactic-box">
+      <h4>Glossaire synthétique et limites pratiques de la plateforme</h4>
+      <p>
+        Cette page regroupe les définitions des notions clés rencontrées dans la documentation utilisateur, un repère
+        des capacités opérationnelles d'ECHO v6, ainsi que le référentiel technique complet destiné aux administrateurs et
+        aux intégrateurs.
+      </p>
+    </div>
+
+    <h2>1. Glossaire des notions ECHO</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Terme / Sigle</th>
+          <th>Signification simple</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>AEC</strong></td>
+          <td><em>Artéfacts Environnementaux Contextuels</em> : repères injectés à chaque échange (date et heure courantes, contexte géo-temporel, modèle cognitif actif, jauge de contexte et consignes actives).</td>
+        </tr>
+        <tr>
+          <td><strong>PGCU</strong></td>
+          <td><em>Protocole de Gestion du Contexte Unifié</em> : règles hiérarchisant l'attention du modèle et graduant l'apprentissage de vos préférences (PACP) et méthodes (PRAC) sur 5 niveaux d'importance.</td>
+        </tr>
+        <tr>
+          <td><strong>PARE</strong></td>
+          <td><em>Protocole d'Agentivité et de Raisonnement Efficients</em> : principe imposant l'exécution directe des tâches simples, le recours aux sous-agents pour les tâches longues et l'arrêt de sécurité après 3 erreurs consécutives.</td>
+        </tr>
+        <tr>
+          <td><strong>PRAF</strong></td>
+          <td><em>Protocole de Rigueur Analytique et Factuelle</em> : pipeline de vérification des faits exigeant la citation des sources, la distinction entre faits vérifiés et déductions, et l'aveu explicite en cas d'incertitude.</td>
+        </tr>
+        <tr>
+          <td><strong>Codex</strong></td>
+          <td>Espace de travail documentaire et logiciel versionné automatiquement, permettant d'éditer fichiers, code et plans sans perte d'historique.</td>
+        </tr>
+        <tr>
+          <td><strong>Coffre-fort (Identity Vault)</strong></td>
+          <td>Espace chiffré par utilisateur où sont stockés vos identifiants et clés d'accès externes, sans jamais être révélés en clair au modèle de langage.</td>
+        </tr>
+        <tr>
+          <td><strong>Sous-agents</strong></td>
+          <td>Assistants spécialisés mandatés en parallèle ou en table ronde (Conseil Delphi, Ouvriers Supervisés) pour conduire des recherches, coder ou auditer un sujet sans saturer votre fil principal.</td>
+        </tr>
+        <tr>
+          <td><strong>Edge WebGPU</strong></td>
+          <td>Calcul local des vecteurs de mémoire directement sur la puce graphique de votre navigateur, garantissant qu'aucun texte brut n'est envoyé à un service tiers pour l'indexation.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>2. Limites utiles au quotidien</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Capacité</th>
+          <th>Plafond ou seuil nominal</th>
+          <th>Comportement associé</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Fenêtre de contexte du modèle</strong></td>
+          <td><code>1 048 576</code> tokens (1 M)</td>
+          <td>Synthèse automatique déclenchée à 60 % de charge pour ramener l'historique actif à 20 %.</td>
+        </tr>
+        <tr>
+          <td><strong>Envoi de fichiers dans le chat</strong></td>
+          <td>Jusqu'à <code>4 Go</code> par fichier</td>
+          <td>Réception par flux progressif directement sur disque, sans saturation de la mémoire vive.</td>
+        </tr>
+        <tr>
+          <td><strong>Dictée vocale (STT)</strong></td>
+          <td>Jusqu'à <code>14 Mo</code> par enregistrement</td>
+          <td>Transcription multimodale directe via la passerelle vocale intégrée.</td>
+        </tr>
+        <tr>
+          <td><strong>Exécution parallèle en un tour</strong></td>
+          <td><code>5</code> appels d'outils / <code>4</code> sous-agents simultanés</td>
+          <td>Supervision par tranches coopératives et arrêt automatique après 3 erreurs consécutives.</td>
+        </tr>
+        <tr>
+          <td><strong>Lecture paginée Codex / Journaux</strong></td>
+          <td><code>800</code> lignes ou <code>45 Ko</code> par tranche</td>
+          <td>Exploration progressive des fichiers longs sans saturer le contexte de travail.</td>
+        </tr>
+        <tr>
+          <td><strong>Utilisateurs actifs par instance</strong></td>
+          <td><code>50</code> utilisateurs maximum</td>
+          <td>Plafond technique par défaut assurant la conformité à la Clause 4 de la licence ECHO-UI.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <details class="tech-spec" id="dossier-ingenierie">
+      <summary>Dossier d'Ingénierie : Matrice des 19 Conteneurs, IPAM, 10 Volumes, Schéma SQLite v2, Qdrant, Constantes SSOT &amp; Routeurs FastAPI</summary>
+
+      <h3>1. Plan d'Adressage IPAM &amp; Matrice des 19 Conteneurs</h3>
+      <p>
+        L'infrastructure s'articule autour de 4 réseaux Docker : <code>bw-universe</code> (<code>10.20.30.0/24</code>),
+        <code>echo-network</code> (<code>10.20.40.0/24</code>), <code>echo-sandbox</code> (<code>10.20.50.0/24</code>)
+        et <code>bw-docker</code> (réseau bridge isolé pour le proxy socket Docker).
+      </p>
+
+      <h4>1a. Stack Applicative Principale (<code>01-config/stack-echo.yml</code> v6.18.15.1 — 11 services)</h4>
+      <table>
+        <thead>
+          <tr>
+            <th>Conteneur</th>
+            <th>Réseaux &amp; IPv4 statique</th>
+            <th>Ports hôte</th>
+            <th>Rôle technique</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>echo-webui</code></td>
+            <td><code>echo-network</code> <code>10.20.40.100</code>, <code>echo-sandbox</code> <code>10.20.50.100</code></td>
+            <td><code>3000:8080</code>, <code>8020-8024:8020-8024</code></td>
+            <td>Cœur ECHO-UI (fork Open WebUI v0.13.2 + package <code>open_webui.echo</code>).</td>
+          </tr>
+          <tr>
+            <td><code>echo-admin-manager</code></td>
+            <td><code>echo-network</code> <code>10.20.40.20</code></td>
+            <td><code>3001:3001</code></td>
+            <td>Console d'administration, sauvegardes <code>tar.xz</code>, élagage sémantique Fail-Closed.</td>
+          </tr>
+          <tr>
+            <td><code>echo-coding-worker</code></td>
+            <td><code>echo-sandbox</code> <code>10.20.50.21</code></td>
+            <td>Interne uniquement</td>
+            <td>Sandbox isolée d'exécution Python / Bash et rendu code.</td>
+          </tr>
+          <tr>
+            <td><code>echo-browser-worker</code></td>
+            <td><code>echo-network</code> <code>10.20.40.22</code></td>
+            <td>Interne uniquement</td>
+            <td>Navigateur autonome Playwright Chromium headless + capture vidéo/screenshots.</td>
+          </tr>
+          <tr>
+            <td><code>echo-mcp-broker</code></td>
+            <td><code>echo-network</code> <code>10.20.40.23</code></td>
+            <td>Interne uniquement</td>
+            <td>Proxy StreamableHTTP/REST pour les 9 services MCP et providers Cloud.</td>
+          </tr>
+          <tr>
+            <td><code>echo-download-broker</code></td>
+            <td><code>echo-network</code> <code>10.20.40.25</code></td>
+            <td>Interne uniquement</td>
+            <td>Démon de collecte asynchrone des Drop-Zones <code>/n8n/</code>, <code>/browser/</code>, <code>/mcp/</code>.</td>
+          </tr>
+          <tr>
+            <td><code>echo-n8n-worker</code></td>
+            <td><code>echo-network</code> <code>10.20.40.26</code></td>
+            <td>Interne uniquement</td>
+            <td>Moteur d'automatisation n8n headless + API d'orchestration.</td>
+          </tr>
+          <tr>
+            <td><code>echo-embedding</code></td>
+            <td><code>echo-network</code> <code>10.20.40.30</code></td>
+            <td>Interne uniquement (<code>7997</code>)</td>
+            <td>Proxy WebSocket <code>/ws/edge-embed</code> et repli CPU Harrier-OSS via <code>llama.cpp</code>.</td>
+          </tr>
+          <tr>
+            <td><code>echo-searxng</code></td>
+            <td><code>echo-network</code> <code>10.20.40.101</code></td>
+            <td>Interne uniquement</td>
+            <td>Méta-moteur de recherche Web privé (<code>searxng/searxng:latest</code>).</td>
+          </tr>
+          <tr>
+            <td><code>echo-watchtower</code></td>
+            <td><code>echo-network</code> <code>10.20.40.102</code></td>
+            <td>Interne uniquement</td>
+            <td>Mise à jour automatique des images tiers non labellisées <code>enable=false</code>.</td>
+          </tr>
+          <tr>
+            <td><code>echo-qdrant</code></td>
+            <td><code>echo-network</code> <code>10.20.40.103</code></td>
+            <td>Interne uniquement (<code>6333</code>)</td>
+            <td>Base vectorielle <code>qdrant/qdrant:v1.19.1</code> (Cosine, 1024-d).</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h4>1b. Stack Périmétrique Secure Edge (<code>01-config/bunkerweb-stack.yml</code> v6.5.3.1 — 8 services)</h4>
+      <table>
+        <thead>
+          <tr>
+            <th>Conteneur</th>
+            <th>Réseaux &amp; IPv4 statique</th>
+            <th>Ports hôte</th>
+            <th>Rôle technique</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>bunkerweb</code></td>
+            <td><code>bw-universe</code> <code>10.20.30.2</code>, <code>echo-network</code> <code>10.20.40.200</code></td>
+            <td><code>80:8080</code>, <code>443:8443</code></td>
+            <td>Frontal WAF / Reverse-Proxy HTTPS <code>bunkerity/bunkerweb:1.6.17</code>.</td>
+          </tr>
+          <tr>
+            <td><code>bw-autoconf</code></td>
+            <td><code>bw-universe</code> <code>10.20.30.3</code>, <code>bw-docker</code></td>
+            <td>Interne uniquement</td>
+            <td>Contrôleur dynamique de découverte des labels Compose.</td>
+          </tr>
+          <tr>
+            <td><code>bw-scheduler</code></td>
+            <td><code>bw-universe</code> <code>10.20.30.4</code>, <code>bw-docker</code></td>
+            <td>Interne uniquement</td>
+            <td>Planificateur de renouvellement Let's Encrypt et tâches WAF.</td>
+          </tr>
+          <tr>
+            <td><code>bw-docker</code></td>
+            <td><code>bw-docker</code></td>
+            <td>Interne uniquement</td>
+            <td>Socket Proxy lecture filtrée (<code>tecnativa/docker-socket-proxy:latest</code>).</td>
+          </tr>
+          <tr>
+            <td><code>bw-db</code></td>
+            <td><code>bw-universe</code> <code>10.20.30.6</code></td>
+            <td>Interne uniquement</td>
+            <td>Persistance configuration WAF sous <code>mariadb:11.4</code>.</td>
+          </tr>
+          <tr>
+            <td><code>echo-redirector</code></td>
+            <td><code>bw-universe</code> <code>10.20.30.7</code>, <code>echo-network</code> <code>10.20.40.201</code></td>
+            <td>Interne uniquement</td>
+            <td>Redirection 301 domaine racine / <code>www</code> vers <code>https://ui.${ECHO_DOMAIN}</code>.</td>
+          </tr>
+          <tr>
+            <td><code>echo-auth-manager</code></td>
+            <td><code>bw-universe</code> <code>10.20.30.24</code>, <code>echo-network</code> <code>10.20.40.24</code></td>
+            <td>Interne uniquement (<code>8000</code>)</td>
+            <td>IdP autonome SSO/MFA Argon2id + TOTP et Forward Auth <code>/api/verify</code>.</td>
+          </tr>
+          <tr>
+            <td><code>echo-user-manager</code></td>
+            <td><code>bw-universe</code> <code>10.20.30.27</code>, <code>echo-network</code> <code>10.20.40.27</code></td>
+            <td>Interne uniquement (<code>3002</code>)</td>
+            <td>Portail self-service <code>my.${ECHO_DOMAIN}</code> (stats, sessions, export <code>.tar.xz</code>).</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>2. Les 10 Volumes Docker Nommés</h3>
+      <ul>
+        <li><strong>Stack applicative (8 volumes)</strong> : <code>echo-webui-data</code>, <code>echo-download-broker-data</code>, <code>echo-backups</code>, <code>echo-qdrant-data</code>, <code>echo-embedding-cache</code>, <code>echo-auth-data</code>, <code>echo-n8n-data</code>, <code>echo-mcp-cache</code>.</li>
+        <li><strong>Stack BunkerWeb (2 volumes)</strong> : <code>bw-data</code> (bind sur <code>/opt/ECHO/bunkerweb</code>), <code>bw-db-data</code>.</li>
+      </ul>
+
+      <h3>3. Schéma Déclaratif SQLite v2 (<code>echo_db_schema.py</code> v6.7.5.1) &amp; Qdrant</h3>
+      <ul>
+        <li><strong><code>identity.db</code> (<code>/app/backend/data/users/{uid}/identity.db</code> — 4 tables)</strong> :
+          <ul>
+            <li><code>auth_data(key PK, value, updated_at)</code> : jetons OAuth2 et identifiants techniques de connexion.</li>
+            <li><code>identity_vault(user_id, service, account_id PK, credentials)</code> : secrets chiffrés applicativement en AES-256-GCM / HKDF-SHA256.</li>
+            <li><code>echo_settings(key PK, value, updated_at)</code> : préférences globales, modèles actifs et résumé <code>VECTORIZED_SUM_UP</code>.</li>
+            <li><code>echo_resources(id PK, name, resource_type, item_type, status, mime, summary, content, metadata, storage_path, git_tracked, message_id, plan_goal, author_model, language, lines, last_commit, commit_msg, created_at, updated_at)</code> : ressources globales utilisateur.</li>
+          </ul>
+        </li>
+        <li><strong><code>session.db</code> (<code>/app/backend/data/users/{uid}/chats/{cid}/session.db</code> — 6 tables actives)</strong> :
+          <ul>
+            <li><code>message_shadows(message_id PK, role, full_parts_json, model_id, updated_at)</code> : historique bit-perfect Gemini avec <code>thoughtSignature</code>.</li>
+            <li><code>rag_index_state(message_id PK, embedded_at)</code> : marqueurs d'indexation vectorielle idempotente O(1).</li>
+            <li><code>call_bridge(call_id PK, signature, function_name, args_json, message_id, timestamp)</code> : correspondance des appels d'outils et signatures.</li>
+            <li><code>cognitive_threads(sub_sid, step_index PK, role_id, role, content_json, thought_signature, updated_at)</code> : historique des sous-agents et threads de cognition.</li>
+            <li><code>echo_resources</code> (mêmes 20 colonnes) &amp; <code>echo_settings</code> (registre KV session, compteurs de tokens, directives AEC en attente).</li>
+          </ul>
+        </li>
+        <li><strong>Collections Qdrant (<code>EMBEDDING_DIM = 1024</code>, métrique Cosine)</strong> : <code>echo_meta_artifacts</code> (mémoires PACP/PRAC L1/L2) et <code>echo_session_rag</code> (indexation sémantique des tours conversationnels).</li>
+      </ul>
+
+      <h3>4. Constantes SSOT de Référence (<code>14-owui-libs/echo_constants.py</code> v6.18.1.1)</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Constante SSOT</th>
+            <th>Valeur</th>
+            <th>Rôle technique</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>ECHO_MAX_CONTEXT_SIZE</code></td>
+            <td><code>1048576</code></td>
+            <td>Fenêtre contextuelle maximale (1 M tokens).</td>
+          </tr>
+          <tr>
+            <td><code>COMPACTION_TRIGGER_THRESHOLD_PCT</code> / <code>TARGET</code> / <code>COMPRESSED_SHARE</code></td>
+            <td><code>0.60</code> / <code>0.20</code> / <code>0.3125</code></td>
+            <td>Seuil de déclenchement (60 %), cible post-compaction (20 %) et part HEAD (31,25 %).</td>
+          </tr>
+          <tr>
+            <td><code>CONTEXT_WARNING_THRESHOLD</code></td>
+            <td><code>0.80</code></td>
+            <td>Seuil d'alerte jaune de charge contextuelle (80 %).</td>
+          </tr>
+          <tr>
+            <td><code>ECHO_LLM_CALL_TIMEOUT</code> / <code>ECHO_LLM_STREAM_TIMEOUT</code></td>
+            <td><code>600</code> s / <code>300</code> s</td>
+            <td>Timeouts de lecture Non-Stream (600 s) et inactivité inter-chunks Stream SSE (300 s).</td>
+          </tr>
+          <tr>
+            <td><code>ECHO_MAX_PARALLEL_TOOLS_PER_TURN</code> / <code>SUBAGENTS</code></td>
+            <td><code>5</code> / <code>4</code></td>
+            <td>Sémaphores d'exécution parallèle intra-tour (5 outils, 4 sous-agents par chat).</td>
+          </tr>
+          <tr>
+            <td><code>ECHO_MAX_CONCURRENT_BROWSERS</code> / <code>MULTIMODAL_SEGMENTS</code></td>
+            <td><code>2</code> / <code>3</code></td>
+            <td>Plafonds globaux d'instances Chromium Playwright (2) et segments multimédias (3).</td>
+          </tr>
+          <tr>
+            <td><code>ECHO_SUBAGENT_CHECKPOINT_TURNS</code> / <code>TIMEOUT_SEC</code> / <code>MAX_CONSECUTIVE_ERRORS</code></td>
+            <td><code>8</code> / <code>120</code> s / <code>3</code></td>
+            <td>Budget par tranche supervisée et disjoncteur PARE après 3 erreurs consécutives.</td>
+          </tr>
+          <tr>
+            <td><code>ECHO_AUTONOMOUS_MAX_TURNS</code> / <code>TIMEOUT_SEC</code></td>
+            <td><code>15</code> / <code>300</code> s</td>
+            <td>Garde-fous des passes autonomes fermées (ouvriers supervisés, deep research).</td>
+          </tr>
+          <tr>
+            <td><code>ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND</code> / <code>ROUND_TIMEOUT_SEC</code></td>
+            <td><code>3</code> / <code>120</code> s</td>
+            <td>Budget d'outils par participant et garde-fou anti-straggler par round Delphi.</td>
+          </tr>
+          <tr>
+            <td><code>ECHO_AUTOMATION_QUEUE_MAX_WAIT_SEC</code></td>
+            <td><code>10800</code> s</td>
+            <td>Attente maximale en file des exécutions headless automatisées (3 h).</td>
+          </tr>
+          <tr>
+            <td><code>ECHO_TOOL_OUTPUT_PREVIEW_CHARS</code> / <code>COGNITIVE_OUTPUT_PREVIEW_CHARS</code></td>
+            <td><code>32768</code> / <code>524288</code></td>
+            <td>Seuils d'aperçu inline (32 Ko outils standards, 512 Ko livrables cognitifs).</td>
+          </tr>
+          <tr>
+            <td><code>ECHO_MAX_FILE_UPLOAD_SIZE_MB</code></td>
+            <td><code>4096</code> Mo</td>
+            <td>Plafond d'import multipart streaming O(1) (4 Go).</td>
+          </tr>
+          <tr>
+            <td><code>BROWSER_TRANSIENT_GRACE_SEC</code> / <code>MAX_CLIPS_PER_CHAT</code> / <code>MAX_CLIPS_MB</code></td>
+            <td><code>1800.0</code> s / <code>50</code> / <code>60</code> Mo</td>
+            <td>Rétention et budget des captures et clips vidéo éphémères <code>browserviews</code>.</td>
+          </tr>
+          <tr>
+            <td><code>ECHO_CODEX_MAX_READ_LINES</code> / <code>MAX_READ_BYTES</code> / <code>CODEX_LIST_MAX_ENTRIES</code></td>
+            <td><code>800</code> / <code>46080</code> / <code>200</code></td>
+            <td>Limites de lecture paginée Codex (800 lignes / 45 Ko) et listage d'arborescence.</td>
+          </tr>
+          <tr>
+            <td><code>GEN_SCHEMA_MAX_TRIES</code> / <code>GEN_IMG_MAX_TRIES</code> / <code>IMAGE_GEN_MAX_INPUT_IMAGES</code></td>
+            <td><code>2</code> / <code>3</code> / <code>10</code></td>
+            <td>Tentatives maximales schéma/image et plafond d'images sources en génération visuelle.</td>
+          </tr>
+          <tr>
+            <td><code>ECHO_QUOTA_REFRESH_THROTTLE_SEC</code></td>
+            <td><code>60</code> s</td>
+            <td>Période minimale entre deux rafraîchissements Cloud de jauge quota.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>5. Routeurs FastAPI Souverains (<code>echo-webui</code>)</h3>
+      <ul>
+        <li><code>/echo/v1/codex</code> (<code>routers/codex.py</code>) : lecture, édition, gestion Git Dulwich et arborescence du Codex.</li>
+        <li><code>/echo/v1/cognition</code> (<code>routers/cognition.py</code>) : snapshot, flux SSE <code>/{chat_id}/stream</code>, pilotage des sous-agents et file FIFO <code>steer</code>.</li>
+        <li><code>/echo/v1/embeds</code> (<code>routers/embeds.py</code>) : ingestion et lecture des médias/fichiers intégrés par session.</li>
+        <li><code>/echo/v1/meta-artifacts</code> (<code>routers/meta_artifacts.py</code>) : CRUD et consultation des mémoires PACP/PRAC dans Qdrant.</li>
+        <li><code>/echo/v1/skills</code> (<code>routers/skills.py</code>, doublé sur <code>/api/v1/skills</code>) : catalogue et gestion des compétences utilisateur.</li>
+        <li><code>/echo/v1/vault</code> (<code>routers/vault.py</code>) : gestion des identités et comptes chiffrés AEAD du Coffre.</li>
+        <li><code>/echo/v1/wm</code> (<code>routers/wm.py</code>) : bus WebSocket du Window Manager et proxy sandbox applicatif <code>/echo/v1/wm/app/</code> par ticket HMAC.</li>
+        <li><code>/echo/v1/audio</code> (<code>14-owui-libs/echo_audio.py</code>) : pont audio in-process (<code>/transcriptions</code>, <code>/speech</code>, <code>/models</code>, <code>/voices</code>).</li>
+      </ul>
+    </details>
+
+    <div class="transition-text">
+      <a href="17_edge_inference.html">&larr; 17. Inférence Locale (Edge)</a>
+      &nbsp;&nbsp;
+      <a href="19_credits.html">19. Crédits &rarr;</a>
+    </div>
+
+    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+
+</html>

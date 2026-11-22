@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Exemples de prompts efficaces et utilisation des commandes slash dans ECHO Framework v6.">
+  <title>ECHO v6 - 3. Exemples de Prompts</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>3. Exemples de Prompts</h1>
+
+    <p>
+      Avec ECHO, vous n'avez pas besoin d'ajouter de longues consignes du type <em>« réponds comme un expert, ne
+      devine rien, vérifie tes sources »</em> : ces obligations sont déjà inscrites dans le noyau d'Écho. Les prompts
+      les plus efficaces vont droit au fait en précisant quatre éléments : le <strong>contexte</strong>,
+      l'<strong>objectif</strong>, les <strong>contraintes</strong> et le <strong>format de sortie souhaité</strong>.
+    </p>
+
+    <div class="didactic-box">
+      <h4>La règle d'or d'un bon prompt sous ECHO</h4>
+      <p>
+        Décrivez le résultat attendu et les critères de réussite plutôt que la mécanique technique interne. Si une tâche
+        comporte un risque de modification ou plusieurs options d'architecture, commencez par <code>/plan</code>. Si
+        l'objectif est clairement défini et peut être testé automatiquement jusqu'au bout, utilisez <code>/goal</code>.
+      </p>
+    </div>
+
+    <h2>1. Utiliser les Commandes Slash dans Vos Prompts</h2>
+
+    <figure class="doc-figure">
+      <img src="images/v6_commandes_slash.png" alt="Menu des commandes slash Écho disponibles en début de requête" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        Les commandes slash officielles s'activent uniquement lorsqu'elles figurent en tête de votre requête.
+      </figcaption>
+    </figure>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Commande</th>
+          <th>Quand l'employer</th>
+          <th>Exemple de formulation</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>/plan</code></td>
+          <td>Avant toute refonte, migration, création d'application ou choix stratégique complexe.</td>
+          <td><code>/plan Je souhaite migrer nos comptes-rendus hebdomadaires vers un tableau de bord consultable. Propose l'architecture et les étapes avant toute création.</code></td>
+        </tr>
+        <tr>
+          <td><code>/goal</code></td>
+          <td>Tâche autonome vérifiable empiriquement (script, audit complet, extraction et tests).</td>
+          <td><code>/goal Écris un script Python dans le Codex qui vérifie la cohérence des colonnes de ces 3 CSV joints, corrige les formats de date et prouve le résultat par un jeu de tests.</code></td>
+        </tr>
+        <tr>
+          <td><code>/prof</code></td>
+          <td>Apprendre un sujet difficile avec progression, exercices et contrôle de compréhension.</td>
+          <td><code>/prof Enseigne-moi les bases du chiffrement asymétrique avec des schémas concrets et pose-moi trois questions de vérification à la fin.</code></td>
+        </tr>
+        <tr>
+          <td><code>/coach</code></td>
+          <td>Débloquer une décision, challenger un argumentaire ou structurer un projet personnel.</td>
+          <td><code>/coach Voici ma proposition commerciale en pièce jointe. Identifie ses angles morts, critique mes hypothèses de prix et propose un plan de renforcement.</code></td>
+        </tr>
+        <tr>
+          <td><code>/rédacteur</code></td>
+          <td>Produire un texte calibré pour un public précis (note de direction, article, courrier formel).</td>
+          <td><code>/rédacteur Rédige une note de synthèse d'une page à destination d'un comité financier pour justifier le passage à une infrastructure auto-hébergée.</code></td>
+        </tr>
+        <tr>
+          <td><code>/persona</code></td>
+          <td>Revenir au comportement neutre et polyvalent après une phase de coaching ou d'enseignement.</td>
+          <td><code>/persona Revenons à l'analyse technique brute du fichier suivant.</code></td>
+        </tr>
+        <tr>
+          <td><code>/status</code></td>
+          <td>Vérifier l'état exact d'une longue session (artéfacts produits, préférences retenues, mode actif).</td>
+          <td><code>/status</code></td>
+        </tr>
+        <tr>
+          <td><code>/résumé</code></td>
+          <td>Obtenir une synthèse fidèle des décisions prises depuis le début de la conversation.</td>
+          <td><code>/résumé</code></td>
+        </tr>
+        <tr>
+          <td><code>/help</code></td>
+          <td>Découvrir les capacités d'ECHO ou demander l'aide sur un outil précis.</td>
+          <td><code>/help comment utiliser le navigateur web autonome et épingler une capture</code></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>2. Modèles de Prompts Prêts à l'Emploi</h2>
+
+    <h3>A. Analyse documentaire et synthèse sourcée</h3>
+    <div class="code-header">PROMPT &mdash; EXTRACTION FACTUELLE SUR DOCUMENTS JOINTS</div>
+    <pre><code>J'ai joint le rapport annuel 2025 (PDF) et le tableau des dépenses (CSV).
+1. Extrais les cinq principaux postes de coûts avec leurs montants exacts et la page ou ligne source.
+2. Compare l'évolution par rapport à 2024 en séparant explicitement les chiffres vérifiés de tes interprétations.
+3. Liste les zones d'incertitude ou données manquantes dans une section Points de vigilance.</code></pre>
+
+    <h3>B. Développement logiciel dans le Codex et le Bac à Sable</h3>
+    <div class="code-header">PROMPT &mdash; CRÉATION, EXÉCUTION ET VERSIONING</div>
+    <pre><code>/plan Crée un outil en Python dans l'espace main du Codex pour analyser nos journaux d'accès au format JSONL, détecter les pics d'erreurs par heure et générer un rapport Markdown.
+Exécute ensuite des tests unitaires dans le bac à sable sur un jeu de données synthétique avant de conclure.</code></pre>
+
+    <h3>C. Recherche web multi-sources et navigation guidée</h3>
+    <div class="code-header">PROMPT &mdash; VEILLE VÉRIFIÉE SUR LE WEB</div>
+    <pre><code>Recherche les dernières recommandations officielles (2025-2026) concernant la conservation des journaux de sécurité pour les PME européennes.
+Privilégie les sources institutionnelles officielles, cite chaque URL consultée et signale toute contradiction entre sources.</code></pre>
+
+    <h3>D. Visualisation interactive et application dans le panneau latéral</h3>
+    <div class="code-header">PROMPT &mdash; TABLEAU DE BORD DANS L'ONGLET APPLICATIONS</div>
+    <pre><code>À partir des données de ventes jointes, génère un tableau de bord interactif dans l'onglet Applications permettant de filtrer par trimestre et par région, avec un graphique d'évolution et un export CSV.</code></pre>
+
+    <h3>E. Délibération multi-angles (Table Ronde / Conseil)</h3>
+    <div class="code-header">PROMPT &mdash; CONTRADICTION MULTI-EXPERTS</div>
+    <pre><code>Réunis un Conseil composé de trois profils distincts : un juriste en protection des données, un architecte logiciel et un responsable financier.
+Fais-les débattre sur l'opportunité de déployer un assistant interne pour notre service client, puis livre-moi une synthèse arbitrée avec les risques résiduels.</code></pre>
+
+    <h3>F. Préparation d'une tâche planifiée récurrente</h3>
+    <div class="code-header">PROMPT &mdash; AUTOMATISATION RÉCURRENTE</div>
+    <pre><code>Crée une automatisation qui s'exécute chaque lundi à 8h00 dans une conversation dédiée réutilisée : recherche les principales annonces de sécurité publiées la semaine précédente sur les composants Python que nous utilisons et rédige un bulletin synthétique de 15 lignes maximum.</code></pre>
+
+    <h2>3. Erreurs Courantes et Corrections</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Erreur fréquente</th>
+          <th>Pourquoi elle pose problème</th>
+          <th>Formulation recommandée</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Placer <code>/plan</code> au milieu d'un paragraphe</td>
+          <td>Par sécurité, les commandes slash ne sont activées que lorsqu'elles figurent en tout début de message.</td>
+          <td>Toujours écrire <code>/plan</code> (ou toute autre commande) comme premier mot de la requête.</td>
+        </tr>
+        <tr>
+          <td>Taper <code>@fichier</code> ou <code>$competence</code> dans le chat</td>
+          <td>Ces déclencheurs sont désactivés dans le chat principal pour éviter les faux positifs dans le texte et le code.</td>
+          <td>Joignez les fichiers via <code>+</code> ou nommez simplement la compétence ou le fichier en langage naturel.</td>
+        </tr>
+        <tr>
+          <td>Mélanger trois projets sans rapport dans le même fil</td>
+          <td>Le résumé de session et la mémoire vectorielle de conversation perdent en précision thématique.</td>
+          <td>Ouvrez une conversation distincte par projet ou utilisez les dossiers de la barre latérale.</td>
+        </tr>
+        <tr>
+          <td>Lancer <code>/goal</code> sur une opération irréversible sans cadrage</td>
+          <td>Le mode autonome enchaîne les sous-agents sans vous redemander validation à chaque étape.</td>
+          <td>Commencez par <code>/plan</code> pour figer le périmètre et les garde-fous, puis validez l'exécution.</td>
+        </tr>
+        <tr>
+          <td>Demander d'inventer des données manquantes « pour l'exemple » sans le dire</td>
+          <td>Le principe PRAF bloque toute extrapolation non sourcée et répondra qu'elle ne sait pas.</td>
+          <td>Précisez explicitement que vous attendez un jeu de données fictif ou un scénario illustratif.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="warning-box">
+      <h4>Rappel sur les actions sensibles</h4>
+      <p>
+        Lorsqu'une opération touche des identifiants du Coffre, l'exécution d'un plan stratégique validé ou la
+        suppression d'une compétence, ECHO affiche une carte ou une fenêtre de confirmation interactive avant de
+        procéder : vérifiez le détail affiché avant de confirmer.
+      </p>
+    </div>
+
+    <details class="tech-spec" id="dossier-ingenierie">
+      <summary>Dossier d'Ingénierie : Traitement des Commandes Slash &amp; Pipeline de Requête</summary>
+      <h4>1. Extraction et Certification des Commandes</h4>
+      <ul>
+        <li><strong>Détection déterministe :</strong> <code>extract_leading_slash_commands()</code> et <code>normalize_slash_command_key()</code> (<code>14-owui-libs/echo_core.py</code>) analysent exclusivement la tête du message utilisateur en s'appuyant sur le registre chargé par <code>load_echo_commands_registry()</code> depuis <code>01-config/system-commands.xml</code>.</li>
+        <li><strong>Certification AEC :</strong> Lorsqu'une commande ou un alias valide (<code>aide</code> &rarr; <code>/help</code>, <code>statut</code> &rarr; <code>/status</code>, <code>resume</code> &rarr; <code>/résumé</code>, <code>redacteur</code> &rarr; <code>/rédacteur</code>) est détecté, <code>new_context_filter.py</code> (Priorité 70) émet <code>&lt;artifact id="AEC_commande" source="Système"&gt;</code> via <code>EchoAEC.render_command_directive()</code> avant <code>&lt;REQUETE_UTILISATEUR&gt;</code>.</li>
+        <li><strong>Défense MPSI :</strong> Toute commande saisie en milieu de phrase ou injectée dans un document tiers reste confinée dans <code>&lt;REQUETE_UTILISATEUR&gt;</code> ou <code>&lt;artifact id="AEC_smart_context"&gt;</code> sans balise <code>AEC_commande</code> et est donc ignorée en tant qu'instruction système.</li>
+      </ul>
+
+      <h4>2. Raccourcis Purement Interface</h4>
+      <ul>
+        <li>Les commandes <code>/dupliquer</code> et <code>/reglages</code> (<code>/settings</code>) sont interceptées côté frontend dans <code>SlashCommands.svelte</code> / <code>CommandSuggestionList.svelte</code> pour déclencher la duplication de fil ou l'ouverture de <code>SettingsModal.svelte</code> sans solliciter le LLM.</li>
+      </ul>
+    </details>
+
+    <div class="transition-text">
+      <a href="02_manuel_utilisateur.html">&larr; 2. Manuel Utilisateur</a>
+      &nbsp;&nbsp;
+      <a href="04_tutoriel_pratique.html">4. Tutoriel Pratique &rarr;</a>
+    </div>
+
+    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+
+</html>

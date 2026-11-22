@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # SCRIPT : disable-bunkerweb.sh
-# VERSION : 6.5.3.1
+# VERSION : 6.18.15.1
 # AUTEUR : Wilfried BARNAVON (ECHO Framework)
 # ==============================================================================
 # ROLE : Désactivation de la couche de sécurité BunkerWeb (Secure Edge)
@@ -11,11 +11,11 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.15.1: Réparation détection Compose V2 et extraction port/CORS via compute_echo_detected_origins.
 # 6.5.3.1: Renommage du service et conteneur echo-open-webui vers echo-webui.
 # 6.0.0.1: Retrait de l'appel à config-owui.sh au profit du bootstrap déclaratif lifespan.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.5: Prévention du crash getwd() via un `cd $ECHO_ROOT` forcé.
-# 2.4: Ajout de l'option opt-in --purge pour détruire la BDD et le dossier complet. Le comportement par défaut devient conservateur.
 
 set -euo pipefail
 
@@ -42,10 +42,7 @@ BW_STACK_FILE="$CONFIG_DIR/bunkerweb-stack.yml"
 ECHO_STACK_FILE="$CONFIG_DIR/stack-echo.yml"
 
 # Détection automatique du moteur Compose (V2 prioritaire)
-DOCKER_COMPOSE_CMD="docker compose"
-if ! command -v $DOCKER_COMPOSE_CMD &> /dev/null; then
-    DOCKER_COMPOSE_CMD="docker-compose"
-fi
+init_echo_compose_cmd
 
 if [ "$EUID" -ne 0 ]; then echo "❌ Run as root (sudo)."; exit 1; fi
 
@@ -55,7 +52,7 @@ if [[ "${1:-}" == "--purge" ]]; then
 fi
 
 echo "=================================================="
-echo "🔓 ECHO SECURITY DISABLE (v2.5)"
+echo "🔓 ECHO SECURITY DISABLE"
 echo "=================================================="
 echo "Ce script va désactiver le WAF et le HTTPS."
 if [ "$PURGE_MODE" = true ]; then
@@ -85,17 +82,7 @@ if [[ "$CONFIRM" != "y" && "$CONFIRM" != "Y" ]]; then echo "Annulé."; exit 0; f
 
 # --- 2. DÉTECTION CORS & IP (Maintien de l'accès local) ---
 echo "🌍 Calcul des origines CORS locales..."
-OWUI_PORT=$(grep -A 10 "echo-webui:" "$ECHO_STACK_FILE" | grep -m 1 "\- \"[0-9]*:[0-9]*\"" | cut -d'"' -f2 | cut -d: -f1)
-if [ -z "$OWUI_PORT" ]; then OWUI_PORT="3000"; fi
-HOST_IPS=$(hostname -I 2>/dev/null || ip addr show | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | cut -d/ -f1)
-ECHO_DETECTED_ORIGINS=""
-for ip in $HOST_IPS; do
-    if [ -z "$ECHO_DETECTED_ORIGINS" ]; then
-        ECHO_DETECTED_ORIGINS="http://$ip:$OWUI_PORT"
-    else
-        ECHO_DETECTED_ORIGINS="$ECHO_DETECTED_ORIGINS;http://$ip:$OWUI_PORT"
-    fi
-done
+compute_echo_detected_origins "$ECHO_STACK_FILE"
 
 # --- 3. MISE À JOUR .ENV (Désactivation Domaine) ---
 if [ -f "$ENV_FILE" ]; then
@@ -122,7 +109,7 @@ echo "🛑 Arrêt de l'infrastructure sécurisée (projet : $COMPOSE_PROJECT_NAM
 mkdir -p "$ECHO_ROOT/bunkerweb"
 
 # Arrêt propre via Compose (ciblé sur le projet echo, préserve les volumes)
-$DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" \
+echo_compose --env-file "$ENV_FILE" \
     -f "$BW_STACK_FILE" -f "$ECHO_STACK_FILE" \
     down --remove-orphans || true
 
@@ -150,7 +137,7 @@ fi
 
 # --- 5. RELANCE EN MODE LOCAL ---
 echo "🚀 Redémarrage en mode Local (sans BunkerWeb)..."
-$DOCKER_COMPOSE_CMD --env-file "$ENV_FILE" \
+echo_compose --env-file "$ENV_FILE" \
     -f "$ECHO_STACK_FILE" \
     up -d --remove-orphans
 

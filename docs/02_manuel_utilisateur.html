@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Manuel utilisateur complet d'ECHO-UI v6 : navigation, commandes slash, onglets de session, mode vocal et portail personnel.">
+  <title>ECHO v6 - 2. Manuel Utilisateur</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <aside class="sidebar"><!-- Menu généré dynamiquement par nav.js --></aside>
+
+  <main>
+    <h1>2. Manuel Utilisateur</h1>
+
+    <p>
+      Ce manuel décrit l'ensemble des écrans, commandes et réglages directement accessibles dans
+      <strong>ECHO-UI</strong> et dans votre <strong>Espace Personnel</strong>. Il constitue votre repère de
+      navigation quotidien pour piloter vos conversations, vos fichiers, vos sous-agents et vos données.
+    </p>
+
+    <div class="didactic-box">
+      <h4>Prise en main en 4 repères</h4>
+      <p>
+        1. Ouvrez une conversation ou sélectionnez-en une dans la barre latérale gauche.<br>
+        2. Saisissez votre demande dans le compositeur central (ou dictez-la au micro).<br>
+        3. Surveillez l'activité en temps réel grâce à l'indicateur en haut à droite et aux 5 onglets du panneau latéral.<br>
+        4. Consultez la jauge de contexte dans la barre de saisie pour suivre la charge de la session et vos quotas.
+      </p>
+    </div>
+
+    <h2>1. Repères de l'Écran Principal</h2>
+
+    <figure class="doc-figure">
+      <img src="images/v6_accueil_compositeur.png" alt="Écran principal ECHO-UI v6 avec barre latérale gauche et barre de saisie enrichie" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        Organisation générale d'ECHO-UI v6 : barre latérale de navigation à gauche, barre d'onglets en haut et compositeur unifié au centre.
+      </figcaption>
+    </figure>
+
+    <ul>
+      <li>
+        <strong>Barre latérale gauche :</strong> donne accès à <em>Nouvelle conversation</em>, à la <em>Recherche</em>
+        dans l'historique, à l'<em>Espace de travail</em> (ainsi qu'aux sections <em>Automatisations</em> et
+        <em>Calendrier</em>), au classement par <em>Dossiers</em> et à la liste des <em>Conversations</em>. Le menu
+        contextuel (<code>...</code>) d'une conversation permet notamment de la dupliquer ou de
+        <strong>Planifier une automatisation</strong> directement liée à ce fil.
+      </li>
+      <li>
+        <strong>Barre supérieure :</strong> affiche l'onglet de la conversation active, un bouton d'activité des
+        sous-agents (ouvrant directement l'onglet <em>Sous-Agents &amp; Outils</em>), ainsi que le bouton d'ouverture du
+        panneau latéral droit et son badge compteur d'onglets ouverts.
+      </li>
+      <li>
+        <strong>Barre de saisie (compositeur) :</strong> regroupe de gauche à droite le bouton <code>+</code>
+        (<em>Joindre des fichiers</em> ou ouvrir un <em>Nouveau terminal</em>), les <em>Vannes</em> de réglage cognitif,
+        l'indicateur d'outils disponibles, les filtres actifs, la <strong>jauge de contexte et de quotas</strong>, le
+        badge d'inférence locale <code>WebGPU</code>, la pilule du modèle unifié <strong>Écho</strong>, le micro de
+        dictée et le bouton d'appel vocal.
+      </li>
+    </ul>
+
+    <h2>2. Espace de Travail, Automatisations et Calendrier</h2>
+
+    <p>
+      En haut de la barre latérale, trois espaces organisent votre travail hors d'une discussion ponctuelle :
+    </p>
+
+    <div class="grid-container">
+      <div class="card">
+        <h3>Espace de travail</h3>
+        <p>
+          Regroupe trois onglets : <strong>Compétences</strong> (créer, consulter ou supprimer les compétences métier
+          utilisées par les sous-agents), <strong>Mémoire</strong> (rechercher les préférences et faits mémorisés, avec
+          le filtre rapide <strong>Axiomes (Niveau 5)</strong>) et <strong>Prompts</strong> (modèles de requêtes
+          réutilisables).
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>Automatisations</h3>
+        <p>
+          Permet de programmer des tâches récurrentes s'exécutant dans une nouvelle conversation, dans une conversation
+          existante ou dans un fil dédié réutilisé. Les messages issus d'une tâche planifiée portent un badge d'origine
+          spécifique.
+        </p>
+      </div>
+
+      <div class="card">
+        <h3>Calendrier</h3>
+        <p>
+          Agenda personnel intégré consultable directement à l'écran et manipulable par Écho (création, recherche,
+          mise à jour ou suppression d'événements).
+        </p>
+      </div>
+    </div>
+
+    <h2>3. Sélecteur Écho et Commandes Slash (<code>/</code>)</h2>
+
+    <figure class="doc-figure">
+      <img src="images/v6_selecteur_paliers.png" alt="Infobulle du sélecteur Écho v6 affichant Cortex Cognitif Dynamique et les 4 paliers" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        Le sélecteur unique Écho v6 affiche les quatre paliers cognitifs gérés dynamiquement (Zéphyr, Apollon, Prométhée, Athéna).
+      </figcaption>
+    </figure>
+
+    <p>
+      Vous n'avez pas à choisir manuellement un identifiant de modèle technique avant chaque message : le sélecteur est
+      verrouillé sur <strong>Écho</strong>. Si vous souhaitez borner le palier maximal ou figer un palier précis pour
+      une conversation, cliquez sur l'icône des <strong>Vannes</strong> à gauche du compositeur.
+    </p>
+
+    <figure class="doc-figure">
+      <img src="images/v6_commandes_slash.png" alt="Menu d'autocomplétion des 9 commandes slash ECHO dans la zone de saisie" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        Menu des commandes slash affiché dès la saisie du caractère <code>/</code> en début de message.
+      </figcaption>
+    </figure>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Commande</th>
+          <th>Alias</th>
+          <th>Effet immédiat</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>/help</code></td>
+          <td><code>/aide</code></td>
+          <td>Affiche les versions actives, la liste des commandes et outils disponibles (ou le détail d'un argument) et suggère des pistes d'usage.</td>
+        </tr>
+        <tr>
+          <td><code>/status</code></td>
+          <td><code>/statut</code></td>
+          <td>Génère un rapport complet de la session : versions, résumé, mode de persona actif, apprentissages, artéfacts et état environnemental.</td>
+        </tr>
+        <tr>
+          <td><code>/plan</code></td>
+          <td>&mdash;</td>
+          <td>Interdit toute exécution immédiate : impose la conception d'un plan formel et d'une analyse critique soumis à votre validation préalable.</td>
+        </tr>
+        <tr>
+          <td><code>/goal</code></td>
+          <td>&mdash;</td>
+          <td>Lance une exécution autonome continue pilotée par sous-agents jusqu'à validation empirique de l'objectif.</td>
+        </tr>
+        <tr>
+          <td><code>/résumé</code></td>
+          <td><code>/resume</code></td>
+          <td>Restitue la synthèse structurée en cours de la session.</td>
+        </tr>
+        <tr>
+          <td><code>/rédacteur</code></td>
+          <td><code>/redacteur</code></td>
+          <td>Active le mode spécialisé Rédacteur pour la session jusqu'à changement de mode.</td>
+        </tr>
+        <tr>
+          <td><code>/coach</code></td>
+          <td>&mdash;</td>
+          <td>Active le mode spécialisé Coach (diagnostic, déconstruction, stratégie d'optimisation).</td>
+        </tr>
+        <tr>
+          <td><code>/prof</code></td>
+          <td>&mdash;</td>
+          <td>Active le mode spécialisé Prof (didactique structurée et acquisition autonome).</td>
+        </tr>
+        <tr>
+          <td><code>/persona</code></td>
+          <td>&mdash;</td>
+          <td>Réinitialise Écho vers son comportement natif par défaut.</td>
+        </tr>
+        <tr>
+          <td><code>/dupliquer</code> / <code>/reglages</code></td>
+          <td><code>/settings</code></td>
+          <td>Raccourcis d'interface pour dupliquer la conversation courante ou ouvrir directement la fenêtre des Réglages.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="warning-box">
+      <h4>Déclencheurs désactivés dans la barre de saisie</h4>
+      <p>
+        Les caractères <code>@</code>, <code>#</code> et <code>$</code> sont volontairement neutres dans la zone de
+        saisie principale afin d'éviter toute mention accidentelle dans vos textes ou morceaux de code. Pour vous
+        adresser directement à un sous-agent en cours de travail, utilisez la zone de message dédiée à l'intérieur de
+        l'onglet <strong>Sous-Agents &amp; Outils</strong>.
+      </p>
+    </div>
+
+    <h2>4. Les Cinq Onglets du Panneau Latéral et le Terminal</h2>
+
+    <p>
+      Le panneau droit de chaque conversation regroupe cinq espaces spécialisés, consultables côte à côte avec votre
+      discussion :
+    </p>
+
+    <ul>
+      <li>
+        <strong>Sous-Agents &amp; Outils :</strong> affiche l'avancement des sous-agents, tables rondes (Conseils) et
+        ouvriers supervisés. Vous pouvez mettre l'affichage en pause, inspecter les appels d'outils, suspendre,
+        reprendre (<code>+N tours</code>), arrêter ou fermer un sous-agent, et lui envoyer une consigne ciblée
+        (<code>@nom</code> ou <code>📢 Tous</code>).
+      </li>
+      <li>
+        <strong>Codex &amp; Fichiers :</strong> donne accès aux espaces de la conversation (<code>main</code>,
+        <code>plans</code>, <code>generated</code>, <code>sandbox</code>, <code>files</code>) ainsi qu'aux dépôts
+        d'autres conversations en lecture seule. Inclut la prévisualisation multi-format (Markdown, HTML, SVG, CSV, PDF,
+        images, audio, vidéo, hexadécimal), l'édition avec coloration syntaxique (<code>Ctrl+S</code>), l'édition
+        assistée par IA avec prévisualisation des différences, l'historique et la restauration des versions, ainsi que
+        les actions <em>Importer</em>, <em>Exporter</em>, <em>Copier</em> et <em>Imprimer</em>. Chaque bloc de code dans
+        le chat dispose aussi d'un bouton <strong>Envoyer au Codex</strong>, et les références aux fichiers produits
+        apparaissent sous forme de liens cliquables ouvrant directement l'onglet sur le document ciblé.
+      </li>
+      <li>
+        <strong>Navigateur Web :</strong> diffuse en direct l'activité du navigateur autonome (<code>🔴 EN DIRECT</code>),
+        permet de remonter le temps sur les captures précédentes (<code>⏸️ DIFFÉRÉ</code>), de lire et télécharger les
+        clips vidéo <code>MP4</code> des actions, d'épingler une capture avec <strong>📌 Conserver</strong> pour la
+        protéger du nettoyage automatique, de recadrer et d'exporter en <code>PNG</code>.
+      </li>
+      <li>
+        <strong>Coffre &amp; Identité :</strong> présente l'état de vos comptes connectés et permet d'ajouter, modifier
+        ou supprimer vos identifiants chiffrés (clés API, SSH, Google Workspace, Microsoft 365, connecteurs externes)
+        avec des guides de configuration dépliables.
+      </li>
+      <li>
+        <strong>Applications :</strong> affiche les visualisations HTML interactives et les applications client-serveur
+        temps réel produites durant la session dans un cadre isolé, avec indicateur d'état (<code>Actif</code> /
+        <code>Arrêté</code>) et boutons d'arrêt ou de fermeture.
+      </li>
+      <li>
+        <strong>Terminal :</strong> accessible depuis le bouton <code>+</code> du compositeur (<em>Nouveau terminal</em>)
+        dès que la conversation a été enregistrée par un premier échange.
+      </li>
+    </ul>
+
+    <figure class="doc-figure">
+      <img src="images/v6_chat_liens_codex.png" alt="Réponse d'ECHO dans le chat affichant les liens Codex cliquables vers synthese_qubits.md et estimateur_vram.py" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        Liens Codex cliquables intégrés directement dans la réponse d'ECHO (<code>synthese_qubits.md</code> et <code>estimateur_vram.py</code>) pour ouvrir le fichier ciblé dans le panneau latéral.
+      </figcaption>
+    </figure>
+
+    <h2>5. Fichiers, Voix, Réglages et Espace Personnel</h2>
+
+    <ul>
+      <li>
+        <strong>Import de fichiers (jusqu'à 4 Go) :</strong> cliquez sur <code>+</code> &rarr; <em>Joindre des
+        fichiers</em> (ou glissez-déposez). Une barre de progression en pourcentage suit le transfert en temps réel.
+      </li>
+      <li>
+        <strong>Dictée et appel vocal :</strong> le micro transcrit votre voix en texte ; l'icône d'appel vocal ouvre un
+        échange oral bidirectionnel avec synthèse vocale en français (voix Vivienne).
+      </li>
+      <li>
+        <strong>Réglages personnels (<code>/reglages</code>) :</strong> 9 onglets (<em>Général</em>, <em>Interface</em>,
+        <em>Notifications</em>, <em>Raccourcis</em>, <em>Audio</em>, <em>Contrôle des données</em>,
+        <em>Conversations archivées</em>, <em>Compte</em> avec choix du genre grammatical et avatar ECHO assorti,
+        <em>À propos</em>). Les réglages système globaux restent réservés aux administrateurs dans
+        <em>Administration &rarr; Réglages</em>.
+      </li>
+    </ul>
+
+    <figure class="doc-figure">
+      <img src="images/v6_user_manager_donnees.png" alt="Portail ECHO Espace Personnel présentant les statistiques du compte, l'export tar.xz et la suppression" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        Le portail ECHO Espace Personnel : suivi de l'empreinte du compte, durée de session, export intégral et gestion de la suppression.
+      </figcaption>
+    </figure>
+
+    <p>
+      Votre portail self-service <strong>ECHO Espace Personnel</strong> (accessible à l'adresse <code>my.</code> de
+      votre domaine) complète l'interface de chat pour gérer votre profil et votre mot de passe, révoquer vos sessions
+      actives, télécharger une archive complète <code>.tar.xz</code> de vos données ou supprimer définitivement votre
+      compte.
+    </p>
+
+    <h2>6. Guide Rapide : Situation &rarr; Action &rarr; Résultat</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Situation</th>
+          <th>Ce qu'il faut faire</th>
+          <th>Résultat obtenu</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>La conversation devient très longue (alerte à 80&nbsp;%)</td>
+          <td>Cliquer sur l'action <strong>Poursuivre dans une nouvelle conversation</strong>.</td>
+          <td>Le résumé, les ressources et la mémoire utile sont transférés proprement vers un nouveau fil.</td>
+        </tr>
+        <tr>
+          <td>Vous voulez valider la méthode avant qu'Écho n'agisse</td>
+          <td>Commencer votre message par <code>/plan</code>.</td>
+          <td>Écho rédige un plan et une analyse critique sans modifier aucun fichier tant que vous n'approuvez pas.</td>
+        </tr>
+        <tr>
+          <td>Un sous-agent part dans la mauvaise direction</td>
+          <td>Ouvrir l'onglet <em>Sous-Agents &amp; Outils</em>, cliquer sur <strong>Pause</strong> ou envoyer un message via <code>@nom</code>.</td>
+          <td>L'agent interrompt ou réoriente son travail selon votre consigne.</td>
+        </tr>
+        <tr>
+          <td>Une capture du navigateur doit être gardée après la session</td>
+          <td>Cliquer sur <strong>📌 Conserver</strong> dans l'onglet <em>Navigateur Web</em>.</td>
+          <td>La capture et son contexte sont sanctuarisés contre le nettoyage automatique.</td>
+        </tr>
+        <tr>
+          <td>Vous voulez sauvegarder un code proposé dans le chat</td>
+          <td>Cliquer sur <strong>Envoyer au Codex</strong> sur le bloc de code.</td>
+          <td>Le fichier est enregistré dans l'espace <code>main</code> et ouvert dans <em>Codex &amp; Fichiers</em>.</td>
+        </tr>
+        <tr>
+          <td>Les quotas affichés semblent anciens</td>
+          <td>Double-cliquer sur la jauge de contexte dans la barre de saisie.</td>
+          <td>L'état de session et les compteurs de quotas Google Cloud sont actualisés.</td>
+        </tr>
+        <tr>
+          <td>Vous souhaitez récupérer toutes vos données hors ligne</td>
+          <td>Ouvrir <em>ECHO Espace Personnel &rarr; Mes Données &amp; Compte</em> et lancer l'export <code>.tar.xz</code>.</td>
+          <td>Une archive complète (conversations, fichiers, Codex, mémoire) est générée pour téléchargement.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <details class="tech-spec" id="dossier-ingenierie">
+      <summary>Dossier d'Ingénierie : Architecture ECHO-UI, Stockage, Audio &amp; Portail Personnel</summary>
+      <h4>1. Socle Applicatif ECHO-UI</h4>
+      <ul>
+        <li><strong>Version et licence :</strong> Composant <code>16-docker-echo-webui</code> (<code>UI_VERSION</code> <code>6.18.18.1</code>), fork maintenu d'Open WebUI <code>v0.13.2</code> soumis à la Clause 4 (plafond technique strict <code>ECHO_MAX_USERS = 50</code> dans <code>auths.py</code>).</li>
+        <li><strong>Profil utilisateur et identité :</strong> <code>identity_bridge.py</code> (<code>v6.18.9.1</code>) maintient <code>webui.db</code> comme source de vérité unique du genre grammatical (<code>M</code>/<code>F</code>/<code>X</code>) et synchronise les avatars genrés par défaut (<code>user-echo-homme.png</code>, <code>user-echo-femme.png</code>, <code>user-echo-neutre.png</code>) avec <code>identity.db</code>.</li>
+        <li><strong>Configuration initiale :</strong> <code>01-config/model-config.json</code> et <code>01-config/webui-settings.json</code> épinglent <code>echo_orchestrator</code>, désactivent le compactage natif Open WebUI (<code>ENABLE_CONTEXT_COMPACTION=false</code>) et déclarent le serveur terminal PTY <code>echo-coding-worker</code>.</li>
+      </ul>
+
+      <h4>2. Transferts, Audio In-Process &amp; Portail <code>my.</code></h4>
+      <ul>
+        <li><strong>Stockage et streaming 4 Go :</strong> <code>storage.py</code> (<code>EchoStorageProvider</code>) utilise <code>EchoStagedMultiPartParser</code> avec tampon 4 MiB dans <code>.tmp_uploads</code>, adoption atomique <code>os.replace()</code>, plafond <code>ECHO_MAX_FILE_UPLOAD_SIZE_MB = 4096</code> et court-circuit <code>skip_owui_processing</code> lorsque <code>bypass_embedding_and_retrieval=True</code>.</li>
+        <li><strong>Pont vocal :</strong> <code>14-owui-libs/echo_audio.py</code> (<code>v6.6.14.1</code>) sert <code>/echo/v1/audio/transcriptions</code> (STT via <code>MODEL_ZEPHYR</code>, max 14 Mo, sniffing magic bytes) et <code>/echo/v1/audio/speech</code> (TTS <code>edge-tts</code> sur <code>fr-FR-VivienneMultilingualNeural</code>, vitesse <code>1.0</code>, pitch <code>-2Hz</code>).</li>
+        <li><strong>Portail self-service :</strong> Conteneur <code>27-docker-user-manager</code> (exposé sous <code>my.${ECHO_DOMAIN}</code> via BunkerWeb Forward Auth, port <code>3002</code>), générant les exports <code>.tar.xz</code> en basse priorité (<code>nice 19</code>, <code>ionice</code> idle, <code>XZ_OPT="-T2 -1"</code>) avec TTL 15 minutes et protection contre suppression pendant téléchargement actif.</li>
+      </ul>
+    </details>
+
+    <div class="transition-text">
+      <a href="01_fondations.html">&larr; 1. Fondations &amp; Philosophie</a>
+      &nbsp;&nbsp;
+      <a href="03_exemples_prompts.html">3. Exemples de Prompts &rarr;</a>
+    </div>
+
+    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+  </main>
+
+  <script src="nav.js"></script>
+</body>
+
+</html>
