@@ -3,16 +3,16 @@
 """
 title: ECHO V6 Cognition Router
 author: Wilfried BARNAVON
-version: 6.16.0.1
+version: 6.19.0.1
 description: Routeur FastAPI pour la visualisation cognitive et des sous-agents (/echo/v1/cognition).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.19.0.1: Support de l'affichage hiérarchique Phalange (phx_*, parent_sub_sid, depth) dans les payloads cognition.
+# 6.18.23.1: GC paresseux des sous-agents 'purged', exclusion d'active_count, tri bas de liste et support action 'purge_now'.
 # 6.16.0.1: Remplacement du SSE /{chat_id}/browser-live par le relais WebSocket binaire zéro-parsing /{chat_id}/browser-ws.
 # 6.15.1.1: Alignement du délai de grâce dans GET /{chat_id}/browser-frames sur BROWSER_TRANSIENT_GRACE_SEC (1800.0s).
 # 6.15.0.1: Exposition de http_status dans _read_browser_frames_sync et grâce passive min_age_sec=300.0 dans GET /{chat_id}/browser-frames.
-# 6.13.2.1: Ajout de GET /{chat_id}/browser-frames/{file_id}/clip, POST /{chat_id}/browser-frames/{file_id}/retain, du flux SSE GET /{chat_id}/browser-live et exposition des métadonnées clip_* dans _read_browser_frames_sync.
-# 6.7.7.1: Normalisation des métriques de tranche par tours (slice_turns_used, slice_turns_limit, slice_timeout_sec, total_turns_used) avec miroirs rétrocompatibles slice_calls_* et alignement sur ECHO_SUBAGENT_CHECKPOINT_TURNS/ECHO_SUBAGENT_CHECKPOINT_TIMEOUT_SEC.
 
 from __future__ import annotations
 
@@ -68,6 +68,7 @@ try:
         SUBAGENT_META_PREFIX,
         SUBAGENT_QUEUE_PREFIX,
         EchoSubagentController,
+        cleanup_expired_purged_subagents_sync,
         extract_turn_origin,
         get_cognition_seq,
         is_subagent_running,
@@ -123,6 +124,7 @@ except ImportError:
         SUBAGENT_META_PREFIX,
         SUBAGENT_QUEUE_PREFIX,
         EchoSubagentController,
+        cleanup_expired_purged_subagents_sync,
         extract_turn_origin,
         get_cognition_seq,
         is_subagent_running,
@@ -162,7 +164,7 @@ class SubagentMessagePayload(BaseModel):
 
 
 class SubagentControlRequest(BaseModel):
-    action: Literal["suspend", "resume", "kill", "close"]
+    action: Literal["suspend", "resume", "kill", "close", "purge_now"]
     directive: Optional[str] = None
     target_model_key: Optional[
         Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"]
@@ -176,7 +178,7 @@ class BrowserFrameRetainRequest(BaseModel):
 _DOM_MAP_PREFIX = "Voici les éléments interactifs actuels (Carte DOM) :"
 _NAV_OBJ_RE = re.compile(r"<objective>(.*?)</objective>", re.DOTALL)
 _COUNCIL_SID_RE = re.compile(r"^thread_council_(.+?)_(synthesis|[^_]+(?:_\d+)?)$")
-_SUPERVISOR_SID_RE = re.compile(r"^thread_supervisor_(sup_[a-f0-9]+|.+?)_(critic|consolidator|[^_]+)$")
+_PHALANX_SID_RE = re.compile(r"^thread_phalanx_(.+?)_([^_]+.*)$")
 _QUESTION_RE = re.compile(r"QUESTION:\s*(.+?)$", re.MULTILINE)
 
 
@@ -264,6 +266,7 @@ _CANONICAL_SUBAGENT_STATUSES = frozenset({
     "suspended_pare_alert",
     "killed",
     "error",
+    "purged",
 })
 
 _GROUP_STATUS_PRIORITY = {
@@ -276,11 +279,12 @@ _GROUP_STATUS_PRIORITY = {
     "killed": 3,
     "completed": 2,
     "idle": 1,
+    "purged": 0,
 }
 
 
 def _normalize_subagent_status(raw_status: Any, running_override: bool = False) -> str:
-    """Normalise un statut de sous-agent vers l'un des 9 statuts canoniques."""
+    """Normalise un statut de sous-agent vers l'un des 10 statuts canoniques."""
     if running_override:
         return "running"
     val = str(raw_status or "").strip()
@@ -302,12 +306,8 @@ def _infer_engine_key(sid: str, role_id: str, meta: Dict[str, Any]) -> str:
         return "navigator"
     if sid.startswith("thread_council_"):
         return "council_synthesis" if sid.endswith("_synthesis") else "council"
-    if sid.startswith("thread_supervisor_"):
-        if sid.endswith("_critic"):
-            return "supervisor_critic"
-        if sid.endswith("_consolidator"):
-            return "supervisor_consolidator"
-        return "supervisor"
+    if sid.startswith("thread_phalanx_") or sid.startswith("thread_supervisor_"):
+        return "phalanx"
     if sid.startswith("dlg_img_") or role_id == "image_gen":
         return "image_gen"
     if "deep_research" in sid or role_id == "deep_research":
@@ -336,15 +336,23 @@ def _classify_thread(sid: str, role_id: str, meta: Dict[str, Any]) -> Dict[str, 
         suffix = m.group(2) if m else sid
         fallback_label = (default_label or "Synthèse du Conseil") if engine_key == "council_synthesis" else f"Expert ({suffix})"
         ttype, icon, color = spec.get("thread_type", "council"), spec.get("icon", "🏛️"), spec.get("color", "purple")
-    elif engine_key in ("supervisor", "supervisor_critic", "supervisor_consolidator"):
-        m = _SUPERVISOR_SID_RE.match(sid)
+    elif engine_key == "phalanx":
+        m = _PHALANX_SID_RE.match(sid)
         suffix = m.group(2) if m else sid
-        fallback_label = (
-            (default_label or "Critique") if engine_key == "supervisor_critic"
-            else (default_label or "Consolidation") if engine_key == "supervisor_consolidator"
-            else f"Ouvrier ({suffix})"
-        )
-        ttype, icon, color = spec.get("thread_type", "supervisor"), spec.get("icon", "📋"), spec.get("color", "amber")
+        mrole = str(meta.get("member_role") or "").strip()
+        if mrole == "strategist":
+            role_icon = "🛡️"
+            fallback_label = "Stratège"
+        elif mrole == "captain":
+            role_icon = "⚔️"
+            fallback_label = "Capitaine"
+        elif mrole == "hoplite":
+            role_icon = "🔱"
+            fallback_label = f"Hoplite ({suffix})"
+        else:
+            role_icon = spec.get("icon", "🛡️")
+            fallback_label = f"Hoplite ({suffix})"
+        ttype, icon, color = spec.get("thread_type", "phalanx"), role_icon, spec.get("color", "amber")
     elif engine_key == "deep_research":
         fallback_label = default_label or "Recherche Profonde"
         ttype, icon, color = spec.get("thread_type", "deep_research"), spec.get("icon", "🕵️"), spec.get("color", "cyan")
@@ -376,6 +384,9 @@ def _classify_thread(sid: str, role_id: str, meta: Dict[str, Any]) -> Dict[str, 
         if "is_addressable" in meta
         else bool(spec.get("is_addressable", True))
     )
+    if _normalize_subagent_status(meta.get("status")) == "purged":
+        is_running = False
+        is_addressable = False
     role_order = int(meta.get("role_order") or spec.get("role_order") or 100)
 
     return {
@@ -390,6 +401,9 @@ def _classify_thread(sid: str, role_id: str, meta: Dict[str, Any]) -> Dict[str, 
         "role_order": role_order,
         "has_tool_loop": has_tool_loop,
         "is_addressable": is_addressable,
+        "parent_sid": meta.get("parent_sid"),
+        "depth": int(meta.get("depth") or 1),
+        "can_delegate": bool(meta.get("can_delegate", False)),
     }
 
 
@@ -404,6 +418,7 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
             "queued_messages": {},
             "tool_calls": [],
             "active_count": 0,
+            "purged_count": 0,
             "running_count": 0,
             "total_count": 0,
             "updated_at": 0,
@@ -519,9 +534,10 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
 
     for sid in set(threads.keys()) | set(thread_meta.keys()):
         entry = thread_meta.setdefault(sid, {"sub_sid": sid})
-        running_now = is_subagent_running(chat_id, sid)
+        raw_st = str(entry.get("status") or "").strip()
+        running_now = False if raw_st == "purged" else is_subagent_running(chat_id, sid)
         entry["status"] = _normalize_subagent_status(
-            entry.get("status"), running_override=running_now
+            raw_st, running_override=running_now
         )
         steps_for_sid = threads.get(sid, [])
         role_id_hint = entry.get("role_id") or (
@@ -558,6 +574,8 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
         entry["consecutive_errors"] = int(entry.get("consecutive_errors") or 0)
         if "checkpoint_reason" not in entry:
             entry["checkpoint_reason"] = None
+        entry["purged_at"] = entry.get("purged_at")
+        entry["purge_expires_at"] = entry.get("purge_expires_at")
 
     for sid, steps_list in threads.items():
         meta_entry = thread_meta.get(sid, {})
@@ -629,7 +647,7 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
         raw_group_id = str(meta_entry.get("group_id") or "").strip()
         engine_val = str(meta_entry.get("engine") or "")
         m_ccl = _COUNCIL_SID_RE.match(sid)
-        m_sup = _SUPERVISOR_SID_RE.match(sid)
+        m_phx = _PHALANX_SID_RE.match(sid)
 
         if engine_val in ("council", "council_synthesis") or m_ccl:
             raw_gid = raw_group_id or (m_ccl.group(1) if m_ccl else sid)
@@ -640,14 +658,14 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
             glabel = f"Table Ronde ({gid_display})"
             gicon = "🏛️"
             gcolor = "purple"
-        elif engine_val in ("supervisor", "supervisor_critic", "supervisor_consolidator") or m_sup:
-            raw_gid = raw_group_id or (m_sup.group(1) if m_sup else sid)
-            gid = raw_gid if raw_gid.startswith("sup_") else f"sup_{raw_gid}"
-            display_gid = raw_gid[4:] if raw_gid.startswith("sup_") else raw_gid
+        elif engine_val == "phalanx" or m_phx or str(raw_group_id).startswith("phx_"):
+            raw_gid = raw_group_id or (m_phx.group(1) if m_phx else sid)
+            gid = raw_gid if raw_gid.startswith("phx_") else f"phx_{raw_gid}"
+            display_gid = raw_gid[4:] if raw_gid.startswith("phx_") else raw_gid
             gid_display = display_gid if len(display_gid) <= 28 else f"{display_gid[:25]}..."
-            gtype = "supervisor"
-            glabel = f"Supervision ({gid_display})"
-            gicon = "📋"
+            gtype = "phalanx"
+            glabel = f"Phalange ({gid_display})"
+            gicon = "🛡️"
             gcolor = "amber"
         else:
             gid = sid
@@ -664,24 +682,35 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
                 "label": glabel,
                 "icon": gicon,
                 "color": gcolor,
-                "group_status": "idle",
+                "group_status": "",
                 "is_running": False,
                 "updated_at": 0.0,
+                "purge_expires_at": None,
                 "threads": [],
             },
         )
         grp["threads"].append(sid)
         sid_status = str(meta_entry.get("status") or "idle")
         if _GROUP_STATUS_PRIORITY.get(sid_status, 0) > _GROUP_STATUS_PRIORITY.get(
-            grp["group_status"], 0
+            grp["group_status"], -1
         ):
             grp["group_status"] = sid_status
+        exp_ts = meta_entry.get("purge_expires_at")
+        if exp_ts is not None:
+            cur_exp = grp.get("purge_expires_at")
+            grp["purge_expires_at"] = (
+                float(exp_ts) if cur_exp is None else min(float(cur_exp), float(exp_ts))
+            )
         if sid_running:
             grp["is_running"] = True
         if sid_updated > grp["updated_at"]:
             grp["updated_at"] = sid_updated
 
     for grp in groups_map.values():
+        if not grp["group_status"]:
+            grp["group_status"] = "idle"
+        if grp["group_status"] != "purged":
+            grp["purge_expires_at"] = None
         grp["threads"].sort(
             key=lambda s: (
                 int(thread_meta.get(s, {}).get("role_order") or 100),
@@ -692,7 +721,11 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
 
     grouped_threads = sorted(
         groups_map.values(),
-        key=lambda g: (1 if g["is_running"] else 0, g["updated_at"]),
+        key=lambda g: (
+            0 if g["group_status"] == "purged" else 1,
+            1 if g["is_running"] else 0,
+            g["updated_at"],
+        ),
         reverse=True,
     )
 
@@ -701,7 +734,13 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
         for m in thread_meta.values()
         if isinstance(m, dict) and m.get("status") == "running"
     )
+    purged_count = sum(
+        1
+        for m in thread_meta.values()
+        if isinstance(m, dict) and m.get("status") == "purged"
+    )
     total_count = len(thread_meta)
+    active_count = max(0, total_count - purged_count)
 
     return {
         "chat_id": chat_id,
@@ -710,7 +749,8 @@ def _read_cognition_snapshot(db_path: str, chat_id: str) -> Dict[str, Any]:
         "grouped_threads": grouped_threads,
         "queued_messages": queued_messages,
         "tool_calls": tool_calls,
-        "active_count": total_count,
+        "active_count": active_count,
+        "purged_count": purged_count,
         "running_count": running_count,
         "total_count": total_count,
         "updated_at": max_ts,
@@ -756,6 +796,7 @@ async def get_cognition_snapshot(
     safe_uid = sanitize_echo_id(user.id)
     safe_cid = sanitize_echo_id(chat_id)
     db_path = get_echo_session_path(safe_uid, safe_cid, "db")
+    await asyncio.to_thread(cleanup_expired_purged_subagents_sync, user.id, chat_id)
     snapshot = await asyncio.to_thread(_read_cognition_snapshot, db_path, chat_id)
     return JSONResponse(content=snapshot)
 
@@ -772,6 +813,7 @@ async def get_cognition_stream(
     db_path = get_echo_session_path(safe_uid, safe_cid, "db")
 
     async def event_generator():
+        await asyncio.to_thread(cleanup_expired_purged_subagents_sync, user.id, chat_id)
         current_snapshot = await asyncio.to_thread(_read_cognition_snapshot, db_path, chat_id)
         last_seen_sig = await asyncio.to_thread(_get_cognition_state_sig, db_path, chat_id)
         yield f"data: {json.dumps(current_snapshot).decode('utf-8')}\n\n"
@@ -869,12 +911,16 @@ async def post_subagent_control(
     payload: SubagentControlRequest,
     user=Depends(get_echo_verified_user),
 ):
-    """Pilote le cycle de vie d'un sous-agent ou groupe (suspend, resume, kill, close)."""
+    """Pilote le cycle de vie d'un sous-agent ou groupe (suspend, resume, kill, close, purge_now)."""
     safe_uid, safe_cid = await _validate_cognition_session(chat_id, user.id)
     sm = EchoStateManager(user_id=safe_uid, chat_id=safe_cid)
     target_key = _normalize_control_target(sub_sid)
     affected_sids = await asyncio.to_thread(
-        resolve_target_sub_sids, sm, chat_id, [target_key]
+        resolve_target_sub_sids,
+        sm,
+        chat_id,
+        [target_key],
+        include_purged=(payload.action == "purge_now"),
     )
     if not affected_sids:
         raise HTTPException(status_code=404, detail="Sous-agent introuvable.")

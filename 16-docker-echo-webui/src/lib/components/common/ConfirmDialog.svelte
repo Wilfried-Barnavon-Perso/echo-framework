@@ -34,9 +34,53 @@
 	let _inputValue = inputValue;
 
 	export let show = false;
+	export let timeoutMs: number | null = null;
 
-	$: if (show) {
+	let wasOpen = false;
+	let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+	let countdownHandle: ReturnType<typeof setInterval> | null = null;
+	let remainingSeconds: number | null = null;
+
+	const clearAutoCancel = () => {
+		if (timeoutHandle) {
+			clearTimeout(timeoutHandle);
+			timeoutHandle = null;
+		}
+		if (countdownHandle) {
+			clearInterval(countdownHandle);
+			countdownHandle = null;
+		}
+		remainingSeconds = null;
+	};
+
+	const formatCountdown = (sec: number): string => {
+		if (sec >= 60) {
+			const m = Math.floor(sec / 60);
+			const s = sec % 60;
+			return `${m}:${String(s).padStart(2, '0')}`;
+		}
+		return `${sec}s`;
+	};
+
+	$: if (show && !wasOpen) {
+		wasOpen = true;
 		init();
+		clearAutoCancel();
+		if (typeof timeoutMs === 'number' && timeoutMs > 0) {
+			remainingSeconds = Math.ceil(timeoutMs / 1000);
+			countdownHandle = setInterval(() => {
+				remainingSeconds =
+					remainingSeconds !== null && remainingSeconds > 0 ? remainingSeconds - 1 : 0;
+			}, 1000);
+			timeoutHandle = setTimeout(() => {
+				cancelHandler();
+			}, timeoutMs);
+		}
+	}
+
+	$: if (!show && wasOpen) {
+		clearAutoCancel();
+		wasOpen = false;
 	}
 
 	let modalElement = null;
@@ -92,6 +136,7 @@
 	};
 
 	const confirmHandler = async () => {
+		clearAutoCancel();
 		show = false;
 		await tick();
 		await onConfirm();
@@ -99,6 +144,7 @@
 	};
 
 	const cancelHandler = () => {
+		clearAutoCancel();
 		show = false;
 		dispatch('cancel');
 	};
@@ -130,6 +176,7 @@
 	}
 
 	onDestroy(() => {
+		clearAutoCancel();
 		show = false;
 		restoreOverflow();
 		window.removeEventListener('keydown', handleKeyDown);
@@ -178,7 +225,11 @@
 					<div class=" text-sm text-gray-500 flex-1">
 						{#if message !== ''}
 							{@const html = DOMPurify.sanitize(marked.parse(message))}
-							{@html html}
+							<div
+								class="max-h-[55vh] overflow-y-auto pr-1 [&_pre]:mt-2 [&_pre]:max-h-[38vh] [&_pre]:overflow-auto [&_pre]:rounded-lg [&_pre]:bg-gray-100 dark:[&_pre]:bg-gray-900 [&_pre]:p-2.5 [&_pre]:font-mono [&_pre]:text-xs [&_pre]:text-gray-800 dark:[&_pre]:text-gray-200 [&_code]:rounded [&_code]:bg-gray-100 dark:[&_code]:bg-gray-900 [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-xs [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:my-0.5"
+							>
+								{@html html}
+							</div>
 						{:else}
 							{$i18n.t('This action cannot be undone. Do you wish to continue?')}
 						{/if}
@@ -231,7 +282,9 @@
 						>
 							{action === 'confirm'
 								? (confirmLabel ?? $i18n.t('Confirm'))
-								: (cancelLabel ?? $i18n.t('Cancel'))}
+								: remainingSeconds !== null
+									? `${cancelLabel ?? $i18n.t('Cancel')} (${formatCountdown(remainingSeconds)})`
+									: (cancelLabel ?? $i18n.t('Cancel'))}
 						</button>
 					{/each}
 				</div>

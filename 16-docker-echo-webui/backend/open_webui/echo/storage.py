@@ -3,17 +3,17 @@
 """
 title: ECHO V6 Unified Vault Storage Provider
 author: Wilfried BARNAVON
-version: 6.7.16.1
-description: Écriture directe des uploads dans l'arborescence ECHO (/users/{uid}/chats/{cid}/files
-             ou /users/{uid}/files) et indexation immédiate dans echo_resources.
+version: 6.18.23.1
+description: Écriture directe des uploads dans /users/{uid}/files/{filename} (avec lien symbolique
+             dans /users/{uid}/chats/{cid}/files/{filename} si chat_id) et indexation dans echo_resources.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.23.1: Inversion du stockage vers /users/{uid}/files/{filename} (maître physique), symlink de session /users/{uid}/chats/{cid}/files/{filename} -> primary_path et suppression de toute écriture/symlink dans UPLOAD_DIR.
 # 6.7.16.1: Nettoyage multi-sessions (chats/*/session.db existants) et suppression des points Qdrant (source_id) dans EchoStorageProvider.delete_file.
 # 6.7.9.1: Ajout de EchoStagedMultiPartParser / parse_staged_multipart (staging nommé tamponné 4 MiB) et adoption os.replace() O(1) avec fallback EXDEV et préservation ENAMETOOLONG dans upload_file_streamed.
 # 6.7.8.1: Streaming par blocs de 4 MiB et calcul SHA-256 optionnel (compute_hash=False par défaut) dans upload_file_streamed.
 # 6.5.3.1: Ajout de upload_file_streamed (streaming zéro-RAM par blocs de 1 MiB jusqu'à 4 Go avec hachage SHA-256 à la volée).
-# 6.1.0.1: Création de EchoStorageProvider unifiant l'écriture dans les Vaults ECHO et echo_resources.
 
 from __future__ import annotations
 
@@ -109,10 +109,10 @@ def _resolve_vault_context(
         or "application/octet-stream"
     )
 
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    upload_mirror_path = os.path.join(UPLOAD_DIR, filename)
-
     if not raw_uid:
+        fallback_dir = get_echo_global_path("system", "files")
+        os.makedirs(fallback_dir, exist_ok=True)
+        fallback_path = os.path.join(fallback_dir, filename)
         return {
             "raw_uid": "",
             "safe_uid": "",
@@ -122,9 +122,9 @@ def _resolve_vault_context(
             "file_id": file_id,
             "orig_name": orig_name,
             "mime": mime,
-            "primary_path": upload_mirror_path,
+            "primary_path": fallback_path,
             "global_file_path": None,
-            "upload_mirror_path": upload_mirror_path,
+            "chat_file_path": None,
             "session_db_path": None,
         }
 
@@ -138,6 +138,7 @@ def _resolve_vault_context(
     global_files_dir = get_echo_global_path(safe_uid, "files")
     os.makedirs(global_files_dir, exist_ok=True)
     global_file_path = os.path.join(global_files_dir, filename)
+    primary_path = global_file_path
 
     if raw_cid:
         safe_cid = sanitize_echo_id(raw_cid)
@@ -145,11 +146,11 @@ def _resolve_vault_context(
             safe_uid, safe_cid, "files"
         )
         os.makedirs(session_files_dir, exist_ok=True)
-        primary_path = os.path.join(session_files_dir, filename)
+        chat_file_path = os.path.join(session_files_dir, filename)
         session_db_path = get_echo_db_path(safe_uid, safe_cid)
     else:
         safe_cid = ""
-        primary_path = global_file_path
+        chat_file_path = None
         session_db_path = None
 
     return {
@@ -163,7 +164,7 @@ def _resolve_vault_context(
         "mime": mime,
         "primary_path": primary_path,
         "global_file_path": global_file_path,
-        "upload_mirror_path": upload_mirror_path,
+        "chat_file_path": chat_file_path,
         "session_db_path": session_db_path,
     }
 
@@ -185,8 +186,7 @@ def _finalize_vault_mirrors_and_index(ctx: Dict[str, Any]) -> None:
     primary_path = ctx["primary_path"]
 
     if ctx.get("raw_cid"):
-        _link_or_copy(primary_path, ctx["global_file_path"])
-        _link_or_copy(primary_path, ctx["upload_mirror_path"])
+        _link_or_copy(primary_path, ctx["chat_file_path"])
 
         ensure_db(ctx["session_db_path"], DB_KIND_SESSION)
         sm_session = EchoStateManager(
@@ -198,11 +198,9 @@ def _finalize_vault_mirrors_and_index(ctx: Dict[str, Any]) -> None:
             resource_type=res_type,
             status=pending_status,
             mime=ctx["mime"],
-            storage_path=primary_path,
+            storage_path=ctx["chat_file_path"],
             message_id=ctx["raw_mid"],
         )
-    else:
-        _link_or_copy(primary_path, ctx["upload_mirror_path"])
 
     # Indexation systématique dans le registre global (identity.db)
     try:
@@ -387,10 +385,10 @@ async def parse_staged_multipart(
 class EchoStorageProvider:
     """
     Fournisseur de stockage souverain ECHO V6 :
-    - Avec chat_id : écrit dans /app/backend/data/users/{uid}/chats/{cid}/files/{filename},
-      lie dans /users/{uid}/files/{filename} et UPLOAD_DIR, et indexe dans session.db + identity.db (echo_resources).
-    - Sans chat_id : écrit dans /app/backend/data/users/{uid}/files/{filename},
-      lie dans UPLOAD_DIR, et indexe dans identity.db (echo_resources).
+    - Avec chat_id : écrit dans /app/backend/data/users/{uid}/files/{filename},
+      lie dans /users/{uid}/chats/{cid}/files/{filename}, et indexe dans session.db + identity.db (echo_resources).
+    - Sans chat_id : écrit dans /app/backend/data/users/{uid}/files/{filename}
+      et indexe dans identity.db (echo_resources).
     """
 
     @staticmethod

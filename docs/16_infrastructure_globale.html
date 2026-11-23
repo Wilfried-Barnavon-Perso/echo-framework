@@ -129,7 +129,7 @@ flowchart LR
     <details class="tech-spec" id="dossier-ingenierie">
       <summary>Dossier d'Ingénierie : Auth Manager, User Manager, Admin Manager, BunkerWeb, Download Broker &amp; Pont Audio</summary>
 
-      <h3>1. Fournisseur d'Identité (<code>24-docker-echo-auth-manager/auth_server.py</code> v6.18.5.1)</h3>
+      <h3>1. Fournisseur d'Identité (<code>24-docker-echo-auth-manager/auth_server.py</code> v6.18.23.1)</h3>
       <ul>
         <li><strong>Base &amp; Hachage</strong> : FastAPI adossé à <code>auth.db</code> (SQLite WAL sur volume <code>echo-auth-data</code>, tables <code>users</code> incluant <code>gender TEXT DEFAULT 'X'</code> et <code>sessions</code>). Mots de passe et réponses de sécurité hachés en <strong>Argon2id</strong> (<code>passlib.hash.argon2</code>) ; MFA <strong>TOTP</strong> via <code>pyotp</code>.</li>
         <li><strong>Politique Dual-Tier &amp; Anti-Bruteforce</strong> : Sessions non fiables bornées à <code>UNTRUSTED_VALID_HOURS = (1, 2, 4, 8, 12, 24)</code> ; terminaux de confiance explicites bornés à <code>TRUSTED_VALID_HOURS = (168, 720, 2160, 4380, 8760, 0)</code> avec cookie permanent <code>COOKIE_ETERNAL_MAX_AGE = 315360000</code> (10 ans). Délai inter-essais paramétrable (<code>LOGIN_RETRY_DELAY_VALID_SEC = (0, 5, 10, 20)</code>) via SQLite et cache LRU <code>_ip_last_attempt</code>, et verrouillage des comptes non enrôlés (<code>UNENROLLED_LOCKOUT_VALID_MIN = (-1, 1, 3, 10, 60, 180, 1440)</code>).</li>
@@ -138,15 +138,15 @@ flowchart LR
 
       <h3>2. Portail Utilisateur Self-Service (<code>27-docker-user-manager/</code>)</h3>
       <ul>
-        <li><strong>Architecture &amp; Exposition</strong> : <code>server.py</code> (v5.236.5.1, Flask threadé, port interne <code>3002</code>, exposé sous <code>https://my.${ECHO_DOMAIN}</code> via <code>bunkerweb-stack.yml</code> sans exposition sur l'hôte et sans montage du socket Docker). Couches <code>core/config.py</code> (v6.5.3.1), <code>core/security.py</code> (v6.6.3.1 : <code>check_user_sso_auth</code> vérifiant <code>X-Echo-Sso-Secret</code> en temps constant via <code>hmac.compare_digest</code>), <code>routes/routes.py</code> (v6.6.3.1) et <code>templates/templates.py</code> (v6.6.3.1).</li>
+        <li><strong>Architecture &amp; Exposition</strong> : <code>server.py</code> (v5.236.5.1, Flask threadé, port interne <code>3002</code>, exposé sous <code>https://my.${ECHO_DOMAIN}</code> via <code>bunkerweb-stack.yml</code> sans exposition sur l'hôte et sans montage du socket Docker). Couches <code>core/config.py</code> (v6.5.3.1), <code>core/security.py</code> (v6.6.3.1 : <code>check_user_sso_auth</code> vérifiant <code>X-Echo-Sso-Secret</code> en temps constant via <code>hmac.compare_digest</code>), <code>routes/routes.py</code> (v6.18.23.1) et <code>templates/templates.py</code> (v6.6.3.1).</li>
         <li><strong>Export Souverain &amp; Suppression Option B (<code>services/export_service.py</code> v5.237.20.1)</strong> : Génère de façon asynchrone une archive <code>.tar.xz</code> à priorité minimale (<code>nice 19</code>, <code>ionice</code> classe idle, <code>XZ_OPT="-T2 -1"</code>) incluant chats, fichiers, bases SQLite et exports Qdrant, avec suivi de progression 0-100 % et auto-destruction après téléchargement réussi ou expiration du TTL de <strong>15 minutes</strong>. La suppression autonome (<code>/action/account/delete</code>, mot de passe + TOTP) purge <code>auth.db</code> et <code>webui.db</code> pour déclencher la purge multi-volumes nocturne (Option B).</li>
       </ul>
 
-      <h3>3. Console d'Administration &amp; Maintenance (<code>20-docker-admin-manager/</code> v6.18.5.1)</h3>
+      <h3>3. Console d'Administration &amp; Maintenance (<code>20-docker-admin-manager/</code> : <code>core/config.py</code> v6.20.4.1, <code>core/security.py</code> v6.18.23.1, <code>routes/routes.py</code> v6.20.4.1)</h3>
       <ul>
         <li><strong>Supervision &amp; Quotas</strong> : Serveur Flask sur port <code>3001</code> (vérification SSO, montage contrôlé du socket Docker pour métriques temps réel et pilotage BunkerWeb). Applique le plafond strict <code>MAX_ECHO_USERS = 50</code> (Clause 4 Open WebUI) et synchronise les comptes et rôles entre <code>auth.db</code>, <code>webui.db</code> et <code>identity.db</code>.</li>
-        <li><strong>Élagage Sémantique Nocturne (<code>services/semantic_pruning.py</code> v6.18.3.1)</strong> : Politique <strong>SSoT Fail-Closed à 3 verrous cumulatifs</strong> sur <code>webui.db</code> (Wait-for-it post-backup vérifiant <code>user</code> et <code>chat</code>, API Safeguard ECHO-UI sur <code>/api/v1/users/</code>, et <code>PRAGMA quick_check(1)</code> + présence de <code>admin@echo.local</code>) : abandon immédiat sans suppression ni <code>VACUUM</code> si la base SSoT est indisponible ou verrouillée. Orchestre également la purge des captures/clips <code>browserviews</code> via <code>cleanup_expired_browserviews_sync</code>, le nettoyage des branches mortes (<code>gc_session_db</code>), la réconciliation de 5 volumes et les <code>VACUUM</code> SQLite.</li>
-        <li><strong>Consolidation &amp; Sauvegardes</strong> : <code>memory_consolidation.py</code> (v5.226.18.0) réalise un clustering greedy et une consolidation centroïde L2-normalisée sur Qdrant (Lvl1 &rarr; Lvl2). <code>maintenance_backup.py</code> (v6.18.0.1) produit les archives <code>tar.xz</code> multi-volumes (incluant checkpoint WAL sur <code>auth.db</code>, <code>.secrets</code> et <code>.env</code>) et les externalise via SFTP ou Rclone sous contrôle APScheduler.</li>
+        <li><strong>Élagage Sémantique Nocturne (<code>services/semantic_pruning.py</code> v6.20.4.1)</strong> : Politique <strong>SSoT Fail-Closed à 3 verrous cumulatifs</strong> sur <code>webui.db</code> (Wait-for-it post-backup vérifiant <code>user</code> et <code>chat</code>, API Safeguard ECHO-UI sur <code>/api/v1/users/</code>, et <code>PRAGMA quick_check(1)</code> + présence de <code>admin@echo.local</code>) : abandon immédiat sans suppression ni <code>VACUUM</code> si la base SSoT est indisponible ou verrouillée. Orchestre également la purge des captures/clips <code>browserviews</code> via <code>cleanup_expired_browserviews_sync</code>, le nettoyage des branches mortes (<code>gc_session_db</code>), la réconciliation de 5 volumes et les <code>VACUUM</code> SQLite.</li>
+        <li><strong>Consolidation &amp; Sauvegardes</strong> : <code>memory_consolidation.py</code> (v5.226.18.0) réalise un clustering greedy et une consolidation centroïde L2-normalisée sur Qdrant (Lvl1 &rarr; Lvl2). <code>maintenance_backup.py</code> (v6.18.23.1) produit les archives <code>tar.xz</code> multi-volumes (incluant checkpoint WAL sur <code>auth.db</code>, <code>.secrets</code> et <code>.env</code>) et les externalise via SFTP ou Rclone sous contrôle APScheduler.</li>
       </ul>
 
       <h3>4. Reverse-Proxy WAF (<code>01-config/bunkerweb-stack.yml</code> v6.5.3.1)</h3>
@@ -168,7 +168,7 @@ flowchart LR
       <a href="17_edge_inference.html">17. Inférence Locale (Edge) &rarr;</a>
     </div>
 
-    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+    <footer>ECHO Framework - Version 6.21.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
   </main>
 
   <script src="nav.js"></script>

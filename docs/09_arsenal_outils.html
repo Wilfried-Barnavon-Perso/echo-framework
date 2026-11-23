@@ -4,7 +4,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Présentation générale de l'arsenal des 106 outils d'ECHO v6 : domaines fonctionnels, exécution parallèle, gestion des sorties volumineuses et garde-fous.">
+  <meta name="description"
+    content="Présentation générale de l'arsenal des 106 outils d'ECHO v6 : domaines fonctionnels, exécution parallèle, gestion des sorties volumineuses et garde-fous.">
   <title>ECHO v6 - 9. L'Arsenal des Outils</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -20,7 +21,8 @@
       <p>
         Un modèle de langage seul ne peut ni vérifier une page Web publiée ce matin, ni exécuter un calcul Python exact,
         ni consulter votre agenda ou vos fichiers locaux. L'Arsenal d'ECHO met à disposition <strong>106 actions
-        spécialisées</strong> réparties en <strong>19 boîtes d'outils</strong>, afin que l'assistant agisse sur des faits
+          spécialisées</strong> réparties en <strong>19 boîtes d'outils</strong>, afin que l'assistant agisse sur des
+        faits
         vérifiés plutôt que de supposer une réponse.
       </p>
     </div>
@@ -33,7 +35,8 @@
     </p>
 
     <figure class="doc-figure">
-      <img src="images/v6_menu_outils_filtres.png" alt="Menu de la zone de saisie ECHO-UI affichant les options d'outils et de filtres" class="doc-screenshot">
+      <img src="images/v6_menu_outils_filtres.png"
+        alt="Menu de la zone de saisie ECHO-UI affichant les options d'outils et de filtres" class="doc-screenshot">
       <p class="doc-caption">Accès aux contrôles et filtres depuis le menu de la barre de saisie dans ECHO-UI.</p>
     </figure>
 
@@ -56,32 +59,42 @@
       <tbody>
         <tr>
           <td>Organiser un projet complexe ou lancer un calcul / une application</td>
-          <td>Planification structurée, tâches suivies, exécution isolée de code, accès serveur distant, agenda et automatisations</td>
-          <td>Plan validé avant action, exécution sécurisée, vue interactive dans l'onglet <strong>Applications</strong>, tâches planifiées</td>
+          <td>Planification structurée, tâches suivies, exécution isolée de code, accès serveur distant, agenda et
+            automatisations</td>
+          <td>Plan validé avant action, exécution sécurisée, vue interactive dans l'onglet
+            <strong>Applications</strong>, tâches planifiées</td>
           <td><a href="10_planification_execution.html">10. Planification &amp; Exécution</a></td>
         </tr>
         <tr>
           <td>Rechercher une information récente, explorer un site ou analyser un média lourd</td>
-          <td>Méta-recherche souveraine, recherche approfondie, navigateur autonome, lecture ciblée de vidéos/audio/PDF, cartes</td>
-          <td>Sources vérifiées, navigation visuelle en direct et clips d'action dans <strong>Navigateur Web</strong>, résumés horodatés</td>
+          <td>Méta-recherche souveraine, recherche approfondie, navigateur autonome, lecture ciblée de vidéos/audio/PDF,
+            cartes</td>
+          <td>Sources vérifiées, navigation visuelle en direct et clips d'action dans <strong>Navigateur Web</strong>,
+            résumés horodatés</td>
           <td><a href="11_recherche_navigation.html">11. Recherche &amp; Navigation</a></td>
         </tr>
         <tr>
           <td>Créer des schémas, générer des images et gérer des documents versionnés</td>
-          <td>Visualisations interactives (17 moteurs), génération et retouche d'images, gestionnaire de fichiers versionné</td>
-          <td>Graphiques interactifs, images retouchées par itérations, édition et historique dans <strong>Codex &amp; Fichiers</strong></td>
+          <td>Visualisations interactives (17 moteurs), génération et retouche d'images, gestionnaire de fichiers
+            versionné</td>
+          <td>Graphiques interactifs, images retouchées par itérations, édition et historique dans <strong>Codex &amp;
+              Fichiers</strong></td>
           <td><a href="12_edition_visuelle.html">12. Édition &amp; Visuel</a></td>
         </tr>
         <tr>
           <td>Retrouver des échanges passés, mémoriser des règles ou exporter une session</td>
-          <td>Mémoire à long terme hiérarchisée, recherche sémantique dans les sessions, actions d'export et de transfert</td>
-          <td>Préférences durables, recherche par date ou par sens, migration vers une nouvelle conversation ou export PDF</td>
+          <td>Mémoire à long terme hiérarchisée, recherche sémantique dans les sessions, actions d'export et de
+            transfert</td>
+          <td>Préférences durables, recherche par date ou par sens, migration vers une nouvelle conversation ou export
+            PDF</td>
           <td><a href="13_memoire_actions.html">13. Mémoire &amp; Actions</a></td>
         </tr>
         <tr>
           <td>Déléguer des travaux complexes ou connecter des services externes</td>
-          <td>Sous-agents supervisés, conseils multi-experts, workflows automatisés, connecteurs cloud, coffre de secrets</td>
-          <td>Suivi en direct dans <strong>Sous-Agents &amp; Outils</strong>, gestion sécurisée des accès dans <strong>Coffre &amp; Identité</strong></td>
+          <td>Sous-agents supervisés, conseils multi-experts, workflows automatisés, connecteurs cloud, coffre de
+            secrets</td>
+          <td>Suivi en direct dans <strong>Sous-Agents &amp; Outils</strong>, gestion sécurisée des accès dans
+            <strong>Coffre &amp; Identité</strong></td>
           <td><a href="14_agents_automatisation.html">14. Agents &amp; Automatisation</a></td>
         </tr>
       </tbody>
@@ -110,7 +123,8 @@
         <h3>Parallélisme borné intra-tour</h3>
         <p>
           Pour éviter les boucles séquentielles lentes, l'assistant peut regrouper jusqu'à <strong>5 appels
-          d'outils indépendants</strong> dans le même tour (par exemple lire plusieurs documents ou interroger plusieurs
+            d'outils indépendants</strong> dans le même tour (par exemple lire plusieurs documents ou interroger
+          plusieurs
           services simultanément).
         </p>
       </div>
@@ -138,15 +152,19 @@
     </div>
 
     <details class="tech-spec" id="dossier-ingenierie">
-      <summary>Dossier d'Ingénierie : Cartographie des 19 Modules (106 Outils), Décorateur <code>@echo_tool</code> &amp; Régimes de Délestage</summary>
+      <summary>Dossier d'Ingénierie : Cartographie des 19 Modules (106 Outils), Décorateur <code>@echo_tool</code> &amp;
+        Régimes de Délestage</summary>
 
-      <h3>1. Séparation Interface / Connaissance (<code>12-owui-tools/</code> &amp; <code>14-owui-libs/tool_guides/</code>)</h3>
+      <h3>1. Séparation Interface / Connaissance (<code>12-owui-tools/</code> &amp;
+        <code>14-owui-libs/tool_guides/</code>)</h3>
       <p>
         Les <strong>106 méthodes publiques</strong> réparties dans les <strong>19 modules Python</strong> de
         <code>12-owui-tools/</code> exposent des docstrings réduites à une phrase fonctionnelle pure, diminuant
-        d'environ <strong>80 %</strong> l'empreinte du schéma OpenAPI envoyé au LLM. La documentation détaillée (contrats
+        d'environ <strong>80 %</strong> l'empreinte du schéma OpenAPI envoyé au LLM. La documentation détaillée
+        (contrats
         d'arguments, prérequis, gestion d'erreurs et guide ECHO-UI) est externalisée dans les <strong>11 manuels
-        Markdown</strong> de <code>14-owui-libs/tool_guides/*.md</code>, indexés par <code>EchoToolGuidesManager</code>
+          Markdown</strong> de <code>14-owui-libs/tool_guides/*.md</code>, indexés par
+        <code>EchoToolGuidesManager</code>
         (<code>echo_tool_guides.py</code> v6.17.2.1, invalidation par <code>st_mtime_ns</code>) et consultés par
         <code>tool_advisor</code> (<code>MODEL_APOLLO</code>, <code>override_thinking="medium"</code>).
       </p>
@@ -170,7 +188,9 @@
           <tr>
             <td><code>agent_orchestration_tool.py</code></td>
             <td>7</td>
-            <td><code>consult_council</code>, <code>consult_supervised_workers</code>, <code>forge_skill</code>, <code>list_skills</code>, <code>read_skill</code>, <code>search_skill</code>, <code>delete_user_skill</code></td>
+            <td><code>consult_council</code>, <code>consult_phalanx</code>, <code>forge_skill</code>,
+              <code>list_skills</code>, <code>read_skill</code>, <code>search_skill</code>,
+              <code>delete_user_skill</code></td>
             <td><code>agent_orchestration.md</code></td>
           </tr>
           <tr>
@@ -182,19 +202,23 @@
           <tr>
             <td><code>strategic_planner.py</code></td>
             <td>8</td>
-            <td><code>build_plan</code>, <code>read_plan</code>, <code>update_plan</code>, <code>update_tasks</code>, <code>process_plan</code>, <code>close_plan</code>, <code>delete_plan</code>, <code>analyze_plan</code></td>
+            <td><code>build_plan</code>, <code>read_plan</code>, <code>update_plan</code>, <code>update_tasks</code>,
+              <code>process_plan</code>, <code>close_plan</code>, <code>delete_plan</code>, <code>analyze_plan</code>
+            </td>
             <td><code>strategic_planner.md</code></td>
           </tr>
           <tr>
             <td><code>code_executor_tool.py</code></td>
             <td>4</td>
-            <td><code>code_executor</code>, <code>control_sandbox_execution</code>, <code>kill_sandbox_execution</code>, <code>ssh_executor</code></td>
+            <td><code>code_executor</code>, <code>control_sandbox_execution</code>, <code>kill_sandbox_execution</code>,
+              <code>ssh_executor</code></td>
             <td><code>code_and_files.md</code></td>
           </tr>
           <tr>
             <td><code>file_content_explorer.py</code></td>
             <td>6</td>
-            <td><code>read_raw_file_content</code>, <code>semantic_probe</code>, <code>read_multimedia_file</code>, <code>show_image_to_user</code>, <code>get_file_metadata</code>, <code>calculate_file_hashes</code></td>
+            <td><code>read_raw_file_content</code>, <code>semantic_probe</code>, <code>read_multimedia_file</code>,
+              <code>show_image_to_user</code>, <code>get_file_metadata</code>, <code>calculate_file_hashes</code></td>
             <td><code>code_and_files.md</code></td>
           </tr>
           <tr>
@@ -206,7 +230,11 @@
           <tr>
             <td><code>echo_codex_tool.py</code></td>
             <td>14</td>
-            <td><code>create_codex</code>, <code>read_codex</code>, <code>edit_codex</code>, <code>delete_codex</code>, <code>create_codex_directory</code>, <code>move_codex</code>, <code>transfer_codex</code>, <code>list_codex</code>, <code>list_other_chats_ids</code>, <code>search_codex</code>, <code>history_codex</code>, <code>restore_codex</code>, <code>summarize_codex</code>, <code>open_codex_ui</code></td>
+            <td><code>create_codex</code>, <code>read_codex</code>, <code>edit_codex</code>, <code>delete_codex</code>,
+              <code>create_codex_directory</code>, <code>move_codex</code>, <code>transfer_codex</code>,
+              <code>list_codex</code>, <code>list_other_chats_ids</code>, <code>search_codex</code>,
+              <code>history_codex</code>, <code>restore_codex</code>, <code>summarize_codex</code>,
+              <code>open_codex_ui</code></td>
             <td><code>codex_management.md</code></td>
           </tr>
           <tr>
@@ -218,7 +246,9 @@
           <tr>
             <td><code>navigation_engine_tool.py</code></td>
             <td>7</td>
-            <td><code>delegate_web_browsing</code>, <code>analyze_web_page</code>, <code>archive_web_page</code>, <code>web_browse_reset</code>, <code>get_browser_frames_history</code>, <code>retain_browser_frame</code>, <code>open_browser_ui</code></td>
+            <td><code>delegate_web_browsing</code>, <code>analyze_web_page</code>, <code>archive_web_page</code>,
+              <code>web_browse_reset</code>, <code>get_browser_frames_history</code>, <code>retain_browser_frame</code>,
+              <code>open_browser_ui</code></td>
             <td><code>web_search_and_browsing.md</code></td>
           </tr>
           <tr>
@@ -230,7 +260,8 @@
           <tr>
             <td><code>universal_visual_generator.py</code></td>
             <td>3</td>
-            <td><code>generate_rich_visualization</code>, <code>generate_image</code>, <code>close_image_session</code></td>
+            <td><code>generate_rich_visualization</code>, <code>generate_image</code>, <code>close_image_session</code>
+            </td>
             <td><code>visual_and_system_metrics.md</code></td>
           </tr>
           <tr>
@@ -242,13 +273,19 @@
           <tr>
             <td><code>memory_and_rag_tool.py</code></td>
             <td>6</td>
-            <td><code>update_meta_artifact</code>, <code>search_meta_artifacts</code>, <code>delete_meta_artifact_item</code>, <code>save_session_context</code>, <code>delete_session_context_source</code>, <code>search_sessions_context</code></td>
+            <td><code>update_meta_artifact</code>, <code>search_meta_artifacts</code>,
+              <code>delete_meta_artifact_item</code>, <code>save_session_context</code>,
+              <code>delete_session_context_source</code>, <code>search_sessions_context</code></td>
             <td><code>memory_and_rag.md</code></td>
           </tr>
           <tr>
             <td><code>n8n_orchestrator_tool.py</code></td>
             <td>12</td>
-            <td><code>create_n8n_template</code>, <code>modify_n8n_template</code>, <code>delete_n8n_template</code>, <code>prepare_n8n_workflow</code>, <code>modify_n8n_workflow</code>, <code>delete_n8n_workflow</code>, <code>run_n8n_oneshot_workflow</code>, <code>deploy_n8n_daemon</code>, <code>search_n8n_hub</code>, <code>download_n8n_hub_template</code>, <code>query_n8n_documentation</code>, <code>delegate_to_n8n_grapher</code></td>
+            <td><code>create_n8n_template</code>, <code>modify_n8n_template</code>, <code>delete_n8n_template</code>,
+              <code>prepare_n8n_workflow</code>, <code>modify_n8n_workflow</code>, <code>delete_n8n_workflow</code>,
+              <code>run_n8n_oneshot_workflow</code>, <code>deploy_n8n_daemon</code>, <code>search_n8n_hub</code>,
+              <code>download_n8n_hub_template</code>, <code>query_n8n_documentation</code>,
+              <code>delegate_to_n8n_grapher</code></td>
             <td><code>n8n_workflows.md</code></td>
           </tr>
           <tr>
@@ -272,7 +309,15 @@
           <tr>
             <td><code>generalist_tools.py</code></td>
             <td>23</td>
-            <td><code>ask_user_input</code>, <code>wait_timer</code>, <code>list_ui_folders</code>, <code>list_ui_tags</code>, <code>create_ui_tasks</code>, <code>update_ui_task</code>, <code>search_ui_chats</code>, <code>view_ui_chat</code>, <code>create_ui_automation</code>, <code>update_ui_automation</code>, <code>toggle_ui_automation</code>, <code>delete_ui_automation</code>, <code>read_ui_automations</code>, <code>list_ui_automations</code>, <code>create_ui_calendar_event</code>, <code>update_ui_calendar_event</code>, <code>read_ui_calendar_events</code>, <code>list_ui_calendar_events</code>, <code>search_ui_calendar_events</code>, <code>delete_ui_calendar_event</code>, <code>read_tool_output</code>, <code>delete_tool_output</code>, <code>tool_advisor</code></td>
+            <td><code>ask_user_input</code>, <code>wait_timer</code>, <code>list_ui_folders</code>,
+              <code>list_ui_tags</code>, <code>create_ui_tasks</code>, <code>update_ui_task</code>,
+              <code>search_ui_chats</code>, <code>view_ui_chat</code>, <code>create_ui_automation</code>,
+              <code>update_ui_automation</code>, <code>toggle_ui_automation</code>, <code>delete_ui_automation</code>,
+              <code>read_ui_automations</code>, <code>list_ui_automations</code>, <code>create_ui_calendar_event</code>,
+              <code>update_ui_calendar_event</code>, <code>read_ui_calendar_events</code>,
+              <code>list_ui_calendar_events</code>, <code>search_ui_calendar_events</code>,
+              <code>delete_ui_calendar_event</code>, <code>read_tool_output</code>, <code>delete_tool_output</code>,
+              <code>tool_advisor</code></td>
             <td><code>ui_calendar_and_automations.md</code> (+ <code>echo_ui_guide.md</code>)</td>
           </tr>
         </tbody>
@@ -280,17 +325,48 @@
 
       <h3>2. Décorateur <code>@echo_tool</code>, Contextes &amp; Parallélisme</h3>
       <ul>
-        <li><strong>Standardisation <code>@echo_tool</code> (<code>echo_core.py</code> v6.10.0.1)</strong> : Compatible <code>async def</code> et <code>def</code>, injecte <code>__user__</code> et <code>__metadata__</code> dans <code>__signature__</code>, pose le garde-fou anti-réentrance <code>_ECHO_IN_TOOL_CALL</code> et centralise le drainage AEC (<code>_drain_tool_aec_events</code> protégé par <code>_get_aec_drain_lock(chat_id)</code>).</li>
-        <li><strong>Propagation &amp; Gardes Headless</strong> : Propage les <code>ContextVar</code> <code>ECHO_SUBAGENT_CONTEXT</code> et <code>ECHO_AUTOMATION_CONTEXT</code> (avec reset garanti en <code>finally</code>). La fonction <code>get_headless_block_reason</code> bloque en contexte sous-agent ou automatisation les appels interactifs et destructeurs (<code>ask_user_input</code>, <code>process_plan(user_already_validated=False)</code>, <code>manage_identity</code>, <code>delete_user_skill</code>).</li>
-        <li><strong>Listes Système Sous-Agents (<code>echo_constants.py</code> v6.18.1.1)</strong> : <code>DELEGATE_AGENT_BLACKLIST</code> interdit aux sous-agents les outils récursifs/UI/long-terme (<code>delegate_deep_research</code>, <code>delegate_to_n8n_grapher</code>, <code>ask_data_broker</code>, <code>control_subagents</code>, <code>ask_user_input</code>, <code>create_ui_tasks</code>, <code>update_ui_task</code>, <code>open_codex_ui</code>, <code>open_browser_ui</code>, <code>generate_rich_visualization</code>, <code>generate_image</code>, <code>close_image_session</code>, <code>show_image_to_user</code>, <code>delete_user_skill</code>, <code>manage_identity</code>, <code>update_meta_artifact</code>, <code>delete_meta_artifact_item</code>). À l'inverse, <code>DELEGATE_AGENT_SYSTEM_TOOLS</code> garantit l'accès à <code>tool_advisor</code>, <code>read_tool_output</code> et <code>delete_tool_output</code>.</li>
-        <li><strong>Parallélisme Intra-Tour</strong> : Plafonné à <code>ECHO_MAX_PARALLEL_TOOLS_PER_TURN = 5</code> dans <code>open_webui/utils/middleware.py</code> (Phase A séquentielle de pré-validation, Phase B <code>asyncio.gather</code> sous <code>asyncio.Semaphore(5)</code>) ainsi que dans <code>EchoAgentRunner</code>.</li>
+        <li><strong>Standardisation <code>@echo_tool</code> (<code>echo_core.py</code> v6.10.0.1)</strong> : Compatible
+          <code>async def</code> et <code>def</code>, injecte <code>__user__</code> et <code>__metadata__</code> dans
+          <code>__signature__</code>, pose le garde-fou anti-réentrance <code>_ECHO_IN_TOOL_CALL</code> et centralise le
+          drainage AEC (<code>_drain_tool_aec_events</code> protégé par <code>_get_aec_drain_lock(chat_id)</code>).</li>
+        <li><strong>Propagation &amp; Gardes Headless</strong> : Propage les <code>ContextVar</code>
+          <code>ECHO_SUBAGENT_CONTEXT</code> et <code>ECHO_AUTOMATION_CONTEXT</code> (avec reset garanti en
+          <code>finally</code>). La fonction <code>get_headless_block_reason</code> bloque en contexte sous-agent ou
+          automatisation les appels interactifs et destructeurs (<code>ask_user_input</code>,
+          <code>process_plan(user_already_validated=False)</code>, <code>manage_identity</code>,
+          <code>delete_user_skill</code>).</li>
+        <li><strong>Listes Système Sous-Agents (<code>echo_constants.py</code> v6.19.0.1)</strong> :
+          <code>DELEGATE_AGENT_BLACKLIST</code> interdit aux sous-agents les outils récursifs/UI/long-terme
+          (<code>delegate_deep_research</code>, <code>delegate_to_n8n_grapher</code>, <code>ask_data_broker</code>,
+          <code>control_subagents</code>, <code>ask_user_input</code>, <code>create_ui_tasks</code>,
+          <code>update_ui_task</code>, <code>open_codex_ui</code>, <code>open_browser_ui</code>,
+          <code>generate_rich_visualization</code>, <code>generate_image</code>, <code>close_image_session</code>,
+          <code>show_image_to_user</code>, <code>delete_user_skill</code>, <code>manage_identity</code>,
+          <code>update_meta_artifact</code>, <code>delete_meta_artifact_item</code>). À l'inverse,
+          <code>DELEGATE_AGENT_SYSTEM_TOOLS</code> garantit l'accès à <code>tool_advisor</code>,
+          <code>read_tool_output</code> et <code>delete_tool_output</code>.</li>
+        <li><strong>Parallélisme Intra-Tour</strong> : Plafonné à <code>ECHO_MAX_PARALLEL_TOOLS_PER_TURN = 5</code> dans
+          <code>open_webui/utils/middleware.py</code> (Phase A séquentielle de pré-validation, Phase B
+          <code>asyncio.gather</code> sous <code>asyncio.Semaphore(5)</code>) ainsi que dans
+          <code>EchoAgentRunner</code>.</li>
       </ul>
 
       <h3>3. Gouvernance de Délestage à 3 Régimes (<code>apply_tool_spillover</code>)</h3>
       <ul>
-        <li><strong>Seuils SSOT (<code>get_tool_truncation_limit</code>)</strong> : <code>ECHO_TOOL_OUTPUT_PREVIEW_CHARS = 32 768</code> caractères pour les sorties I/O brutes ; <code>ECHO_COGNITIVE_OUTPUT_PREVIEW_CHARS = 524 288</code> caractères pour les outils de distillation cognitive et les sous-agents (<code>ECHO_COGNITIVE_DISTILLATION_TOOLS</code>).</li>
-        <li><strong>Exemption des Lecteurs Paginés (<code>ECHO_PAGINATED_READER_TOOLS</code>)</strong> : <code>read_tool_output</code>, <code>read_codex</code>, <code>read_raw_file_content</code> et <code>delete_tool_output</code> ne subissent pas le délestage récursif.</li>
-        <li><strong>Mécanisme</strong> : Hors contenus Base64 protégés, toute sortie dépassant le seuil est écrite dans <code>tools_output/{output_id}.txt</code> avec retour structuré d'un aperçu Head+Tail aligné sur les lignes (<code>output_id</code>, <code>total_chars</code>, <code>total_lines</code>, <code>omitted_lines_range</code>). La relecture paginée s'effectue via <code>read_tool_output</code> (<code>paginate_lines_window</code> à <code>800</code> lignes / <code>46 080</code> octets max par appel, filtre regex <code>search_pattern</code> à contexte &plusmn;2 lignes) puis suppression via <code>delete_tool_output</code>.</li>
+        <li><strong>Seuils SSOT (<code>get_tool_truncation_limit</code>)</strong> :
+          <code>ECHO_TOOL_OUTPUT_PREVIEW_CHARS = 32 768</code> caractères pour les sorties I/O brutes ;
+          <code>ECHO_COGNITIVE_OUTPUT_PREVIEW_CHARS = 524 288</code> caractères pour les outils de distillation
+          cognitive et les sous-agents (<code>ECHO_COGNITIVE_DISTILLATION_TOOLS</code>).</li>
+        <li><strong>Exemption des Lecteurs Paginés (<code>ECHO_PAGINATED_READER_TOOLS</code>)</strong> :
+          <code>read_tool_output</code>, <code>read_codex</code>, <code>read_raw_file_content</code> et
+          <code>delete_tool_output</code> ne subissent pas le délestage récursif.</li>
+        <li><strong>Mécanisme</strong> : Hors contenus Base64 protégés, toute sortie dépassant le seuil est écrite dans
+          <code>tools_output/{output_id}.txt</code> avec retour structuré d'un aperçu Head+Tail aligné sur les lignes
+          (<code>output_id</code>, <code>total_chars</code>, <code>total_lines</code>,
+          <code>omitted_lines_range</code>). La relecture paginée s'effectue via <code>read_tool_output</code>
+          (<code>paginate_lines_window</code> à <code>800</code> lignes / <code>46 080</code> octets max par appel,
+          filtre regex <code>search_pattern</code> à contexte &plusmn;2 lignes) puis suppression via
+          <code>delete_tool_output</code>.</li>
       </ul>
     </details>
 
@@ -300,7 +376,7 @@
       <a href="10_planification_execution.html">10. Planification &amp; Exécution &rarr;</a>
     </div>
 
-    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+    <footer>ECHO Framework - Version 6.21.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
   </main>
 
   <script src="nav.js"></script>

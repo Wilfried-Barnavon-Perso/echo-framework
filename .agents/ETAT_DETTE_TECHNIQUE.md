@@ -17,10 +17,10 @@ Ce document recense les 5 chantiers architecturaux différés à l'issue de l'au
   - `12-owui-tools/strategic_planner.py` L566, L576 (`process_plan`).
 - **Sandbox interactive `echo_monitor`** : *(Migré en 6.6.17)* `12-owui-tools/code_executor_tool.py` (`v6.6.16.1`) et `14-owui-libs/echo_ui.py` (`v6.6.16.1`, suppression de `get_floating_monitor_js()`) ont été raccordés nativement à `EchoCanvasTab.svelte` via le bus SSE/RPC `/echo/v1/wm` et `EchoWindowManager` (`v6.6.16.2`).
 - **HUDs transitoires & Actions** :
-  - `#echo-migration-hud` : `13-owui-actions/resume_in_new_chat_action.py` L285-321, L589-593 (`call_execute`) ;
+  - ~~`#echo-migration-hud` : `13-owui-actions/resume_in_new_chat_action.py`~~ *(Supprimé : migré en natif vers `ChatMenu.svelte` + `14-owui-libs/echo_session_resume.py` et `routers/chat_actions.py` ; de même `13-owui-actions/reset_auth_action.py` supprimé et migré vers `Settings/LlmAuth.svelte` + `routers/llm_auth.py`)* ;
   - `#echo-clone-hud` : `15-owui-events/echo_chat_cloned_event.py` L83-114, L159, L173, L213 (`emit_execute`) ;
   - Export PDF : `13-owui-actions/print_pdf_action.py` L80 (`call_execute`) ;
-  - Purge mémoire : `13-owui-actions/purge_memory_action.py` L170, L248 (`events.confirm(...)` via Socket.IO `__event_call__`).
+  - ~~Purge mémoire : `13-owui-actions/purge_memory_action.py`~~ *(Supprimé : migré en natif vers `EchoMetaArtifacts.svelte` + `routers/meta_artifacts.py`)*.
 
 ### Cause racine & Risques
 - Le protocole UCTP V5 transporte du code JavaScript brut depuis les plugins Python vers le navigateur via Socket.IO (`__event_call__`) et SSE (`wm_uctp_exec` / `wm_uctp_chunk`), exécuté via `new Function(...)` côté Svelte (`Chat.svelte:1808`) et le runtime `EchoWM`.
@@ -28,7 +28,7 @@ Ce document recense les 5 chantiers architecturaux différés à l'issue de l'au
 
 ### Architecture cible
 - *(Mis à jour)* Le bus Window Manager a migré du SSE `/echo/v1/wm/stream` vers le WebSocket bidirectionnel `/echo/v1/wm/ws` (`16-docker-echo-webui/backend/open_webui/echo/routers/wm.py` v6.17.4.1). Remplacer les appels résiduels `emit_execute` / `call_execute` et la fragmentation UCTP par des événements typés déclaratifs sur `/echo/v1/wm/ws` avec retour RPC JSON structuré sur `POST /echo/v1/wm/rpc` :
-  - `ui_modal_request` / `ui_modal_response` (Svelte natif) pour `forge_skill`, `manage_identity`, `process_plan` et `purge_memory_action.py` *(déjà migré vers `AskUserCard.svelte` pour `ask_user_input`)* ;
+  - `ui_modal_request` / `ui_modal_response` (Svelte natif) pour `forge_skill`, `manage_identity` et `process_plan` *(déjà migré vers `AskUserCard.svelte` pour `ask_user_input`, et `EchoMetaArtifacts.svelte` pour la purge mémoire)* ;
   - ~~`monitor_frame_open` / `monitor_frame_event` pour `echo_monitor` dans `code_executor_tool.py`~~ *(Réalisé en 6.6.17 via `window_mounted` / `echo_canvas_event` et `canvas_ui_event`)* ;
   - `hud_progress` (`migration` / `clone`) rendu par un composant Svelte global dans `(app)/+layout.svelte` ;
   - Action d'export PDF portée par un handler client natif déclenché sur événement typé.

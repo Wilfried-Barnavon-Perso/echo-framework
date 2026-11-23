@@ -3,16 +3,16 @@
 """
 title: ECHO UI Rendering Engine
 author: Wilfried BARNAVON
-version: 6.14.2.2
+version: 6.20.3.1
 description: Composant système interne : ECHO UI Rendering Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.20.3.1: Suppression des helpers JS morts get_custom_modals_js et get_sanitize_html_js.
+# 6.18.23.1: Suppression du court-circuit iframe et masquage @media print des barres d'actions (.buttons, .print:hidden, [role="toolbar"]) dans get_print_isolation_js.
 # 6.14.2.2: Purge du code mort EchoFloatingHUD et ajout du pont postMessage echo-asset:// et du fast-path blob: dans image_viewer et get_media_export_js.
 # 6.6.16.1: Suppression de get_floating_monitor_js suite à la migration de echo_monitor vers EchoCanvasTab.svelte.
 # 6.6.9.2: Purge du reliquat mort get_esm_loader_js.
-# 6.6.9.1: Purge des ponts JS obsolètes (get_webgpu_probe_js, get_edge_embedding_bridge_js, get_event_dispatcher_js, get_mobile_guard_js, safe_deploy, get_context_gauge_renderer_js) et du doublon CustomEvent dans deploy_context_gauge.
-# 6.6.2.2: Purge de monitor_ECHO et _generate_webplayer_js (remplacés par l'onglet natif EchoBrowserTab).
 
 
 import sys
@@ -1654,20 +1654,15 @@ class EchoUI(EchoRichUI):
     @staticmethod
     def get_print_isolation_js(target_selectors: str) -> str:
         """Génère le script JS d'isolation CSS Path-Marking + window.print() natif."""
+        safe_selector_js = std_json.dumps(target_selectors).decode("utf-8")
         return f"""
 return new Promise(function(resolve) {{
     var STYLE_ID = 'echo-print-isolation-css';
-    var chatContainer = document.querySelector('{target_selectors}');
+    var targetSelector = {safe_selector_js};
+    var chatContainer = document.querySelector(targetSelector);
 
     if (!chatContainer) {{
         resolve({{ success: false, error: 'Conteneur cible introuvable' }});
-        return;
-    }}
-
-    var iframe = chatContainer.querySelector('iframe');
-    if (iframe && iframe.contentWindow) {{
-        iframe.contentWindow.postMessage('echo-print', '*');
-        resolve({{ success: true, method: 'iframe_postMessage' }});
         return;
     }}
 
@@ -1718,6 +1713,11 @@ return new Promise(function(resolve) {{
         '    overflow: visible !important;\\n' +
         '    max-height: none !important;\\n' +
         '  }}\\n' +
+        '  .echo-print-target .buttons,\\n' +
+        '  .echo-print-target .print\\\\:hidden,\\n' +
+        '  .echo-print-target [role="toolbar"] {{\\n' +
+        '    display: none !important;\\n' +
+        '  }}\\n' +
         '  @page {{ margin: 15mm; }}\\n' +
         '}}';
     document.head.appendChild(printStyle);
@@ -1758,207 +1758,3 @@ return new Promise(function(resolve) {{
     }}, 3000);
 }});
 """
-
-    # =====================================================================
-    # ECHO DOM SECURITY, MODALS & SANDBOX MONITOR
-    # =====================================================================
-
-    @staticmethod
-    def get_sanitize_html_js() -> str:
-        """Fournit le moteur JS d'assainissement HTML autonome pour la neutralisation des injections XSS."""
-        return """
-      window.echoSanitizeHTML = (html) => {
-          if (typeof html !== 'string') return '';
-          const doc = new DOMParser().parseFromString(html, 'text/html');
-          const allowedTags = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'BR', 'P', 'SPAN', 'UL', 'OL', 'LI', 'CODE', 'PRE', 'DIV', 'A', 'HR', 'SMALL', 'BLOCKQUOTE']);
-          const clean = (node) => {
-              const children = Array.from(node.childNodes);
-              for (const child of children) {
-                  if (child.nodeType === Node.ELEMENT_NODE) {
-                      if (child.tagName === 'SCRIPT' || child.tagName === 'STYLE' || child.tagName === 'IFRAME' || child.tagName === 'OBJECT' || child.tagName === 'EMBED') {
-                          child.remove();
-                          continue;
-                      }
-                      if (!allowedTags.has(child.tagName)) {
-                          const textNode = document.createTextNode(child.textContent);
-                          node.replaceChild(textNode, child);
-                      } else {
-                          const attrs = Array.from(child.attributes);
-                          for (const attr of attrs) {
-                              const name = attr.name.toLowerCase();
-                              const val = (attr.value || '').toLowerCase().replace(/[\\s\\x00-\\x1f\\x7f-\\x9f]/g, '');
-                              if (name.startsWith('on') || val.startsWith('javascript:') || val.startsWith('data:text/html') || val.startsWith('vbscript:')) {
-                                  child.removeAttribute(attr.name);
-                              }
-                          }
-                          if (child.tagName === 'A') {
-                              child.target = '_blank';
-                              child.rel = 'noopener noreferrer';
-                          }
-                          clean(child);
-                      }
-                  }
-              }
-          };
-          clean(doc.body);
-          return doc.body.innerHTML;
-      };
-      """
-
-    @staticmethod
-    def get_custom_modals_js() -> str:
-        """Fournit le code JS autonome des modales natives asynchrones d'ECHO (Confirm & Prompt)."""
-        return EchoUI.get_sanitize_html_js() + """
-      window.echoCustomConfirm = (msg, arg2, arg3) => {
-          const callback = typeof arg2 === 'function' ? arg2 : arg3;
-          const timeoutSeconds = typeof arg2 === 'number' ? arg2 : 0;
-
-          const isDark = document.documentElement.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches;
-          const bgColor = isDark ? '#1e1e2e' : '#ffffff';
-          const borderColor = isDark ? '#444' : '#ddd';
-          const textColor = isDark ? '#cdd6f4' : '#333';
-          const accentColor = '#89b4fa';
-
-          const overlay = document.createElement('div');
-          overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:999999; display:flex; align-items:flex-start; justify-content:center; padding-top:10dvh; overflow-y:auto; font-family:"Segoe UI",system-ui,sans-serif;';
-          const originalOverflow = document.body.style.overflow;
-          document.body.style.overflow = 'hidden';
-          const dialog = document.createElement('div');
-          dialog.style.cssText = 'background:' + bgColor + '; border:1px solid ' + borderColor + '; padding:16px; border-radius:8px; text-align:left; box-shadow:0 10px 40px rgba(0,0,0,0.5); width:90%; max-width:450px; box-sizing:border-box; color:' + textColor + '; max-height:85vh; overflow-y:auto;';
-          dialog.innerHTML = '<div style="margin-bottom:20px; font-size:14px; line-height:1.5;">' + window.echoSanitizeHTML(msg) + '</div>';
-          const btnContainer = document.createElement('div');
-          btnContainer.style.cssText = 'display:flex; justify-content:center; gap:10px; flex-wrap:wrap;';
-          const btnCancel = document.createElement('button');
-          btnCancel.textContent = 'Annuler';
-          btnCancel.style.cssText = 'min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0 16px; border-radius:4px; border:1px solid ' + borderColor + '; background:transparent; color:' + textColor + '; cursor:pointer; font-size:14px; flex: 1 1 45%;';
-          const btnOk = document.createElement('button');
-          btnOk.textContent = 'Confirmer';
-          btnOk.style.cssText = 'min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0 16px; border-radius:4px; border:none; background:' + accentColor + '; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:14px; flex: 1 1 45%;';
-
-          let timeRemaining = timeoutSeconds;
-          let timerInterval = null;
-
-          const cleanupAndResolve = (val) => {
-              if (timerInterval) clearInterval(timerInterval);
-              document.body.style.overflow = originalOverflow;
-              overlay.remove();
-              callback && callback(val);
-          };
-
-          const updateTimer = () => {
-              const m = Math.floor(timeRemaining / 60);
-              const s = timeRemaining % 60;
-              btnCancel.textContent = 'Annuler (' + m + ':' + s.toString().padStart(2, '0') + ')';
-          };
-
-          if (timeoutSeconds > 0) {
-              updateTimer();
-              timerInterval = setInterval(() => {
-                  timeRemaining--;
-                  if (timeRemaining <= 0) {
-                      cleanupAndResolve(false);
-                  } else {
-                      updateTimer();
-                  }
-              }, 1000);
-          }
-
-          btnCancel.onclick = () => cleanupAndResolve(false);
-          btnOk.onclick = () => cleanupAndResolve(true);
-
-          btnContainer.appendChild(btnCancel);
-          btnContainer.appendChild(btnOk);
-          dialog.appendChild(btnContainer);
-          overlay.appendChild(dialog);
-          document.body.appendChild(overlay);
-      };
-
-      window.echoCustomPrompt = (msg, timeoutSeconds, options, callback) => {
-              const isDark = document.documentElement.classList.contains('dark') || window.matchMedia('(prefers-color-scheme: dark)').matches;
-              const bgColor = isDark ? '#1e1e2e' : '#ffffff';
-              const borderColor = isDark ? '#444' : '#ddd';
-              const textColor = isDark ? '#cdd6f4' : '#333';
-              const accentColor = '#89b4fa';
-
-              const overlay = document.createElement('div');
-              overlay.style.cssText = 'position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:999999; display:flex; align-items:flex-start; justify-content:center; padding-top:10dvh; overflow-y:auto; font-family:"Segoe UI",system-ui,sans-serif;';
-              const originalOverflow = document.body.style.overflow;
-              document.body.style.overflow = 'hidden';
-              const dialog = document.createElement('div');
-              dialog.style.cssText = 'background:' + bgColor + '; border:1px solid ' + borderColor + '; padding:16px; border-radius:8px; text-align:left; box-shadow:0 10px 40px rgba(0,0,0,0.5); width:90%; max-width:500px; box-sizing:border-box; color:' + textColor + '; max-height:85vh; overflow-y:auto;';
-              dialog.innerHTML = '<div style="margin-bottom:15px; font-size:14px; line-height:1.5; text-align:left;">' + window.echoSanitizeHTML(msg) + '</div>';
-
-              const inputField = document.createElement('input');
-              inputField.type = 'text';
-              inputField.style.cssText = 'width:100%; box-sizing:border-box; padding:12px; margin-bottom:20px; border-radius:4px; border:1px solid ' + borderColor + '; background:rgba(0,0,0,0.2); color:' + textColor + '; outline:none; font-family:monospace; font-size:16px !important;';
-
-              if (options && options.length > 0) {
-                  const pillsContainer = document.createElement('div');
-                  pillsContainer.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px; margin-bottom:15px; justify-content:flex-start;';
-                  options.forEach(opt => {
-                      const pill = document.createElement('button');
-                      pill.textContent = opt;
-                      pill.style.cssText = 'min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0 16px; border-radius:22px; border:1px solid ' + accentColor + '; background:rgba(137,180,250,0.1); color:' + accentColor + '; cursor:pointer; font-size:14px; transition:all 0.2s; white-space:nowrap; margin-bottom:4px;';
-                      pill.onmouseover = () => { pill.style.background = accentColor; pill.style.color = '#1e1e2e'; };
-                      pill.onmouseout = () => { pill.style.background = 'rgba(137,180,250,0.1)'; pill.style.color = accentColor; };
-                      pill.onclick = () => {
-                          inputField.value = opt;
-                          cleanupAndResolve(opt);
-                      };
-                      pillsContainer.appendChild(pill);
-                  });
-                  dialog.appendChild(pillsContainer);
-              }
-
-              const btnContainer = document.createElement('div');
-              btnContainer.style.cssText = 'display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;';
-
-              const btnCancel = document.createElement('button');
-              btnCancel.textContent = 'Annuler';
-              btnCancel.style.cssText = 'min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0 16px; border-radius:4px; border:1px solid ' + borderColor + '; background:transparent; color:' + textColor + '; cursor:pointer; font-size:14px; flex: 1 1 45%;';
-
-              const btnOk = document.createElement('button');
-              btnOk.textContent = 'Soumettre';
-              btnOk.style.cssText = 'min-height:44px; display:inline-flex; align-items:center; justify-content:center; padding:0 16px; border-radius:4px; border:none; background:' + accentColor + '; color:#1e1e2e; cursor:pointer; font-weight:600; font-size:14px; flex: 1 1 45%;';
-
-              let timeRemaining = timeoutSeconds;
-              let timerInterval = null;
-
-              const updateTimer = () => {
-                  const m = Math.floor(timeRemaining / 60);
-                  const s = timeRemaining % 60;
-                  btnCancel.textContent = 'Annuler (' + m + ':' + s.toString().padStart(2, '0') + ')';
-              };
-
-              const cleanupAndResolve = (val) => {
-                  if(timerInterval) clearInterval(timerInterval);
-                  document.body.style.overflow = originalOverflow;
-                  overlay.remove();
-                  callback && callback(val);
-              };
-
-              if (timeoutSeconds > 0) {
-                  updateTimer();
-                  timerInterval = setInterval(() => {
-                      timeRemaining--;
-                      if (timeRemaining <= 0) {
-                          cleanupAndResolve(null);
-                      } else {
-                          updateTimer();
-                      }
-                  }, 1000);
-              }
-
-          btnCancel.onclick = () => cleanupAndResolve(null);
-          btnOk.onclick = () => cleanupAndResolve(inputField.value);
-          inputField.onkeydown = (e) => { if(e.key === 'Enter') cleanupAndResolve(inputField.value); };
-
-          dialog.appendChild(inputField);
-          btnContainer.appendChild(btnCancel);
-          btnContainer.appendChild(btnOk);
-          dialog.appendChild(btnContainer);
-          overlay.appendChild(dialog);
-          document.body.appendChild(overlay);
-          inputField.focus();
-      };
-      """

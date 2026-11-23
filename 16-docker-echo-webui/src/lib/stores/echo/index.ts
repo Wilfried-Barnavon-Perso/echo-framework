@@ -96,7 +96,7 @@ export interface EchoCognitionStep {
 	content: any;
 	thought_signature?: string | null;
 	updated_at?: number;
-	origin?: 'orchestrator' | 'human' | 'tool';
+	origin?: 'orchestrator' | 'human' | 'peer' | 'handoff' | 'tool';
 	clean_text?: string;
 	model_key?: string | null;
 	escalation_target?: string | null;
@@ -114,7 +114,8 @@ export type EchoSubagentStatus =
 	| 'suspended_checkpoint'
 	| 'suspended_pare_alert'
 	| 'killed'
-	| 'error';
+	| 'error'
+	| 'purged';
 
 export interface EchoCognitionThreadMeta {
 	sub_sid?: string;
@@ -127,9 +128,7 @@ export interface EchoCognitionThreadMeta {
 		| 'navigator'
 		| 'council'
 		| 'council_synthesis'
-		| 'supervisor'
-		| 'supervisor_critic'
-		| 'supervisor_consolidator'
+		| 'phalanx'
 		| 'deep_research'
 		| 'n8n_grapher'
 		| 'data_broker'
@@ -145,13 +144,15 @@ export interface EchoCognitionThreadMeta {
 	total_calls_used?: number;
 	consecutive_errors?: number;
 	checkpoint_reason?: string | null;
+	purged_at?: number | null;
+	purge_expires_at?: number | null;
 	group_id?: string | null;
 	updated_at?: number;
 	updated_at_ms?: number;
 	thread_type?:
 		| 'web'
 		| 'council'
-		| 'supervisor'
+		| 'phalanx'
 		| 'deep_research'
 		| 'n8n_grapher'
 		| 'data_broker'
@@ -163,10 +164,13 @@ export interface EchoCognitionThreadMeta {
 	display_label?: string;
 	model_key?: string | null;
 	is_running?: boolean;
-	member_role?: 'participant' | 'synthesis' | 'worker' | 'critic' | 'consolidator' | 'agent' | string;
+	member_role?: 'participant' | 'synthesis' | 'strategist' | 'captain' | 'hoplite' | 'agent' | string;
 	role_order?: number;
 	has_tool_loop?: boolean;
 	is_addressable?: boolean;
+	parent_sid?: string | null;
+	depth?: number;
+	can_delegate?: boolean;
 	[key: string]: any;
 }
 
@@ -193,6 +197,7 @@ export interface EchoCognitionGroup {
 	model_keys?: string[];
 	group_status?: EchoSubagentStatus | string;
 	is_running: boolean;
+	purge_expires_at?: number | null;
 	updated_at: number;
 	steps_count?: number;
 	merged_steps?: EchoCognitionStep[];
@@ -206,6 +211,7 @@ export interface EchoCognitionSnapshot {
 	queued_messages: Record<string, EchoCognitionQueuedMsg[]>;
 	tool_calls: any[];
 	active_count: number;
+	purged_count?: number;
 	running_count: number;
 	total_count: number;
 	updated_at: number;
@@ -270,7 +276,24 @@ export interface EchoTabOpenRequest {
 	};
 }
 
+export interface EchoWaitTimerState {
+	chat_id: string;
+	duration_sec: number;
+	started_at_ms: number;
+	active: boolean;
+}
+
 export const echoContextGauge = writable<EchoContextGaugePayload | null>(null);
+export const echoWaitTimers = writable<Record<string, EchoWaitTimerState | null>>({});
+export const clearEchoWaitTimer = (chatId: string) => {
+	if (!chatId) return;
+	echoWaitTimers.update((all) => {
+		if (!(chatId in all)) return all;
+		const next = { ...all };
+		delete next[chatId];
+		return next;
+	});
+};
 export const echoCognitionActiveCount = writable<number>(0);
 export const echoCognitionRunningCount = writable<number>(0);
 export const echoCognitionSnapshot = writable<EchoCognitionSnapshot | null>(null);
@@ -418,7 +441,7 @@ const applyCognitionSnapshot = (data: EchoCognitionSnapshot) => {
 	if (!data || typeof data !== 'object') return;
 	const threads = data.threads ?? {};
 	echoCognitionSnapshot.set(data);
-	echoCognitionActiveCount.set(data.total_count ?? Object.keys(threads).length);
+	echoCognitionActiveCount.set(data.active_count ?? data.total_count ?? Object.keys(threads).length);
 	echoCognitionRunningCount.set(data.running_count ?? 0);
 };
 
@@ -754,6 +777,23 @@ const openWmSocket = () => {
 						});
 						return { ...all, [cid]: next };
 					});
+				}
+			} else if (data.type === 'echo_wait_timer') {
+				const cid = data.chat_id || wmGetActiveChatId() || '';
+				if (cid) {
+					if (data.active === false || !(Number(data.duration_sec) > 0)) {
+						clearEchoWaitTimer(cid);
+					} else {
+						echoWaitTimers.update((all) => ({
+							...all,
+							[cid]: {
+								chat_id: cid,
+								duration_sec: Number(data.duration_sec),
+								started_at_ms: Number(data.started_at_ms) || Date.now(),
+								active: true
+							}
+						}));
+					}
 				}
 			}
 		} catch {

@@ -4,12 +4,14 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - CORE SECURITY & SSO
-VERSION : 5.226.18.0
+VERSION : 6.18.23.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.23.1: Ajout du helper centralisé open_sqlite_db (PRAGMA journal_mode=WAL, synchronous=NORMAL, busy_timeout et fermeture garantie) et bascule de check_sso_auth.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
+from contextlib import contextmanager
 import os
 import sqlite3
 import time
@@ -24,10 +26,44 @@ from core.config import (
 from core.settings_io import get_auth_settings
 
 __all__ = [
+    'open_sqlite_db',
     'generate_complex_temp_password',
     'check_sso_auth',
     'change_system_password',
 ]
+
+
+@contextmanager
+def open_sqlite_db(
+    db_path: str,
+    *,
+    readonly: bool = False,
+    timeout: float = 10.0,
+    row_factory=None,
+    auto_commit: bool = True,
+):
+    """Ouvre une connexion SQLite durcie (WAL/NORMAL/busy_timeout) avec fermeture garantie."""
+    if readonly:
+        uri_path = os.path.abspath(db_path).replace("\\", "/")
+        conn = sqlite3.connect(f"file:{uri_path}?mode=ro", uri=True, timeout=timeout)
+    else:
+        conn = sqlite3.connect(db_path, timeout=timeout)
+    try:
+        conn.execute(f"PRAGMA busy_timeout = {int(timeout * 1000)};")
+        if not readonly:
+            conn.execute("PRAGMA journal_mode = WAL;")
+            conn.execute("PRAGMA synchronous = NORMAL;")
+        if row_factory is not None:
+            conn.row_factory = row_factory
+        yield conn
+        if not readonly and auto_commit:
+            conn.commit()
+    except Exception:
+        if not readonly and auto_commit:
+            conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 def generate_complex_temp_password():
     settings = get_auth_settings()
@@ -72,9 +108,8 @@ def check_sso_auth():
 
     try:
         # Vérification stricte des droits Admin
-        conn = sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True)
-        user_data = conn.execute("SELECT role FROM user WHERE email = ?", (webui_user,)).fetchone()
-        conn.close()
+        with open_sqlite_db(WEBUI_DB_PATH, readonly=True) as conn:
+            user_data = conn.execute("SELECT role FROM user WHERE email = ?", (webui_user,)).fetchone()
         
         if user_data and user_data[0] == 'admin':
             session['logged_in'] = True

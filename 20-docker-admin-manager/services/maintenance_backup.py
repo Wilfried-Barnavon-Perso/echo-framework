@@ -4,24 +4,22 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - MAINTENANCE & BACKUP SCHEDULER
-VERSION : 6.18.0.1
+VERSION : 6.18.23.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.23.1: Bascule du checkpoint WAL auth.db sur open_sqlite_db (PRAGMA busy_timeout=5000, fermeture garantie).
 # 6.18.0.1: Alignement de l'arrêt/redémarrage coordonné backup et reprise nocturne sur BACKUP_AUX_CONTAINERS (ECHO v6).
 # 6.5.0.1: Checkpoint WAL SQLite sur auth.db avant archivage et inclusion de SECRETS_DIR et HOST_ENV_FILE dans la sauvegarde tar.xz.
 # 5.239.1.1: Exécution de la sauvegarde tar.xz à priorité minimale (nice 19, ionice idle c3, XZ_OPT="-T2 -1", IDLE_PRIORITY_CLASS).
 # 5.235.5.1: Intégration des statistiques de purge des branches mortes dans le rapport de maintenance nocturne.
-# 5.235.2.1: Affichage explicite des session.db purgées dans le bilan d'élagage du cycle nocturne.
-from contextlib import closing
 import datetime
 import glob
 import html
 import json
 import os
 import shutil
-import sqlite3
 import subprocess
 import time
 from core.config import (
@@ -43,6 +41,7 @@ from core.config import (
     psutil,
 )
 from core.utils import human_size, _format_bytes, _get_tree_size
+from core.security import open_sqlite_db
 from core.settings_io import (
     load_settings,
     load_maint_config,
@@ -135,7 +134,7 @@ def perform_backup_task(record_report: bool = False):
         auth_db_file = "/app/auth-data/auth.db"
         if os.path.isfile(auth_db_file):
             try:
-                with closing(sqlite3.connect(auth_db_file, timeout=5)) as aconn:
+                with open_sqlite_db(auth_db_file, timeout=5.0, auto_commit=False) as aconn:
                     aconn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
             except Exception:
                 pass

@@ -47,6 +47,7 @@
 	import { refreshChatList, refreshFolderChatLists } from '$lib/stores/chatList';
 	import ChatParticipants from '$lib/components/common/ChatParticipants.svelte';
 	import EchoSubagentIndicator from '$lib/components/echo/EchoSubagentIndicator.svelte';
+	import EchoWaitTimer from '$lib/components/echo/EchoWaitTimer.svelte';
 	import { echoOpenSecondaryTabsCount } from '$lib/stores/echo';
 
 	const i18n: any = getContext('i18n');
@@ -232,6 +233,7 @@
 
 {#snippet renderTabBarActions()}
 	<EchoSubagentIndicator chatId={chat?.id || $chatId || ''} />
+	<EchoWaitTimer chatId={chat?.id || $chatId || ''} />
 	{@render renderTemporaryChatToggle()}
 	{#if liveParticipants.length > 0}
 		<div class="flex h-6 shrink-0 items-center px-1">
@@ -416,6 +418,7 @@
 
 					<!-- [ECHO-V6-HOOK] Indicateur de sous-agents intégré dans la navbar -->
 					<EchoSubagentIndicator chatId={chat?.id || $chatId || ''} />
+					<EchoWaitTimer chatId={chat?.id || $chatId || ''} />
 
 					{#if !tabbed}{@render renderChatActions()}{/if}
 

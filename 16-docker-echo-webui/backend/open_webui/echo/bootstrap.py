@@ -3,19 +3,20 @@
 """
 title: ECHO V6 Declarative Lifespan Bootstrap
 author: Wilfried BARNAVON
-version: 6.18.9.1
+version: 6.21.0.1
 description: Provisioning déclaratif au démarrage FastAPI remplaçant intégralement config-owui.sh.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.0.1: Exécution asynchrone au démarrage des migrations ponctuelles 14-owui-libs/migrations/ persistées dans echo.applied_migrations.
+# 6.20.0.1: Simplification de la purge des fonctions ghosts via set(existing_map.keys()) - set(discovered.keys()) et retrait de LEGACY_OBSOLETE_ACTION_IDS (redondant avec echo-sync.sh).
+# 6.18.23.1: Purge déclarative explicite des actions legacy retirées (reset_auth_action, resume_in_new_chat_action) lors de la synchronisation des fonctions au démarrage.
 # 6.18.9.1: Copie statique des avatars user-echo-{neutre,homme,femme}.png dans STATIC_DIR et inclusion dans echo_branding_version.
 # 6.18.3.1: Factorisation des visuels de branding et icônes PWA dans STATIC_DIR depuis _assets/images (ou /opt/ECHO/echo-images) via _sync_branding_assets et hash cache-buster echo_branding_version.
-# 6.7.20.1: Provisioning du modèle maître depuis system-prompt.xml + system-commands.xml via load_assembled_system_prompt.
-# 6.7.16.1: Création idempotente au démarrage des 4 index SQLite composites sur la table file et purge one-shot echo.file_content_hygiene_v1 hors knowledge_file.
-# 6.7.8.1: Création et purge sécurisée au démarrage des résidus orphelins dans TMPDIR (.tmp_uploads) via _prepare_tmp_uploads_dir.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -177,8 +178,10 @@ async def _sync_functions(root: Path, owner_id: str) -> dict[str, list[str]]:
     existing_funcs = await Functions.get_functions()
     existing_map = {f.id: f for f in existing_funcs}
 
-    # Purge des fonctions ghosts absentes du disque (ex: anciens filtres V5 supprimés)
-    for old_id in set(existing_map.keys()) - set(discovered.keys()):
+    # Purge automatique des fonctions ghosts absentes du disque
+    obsolete_ids = set(existing_map.keys()) - set(discovered.keys())
+    for old_id in sorted(obsolete_ids):
+        discovered.pop(old_id, None)
         await Functions.delete_function_by_id(old_id)
         log.info("[ECHO-BOOTSTRAP] Function ghost purgée : %s", old_id)
 
@@ -421,6 +424,29 @@ async def _ensure_file_table_indexes_and_hygiene(run_hygiene: bool = True) -> di
     return stats
 
 
+async def _run_echo_migrations() -> dict[str, Any]:
+    """Exécute les migrations ponctuelles 14-owui-libs/migrations/ non encore enregistrées dans webui.db."""
+    if async_engine.dialect.name != "sqlite":
+        return {"skipped_env": True}
+    try:
+        from echo_migrations import APPLIED_MIGRATIONS_CONFIG_KEY, run_pending_migrations  # type: ignore
+
+        existing = await Config.get(APPLIED_MIGRATIONS_CONFIG_KEY, default=[])
+        applied_list = [str(x) for x in existing] if isinstance(existing, list) else []
+        report = await asyncio.to_thread(run_pending_migrations, applied_list)
+        newly = report.get("newly_applied") or []
+        if newly:
+            merged = applied_list + [m for m in newly if m not in applied_list]
+            await Config.upsert({APPLIED_MIGRATIONS_CONFIG_KEY: merged})
+            log.info("[ECHO-BOOTSTRAP] Migrations appliquées : %s", newly)
+        if report.get("error"):
+            log.error("[ECHO-BOOTSTRAP] Échec migration (pré-vol ou exécution) : %s", report["error"])
+        return report
+    except Exception as exc:
+        log.error("[ECHO-BOOTSTRAP] Erreur chargeur migrations : %s", exc)
+        return {"error": str(exc)}
+
+
 def _resolve_echo_images_dir(root: Path) -> Path | None:
     """Résout le répertoire source des visuels ECHO (_assets/images ou echo-images)."""
     candidates = [
@@ -561,6 +587,7 @@ async def bootstrap_echo_runtime(app: FastAPI) -> dict[str, Any]:
     model_id = await _sync_master_model(root, owner_id, tool_ids, by_type)
     cfg_count = await _sync_global_configs(root, app)
     file_db_stats = await _ensure_file_table_indexes_and_hygiene(run_hygiene=True)
+    migrations_stats = await _run_echo_migrations()
 
     summary = {
         "skipped": False,
@@ -570,6 +597,7 @@ async def bootstrap_echo_runtime(app: FastAPI) -> dict[str, Any]:
         "model_id": model_id,
         "config_keys_synced": cfg_count,
         "file_db": file_db_stats,
+        "migrations": migrations_stats,
         "branding": branding_stats,
     }
     app.state.echo_bootstrap_summary = summary

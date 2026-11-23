@@ -161,7 +161,7 @@ flowchart TD
       <summary>Dossier d'Ingénierie : Registre des Modèles, Suture Bit-Perfect, AEC &amp; Compaction</summary>
       <h4>1. Registre Cognitif &amp; Verrou de Tour (<code>echo_constants.py</code> &amp; <code>echo_orchestrator.py</code>)</h4>
       <ul>
-        <li><strong>Mapping Dual-Backend (<code>ECHO_MODELS_REGISTRY</code>, <code>echo_constants.py</code> v6.18.1.1) :</strong>
+        <li><strong>Mapping Dual-Backend (<code>ECHO_MODELS_REGISTRY</code>, <code>echo_constants.py</code> v6.19.0.1) :</strong>
           <code>MODEL_ATHENA</code> (<code>gemini-4-carbon</code> / <code>gemini-4-carbon-high</code>, <code>hierarchy: 3</code>, <code>thinkingLevel: "high"</code>) ;
           <code>MODEL_PROMETHEUS</code> (<code>gemini-4-neon</code> / <code>gemini-4-neon-medium</code>, <code>hierarchy: 2</code>, <code>thinkingLevel: "medium"</code>) ;
           <code>MODEL_APOLLO</code> (<code>gemini-4-hydrogen</code> / <code>gemini-4-hydrogen-high</code>, <code>hierarchy: 1</code>, <code>thinkingLevel: "high"</code>) ;
@@ -184,7 +184,7 @@ flowchart TD
       <ul>
         <li><strong>Seuils SSOT :</strong> <code>ECHO_MAX_CONTEXT_SIZE = 1 048 576</code> ; déclenchement à <code>COMPACTION_TRIGGER_THRESHOLD_PCT = 0.60</code> (~629 145 tokens) ; cible <code>COMPACTION_TARGET_CONTEXT_PCT = 0.20</code> (~209 715 tokens) répartie via <code>get_compaction_shares()</code> en <code>31.25 %</code> compressé <code>HEAD</code> (budget <code>65 535</code> tokens) et <code>68.75 %</code> de tours récents bruts <code>TAIL</code> (~144 179 tokens), avec isolement de branche <code>head_last_msg_id</code>. Seuil d'alerte UI <code>CONTEXT_WARNING_THRESHOLD</code> à <code>80 %</code>.</li>
         <li><strong><code>AEC_REMINDERS</code> :</strong> Paliers indexés sur <code>ECHO_MAX_CONTEXT_SIZE</code> et nombre d'appels d'outils : <code>efficiency</code> (8 % / 18), <code>alignment</code> (10 % / 28), <code>strategy</code> (12 % / 30), <code>factuality</code> (15 % / 35), <code>kernel</code> (20 % / 50), <code>context_hygiene</code> (30 % / 65).</li>
-        <li><strong>Gestion des branches :</strong> <code>echo_session_gc.py</code> (<code>compute_dead_set</code> / <code>purge_dead_set</code>) et <code>echo_session_clone.py</code> (<code>v6.14.2.2</code>) assurent l'élagage exact des branches mortes et la préservation des productions sous provenance <code>hors_branche</code>.</li>
+        <li><strong>Gestion des branches :</strong> <code>echo_session_gc.py</code> (<code>compute_dead_set</code> / <code>purge_dead_set</code>) et <code>echo_session_clone.py</code> (<code>v6.18.23.1</code>) assurent l'élagage exact des branches mortes et la préservation des productions sous provenance <code>hors_branche</code>.</li>
       </ul>
     </details>
 
@@ -194,7 +194,7 @@ flowchart TD
       <a href="09_arsenal_outils.html">9. L'Arsenal des Outils &rarr;</a>
     </div>
 
-    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+    <footer>ECHO Framework - Version 6.21.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
   </main>
 
   <script src="nav.js"></script>

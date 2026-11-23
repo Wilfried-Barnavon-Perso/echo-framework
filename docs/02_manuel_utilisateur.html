@@ -201,7 +201,7 @@
     <ul>
       <li>
         <strong>Sous-Agents &amp; Outils :</strong> affiche l'avancement des sous-agents, tables rondes (Conseils) et
-        ouvriers supervisés. Vous pouvez mettre l'affichage en pause, inspecter les appels d'outils, suspendre,
+        Phalanges multi-niveaux. Vous pouvez mettre l'affichage en pause, inspecter les appels d'outils, suspendre,
         reprendre (<code>+N tours</code>), arrêter ou fermer un sous-agent, et lui envoyer une consigne ciblée
         (<code>@nom</code> ou <code>📢 Tous</code>).
       </li>
@@ -256,13 +256,21 @@
         échange oral bidirectionnel avec synthèse vocale en français (voix Vivienne).
       </li>
       <li>
-        <strong>Réglages personnels (<code>/reglages</code>) :</strong> 9 onglets (<em>Général</em>, <em>Interface</em>,
+        <strong>Réglages personnels (<code>/reglages</code>) :</strong> 10 onglets (<em>Général</em>, <em>Interface</em>,
         <em>Notifications</em>, <em>Raccourcis</em>, <em>Audio</em>, <em>Contrôle des données</em>,
         <em>Conversations archivées</em>, <em>Compte</em> avec choix du genre grammatical et avatar ECHO assorti,
-        <em>À propos</em>). Les réglages système globaux restent réservés aux administrateurs dans
-        <em>Administration &rarr; Réglages</em>.
+        <em>Authentification LLM</em> dans <em>Profil</em> pour connecter Google OAuth2, saisir des clés API
+        primaire/secondaire ou réinitialiser la connexion, et <em>À propos</em>). Les réglages système globaux
+        restent réservés aux administrateurs dans <em>Administration &rarr; Réglages</em>.
       </li>
     </ul>
+
+    <figure class="doc-figure">
+      <img src="images/v6_parametres_llm_auth.png" alt="Onglet Authentification LLM dans les réglages personnels présentant le statut OAuth2, les fenêtres de quotas, les clés API de secours et la réinitialisation" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        L'onglet <em>Authentification LLM</em> dans <em>Paramètres &rarr; Profil</em> : suivi en direct des quotas Google (fenêtres 5h et hebdomadaire), reconnexion OAuth2, clés API de secours et réinitialisation dédiée.
+      </figcaption>
+    </figure>
 
     <figure class="doc-figure">
       <img src="images/v6_user_manager_donnees.png" alt="Portail ECHO Espace Personnel présentant les statistiques du compte, l'export tar.xz et la suppression" class="doc-screenshot">
@@ -291,7 +299,7 @@
       <tbody>
         <tr>
           <td>La conversation devient très longue (alerte à 80&nbsp;%)</td>
-          <td>Cliquer sur l'action <strong>Poursuivre dans une nouvelle conversation</strong>.</td>
+          <td>Ouvrir le menu contextuel de la conversation (barre latérale) et cliquer sur <strong>Poursuivre dans un nouveau chat</strong>.</td>
           <td>Le résumé, les ressources et la mémoire utile sont transférés proprement vers un nouveau fil.</td>
         </tr>
         <tr>
@@ -331,7 +339,7 @@
       <summary>Dossier d'Ingénierie : Architecture ECHO-UI, Stockage, Audio &amp; Portail Personnel</summary>
       <h4>1. Socle Applicatif ECHO-UI</h4>
       <ul>
-        <li><strong>Version et licence :</strong> Composant <code>16-docker-echo-webui</code> (<code>UI_VERSION</code> <code>6.18.18.1</code>), fork maintenu d'Open WebUI <code>v0.13.2</code> soumis à la Clause 4 (plafond technique strict <code>ECHO_MAX_USERS = 50</code> dans <code>auths.py</code>).</li>
+        <li><strong>Version et licence :</strong> Composant <code>16-docker-echo-webui</code> (<code>UI_VERSION</code> <code>6.20.3.1</code>), fork maintenu d'Open WebUI <code>v0.13.2</code> soumis à la Clause 4 (plafond technique strict <code>ECHO_MAX_USERS = 50</code> dans <code>auths.py</code>).</li>
         <li><strong>Profil utilisateur et identité :</strong> <code>identity_bridge.py</code> (<code>v6.18.9.1</code>) maintient <code>webui.db</code> comme source de vérité unique du genre grammatical (<code>M</code>/<code>F</code>/<code>X</code>) et synchronise les avatars genrés par défaut (<code>user-echo-homme.png</code>, <code>user-echo-femme.png</code>, <code>user-echo-neutre.png</code>) avec <code>identity.db</code>.</li>
         <li><strong>Configuration initiale :</strong> <code>01-config/model-config.json</code> et <code>01-config/webui-settings.json</code> épinglent <code>echo_orchestrator</code>, désactivent le compactage natif Open WebUI (<code>ENABLE_CONTEXT_COMPACTION=false</code>) et déclarent le serveur terminal PTY <code>echo-coding-worker</code>.</li>
       </ul>
@@ -350,7 +358,7 @@
       <a href="03_exemples_prompts.html">3. Exemples de Prompts &rarr;</a>
     </div>
 
-    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+    <footer>ECHO Framework - Version 6.21.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
   </main>
 
   <script src="nav.js"></script>

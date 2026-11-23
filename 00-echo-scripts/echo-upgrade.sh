@@ -3,18 +3,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # SCRIPT : echo-upgrade.sh
-# VERSION : 6.18.16.1
+# VERSION : 6.21.0.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : MISE À NIVEAU MAJEURE (IMAGES DOCKER + CODE + RECREATION CONTAINERS)
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.0.1: Export de CONFIRMED_YET avant auto-relance pour éviter la double confirmation interactive.
 # 6.18.16.1: Suppression des variables Compose inutilisées (DOCKER_COMPOSE_CMD, COMPOSE_FILE).
 # 6.8.1.1: Propagation du code d'échec de install-stack.sh (|| exit 1) afin de ne pas afficher 'UPGRADE TERMINÉ' en cas d'erreur.
 # 5.231.39.1: Renommage en echo-upgrade.sh, commande destructrice echo-rebuild et ciblage de echo-sync.sh.
 # 5.226.18.0: Alignement sur le versioning global ECHO.
-# 6.10: Implémentation d'une double vérification biométrique/stricte pour la commande destructrice rebuild-echo.
 
 # --- INITIALISATION : CORE ECHO GLOBALS ---
 ECHO_ROOT="/opt/ECHO"
@@ -88,6 +88,7 @@ echo ""
 [ -v CONFIRMED_YET ] || { 
         read -p "Tapez 'CONFIRMER' : " CONFIRM
         [ "$CONFIRM" != "CONFIRMER" ] && exit 1
+        export CONFIRMED_YET="yes"
 }
 
 # --- 1. SYNC & DEPLOY (Centralisé) ---

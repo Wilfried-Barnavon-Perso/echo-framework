@@ -3,16 +3,16 @@
 """
 title: ECHO Codex Editor
 author: Wilfried BARNAVON
-version: 6.15.0.1
+version: 6.21.1.1
 description: Permet au modèle de manipuler un espace virtuel (Codex) avec versioning Git invisible et accès natif à Python/Bash sécurisés.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.1.1: Correction de l'appel get_echo_session_path(uid, cid, CODEX_DIR_NAME) dans transfer_codex.
+# 6.19.0.1: Isolation paresseuse des accès sandbox/<sub_sid>/ via scope_subagent_sandbox_path pour les sous-agents.
 # 6.15.0.1: Ajout de process_plan et close_plan dans l'indication _check_generic_writable du workspace 'plans'.
 # 6.12.0.1: Ajout create_codex_directory, move_codex, transfer_codex (Option A), list_codex(path, recursive), delete_codex(recursive), garde restore_codex anti-sandbox, recherche récursive et délégation sync_codex_registry_* vers echo_codex_git.
 # 6.7.11.1: Délégation du fenêtrage read_codex à paginate_lines_window et suppression des skip_truncation=True redondants.
-# 6.7.4.1: Alignement de get_generation_config sur CODEX_EDIT_MODEL dans edit_codex.
-# 6.7.1.1: Mise en conformité PAS des prompts et directives.
 
 # ECHO CONFIG NAME : ECHO Codex
 
@@ -39,11 +39,13 @@ from echo_constants import (
     CODEX_WORKSPACE_LITERAL,
     CODEX_WORKSPACE_MAIN,
     CODEX_WORKSPACE_PLANS,
+    CODEX_WORKSPACE_SANDBOX,
     CODEX_WRITABLE_WORKSPACE_LITERAL,
     ECHO_API_MAX_RETRIES,
     ECHO_CODEX_MAX_READ_BYTES,
     ECHO_CODEX_MAX_READ_LINES,
     ECHO_CODEX_WORKSPACES,
+    ECHO_SUBAGENT_CONTEXT,
     ECHO_SYNC_EXCLUDE_LIST,
     ECHO_USERS_ROOT,
     get_generation_config,
@@ -63,7 +65,7 @@ from echo_codex_git import (
     sync_codex_registry_save,
     transfer_codex_entries,
 )
-from echo_paths import get_codex_lock
+from echo_paths import get_codex_lock, get_echo_session_path, scope_subagent_sandbox_path
 
 
 class Tools:
@@ -102,6 +104,17 @@ class Tools:
         repo = CodexRepo(uid, effective_cid, workspace)
         state = EchoStateManager(user_id=uid, chat_id=effective_cid)
         return uid, effective_cid, repo, state, is_remote
+
+    @staticmethod
+    def _scope_sandbox_path(repo: CodexRepo, path: str, for_write: bool = False) -> str:
+        if getattr(repo, "workspace", "") != CODEX_WORKSPACE_SANDBOX or not path:
+            return path
+        sub_sid = (ECHO_SUBAGENT_CONTEXT.get() or {}).get("sub_sid") or ""
+        if not sub_sid:
+            return path
+        return scope_subagent_sandbox_path(
+            path, sub_sid=sub_sid, sandbox_root=repo.repo_path, for_write=for_write
+        )
 
     async def _resolve_and_verify_file(
         self,
@@ -151,7 +164,7 @@ class Tools:
             )
             return None, err
 
-        safe_file = repo._secure_path(filename)
+        safe_file = repo._secure_path(self._scope_sandbox_path(repo, filename, for_write=False))
         if not safe_file:
             err = wrap_tool_output(
                 text="❌ Chemin de fichier invalide.",
@@ -295,7 +308,7 @@ class Tools:
         self._emit_urn_directive(EchoStateManager(user_id=uid, chat_id=cid))
 
         try:
-            safe_file = repo._secure_path(filename)
+            safe_file = repo._secure_path(self._scope_sandbox_path(repo, filename, for_write=True))
         except ValueError as e:
             return wrap_tool_output(
                 text=f"❌ {e}",
@@ -369,7 +382,7 @@ class Tools:
         self._emit_urn_directive(EchoStateManager(user_id=uid, chat_id=cid))
 
         try:
-            safe_file = repo._secure_path(filename)
+            safe_file = repo._secure_path(self._scope_sandbox_path(repo, filename, for_write=True))
         except ValueError as e:
             return wrap_tool_output(
                 text=f"❌ {e}",
@@ -528,7 +541,7 @@ class Tools:
 
         async with get_codex_lock(uid, cid):
             try:
-                safe_target = repo._secure_path(filename)
+                safe_target = repo._secure_path(self._scope_sandbox_path(repo, filename, for_write=True))
             except ValueError as e:
                 return wrap_tool_output(
                     text=f"❌ {e}",
@@ -1059,7 +1072,8 @@ class Tools:
             return "❌ Contexte manquant (chat_id)."
 
         try:
-            clean_sub = repo._secure_path(path, allow_empty=True)
+            target_sub = self._scope_sandbox_path(repo, path, for_write=False) if path else ""
+            clean_sub = repo._secure_path(target_sub, allow_empty=True)
         except ValueError as e:
             return wrap_tool_output(
                 text=f"❌ {e}",
@@ -1264,7 +1278,8 @@ class Tools:
 
         async with get_codex_lock(uid, cid):
             try:
-                safe_rel, created = await asyncio.to_thread(repo.create_directory, path)
+                scoped_dir = self._scope_sandbox_path(repo, path, for_write=True)
+                safe_rel, created = await asyncio.to_thread(repo.create_directory, scoped_dir)
             except CodexPathConflictError as e:
                 return wrap_tool_output(
                     text=f"❌ {e}",
@@ -1323,10 +1338,12 @@ class Tools:
 
         async with get_codex_lock(uid, cid):
             try:
+                src_scoped = self._scope_sandbox_path(repo, source_path, for_write=False)
+                dst_scoped = self._scope_sandbox_path(repo, destination_path, for_write=True)
                 mv_res = await asyncio.to_thread(
                     repo.move_entry,
-                    source_path,
-                    destination_path,
+                    src_scoped,
+                    dst_scoped,
                     msg,
                     "ECHO Codex",
                     overwrite,
@@ -1452,16 +1469,33 @@ class Tools:
 
         self._emit_urn_directive(EchoStateManager(user_id=uid, chat_id=cid))
 
+        sub_sid = (ECHO_SUBAGENT_CONTEXT.get() or {}).get("sub_sid") or ""
+        src_scoped = source_path
+        dst_scoped = destination_path
+        if sub_sid and (src_ws == CODEX_WORKSPACE_SANDBOX or dst_ws == CODEX_WORKSPACE_SANDBOX):
+            sandbox_root = os.path.join(
+                get_echo_session_path(uid, cid, CODEX_DIR_NAME), CODEX_WORKSPACE_SANDBOX
+            )
+            if src_ws == CODEX_WORKSPACE_SANDBOX:
+                src_scoped = scope_subagent_sandbox_path(
+                    source_path, sub_sid=sub_sid, sandbox_root=sandbox_root, for_write=False
+                )
+            if dst_ws == CODEX_WORKSPACE_SANDBOX:
+                dst_base = destination_path or os.path.basename(source_path.strip("/"))
+                dst_scoped = scope_subagent_sandbox_path(
+                    dst_base, sub_sid=sub_sid, sandbox_root=sandbox_root, for_write=True
+                )
+
         async with get_codex_lock(uid, cid):
             try:
                 tr = await asyncio.to_thread(
                     transfer_codex_entries,
                     uid,
                     cid,
-                    source_path,
+                    src_scoped,
                     src_ws,
                     dst_ws,
-                    destination_path,
+                    dst_scoped,
                     mode,
                     overwrite,
                     commit_message,

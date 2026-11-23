@@ -3,16 +3,16 @@
 """
 title: ECHO Generalist Tools
 author: Antigravity
-version: 6.17.2.1
+version: 6.20.3.1
 description: Composant système interne : ECHO Generalist Tools.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.20.3.1: Support multi_select sur ask_user_input et migration de wait_timer vers le bus WM Svelte (broadcast_wait_timer).
 # 6.17.2.1: Correctif indentation break dans tool_advisor (anti-double appel LLM), découplage get_chat_tools et propagation caller_context/excluded_tools.
 # 6.15.0.1: Typage UiTaskItem et normalisation tolérante (title/label/text/name/description -> content) + garde invalid_tasks_payload dans create_ui_tasks.
 # 6.13.2.1: Extension de la description et de la docstring de tool_advisor à l'assistance ECHO-UI (echo_ui_guide).
 # 6.10.0.1: Support des 3 modes de destination (new_chat, existing_chat avec target_chat_id='current', persistent_chat) sur create/update_ui_automation et exposition target/folder_id dans list_ui_automations.
-# 6.8.2.2: Migration Svelte native de ask_user_input (request:user_input / AskUserCard), blocage headless/automation via get_headless_block_reason, et ajout de create_ui_tasks, update_ui_task, toggle_ui_automation, search_ui_chats et view_ui_chat.
 
 # ECHO CONFIG NAME : ECHO Generalist Tools
 
@@ -41,6 +41,10 @@ from echo_paths import get_echo_session_path, sanitize_echo_id
 from echo_gemini_client import EchoGeminiClient
 from echo_prompts import SYS_ORCHESTRATOR_CONSULTANT
 from echo_tool_guides import EchoToolGuidesManager
+try:
+    from echo_window_manager import get_window_manager
+except ImportError:
+    get_window_manager = None
 
 from open_webui.tools.builtin import (
     search_calendar_events as _owui_search,
@@ -120,114 +124,35 @@ class Tools:
         __metadata__: dict = {},
     ) -> str:
         """Suspend l'exécution de manière asynchrone pendant `seconds` secondes (max 300s, 1 appel max par tour)."""
-        events = EchoEvents(__event_emitter__, __event_call__)
-        
+        uid = str((__user__ or {}).get("id") or "")
+        cid = str((__metadata__ or {}).get("chat_id") or "")
+        events = EchoEvents(__event_emitter__, __event_call__, user_id=uid, chat_id=cid)
+
         # 1. Validation & Clamp de sécurité
         try:
             sec_val = int(seconds)
         except ValueError:
             sec_val = 10
-            
+
         max_t = int(self.valves.MAX_TIMER)
-        if sec_val < 1: sec_val = 1
-        if sec_val > max_t: sec_val = max_t
+        if sec_val < 1:
+            sec_val = 1
+        if sec_val > max_t:
+            sec_val = max_t
 
         await events.status(f"⏱️ Démarrage d'un timer de {sec_val} secondes...")
 
-        # 2. Injection du HUD Interactif (Front-end)
-        cid = str(__metadata__.get("chat_id") or "") if __metadata__ else ""
-        safe_cid = "".join(c if c.isalnum() or c in "-_" else "_" for c in cid)
-        hud_id = f"echo-wait-timer-hud-{safe_cid}" if safe_cid else "echo-wait-timer-hud"
-        cid_json = json.dumps(cid)
-        js_code = f"""
-        (function() {{
-            const HUD_ID = '{hud_id}';
-            const CHAT_ID = {cid_json};
-            let old = document.getElementById(HUD_ID);
-            if (old) {{
-                if (old._cleanup) old._cleanup();
-                old.remove();
-            }}
-
-            let remaining = {sec_val};
-            
-            const hud = document.createElement('div');
-            hud.id = HUD_ID;
-            if (CHAT_ID) {{
-                hud.setAttribute('data-chat-id', CHAT_ID);
-                hud.setAttribute('data-echo-chat-id', CHAT_ID);
-            }}
-            hud.style.cssText = 'position:fixed; z-index:10005; top:80px; right:30px; background-color:#0a0a0a; color:#ef4444; font-family:"Courier New", Courier, monospace; font-weight:bold; font-size:24px; border:2px solid #333; border-radius:10px; padding:10px 20px; box-shadow:0 8px 30px rgba(0,0,0,0.8); display:flex; align-items:center; gap:15px; user-select:none; cursor:move; min-width:120px; justify-content:center;';
-
-            const timeDisplay = document.createElement('span');
-            timeDisplay.style.cssText = 'letter-spacing: 2px;';
-            timeDisplay.innerText = remaining + "s";
-            
-            const closeBtn = document.createElement('span');
-            closeBtn.innerHTML = '&times;';
-            closeBtn.style.cssText = 'color:#555; cursor:pointer; font-size:20px; transition:color 0.2s; position:absolute; top:-5px; right:5px; font-weight:normal; line-height:1;';
-            closeBtn.onmouseover = () => closeBtn.style.color = '#ef4444';
-            closeBtn.onmouseout = () => closeBtn.style.color = '#555';
-
-            // Fonctionnalité Drag & Drop sans fuite de listeners
-            let startX, startY, startLeft, startTop;
-            const onMove = (e) => {{
-                hud.style.right = 'auto';
-                hud.style.left = (startLeft + e.clientX - startX) + 'px';
-                hud.style.top = (startTop + e.clientY - startY) + 'px';
-            }};
-            const onUp = () => {{
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
-            }};
-            hud.onmousedown = (e) => {{
-                if (e.target === closeBtn) return;
-                startX = e.clientX; startY = e.clientY;
-                const rect = hud.getBoundingClientRect();
-                startLeft = rect.left; startTop = rect.top;
-                document.addEventListener('mousemove', onMove);
-                document.addEventListener('mouseup', onUp);
-            }};
-
-            // Moteur du Timer
-            const interval = setInterval(() => {{
-                remaining--;
-                if (remaining <= 0) {{
-                    remaining = 0;
-                    timeDisplay.innerText = "0s";
-                    clearInterval(interval);
-                    setTimeout(() => {{
-                        let currentHud = document.getElementById(HUD_ID);
-                        if (currentHud) {{
-                            if (currentHud._cleanup) currentHud._cleanup();
-                            currentHud.remove();
-                        }}
-                    }}, 1000);
-                }} else {{
-                    timeDisplay.innerText = remaining + "s";
-                }}
-            }}, 1000);
-
-            hud._cleanup = () => {{
-                clearInterval(interval);
-                document.removeEventListener('mousemove', onMove);
-                document.removeEventListener('mouseup', onUp);
-            }};
-            closeBtn.onclick = () => {{
-                hud._cleanup();
-                hud.remove();
-            }};
-
-            hud.appendChild(timeDisplay);
-            hud.appendChild(closeBtn);
-            document.body.appendChild(hud);
-        }})();
-        """
-        await events.emit_execute(js_code)
+        # 2. Diffusion vers le HUD natif Svelte via le bus Window Manager
+        wm = get_window_manager() if get_window_manager is not None else None
+        if wm is not None:
+            await wm.broadcast_wait_timer(uid, cid, sec_val, active=True)
 
         # 3. Blocage Backend (Attente réelle)
-        # On divise l'attente pour que si OWUI coupe le contexte, ça ne plante pas brutalement
-        await asyncio.sleep(sec_val)
+        try:
+            await asyncio.sleep(sec_val)
+        finally:
+            if wm is not None:
+                await wm.broadcast_wait_timer(uid, cid, 0, active=False)
 
         await events.status("⏱️ Timer terminé.", done=True)
         return f"Le timer de {sec_val} secondes est terminé avec succès."
@@ -238,6 +163,7 @@ class Tools:
         question: str = "",
         input_type: str = "text",
         options: Optional[list[Any]] = None,
+        multi_select: bool = False,
         timeout_seconds: int = 300,
         questions: Optional[list[dict]] = None,
         __user__: dict = {},
@@ -245,7 +171,7 @@ class Tools:
         __event_emitter__: Any = None,
         __event_call__: Any = None,
     ) -> dict:
-        """Affiche une carte interactive Svelte native à l'Utilisateur pour saisir une réponse (`text`), confirmer (`confirm`) ou répondre à un questionnaire multi-questions (`questions`)."""
+        """Affiche une carte interactive Svelte native à l'Utilisateur pour saisir une réponse (`text`, choix unique ou `multi_select`), confirmer (`confirm`) ou répondre à un questionnaire multi-questions (`questions`)."""
         if not __user__:
             return wrap_tool_output(
                 text=json.dumps({"status": "error", "message": "Contexte utilisateur manquant."}, ensure_ascii=False),
@@ -300,6 +226,7 @@ class Tools:
                     "header": str(q.get("header") or f"Question {idx + 1}").strip(),
                     "question": q_text,
                     "options": _normalize_options(q.get("options")),
+                    "multi_select": bool(q.get("multi_select", False)),
                     "allow_other": bool(q.get("allow_other", True)),
                     "show_recommended": bool(q.get("show_recommended", False)),
                 })
@@ -332,6 +259,7 @@ class Tools:
                     "header": "Question",
                     "question": q_text,
                     "options": _normalize_options(options),
+                    "multi_select": bool(multi_select),
                     "allow_other": True,
                     "show_recommended": False,
                 }]
@@ -368,7 +296,16 @@ class Tools:
         extracted_map = {}
         for qid, ans in answers.items():
             if isinstance(ans, dict):
-                extracted_map[qid] = ans.get("text", "") if ans.get("type") == "other" else ans.get("label", "")
+                if ans.get("type") == "multi":
+                    selected = [str(lbl).strip() for lbl in (ans.get("labels") or []) if str(lbl).strip()]
+                    other_val = str(ans.get("other_text") or "").strip()
+                    if other_val:
+                        selected.append(other_val)
+                    extracted_map[qid] = selected
+                elif ans.get("type") == "other":
+                    extracted_map[qid] = ans.get("text", "")
+                else:
+                    extracted_map[qid] = ans.get("label", "")
 
         await events.status("Réponse utilisateur reçue.", done=True)
 

@@ -4,16 +4,16 @@
 """
 title: ECHO Echo State Manager
 author: Wilfried BARNAVON
-version: 6.10.0.1
+version: 6.18.23.1
 description: Gestionnaire d'état SQLite et RAG.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.23.1: Support de parent_id avec COALESCE dans save_message_shadow/save_shadow, ajout de sync_shadow_parent_ids et remontée causale get_shadow_branch_lineage.
 # 6.10.0.1: Recherche étendue à storage_path dans get_resources, ajout de _detach_or_delete_codex_rows, delete_codex_prefix_resources et relocate_codex_resources (préservation des uploads Vault sur suppression/déplacement).
 # 6.7.18.1: Paramètre allow_single_fallback dans get_vault_credential (arrêt repli silencieux LIMIT 1 par défaut).
 # 6.7.0.1: Déduplication de thoughtSignature hors de content_json dans save_thread_step et réhydratation universelle (incluant inlineData) dans get_thread_history.
 # 6.6.30.1: Ajout du context manager _write_tx() (BEGIN IMMEDIATE) sur les transactions d'écriture et mixtes lecture/écriture.
-# 6.6.2.1: Câblage de bump_cognition_seq(self.chat_id) dans save_call_bridge et save_thread_step pour la réactivité SSE temps réel.
 import contextlib
 import functools
 import os
@@ -159,22 +159,25 @@ class EchoStateManager:
         parts: List[dict],
         updated_at: Optional[int] = None,
         model_id: Optional[str] = None,
+        parent_id: Optional[str] = None,
     ):
         """Persiste une ombre de message dans message_shadows (chat_id conservé pour compatibilité, ignoré en SQL)."""
         if not message_id:
             return
         ts = updated_at if updated_at is not None else int(time.time())
+        norm_parent_id = str(parent_id) if parent_id else None
         try:
             with self._write_tx() as conn:
                 conn.execute("""
-                    INSERT INTO message_shadows (message_id, role, full_parts_json, model_id, updated_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO message_shadows (message_id, parent_id, role, full_parts_json, model_id, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT(message_id) DO UPDATE SET
+                        parent_id = COALESCE(excluded.parent_id, message_shadows.parent_id),
                         role = excluded.role,
                         full_parts_json = excluded.full_parts_json,
                         model_id = COALESCE(excluded.model_id, message_shadows.model_id),
                         updated_at = excluded.updated_at
-                """, (message_id, role, json.dumps(parts).decode('utf-8'), model_id, ts))
+                """, (message_id, norm_parent_id, role, json.dumps(parts).decode('utf-8'), model_id, ts))
                 if model_id:
                     self.save_session_setting('last_model_id', model_id, conn=conn)
         except EchoDbMissingError:
@@ -183,26 +186,7 @@ class EchoStateManager:
             print(f"[ECHO_DEBUG_FATAL] Erreur écriture save_message_shadow: {e}")
 
     @_session_scope()
-    def get_message_shadow(self, message_id: str, updated_at: int) -> Optional[List[dict]]:
-        if not message_id:
-            return None
-        try:
-            with self._get_connection(readonly=True) as conn:
-                row = conn.execute(
-                    "SELECT full_parts_json FROM message_shadows WHERE message_id = ? AND updated_at = ?",
-                    (message_id, int(updated_at)),
-                ).fetchone()
-                if row:
-                    return std_json.loads(row[0])
-        except EchoDbMissingError:
-            return None
-        except Exception as e:
-            print(f"[ECHO_DEBUG_FATAL] Erreur lecture get_message_shadow: {e}")
-        return None
-
-    @_session_scope()
-    def get_shadow(self, message_id: str, updated_at: Optional[int] = None) -> Optional[List[dict]]:
-        """Alias pour la lecture d'une ombre de message avec updated_at facultatif."""
+    def get_message_shadow(self, message_id: str, updated_at: Optional[int] = None) -> Optional[List[dict]]:
         if not message_id:
             return None
         try:
@@ -222,8 +206,13 @@ class EchoStateManager:
         except EchoDbMissingError:
             return None
         except Exception as e:
-            print(f"[EchoStateManager] get_shadow error: {e}")
+            print(f"[ECHO_DEBUG_FATAL] Erreur lecture get_message_shadow: {e}")
         return None
+
+    @_session_scope()
+    def get_shadow(self, message_id: str, updated_at: Optional[int] = None) -> Optional[List[dict]]:
+        """Alias pour la lecture d'une ombre de message avec updated_at facultatif."""
+        return self.get_message_shadow(message_id, updated_at=updated_at)
 
     @_session_scope()
     def save_shadow(
@@ -233,6 +222,7 @@ class EchoStateManager:
         role: str = "user",
         updated_at: Optional[int] = None,
         model_id: Optional[str] = None,
+        parent_id: Optional[str] = None,
     ):
         """Alias pour persister une ombre de message."""
         return self.save_message_shadow(
@@ -242,7 +232,98 @@ class EchoStateManager:
             parts=parts,
             updated_at=updated_at,
             model_id=model_id,
+            parent_id=parent_id,
         )
+
+    @_session_scope(0)
+    def sync_shadow_parent_ids(self, parent_map: Dict[str, Optional[str]]) -> int:
+        """Synchronise différentiellement les parent_id de message_shadows avec l'arbre actif."""
+        if not parent_map:
+            return 0
+        norm_map: Dict[str, Optional[str]] = {
+            str(k): (str(v) if v else None)
+            for k, v in parent_map.items()
+            if k
+        }
+        if not norm_map:
+            return 0
+        try:
+            with self._get_connection(readonly=True) as conn:
+                keys_list = list(norm_map.keys())
+                to_update: List[Tuple[Optional[str], str]] = []
+                for i in range(0, len(keys_list), 500):
+                    chunk = keys_list[i:i + 500]
+                    placeholders = ", ".join("?" for _ in chunk)
+                    rows = conn.execute(
+                        f"SELECT message_id, parent_id FROM message_shadows WHERE message_id IN ({placeholders})",
+                        chunk,
+                    ).fetchall()
+                    for mid, cur_pid in rows:
+                        s_mid = str(mid)
+                        cur_norm = str(cur_pid) if cur_pid else None
+                        target_pid = norm_map.get(s_mid)
+                        if cur_norm != target_pid:
+                            to_update.append((target_pid, s_mid))
+            if to_update:
+                with self._write_tx() as conn:
+                    conn.executemany(
+                        "UPDATE message_shadows SET parent_id = ? WHERE message_id = ?",
+                        to_update,
+                    )
+                return len(to_update)
+        except EchoDbMissingError:
+            return 0
+        except Exception as e:
+            print(f"[EchoStateManager] sync_shadow_parent_ids error: {e}")
+        return 0
+
+    @_session_scope(list)
+    def get_shadow_branch_lineage(self, leaf_message_id: str) -> List[Dict[str, Any]]:
+        """Remonte la lignée causale (leaf -> parent_id -> ... -> root) dans message_shadows.
+
+        Inclut une garde anti-cycle stricte (visited) et retourne la liste ordonnée chronologiquement
+        (de la racine vers leaf_message_id).
+        """
+        if not leaf_message_id:
+            return []
+        lineage: List[Dict[str, Any]] = []
+        visited: set = set()
+        curr_id: Optional[str] = str(leaf_message_id)
+        try:
+            with self._get_connection(readonly=True) as conn:
+                while curr_id and curr_id not in visited:
+                    visited.add(curr_id)
+                    row = conn.execute(
+                        "SELECT message_id, parent_id, role, full_parts_json, model_id, updated_at "
+                        "FROM message_shadows WHERE message_id = ?",
+                        (curr_id,),
+                    ).fetchone()
+                    if not row:
+                        break
+                    mid, pid, role, raw_parts, model_id, updated_at = row
+                    try:
+                        parts = std_json.loads(raw_parts) if raw_parts else []
+                    except Exception:
+                        parts = []
+                    norm_pid = str(pid) if pid else None
+                    lineage.append({
+                        "message_id": str(mid),
+                        "parent_id": norm_pid,
+                        "role": role,
+                        "parts": parts,
+                        "full_parts_json": raw_parts,
+                        "model_id": model_id,
+                        "updated_at": int(updated_at or 0),
+                    })
+                    curr_id = norm_pid
+        except EchoDbMissingError:
+            return []
+        except Exception as e:
+            print(f"[EchoStateManager] get_shadow_branch_lineage error: {e}")
+            return []
+
+        lineage.reverse()
+        return lineage
 
     @_session_scope()
     def save_call_bridge(self, call_id: str, signature: str, function_name: str, args: dict = None, message_id: Optional[str] = None):
@@ -1379,6 +1460,7 @@ class EchoStateManager:
         chat_id_or_ids: Any = None,
         limit: int = 20,
         active_message_ids: Optional[List[str]] = None,
+        leaf_message_id: Optional[str] = None,
     ) -> Any:
         """Récupère les ombres des messages appartenant à la branche active ordonnée."""
         if isinstance(chat_id_or_ids, (list, tuple, set)):
@@ -1388,26 +1470,39 @@ class EchoStateManager:
         else:
             effective_ids = []
 
+        if not effective_ids and leaf_message_id:
+            lineage = self.get_shadow_branch_lineage(leaf_message_id)
+            ordered = BranchShadowsList(lineage)
+            return BranchShadowsList(ordered[-limit:]) if limit > 0 else ordered
+
         if not effective_ids:
             return BranchShadowsList()
         try:
             with self._get_connection(readonly=True) as conn:
                 placeholders = ", ".join("?" for _ in effective_ids)
                 rows = conn.execute(
-                    f"SELECT message_id, role, full_parts_json FROM message_shadows WHERE message_id IN ({placeholders})",
+                    f"SELECT message_id, parent_id, role, full_parts_json, model_id, updated_at "
+                    f"FROM message_shadows WHERE message_id IN ({placeholders})",
                     effective_ids,
                 ).fetchall()
-                shadow_by_id = {r[0]: (r[1], r[2]) for r in rows}
+                shadow_by_id = {r[0]: (r[1], r[2], r[3], r[4], r[5]) for r in rows}
 
                 ordered = BranchShadowsList()
                 for mid in effective_ids:
                     if mid in shadow_by_id:
-                        r_role, r_json = shadow_by_id[mid]
+                        r_pid, r_role, r_json, r_model, r_ts = shadow_by_id[mid]
                         try:
                             parts = json.loads(r_json)
                         except Exception:
                             parts = []
-                        ordered.append({"message_id": mid, "role": r_role, "parts": parts})
+                        ordered.append({
+                            "message_id": mid,
+                            "parent_id": str(r_pid) if r_pid else None,
+                            "role": r_role,
+                            "parts": parts,
+                            "model_id": r_model,
+                            "updated_at": int(r_ts or 0),
+                        })
 
                 return BranchShadowsList(ordered[-limit:]) if limit > 0 else ordered
         except EchoDbMissingError:

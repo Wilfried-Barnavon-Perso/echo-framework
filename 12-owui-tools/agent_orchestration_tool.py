@@ -3,16 +3,16 @@
 """
 title: ECHO Agent Orchestration
 author: ECHO Framework
-version: 6.10.0.1
+version: 6.20.3.1
 description: Composant système interne : ECHO Agent Orchestration.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.20.3.1: Migration de la confirmation delete_user_skill vers events.confirm (Markdown et timeout_seconds).
+# 6.20.2.1: Ajout de l'avertissement coût tokens et de l'accord préalable Utilisateur dans la docstring de consult_phalanx.
+# 6.19.0.1: Remplacement de consult_supervised_workers par consult_phalanx (Phalange multi-niveaux Stratège/Capitaine/Hoplite).
 # 6.10.0.1: Mutualisation du blocage headless/automatisation via get_headless_block_reason dans delete_user_skill.
 # 6.7.7.1: Migration vers le découpage en tours d'outils (COUNCIL_EXPERT_MAX_TOOL_TURNS_PER_ROUND = 3 [0..6], ECHO_COUNCIL_ROUND_TIMEOUT_SEC = 120, ECHO_AUTONOMOUS_MAX_TURNS = 15, ECHO_AUTONOMOUS_TIMEOUT_SEC = 300).
-# 6.7.1.2: Câblage run_cognitive_step sur synthèse/critique/consolidation, role_order déterministe, normalisation _normalize_workers_input et fail-fast Phase 1.
-# 6.7.1.1: Mise en conformité PAS des prompts et directives.
-# 6.6.30.1: Câblage de consult_council et consult_supervised_workers sur EchoSubagentController et suppression de list_councils, close_council, list_supervised_tasks et close_supervised_task.
 
 import sys
 import orjson as json
@@ -20,12 +20,12 @@ import asyncio
 import uuid
 import datetime
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any, Literal, Tuple, Union
+from typing import Optional, List, Dict, Any, Literal, Tuple
 
 # Importation ECHO Standard
 sys.path.append("/app/backend/echo_libs")
 from echo_core import echo_tool, wrap_tool_output
-from echo_protocol import SkillRouterOutput, SupervisorCriticOutput
+from echo_protocol import SkillRouterOutput
 from echo_events import EchoEvents
 from echo_gemini_client import EchoGeminiClient
 from echo_state_manager import EchoStateManager
@@ -38,18 +38,17 @@ from echo_constants import (
     ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND,
     ECHO_COUNCIL_ROUND_TIMEOUT_SEC,
     ECHO_LLM_CALL_TIMEOUT,
+    ECHO_MAX_PHALANX_DEPTH,
     get_generation_config,
     get_headless_block_reason,
 )
 from echo_skills import get_all_skills, get_skill_content, save_skill, parse_skill_metadata, delete_skill
 from echo_paths import sanitize_echo_id, get_user_skill_lock
-from echo_ui import EchoUI
 from echo_prompts import (
     SYS_ORCHESTRATOR_SKILL_ROUTER,
     SYS_ORCHESTRATOR_COUNCIL_EXPERT,
     SYS_ORCHESTRATOR_COUNCIL_SYNTHESIS,
-    SYS_ORCHESTRATOR_CRITIC,
-    SYS_ORCHESTRATOR_CONSOLIDATOR
+    SYS_ORCHESTRATOR_PHALANX,
 )
 
 _COUNCIL_LOCKS: dict[str, asyncio.Lock] = {}
@@ -79,7 +78,6 @@ class Tools:
             description="Nombre max de tours d'outils par expert et par tour de conseil (0 = délibération pure sans outil).",
         )
         COUNCIL_MAX_PR_COMPLEXITY: int = Field(default=60, description="Complexité maximale (participants * rounds) d'un conseil.")
-        SUPERVISOR_MAX_CORRECTION_ROUNDS: int = Field(default=3, ge=1, le=5, description="Nombre maximum de tours de correction du superviseur.")
 
     def __init__(self):
         self.valves = self.Valves()
@@ -242,43 +240,24 @@ class Tools:
         if not content:
             return f"❌ Le skill '{skill_id}' n'existe pas."
 
-        msg_html = f'''
-        <div style="margin-bottom:15px; font-size:15px; font-weight:600;">
-            ⚠️ Confirmez-vous la suppression définitive de l'expertise <b>{skill_id}</b> ?
-        </div>
-        <pre style="
-            background: rgba(0,0,0,0.1);
-            padding: 10px;
-            border-radius: 5px;
-            white-space: pre-wrap;
-            word-break: break-word;
-            max-height: 40vh; /* Ascenseur interne */
-            overflow-y: auto;
-            font-family: monospace;
-            font-size: 12px;
-            border: 1px solid rgba(128,128,128,0.2);
-        ">{content}</pre>
-        '''
-
-        # orjson.dumps retourne des bytes, il faut décoder en utf-8 pour l'injection JS
-        msg_escaped = json.dumps(msg_html).decode('utf-8')
-        modals_injection = EchoUI.get_custom_modals_js()
-
-        js_code = f"""
-        {modals_injection}
-        return await new Promise((resolve) => {{
-            window.echoCustomConfirm({msg_escaped}, {timeout_seconds}, (result) => resolve(result));
-        }});
-        """
-
-        if __event_emitter__:
-            await events.status(f"Validation requise pour supprimer le skill {skill_id}...", done=False)
-
         block_reason = get_headless_block_reason(__metadata__)
         if block_reason:
             return f"Erreur : {block_reason}"
 
-        user_confirmed = await events.call_execute(js_code)
+        fence = "````" if "```" in content else "```"
+        msg_md = (
+            f"Confirmez-vous la suppression définitive de l'expertise **{skill_id}** ?\n\n"
+            f"{fence}\n{content}\n{fence}"
+        )
+
+        if __event_emitter__:
+            await events.status(f"Validation requise pour supprimer le skill {skill_id}...", done=False)
+
+        user_confirmed = await events.confirm(
+            f"Supprimer la compétence « {skill_id} »",
+            msg_md,
+            timeout_seconds=timeout_seconds,
+        )
 
         if user_confirmed:
             async with get_user_skill_lock(user_id):
@@ -622,390 +601,86 @@ class Tools:
         )
 
     # ==========================================================================
-    # 3. SUPERVISEUR (Boucle critique / correction récursive)
+    # 3. PHALANGE MULTI-NIVEAUX (Stratège -> Capitaines / Hoplites)
     # ==========================================================================
 
-    @staticmethod
-    def _normalize_workers_input(raw_workers: Any) -> Dict[str, dict]:
-        """Normalise l'entrée `workers` (dict, list ou JSON string) en `{worker_id: {task, ...}}`."""
-        parsed = raw_workers
-        if isinstance(raw_workers, str):
-            try:
-                parsed = json.loads(raw_workers)
-            except Exception as e:
-                raise ValueError(f"Format JSON invalide pour `workers` : {e}")
-
-        if isinstance(parsed, list):
-            if not parsed:
-                raise ValueError("`workers` ne peut pas être une liste vide.")
-            converted: Dict[str, dict] = {}
-            for idx, item in enumerate(parsed, 1):
-                if isinstance(item, str) and item.strip():
-                    converted[f"worker_{idx}"] = {"task": item.strip()}
-                elif isinstance(item, dict):
-                    w_id = str(item.get("id") or item.get("worker_id") or f"worker_{idx}").strip()
-                    w_task = str(item.get("task") or item.get("description") or "").strip()
-                    if not w_task:
-                        raise ValueError(
-                            f"Entrée `{w_id}` invalide dans `workers` : le champ `task` est requis et non vide."
-                        )
-                    entry = dict(item)
-                    entry["task"] = w_task
-                    converted[w_id] = entry
-                else:
-                    raise ValueError(
-                        f"Élément #{idx} invalide dans `workers` : dict ou str attendu."
-                    )
-            return converted
-
-        if not parsed or not isinstance(parsed, dict):
-            raise ValueError(
-                "`workers` DOIT être un dictionnaire non vide de la forme "
-                "`{'worker_id': {'task': '...', 'skill_id': '...'}}` ou `{'worker_id': 'description'}`."
-            )
-
-        normalized: Dict[str, dict] = {}
-        for raw_id, raw_cfg in parsed.items():
-            w_id = str(raw_id or "").strip()
-            if not w_id:
-                raise ValueError("Identifiant de worker vide interdit dans `workers`.")
-            if isinstance(raw_cfg, str):
-                if not raw_cfg.strip():
-                    raise ValueError(f"La tâche du worker `{w_id}` ne peut pas être vide.")
-                normalized[w_id] = {"task": raw_cfg.strip()}
-            elif isinstance(raw_cfg, dict):
-                w_task = str(raw_cfg.get("task") or raw_cfg.get("description") or "").strip()
-                if not w_task:
-                    raise ValueError(
-                        f"Le worker `{w_id}` DOIT définir un champ `task` non vide."
-                    )
-                entry = dict(raw_cfg)
-                entry["task"] = w_task
-                normalized[w_id] = entry
-            else:
-                raise ValueError(
-                    f"Configuration invalide pour le worker `{w_id}` : dict ou str attendu."
-                )
-        return normalized
-
     @echo_tool
-    async def consult_supervised_workers(
+    async def consult_phalanx(
         self,
-        objective: str = Field(..., description="Objectif global de la mission supervisée."),
-        workers: Union[dict, list, str] = Field(
-            ...,
-            description="Dictionnaire des workers {'worker_id': {'task': '...', 'skill_id': '(optionnel)', 'system_prompt': '(optionnel)'}} ou {'worker_id': 'description de la tâche'}.",
-        ),
-        target_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_APOLLO",
-        critic_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_PROMETHEUS",
-        max_correction_rounds: Optional[int] = None,
+        objective: str = Field(..., description="Objectif global confié à la Phalange."),
+        strategist_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_PROMETHEUS",
+        worker_model: Literal["MODEL_ZEPHYR", "MODEL_APOLLO", "MODEL_PROMETHEUS", "MODEL_ATHENA"] = "MODEL_APOLLO",
+        phalanx_id: Optional[str] = Field(default=None, description="Identifiant optionnel de la Phalange."),
         close_on_finish: bool = False,
         __user__: Optional[dict] = None,
         __chat_id__: Optional[str] = None,
         __metadata__: dict = {},
         __event_emitter__: Any = None,
-        __event_call__: Any = None
-    ) -> str:
-        """Délègue des sous-tâches à des workers supervisés par un critique itératif avant consolidation."""
+        __event_call__: Any = None,
+    ) -> dict:
+        """Déploie une Phalange multi-niveaux (coût tokens élevé) pour un objectif complexe multi-fronts ; obtenir l'accord préalable de l'Utilisateur sauf demande explicite, /goal ou automatisation headless."""
         events = EchoEvents(__event_emitter__, __event_call__)
-        user_id = __user__.get("id", "system") if __user__ else "system"
-        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id")
+        user_id = (__user__ or {}).get("id", "system")
+        chat_id = __chat_id__ or (__metadata__ or {}).get("chat_id") or ""
         if not chat_id:
-            return "❌ Erreur: Aucun chat_id détecté."
+            return wrap_tool_output(
+                text="❌ Erreur: Aucun chat_id détecté.",
+                status={"status": "error", "message": "chat_id requis"},
+            )
 
-        try:
-            workers_dict = self._normalize_workers_input(workers)
-        except ValueError as e:
-            return f"❌ Erreur de format pour `workers` : {e}"
+        clean_pid = sanitize_echo_id(
+            phalanx_id or uuid.uuid4().hex[:8], fallback="phalanx"
+        ).replace("_", "-")
+        group_id = clean_pid if clean_pid.startswith("phx_") else f"phx_{clean_pid}"
+        strategist_sid = f"thread_phalanx_{clean_pid}_strategist"
 
-        task_id = f"sup_{uuid.uuid4().hex[:8]}"
-        max_rounds = max_correction_rounds or self.user_valves.SUPERVISOR_MAX_CORRECTION_ROUNDS
+        phalanx_system = SYS_ORCHESTRATOR_PHALANX.format(
+            phalanx_id=group_id,
+            default_worker_model=worker_model,
+            max_depth=ECHO_MAX_PHALANX_DEPTH,
+            current_time=datetime.datetime.now().isoformat(),
+        )
 
         await events.status(
-            f"📋 Superviseur [{task_id}] : {len(workers_dict)} workers, max {max_rounds} corrections..."
+            f"🛡️ Phalange [{group_id}] — Déploiement du Stratège ({strategist_model})..."
         )
-
-        worker_sids = {}  # worker_id → sub_sid
-        deliverables = {}  # worker_id → texte du livrable
-
-        # ── Phase 1 : Délégation initiale (parallélisée via asyncio.gather) ──
-        await events.status(f"📋 [{task_id}] Phase 1 — Délégation parallèle ({len(workers_dict)} workers)...")
-
-        def _extract_worker_deliverable(result: Any) -> str:
-            budget_exhausted = False
-            if isinstance(result, str):
-                try:
-                    parsed = json.loads(result)
-                    text_val = parsed.get("text", result)
-                    if parsed.get("status", {}).get("warning") == "budget_exhausted":
-                        budget_exhausted = True
-                except Exception:
-                    text_val = result
-            elif isinstance(result, dict):
-                text_val = result.get("text", str(result))
-                if result.get("status", {}).get("warning") == "budget_exhausted":
-                    budget_exhausted = True
-            else:
-                text_val = str(result)
-            if budget_exhausted:
-                text_val += "\n\n[⚠️ AVERTISSEMENT SYSTÈME : Ce worker a atteint le garde-fou de sa passe autonome (tours ou délai) et a été interrompu. Si la direction de son travail est bonne et que la tâche justifie d'être poursuivie, le Superviseur DOIT retourner un statut `needs_correction` avec des directives pour la suite. La relance lui octroiera automatiquement une nouvelle passe autonome.]"
-            return text_val
-
-        # Validation gracieuse des skill_id éventuels (repli en rôle descriptif si absent)
-        for w_id, w_cfg in workers_dict.items():
-            w_role = w_cfg.get("skill_id")
-            if w_role:
-                skill_txt = await asyncio.to_thread(get_skill_content, user_id, str(w_role))
-                if not skill_txt:
-                    base_sys = w_cfg.get("system_prompt") or f"Le Modèle est un agent chargé de : {w_cfg.get('task', '')}"
-                    w_cfg["system_prompt"] = f"[Rôle assigné : {w_role}]\n{base_sys}"
-                    w_cfg["role_name"] = w_cfg.get("role_name") or str(w_role)
-                    w_cfg["skill_id"] = None
-
-        async def _run_initial_worker(w_idx: int, w_id: str, w_config: dict) -> Tuple[str, str]:
-            w_task = w_config.get("task", "")
-            w_role = w_config.get("skill_id")
-            w_label = w_config.get("role_name") or w_id
-            w_sys = w_config.get("system_prompt", f"Le Modèle est un agent chargé de : {w_task}")
-            agent_sid = f"thread_supervisor_{task_id}_{w_id}"
-            worker_sids[w_id] = agent_sid
-            res = await EchoSubagentController.run_or_resume(
-                user_id=user_id,
-                chat_id=chat_id,
-                task=f"### OBJECTIF GLOBAL\n{objective}\n\n### TÂCHE ASSIGNÉE\n{w_task}",
-                system_prompt=w_sys,
-                skill_id=w_role,
-                sub_sid=agent_sid,
-                target_model_key=target_model,
-                slice_max_turns=ECHO_AUTONOMOUS_MAX_TURNS,
-                slice_timeout_sec=ECHO_AUTONOMOUS_TIMEOUT_SEC,
-                autonomous_slice=True,
-                engine="supervisor",
-                group_id=task_id,
-                role_name=w_label,
-                role_order=100 + w_idx,
-                key_switch_threshold=self.valves.KEY_SWITCH_THRESHOLD,
-                max_retries=self.valves.MAX_RETRIES,
-                __user__=__user__,
-                __metadata__=__metadata__,
-                __event_emitter__=__event_emitter__,
-                __event_call__=__event_call__,
-            )
-            return w_id, _extract_worker_deliverable(res)
-
-        init_results = await asyncio.gather(
-            *[_run_initial_worker(idx, w_id, w_cfg) for idx, (w_id, w_cfg) in enumerate(workers_dict.items(), 1)],
-            return_exceptions=True,
-        )
-        state = EchoStateManager(user_id=user_id, chat_id=chat_id)
-        for idx, (w_id, w_cfg) in enumerate(workers_dict.items(), 1):
-            res_item = init_results[idx - 1]
-            if isinstance(res_item, Exception):
-                err_msg = f"⚠️ Erreur d'exécution du worker `{w_id}` : {res_item}"
-                deliverables[w_id] = err_msg
-                agent_sid = worker_sids.get(w_id) or f"thread_supervisor_{task_id}_{w_id}"
-                worker_sids[w_id] = agent_sid
-                save_subagent_meta(
-                    state,
-                    agent_sid,
-                    {
-                        "sub_sid": agent_sid,
-                        "chat_id": chat_id,
-                        "engine": "supervisor",
-                        "role_name": w_cfg.get("role_name") or w_id,
-                        "role_order": 100 + idx,
-                        "group_id": task_id,
-                        "model_key": target_model,
-                        "status": "error",
-                    },
-                )
-                state.save_thread_step(
-                    agent_sid,
-                    chat_id,
-                    "supervisor",
-                    0,
-                    "model",
-                    [{"text": err_msg}],
-                )
-            else:
-                _, text_out = res_item
-                deliverables[w_id] = text_out
-
-        # Fail-Fast : si tous les workers ont échoué techniquement, court-circuiter Critique & Consolidation
-        if init_results and all(isinstance(r, Exception) for r in init_results):
-            await events.status(f"❌ [{task_id}] Échec fatal de tous les workers.", done=True)
-            err_report = "\n\n".join(f"### WORKER: {w_id}\n{txt}" for w_id, txt in deliverables.items())
-            return wrap_tool_output(
-                text=f"❌ Échec technique de tous les workers [{task_id}] :\n\n{err_report}",
-                status={
-                    "status": "error",
-                    "task_id": task_id,
-                    "workers_count": len(workers_dict),
-                },
-            )
-
-        # ── Phase 2+3 : Boucle critique / correction ──
-        critic_sid = f"thread_supervisor_{task_id}_critic"
-        critic_step_idx = 0
-        correction_round = 0
-        while correction_round < max_rounds:
-            correction_round += 1
-            await events.status(
-                f"📋 [{task_id}] Phase 2 — Évaluation critique (round {correction_round}/{max_rounds})..."
-            )
-
-            # Construction du prompt critique
-            deliverables_text = "\n\n---\n\n".join(
-                f"### WORKER: {w_id}\n{text}" for w_id, text in deliverables.items()
-            )
-
-            current_time = datetime.datetime.now().isoformat()
-
-            critic_prompt = SYS_ORCHESTRATOR_CRITIC.format(
-                current_time=current_time,
-                objective=objective,
-                deliverables_text=deliverables_text
-            )
-            critic_text, critic_used, critic_parsed = await EchoSubagentController.run_cognitive_step(
-                user_id=user_id,
-                chat_id=chat_id,
-                sub_sid=critic_sid,
-                engine="supervisor_critic",
-                role_name=f"Critique ({task_id})",
-                target_model_key=critic_model,
-                user_prompt=critic_prompt,
-                display_user_prompt=f"Évaluation critique round {correction_round}/{max_rounds} ({len(deliverables)} livrables) — Objectif : {objective[:400]}",
-                group_id=task_id,
-                role_order=900,
-                step_index=critic_step_idx,
-                override_thinking="high",
-                max_output_tokens=8192,
-                response_schema=SupervisorCriticOutput,
-                timeout=self.valves.COGNITIVE_TIMEOUT,
-                events=events,
-                metadata=(__metadata__ or {}),
-                fallback_error="",
-            )
-            critic_step_idx += 2
-
-            if not critic_text or critic_parsed is None:
-                await events.status(f"⚠️ [{task_id}] Critique indisponible ou non parseable — validation forcée.", done=True)
-                break
-
-            verdict = critic_parsed.verdict
-            if verdict == "APPROVED":
-                await events.status(f"✅ [{task_id}] Verdict : APPROVED (round {correction_round})")
-                break
-
-            # REJECTED — Phase 3 : Correction
-            worker_feedback = {
-                item.worker_id: {"status": item.status, "feedback": item.feedback}
-                for item in critic_parsed.worker_feedback
-                if item.worker_id in deliverables
-            }
-            workers_to_correct = [
-                w_id for w_id, fb in worker_feedback.items()
-                if fb.get("status") == "needs_correction"
-            ]
-
-            if not workers_to_correct:
-                break  # REJECTED mais personne à corriger
-
-            await events.status(
-                f"📋 [{task_id}] Phase 3 — Correction parallèle de {len(workers_to_correct)} workers..."
-            )
-
-            async def _run_correction_worker(w_id: str) -> Tuple[str, str]:
-                feedback = worker_feedback[w_id].get("feedback", "Le Sous-Agent DOIT corriger le livrable.")
-                agent_sid = worker_sids[w_id]
-                w_config = workers_dict.get(w_id, {})
-                w_role = w_config.get("skill_id", w_config.get("role_name"))
-                w_sys = w_config.get("system_prompt", "")
-                res = await EchoSubagentController.run_or_resume(
-                    user_id=user_id,
-                    chat_id=chat_id,
-                    task=f"### FEEDBACK DU CRITIQUE\n{feedback}\n\n### OBJECTIF\nLe Modèle DOIT corriger son livrable précédent.",
-                    system_prompt=w_sys,
-                    skill_id=w_role,
-                    sub_sid=agent_sid,
-                    target_model_key=target_model,
-                    slice_max_turns=ECHO_AUTONOMOUS_MAX_TURNS,
-                    slice_timeout_sec=ECHO_AUTONOMOUS_TIMEOUT_SEC,
-                    autonomous_slice=True,
-                    engine="supervisor",
-                    group_id=task_id,
-                    key_switch_threshold=self.valves.KEY_SWITCH_THRESHOLD,
-                    max_retries=self.valves.MAX_RETRIES,
-                    __user__=__user__,
-                    __metadata__=__metadata__,
-                    __event_emitter__=__event_emitter__,
-                    __event_call__=__event_call__,
-                )
-                return w_id, _extract_worker_deliverable(res)
-
-            valid_workers_to_correct = [w_id for w_id in workers_to_correct if w_id in worker_sids]
-            corr_results = await asyncio.gather(
-                *[_run_correction_worker(w_id) for w_id in valid_workers_to_correct],
-                return_exceptions=True,
-            )
-            for idx, w_id in enumerate(valid_workers_to_correct):
-                res_item = corr_results[idx]
-                if isinstance(res_item, Exception):
-                    deliverables[w_id] = f"⚠️ Erreur de correction du worker `{w_id}` : {res_item}"
-                else:
-                    _, text_out = res_item
-                    deliverables[w_id] = text_out
-
-        # ── Phase 4 : Consolidation ──
-        await events.status(f"📋 [{task_id}] Phase 4 — Consolidation...")
-
-        consolidation_text = "\n\n---\n\n".join(
-            f"### WORKER: {w_id}\n{text}" for w_id, text in deliverables.items()
-        )
-
-        current_time = datetime.datetime.now().isoformat()
-
-        consolidation_prompt = SYS_ORCHESTRATOR_CONSOLIDATOR.format(
-            current_time=current_time,
-            objective=objective,
-            consolidation_text=consolidation_text
-        )
-
-        final_text, consol_used, _ = await EchoSubagentController.run_cognitive_step(
+        res = await EchoSubagentController.run_or_resume(
             user_id=user_id,
             chat_id=chat_id,
-            sub_sid=f"thread_supervisor_{task_id}_consolidator",
-            engine="supervisor_consolidator",
-            role_name=f"Consolidation ({task_id})",
-            target_model_key=target_model,
-            user_prompt=consolidation_prompt,
-            display_user_prompt=f"Consolidation [{task_id}] ({len(deliverables)} livrables) — Objectif : {objective[:400]}",
-            group_id=task_id,
-            role_order=999,
-            override_thinking="medium",
-            max_output_tokens=16000,
-            timeout=self.valves.COGNITIVE_TIMEOUT,
-            events=events,
-            metadata=(__metadata__ or {}),
-            fallback_error="❌ Cascade épuisée pour la consolidation.",
+            task=objective,
+            system_prompt=phalanx_system,
+            sub_sid=strategist_sid,
+            target_model_key=strategist_model,
+            slice_max_turns=ECHO_AUTONOMOUS_MAX_TURNS,
+            slice_timeout_sec=ECHO_AUTONOMOUS_TIMEOUT_SEC,
+            autonomous_slice=False,
+            engine="phalanx",
+            group_id=group_id,
+            role_name=f"Stratège ({clean_pid})",
+            role_order=10,
+            can_delegate=True,
+            depth=1,
+            default_worker_model=worker_model,
+            key_switch_threshold=self.valves.KEY_SWITCH_THRESHOLD,
+            max_retries=self.valves.MAX_RETRIES,
+            __user__=__user__,
+            __metadata__=__metadata__,
+            __event_emitter__=__event_emitter__,
+            __event_call__=__event_call__,
         )
 
-        # Clôture
-        if close_on_finish:
+        if (
+            close_on_finish
+            and isinstance(res, dict)
+            and (res.get("status") or {}).get("subagent_status") == "completed"
+        ):
             await EchoSubagentController.execute_control_action(
-                action="close", user_id=user_id, chat_id=chat_id, target_ids=[task_id]
+                action="close",
+                user_id=user_id,
+                chat_id=chat_id,
+                target_ids=[group_id],
             )
 
-        await events.status(f"📋 Superviseur [{task_id}] terminé.", done=True)
-        return wrap_tool_output(
-            text=(
-                f"### RÉSULTAT SUPERVISÉ [{task_id}] ({len(workers_dict)} workers, "
-                f"{correction_round} round(s) de critique)\n\n{final_text}"
-            ),
-            status={
-                "status": "success",
-                "task_id": task_id,
-                "rounds_remaining": max_rounds - correction_round,
-                "workers_count": len(workers_dict)
-            }
-        )
+        if isinstance(res, dict) and isinstance(res.get("status"), dict):
+            res["status"]["phalanx_id"] = group_id
+        return res

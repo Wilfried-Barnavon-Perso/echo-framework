@@ -193,6 +193,7 @@
 	let eventConfirmationInputValue = '';
 	let eventConfirmationInputType = '';
 	let eventConfirmationInputOptions: ({ label?: string; value: string } | string)[] = [];
+	let eventConfirmationTimeoutMs: number | null = null;
 	let eventCallback: (value: any) => void = () => {};
 	let eventInteractionId: string | null = null;
 	type BrowserInteraction = {
@@ -1515,6 +1516,7 @@
 		if (interactionType === 'request:interaction:done') {
 			if (eventInteractionId && eventInteractionId === interactionData?.interaction_id) {
 				showEventConfirmation = false;
+				eventConfirmationTimeoutMs = null;
 				eventInteractionId = null;
 			}
 			browserInteractions = browserInteractions.filter(
@@ -1775,6 +1777,8 @@
 					eventInteractionId = data.interaction_id ?? null;
 
 					eventConfirmationInput = false;
+					eventConfirmationTimeoutMs =
+						typeof data?.timeout_ms === 'number' && data.timeout_ms > 0 ? data.timeout_ms : null;
 					showEventConfirmation = true;
 					eventConfirmationInputOptions = [];
 
@@ -1797,6 +1801,7 @@
 					eventInteractionId = data.interaction_id ?? null;
 
 					eventConfirmationInput = true;
+					eventConfirmationTimeoutMs = null;
 					showEventConfirmation = true;
 
 					eventConfirmationTitle = data.title;
@@ -1852,6 +1857,7 @@
 					submitHandler(prompt);
 				} else {
 					eventConfirmationInput = false;
+					eventConfirmationTimeoutMs = null;
 					eventConfirmationTitle = $i18n.t('Confirm Prompt from Embed');
 					eventConfirmationMessage = prompt;
 					eventInteractionId = null;
@@ -1886,6 +1892,7 @@
 					submitHandler(event.data.text);
 				} else {
 					eventConfirmationInput = false;
+					eventConfirmationTimeoutMs = null;
 					eventConfirmationTitle = $i18n.t('Confirm Prompt from Embed');
 					eventConfirmationMessage = event.data.text;
 					eventInteractionId = null;
@@ -5112,6 +5119,7 @@
 	inputValue={eventConfirmationInputValue}
 	inputType={eventConfirmationInputType}
 	inputOptions={eventConfirmationInputOptions}
+	timeoutMs={eventConfirmationTimeoutMs}
 	on:confirm={(e) => {
 		if (eventConfirmationInput) {
 			eventCallback(e.detail);

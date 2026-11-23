@@ -127,44 +127,53 @@
       comme productions issues d'une autre branche si vous consultez le registre.
     </p>
 
-    <h2>3. Les quatre actions sous les messages et le clonage</h2>
+    <h2>3. Actions sur la session, migration et clonage</h2>
 
     <p>
-      Sous chaque réponse de l'assistant, des boutons d'action permettent d'intervenir directement sur la session en
-      cours :
+      Sous chaque réponse de l'assistant, le bouton d'action <strong>Export PDF</strong> permet d'imprimer ou
+      d'enregistrer en PDF le message sélectionné pour un archivage local ou un partage hors ligne. Les autres
+      opérations de gestion de session et de compte sont intégrées directement à leur emplacement naturel dans
+      l'interface :
     </p>
 
     <table>
       <thead>
         <tr>
-          <th>Action</th>
+          <th>Opération</th>
+          <th>Emplacement dans l'interface</th>
           <th>Effet concret</th>
-          <th>Cas d'usage</th>
         </tr>
       </thead>
       <tbody>
         <tr>
-          <td><strong>Poursuivre dans une nouvelle conversation</strong></td>
-          <td>Condense l'échange actuel en deux passes (synthèse globale et détails récents) et transfère étiquettes, fichiers, espace Codex et mémoire de la branche active vers un nouveau fil allégé.</td>
-          <td>Recommandé lorsque la jauge de contexte approche la saturation (au-delà de 80 %) pour repartir sur une fenêtre propre sans perte.</td>
-        </tr>
-        <tr>
-          <td><strong>Purge ciblée de la mémoire</strong></td>
-          <td>Ouvre une liste déroulante permettant de cocher et supprimer précisément des fragments vectoriels obsolètes ou erronés.</td>
-          <td>Corriger un souvenir faux ou nettoyer un document qui n'a plus lieu d'être rappelé.</td>
-        </tr>
-        <tr>
           <td><strong>Export PDF</strong></td>
-          <td>Génère un document PDF imprimable de l'échange en cours.</td>
-          <td>Archivage local ou partage hors ligne d'une session.</td>
+          <td>Bouton d'action sous le message de l'assistant</td>
+          <td>Génère une vue imprimable et exportable en PDF du message sélectionné.</td>
         </tr>
         <tr>
-          <td><strong>Réinitialisation d'authentification</strong></td>
-          <td>Purge les jetons d'accès du fournisseur d'intelligence artificielle sans toucher à vos conversations, fichiers ou secrets du Coffre.</td>
-          <td>Dépannage rapide en cas de désynchronisation de connexion API.</td>
+          <td><strong>Poursuivre dans un nouveau chat</strong></td>
+          <td>Menu contextuel de la conversation (barre latérale)</td>
+          <td>Condense l'échange actuel en deux passes (synthèse globale et détails récents) et transfère étiquettes, fichiers, espace Codex et mémoire de la branche active vers un nouveau fil allégé (recommandé au-delà de 80&nbsp;% de saturation).</td>
+        </tr>
+        <tr>
+          <td><strong>Gestion et purge ciblée de la mémoire</strong></td>
+          <td><em>Espace de travail &gt; Mémoire</em></td>
+          <td>Permet de consulter, filtrer (notamment les Axiomes de niveau 5), ajouter ou supprimer précisément des souvenirs à long terme.</td>
+        </tr>
+        <tr>
+          <td><strong>Authentification LLM et réinitialisation de connexion</strong></td>
+          <td><em>Paramètres &gt; Profil &gt; Authentification LLM</em></td>
+          <td>Permet de connecter un compte Google, gérer des clés API primaire/secondaire ou réinitialiser les jetons d'accès sans toucher aux conversations, fichiers ou secrets du Coffre.</td>
         </tr>
       </tbody>
     </table>
+
+    <figure class="doc-figure">
+      <img src="images/v6_menu_conversation_resume.png" alt="Menu contextuel d'une conversation dans la barre latérale mettant en évidence l'option Poursuivre dans un nouveau chat et le bouton Export PDF sous le message" class="doc-screenshot">
+      <figcaption class="doc-caption">
+        Menu contextuel d'une conversation dans la barre latérale (<em>Cloner</em>, <em>Poursuivre dans un nouveau chat</em>, <em>Archiver</em>, <em>Supprimer</em>) et bouton d'action <em>Export PDF</em> conservé directement sous la réponse.
+      </figcaption>
+    </figure>
 
     <div class="note-box">
       <h4>Clonage et bifurcation (Fork) fidèles</h4>
@@ -172,13 +181,13 @@
         Lorsque vous dupliquez une conversation depuis la barre latérale ou depuis un message précis, ECHO copie
         l'état exact de la session (historique, fichiers, dépôts versionnés ramenés à l'instant exact du message,
         captures de navigation conservées et fragments vectoriels de la branche active) sans contamination entre la
-        copie et l'original. Lors d'une migration (« Poursuivre dans une nouvelle conversation »), si la copie vectorielle
-        est incomplète, une fenêtre de confirmation vous en informe avant toute redirection.
+        copie et l'original. Lors d'une migration depuis le menu de la conversation (« Poursuivre dans un nouveau chat »),
+        si la copie vectorielle est incomplète, une fenêtre de confirmation vous en informe avant toute redirection.
       </p>
     </div>
 
     <details class="tech-spec" id="dossier-ingenierie">
-      <summary>Dossier d'Ingénierie : Collections Qdrant 1024-d, Filtrage de Branche, 4 Actions &amp; Moteur de Clonage Atomique</summary>
+      <summary>Dossier d'Ingénierie : Collections Qdrant 1024-d, Filtrage de Branche, Actions &amp; Moteur de Clonage Atomique</summary>
 
       <h3>1. Mémoire Long-Terme (<code>echo_meta_artifacts</code>) &amp; UI Workspace</h3>
       <ul>
@@ -191,17 +200,15 @@
       <h3>2. Mémoire Épisodique de Session (<code>echo_session_rag</code>) &amp; Garbage Collection</h3>
       <ul>
         <li><strong>Indexation &amp; Recherche (<code>search_sessions_context</code>)</strong> : Collection <code>COLLECTION_SESSION_RAG</code> dotée de 4 index payload <code>keyword</code> (<code>user_id</code>, <code>chat_id</code>, <code>source_id</code>, <code>message_id</code>). Trois modes exclusifs : <code>inventory</code> (en-têtes légers agrégés sans <code>text</code>), <code>chronological</code> (<code>newest_first</code> / <code>oldest_first</code>, hydratation <code>POST /points</code>) et <code>semantic</code> (paliers <code>BROAD = 0.34</code>, <code>STANDARD = 0.52</code>, <code>STRICT = 0.63</code>, <code>EXACT = 0.81</code> ou <code>certainty_level="COSINE"</code> avec <code>cosine_threshold</code> dans <code>[0.0, 1.0]</code>).</li>
-        <li><strong>Étanchéité de Branche &amp; Provenance</strong> : En recherche locale (<code>global_search=False</code>), filtre déterministe sur la branche vivante via <code>build_branch_rag_filter(active_ids)</code> (<code>echo_session_gc.py</code> v5.237.20.2). Le GC exécute <code>compute_dead_set</code> / <code>purge_dead_set</code> sous <code>SAVEPOINT echo_purge_dead</code> tout en conservant les productions disque qualifiées <code>hors_branche</code> dans <code>query_registry_tool.py</code> (v6.13.1.1). En contexte sous-agent headless, la recherche est restreinte au <code>sub_sid</code> courant.</li>
+        <li><strong>Étanchéité de Branche &amp; Provenance</strong> : En recherche locale (<code>global_search=False</code>), filtre déterministe sur la branche vivante via <code>build_branch_rag_filter(active_ids)</code> (<code>echo_session_gc.py</code> v6.18.23.1). Le GC exécute <code>compute_dead_set</code> / <code>purge_dead_set</code> sous <code>SAVEPOINT echo_purge_dead</code> tout en conservant les productions disque qualifiées <code>hors_branche</code> dans <code>query_registry_tool.py</code> (v6.13.1.1). En contexte sous-agent headless, la recherche est restreinte au <code>sub_sid</code> courant.</li>
         <li><strong>Écriture / Purge</strong> : <code>save_session_context</code> et <code>delete_session_context_source</code> (un sous-agent ne peut purger que ses propres sources).</li>
       </ul>
 
-      <h3>3. Les 4 Actions (<code>13-owui-actions/</code>) &amp; Événementiel (<code>15-owui-events/</code>)</h3>
+      <h3>3. Action (<code>13-owui-actions/</code>), Reprise Distillée &amp; Événementiel (<code>15-owui-events/</code>)</h3>
       <ul>
-        <li><strong><code>resume_in_new_chat_action.py</code> (v6.7.1.1, Priorité 20)</strong> : Extrait la branche active via <code>Chats.get_chat_by_id</code> (incluant <code>m["output"]</code> et purge des balises de raisonnement), propage les étiquettes (<code>Chats.add_chat_tag_by_id</code>), exécute une distillation en 2 passes via <code>EchoGeminiClient.call_distillation</code> (<code>USR_ACTION_RESUME_GLOBAL</code> puis <code>USR_ACTION_RESUME_RECENT</code>) sous HUD <code>#echo-migration-hud</code>, puis appelle <code>sync_resumed_session</code> et <code>duplicate_session_rag</code> sous <code>get_chat_clone_lock</code>. Contrôle le <code>RagCloneReport</code> (upsert par lots de 64, réancrage <code>anchor_msg_id</code>) et affiche une modale <code>EchoEvents.confirm</code> en cas de copie vectorielle partielle avant toute redirection <code>/c/{new_chat_id}</code>.</li>
-        <li><strong><code>purge_memory_action.py</code> (v5.226.18.0, Priorité 30)</strong> : Interface scrollable de suppression granulaire dans Qdrant avec contrôle d'annulation UI.</li>
-        <li><strong><code>print_pdf_action.py</code> (v5.231.46.1, Priorité 100)</strong> : Déclenche l'export PDF client via <code>EchoEvents.call_execute</code> (UCTP Socket.IO + SSE/RPC).</li>
-        <li><strong><code>reset_auth_action.py</code> (v5.235.5.1, Priorité 10)</strong> : Purge ciblée des clés Google/PKCE et OAuth2 via <code>EchoAuth.delete_auth_data_by_prefixes</code> dans <code>identity.db</code>.</li>
-        <li><strong><code>echo_chat_cloned_event.py</code> (v5.235.5.1) &amp; <code>echo_session_clone.py</code> (v6.14.2.2)</strong> : Réagit à l'événement <code>chat.cloned</code> avec HUD <code>#echo-clone-hud</code>, verrou <code>get_chat_clone_lock</code>, copie SQLite <code>sqlite3.Connection.backup()</code>, élagage causal de fork partiel (<code>prune_forked_history</code> avec tolérance <code>+1s</code>), restauration temporelle Git <code>CodexRepo.restore_repo_to_timestamp(cutoff_ts)</code> sur <code>main</code>/<code>plans</code>/<code>generated</code> avant réécriture du frontmatter des plans, filtrage exclusif des <code>browserviews</code> au statut <code>retained</code>, réécriture <code>reassign_session_ids</code> et duplication vectorielle <code>duplicate_session_rag</code> bornée à <code>cutoff_ts</code> et <code>live_ids</code>.</li>
+        <li><strong><code>print_pdf_action.py</code> (v6.18.23.1, Priorité 100)</strong> : Déclenche l'impression et l'export PDF ciblé sur le message sélectionné via <code>EchoEvents.call_execute</code> (UCTP Socket.IO + SSE/RPC).</li>
+        <li><strong><code>echo_session_resume.py</code> (v6.18.23.1) &amp; <code>routers/chat_actions.py</code> (v6.18.23.1)</strong> : Exécutent la reprise distillée en deux passes sur la branche active (<code>POST /echo/v1/chats/{chat_id}/resume</code>) déclenchée depuis <code>ChatMenu.svelte</code> (remplaçant l'ancienne action de bas de message).</li>
+        <li><strong><code>echo_chat_cloned_event.py</code> (v5.235.5.1) &amp; <code>echo_session_clone.py</code> (v6.18.23.1)</strong> : Réagit à l'événement <code>chat.cloned</code> avec HUD <code>#echo-clone-hud</code>, verrou <code>get_chat_clone_lock</code>, copie SQLite <code>sqlite3.Connection.backup()</code> et durcissement <code>echo_db_schema.open_db</code>, élagage causal de fork partiel (<code>prune_forked_history</code> avec tolérance <code>+1s</code>), restauration temporelle Git <code>CodexRepo.restore_repo_to_timestamp(cutoff_ts)</code> sur <code>main</code>/<code>plans</code>/<code>generated</code> avant réécriture du frontmatter des plans, filtrage exclusif des <code>browserviews</code> au statut <code>retained</code>, réécriture <code>reassign_session_ids</code> et duplication vectorielle <code>duplicate_session_rag</code> bornée à <code>cutoff_ts</code> et <code>live_ids</code>.</li>
       </ul>
     </details>
 
@@ -211,7 +218,7 @@
       <a href="14_agents_automatisation.html">14. Agents &amp; Automatisation &rarr;</a>
     </div>
 
-    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+    <footer>ECHO Framework - Version 6.21.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
   </main>
 
   <script src="nav.js"></script>

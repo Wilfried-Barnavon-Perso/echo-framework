@@ -3,16 +3,16 @@
 """
 title: ECHO Code Executor
 author: Wilfried BARNAVON
-version: 6.17.4.1
+version: 6.21.1.1
 description: Composant système interne : ECHO Code Executor (Python, Node.js, Bash & SSH).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.1.1: Correction de l'appel get_echo_session_path(..., CODEX_DIR_NAME) et factorisation de _get_sandbox_dir.
+# 6.19.0.1: Isolation paresseuse des exécutions sandbox/<sub_sid>/ via scope_subagent_sandbox_path pour les sous-agents.
 # 6.17.4.1: Propagation du jeton HMAC sandbox_callback_token lors de l'exécution et alignement Option B (sans Pacemaker WS/BidiRouter).
 # 6.16.0.2: Retrait bidi_polling/poller, raccordement /wait_ready, offsets WM, abort léger et garde expose_app(background=True).
 # 6.15.2.1: Durcissement Option A : garde pré-vol serve_forever(), handshake ready/crash, boucle poller réveillée par wake_event, arrêt sur unknown x3 et cleanup scopé par run_id.
-# 6.13.1.2: Fiabilisation Pacemaker bidi_polling (constantes SSOT, peek/ack scopé par window_id, push delta-only, grâce _is_closed, arrêt auto sur fin de job et broadcast_canvas_status).
-# 6.6.30.1: Isolation par sub_sid (ECHO_SUBAGENT_CONTEXT) des jobs, pollers et actions status/listen/kill.
 
 # ECHO CONFIG NAME : ECHO Code Sandbox
 
@@ -41,7 +41,7 @@ from echo_constants import (  # noqa: E402
 )
 from echo_core import echo_tool, wrap_tool_output  # noqa: E402
 from echo_events import EchoEvents  # noqa: E402
-from echo_paths import get_echo_session_path, sanitize_echo_id  # noqa: E402
+from echo_paths import get_echo_session_path, sanitize_echo_id, scope_subagent_sandbox_path  # noqa: E402
 from echo_state_manager import EchoStateManager  # noqa: E402
 from echo_window_manager import get_window_manager  # noqa: E402
 
@@ -53,12 +53,24 @@ def _resolve_sandbox_identity(__user__: Optional[dict], __metadata__: Optional[d
     return uid, cid, sub_sid
 
 
+def _get_sandbox_dir(uid: str, cid: str) -> str:
+    codex_dir = get_echo_session_path(uid, cid, CODEX_DIR_NAME)
+    return os.path.abspath(os.path.join(codex_dir, CODEX_WORKSPACE_SANDBOX))
+
+
+def _resolve_sandbox_file_path(uid: str, cid: str, sub_sid: str, file_path: str) -> str:
+    sandbox_dir = _get_sandbox_dir(uid, cid)
+    return scope_subagent_sandbox_path(
+        file_path, sub_sid=sub_sid, sandbox_root=sandbox_dir, for_write=False
+    )
+
+
 def _inspect_sandbox_script(uid: str, cid: str, file_path: str) -> tuple[bool, bool]:
     """Inspecte le script sandbox en lecture confinée et détecte (uses_echo_monitor, calls_daemon)."""
     try:
-        session_dir = get_echo_session_path(uid, cid)
-        sandbox_dir = os.path.abspath(os.path.join(session_dir, CODEX_DIR_NAME, CODEX_WORKSPACE_SANDBOX))
-        rel = str(file_path or "").lstrip("/\\")
+        sandbox_dir = _get_sandbox_dir(uid, cid)
+        effective_path = _resolve_sandbox_file_path(uid, cid, "", file_path)
+        rel = str(effective_path or "").lstrip("/\\")
         target_path = os.path.abspath(os.path.join(sandbox_dir, rel))
         if target_path != sandbox_dir and not target_path.startswith(sandbox_dir + os.sep):
             return (False, False)
@@ -263,8 +275,9 @@ class Tools:
             await events.status(f"Erreur: {err_msg}", done=True)
             return f"❌ {err_msg}"
 
+        effective_file_path = _resolve_sandbox_file_path(uid, cid, sub_sid, file_path)
         _, calls_daemon = await asyncio.to_thread(
-            _inspect_sandbox_script, uid, cid, file_path
+            _inspect_sandbox_script, uid, cid, effective_file_path
         )
         if not background and calls_daemon:
             return (
@@ -291,7 +304,8 @@ class Tools:
                     response = await client.post(
                         ECHO_CODING_WORKER_URL,
                         json={
-                            "file_path": file_path,
+                            "file_path": effective_file_path,
+                            "sub_sid": sub_sid,
                             "dependencies": dependencies,
                             "user_id": uid,
                             "chat_id": cid,

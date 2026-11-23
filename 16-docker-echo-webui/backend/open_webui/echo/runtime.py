@@ -3,11 +3,12 @@
 """
 title: ECHO V6 Direct Disk Plugin Runtime
 author: Wilfried BARNAVON
-version: 6.0.0.1
+version: 6.18.22.1
 description: Chargeur direct sur disque des Pipes, Filters, Tools, Actions et Events ECHO avec hot-reload st_mtime_ns.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.22.1: Tolérance des lignes vides et commentaires (# Copyright/SPDX) avant le docstring dans parse_echo_frontmatter.
 # 6.0.0.1: Chargeur direct sur disque des plugins ECHO avec hot-reload st_mtime_ns et stacktraces natives.
 
 from __future__ import annotations
@@ -68,19 +69,30 @@ def ensure_echo_sys_path() -> None:
             sys.path.insert(0, path_str)
 
 
-def parse_echo_frontmatter(content: str) -> dict[str, str]:
+def parse_echo_frontmatter(content: str, lowercase_keys: bool = True) -> dict[str, str]:
     """Extrait le frontmatter docstring triple-quotes standard ECHO/Open WebUI."""
+    if not content:
+        return {}
     lines = content.splitlines()
-    if not lines or lines[0].strip() != '"""':
+    idx = 0
+    # Ignore les lignes vides et commentaires d'en-tête (# -*- coding, Copyright, SPDX) avant le docstring
+    while idx < len(lines):
+        stripped = lines[idx].strip()
+        if not stripped or stripped.startswith("#"):
+            idx += 1
+            continue
+        break
+    if idx >= len(lines) or lines[idx].strip() != '"""':
         return {}
     meta: dict[str, str] = {}
-    for line in lines[1:]:
+    for line in lines[idx + 1:]:
         if '"""' in line:
             break
         match = _FRONTMATTER_RE.match(line)
         if match:
             key, val = match.groups()
-            meta[key.strip().lower()] = val.strip()
+            norm_key = key.strip().lower() if lowercase_keys else key.strip()
+            meta[norm_key] = val.strip()
     return meta
 
 

@@ -3,17 +3,19 @@
 """
 title: Print / PDF
 author: Wilfried BARNAVON
-version: 5.231.46.1
-description: Outil d'exportation de la conversation courante vers un document PDF formaté pour l'impression.
+version: 6.18.23.1
+description: Outil d'exportation du message courant vers un document PDF formaté pour l'impression.
 icon_url: data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiPjxwYXRoIGQ9Ik0xNCAySDZhMiAyIDAgMCAwLTIgMnYxNmEyIDIgMCAwIDAgMiAyaDEyYTIgMiAwIDAgMCAyLTJWOHoiLz48cG9seWxpbmUgcG9pbnRzPSIxNCAyIDE0IDggMjAgOCIvPjxsaW5lIHgxPSIxMiIgeTE9IjEyIiB4Mj0iMTIiIHkyPSIxOCIvPjxwb2x5bGluZSBwb2ludHM9IjkgMTUgMTIgMTggMTUgMTUiLz48L3N2Zz4=
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.23.1: Ciblage exclusif du message courant (#message-{safe_msg_id}) sans repli global sur le fil de discussion.
 # 5.231.46.1: Remplacement de l'appel direct __event_call__ par events.call_execute (conformité UCTP, traçage EchoWM et double transport).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 2.4: Mise à jour de la priorité d'affichage à 100.
 # 2.3: Factorisation de la logique CSS Path-Marking vers echo_ui.py (EchoUI.get_print_isolation_js). Renommage export_pdf -> print_pdf pour refléter le comportement natif.
 
+import re
 import sys
 import logging
 from typing import Optional, Any
@@ -32,10 +34,10 @@ logger = logging.getLogger(__name__)
 # ==============================================================================
 
 class Action:
-    """Action ECHO — Impression et Export PDF de la conversation via impression native du navigateur.
+    """Action ECHO — Impression et Export PDF du message courant via impression native du navigateur.
 
     Workflow :
-    1. Isole le conteneur cible avec le pattern CSS Path-Marking via EchoUI.
+    1. Extrait l'identifiant du message et isole exclusivement #message-{id} via EchoUI.
     2. Appelle window.print() → boîte de dialogue système du navigateur.
     3. L'utilisateur choisit l'imprimante ou 'Enregistrer en PDF'.
     4. Nettoyage DOM via l'événement afterprint.
@@ -68,6 +70,12 @@ class Action:
             await events.toast("❌ Print / PDF : __event_call__ indisponible.", "error")
             return None
 
+        raw_msg_id = str((__metadata__ or {}).get("message_id") or body.get("id") or "").strip()
+        safe_msg_id = re.sub(r"[^A-Za-z0-9_-]", "", raw_msg_id)
+        if not safe_msg_id:
+            await events.toast("❌ Print / PDF : identifiant du message introuvable.", "error")
+            return None
+
         await events.status(
             "🖨️ Ouverture de la boîte d'impression...",
             False
@@ -77,7 +85,7 @@ class Action:
             "info"
         )
 
-        js_logic = EchoUI.get_print_isolation_js('#chat-messages, [id*="messages-container"], main .overflow-y-auto, main')
+        js_logic = EchoUI.get_print_isolation_js(f"#message-{safe_msg_id}")
 
         result = await events.call_execute(js_logic)
 

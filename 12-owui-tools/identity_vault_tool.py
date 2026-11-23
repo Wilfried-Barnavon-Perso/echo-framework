@@ -3,18 +3,17 @@
 """
 title: ECHO Identity Vault Tool
 author: ECHO
-version: 6.10.0.1
+version: 6.20.3.1
 description: Outil permettant à l'Agent de gérer le Identity Vault (ajout/suppression de serveurs distants ou N8N).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.20.3.1: Migration des confirmations manage_identity (add/update/delete) vers events.confirm (Markdown).
 # 6.10.0.1: Mutualisation du blocage headless/automatisation via get_headless_block_reason dans manage_identity.
 # 5.233.0.1: Généralisation de l'encapsulation @echo_tool sur les 3 outils et typage du schéma de sortie IdentityServicesCatalogOutput.
 # 5.231.21.2: Délégation CRUD chiffré à EchoStateManager, masquage des secrets bruts dans list_identities, schéma n8n_workflows et échappement HTML.
 # 5.229.0.0: Compression radicale des docstrings (externalisation vers tool_guides).
-# 5.226.18.0: Alignement sur le versioning global ECHO.
 import sys
-import html
 import json
 from typing import Any, Dict, List, Literal, Union
 from pydantic import BaseModel
@@ -22,7 +21,6 @@ from pydantic import BaseModel
 sys.path.append("/app/backend/echo_libs")
 from echo_core import echo_tool  # noqa: E402
 from echo_state_manager import EchoStateManager  # noqa: E402
-from echo_ui import EchoUI  # noqa: E402
 from echo_events import EchoEvents  # noqa: E402
 from echo_constants import get_headless_block_reason  # noqa: E402
 
@@ -151,46 +149,34 @@ class Tools:
 
         events = EchoEvents(__event_emitter__, __event_call__)
 
-        safe_acc = html.escape(str(account_id))
-        safe_svc = html.escape(str(service))
+        def _inline_code(val: Any) -> str:
+            text = str(val).replace("\r", " ").replace("\n", " ")
+            return f"`` {text} ``" if "`" in text else f"`{text}`"
 
         if action in ["add", "update"]:
             try:
                 payload_dict = json.loads(credentials_json)
-                items = [
-                    f"<li><i>{html.escape(str(k))}</i> : {html.escape(str(v))}</li>"
-                    for k, v in payload_dict.items()
-                ]
-                payload_html = "<ul>" + "".join(items) + "</ul>"
+                if isinstance(payload_dict, dict):
+                    items = [f"- *{k}* : {_inline_code(v)}" for k, v in payload_dict.items()]
+                    payload_md = "\n".join(items)
+                else:
+                    payload_md = _inline_code(credentials_json)
             except Exception:
-                payload_html = f"<code>{html.escape(str(credentials_json))}</code>"
+                payload_md = _inline_code(credentials_json)
 
-            if action == "add":
-                action_fr = "ajouter"
-            else:
-                action_fr = "mettre à jour"
+            action_fr = "ajouter" if action == "add" else "mettre à jour"
 
             if service == "mcp":
-                action_desc = f"L'Agent souhaite <b>{action_fr}</b> le Serveur MCP distant nommé <b>{safe_acc}</b> :"
+                action_desc = f"L'Agent souhaite **{action_fr}** le Serveur MCP distant nommé **{account_id}** :"
             else:
-                action_desc = f"L'Agent souhaite <b>{action_fr}</b> les identifiants d'API pour <b>{safe_acc}</b> ({safe_svc}) :"
+                action_desc = f"L'Agent souhaite **{action_fr}** les identifiants d'API pour **{account_id}** (`{service}`) :"
 
-            js_msg = (
-                f"🛡️ <b>Demande d'autorisation système</b><br><br>"
-                f"{action_desc}<br><br>"
-                f"<b>Détails de la configuration :</b><br>"
-                f"{payload_html}<br>"
+            msg_md = (
+                f"{action_desc}\n\n"
+                f"**Détails de la configuration :**\n{payload_md}\n\n"
                 f"Autoriser cette modification sur votre environnement ?"
             )
-            js_msg_escaped = json.dumps(js_msg)
-
-            confirm_js = f"""
-            {EchoUI.get_custom_modals_js()}
-            return await new Promise((resolve) => {{
-                window.echoCustomConfirm({js_msg_escaped}, (agreed) => resolve(agreed));
-            }});
-            """
-            user_consent = await events.call_execute(confirm_js)
+            user_consent = await events.confirm("Demande d'autorisation système", msg_md)
 
             if not user_consent:
                 return "Opération annulée : L'utilisateur a refusé la modification."
@@ -201,24 +187,15 @@ class Tools:
 
         elif action == "delete":
             if service == "mcp":
-                action_desc = f"L'Agent demande la <b>suppression définitive</b> du Serveur MCP distant nommé <b>{safe_acc}</b>."
+                action_desc = f"L'Agent demande la **suppression définitive** du Serveur MCP distant nommé **{account_id}**."
             else:
-                action_desc = f"L'Agent demande la <b>suppression définitive</b> des identifiants pour <b>{safe_acc}</b> ({safe_svc})."
+                action_desc = f"L'Agent demande la **suppression définitive** des identifiants pour **{account_id}** (`{service}`)."
 
-            js_msg = (
-                f"⚠️ <b>Action Destructive Requise</b><br><br>"
-                f"{action_desc}<br><br>"
+            msg_md = (
+                f"{action_desc}\n\n"
                 f"Cette action est irréversible. Confirmer la suppression ?"
             )
-            js_msg_escaped = json.dumps(js_msg)
-
-            confirm_js = f"""
-            {EchoUI.get_custom_modals_js()}
-            return await new Promise((resolve) => {{
-                window.echoCustomConfirm({js_msg_escaped}, (agreed) => resolve(agreed));
-            }});
-            """
-            user_consent = await events.call_execute(confirm_js)
+            user_consent = await events.confirm("Action Destructive Requise", msg_md)
 
             if not user_consent:
                 return "Opération annulée : L'utilisateur a refusé la suppression."

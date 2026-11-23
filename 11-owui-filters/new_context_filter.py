@@ -4,16 +4,16 @@
 title: ECHO New Context Filter
 author: Wilfried BARNAVON
 author_url: https://github.com/Wilfried-Barnavon-Perso
-version: 6.18.9.1
+version: 6.18.23.1
 description: Composant système interne : ECHO New Context Filter.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.23.1: Résolution de _echo_user_msg_parent_id pour le scellement Shadow v3 et suppression de l'interception obsolète ECHO_AUTH_PENDING_MARKER/_api_key.
 # 6.18.9.1: Lecture directe en mémoire de __user__.get("gender") sans requête SQLite sur identity.db.
 # 6.10.0.1: Détection automation_id, neutralisation du salut /help en 1er tour automatisé et injection de directive AEC autonome.
 # 6.7.20.1: Détection déterministe des commandes / ECHO en tête de requête, émission de AEC_commande (Priorité 4) et alignement de la directive d'accueil sur /help.
 # 6.7.16.1: Réutilisation inter-chats zéro-LLM des résumés VECTORIZED_SUM_UP d'identity.db avec clonage des points Qdrant vers la session cible.
-# 6.7.5.1: Préservation intacte de content: None dans outlet et lectures None-safe dans inlet.
 
 
 from pydantic import BaseModel, Field
@@ -37,7 +37,6 @@ from echo_constants import (
     GOOGLE_API_KEY_REGEX,
     DEFAULT_MAX_OFFICE_CONVERT_SIZE_MB,
     FILE_INGESTION_STATUS,
-    ECHO_AUTH_PENDING_MARKER,
 )
 from echo_core import EchoCompactionEngine
 from echo_session_gc import resource_provenance
@@ -105,18 +104,6 @@ class Filter:
             msgs = body.get("messages") or []
             if not msgs:
                 return body
-
-            if len(msgs) >= 2:
-                prev_content = str(msgs[-2].get("content") or "")
-                # Interception clé API AI Studio (fallback OAuth2).
-                # L'ancien bloc de détection code 4/… (PKCE) est supprimé :
-                # le Device Flow (RFC 8628) ne génère pas de code dans le chat.
-                last_content = str(msgs[-1].get("content") or "").strip()
-                keys = re.findall(GOOGLE_API_KEY_REGEX, last_content)
-                if ECHO_AUTH_PENDING_MARKER in prev_content and keys:
-                    body["_api_key"] = last_content
-                    msgs[-1]["content"] = "🔐 *Vérification de la clé API Google en cours...*"
-                    return body
 
             if __user__ and "id" in __user__:
                 self.auth.get_api_keys(__user__["id"])
@@ -470,6 +457,10 @@ class Filter:
                             error_events.append(err_evt)
 
                 # === AEC : Détection delta (ressources créées par outils/HUD hors-tour) ===
+                branch_messages = None
+                if chat_id:
+                    branch_messages = await EchoCompactionEngine.load_active_branch_messages(chat_id)
+
                 if chat_id and state_manager:
                     last_check = body.get("metadata", {}).get("_echo_last_event_check_at") or int(
                         state_manager.get_session_setting("last_event_check_at") or 0
@@ -480,7 +471,11 @@ class Filter:
                             if dr.get("resource_type") not in ("aec_event", "aec_directive")
                         ]
                         if delta_resources:
-                            branch_ids = await EchoCompactionEngine.load_active_branch_ids(chat_id)
+                            branch_ids = [
+                                str(bm.get("id"))
+                                for bm in (branch_messages or [])
+                                if isinstance(bm, dict) and bm.get("id")
+                            ]
                             active_ids = (
                                 set(branch_ids)
                                 | {m.get("id") for m in msgs if isinstance(m, dict) and m.get("id")}
@@ -534,7 +529,52 @@ class Filter:
                             rich_parts.append({"inline_data": {"mime_type": res["content"]["mime"], "data": res["content"]["data"]}})
 
                 body["metadata"]["_echo_user_parts_draft"] = rich_parts
-                body["metadata"]["_echo_user_msg_id"] = msgs[idx].get("id") or meta.get("user_message_id")
+                resolved_user_msg_id = (
+                    msgs[idx].get("id")
+                    or meta.get("user_message_id")
+                    or (meta.get("user_message") or {}).get("id")
+                )
+                if not resolved_user_msg_id and branch_messages:
+                    for bm in reversed(branch_messages):
+                        if isinstance(bm, dict) and bm.get("role") == "user" and bm.get("id"):
+                            resolved_user_msg_id = bm.get("id")
+                            break
+
+                resolved_user_parent_id = (
+                    msgs[idx].get("parentId")
+                    or msgs[idx].get("parent_id")
+                    or (meta.get("user_message") or {}).get("parentId")
+                    or (meta.get("user_message") or {}).get("parent_id")
+                    or meta.get("parent_id")
+                    or meta.get("parentId")
+                )
+                if not resolved_user_parent_id and branch_messages:
+                    if resolved_user_msg_id:
+                        for b_i, bm in enumerate(branch_messages):
+                            if isinstance(bm, dict) and str(bm.get("id") or "") == str(resolved_user_msg_id):
+                                resolved_user_parent_id = bm.get("parentId") or bm.get("parent_id")
+                                if not resolved_user_parent_id and b_i > 0:
+                                    resolved_user_parent_id = branch_messages[b_i - 1].get("id")
+                                break
+                        else:
+                            if isinstance(branch_messages[-1], dict):
+                                last_bm_id = branch_messages[-1].get("id")
+                                if last_bm_id and str(last_bm_id) != str(resolved_user_msg_id):
+                                    resolved_user_parent_id = last_bm_id
+                if not resolved_user_parent_id and idx > 0:
+                    for prev_m in reversed(msgs[:idx]):
+                        if isinstance(prev_m, dict) and prev_m.get("role") != "system" and prev_m.get("id"):
+                            if str(prev_m.get("id")) != str(resolved_user_msg_id or ""):
+                                resolved_user_parent_id = prev_m.get("id")
+                                break
+
+                if resolved_user_msg_id and not msgs[idx].get("id"):
+                    msgs[idx]["id"] = resolved_user_msg_id
+                if resolved_user_parent_id and not msgs[idx].get("parentId"):
+                    msgs[idx]["parentId"] = resolved_user_parent_id
+
+                body["metadata"]["_echo_user_msg_id"] = resolved_user_msg_id
+                body["metadata"]["_echo_user_msg_parent_id"] = resolved_user_parent_id
                 body["metadata"]["_echo_user_msg_updated_at"] = msgs[idx].get("updated_at") or meta.get("user_message", {}).get("updated_at") or int(time.time())
                 body["metadata"]["_echo_files_to_seal"] = results_to_seal
 

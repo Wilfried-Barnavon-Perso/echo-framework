@@ -977,9 +977,6 @@
 			size: file.size,
 			error: '',
 			itemId: tempItemId,
-			// Stamp the user's default upload mode so the sent payload carries it;
-			// the per-file toggle in FileItemModal can still override it afterwards.
-			...($settings?.defaultUploadContext === 'full' ? { context: 'full' } : {}),
 			...itemData
 		};
 
@@ -2083,7 +2080,7 @@
 																				}
 																			);
 
-																			await uploadFileHandler(file, true, { context: 'full' });
+																			await uploadFileHandler(file, true);
 																		}
 																	}
 																} else {

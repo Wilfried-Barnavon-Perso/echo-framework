@@ -4,17 +4,16 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - SEMANTIC PRUNING & GC
-VERSION : 6.18.3.1
+VERSION : 6.20.4.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.20.4.1: Filet de sécurité sur les symlinks UPLOADS_DIR pointant sous ECHO_USERS_ROOT et Étape 3.bis de purge des fichiers orphelins dans TMP_UPLOADS_DIR (.tmp_uploads).
+# 6.18.23.1: Durcissement SQLite WAL via open_sqlite_db, réalignement GC fichiers sur la topologie maître users/{uid}/files/ (symlinks chats/{cid}/files/), et appel filet cleanup_expired_purged_subagents_sync (Contrat C2).
 # 6.18.3.1: Préservation du wildcard public principal_id != '*' lors de la purge des orphelins access_grant (évite la suppression des grants publics model/tool).
 # 6.18.0.1: Compatibilité ECHO v6 (API Safeguard /api/v1/users/ + follow_redirects, GC fichiers dual-topologie EchoStorageProvider/Download Broker, délégation browserviews+MP4 à cleanup_expired_browserviews_sync, purge webui.db auth/access_grant/automation_run et levée du filtre len<=30 dans purge_user_artifacts).
 # 6.15.1.1: Respect du délai de grâce BROWSER_TRANSIENT_GRACE_SEC (1800.0s) avant purge des captures browserviews éphémères.
-# 6.15.0.1: Correction de l'URL de recensement des sessions navigateur vers NAVIGATION_ENGINE_URL / http://echo-browser-worker:5002/sessions.
-# 6.6.5.1: Purge des captures browserviews éphémères (non retained) dont la session Playwright est absente de GET http://echo-browser:5001/sessions.
-from contextlib import closing
 import datetime
 import html
 import json
@@ -42,12 +41,14 @@ from core.config import (
     OWUI_ADMIN_SECRET_PATH,
     QDRANT_URL,
     SYSTEM_ADMIN_EMAIL,
+    TMP_UPLOADS_DIR,
     UPLOADS_DIR,
     WEBUI_DB_PATH,
     WEBUI_URL,
     httpx,
 )
 from core.utils import _format_bytes, _get_tree_size
+from core.security import open_sqlite_db
 from core.settings_io import (
     load_maint_config,
     save_maint_config,
@@ -69,10 +70,15 @@ if HAS_ECHO_LIBS:
         from echo_browser_lib import cleanup_expired_browserviews_sync
     except ImportError:
         cleanup_expired_browserviews_sync = None
+    try:
+        from echo_subagent_hub import cleanup_expired_purged_subagents_sync
+    except ImportError:
+        cleanup_expired_purged_subagents_sync = None
 else:
     BROWSER_CLIP_EXT = "_clip.mp4"
     BROWSER_TRANSIENT_GRACE_SEC = 1800.0
     cleanup_expired_browserviews_sync = None
+    cleanup_expired_purged_subagents_sync = None
 
 
 def _delete_rag_points(uid: str, chat_id: str, seeds: list) -> int:
@@ -158,7 +164,7 @@ def purge_user_artifacts(uid: str):
                 session_db_path = cdir / "session.db"
                 if session_db_path.exists():
                     try:
-                        with sqlite3.connect(f"file:{session_db_path}?mode=ro", uri=True, timeout=5.0) as s_conn:
+                        with open_sqlite_db(str(session_db_path), readonly=True, timeout=5.0) as s_conn:
                             cur = s_conn.execute(
                                 "SELECT status FROM echo_resources WHERE resource_type = 'n8n_workflow' AND status LIKE 'deployed_as_%'"
                             )
@@ -181,7 +187,7 @@ def purge_user_artifacts(uid: str):
                 pass
         if os.path.exists(N8N_DB_PATH):
             try:
-                with sqlite3.connect(N8N_DB_PATH, timeout=10.0) as n8n_db:
+                with open_sqlite_db(N8N_DB_PATH, timeout=10.0, auto_commit=False) as n8n_db:
                     n8n_db.execute("VACUUM;")
             except Exception:
                 pass
@@ -256,7 +262,7 @@ def _run_semantic_pruning(silent=False):
         # Check SQLite SSoT (existence, taille > 0, présence d'au moins 1 user et table chat lisible)
         if os.path.exists(WEBUI_DB_PATH) and os.path.getsize(WEBUI_DB_PATH) > 0:
             try:
-                with sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True, timeout=5.0) as conn:
+                with open_sqlite_db(WEBUI_DB_PATH, readonly=True, timeout=5.0) as conn:
                     first_user = conn.execute("SELECT id FROM user LIMIT 1").fetchone()
                     conn.execute("SELECT COUNT(id) FROM chat").fetchone()
                     if first_user is not None:
@@ -378,7 +384,7 @@ def _run_semantic_pruning(silent=False):
         return err_msg, {}
 
     try:
-        with sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True, timeout=10.0) as conn:
+        with open_sqlite_db(WEBUI_DB_PATH, readonly=True, timeout=10.0) as conn:
             chk = conn.execute("PRAGMA quick_check(1)").fetchone()
             if not chk or chk[0] != "ok":
                 raise sqlite3.DatabaseError(f"PRAGMA quick_check(1) en échec : {chk}")
@@ -467,7 +473,7 @@ def _run_semantic_pruning(silent=False):
                             session_db_path = os.path.join(user_chats_dir, cdir, "session.db")
                             if os.path.exists(session_db_path):
                                 try:
-                                    with sqlite3.connect(f"file:{session_db_path}?mode=ro", uri=True, timeout=5.0) as s_conn:
+                                    with open_sqlite_db(session_db_path, readonly=True, timeout=5.0) as s_conn:
                                         cur = s_conn.execute("SELECT id, status FROM echo_resources WHERE resource_type = 'n8n_workflow'")
                                         for row in cur.fetchall():
                                             wf_echo_id, st = row[0], row[1]
@@ -648,13 +654,13 @@ def _run_semantic_pruning(silent=False):
                             stats["users"]["c"] += 1
                             stats["users"]["b"] += sz
 
-                # --- A.bis Purge Granulaire des Fichiers (Dual-Topologie v6 EchoStorageProvider & Download Broker) ---
+                # --- A.bis Purge Granulaire des Fichiers (Topologie Unifiée v6 : maître users/{uid}/files) ---
                 if HAS_ECHO_LIBS and ECHO_GC_GRACE_PERIOD_SEC is not None:
                     MAINTENANCE_STATE["percent"] = 65
                     MAINTENANCE_STATE["status"] = "Élagage (4/7) : Garbage Collection des fichiers (FS)..."
                     grace_period = time.time() - ECHO_GC_GRACE_PERIOD_SEC
 
-                    # Étape 1 : Cartographier tous les symlinks valides dans les chats actifs (Topologie B : Download Broker / dérivés / clones)
+                    # Étape 1 : Cartographier les symlinks valides dans les chats actifs (et purger les symlinks cassés)
                     active_symlink_targets = set()
                     for folder in valid_ids:
                         valid_u_chats = user_valid_chats.get(folder, set())
@@ -667,10 +673,17 @@ def _run_semantic_pruning(silent=False):
                                         for f_name in os.listdir(chat_files_dir):
                                             f_path = os.path.join(chat_files_dir, f_name)
                                             if os.path.islink(f_path):
-                                                try:
-                                                    active_symlink_targets.add(os.path.realpath(f_path))
-                                                except Exception:
-                                                    pass
+                                                if os.path.exists(f_path):
+                                                    try:
+                                                        active_symlink_targets.add(os.path.realpath(f_path))
+                                                    except Exception:
+                                                        pass
+                                                else:
+                                                    try:
+                                                        os.unlink(f_path)
+                                                        stats["files"]["c"] += 1
+                                                    except Exception:
+                                                        pass
 
                     # Étape 2 : Nettoyer users/<uid>/files/ (dead symlinks v6 + physiques orphelins hors webui.db et hors chats actifs)
                     for folder in valid_ids:
@@ -705,12 +718,17 @@ def _run_semantic_pruning(silent=False):
                                         except Exception:
                                             pass
 
-                    # Étape 3 : Nettoyer le dossier UPLOADS_DIR (Liens morts et fichiers physiques non référencés)
+                    # Étape 3 : Purge résiduelle historique d'UPLOADS_DIR (aucune nouvelle écriture/symlink n'y est créée)
                     if os.path.exists(UPLOADS_DIR):
+                        users_root_real = os.path.realpath(ECHO_USERS_ROOT)
                         for f_name in os.listdir(UPLOADS_DIR):
                             f_path = os.path.join(UPLOADS_DIR, f_name)
                             if os.path.islink(f_path):
-                                if not os.path.exists(f_path):
+                                try:
+                                    target_real = os.path.realpath(f_path)
+                                except Exception:
+                                    target_real = ""
+                                if not os.path.exists(f_path) or target_real.startswith(users_root_real + os.sep):
                                     try:
                                         os.unlink(f_path)
                                         stats["files"]["c"] += 1
@@ -731,6 +749,22 @@ def _run_semantic_pruning(silent=False):
                                     except Exception:
                                         pass
 
+                    # Étape 3.bis : Purge des fichiers de staging multipart orphelins dans .tmp_uploads
+                    if os.path.isdir(TMP_UPLOADS_DIR):
+                        for f_name in os.listdir(TMP_UPLOADS_DIR):
+                            f_path = os.path.join(TMP_UPLOADS_DIR, f_name)
+                            try:
+                                if os.path.islink(f_path):
+                                    os.unlink(f_path)
+                                    stats["files"]["c"] += 1
+                                elif os.path.isfile(f_path) and os.path.getmtime(f_path) < grace_period:
+                                    sz = os.path.getsize(f_path)
+                                    os.remove(f_path)
+                                    stats["files"]["c"] += 1
+                                    stats["files"]["b"] += sz
+                            except Exception:
+                                pass
+
             # --- A.ter Purge des Branches Mortes (SQLite & Qdrant) ---
             if not HAS_ECHO_LIBS:
                 libs_warning_line = "<br>⚠️ <b class='text-warning'>Libs ECHO non montées</b> : GC fichiers et branches mortes ignorés"
@@ -740,7 +774,7 @@ def _run_semantic_pruning(silent=False):
                 grace_period = time.time() - ECHO_GC_GRACE_PERIOD_SEC
                 if os.path.exists(OWUI_DB_PATH):
                     try:
-                        with closing(sqlite3.connect(f"file:{OWUI_DB_PATH}?mode=ro", uri=True, timeout=15.0)) as w_conn:
+                        with open_sqlite_db(OWUI_DB_PATH, readonly=True, timeout=15.0) as w_conn:
                             for uid in valid_ids:
                                 chats_root = os.path.join(ECHO_USERS_ROOT, uid, "chats")
                                 if not os.path.exists(chats_root):
@@ -799,7 +833,7 @@ def _run_semantic_pruning(silent=False):
                                     kept_fnames = set()
                                     now_ts = time.time()
                                     try:
-                                        with closing(sqlite3.connect(session_db_path, timeout=10.0)) as s_conn:
+                                        with open_sqlite_db(session_db_path, timeout=10.0) as s_conn:
                                             rows = s_conn.execute(
                                                 "SELECT id, name, status, metadata, created_at FROM echo_resources WHERE resource_type = 'browserview'"
                                             ).fetchall()
@@ -845,8 +879,7 @@ def _run_semantic_pruning(silent=False):
                                                     kept_fnames.add(fname)
                                                     kept_fnames.update(clip_names)
                                             if del_ids:
-                                                with s_conn:
-                                                    s_conn.executemany("DELETE FROM echo_resources WHERE id = ?", del_ids)
+                                                s_conn.executemany("DELETE FROM echo_resources WHERE id = ?", del_ids)
                                     except Exception:
                                         pass
                                     if os.path.isdir(bv_dir):
@@ -862,6 +895,24 @@ def _run_semantic_pruning(silent=False):
                                                     pass
                 except Exception as e:
                     logger.error(f"Erreur GC browserviews : {e}")
+
+            # --- A.quinquies Purge filet de sécurité des sous-agents purgés expirés (Contrat C2) ---
+            if cleanup_expired_purged_subagents_sync is not None and valid_ids:
+                purged_subagents_total = 0
+                for uid in valid_ids:
+                    chats_root = os.path.join(ECHO_USERS_ROOT, uid, "chats")
+                    if not os.path.exists(chats_root):
+                        continue
+                    for cid in user_valid_chats.get(uid, set()):
+                        session_db_path = os.path.join(chats_root, cid, "session.db")
+                        if not os.path.isfile(session_db_path):
+                            continue
+                        try:
+                            purged_subagents_total += int(cleanup_expired_purged_subagents_sync(uid, cid) or 0)
+                        except Exception as e:
+                            logger.warning(f"Erreur GC sous-agents purgés ({uid}/{cid}) : {e}")
+                if purged_subagents_total > 0:
+                    logger.info(f"🧹 [ECHO-LIFECYCLE] {purged_subagents_total} sous-agent(s) purgé(s) expiré(s) supprimé(s).")
 
             # --- B. Purge Temporelle des Souvenirs & Garbage Collection (Qdrant) ---
             MAINTENANCE_STATE["percent"] = 75
@@ -935,7 +986,7 @@ def _run_semantic_pruning(silent=False):
             MAINTENANCE_STATE["percent"] = 92
             MAINTENANCE_STATE["status"] = "Élagage (7/7) : Synchronisation BDD & VACUUM SQLite..."
             try:
-                with sqlite3.connect(f"file:{WEBUI_DB_PATH}", uri=True, timeout=10.0) as conn:
+                with open_sqlite_db(WEBUI_DB_PATH, timeout=10.0) as conn:
                     orphans_db = 0
                     if config.get("purge_orphaned_users", False):
                         tables = [row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
@@ -1011,7 +1062,7 @@ def _run_semantic_pruning(silent=False):
             for f in files:
                 if f.endswith('.db'):
                     try:
-                        with sqlite3.connect(os.path.join(root, f), timeout=10.0) as db:
+                        with open_sqlite_db(os.path.join(root, f), timeout=10.0, auto_commit=False) as db:
                             db.execute("VACUUM;")
                             stats["sqlite_vacuumed"] += 1
                     except Exception:
@@ -1019,7 +1070,7 @@ def _run_semantic_pruning(silent=False):
         for global_db in (N8N_DB_PATH, WEBUI_DB_PATH, "/app/auth-data/auth.db"):
             if os.path.exists(global_db):
                 try:
-                    with sqlite3.connect(global_db, timeout=10.0) as db:
+                    with open_sqlite_db(global_db, timeout=10.0, auto_commit=False) as db:
                         db.execute("VACUUM;")
                         stats["sqlite_vacuumed"] += 1
                 except Exception:

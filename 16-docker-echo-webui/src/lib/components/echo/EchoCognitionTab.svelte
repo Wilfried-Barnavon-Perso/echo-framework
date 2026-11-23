@@ -51,6 +51,8 @@
 	let atSelectedIdx = 0;
 	let explicitlyMentionedSids: string[] = [];
 	let lastTrackedGroupId = '';
+	let nowSec = Math.floor(Date.now() / 1000);
+	let purgeClockInterval: ReturnType<typeof setInterval> | null = null;
 
 	const syncChatStream = async (cid: string) => {
 		const normalized = cid && isSavedChatId(cid) ? cid : '';
@@ -82,6 +84,9 @@
 	onMount(() => {
 		mounted = true;
 		void syncChatStream(chatId);
+		purgeClockInterval = setInterval(() => {
+			nowSec = Math.floor(Date.now() / 1000);
+		}, 30000);
 	});
 
 	$: if (mounted) {
@@ -89,6 +94,10 @@
 	}
 
 	onDestroy(() => {
+		if (purgeClockInterval) {
+			clearInterval(purgeClockInterval);
+			purgeClockInterval = null;
+		}
 		if (releaseStream) {
 			releaseStream();
 			releaseStream = null;
@@ -121,6 +130,9 @@
 
 	$: sortedSubSids = Array.from(new Set([...Object.keys(threads), ...Object.keys(threadMeta)])).sort(
 		(a, b) => {
+			const aPurged = threadMeta[a]?.status === 'purged' ? 1 : 0;
+			const bPurged = threadMeta[b]?.status === 'purged' ? 1 : 0;
+			if (aPurged !== bPurged) return aPurged - bPurged;
 			const aRunning = threadMeta[a]?.status === 'running' ? 1 : 0;
 			const bRunning = threadMeta[b]?.status === 'running' ? 1 : 0;
 			if (aRunning !== bRunning) return bRunning - aRunning;
@@ -205,6 +217,13 @@
 			badgeClass: 'bg-gray-200/70 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-300/60 dark:border-gray-700/60',
 			dotClass: 'bg-indigo-400',
 			pulse: false
+		},
+		purged: {
+			label: 'Purgé (Lecture seule)',
+			shortLabel: '🗄️ Purgé (Lecture seule)',
+			badgeClass: 'bg-zinc-500/15 text-zinc-700 dark:text-zinc-300 border-zinc-500/30',
+			dotClass: 'bg-zinc-400',
+			pulse: false
 		}
 	};
 
@@ -217,7 +236,8 @@
 		error: 4,
 		killed: 3,
 		completed: 2,
-		idle: 1
+		idle: 1,
+		purged: 0
 	};
 
 	const getStatusBadge = (status?: string | null): StatusUiSpec =>
@@ -238,8 +258,15 @@
 			group_status = member_sids.reduce((best, sid) => {
 				const st = threadMeta[sid]?.status || 'idle';
 				return (STATUS_PRIORITY[st] ?? 0) > (STATUS_PRIORITY[best] ?? 0) ? st : best;
-			}, 'idle');
+			}, member_sids.length > 0 ? 'purged' : 'idle');
 		}
+		const expCandidates = member_sids
+			.map((sid) => threadMeta[sid]?.purge_expires_at)
+			.filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+		const purge_expires_at =
+			group_status === 'purged'
+				? (g.purge_expires_at ?? (expCandidates.length > 0 ? Math.min(...expCandidates) : null))
+				: null;
 		return {
 			...g,
 			id,
@@ -250,6 +277,7 @@
 			member_sids,
 			model_keys,
 			group_status,
+			purge_expires_at,
 			is_running: Boolean(g.is_running),
 			updated_at: Number(g.updated_at ?? 0) || 0
 		};
@@ -310,7 +338,7 @@
 	$: selectedGroup = groups.find((g) => g.id === selectedGroupId) ?? groups[0] ?? null;
 
 	$: addressableMemberSids = (selectedGroup?.member_sids ?? []).filter(
-		(sid) => threadMeta[sid]?.is_addressable !== false
+		(sid) => threadMeta[sid]?.is_addressable !== false && threadMeta[sid]?.status !== 'purged'
 	);
 
 	$: if (selectedGroup) {
@@ -373,7 +401,7 @@
 	}
 
 	$: liveAddressableSids = addressableMemberSids.filter(
-		(sid) => threadMeta[sid]?.status !== 'killed'
+		(sid) => threadMeta[sid]?.status !== 'killed' && threadMeta[sid]?.status !== 'purged'
 	);
 
 	type AtCandidate =
@@ -478,17 +506,38 @@
 	$: activeTotalUsed = Number(activeThreadMeta?.total_calls_used ?? 0);
 	$: activeConsecutiveErrors = Number(activeThreadMeta?.consecutive_errors ?? 0);
 	$: activeCheckpointReason = activeThreadMeta?.checkpoint_reason ?? null;
+	$: activePurgeExpiresAt =
+		activeThreadMeta?.purge_expires_at ?? selectedGroup?.purge_expires_at ?? null;
 	$: controlTargetId = activeThreadSid || selectedGroup?.id || '';
 	$: canResumeStatus = ['suspended', 'suspended_checkpoint', 'suspended_pare_alert', 'idle', 'pending_question'].includes(activeStatus);
+
+	const formatPurgeDelay = (expiresAt?: number | null, currentSec: number = nowSec, withClock = true): string => {
+		if (typeof expiresAt !== 'number' || !Number.isFinite(expiresAt) || expiresAt <= 0) {
+			return 'Rétention 24h';
+		}
+		const rem = Math.max(0, Math.floor(expiresAt - currentSec));
+		if (rem <= 0) return 'Purge imminente';
+		const hours = Math.floor(rem / 3600);
+		const mins = Math.floor((rem % 3600) / 60);
+		const delayStr = hours > 0 ? `${hours}h ${String(mins).padStart(2, '0')}m` : `${Math.max(1, mins)}m`;
+		if (!withClock) return `Purge dans ${delayStr}`;
+		const hhmm = new Date(expiresAt * 1000).toLocaleTimeString('fr-FR', {
+			hour: '2-digit',
+			minute: '2-digit'
+		});
+		return `Purge dans ${delayStr} (à ${hhmm})`;
+	};
 
 	const getGroupQueueCount = (g: ReturnType<typeof normalizeGroup>): number =>
 		g.member_sids.reduce((acc, sid) => acc + (queuedMap[sid]?.length ?? 0), 0);
 
-	const getGroupOptionLabel = (g: ReturnType<typeof normalizeGroup>): string => {
+	const getGroupOptionLabel = (g: ReturnType<typeof normalizeGroup>, currentSec: number = nowSec): string => {
 		const statusLabel = getStatusBadge(g.group_status).shortLabel;
 		const queueLen = getGroupQueueCount(g);
 		const queueBadge = queueLen > 0 ? ` (+${queueLen} en attente)` : '';
-		return `${g.icon} ${g.display_label} — ${statusLabel}${queueBadge}`;
+		const purgeBadge =
+			g.group_status === 'purged' ? ` · ${formatPurgeDelay(g.purge_expires_at, currentSec, false)}` : '';
+		return `${g.icon} ${g.display_label} — ${statusLabel}${purgeBadge}${queueBadge}`;
 	};
 
 	const getParticipantLabel = (sid: string, step?: EchoCognitionStep): string => {
@@ -540,27 +589,12 @@
 		return ACCENT_CLASSES[key] ?? ACCENT_CLASSES.indigo;
 	};
 
-	interface CriticFeedbackItem {
-		worker_id?: string;
-		status?: string;
-		feedback?: string;
-		reason?: string;
-		[key: string]: any;
-	}
-
-	interface CriticVerdictCard {
-		verdict: string;
-		global_assessment: string;
-		worker_feedback: CriticFeedbackItem[];
-	}
-
 	interface ParsedStepView {
 		thoughtTexts: string[];
 		visibleTexts: string[];
 		toolCalls: { name: string; args?: any }[];
 		toolResponses: { name: string; response?: any }[];
 		domMapCounts: number[];
-		criticVerdict: CriticVerdictCard | null;
 		fallbackRaw: string;
 	}
 
@@ -635,29 +669,6 @@
 		return { clean: clean.trim(), thoughts };
 	};
 
-	const tryParseCriticVerdict = (text: string): CriticVerdictCard | null => {
-		const trimmed = text.trim();
-		if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
-		try {
-			const parsed = JSON.parse(trimmed);
-			if (
-				parsed &&
-				typeof parsed === 'object' &&
-				typeof parsed.verdict === 'string' &&
-				typeof parsed.global_assessment === 'string'
-			) {
-				return {
-					verdict: parsed.verdict,
-					global_assessment: parsed.global_assessment,
-					worker_feedback: Array.isArray(parsed.worker_feedback) ? parsed.worker_feedback : []
-				};
-			}
-		} catch {
-			// Ignorer les chaînes non-JSON
-		}
-		return null;
-	};
-
 	const pushCleanVisibleText = (result: ParsedStepView, text: string) => {
 		const { clean, thoughts } = splitImplicitThoughts(text);
 		if (thoughts.length > 0) {
@@ -669,12 +680,7 @@
 			result.domMapCounts.push(...domCounts);
 		}
 		if (cleanText) {
-			const critic = tryParseCriticVerdict(cleanText);
-			if (critic && !result.criticVerdict) {
-				result.criticVerdict = critic;
-			} else {
-				result.visibleTexts.push(cleanText);
-			}
+			result.visibleTexts.push(cleanText);
 		}
 	};
 
@@ -685,7 +691,6 @@
 			toolCalls: [],
 			toolResponses: [],
 			domMapCounts: [],
-			criticVerdict: null,
 			fallbackRaw: ''
 		};
 
@@ -885,8 +890,9 @@
 
 	const getMemberRoleIcon = (sid: string): string => {
 		const meta = threadMeta[sid];
-		if (meta?.member_role === 'critic' || meta?.engine === 'supervisor_critic') return '⚖️';
-		if (meta?.member_role === 'consolidator' || meta?.engine === 'supervisor_consolidator') return '📑';
+		if (meta?.member_role === 'strategist') return '🛡️';
+		if (meta?.member_role === 'captain') return '⚔️';
+		if (meta?.member_role === 'hoplite') return '🔱';
 		if (meta?.member_role === 'synthesis' || meta?.engine === 'council_synthesis') return '🏛️';
 		return meta?.icon || '';
 	};
@@ -996,7 +1002,8 @@
 		suspend: 'Pause demandée (arrêt en fin de tour d’outil).',
 		resume: 'Nouvelle tranche supervisée lancée.',
 		kill: 'Sous-agent interrompu et scellé.',
-		close: 'Session sous-agent fermée et purgée.'
+		close: 'Session sous-agent close et archivée en lecture seule (24h).',
+		purge_now: 'Session sous-agent supprimée définitivement.'
 	};
 
 	const runSubagentControl = async (action: EchoSubagentControlAction) => {
@@ -1011,7 +1018,7 @@
 		try {
 			await postEchoSubagentControl(token, chatId, controlTargetId, { action });
 			toast.success(CONTROL_TOAST_MAP[action]);
-			if (action === 'close' && controlTargetId === selectedGroupId) {
+			if (action === 'purge_now' && controlTargetId === selectedGroupId) {
 				selectedGroupId = '';
 			}
 			await refreshCognitionSnapshot(chatId);
@@ -1145,7 +1152,7 @@
 						class="flex-1 min-w-0 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2.5 py-1.5 text-xs font-medium text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500/40"
 					>
 						{#each groups as g (g.id)}
-							<option value={g.id}>{getGroupOptionLabel(g)}</option>
+							<option value={g.id}>{getGroupOptionLabel(g, nowSec)}</option>
 						{/each}
 					</select>
 
@@ -1164,11 +1171,19 @@
 								<span class="truncate max-w-[200px]">{selectedGroup.display_label}</span>
 							</span>
 							<span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border font-medium {activeStatusBadge.badgeClass}">
-								{activeStatusBadge.label}
+								{activeStatus === 'purged' ? activeStatusBadge.shortLabel : activeStatusBadge.label}
 								{#if activeStatus === 'suspended_checkpoint' && activeThreadMeta}
 									<span class="font-mono">({activeSliceUsed}/{activeSliceLimit})</span>
 								{/if}
 							</span>
+							{#if activeStatus === 'purged'}
+								<span
+									class="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-zinc-400/40 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300"
+									title="Échéance de suppression automatique définitive"
+								>
+									⏳ {formatPurgeDelay(activePurgeExpiresAt, nowSec, true)}
+								</span>
+							{/if}
 							{#if activeThreadMeta && activeThreadMeta.has_tool_loop !== false}
 								<span
 									class="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-900/70 text-gray-600 dark:text-gray-300"
@@ -1224,6 +1239,16 @@
 								>
 									⏹ Stop
 								</button>
+							{:else if activeStatus === 'purged'}
+								<button
+									type="button"
+									disabled={Boolean(controlActionPending)}
+									on:click={() => runSubagentControl('purge_now')}
+									class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300 hover:bg-rose-500/20 transition disabled:opacity-40"
+									title="Supprimer définitivement ce sous-agent archivé"
+								>
+									🗑️ Supprimer définitivement
+								</button>
 							{:else}
 								{#if canResumeStatus}
 									<button
@@ -1241,7 +1266,7 @@
 									disabled={Boolean(controlActionPending)}
 									on:click={() => runSubagentControl('close')}
 									class="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-600 dark:text-gray-300 hover:border-rose-400 hover:text-rose-600 dark:hover:text-rose-400 transition disabled:opacity-40"
-									title="Fermer et purger cette session sous-agent"
+									title="Clore et archiver en lecture seule (conservation 24h)"
 								>
 									✕ Fermer
 								</button>
@@ -1260,6 +1285,10 @@
 					{:else if activeStatus === 'pending_question'}
 						<div class="rounded-lg px-2.5 py-1.5 text-[11px] bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-300">
 							Le sous-agent attend votre réponse ci-dessous pour poursuivre son exécution.
+						</div>
+					{:else if activeStatus === 'purged'}
+						<div class="rounded-lg px-2.5 py-1.5 text-[11px] bg-zinc-500/10 border border-zinc-500/30 text-zinc-700 dark:text-zinc-300">
+							Session close en lecture seule — {formatPurgeDelay(activePurgeExpiresAt, nowSec, true)} avant suppression définitive.
 						</div>
 					{/if}
 
@@ -1290,13 +1319,15 @@
 										<span class="text-[10px] text-teal-500 {participantFilter === sid ? 'text-teal-200' : ''} shrink-0">✓</span>
 									{:else if memberStatus === 'error' || memberStatus === 'killed'}
 										<span class="text-[10px] text-red-500 {participantFilter === sid ? 'text-red-200' : ''} shrink-0">✕</span>
+									{:else if memberStatus === 'purged'}
+										<span class="text-[10px] text-zinc-400 shrink-0">🗄️</span>
 									{:else}
 										<span class="w-1.5 h-1.5 rounded-full shrink-0 {memberBadge.dotClass} {memberBadge.pulse ? 'animate-pulse' : ''}"></span>
 									{/if}
 									{#if roleIcon}
 										<span class="shrink-0">{roleIcon}</span>
 									{/if}
-									<span class="truncate">{getParticipantLabel(sid)}</span>
+									<span class="truncate">{(threadMeta[sid]?.depth ?? 1) > 1 ? '↳ ' : ''}{getParticipantLabel(sid)}</span>
 								</button>
 							{/each}
 						</div>
@@ -1342,6 +1373,50 @@
 												</span>
 												{#if isMultiMember}
 													<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-200/70 dark:bg-gray-800 text-gray-600 dark:text-gray-300">
+														→ {getParticipantLabel(step.sub_sid, step)}
+													</span>
+												{/if}
+											</div>
+											<span class="text-[11px] text-gray-400 font-mono">
+												{formatTimestamp(step.updated_at)}
+											</span>
+										</div>
+										<div class="text-xs text-gray-800 dark:text-gray-100 whitespace-pre-wrap leading-relaxed">
+											{step.clean_text ?? parsed.visibleTexts.join('\n')}
+										</div>
+									</div>
+								{:else if step.origin === 'peer'}
+									<!-- Message Pair -->
+									<div class="rounded-xl p-3 bg-amber-50/70 dark:bg-amber-950/25 border border-amber-200/80 dark:border-amber-800/40 space-y-1.5">
+										<div class="flex items-center justify-between gap-2">
+											<div class="flex items-center gap-1.5">
+												<span class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300">
+													🤝 Message Pair
+												</span>
+												{#if isMultiMember}
+													<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300">
+														→ {getParticipantLabel(step.sub_sid, step)}
+													</span>
+												{/if}
+											</div>
+											<span class="text-[11px] text-gray-400 font-mono">
+												{formatTimestamp(step.updated_at)}
+											</span>
+										</div>
+										<div class="text-xs text-gray-800 dark:text-gray-100 whitespace-pre-wrap leading-relaxed">
+											{step.clean_text ?? parsed.visibleTexts.join('\n')}
+										</div>
+									</div>
+								{:else if step.origin === 'handoff'}
+									<!-- Contrat de Relais -->
+									<div class="rounded-xl p-3 bg-purple-50/70 dark:bg-purple-950/25 border border-purple-200/80 dark:border-purple-800/40 space-y-1.5">
+										<div class="flex items-center justify-between gap-2">
+											<div class="flex items-center gap-1.5">
+												<span class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-700 dark:text-purple-300">
+													📜 Contrat de Relais
+												</span>
+												{#if isMultiMember}
+													<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-500/10 text-purple-700 dark:text-purple-300">
 														→ {getParticipantLabel(step.sub_sid, step)}
 													</span>
 												{/if}
@@ -1451,46 +1526,6 @@
 										</details>
 									{/if}
 
-									{#if parsed.criticVerdict}
-										{@const isApproved = parsed.criticVerdict.verdict.toUpperCase() === 'APPROVED'}
-										<div class="rounded-lg border p-2.5 space-y-2 {isApproved
-											? 'bg-emerald-50/70 dark:bg-emerald-950/20 border-emerald-500/30'
-											: 'bg-rose-50/70 dark:bg-rose-950/20 border-rose-500/30'}">
-											<div class="flex items-center justify-between gap-2">
-												<span class="text-[11px] font-semibold uppercase tracking-wide {isApproved
-													? 'text-emerald-700 dark:text-emerald-300'
-													: 'text-rose-700 dark:text-rose-300'}">
-													{isApproved ? '✅ APPROUVÉ' : `❌ ${parsed.criticVerdict.verdict} — CORRECTIONS REQUISES`}
-												</span>
-											</div>
-											<div class="text-xs text-gray-800 dark:text-gray-100 leading-relaxed bg-white/60 dark:bg-gray-900/40 rounded px-2.5 py-1.5 border border-black/5 dark:border-white/5">
-												{parsed.criticVerdict.global_assessment}
-											</div>
-											{#if parsed.criticVerdict.worker_feedback.length > 0}
-												<div class="grid grid-cols-1 gap-1.5 pt-1 border-t border-black/10 dark:border-white/10">
-													{#each parsed.criticVerdict.worker_feedback as fb}
-														{@const fbOk = String(fb.status || '').toLowerCase() === 'approved' || String(fb.status || '').toLowerCase() === 'ok'}
-														<div class="text-[11px] bg-white/80 dark:bg-gray-900/60 rounded-lg px-2.5 py-1.5 border border-gray-200/70 dark:border-gray-800 space-y-0.5">
-															<div class="flex items-center justify-between gap-2">
-																<span class="font-semibold text-gray-900 dark:text-gray-100">{fb.worker_id || 'Ouvrier'}</span>
-																{#if fb.status}
-																	<span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full font-medium {fbOk
-																		? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
-																		: 'bg-amber-500/15 text-amber-700 dark:text-amber-300'}">
-																		{fbOk ? '✅ Validé' : '🔧 À corriger'}
-																	</span>
-																{/if}
-															</div>
-															<div class="text-gray-700 dark:text-gray-300 leading-relaxed">
-																{fb.feedback || fb.reason || JSON.stringify(fb)}
-															</div>
-														</div>
-													{/each}
-												</div>
-											{/if}
-										</div>
-									{/if}
-
 									{#if parsed.visibleTexts.length > 0}
 										<div class="text-xs text-gray-800 dark:text-gray-100 whitespace-pre-wrap leading-relaxed">
 											{parsed.visibleTexts.join('\n')}
@@ -1569,9 +1604,13 @@
 			{/if}
 
 			<!-- Compositeur interactif -->
-			{#if addressableMemberSids.length === 0}
+			{#if activeStatus === 'purged' || addressableMemberSids.length === 0}
 				<div class="px-3 py-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-850/70 text-[11px] text-gray-500 dark:text-gray-400 shrink-0">
-					Ce thread est en lecture seule et n'accepte pas de consigne interactive.
+					{#if activeStatus === 'purged'}
+						🗄️ Session close — archivée en lecture seule ({formatPurgeDelay(activePurgeExpiresAt, nowSec, true)}).
+					{:else}
+						Ce thread est en lecture seule et n'accepte pas de consigne interactive.
+					{/if}
 				</div>
 			{:else}
 				<div class="p-3 border-t border-gray-200 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-850/70 shrink-0 space-y-2">
@@ -1602,7 +1641,7 @@
 										: 'bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-400 border-gray-200 dark:border-gray-700 hover:border-indigo-400'}"
 								>
 									<span>{isSelected ? '✓' : '+'}</span>
-									<span class="truncate">{getParticipantLabel(sid)}</span>
+									<span class="truncate">{(threadMeta[sid]?.depth ?? 1) > 1 ? '↳ ' : ''}{getParticipantLabel(sid)}</span>
 								</button>
 							{/each}
 						</div>

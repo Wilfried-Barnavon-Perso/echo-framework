@@ -4,11 +4,12 @@
 """
 title: ECHO Window Manager
 author: Wilfried BARNAVON
-version: 6.17.4.1
+version: 6.20.3.1
 description: Gestionnaire de fenêtres et d'exécutions JS agnostique, multi-chats et multi-navigateurs.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.20.3.1: Ajout de broadcast_wait_timer (echo_wait_timer) pour la diffusion temps réel du minuteur vers le bus WM.
 # 6.17.4.1: Suppression relais WS Canvas et file d'événements, ajout jetons HMAC sandbox_event et préservation src app_proxy dans upsert_canvas_frame.
 # 6.16.0.4: Registre _active_browser_sessions, relais WS Canvas/App, tickets HMAC app_proxy et purge code mort polling/pings/event.
 # 6.15.2.1: Isolation multi-run par run_id dans les frames Canvas, arrêt ciblé canvas_stop_run, réconciliation F5 reconcile_canvas_frames et réveil réactif inbox via wake_event.
@@ -322,6 +323,25 @@ class EchoWindowManager:
                 "type": "echo_browser_frame",
                 "chat_id": chat_id,
                 **frame_data,
+            },
+        )
+
+    async def broadcast_wait_timer(
+        self,
+        user_id: str,
+        chat_id: str,
+        duration_sec: int,
+        active: bool = True,
+    ) -> None:
+        """Diffuse l'état d'un temporisateur wait_timer côté client via le bus WM."""
+        await self.broadcast(
+            user_id,
+            {
+                "type": "echo_wait_timer",
+                "chat_id": chat_id,
+                "duration_sec": max(0, int(duration_sec)),
+                "started_at_ms": int(time.time() * 1000),
+                "active": bool(active),
             },
         )
 

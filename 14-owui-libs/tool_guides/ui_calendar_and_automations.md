@@ -1,7 +1,7 @@
 ---
 domain_id: ui_calendar_and_automations
-version: 6.17.2.1
-updated_at: 2026-11-21
+version: 6.21.3.1
+updated_at: 2026-11-23
 name: Agenda de l'Interface Utilisateur, Automatisations CRON (RRULE), Dossiers UI, Étiquettes, Saisie Interactive, Tâches UI, Historique Chats & Lecture des Sorties Délestées
 description: Gestion complète du calendrier de l'Interface Utilisateur, programmation de tâches de fond CRON (syntaxe RRULE iCalendar), dossiers UI, exploration des étiquettes (tags), ask_user_input, wait_timer, checklist UI (create_ui_tasks, update_ui_task), recherche/lecture exacte de conversations (search_ui_chats, view_ui_chat) et exploitation paginée/purge des sorties d'outils délestées (read_tool_output, delete_tool_output).
 tools: [search_ui_calendar_events, list_ui_calendar_events, read_ui_calendar_events, create_ui_calendar_event, update_ui_calendar_event, delete_ui_calendar_event, create_ui_automation, update_ui_automation, toggle_ui_automation, delete_ui_automation, read_ui_automations, list_ui_automations, list_ui_folders, list_ui_tags, ask_user_input, wait_timer, create_ui_tasks, update_ui_task, search_ui_chats, view_ui_chat, read_tool_output, delete_tool_output]
@@ -65,13 +65,13 @@ L'argument `rrule` dans `create_ui_automation` et `update_ui_automation` **DOIT 
 ---
 
 ## 3. INTERACTION DIRECTE & TEMPORISATION (`ask_user_input`, `wait_timer`)
-- `ask_user_input(question="", input_type="text", options=None, timeout_seconds=300, questions=None)` :
-  - Affiche une carte interactive de saisie dans le flux du chat principal (**ABSOLUMENT INTERDIT depuis un Sous-Agent headless ou une automatisation**).
-  - Mode `input_type="text"` : Saisie libre pleine largeur (avec suggestions rapides si `options=["Choix A", "Choix B"]` ou `[{"label": "...", "description": "...", "recommended": true}]` est fourni).
-  - Mode `input_type="confirm"` : Approbation binaire (`Oui` / `Non`, sans saisie libre).
-  - Mode `questions=[...]` : Questionnaire multi-étapes (1 à 5 questions structurées avec `id`, `header`, `question`, `options`, `allow_other`, `show_recommended`). Retourne `{"status": "success", "answers": {id: valeur}}`.
+- `ask_user_input(question="", input_type="text", options=None, multi_select=False, timeout_seconds=300, questions=None)` :
+  - Affiche une carte interactive de saisie dans le flux du chat principal (**ABSOLUMENT INTERDIT depuis un Sous-Agent headless ou une automatisation**). `timeout_seconds` est borné à `[10, 600]`.
+  - Mode `input_type="text"` : Saisie libre pleine largeur (avec suggestions rapides si `options=["Choix A", "Choix B"]` ou `[{"label": "...", "description": "...", "recommended": true}]` est fourni). Avec `multi_select=True`, autorise la sélection multiple (cases à cocher) et retourne une `list[str]` des choix sélectionnés (incluant la saisie libre éventuelle) dans `{"status": "success", "user_input": ...}`.
+  - Mode `input_type="confirm"` : Approbation binaire (`Oui` / `Non`, sans saisie libre), retournant `{"status": "success", "user_input": True}` ou `{"status": "cancelled", "user_input": False}`.
+  - Mode `questions=[...]` : Questionnaire multi-étapes (1 à 5 questions structurées avec `id`, `header`, `question`, `options`, `multi_select`, `allow_other`, `show_recommended`). Chaque question avec `multi_select=True` retourne une `list[str]` des choix sélectionnés (plus la saisie libre éventuelle). Retourne `{"status": "success", "answers": {id: valeur}}`.
 - `wait_timer(seconds)` :
-  - Met en pause l'exécution de `1` à `300` secondes. **Strictement limité à 1 seul appel par boucle agentique**.
+  - Met en pause l'exécution de `1` à `300` secondes tout en diffusant l'état du compte à rebours vers le HUD natif Svelte via le bus Window Manager (`echo_wait_timer`). **Strictement limité à 1 seul appel par boucle agentique**.
 
 ## 4. LECTURE PAGINÉE & PURGE DES SORTIES D'OUTILS DÉLESTÉES (`read_tool_output`, `delete_tool_output`)
 - Gouvernance à 3 régimes : `32 768` caractères pour les outils I/O bruts par défaut, `524 288` caractères (512 Ko) pour les outils de distillation cognitive et Sous-Agents, et exemption totale pour les lecteurs déjà paginés (`read_codex`, `read_tool_output`, `delete_tool_output`). Lorsqu'un seuil est franchi (hors Base64 protégé), l'intégralité de la sortie est délestée dans `tools_output/{output_id}.txt` et la réponse inline retourne un aperçu `Head + Tail` accompagné de `truncated: true`, `output_id`, `total_chars`, `total_lines`, `omitted_lines_range` et `next_tools`. Si la requête de L'Utilisateur exige une restitution exhaustive ou un verbatim, il est ABSOLUMENT INTERDIT de synthétiser l'aperçu partiel sans paginer toutes les lignes omises.

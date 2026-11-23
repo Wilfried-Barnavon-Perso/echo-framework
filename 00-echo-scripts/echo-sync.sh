@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # ==============================================================================
 # SCRIPT : echo-sync.sh
-# VERSION : 6.18.15.1
+# VERSION : 6.21.0.1
 # AUTEUR : Wilfried BARNAVON
 # ==============================================================================
 # ROLE : 
@@ -12,11 +12,10 @@
 # ==============================================================================
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.21.0.1: Auto-relance (--local-only) après synchronisation Git lorsque echo-sync.sh évolue.
 # 6.18.15.1: Garde d'existence /etc/cron.daily lors du nettoyage des liens symboliques.
 # 6.6.20.1: Purge automatique des liens symboliques orphelins (/usr/local/bin et /etc/cron.daily) pointant vers $ECHO_SCRIPTS.
 # 6.5.3.1: Renommage des références echo-open-webui vers echo-webui.
-# 6.5.0.1: Garantie d'initialisation préventive du fichier maître /opt/ECHO/.env (chmod 600) avant montage Docker.
-# 5.231.39.1: Renommage en echo-sync.sh et mise à jour du lien symbolique echo-rebuild.
 
 # --- 0. INITIALISATION CORE ---
 ECHO_ROOT="/opt/ECHO"
@@ -136,6 +135,17 @@ else
             exit 1
         fi
     fi
+fi
+
+# Auto-relance si echo-sync.sh a évolué côté Git (avant le déploiement et l'écrasement d'ECHO_VERSION)
+NEW_SYNC_SRC="$SRC_DIR/00-echo-scripts/echo-sync.sh"
+if [ "$LOCAL_ONLY" != "true" ] && [ -f "$NEW_SYNC_SRC" ] && ! diff -q "$NEW_SYNC_SRC" "$CURRENT_SCRIPT" >/dev/null 2>&1; then
+    echo "   🔁 Nouvelle version d'echo-sync.sh détectée : relance avant déploiement..."
+    cp "$NEW_SYNC_SRC" "$TMP_SCRIPT"
+    sed -i '1s/^\xEF\xBB\xBF//; s/\r$//' "$TMP_SCRIPT"
+    chmod +x "$TMP_SCRIPT"
+    exec "$TMP_SCRIPT" --local-only
+    exit 0
 fi
 
 # --- CAPTURE NOUVEL ETAT (APRES SYNC) ---

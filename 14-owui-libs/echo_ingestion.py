@@ -4,16 +4,16 @@
 ECHO Ingestion Pipeline
 Gestion unifiée, asynchrone et Zéro-RAM de l'ingestion des fichiers (CAS 1, 2, 3, 4).
 Factorisé à partir de new_context_filter.py pour permettre le traitement en arrière-plan.
-version: 6.7.16.1
+version: 6.18.23.1
 description: Composant du système ECHO : Echo Ingestion.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.23.1: Suppression de la création de symlinks dans ECHO_UPLOADS_TRANSIT_DIR (/uploads) au sein de _sync_file_to_global_vault.
 # 6.7.16.1: Initialisation indexée Qdrant via ensure_session_rag_collection, correction du compteur retourné par flush(), filtre user_id+chat_id+source_id et retour de storage_path.
 # 6.7.4.1: Bascule de la description d'images OOXML (_extract_and_describe_zip_images) sur MODEL_DISTILLATION et factorisation de son import global.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 6.1.0.1: Idempotence de _sync_file_to_global_vault lorsque le fichier réside déjà dans le Vault de session.
-# 5.231.29.1: Alignement sur la constante SSOT CODEX_WORKSPACE_MAIN lors de l'indexation Codex.
 
 import os
 import asyncio
@@ -283,17 +283,8 @@ class EchoIngestionPipeline:
                 global_path = os.path.realpath(path)
             elif os.path.exists(path):
                 shutil.move(path, global_path)
-                
-        # 2. Lien symbolique absolu pour OWUI (dans /uploads)
-        try:
-            from echo_constants import ECHO_UPLOADS_TRANSIT_DIR
-            upload_symlink = os.path.join(ECHO_UPLOADS_TRANSIT_DIR, vault_name)
-            if not os.path.exists(upload_symlink) and not os.path.islink(upload_symlink):
-                os.symlink(global_path, upload_symlink)
-        except Exception as e:
-            logger.warning(f"Erreur création symlink OWUI pour {vault_name}: {e}")
 
-        # 3. Lien symbolique pour le Chat Vault
+        # 2. Lien symbolique pour le Chat Vault
         if not os.path.exists(chat_vault_path) and not os.path.islink(chat_vault_path):
             os.symlink(global_path, chat_vault_path)
 

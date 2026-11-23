@@ -3,16 +3,16 @@
 """
 title: ECHO Session Clone & Migration Engine
 author: Wilfried BARNAVON
-version: 6.14.2.2
+version: 6.18.23.1
 description: Moteur partagé de duplication atomique des conteneurs de session ECHO (Clone, Fork et Migration).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.23.1: Durcissement SQLite WAL/NORMAL/busy_timeout via echo_db_schema.open_db(..., require_version=False) et réapplication WAL post-backup sur new_db dans backup_session_db.
 # 6.14.2.2: Retrait du ré-ancrage obsolète de echo_settings['wm_state'] dans reassign_session_ids et inclusion de tools_output/ dans duplicate_session_domains et _prune_domain_files_to_cutoff.
 # 6.13.1.1: Réécriture de echo_resources.metadata dans reassign_session_ids et ajout de _prune_transient_browserviews_on_clone (transfert retained uniquement lors du clone/resume).
 # 6.10.0.1: Ré-insertion dans align_codex_git_to_cutoff des fichiers trackés restaurés par Git mais absents d'echo_resources (cas de fichiers renommés ou déplacés après cutoff_ts).
 # 6.6.5.1: Inclusion du domaine BROWSER_VIEWS_DIR_NAME ('browserviews') dans duplicate_session_domains et _prune_domain_files_to_cutoff.
-# 5.239.13.1: duplicate_session_rag fiabilisé : retries bornés (_qdrant_call : réseau, 429, 5xx), upsert par lots de 64, comptage de contrôle exact et retour structuré RagCloneReport.
 
 from contextlib import closing
 import asyncio
@@ -40,6 +40,7 @@ from echo_constants import (
     is_codex_workspace_indexed,
     is_codex_workspace_versioned,
 )
+from echo_db_schema import open_db
 from echo_paths import format_codex_storage_path, get_echo_session_path, sanitize_echo_id
 from echo_session_gc import (
     compute_dead_set,
@@ -57,7 +58,7 @@ def _is_session_db_populated(db_path: str) -> bool:
     if not os.path.exists(db_path) or os.path.getsize(db_path) == 0:
         return False
     try:
-        with closing(sqlite3.connect(db_path, timeout=5.0)) as conn:
+        with closing(open_db(db_path, readonly=True, require_version=False, timeout=5.0)) as conn:
             cur = conn.cursor()
             for tbl in (
                 "message_shadows",
@@ -80,10 +81,15 @@ def backup_session_db(orig_db: str, new_db: str) -> bool:
     if not os.path.exists(orig_db) or _is_session_db_populated(new_db):
         return False
     os.makedirs(os.path.dirname(new_db), exist_ok=True)
-    with closing(sqlite3.connect(orig_db, timeout=15.0)) as src, closing(
-        sqlite3.connect(new_db, timeout=15.0)
+    with closing(
+        open_db(orig_db, readonly=True, require_version=False, timeout=15.0)
+    ) as src, closing(
+        open_db(new_db, create=True, require_version=False, timeout=15.0)
     ) as dst:
         src.backup(dst)
+        dst.execute("PRAGMA journal_mode = WAL")
+        dst.execute("PRAGMA synchronous = NORMAL")
+        dst.execute("PRAGMA busy_timeout = 15000")
     return True
 
 
@@ -724,7 +730,7 @@ def align_codex_git_to_cutoff(
             )
             return (cnt, st_match.group(1) if st_match else None)
 
-        with closing(sqlite3.connect(new_db, timeout=15.0)) as conn:
+        with closing(open_db(new_db, require_version=False, timeout=15.0)) as conn:
             cur = conn.cursor()
             cur.execute(
                 "SELECT id, name, resource_type, storage_path FROM echo_resources "
@@ -898,7 +904,7 @@ def sync_cloned_session(
     kept_markers: Set[str] = set()
     kept_wf_ids: Set[str] = set()
 
-    with closing(sqlite3.connect(new_db, timeout=15.0)) as conn:
+    with closing(open_db(new_db, require_version=False, timeout=15.0)) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
 
@@ -961,7 +967,7 @@ def sync_cloned_session(
     if progress_cb:
         progress_cb(75, "🔗 Réajustement des identifiants de session...")
 
-    with closing(sqlite3.connect(new_db, timeout=15.0)) as conn:
+    with closing(open_db(new_db, require_version=False, timeout=15.0)) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
         reassign_session_ids(cur, orig_cid, new_cid)
@@ -994,7 +1000,7 @@ def sync_resumed_session(
     new_db = get_echo_session_path(user_id, new_cid, "db")
 
     if backup_session_db(orig_db, new_db):
-        with closing(sqlite3.connect(new_db, timeout=15.0)) as conn:
+        with closing(open_db(new_db, require_version=False, timeout=15.0)) as conn:
             conn.row_factory = sqlite3.Row
             cur = conn.cursor()
             reassign_session_ids(cur, orig_cid, new_cid)
@@ -1017,7 +1023,7 @@ def sync_resumed_session(
 
     duplicate_session_domains(user_id, orig_cid, new_cid)
     if os.path.exists(new_db):
-        with closing(sqlite3.connect(new_db, timeout=15.0)) as conn:
+        with closing(open_db(new_db, require_version=False, timeout=15.0)) as conn:
             conn.row_factory = sqlite3.Row
             cur = conn.cursor()
             _prune_transient_browserviews_on_clone(cur, user_id, new_cid)

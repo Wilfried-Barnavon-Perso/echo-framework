@@ -4,17 +4,18 @@
 """
 ================================================================================
 MODULE : ECHO USER MANAGER - FLASK ROUTES
-VERSION : 6.6.3.1
+VERSION : 6.18.23.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.23.1: Factorisation et durcissement SQLite WAL/NORMAL/busy_timeout via _open_sqlite_db sur l'ensemble des routes.
 # 6.6.3.1: Exposition de user_gender et route POST /action/profile/gender.
 # 5.237.5.1: Maintien du job pendant le téléchargement (suppression du pop prématuré) et en-tête Content-Length explicite.
 # 5.237.2.1: Intégration des routes d'export asynchrone (/api/me/export/start, status, cancel, download) avec barre de progression.
 # 5.236.5.1: Routes self-service utilisateur (stats, sessions, renommage, mot de passe, export .tar.xz, suppression Option B et logout).
 
-from contextlib import closing
+from contextlib import contextmanager
 import datetime
 import glob
 import os
@@ -77,6 +78,38 @@ def _get_effective_domain() -> str:
     return (os.environ.get("ECHO_DOMAIN") or ECHO_DOMAIN or "localhost").strip()
 
 
+@contextmanager
+def _open_sqlite_db(
+    db_path: str,
+    *,
+    readonly: bool = False,
+    timeout: float = 10.0,
+    row_factory=None,
+):
+    """Ouvre une connexion SQLite durcie (WAL/NORMAL/busy_timeout) avec fermeture garantie."""
+    if readonly:
+        uri_path = os.path.abspath(db_path).replace("\\", "/")
+        conn = sqlite3.connect(f"file:{uri_path}?mode=ro", uri=True, timeout=timeout)
+    else:
+        conn = sqlite3.connect(db_path, timeout=timeout)
+    try:
+        conn.execute(f"PRAGMA busy_timeout = {int(timeout * 1000)};")
+        if not readonly:
+            conn.execute("PRAGMA journal_mode = WAL;")
+            conn.execute("PRAGMA synchronous = NORMAL;")
+        if row_factory is not None:
+            conn.row_factory = row_factory
+        yield conn
+        if not readonly:
+            conn.commit()
+    except Exception:
+        if not readonly:
+            conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def _list_user_sessions(email: str, current_sid: str) -> list[dict]:
     """Récupère et enrichit toutes les sessions SSO actives de l'utilisateur dans auth.db."""
     if not email or not os.path.exists(AUTH_DB_PATH):
@@ -84,8 +117,12 @@ def _list_user_sessions(email: str, current_sid: str) -> list[dict]:
     now = int(time.time())
     sessions_dict: dict[str, dict] = {}
     try:
-        with closing(sqlite3.connect(f"file:{AUTH_DB_PATH}?mode=ro", uri=True, timeout=5.0)) as conn:
-            conn.row_factory = sqlite3.Row
+        with _open_sqlite_db(
+            AUTH_DB_PATH,
+            readonly=True,
+            timeout=5.0,
+            row_factory=sqlite3.Row,
+        ) as conn:
             rows = conn.execute(
                 "SELECT * FROM sessions WHERE email = ? ORDER BY created_at DESC",
                 (email,),
@@ -133,7 +170,7 @@ def _compute_user_stats(user_id: str | None, email: str, current_sid: str) -> di
     chat_count = 0
     if user_id and os.path.exists(WEBUI_DB_PATH):
         try:
-            with closing(sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True, timeout=5.0)) as conn:
+            with _open_sqlite_db(WEBUI_DB_PATH, readonly=True, timeout=5.0) as conn:
                 row = conn.execute(
                     "SELECT COUNT(id) FROM chat WHERE user_id = ?",
                     (str(user_id),),
@@ -240,12 +277,11 @@ def action_revoke_session():
         return jsonify({"error": "Identifiant de session manquant."}), 400
 
     try:
-        with closing(sqlite3.connect(AUTH_DB_PATH, timeout=10.0)) as conn:
+        with _open_sqlite_db(AUTH_DB_PATH, timeout=10.0) as conn:
             cur = conn.execute(
                 "DELETE FROM sessions WHERE session_id = ? AND email = ?",
                 (target_sid, g.user_email),
             )
-            conn.commit()
             deleted = int(cur.rowcount or 0)
         return jsonify(
             {
@@ -261,7 +297,7 @@ def action_revoke_session():
 @app.route("/action/session/revoke_others", methods=["POST"])
 def action_revoke_other_sessions():
     try:
-        with closing(sqlite3.connect(AUTH_DB_PATH, timeout=10.0)) as conn:
+        with _open_sqlite_db(AUTH_DB_PATH, timeout=10.0) as conn:
             if g.current_session_id:
                 cur = conn.execute(
                     "DELETE FROM sessions WHERE email = ? AND session_id != ?",
@@ -272,7 +308,6 @@ def action_revoke_other_sessions():
                     "DELETE FROM sessions WHERE email = ?",
                     (g.user_email,),
                 )
-            conn.commit()
             revoked_count = int(cur.rowcount or 0)
         return jsonify({"status": "success", "revoked_count": revoked_count})
     except Exception as e:
@@ -287,21 +322,19 @@ def action_profile_rename():
         return redirect(url_for("index"))
 
     try:
-        with closing(sqlite3.connect(AUTH_DB_PATH, timeout=10.0)) as conn:
+        with _open_sqlite_db(AUTH_DB_PATH, timeout=10.0) as conn:
             conn.execute(
                 "UPDATE users SET name = ? WHERE email = ?",
                 (new_name, g.user_email),
             )
-            conn.commit()
 
         if os.path.exists(WEBUI_DB_PATH):
             try:
-                with closing(sqlite3.connect(f"file:{WEBUI_DB_PATH}", uri=True, timeout=10.0)) as w_conn:
+                with _open_sqlite_db(WEBUI_DB_PATH, timeout=10.0) as w_conn:
                     w_conn.execute(
                         "UPDATE user SET name = ? WHERE email = ?",
                         (new_name, g.user_email),
                     )
-                    w_conn.commit()
             except Exception:
                 pass
 
@@ -318,7 +351,7 @@ def action_profile_gender():
     new_gender = normalize_gender(raw_gender)
 
     try:
-        with closing(sqlite3.connect(AUTH_DB_PATH, timeout=10.0)) as conn:
+        with _open_sqlite_db(AUTH_DB_PATH, timeout=10.0) as conn:
             try:
                 conn.execute("ALTER TABLE users ADD COLUMN gender TEXT DEFAULT 'X'")
             except sqlite3.OperationalError:
@@ -327,7 +360,6 @@ def action_profile_gender():
                 "UPDATE users SET gender = ? WHERE email = ?",
                 (new_gender, g.user_email),
             )
-            conn.commit()
 
         labels = {"M": "Homme (M)", "F": "Femme (F)", "X": "Neutre / Non précisé (X)"}
         flash(f"Genre grammatical mis à jour en « {labels.get(new_gender, new_gender)} ».", "success")
@@ -363,7 +395,7 @@ def action_profile_password():
 
     try:
         new_hash = hash_user_password(new_pwd)
-        with closing(sqlite3.connect(AUTH_DB_PATH, timeout=10.0)) as conn:
+        with _open_sqlite_db(AUTH_DB_PATH, timeout=10.0) as conn:
             conn.execute(
                 "UPDATE users SET pass_hash = ? WHERE email = ?",
                 (new_hash, g.user_email),
@@ -373,7 +405,6 @@ def action_profile_password():
                     "DELETE FROM sessions WHERE email = ? AND session_id != ?",
                     (g.user_email, g.current_session_id),
                 )
-            conn.commit()
         flash("Mot de passe modifié avec succès.", "success")
     except Exception as e:
         flash(f"Erreur lors de la mise à jour du mot de passe : {e}", "danger")
@@ -514,7 +545,7 @@ def action_account_delete():
     try:
         # 1. Option B : Suppression de l'entrée maîtresse dans webui.db (déclenche le GC nocturne de l'admin-manager)
         if os.path.exists(WEBUI_DB_PATH):
-            with closing(sqlite3.connect(f"file:{WEBUI_DB_PATH}", uri=True, timeout=10.0)) as w_conn:
+            with _open_sqlite_db(WEBUI_DB_PATH, timeout=10.0) as w_conn:
                 u_row = w_conn.execute(
                     "SELECT id, role FROM user WHERE email = ?",
                     (g.user_email,),
@@ -541,13 +572,11 @@ def action_account_delete():
                     except Exception:
                         pass
                     w_conn.execute("DELETE FROM user WHERE id = ?", (uid,))
-                    w_conn.commit()
 
         # 2. Suppression du compte et des sessions dans auth.db (auth-manager)
-        with closing(sqlite3.connect(AUTH_DB_PATH, timeout=10.0)) as conn:
+        with _open_sqlite_db(AUTH_DB_PATH, timeout=10.0) as conn:
             conn.execute("DELETE FROM sessions WHERE email = ?", (g.user_email,))
             conn.execute("DELETE FROM users WHERE email = ?", (g.user_email,))
-            conn.commit()
 
         # 3. Révocation Open WebUI & nettoyage des cookies SSO
         _revoke_owui_token()
@@ -571,12 +600,11 @@ def logout():
     _revoke_owui_token()
     if g.current_session_id and os.path.exists(AUTH_DB_PATH):
         try:
-            with closing(sqlite3.connect(AUTH_DB_PATH, timeout=5.0)) as conn:
+            with _open_sqlite_db(AUTH_DB_PATH, timeout=5.0) as conn:
                 conn.execute(
                     "DELETE FROM sessions WHERE session_id = ? AND email = ?",
                     (g.current_session_id, g.user_email),
                 )
-                conn.commit()
         except Exception:
             pass
 

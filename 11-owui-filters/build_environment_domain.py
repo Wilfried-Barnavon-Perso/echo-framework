@@ -4,11 +4,12 @@
 """
 title: ECHO Build Environment Domain Filter
 author: Wilfried BARNAVON
-version: 5.235.5.1
-description: Crée l'arborescence complète (fichiers, rag, codex, etc.) et applique le schéma SQLite (identity.db, session.db) en priorité 0.
+version: 6.18.23.1
+description: Crée l'arborescence complète (fichiers, rag, codex, etc.) et applique le schéma déclaratif SQLite v3 idempotent (identity.db, session.db) en priorité 0.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.23.1: Alignement sur le schéma déclaratif SQLite v3 idempotent en priorité 0 et sécurisation OSError de chmod 0o711 sur les domaines files.
 # 5.235.5.1: Application du schéma déclaratif SQLite v1 (identity.db et session.db) en priorité 0 via ensure_db et attente du clone.
 # 5.232.5.1: Création des sous-dossiers pour l'ensemble des workspaces ECHO_CODEX_WORKSPACES et initialisation Git sur les workspaces versionnés (main, plans, generated).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
@@ -48,6 +49,8 @@ class Filter:
             rep = ensure_db(path, kind)
             if rep.get("status") in ("locked", "error"):
                 print(f"[ECHO-ENV] ensure_db {kind} {rep}")
+            elif rep.get("status") == "migrated":
+                print(f"[ECHO-ENV] SQLite v3 migrated ({kind}): {rep.get('actions')}")
         except Exception as e:
             print(f"[ECHO-ENV] ensure_db {kind} exception: {e}")
 
@@ -75,7 +78,10 @@ class Filter:
                 
                 # Masquage du dossier 'files' pour empêcher l'exploration par le LLM (bwrap)
                 if domain == "files":
-                    os.chmod(domain_path, 0o711)
+                    try:
+                        os.chmod(domain_path, 0o711)
+                    except OSError:
+                        pass
             except Exception:
                 pass
 
@@ -93,6 +99,11 @@ class Filter:
                     try:
                         domain_path = get_echo_session_path(user_id, chat_id, domain)
                         os.makedirs(domain_path, exist_ok=True)
+                        if domain == "files":
+                            try:
+                                os.chmod(domain_path, 0o711)
+                            except OSError:
+                                pass
                         if domain == "codex":
                             for ws in ECHO_CODEX_WORKSPACES.keys():
                                 os.makedirs(os.path.join(domain_path, ws), exist_ok=True)

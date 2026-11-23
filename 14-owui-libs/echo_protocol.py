@@ -3,16 +3,16 @@
 """
 title: ECHO Protocol Adapter
 author: Wilfried BARNAVON
-version: 6.7.4.1
+version: 6.19.0.1
 description: Couche de traduction parametres ECHO -> format API Gemini. Deux backends : AI Studio (cle API) et Code Assist v1internal (OAuth2). Fonctions pures -- aucun appel reseau, aucun etat. Point de modification unique pour adapter les requetes CA.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.19.0.1: Remplacement de SupervisorCriticOutput/WorkerFeedbackItem par le modèle Pydantic HandoffSpec (acquis, ressources, mission).
 # 6.7.4.1: Alignement du modèle de repli de get_ca_model_id sur gemini-3.5-flash-lite.
 # 5.233.0.1: Ajout de normalize_response_schema, normalize_generation_config et des modèles Pydantic SSOT de sorties JSON contraintes (responseSchema Gemini 3+).
 # 5.226.18.0: Alignement sur le versioning global ECHO.
 # 1.3: Alignement documentaire interne sur echo_orchestrator.py.
-# 1.2: Alignement sur la nomenclature cognitive (MODEL_ZEPHYR, MODEL_APOLLO, MODEL_PROMETHEUS).
 
 import copy
 from typing import Any, Dict, List, Literal, Optional, Type, Union
@@ -70,16 +70,13 @@ class SkillRouterOutput(BaseModel):
     best_matches: List[str] = Field(default_factory=list, description="Liste des compétences pertinentes sélectionnées.")
 
 
-class WorkerFeedbackItem(BaseModel):
-    worker_id: str = Field(description="Identifiant unique du worker.")
-    status: Literal["ok", "needs_correction"] = Field(description="Statut d'évaluation du travail fourni.")
-    feedback: str = Field(default="", description="Commentaire ou directive d'ajustement pour le worker.")
-
-
-class SupervisorCriticOutput(BaseModel):
-    global_assessment: str = Field(description="Évaluation globale de la synthèse.")
-    verdict: Literal["APPROVED", "REJECTED"] = Field(description="Verdict de validation globale.")
-    worker_feedback: List[WorkerFeedbackItem] = Field(default_factory=list, description="Retours individuels par worker.")
+class HandoffSpec(BaseModel):
+    acquis: str = Field(..., min_length=1, description="Faits établis, vérifiés et décisions déjà tranchées.")
+    ressources: List[str] = Field(
+        default_factory=list,
+        description="Pointeurs exacts vers les productions ou sources (URNs codex:..., sandbox/<sid>/..., IDs fichiers/RAG, URLs).",
+    )
+    mission: str = Field(..., min_length=1, description="Mission précise attendue du destinataire et contraintes impératives.")
 
 
 class VisualCriticOutput(BaseModel):

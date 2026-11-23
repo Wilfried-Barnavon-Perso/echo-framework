@@ -3,18 +3,19 @@
 """
 ================================================================================
 MODULE : ECHO AUTH MANAGER
-VERSION : 6.18.5.1
+VERSION : 6.18.23.1
 AUTEUR : Wilfried BARNAVON & ECHO Team
 DATE MAJ : 2026-11-11
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.23.1: Factorisation des connexions auth.db via _open_auth_db (PRAGMA journal_mode=WAL, synchronous=NORMAL, busy_timeout=10000 et fermeture garantie).
 # 6.18.5.1: Plafond strict MAX_ECHO_USERS = 50 (_is_within_user_cap ORDER BY rowid ASC LIMIT 50 sur /api/verify, /login et /enroll).
 # 6.6.3.1: Ajout de la colonne users.gender (M/F/X), pré-remplissage enrôlement et émission du header SSO X-Webui-Gender.
 # 6.5.3.1: Alignement de OWUI_INTERNAL_URL sur http://echo-webui:8080.
 # 5.239.3.1: Ergonomie responsive et ascenseur sur les templates (grille 2 colonnes pour enroll.html, conteneur .auth-container-wide, max-height dynamique avec scrollbar stylisée et correction du contraste des options <select>).
-# 5.239.2.1: Politique anti-bruteforce paramétrable (délai inter-essais 0/5/10/20s universel, quota d'essais et verrouillage temporisé ou définitif pour les comptes non-enrôlés) et affichage temps réel sur login.html.
+from contextlib import contextmanager
 import os
 import sqlite3
 import httpx
@@ -93,32 +94,51 @@ def normalize_gender(value: Optional[str]) -> str:
     return val if val in ("M", "F", "X") else "X"
 
 
+@contextmanager
+def _open_auth_db(readonly: bool = False, timeout: float = 10.0):
+    """Ouvre auth.db avec PRAGMAs WAL/busy_timeout et fermeture garantie."""
+    if readonly:
+        uri_path = os.path.abspath(DB_PATH).replace("\\", "/")
+        conn = sqlite3.connect(f"file:{uri_path}?mode=ro", uri=True, timeout=timeout)
+    else:
+        conn = sqlite3.connect(DB_PATH, timeout=timeout)
+    try:
+        conn.execute(f"PRAGMA busy_timeout = {int(timeout * 1000)};")
+        if not readonly:
+            conn.execute("PRAGMA journal_mode = WAL;")
+            conn.execute("PRAGMA synchronous = NORMAL;")
+        yield conn
+        if not readonly:
+            conn.commit()
+    except Exception:
+        if not readonly:
+            conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def _is_within_user_cap(email: str) -> bool:
     """Vérifie que l'email appartient aux MAX_ECHO_USERS premiers comptes."""
     clean_email = (email or "").strip()
     if not clean_email:
         return False
-    conn = None
     try:
-        conn = sqlite3.connect(DB_PATH)
-        row = conn.execute(
-            "SELECT 1 FROM (SELECT email FROM users "
-            "ORDER BY rowid ASC LIMIT ?) WHERE lower(email) = lower(?)",
-            (MAX_ECHO_USERS, clean_email),
-        ).fetchone()
-        return row is not None
+        with _open_auth_db(readonly=True) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM (SELECT email FROM users "
+                "ORDER BY rowid ASC LIMIT ?) WHERE lower(email) = lower(?)",
+                (MAX_ECHO_USERS, clean_email),
+            ).fetchone()
+            return row is not None
     except Exception:
         return False
-    finally:
-        if conn is not None:
-            conn.close()
 
 
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    with sqlite3.connect(DB_PATH) as conn:
+    with _open_auth_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL;")
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 email TEXT PRIMARY KEY,
@@ -170,7 +190,7 @@ def init_db():
 init_db()
 
 def get_user(email: str):
-    with sqlite3.connect(DB_PATH) as conn:
+    with _open_auth_db(readonly=True) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
@@ -185,7 +205,7 @@ def update_user_enrollment(
     name: str = None,
     gender: str = "X",
 ):
-    with sqlite3.connect(DB_PATH) as conn:
+    with _open_auth_db() as conn:
         cursor = conn.cursor()
         current_time = int(time.time())
         clean_name = (name or "").strip()
@@ -198,7 +218,7 @@ def update_user_enrollment(
         conn.commit()
 
 def update_user_password(email: str, pass_hash: str):
-    with sqlite3.connect(DB_PATH) as conn:
+    with _open_auth_db() as conn:
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET pass_hash = ? WHERE email = ?", (pass_hash, email))
         conn.commit()
@@ -349,9 +369,8 @@ def check_login_guard(user, client_ip: str, now: int, settings: dict) -> dict:
                 "attempts_remaining": 0
             }
         if locked_until > 0 and locked_until <= now:
-            with sqlite3.connect(DB_PATH) as conn:
+            with _open_auth_db() as conn:
                 conn.execute("UPDATE users SET failed_attempts = 0, locked_until = 0 WHERE email = ?", (user["email"],))
-                conn.commit()
             failed_att = 0
 
     # Vérification délai inter-essais retry_delay > 0 (pour must_enroll == 1 ET must_enroll == 0)
@@ -388,21 +407,19 @@ def record_login_attempt(user, client_ip: str, is_success: bool, now: int, setti
     user_keys = user.keys() if hasattr(user, "keys") else ()
 
     if is_success:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _open_auth_db() as conn:
             conn.execute(
                 "UPDATE users SET failed_attempts = 0, locked_until = 0, last_attempt_at = ? WHERE email = ?",
                 (now, email)
             )
-            conn.commit()
         return {"cooldown_sec": 0, "lockout_sec": 0, "attempts_remaining": None}
 
     if user["must_enroll"] == 0:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _open_auth_db() as conn:
             conn.execute(
                 "UPDATE users SET last_attempt_at = ? WHERE email = ?",
                 (now, email)
             )
-            conn.commit()
         return {"cooldown_sec": retry_delay, "lockout_sec": 0, "attempts_remaining": None}
 
     # must_enroll == 1
@@ -414,12 +431,11 @@ def record_login_attempt(user, client_ip: str, is_success: bool, now: int, setti
     new_failed = cur_failed + 1
     if new_failed >= max_attempts:
         if lockout_min == -1:
-            with sqlite3.connect(DB_PATH) as conn:
+            with _open_auth_db() as conn:
                 conn.execute(
                     "UPDATE users SET failed_attempts = ?, last_attempt_at = ?, locked_until = -1 WHERE email = ?",
                     (new_failed, now, email)
                 )
-                conn.commit()
             return {
                 "error": f"Identifiants incorrects ({max_attempts}/{max_attempts}). Compte verrouillé définitivement en attente de réinitialisation MFA par l'Admin.",
                 "cooldown_sec": 0,
@@ -429,12 +445,11 @@ def record_login_attempt(user, client_ip: str, is_success: bool, now: int, setti
         else:
             lock_sec = lockout_min * 60
             locked_until_ts = now + lock_sec
-            with sqlite3.connect(DB_PATH) as conn:
+            with _open_auth_db() as conn:
                 conn.execute(
                     "UPDATE users SET failed_attempts = ?, last_attempt_at = ?, locked_until = ? WHERE email = ?",
                     (new_failed, now, locked_until_ts, email)
                 )
-                conn.commit()
             return {
                 "error": f"Identifiants incorrects ({max_attempts}/{max_attempts}). Compte verrouillé ({sanction_label}).",
                 "cooldown_sec": 0,
@@ -443,12 +458,11 @@ def record_login_attempt(user, client_ip: str, is_success: bool, now: int, setti
             }
     else:
         rem_tries = max_attempts - new_failed
-        with sqlite3.connect(DB_PATH) as conn:
+        with _open_auth_db() as conn:
             conn.execute(
                 "UPDATE users SET failed_attempts = ?, last_attempt_at = ?, locked_until = 0 WHERE email = ?",
                 (new_failed, now, email)
             )
-            conn.commit()
         return {
             "error": f"Identifiants incorrects ({rem_tries} essai(s) restant(s) avant {sanction_label.lower()}).",
             "cooldown_sec": retry_delay,
@@ -485,7 +499,7 @@ def create_session(email: str, request: Request = None, is_trusted: bool = False
             except ImportError:
                 pass
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with _open_auth_db() as conn:
         cursor = conn.cursor()
         # Purge opportuniste des sessions expirées
         try:
@@ -503,20 +517,18 @@ def create_session(email: str, request: Request = None, is_trusted: bool = False
                 "INSERT INTO sessions (session_id, email, created_at) VALUES (?, ?, ?)", 
                 (session_id, email, now)
             )
-        conn.commit()
     return session_id
 
 def delete_session(session_id: str):
     if session_id:
-        with sqlite3.connect(DB_PATH) as conn:
+        with _open_auth_db() as conn:
             conn.execute("DELETE FROM sessions WHERE session_id = ?", (session_id,))
-            conn.commit()
 
 def resolve_session_state(echo_auth_session: Optional[str] = None) -> Optional[dict]:
     if not echo_auth_session:
         return None
     
-    with sqlite3.connect(DB_PATH) as conn:
+    with _open_auth_db(readonly=True) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM sessions WHERE session_id = ?", (echo_auth_session,))

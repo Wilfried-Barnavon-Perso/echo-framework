@@ -3,19 +3,19 @@
 """
 ================================================================================
 MODULE : ECHO CODE WORKER API
-VERSION : 6.17.4.1
+VERSION : 6.19.0.1
 AUTEUR : Wilfried BARNAVON
-DATE MAJ : 2026-11-21
+DATE MAJ : 2026-11-23
 
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.19.0.1: Support du répertoire de travail scopé sub_sid (/sandbox/<sub_sid>) sous Bubblewrap.
 # 6.17.4.1: Purge /ws/canvas et relais BidiRouter, ajout webhook interne sandbox_event HMAC et durcissement proxy HTTP/WS B2 (Option B).
 # 6.16.0.3: CanvasRunHub AF_UNIX, /ws/canvas/{run_id}, proxy HTTP/WS B2 (/app_proxy, /ws/app) et purge monitor_payloads/flag test port.
 # 6.15.2.1: Long-polling /poll_monitor (wait), purge TTL/lifetime jobs terminés, contrôle /kill par run_id et payloads.
 # 6.13.1.1: Exposition de job_state, exit_code et alive dans GET /poll_monitor.
-# 6.6.22.1: Attachement TIOCSCTTY du PTY bwrap, déduplication buffer/out_queue, reprise par curseur et close 1000.
 
 import asyncio
 import json
@@ -673,9 +673,11 @@ def _build_base_bwrap_cmd(
     global_files_dir: str | None = None,
     deps_dir: str | None = None,
     browserviews_dir: str | None = None,
+    workdir_subpath: str = "",
 ) -> list[str]:
     """Construit la base immuable des arguments bubblewrap partagée entre batch et PTY."""
     _ensure_bwrap_identity_files()
+    chdir_target = f"/sandbox/{workdir_subpath}" if workdir_subpath else "/sandbox"
     cmd = [
         "bwrap",
         "--ro-bind", "/usr", "/usr",
@@ -697,7 +699,7 @@ def _build_base_bwrap_cmd(
         "--bind", sandbox_dir, "/sandbox",
         "--ro-bind-try", "/app/echo_libs_sandbox", "/echo_libs_sandbox",
         "--ro-bind-try", "/app/sandbox-agent-readme.md", "/sandbox-agent-readme.md",
-        "--chdir", "/sandbox",
+        "--chdir", chdir_target,
     ]
     if files_dir:
         cmd.extend(["--ro-bind-try", files_dir, "/files"])
@@ -771,11 +773,15 @@ def _start_sandbox_job(
     idle_ttl_sec: float = DEFAULT_BG_IDLE_TTL_SEC,
     max_lifetime_sec: float = DEFAULT_BG_MAX_LIFETIME_SEC,
     callback_token: str = "",
+    sub_sid: str = "",
 ):
     if not sandbox_dir:
         return None, {"status": "critical_error", "error": "Espace d'exécution non défini."}
 
     os.makedirs(sandbox_dir, exist_ok=True)
+    safe_sub_sid = _sanitize_id(sub_sid, default="") if sub_sid else ""
+    if safe_sub_sid:
+        os.makedirs(os.path.join(sandbox_dir, safe_sub_sid), exist_ok=True)
     sandbox_tmp = os.path.join(sandbox_dir, ".tmp")
     os.makedirs(sandbox_tmp, exist_ok=True)
 
@@ -849,6 +855,7 @@ def _start_sandbox_job(
         global_files_dir=global_files_dir,
         deps_dir=deps_dir,
         browserviews_dir=browserviews_dir,
+        workdir_subpath=safe_sub_sid,
     )
     if hub.is_unix_sock and hub.sock_path:
         bwrap_cmd.extend([
@@ -1226,6 +1233,7 @@ def execute_code():
     run_id = _sanitize_id(data.get('run_id') or f"run_{uuid.uuid4().hex[:8]}")
     safe_uid = _sanitize_id(data.get('user_id', 'system'))
     safe_cid = _sanitize_id(data.get('chat_id'), default="")
+    safe_sub_sid = _sanitize_id(data.get("sub_sid"), default="") if data.get("sub_sid") else ""
 
     logger.info(
         f"🚀 Execution START | User: {safe_uid} | Chat: {safe_cid} | "
@@ -1247,6 +1255,7 @@ def execute_code():
         idle_ttl_sec=idle_ttl_sec,
         max_lifetime_sec=max_lifetime_sec,
         callback_token=callback_token,
+        sub_sid=safe_sub_sid,
     )
     if err is not None:
         err["run_id"] = run_id

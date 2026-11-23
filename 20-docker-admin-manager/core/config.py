@@ -4,16 +4,16 @@
 r"""
 # ================================================================================
 # MODULE : ECHO ADMIN MANAGER SERVER
-# VERSION : 6.18.5.1
+# VERSION : 6.20.4.1
 # ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.20.4.1: Ajout de TMP_UPLOADS_DIR (/app/backend/data/.tmp_uploads) et exposition dans DIRS["tmp_uploads"].
 # 6.18.5.1: Ajout de la constante MAX_ECHO_USERS = 50 (plafond Clause 4 Open WebUI).
 # 6.18.0.1: Ajout des constantes SSOT BACKUP_AUX_CONTAINERS (couvrant tous les écrivains :rw ECHO v6) et BROWSER_WORKER_URL.
 # 6.5.3.1: Alignement de l'URL interne et du nom de conteneur sur echo-webui.
 # 6.5.0.1: Définition des constantes SECRETS_DIR, HOST_ENV_FILE et HOST_ECHO_ROOT pour l'archivage et la restauration des secrets hôtes.
-# 5.239.2.1: Ajout de login_retry_delay_sec (5s), unenrolled_max_attempts (5) et unenrolled_lockout_min (10m) dans DEFAULT_AUTH_SETTINGS.
 
 import os
 import sys
@@ -98,6 +98,7 @@ SETTINGS_FILE = os.path.join(BACKUP_DIR, "settings.json")
 OWUI_DATA_ROOT = "/app/backend/data"
 ECHO_USERS_ROOT = os.path.join(OWUI_DATA_ROOT, "users") 
 UPLOADS_DIR = os.path.join(OWUI_DATA_ROOT, "uploads")
+TMP_UPLOADS_DIR = os.path.join(OWUI_DATA_ROOT, ".tmp_uploads")
 WEBUI_DB_PATH = os.path.join(OWUI_DATA_ROOT, "webui.db")
 RCLONE_CONF_DIR = os.path.join(OWUI_DATA_ROOT, "rclone")
 
@@ -120,6 +121,7 @@ COLLECTION_SESSION_RAG = "echo_session_rag"
 
 DIRS = {
     "uploads": UPLOADS_DIR,
+    "tmp_uploads": TMP_UPLOADS_DIR,
     "echo_vault": ECHO_USERS_ROOT,
     "debug_logs": os.path.join(OWUI_DATA_ROOT, "debug_logs"),
     "rclone": RCLONE_CONF_DIR

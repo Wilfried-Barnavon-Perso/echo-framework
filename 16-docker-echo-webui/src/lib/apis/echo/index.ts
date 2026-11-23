@@ -396,7 +396,7 @@ export const postEchoSubagentMessage = async (
 		"Échec d'envoi du message au sous-agent"
 	);
 
-export type EchoSubagentControlAction = 'suspend' | 'resume' | 'kill' | 'close';
+export type EchoSubagentControlAction = 'suspend' | 'resume' | 'kill' | 'close' | 'purge_now';
 
 export interface EchoSubagentControlRequest {
 	action: EchoSubagentControlAction;

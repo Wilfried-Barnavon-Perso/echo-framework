@@ -4,16 +4,16 @@
 """
 title: ECHO Echo Paths
 author: Wilfried BARNAVON
-version: 6.14.2.1
+version: 6.19.0.1
 description: Résolution des chemins absolus du système.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.19.0.1: Ajout de scope_subagent_sandbox_path pour l'isolation paresseuse des chemins sandbox/<sub_sid>/ des sous-agents.
 # 6.14.2.1: Ajout de EMBED_URI_PREFIX, ASSET_URI_PREFIX, get_echo_embeds_dir, save_embed_binary_asset et save_embed_html_document.
 # 6.11.0.1: Ajout de is_safe_user_exportable_path, resolve_user_exportable_file_path et support domaine 'files' sécurisé.
 # 6.10.0.1: Ajout de is_sandbox_internal_segment et resolve_confined_codex_path (confinement commonpath, rejet symlinks/IPC/.git), durcissement de normalize_codex_rel_path, check_codex_file_exists et resolve_extended_file_path.
 # 6.7.16.1: Repli sur le Vault global utilisateur et les Vaults de chats dans resolve_upload_file_path même lorsque chat_id est fourni.
-# 6.6.5.1: Support du domaine 'browserviews' et resource_type 'browserview' dans resolve_extended_file_path.
 import os
 import re
 import json
@@ -557,6 +557,40 @@ def resolve_confined_codex_path(
     elif not any(_is_under(real_target, r) for r in valid_roots):
         raise ValueError("Sortie de confinement détectée.")
     return (clean_rel, target_abs)
+
+
+def scope_subagent_sandbox_path(
+    relative_path: str,
+    sub_sid: str = "",
+    sandbox_root: str = "",
+    for_write: bool = False,
+) -> str:
+    """Résout un chemin relatif sandbox scopé paresseusement sous `<sub_sid>/` pour un sous-agent."""
+    clean_sid = sanitize_echo_id(sub_sid, fallback="") if sub_sid else ""
+    if not clean_sid or not relative_path:
+        return relative_path
+    clean_rel = normalize_codex_rel_path(
+        relative_path,
+        workspace=CODEX_WORKSPACE_SANDBOX,
+        repo_path=sandbox_root,
+    )
+    if not clean_rel:
+        return relative_path
+    if clean_rel == clean_sid or clean_rel.startswith(f"{clean_sid}/"):
+        return clean_rel
+    if for_write:
+        if (
+            "/" in clean_rel
+            and sandbox_root
+            and os.path.exists(os.path.join(sandbox_root, *clean_rel.split("/")))
+        ):
+            return clean_rel
+        return f"{clean_sid}/{clean_rel}"
+    if sandbox_root and os.path.exists(
+        os.path.join(sandbox_root, clean_sid, *clean_rel.split("/"))
+    ):
+        return f"{clean_sid}/{clean_rel}"
+    return clean_rel
 
 
 def format_codex_storage_path(relative_path: str, workspace: str = CODEX_DEFAULT_WORKSPACE) -> str:

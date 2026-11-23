@@ -3,16 +3,16 @@
 """
 title: ECHO Visual Engine
 author: Wilfried BARNAVON
-version: 6.14.2.1
+version: 6.18.23.1
 description: Composant système interne : ECHO Visual Engine.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.23.1: Alignement de close_image_session sur close_subagent_session ('purged', rétention 1440m) et garde anti-réutilisation dans generate_image.
 # 6.14.2.1: Externalisation binaire des images générées via save_embed_binary_asset (echo-asset://) hors flux Base64.
 # 6.7.4.1: Passage intégral en override_thinking='medium' des 3 étapes (génération, réparation JSON et critique multimodal) de generate_rich_visualization.
 # 6.7.1.2: Télémétrie temps réel save_subagent_meta/mark_subagent_running sur generate_image et filtrage extract_response_parts_and_text dans _run_visual_critic.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
-# 5.239.11.1: Ajout dans `context["message"]` de `generate_rich_visualization` de la consigne explicite anti-redondance Markdown après génération dans l'Iframe.
 # MOTEURS INTÉGRÉS ET DATAFLOWS :
 # - mermaid (v11) : Syntaxe Mermaid pure
 # - echarts (v5) : JSON ECharts strict
@@ -53,7 +53,9 @@ from echo_browser_lib import render_ephemeral_html
 from echo_ui import EchoUI
 from echo_state_manager import EchoStateManager
 from echo_subagent_hub import (
+    close_subagent_session,
     extract_response_parts_and_text,
+    get_subagent_meta,
     mark_subagent_running,
     save_subagent_meta,
 )
@@ -552,6 +554,12 @@ class Tools:
       sid = f"dlg_img_{sid}"
 
     state_mgr = EchoStateManager(user_id=user_id, chat_id=chat_id)
+    existing_img_meta = get_subagent_meta(state_mgr, sid) or {}
+    if existing_img_meta.get("status") == "purged":
+      return (
+          f"❌ Session d'imagerie `{sid}` close et archivée en lecture seule (`purged`). "
+          "Omettez `sub_sid` pour démarrer une nouvelle session."
+      )
     history = state_mgr.get_thread_history(sid)
     initial_step = len(history)
 
@@ -917,7 +925,7 @@ class Tools:
     __metadata__: dict = {},
     __event_emitter__: Any = None,
   ) -> dict:
-    """Ferme définitivement une session de sous-agent d'imagerie (`sub_sid`) et purge son historique lorsque l'image convient à l'Utilisateur."""
+    """Clôt une session de sous-agent d'imagerie (`sub_sid`) en lecture seule ('purged', rétention 1440 min) lorsque l'image convient à l'Utilisateur."""
     events = EchoEvents(__event_emitter__)
     user_id = (__user__ or {}).get("id", "system")
     chat_id = (__metadata__ or {}).get("chat_id")
@@ -928,16 +936,22 @@ class Tools:
     state_mgr = EchoStateManager(user_id=user_id, chat_id=chat_id)
     threads = state_mgr.list_threads(chat_id)
     sids_in_chat = {t["sub_sid"] for t in threads}
+    existing_meta = get_subagent_meta(state_mgr, clean_sid) or {}
 
-    if clean_sid not in sids_in_chat:
+    if (clean_sid not in sids_in_chat and not existing_meta) or existing_meta.get("status") == "purged":
       return wrap_tool_output(
           text=f"ℹ️ La session d'imagerie `{clean_sid}` est déjà clôturée ou introuvable dans cette conversation.",
           status={"status": "success", "sub_sid": clean_sid, "already_closed": True},
       )
 
-    state_mgr.delete_thread(clean_sid)
-    await events.status(f"🔒 Session d'imagerie [{clean_sid}] clôturée.", done=True)
+    purged_meta = await close_subagent_session(state_mgr, user_id, chat_id, clean_sid)
+    await events.status(f"🗄️ Session d'imagerie [{clean_sid}] archivée en lecture seule.", done=True)
     return wrap_tool_output(
-        text=f"✅ Session d'imagerie `{clean_sid}` fermée et purgée.",
-        status={"status": "success", "sub_sid": clean_sid},
+        text=f"🗄️ Session d'imagerie `{clean_sid}` close et archivée en lecture seule (rétention 24h).",
+        status={
+            "status": "success",
+            "sub_sid": clean_sid,
+            "subagent_status": "purged",
+            "purge_expires_at": purged_meta.get("purge_expires_at"),
+        },
     )

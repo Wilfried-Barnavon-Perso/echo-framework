@@ -3,21 +3,20 @@
 """
 title: ECHO Strategic Planner
 author: ECHO Framework
-version: 6.15.0.1
+version: 6.20.3.1
 description: Composant système interne : ECHO Strategic Planner.
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.20.3.1: Migration de la confirmation process_plan vers events.confirm (Markdown).
 # 6.15.0.1: Ajout de close_plan (PAS, zéro LLM, états terminaux success/partial/failed/abandoned + ## Synthèse d'exécution), Gatekeeper 1 pré-LLM dans update_plan, garde terminal dans update_tasks et parsing/remplacement borné du frontmatter YAML.
 # 6.10.0.1: Mutualisation du blocage headless/automatisation via get_headless_block_reason dans process_plan.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
 # 5.233.0.1: Unification du wrapper dans wrap_tool_output, décoration @echo_tool sur les 7 méthodes publiques et simplification des retours.
-# 5.232.5.1: Isolement et versionnement Git des plans et listes de tâches dans le workspace dédié CODEX_WORKSPACE_PLANS ("plans") avec synchronisation de last_commit dans echo_resources.
 
 import sys
 import uuid
 import asyncio
-import orjson as json
 import re
 import time
 import unicodedata
@@ -37,7 +36,6 @@ from echo_prompts import (
 )
 from echo_codex_git import CodexRepo
 from echo_paths import get_codex_lock, format_codex_storage_path
-from echo_ui import EchoUI
 from echo_constants import (
     CODEX_WORKSPACE_PLANS,
     PLANNER_MODEL_BUILD,
@@ -610,23 +608,13 @@ class Tools:
         # 2. Modale de confirmation (Si non validé précédemment)
         block_reason = get_headless_block_reason(__metadata__)
         if not user_already_validated and block_reason is None:
-            msg_html = f'''
-            <div style="margin-bottom:15px; font-size:15px; font-weight:600;">
-                Lancement du Plan : Confirmez-vous l'exécution de <b>{plan_id}</b> ?
-            </div>
-            '''
-            msg_escaped = json.dumps(msg_html).decode('utf-8')
-            modals_injection = EchoUI.get_custom_modals_js()
-            js_code = f"""
-            {modals_injection}
-            return await new Promise((resolve) => {{
-                window.echoCustomConfirm({msg_escaped}, (result) => resolve(result));
-            }});
-            """
             if __event_emitter__:
                 await events.status(f"⏳ Attente de confirmation pour lancer le plan {plan_id}...", done=False)
-                
-            user_confirmed = await events.call_execute(js_code)
+
+            user_confirmed = await events.confirm(
+                f"Lancer le plan {plan_id}",
+                f"Confirmez-vous l'exécution du plan **{plan_id}** (`proposed` → `executing`) ?",
+            )
             if not user_confirmed:
                 await events.status(f"🛑 Lancement du plan {plan_id} refusé par l'utilisateur.", done=True)
                 return "Refus : L'Utilisateur a refusé de lancer l'exécution du plan. Le Modèle DOIT attendre les consignes de L'Utilisateur."

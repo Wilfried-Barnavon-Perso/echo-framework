@@ -4,16 +4,16 @@
 """
 ================================================================================
 MODULE : ECHO ADMIN MANAGER - FLASK ROUTES
-VERSION : 6.18.5.1
+VERSION : 6.20.4.1
 ================================================================================
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.20.4.1: Agrégation de TMP_UPLOADS_DIR (.tmp_uploads) et UPLOADS_DIR dans storage_stats["uploads"] pour le Dashboard.
+# 6.18.23.1: Durcissement SQLite WAL/NORMAL/busy_timeout et fermeture garantie sur toutes les routes via core.security.open_sqlite_db.
 # 6.18.5.1: Plafond strict MAX_ECHO_USERS = 50 (_get_auth_user_quota, GET /api/auth/quota, gardes sur auth_create_user, auth_import_users et auth_import_admin).
 # 6.18.3.1: Garde défensive principal_id != '*' sur la purge access_grant dans auth_delete_user.
 # 6.18.0.1: Compatibilité ECHO v6 (BACKUP_AUX_CONTAINERS et détection ECHO_ADMIN_PASSWORD au restore, purge identity_vault dans auth_reset_user, purge auth/access_grant/automation_run dans auth_delete_user, suppression de la route dupliquée auth_user_role).
-# 6.6.3.1: Prise en charge de users.gender (M/F/X) à la création, dans /api/auth/users et via /action/auth/gender.
-# 6.5.0.1: Restauration sécurisée de .secrets et .env via conteneur éphémère one-shot (echo-python-base:latest), détection de divergence des clés maîtresses en RAM et redémarrage des conteneurs hot-reload.
 import configparser
 from contextlib import closing
 import datetime
@@ -58,6 +58,7 @@ from core.config import (
     RCLONE_CONF_PATH,
     SYSTEM_ADMIN_EMAIL,
     TARGET_CONTAINER,
+    TMP_UPLOADS_DIR,
     UPLOADS_DIR,
     WEBUI_DB_PATH,
     app,
@@ -91,6 +92,7 @@ from core.settings_io import (
 from core.security import (
     change_system_password,
     generate_complex_temp_password,
+    open_sqlite_db,
 )
 from services.memory_consolidation import consolidate_memories_for_user
 from services.semantic_pruning import purge_user_artifacts, run_semantic_pruning
@@ -115,7 +117,7 @@ def index():
     # Compteur OWUI SQLite (Sessions Actives BDD)
     owui_sessions_count = 0
     try:
-        with sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True) as conn:
+        with open_sqlite_db(WEBUI_DB_PATH, readonly=True) as conn:
             owui_sessions_count = conn.execute("SELECT COUNT(id) FROM chat").fetchone()[0]
     except Exception: pass
 
@@ -133,8 +135,18 @@ def index():
     # Taille totale du dossier de backups
     backup_stats = get_dir_stats(BACKUP_DIR)
 
+    # Transit combiné : staging multipart actif (.tmp_uploads) + éventuel résidu historique (uploads)
+    tmp_up_stats = get_dir_stats(TMP_UPLOADS_DIR)
+    legacy_up_stats = get_dir_stats(UPLOADS_DIR)
+    transit_size = tmp_up_stats["size"] + legacy_up_stats["size"]
+    transit_stats = {
+        "count": tmp_up_stats["count"] + legacy_up_stats["count"],
+        "size": transit_size,
+        "size_fmt": human_size(transit_size),
+    }
+
     stats = {
-        "uploads": get_dir_stats(UPLOADS_DIR),
+        "uploads": transit_stats,
         "vault": vault_storage,
         "vault_disk_percent": vault_disk_percent,
         "logs": get_dir_stats(os.path.join(OWUI_DATA_ROOT, "debug_logs")),
@@ -180,7 +192,7 @@ def user_stats():
     if not session.get('logged_in'): return jsonify([])
     data = []
     try:
-        with sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True) as conn:
+        with open_sqlite_db(WEBUI_DB_PATH, readonly=True) as conn:
             users = conn.execute("SELECT id, name, email, role FROM user ORDER BY name ASC").fetchall()
             for u in users:
                 user_id = str(u[0])
@@ -434,9 +446,8 @@ def handle_action(action):
                 if not os.path.exists(WEBUI_DB_PATH):
                     print("[ECHO-CONSOLIDATION] \u274c Base SSoT webui.db absente. Abandon."); return
                 try:
-                    conn = sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True, timeout=10.0)
-                    valid_ids = [str(row[0]) for row in conn.execute("SELECT id FROM user").fetchall()]
-                    conn.close()
+                    with open_sqlite_db(WEBUI_DB_PATH, readonly=True, timeout=10.0) as conn:
+                        valid_ids = [str(row[0]) for row in conn.execute("SELECT id FROM user").fetchall()]
                 except Exception as e:
                     print(f"[ECHO-CONSOLIDATION] \u274c Lecture DB: {e}"); return
                 if not valid_ids:
@@ -595,7 +606,7 @@ def update_user_role(user_id):
         return redirect(url_for('index'))
         
     try:
-        with sqlite3.connect(f"file:{WEBUI_DB_PATH}", uri=True) as conn:
+        with open_sqlite_db(WEBUI_DB_PATH) as conn:
             user = conn.execute("SELECT email, role FROM user WHERE id = ?", (user_id,)).fetchone()
             if not user:
                 flash('Utilisateur introuvable.', 'danger')
@@ -628,9 +639,8 @@ def auth_reset_user(user_id):
         flash('Base SSoT Open WebUI injoignable. Action annulée.', 'danger')
         return redirect(url_for('index'))
     try:
-        conn = sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True, timeout=10.0)
-        user = conn.execute("SELECT name, email FROM user WHERE id = ?", (user_id,)).fetchone()
-        conn.close()
+        with open_sqlite_db(WEBUI_DB_PATH, readonly=True, timeout=10.0) as conn:
+            user = conn.execute("SELECT name, email FROM user WHERE id = ?", (user_id,)).fetchone()
         if user and (user[1].endswith('@echo.local') or user[0] in ['admin', 'install-stack']):
             flash('Action strictement interdite sur un compte système.', 'danger')
             return redirect(url_for('index'))
@@ -658,7 +668,7 @@ def auth_reset_user(user_id):
                 with closing(open_db(db_path, timeout=5.0)) as conn:
                     _purge_identity_tables(conn)
             else:
-                with closing(sqlite3.connect(db_path, timeout=5.0)) as conn:
+                with open_sqlite_db(db_path, timeout=5.0) as conn:
                     _purge_identity_tables(conn)
             purged_any = True
         except Exception as e:
@@ -933,7 +943,7 @@ def api_auth_quota():
             "reached": False,
         })
     try:
-        with sqlite3.connect("/app/auth-data/auth.db") as conn:
+        with open_sqlite_db("/app/auth-data/auth.db") as conn:
             _ensure_auth_users_schema(conn)
             count, max_users, reached = _get_auth_user_quota(conn)
         return jsonify({
@@ -956,13 +966,13 @@ def auth_users():
         owui_names = {}
         try:
             if os.path.exists(WEBUI_DB_PATH):
-                with sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True) as conn2:
+                with open_sqlite_db(WEBUI_DB_PATH, readonly=True) as conn2:
                     for r in conn2.execute("SELECT email, name FROM user").fetchall():
                         owui_names[r[0]] = r[1]
         except Exception:
             pass
         
-        with sqlite3.connect("/app/auth-data/auth.db", uri=True) as conn:
+        with open_sqlite_db("/app/auth-data/auth.db") as conn:
             _ensure_auth_users_schema(conn)
             users = conn.execute("SELECT email, must_enroll, temp_pass_expires, last_enrollment, name, failed_attempts, locked_until, gender FROM users").fetchall()
             
@@ -1006,7 +1016,7 @@ def auth_create_user():
         from passlib.hash import argon2
         pass_hash = argon2.hash(temp_pwd)
         os.makedirs("/app/auth-data", exist_ok=True)
-        with sqlite3.connect("/app/auth-data/auth.db") as conn:
+        with open_sqlite_db("/app/auth-data/auth.db") as conn:
             _ensure_auth_users_schema(conn)
             exists = conn.execute(
                 "SELECT 1 FROM users WHERE lower(email) = lower(?)",
@@ -1037,7 +1047,7 @@ def auth_import_users():
     if not session.get('logged_in'): return redirect(url_for('index'))
     try:
         from passlib.hash import argon2
-        with sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True) as conn:
+        with open_sqlite_db(WEBUI_DB_PATH, readonly=True) as conn:
             webui_users = conn.execute("SELECT email, name FROM user").fetchall()
         
         imported = 0
@@ -1046,7 +1056,7 @@ def auth_import_users():
         os.makedirs("/app/auth-data", exist_ok=True)
         settings = get_auth_settings()
         expire_timestamp = int(time.time()) + (int(settings.get("temp_pass_hours", 24)) * 3600)
-        with sqlite3.connect("/app/auth-data/auth.db") as conn:
+        with open_sqlite_db("/app/auth-data/auth.db") as conn:
             _ensure_auth_users_schema(conn)
             current_count, max_users, _ = _get_auth_user_quota(conn)
             for (email, name) in webui_users:
@@ -1100,7 +1110,7 @@ def auth_import_admin():
     if not session.get('logged_in'): return redirect(url_for('index'))
     try:
         from passlib.hash import argon2
-        with sqlite3.connect(f"file:{WEBUI_DB_PATH}?mode=ro", uri=True) as conn:
+        with open_sqlite_db(WEBUI_DB_PATH, readonly=True) as conn:
             user_exists = conn.execute("SELECT email FROM user WHERE email=?", (SYSTEM_ADMIN_EMAIL,)).fetchone()
         
         if not user_exists:
@@ -1111,7 +1121,7 @@ def auth_import_admin():
         settings = get_auth_settings()
         expire_timestamp = int(time.time()) + (int(settings.get("temp_pass_hours", 24)) * 3600)
         
-        with sqlite3.connect("/app/auth-data/auth.db") as conn:
+        with open_sqlite_db("/app/auth-data/auth.db") as conn:
             _ensure_auth_users_schema(conn)
             
             if conn.execute(
@@ -1151,13 +1161,13 @@ def auth_rename_user():
         return redirect(url_for('index'))
     try:
         # 1. Mise à jour dans le SSO
-        with sqlite3.connect("/app/auth-data/auth.db", uri=True) as conn:
+        with open_sqlite_db("/app/auth-data/auth.db") as conn:
             conn.execute("UPDATE users SET name = ? WHERE email = ?", (name if name else None, email))
             
         # 2. Mise à jour synchrone dans Open WebUI
         try:
             if os.path.exists(WEBUI_DB_PATH):
-                with sqlite3.connect(f"file:{WEBUI_DB_PATH}", uri=True) as conn2:
+                with open_sqlite_db(WEBUI_DB_PATH) as conn2:
                     conn2.execute("UPDATE user SET name = ? WHERE email = ?", (name if name else "", email))
         except Exception:
             pass
@@ -1178,7 +1188,7 @@ def auth_gender_user():
     if not email:
         return redirect(url_for('index'))
     try:
-        with sqlite3.connect("/app/auth-data/auth.db", uri=True) as conn:
+        with open_sqlite_db("/app/auth-data/auth.db") as conn:
             _ensure_auth_users_schema(conn)
             conn.execute("UPDATE users SET gender = ? WHERE email = ?", (gender, email))
             conn.commit()
@@ -1197,7 +1207,7 @@ def auth_reset_mfa():
     try:
         from passlib.hash import argon2
         pass_hash = argon2.hash(temp_pwd)
-        with sqlite3.connect("/app/auth-data/auth.db") as conn:
+        with open_sqlite_db("/app/auth-data/auth.db") as conn:
             try: conn.execute("ALTER TABLE users ADD COLUMN temp_pass_expires INTEGER DEFAULT 0")
             except: pass
             try: conn.execute("ALTER TABLE users ADD COLUMN last_enrollment INTEGER DEFAULT 0")
@@ -1252,7 +1262,7 @@ def auth_disable_user():
     if not session.get('logged_in'): return redirect(url_for('index'))
     email = request.form.get('email', '').strip()
     try:
-        with sqlite3.connect("/app/auth-data/auth.db") as conn:
+        with open_sqlite_db("/app/auth-data/auth.db") as conn:
             conn.execute("DELETE FROM users WHERE email=?", (email,))
             conn.execute("DELETE FROM sessions WHERE email=?", (email,))
             conn.commit()
@@ -1270,8 +1280,7 @@ def api_auth_sessions():
     try:
         now = int(time.time())
         sessions_dict = {}
-        with sqlite3.connect("/app/auth-data/auth.db") as conn:
-            conn.row_factory = sqlite3.Row
+        with open_sqlite_db("/app/auth-data/auth.db", readonly=True, row_factory=sqlite3.Row) as conn:
             for row in conn.execute("SELECT * FROM sessions ORDER BY created_at DESC"):
                 s = dict(row)
                 sid = s['session_id']
@@ -1306,7 +1315,7 @@ def auth_revoke_session():
         if not data or 'session_id' not in data:
             return jsonify({"error": "Missing session_id"}), 400
         session_id = data['session_id']
-        with sqlite3.connect("/app/auth-data/auth.db") as conn:
+        with open_sqlite_db("/app/auth-data/auth.db") as conn:
             conn.execute("DELETE FROM sessions WHERE session_id=?", (session_id,))
             conn.commit()
         return jsonify({"status": "success"})
@@ -1317,7 +1326,7 @@ def auth_revoke_session():
 def auth_revoke_all_sessions():
     if not session.get('logged_in'): return jsonify({"error": "Unauthorized"}), 401
     try:
-        with sqlite3.connect("/app/auth-data/auth.db") as conn:
+        with open_sqlite_db("/app/auth-data/auth.db") as conn:
             conn.execute("DELETE FROM sessions")
             conn.commit()
         return jsonify({"status": "success"})
@@ -1340,7 +1349,7 @@ def auth_delete_user():
     try:
         uid = None
         # 1. Transaction SSoT prioritaire sur webui.db (Fail-Closed : si webui.db est verrouillée/injoignable, aucune action)
-        with sqlite3.connect(f"file:{WEBUI_DB_PATH}", uri=True, timeout=10.0) as conn_owui:
+        with open_sqlite_db(WEBUI_DB_PATH, timeout=10.0) as conn_owui:
             u_row = conn_owui.execute("SELECT id, role FROM user WHERE email=?", (email,)).fetchone()
             if u_row:
                 uid, u_role = str(u_row[0]), u_row[1]
@@ -1390,7 +1399,7 @@ def auth_delete_user():
 
         # 2. Suppression dans la base SSO optionnelle (/app/auth-data/auth.db)
         if os.path.exists("/app/auth-data/auth.db"):
-            with sqlite3.connect("/app/auth-data/auth.db", timeout=10.0) as conn_auth:
+            with open_sqlite_db("/app/auth-data/auth.db", timeout=10.0) as conn_auth:
                 conn_auth.execute("DELETE FROM users WHERE email=?", (email,))
                 conn_auth.execute("DELETE FROM sessions WHERE email=?", (email,))
                 conn_auth.commit()

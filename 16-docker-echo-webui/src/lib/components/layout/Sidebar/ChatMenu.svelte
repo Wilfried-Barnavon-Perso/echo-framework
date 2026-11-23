@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { getContext, tick } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { toast } from 'svelte-sonner';
 
 	import fileSaver from 'file-saver';
 	const { saveAs } = fileSaver;
@@ -8,13 +10,17 @@
 	import DropdownMenu from '$lib/components/common/DropdownMenu.svelte';
 	import DropdownSub from '$lib/components/common/DropdownSub.svelte';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
+	import ConfirmDialog from '$lib/components/common/ConfirmDialog.svelte';
+	import Spinner from '$lib/components/common/Spinner.svelte';
 	import Tags from '$lib/components/chat/Tags.svelte';
 	import {
 		getChatById,
 		getChatPinnedStatusById,
 		toggleChatPinnedStatusById
 	} from '$lib/apis/chats';
+	import { resumeChatInNewSession, type ResumeChatResponse } from '$lib/apis/echo/chat_actions';
 	import { chats, config, folders, settings, theme, user, visibleControls } from '$lib/stores';
+	import { refreshSidebar } from '$lib/stores/chatList';
 	import { createMessagesList } from '$lib/utils';
 	import { getOutputText } from '$lib/components/chat/Messages/structuredOutput';
 	import ArchiveBoxIcon from '$lib/components/icons/ArchiveBox.svelte';
@@ -28,6 +34,7 @@
 	import ShareIcon from './icons/Share.svelte';
 	import TrashIcon from './icons/Trash.svelte';
 	import ChatCheckIcon from '$lib/components/icons/ChatCheck.svelte';
+	import ArrowForwardIcon from '$lib/components/icons/ArrowForward.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -52,6 +59,9 @@
 
 	let chat = null;
 	let showFullMessages = false;
+	let resuming = false;
+	let showIncompleteRagConfirm = false;
+	let pendingResumeResult: ResumeChatResponse | null = null;
 
 	export let onPinChange: (chat: {
 		pinned: boolean;
@@ -313,6 +323,32 @@
 	$: if (show && !readonly) {
 		checkPinned();
 	}
+
+	const resumeInNewChatHandler = async () => {
+		if (resuming || !chatId || chatId.startsWith('local:')) return;
+		resuming = true;
+		const token = typeof localStorage !== 'undefined' ? (localStorage.token ?? '') : '';
+		const loadingId = toast.loading($i18n.t('Distilling and resuming session...'));
+
+		try {
+			const res = await resumeChatInNewSession(token, chatId);
+			toast.dismiss(loadingId);
+
+			if (res.rag_report?.complete) {
+				await refreshSidebar(token);
+				toast.success($i18n.t('Session resumed in a new chat'));
+				await goto(`/c/${res.new_chat_id}`);
+			} else {
+				pendingResumeResult = res;
+				showIncompleteRagConfirm = true;
+			}
+		} catch (error) {
+			toast.dismiss(loadingId);
+			toast.error(`${error}`);
+		} finally {
+			resuming = false;
+		}
+	};
 </script>
 
 {#if chat && showFullMessages}
@@ -499,6 +535,25 @@
 					</button>
 				{/if}
 
+				{#if !readonly && chatId && !chatId.startsWith('local:')}
+					<button
+						role="menuitem"
+						draggable="false"
+						disabled={resuming}
+						class="flex h-[1.6875rem] gap-2 items-center rounded-xl px-2 text-[0.8125rem] cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-900 w-full disabled:opacity-60"
+						on:click={() => {
+							void resumeInNewChatHandler();
+						}}
+					>
+						{#if resuming}
+							<Spinner className="size-3.5" />
+						{:else}
+							<ArrowForwardIcon className="size-3.5" strokeWidth="1.5" />
+						{/if}
+						<div class="flex items-center">{$i18n.t('Resume in new chat')}</div>
+					</button>
+				{/if}
+
 				{#if chatId && $folders.length > 0}
 					<DropdownSub contentClass="select-none z-50 max-h-52 overflow-y-auto scrollbar-hidden">
 						<button
@@ -563,3 +618,39 @@
 		</DropdownMenu>
 	</div>
 </Dropdown>
+
+<ConfirmDialog
+	bind:show={showIncompleteRagConfirm}
+	title={$i18n.t('Incomplete vector memory transfer')}
+	message={$i18n.t(
+		'Session vector memory transfer was incomplete ({{CLONED}}/{{ELIGIBLE}} fragments; cause: {{CAUSE}}). The summary was transferred, but older details may be missing from session search. Open the new chat anyway?',
+		{
+			CLONED: String(pendingResumeResult?.rag_report?.cloned ?? 0),
+			ELIGIBLE: String(pendingResumeResult?.rag_report?.eligible ?? 0),
+			CAUSE: pendingResumeResult?.rag_report?.error ?? $i18n.t('unknown')
+		}
+	)}
+	confirmLabel={$i18n.t('Open new chat')}
+	on:confirm={async () => {
+		const targetId = pendingResumeResult?.new_chat_id;
+		pendingResumeResult = null;
+		const token = typeof localStorage !== 'undefined' ? (localStorage.token ?? '') : '';
+		await refreshSidebar(token);
+		if (targetId) {
+			await goto(`/c/${targetId}`);
+		}
+	}}
+	on:cancel={async () => {
+		const title = pendingResumeResult?.title;
+		pendingResumeResult = null;
+		const token = typeof localStorage !== 'undefined' ? (localStorage.token ?? '') : '';
+		await refreshSidebar(token);
+		if (title) {
+			toast.info(
+				$i18n.t('New conversation "{{TITLE}}" is available in the sidebar.', {
+					TITLE: title
+				})
+			);
+		}
+	}}
+/>

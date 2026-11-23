@@ -1,11 +1,11 @@
 <div align="center">
   <img src="docs/logo-echo-full.png" alt="ECHO Framework Logo" width="350">
   
-  # 🧠 ECHO Framework v6.18.20
+  # 🧠 ECHO Framework v6.21.4
   
   **The Sovereign Intelligence Orchestrator**
   
-  [![Version](https://img.shields.io/badge/version-6.18.20-8b5cf6.svg)](#)
+  [![Version](https://img.shields.io/badge/version-6.21.4-8b5cf6.svg)](#)
   [![Open WebUI](https://img.shields.io/badge/Powered%20by-Open%20WebUI-4CAF50.svg)](#)
   [![Gemini](https://img.shields.io/badge/AI-Google%20Gemini-F9AB00.svg)](#)
   [![License](https://img.shields.io/badge/license-Apache%202.0-purple.svg)](#)
@@ -40,6 +40,7 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
 │   • Echo Orchestrator : routage cognitif, suture SQLite bit-perfect     │
 │   • SSOT Registry : gouvernance unifiée (ATHENA, PROMETHEUS, APOLLO, ZEPHYR) │
 │   • Filtres & Contexte : Migration/Fork Session, Smart Context, AEC XML │
+│   • UI & Cycle de Vie : Authentification LLM unifiée, Migrations auto   │
 │   • Window Manager & HUD : fenêtres multi-chats, jauge quotas, Codex UI │
 └──────────────────┬───────────────────────────────────┬──────────────────┘
                    │                                   │
@@ -68,7 +69,7 @@ ECHO agit comme un **Kernel** : il impose ses règles méthodologiques et son d�
   - **Pont Audio Intégré (STT & TTS)** : Transcription vocale multimodale haute précision et synthèse vocale neuronale fluide en streaming.
   - **Coding Worker Sandbox, Applications, Terminal PTY & SSH** : Exécution hermétique de code multi-langages (Python 3.14, Node.js 22 et Bash) sous Bubblewrap en mode synchrone ou détaché en arrière-plan (`control_sandbox_execution`), déploiement d'applications web interactives temps réel (`Applications` via proxy ticketé HMAC), **Terminal PTY interactif Xterm.js**, **connecteur SSH souverain** via l'Identity Vault et supervision de cycle de vie anti-zombie.
   - **Browser Worker** : Navigation web autonome asynchrone propulsée par Playwright avec architecture Zéro-Trace DOM, curseur incrusté hors-DOM, contournement anti-bot et ciblage visuel de précision.
-  - **Studio Visuel, Imagerie Supervisée, ECHO Codex & Delphi** : Génération de visualisations interactives 2D/3D auto-vérifiées en mémoire vive, studio de création, fusion multi-images et retouche itérative d'images supervisées (`generate_image`), éditeur de code intégré (CodeMirror 6) sur **5 espaces** (`main`, `plans`, `generated`, `sandbox`, `files`) avec **édition assistée par IA et pré-validation Diff**, visionneuse hexadécimale virtualisée, prévisualisation multimédia en direct (Markdown, HTML, SVG, PDF, images avec zoom tactile mobile, copie et export instantanés), consultation inter-conversations en lecture seule, **liens Codex cliquables** directement dans les réponses de l'IA, tables rondes multi-agents parallélisées (`consult_council` avec contradiction intra-spécialité, `consult_supervised_workers`) et gestionnaire de compétences (`Skills`).
+  - **Studio Visuel, Imagerie Supervisée, ECHO Codex & Delphi** : Génération de visualisations interactives 2D/3D auto-vérifiées en mémoire vive, studio de création, fusion multi-images et retouche itérative d'images supervisées (`generate_image`), éditeur de code intégré (CodeMirror 6) sur **5 espaces** (`main`, `plans`, `generated`, `sandbox`, `files`) avec **édition assistée par IA et pré-validation Diff**, visionneuse hexadécimale virtualisée, prévisualisation multimédia en direct (Markdown, HTML, SVG, PDF, images avec zoom tactile mobile, copie et export instantanés), consultation inter-conversations en lecture seule, **liens Codex cliquables** directement dans les réponses de l'IA, tables rondes multi-agents parallélisées (`consult_council` avec contradiction intra-spécialité) et **Phalanges multi-niveaux** (`consult_phalanx` avec délégation hiérarchique, relais `handoff` et isolation sandbox) adossées au gestionnaire de compétences (`Skills`).
   - **Window Manager (`EchoWM`), HUD, Sous-agents & Conseiller d'Outils** : Gestionnaire de fenêtres multi-chats et multi-navigateurs avec isolation stricte par propriétaire, suivi temps réel en tranches des sous-agents (`Sous-agents`), **Calendrier**, **Automatisations** récurrentes et **Boîte de réception**, **Jauge Contextuelle & Quotas Cloud (5h / Semaine)** avec suivi différentiel dès le premier tour et compteur de compaction, et **Expert-Conseil Opérationnel (`tool_advisor`)** adossé à **11 manuels spécialisés** réduisant de 80 % l'empreinte des **106 outils**.
 
 ---

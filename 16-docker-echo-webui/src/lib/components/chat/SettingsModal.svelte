@@ -16,6 +16,7 @@
 
 	import Modal from '../common/Modal.svelte';
 	import Account from './Settings/Account.svelte';
+	import LlmAuth from './Settings/LlmAuth.svelte';
 	import About from './Settings/About.svelte';
 	import General from './Settings/General.svelte';
 	import Interface from './Settings/Interface.svelte';
@@ -35,6 +36,7 @@
 	import ArchiveBox from '../icons/ArchiveBox.svelte';
 	import ChevronLeft from '../icons/ChevronLeft.svelte';
 	import Keyboard from '../icons/Keyboard.svelte';
+	import LockClosed from '../icons/LockClosed.svelte';
 
 	const i18n: Writable<any> = getContext('i18n');
 
@@ -121,6 +123,7 @@
 		data_controls: $i18n.t('Data'),
 		archived_chats: $i18n.t('Data'),
 		account: $i18n.t('Profile'),
+		llm_auth: $i18n.t('Profile'),
 		about: $i18n.t('Profile')
 	};
 	// $i18n.t('Experience');
@@ -182,6 +185,12 @@
 			titleKey: 'settings.personal.account.title',
 			title: $i18n.t('settings.personal.account.title'),
 			searchPrefixes: ['settings.personal.account.']
+		},
+		{
+			id: 'llm_auth',
+			titleKey: 'settings.personal.llm_auth.title',
+			title: $i18n.t('settings.personal.llm_auth.title'),
+			searchPrefixes: ['settings.personal.llm_auth.']
 		},
 		{
 			id: 'about',
@@ -363,6 +372,13 @@
 					class="w-full text-xs bg-transparent py-1 outline-hidden placeholder:text-gray-600 dark:text-gray-300 dark:placeholder:text-gray-500"
 					bind:value={search}
 					id="search-input-settings-modal"
+					type="search"
+					name="echo-settings-search-filter"
+					autocomplete="off"
+					spellcheck="false"
+					data-lpignore="true"
+					data-1p-ignore="true"
+					data-form-type="other"
 					on:keydown={searchKeydown}
 					placeholder={$i18n.t('Search')}
 				/>
@@ -493,6 +509,19 @@
 								<UserCircle className="size-3.5" strokeWidth="2" />
 								<span>{$i18n.t('settings.personal.account.title')}</span>
 							</button>
+						{:else if tabId === 'llm_auth'}
+							<button
+								role="tab"
+								aria-controls="tab-llm-auth"
+								aria-selected={selectedTab === 'llm_auth'}
+								class={tabButtonClass(selectedTab === 'llm_auth')}
+								on:click={() => {
+									selectTab('llm_auth');
+								}}
+							>
+								<LockClosed className="size-3.5" strokeWidth="2" />
+								<span>{$i18n.t('settings.personal.llm_auth.title')}</span>
+							</button>
 						{:else if tabId === 'about'}
 							<button
 								role="tab"
@@ -558,6 +587,8 @@
 						toast.success($i18n.t('Settings saved successfully!'));
 					}}
 				/>
+			{:else if selectedTab === 'llm_auth'}
+				<LlmAuth />
 			{:else if selectedTab === 'about'}
 				<About />
 			{/if}

@@ -3,17 +3,17 @@
 """
 title: Écho
 author: Wilfried BARNAVON
-version: 6.7.20.1
+version: 6.18.23.1
 requirements: asyncssh
 description: ECHO - Orchestrateur
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.23.1: Reconstruction directe de l'historique depuis session.db via get_shadow_branch_lineage (Schéma v3), scellement parent_id et débranchement du flux PKCE/API-Key vers l'onglet Authentification LLM.
 # 6.7.20.1: Assemblage hot-reload de systemInstruction via load_assembled_system_prompt (system-prompt.xml + system-commands.xml) préservant le cache de préfixe Gemini.
 # 6.7.16.1: Synchronisation en fin de tour du statut final et du résumé VECTORIZED_SUM_UP des ressources de session vers identity.db.
 # 6.7.5.1: Garde-fous None-safe sur content, auto-guérison _sanitize_shadow_none_parts, fallback meta["message_id"] sur sous-tour actif et filtrage tamponné "None"+functionCall dans StreamProcessor.
 # 6.7.1.1: Mise en conformité PAS des prompts et directives.
-# 6.6.30.1: Centralisation et délégation de _TOOLS_CACHE à register_chat_tools (echo_subagent_hub).
 
 
 # ==============================================================================
@@ -60,9 +60,6 @@ from echo_constants import (
     ECHO_MODELS_REGISTRY, get_model_identity, get_generation_config,
     get_descending_cascade, ECHO_ENDPOINT_LOCK_TIMEOUT_MIN,
     AEC_REMINDERS,
-    ECHO_AUTH_PENDING_MARKER,
-    ECHO_AUTH_TITLE_PENDING,
-    ECHO_AUTH_NOTICE_MARKERS,
     ECHO_TURN_CONTEXT,
 )
 from echo_auth import EchoAuth
@@ -113,9 +110,36 @@ class UserDataManager:
         """Restauration Bit-Perfect par ID physique (et Timestamp optionnel pour user)."""
         return self._sanitize_shadow_none_parts(self.state_manager.get_shadow(message_id, updated_at))
 
-    def save_shadow(self, message_id: str, updated_at: Optional[int], parts: List[dict], chat_id: str, role: str, model_id: Optional[str] = None):
+    def save_shadow(
+        self,
+        message_id: str,
+        updated_at: Optional[int],
+        parts: List[dict],
+        chat_id: str,
+        role: str,
+        model_id: Optional[str] = None,
+        parent_id: Optional[str] = None,
+    ):
         """Scellement définitif de l'ombre d'un message."""
-        self.state_manager.save_message_shadow(message_id, chat_id, role, parts, updated_at, model_id=model_id)
+        self.state_manager.save_message_shadow(
+            message_id,
+            chat_id,
+            role,
+            parts,
+            updated_at,
+            model_id=model_id,
+            parent_id=parent_id,
+        )
+
+    def sync_shadow_parent_ids(self, parent_map: Dict[str, Optional[str]]) -> int:
+        return self.state_manager.sync_shadow_parent_ids(parent_map)
+
+    def get_shadow_branch_lineage(self, leaf_message_id: str) -> List[Dict[str, Any]]:
+        lineage = self.state_manager.get_shadow_branch_lineage(leaf_message_id)
+        for node in lineage:
+            if isinstance(node, dict) and node.get("role") in ("assistant", "model"):
+                node["parts"] = self._sanitize_shadow_none_parts(node.get("parts")) or []
+        return lineage
 
     def get_signature_by_id(self, message_id: str) -> Optional[str]:
         return self.state_manager.get_signature_by_id(message_id)
@@ -181,6 +205,115 @@ class Orchestrator:
                 break
 
         self.model_origin = old_model
+
+    def _sync_user_shadow_in_place(
+        self,
+        msg: Dict[str, Any],
+        u_parts: List[Dict[str, Any]],
+        chat_id: str,
+        model_id: str,
+        parent_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Synchronise chirurgicalement en base une édition in-place UI sur une ombre user existante."""
+        msg_id = msg.get("id")
+        updated_at = msg.get("updated_at")
+        raw_c = msg.get("content") or ""
+        if isinstance(raw_c, list):
+            curr_txt = "".join(
+                str(it.get("text", ""))
+                for it in raw_c
+                if isinstance(it, dict) and it.get("type") == "text"
+            )
+        else:
+            curr_txt = str(raw_c or "")
+        curr_txt = re.sub(
+            r'^\s*<artifact\s+id="AEC_evenement_systeme">.*?</artifact>\s*',
+            "",
+            curr_txt,
+            flags=re.DOTALL,
+        )
+        m_req = re.search(r"<REQUETE_UTILISATEUR>(.*?)</REQUETE_UTILISATEUR>", curr_txt, flags=re.DOTALL)
+        if m_req:
+            curr_txt = m_req.group(1)
+        resolved_curr = resolve_placeholders(curr_txt, model_id, self.model_origin).strip()
+        if resolved_curr:
+            sh_mod = False
+            for p in u_parts:
+                if isinstance(p, dict) and "text" in p and "<REQUETE_UTILISATEUR>" in p["text"]:
+                    m_sh = re.search(
+                        r"<REQUETE_UTILISATEUR>(.*?)</REQUETE_UTILISATEUR>",
+                        p["text"],
+                        flags=re.DOTALL,
+                    )
+                    if m_sh and m_sh.group(1).strip() != resolved_curr:
+                        p["text"] = re.sub(
+                            r"<REQUETE_UTILISATEUR>.*?</REQUETE_UTILISATEUR>",
+                            f"<REQUETE_UTILISATEUR>\n{resolved_curr}\n</REQUETE_UTILISATEUR>",
+                            p["text"],
+                            flags=re.DOTALL,
+                        )
+                        sh_mod = True
+                        break
+            if sh_mod and msg_id:
+                self.user_data_manager.save_shadow(
+                    msg_id,
+                    updated_at or int(time.time()),
+                    u_parts,
+                    chat_id,
+                    "user",
+                    parent_id=parent_id,
+                )
+        return u_parts
+
+    def _sync_assistant_shadow_in_place(
+        self,
+        last_owui_asst: Optional[Dict[str, Any]],
+        existing_asst_sh: List[Dict[str, Any]],
+        turn_asst_id: Optional[str],
+        turn_asst_ts: Optional[int],
+        chat_id: str,
+        model_id: str,
+        parent_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Synchronise chirurgicalement en base une édition in-place UI sur le texte final d'une ombre assistant."""
+        if not last_owui_asst:
+            return existing_asst_sh
+        c_raw = last_owui_asst.get("content") or ""
+        c_clean, _ = split_thought_process(c_raw if isinstance(c_raw, str) else str(c_raw or ""))
+        owui_clean = resolve_placeholders(c_clean, model_id, self.model_origin).strip()
+        last_sh_model = next(
+            (m for m in reversed(existing_asst_sh) if isinstance(m, dict) and m.get("role") == "model"),
+            None,
+        )
+        if last_sh_model and owui_clean:
+            sh_parts = last_sh_model.get("parts", [])
+            sh_text = "".join(
+                str(p.get("text", "")) for p in sh_parts if isinstance(p, dict) and "text" in p
+            ).strip()
+            if sh_text != owui_clean:
+                old_sig = next(
+                    (p.get("thoughtSignature") for p in sh_parts if isinstance(p, dict) and p.get("thoughtSignature")),
+                    None,
+                )
+                fc_parts = [p for p in sh_parts if isinstance(p, dict) and "functionCall" in p]
+                new_text_parts = ensure_gemini_parts(owui_clean, model_id, self.model_origin)
+                updated_parts = new_text_parts + fc_parts
+                attach_thought_signature(
+                    updated_parts,
+                    old_sig,
+                    fallback_magic_key=MAGIC_KEY_SKIP_VALIDATION if fc_parts else None,
+                )
+                last_sh_model["parts"] = ensure_gemini_parts(updated_parts, model_id, self.model_origin)
+                if turn_asst_id:
+                    self.user_data_manager.save_shadow(
+                        turn_asst_id,
+                        turn_asst_ts or int(time.time()),
+                        existing_asst_sh,
+                        chat_id,
+                        "assistant",
+                        parent_id=parent_id,
+                    )
+        return existing_asst_sh
 
     async def prepare_context(self, body: Dict, chat_id: str, target_model: str, __metadata__: Optional[Dict] = None, events: Optional[EchoEvents] = None) -> List[Dict]:
         """RESTAURATION Bit-Perfect avec Contrôle Temporel Strict (Anti-Ghosting)."""
@@ -262,9 +395,155 @@ class Orchestrator:
                 log.warning(f"[PipeEngine] Lecture context_checkpoint ignorée: {e}")
 
         final_contents = list(ckpt_prefix)
+        all_turns = EchoCompactionEngine.split_into_turns(messages)
         active_turns = EchoCompactionEngine.split_into_turns(messages[cut_msg_idx:])
 
-        for t_idx, turn in enumerate(active_turns):
+        # Construction de la carte causale parent_id sur l'arbre actif (branch_messages + messages)
+        branch_parent_map: Dict[str, Optional[str]] = {}
+        if branch_messages:
+            prev_bm_id: Optional[str] = None
+            for bm in branch_messages:
+                if isinstance(bm, dict) and bm.get("id"):
+                    bm_id = str(bm["id"])
+                    raw_pid = bm.get("parentId") or bm.get("parent_id") or prev_bm_id
+                    branch_parent_map[bm_id] = str(raw_pid) if raw_pid else None
+                    prev_bm_id = bm_id
+
+        prev_chain_id: Optional[str] = None
+        for t_all in all_turns:
+            for um in [m for m in t_all["messages"] if EchoCompactionEngine.is_real_user_turn(m)]:
+                um_id = um.get("id")
+                if not um_id and um is (messages[-1] if messages else None):
+                    um_id = meta.get("_echo_user_msg_id") or meta.get("user_message_id")
+                    if um_id:
+                        um["id"] = um_id
+                if um_id:
+                    s_uid = str(um_id)
+                    explicit_pid = (
+                        um.get("parentId")
+                        or um.get("parent_id")
+                        or (meta.get("_echo_user_msg_parent_id") if um is (messages[-1] if messages else None) else None)
+                    )
+                    resolved_pid = prev_chain_id or branch_parent_map.get(s_uid) or (str(explicit_pid) if explicit_pid else None)
+                    branch_parent_map[s_uid] = resolved_pid
+                    prev_chain_id = s_uid
+            non_u_all = [
+                m for m in t_all["messages"]
+                if not EchoCompactionEngine.is_real_user_turn(m) and m.get("role") != "system"
+            ]
+            if non_u_all:
+                asst_id_all = next(
+                    (m.get("_echo_turn_asst_id") or m.get("id") for m in reversed(non_u_all) if m.get("_echo_turn_asst_id") or m.get("id")),
+                    None,
+                )
+                if asst_id_all:
+                    s_aid = str(asst_id_all)
+                    resolved_apid = prev_chain_id or branch_parent_map.get(s_aid)
+                    branch_parent_map[s_aid] = resolved_apid
+                    prev_chain_id = s_aid
+
+        if chat_id and branch_parent_map:
+            self.user_data_manager.sync_shadow_parent_ids(branch_parent_map)
+
+        # --- LECTURE ARBORESCENTE DIRECTE DEPUIS SESSION.DB (CURSEUR 4B) ---
+        # Pour tous les tours passés achevés (past_turns), on remonte directement la lignée SQLite
+        # via get_shadow_branch_lineage sans retraduire l'historique OpenAI.
+        start_turn_idx = 0
+        if chat_id and len(active_turns) > 1:
+            past_turns = active_turns[:-1]
+            expected_past_nodes: List[Dict[str, Any]] = []
+            can_use_direct_lineage = True
+            for pt in past_turns:
+                pt_u_msgs = [m for m in pt["messages"] if EchoCompactionEngine.is_real_user_turn(m)]
+                for um in pt_u_msgs:
+                    uid = um.get("id")
+                    if not uid:
+                        can_use_direct_lineage = False
+                        break
+                    expected_past_nodes.append({"id": str(uid), "role": "user", "msg": um})
+                if not can_use_direct_lineage:
+                    break
+                pt_non_u = [
+                    m for m in pt["messages"]
+                    if not EchoCompactionEngine.is_real_user_turn(m) and m.get("role") != "system"
+                ]
+                if pt_non_u:
+                    aid = next(
+                        (m.get("_echo_turn_asst_id") or m.get("id") for m in reversed(pt_non_u) if m.get("_echo_turn_asst_id") or m.get("id")),
+                        None,
+                    )
+                    last_asst_m = next(
+                        (m for m in reversed(pt_non_u) if m.get("role") in ("assistant", "model")),
+                        None,
+                    )
+                    ats = next(
+                        (m.get("_echo_turn_asst_ts") or m.get("updated_at") for m in reversed(pt_non_u) if m.get("_echo_turn_asst_ts") or m.get("updated_at")),
+                        None,
+                    )
+                    if not aid:
+                        can_use_direct_lineage = False
+                        break
+                    expected_past_nodes.append({
+                        "id": str(aid),
+                        "role": "assistant",
+                        "msg": last_asst_m,
+                        "ts": ats,
+                    })
+
+            if can_use_direct_lineage and expected_past_nodes:
+                leaf_past_id = expected_past_nodes[-1]["id"]
+                first_past_id = expected_past_nodes[0]["id"]
+                raw_lineage = self.user_data_manager.get_shadow_branch_lineage(leaf_past_id)
+                win_start_idx = next(
+                    (i for i, n in enumerate(raw_lineage) if n.get("message_id") == first_past_id),
+                    -1,
+                )
+                if win_start_idx >= 0:
+                    lineage_win = raw_lineage[win_start_idx:]
+                    expected_ids = [n["id"] for n in expected_past_nodes]
+                    lineage_ids = [n.get("message_id") for n in lineage_win]
+                    if lineage_ids == expected_ids:
+                        all_asst_valid = all(
+                            isinstance(l_node.get("parts"), list)
+                            and len(l_node["parts"]) > 0
+                            and isinstance(l_node["parts"][0], dict)
+                            and "role" in l_node["parts"][0]
+                            for l_node, e_node in zip(lineage_win, expected_past_nodes)
+                            if e_node["role"] == "assistant"
+                        )
+                        if all_asst_valid:
+                            for l_node, e_node in zip(lineage_win, expected_past_nodes):
+                                n_mid = e_node["id"]
+                                n_pid = branch_parent_map.get(n_mid)
+                                if e_node["role"] == "user":
+                                    u_parts = self._sync_user_shadow_in_place(
+                                        e_node["msg"],
+                                        list(l_node.get("parts") or []),
+                                        chat_id,
+                                        model_id,
+                                        parent_id=n_pid,
+                                    )
+                                    if len(final_contents) > len(ckpt_prefix) and final_contents[-1].get("role") == "user":
+                                        final_contents[-1]["parts"] = EchoCompactionEngine.merge_consecutive_user_parts(
+                                            final_contents[-1]["parts"], u_parts
+                                        )
+                                    else:
+                                        final_contents.append({"role": "user", "parts": u_parts})
+                                else:
+                                    asst_sh = self._sync_assistant_shadow_in_place(
+                                        e_node["msg"],
+                                        list(l_node.get("parts") or []),
+                                        n_mid,
+                                        e_node.get("ts"),
+                                        chat_id,
+                                        model_id,
+                                        parent_id=n_pid,
+                                    )
+                                    final_contents.extend(asst_sh)
+                            start_turn_idx = len(past_turns)
+
+        for t_idx in range(start_turn_idx, len(active_turns)):
+            turn = active_turns[t_idx]
             is_in_flight_tool_turn = (
                 t_idx == len(active_turns) - 1
                 and bool(messages)
@@ -275,36 +554,20 @@ class Orchestrator:
             u_msgs = [m for m in turn["messages"] if EchoCompactionEngine.is_real_user_turn(m)]
             for u_idx, m in enumerate(u_msgs):
                 msg_id = m.get("id")
+                if not msg_id and m is (messages[-1] if messages else None):
+                    msg_id = meta.get("_echo_user_msg_id") or meta.get("user_message_id")
                 updated_at = m.get("updated_at")
+                u_parent_id = (
+                    branch_parent_map.get(str(msg_id))
+                    if msg_id
+                    else (meta.get("_echo_user_msg_parent_id") if m is (messages[-1] if messages else None) else None)
+                )
                 u_parts = self.user_data_manager.get_shadow(msg_id) if msg_id else None
                 if u_parts:
                     if not (m is messages[-1] and meta.get("_echo_user_parts_draft") is not None):
-                        raw_c = m.get("content") or ""
-                        if isinstance(raw_c, list):
-                            curr_txt = "".join(str(it.get("text", "")) for it in raw_c if isinstance(it, dict) and it.get("type") == "text")
-                        else:
-                            curr_txt = str(raw_c or "")
-                        curr_txt = re.sub(r'^\s*<artifact\s+id="AEC_evenement_systeme">.*?</artifact>\s*', '', curr_txt, flags=re.DOTALL)
-                        m_req = re.search(r'<REQUETE_UTILISATEUR>(.*?)</REQUETE_UTILISATEUR>', curr_txt, flags=re.DOTALL)
-                        if m_req:
-                            curr_txt = m_req.group(1)
-                        resolved_curr = resolve_placeholders(curr_txt, model_id, self.model_origin).strip()
-                        if resolved_curr:
-                            sh_mod = False
-                            for p in u_parts:
-                                if isinstance(p, dict) and "text" in p and "<REQUETE_UTILISATEUR>" in p["text"]:
-                                    m_sh = re.search(r'<REQUETE_UTILISATEUR>(.*?)</REQUETE_UTILISATEUR>', p["text"], flags=re.DOTALL)
-                                    if m_sh and m_sh.group(1).strip() != resolved_curr:
-                                        p["text"] = re.sub(
-                                            r'<REQUETE_UTILISATEUR>.*?</REQUETE_UTILISATEUR>',
-                                            f'<REQUETE_UTILISATEUR>\n{resolved_curr}\n</REQUETE_UTILISATEUR>',
-                                            p["text"],
-                                            flags=re.DOTALL,
-                                        )
-                                        sh_mod = True
-                                        break
-                            if sh_mod and msg_id:
-                                self.user_data_manager.save_shadow(msg_id, updated_at or int(time.time()), u_parts, chat_id, "user")
+                        u_parts = self._sync_user_shadow_in_place(
+                            m, u_parts, chat_id, model_id, parent_id=u_parent_id
+                        )
                 else:
                     if m is messages[-1] and meta.get("_echo_user_parts_draft") is not None:
                         u_parts = ensure_gemini_parts(meta.get("_echo_user_parts_draft"), model_id, self.model_origin)
@@ -316,9 +579,11 @@ class Orchestrator:
                                 p["text"] = f"<REQUETE_UTILISATEUR>\n{p['text']}\n</REQUETE_UTILISATEUR>"
                     u_parts = ensure_gemini_parts(u_parts, model_id, self.model_origin)
                     if msg_id and updated_at and u_parts:
-                        self.user_data_manager.save_shadow(msg_id, updated_at, u_parts, chat_id, "user")
+                        self.user_data_manager.save_shadow(
+                            msg_id, updated_at, u_parts, chat_id, "user", parent_id=u_parent_id
+                        )
 
-                if u_idx > 0 and final_contents and final_contents[-1].get("role") == "user":
+                if len(final_contents) > len(ckpt_prefix) and final_contents[-1].get("role") == "user":
                     final_contents[-1]["parts"] = EchoCompactionEngine.merge_consecutive_user_parts(
                         final_contents[-1]["parts"], u_parts
                     )
@@ -330,10 +595,6 @@ class Orchestrator:
                 m for m in turn["messages"]
                 if not EchoCompactionEngine.is_real_user_turn(m)
                 and m.get("role") != "system"
-                and not (
-                    m.get("role") in ("assistant", "model")
-                    and any(marker in str(m.get("content") or "") for marker in ECHO_AUTH_NOTICE_MARKERS)
-                )
             ]
             if not non_u_msgs:
                 continue
@@ -343,6 +604,12 @@ class Orchestrator:
                 meta.get("message_id") if is_in_flight_tool_turn else None,
             )
             turn_asst_ts = next((m.get("_echo_turn_asst_ts") or m.get("updated_at") for m in reversed(non_u_msgs) if m.get("_echo_turn_asst_ts") or m.get("updated_at")), None)
+            last_turn_u_id = next((um.get("id") for um in reversed(u_msgs) if um.get("id")), None)
+            turn_asst_parent_id = (
+                branch_parent_map.get(str(turn_asst_id))
+                if turn_asst_id and str(turn_asst_id) in branch_parent_map
+                else (str(last_turn_u_id) if last_turn_u_id else None)
+            )
 
             existing_asst_sh = self.user_data_manager.get_shadow(turn_asst_id) if turn_asst_id else None
             is_multi_sh = isinstance(existing_asst_sh, list) and len(existing_asst_sh) > 0 and isinstance(existing_asst_sh[0], dict) and "role" in existing_asst_sh[0]
@@ -360,41 +627,15 @@ class Orchestrator:
                     (m for m in reversed(non_u_msgs) if m.get("role") in ("assistant", "model")),
                     None,
                 )
-                if last_owui_asst:
-                    c_raw = last_owui_asst.get("content") or ""
-                    c_clean, _ = split_thought_process(c_raw if isinstance(c_raw, str) else str(c_raw or ""))
-                    owui_clean = resolve_placeholders(c_clean, model_id, self.model_origin).strip()
-                    last_sh_model = next(
-                        (m for m in reversed(existing_asst_sh) if m.get("role") == "model"),
-                        None,
-                    )
-                    if last_sh_model and owui_clean:
-                        sh_parts = last_sh_model.get("parts", [])
-                        sh_text = "".join(
-                            str(p.get("text", "")) for p in sh_parts if isinstance(p, dict) and "text" in p
-                        ).strip()
-                        if sh_text != owui_clean:
-                            old_sig = next(
-                                (p.get("thoughtSignature") for p in sh_parts if isinstance(p, dict) and p.get("thoughtSignature")),
-                                None,
-                            )
-                            fc_parts = [p for p in sh_parts if isinstance(p, dict) and "functionCall" in p]
-                            new_text_parts = ensure_gemini_parts(owui_clean, model_id, self.model_origin)
-                            updated_parts = new_text_parts + fc_parts
-                            attach_thought_signature(
-                                updated_parts,
-                                old_sig,
-                                fallback_magic_key=MAGIC_KEY_SKIP_VALIDATION if fc_parts else None,
-                            )
-                            last_sh_model["parts"] = ensure_gemini_parts(updated_parts, model_id, self.model_origin)
-                            if turn_asst_id:
-                                self.user_data_manager.save_shadow(
-                                    turn_asst_id,
-                                    turn_asst_ts or int(time.time()),
-                                    existing_asst_sh,
-                                    chat_id,
-                                    "assistant",
-                                )
+                existing_asst_sh = self._sync_assistant_shadow_in_place(
+                    last_owui_asst,
+                    existing_asst_sh,
+                    turn_asst_id,
+                    turn_asst_ts,
+                    chat_id,
+                    model_id,
+                    parent_id=turn_asst_parent_id,
+                )
                 final_contents.extend(existing_asst_sh)
                 continue
 
@@ -493,7 +734,14 @@ class Orchestrator:
             if is_in_flight_tool_turn:
                 body["_echo_in_flight_asst_prefix"] = list(turn_asst_msgs)
             elif turn_asst_id and turn_asst_msgs:
-                self.user_data_manager.save_shadow(turn_asst_id, turn_asst_ts, turn_asst_msgs, chat_id, "assistant")
+                self.user_data_manager.save_shadow(
+                    turn_asst_id,
+                    turn_asst_ts,
+                    turn_asst_msgs,
+                    chat_id,
+                    "assistant",
+                    parent_id=turn_asst_parent_id,
+                )
 
         # --- SATURATION ET TRONCATURE ---
         if events:
@@ -925,82 +1173,16 @@ class Pipe:
         _settings.save_setting("model_policy", model_policy)
         _settings.save_setting("enable_paid_credits", str(user_valves.ENABLE_PAID_CREDITS))
 
-        # --- [NOUVEAU] DETECTION ET INTERCEPTION DE CLÉ API ---
-        api_key_from_filter = body.get("_api_key")
-
-        # auth = AuthService(user_id=__user__["id"])  # [192.36] DÉSACTIVÉ : AuthService n'existe plus.
-        from echo_auth import AuthService
-        auth = AuthService(user_id=__user__["id"])
-        echo_auth = EchoAuth(user_id=__user__["id"])
-
-        if api_key_from_filter:
-            await events.status("🔒  Validation de l'authentification Google...")
-            success, msg = await auth.validate_and_save_api_key(api_key_from_filter)
-            if success:
-                yield (
-                    "✅ **Configuration d'accès ECHO Configurée avec Succès**\n\n"
-                    f"{msg}\n\n"
-                    "Vos accès Google ont été validés et enregistrés de manière sécurisée dans votre Espace Personnel ECHO.\n\n"
-                    "Vous pouvez maintenant poser votre question."
-                )
-                return
-            else:
-                yield f"❌ **Échec de validation**\n\n{msg}\n\n" + auth.get_auth_prompt()
-                return
-
         # Résolution du Registre des Fournisseurs d'Accès (Cache local pour ce tour de pipe)
+        echo_auth = EchoAuth(user_id=__user__["id"])
         auth_providers = await echo_auth.get_ordered_auth_providers(__user__["id"])
 
-        # --- AUTHENTIFICATION PKCE (Authorization Code + PKCE RFC 7636) ---
-        # Tunnel SSH ephemere asyncssh - ports dynamiques - multi-user natif.
         if not auth_providers:
-            _ea = EchoAuth(user_id=__user__["id"])
-            pkce_pending = _ea.get_auth_data("pkce_status") == "pending"
-
-            try:
-                if pkce_pending:
-                    # Flow deja en cours - reafficher les instructions
-                    stored_url = _ea.get_auth_data("pkce_auth_url") or ""
-                    yield (
-                        f"\U0001f510 **{ECHO_AUTH_TITLE_PENDING}**\n\n"
-                        f"Le lien est toujours valide.\n\n"
-                        f"[\U0001f517 **Autoriser ECHO avec Google**]({stored_url})\n\n"
-                        f"---\n"
-                        f"*Ou collez directement une cl\u00e9 `AIza\u2026` / `AQ.\u2026` pour utiliser AI Studio.*\n\n"
-                        f"*{ECHO_AUTH_PENDING_MARKER}*"
-                    )
-                    return
-
-                await events.status("\U0001f510 Lancement authentification PKCE...")
-                ok, auth_url, server_ip, ssh_port, cb_port, temp_pwd = \
-                    await auth.initiate_pkce_flow(request=__request__)
-                if not ok:
-                    yield "\u274c Impossible de lancer le flow PKCE.\n\n" + auth.get_auth_prompt()
-                    return
-
-                # Persister l'URL pour les messages suivants
-                _ea.save_api_key("pkce_auth_url", auth_url)
-
-                # Lancer le serveur callback en background (non bloquant)
-                # Préservation de la référence pour éviter le Garbage Collection de la tâche
-                global _BACKGROUND_TASKS
-                if '_BACKGROUND_TASKS' not in globals():
-                    _BACKGROUND_TASKS = set()
-
-                pkce_task = asyncio.create_task(auth.await_pkce_callback())
-                _BACKGROUND_TASKS.add(pkce_task)
-                pkce_task.add_done_callback(_BACKGROUND_TASKS.discard)
-
-                yield auth.get_auth_prompt(
-                    auth_url=auth_url,
-                    server_ip=server_ip,
-                    ssh_port=ssh_port,
-                    cb_port=cb_port,
-                    temp_pwd=temp_pwd
-                )
-
-            except Exception as e:
-                yield f"\u274c Erreur PKCE : {str(e)}\n\n" + auth.get_auth_prompt()
+            yield (
+                "🔐 **Authentification LLM Requise**\n\n"
+                "Aucun fournisseur d'accès Google (OAuth2 Code Assist ou clé API AI Studio) n'est configuré pour votre compte.\n\n"
+                "Veuillez ouvrir **Paramètres > Profil > Authentification LLM** pour connecter votre compte Google ou enregistrer une clé API."
+            )
             return
 
         # --- [NOUVEAU] ROUTAGE DYNAMIQUE (Fluctuation Continue) ---
@@ -1440,6 +1622,11 @@ class Pipe:
             # 1. Scellement message Utilisateur (Le Draft complet)
             user_updated_at = meta.get("_echo_user_msg_updated_at")
             user_draft = meta.get("_echo_user_parts_draft")
+            user_parent_id = (
+                meta.get("_echo_user_msg_parent_id")
+                or (body["messages"][-1].get("parentId") if body.get("messages") else None)
+                or (body["messages"][-1].get("parent_id") if body.get("messages") else None)
+            )
             if user_msg_id and user_draft:
                 user_text = body['messages'][-1].get('content') or ""
                 full_user_parts = ensure_gemini_parts(user_draft, target_model, orch.model_origin)
@@ -1451,7 +1638,14 @@ class Pipe:
                 )
                 if isinstance(user_text, str) and user_text.strip() and not has_req_tag:
                     full_user_parts.append({"text": resolve_placeholders(user_text, target_model, orch.model_origin)})
-                orch.user_data_manager.save_shadow(user_msg_id, user_updated_at, full_user_parts, chat_id, "user")
+                orch.user_data_manager.save_shadow(
+                    user_msg_id,
+                    user_updated_at,
+                    full_user_parts,
+                    chat_id,
+                    "user",
+                    parent_id=user_parent_id,
+                )
 
             # 2. Scellement du Registre Unifié et Rangement
             files_to_seal = meta.get("_echo_files_to_seal", [])
@@ -1504,6 +1698,14 @@ class Pipe:
             current_step_msgs = proc._filter_cascade_for_shadow(cascade_history) if cascade_history else []
             full_asst_shadow = list(in_flight_prefix) + list(current_step_msgs)
             if asst_msg_id and full_asst_shadow:
+                asst_parent_id = user_msg_id or next(
+                    (
+                        m.get("id")
+                        for m in reversed(body.get("messages") or [])
+                        if isinstance(m, dict) and EchoCompactionEngine.is_real_user_turn(m) and m.get("id")
+                    ),
+                    None,
+                )
                 orch.user_data_manager.save_shadow(
                     asst_msg_id,
                     int(time.time()),
@@ -1511,6 +1713,7 @@ class Pipe:
                     chat_id,
                     "assistant",
                     model_id=target_model,
+                    parent_id=asst_parent_id,
                 )
 
             # Sauvegarde des ponts d'outils pour la navigation future

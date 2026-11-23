@@ -60,7 +60,7 @@
         </tr>
         <tr>
           <td><strong>Sous-agents</strong></td>
-          <td>Assistants spécialisés mandatés en parallèle ou en table ronde (Conseil Delphi, Ouvriers Supervisés) pour conduire des recherches, coder ou auditer un sujet sans saturer votre fil principal.</td>
+          <td>Assistants spécialisés mandatés en parallèle, en table ronde (Conseil Delphi) ou en Phalange multi-niveaux pour conduire des recherches, coder ou auditer un sujet sans saturer votre fil principal.</td>
         </tr>
         <tr>
           <td><strong>Edge WebGPU</strong></td>
@@ -114,7 +114,7 @@
     </table>
 
     <details class="tech-spec" id="dossier-ingenierie">
-      <summary>Dossier d'Ingénierie : Matrice des 19 Conteneurs, IPAM, 10 Volumes, Schéma SQLite v2, Qdrant, Constantes SSOT &amp; Routeurs FastAPI</summary>
+      <summary>Dossier d'Ingénierie : Matrice des 19 Conteneurs, IPAM, 10 Volumes, Schéma SQLite v3, Qdrant, Constantes SSOT &amp; Routeurs FastAPI</summary>
 
       <h3>1. Plan d'Adressage IPAM &amp; Matrice des 19 Conteneurs</h3>
       <p>
@@ -271,7 +271,7 @@
         <li><strong>Stack BunkerWeb (2 volumes)</strong> : <code>bw-data</code> (bind sur <code>/opt/ECHO/bunkerweb</code>), <code>bw-db-data</code>.</li>
       </ul>
 
-      <h3>3. Schéma Déclaratif SQLite v2 (<code>echo_db_schema.py</code> v6.7.5.1) &amp; Qdrant</h3>
+      <h3>3. Schéma Déclaratif SQLite v3 (<code>echo_db_schema.py</code> v6.18.23.1) &amp; Qdrant</h3>
       <ul>
         <li><strong><code>identity.db</code> (<code>/app/backend/data/users/{uid}/identity.db</code> — 4 tables)</strong> :
           <ul>
@@ -293,7 +293,7 @@
         <li><strong>Collections Qdrant (<code>EMBEDDING_DIM = 1024</code>, métrique Cosine)</strong> : <code>echo_meta_artifacts</code> (mémoires PACP/PRAC L1/L2) et <code>echo_session_rag</code> (indexation sémantique des tours conversationnels).</li>
       </ul>
 
-      <h3>4. Constantes SSOT de Référence (<code>14-owui-libs/echo_constants.py</code> v6.18.1.1)</h3>
+      <h3>4. Constantes SSOT de Référence (<code>14-owui-libs/echo_constants.py</code> v6.19.0.1)</h3>
       <table>
         <thead>
           <tr>
@@ -341,7 +341,7 @@
           <tr>
             <td><code>ECHO_AUTONOMOUS_MAX_TURNS</code> / <code>TIMEOUT_SEC</code></td>
             <td><code>15</code> / <code>300</code> s</td>
-            <td>Garde-fous des passes autonomes fermées (ouvriers supervisés, deep research).</td>
+            <td>Garde-fous des passes autonomes fermées (Phalange multi-niveaux, deep research).</td>
           </tr>
           <tr>
             <td><code>ECHO_COUNCIL_DEFAULT_TURNS_PER_ROUND</code> / <code>ROUND_TIMEOUT_SEC</code></td>
@@ -395,6 +395,8 @@
         <li><code>/echo/v1/skills</code> (<code>routers/skills.py</code>, doublé sur <code>/api/v1/skills</code>) : catalogue et gestion des compétences utilisateur.</li>
         <li><code>/echo/v1/vault</code> (<code>routers/vault.py</code>) : gestion des identités et comptes chiffrés AEAD du Coffre.</li>
         <li><code>/echo/v1/wm</code> (<code>routers/wm.py</code>) : bus WebSocket du Window Manager et proxy sandbox applicatif <code>/echo/v1/wm/app/</code> par ticket HMAC.</li>
+        <li><code>/echo/v1/llm-auth</code> (<code>routers/llm_auth.py</code>) : statut, flux OAuth2 PKCE et clés API Google AI Studio (primaire/secondaire).</li>
+        <li><code>/echo/v1/chats</code> (<code>routers/chat_actions.py</code>) : reprise distillée en deux passes vers un nouveau chat (<code>POST /{chat_id}/resume</code>).</li>
         <li><code>/echo/v1/audio</code> (<code>14-owui-libs/echo_audio.py</code>) : pont audio in-process (<code>/transcriptions</code>, <code>/speech</code>, <code>/models</code>, <code>/voices</code>).</li>
       </ul>
     </details>
@@ -405,7 +407,7 @@
       <a href="19_credits.html">19. Crédits &rarr;</a>
     </div>
 
-    <footer>ECHO Framework - Version 6.18.20 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
+    <footer>ECHO Framework - Version 6.21.4 - Copyright &copy; 2025-2026 Wilfried BARNAVON - Licence Apache 2.0</footer>
   </main>
 
   <script src="nav.js"></script>

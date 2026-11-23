@@ -3,16 +3,16 @@
 """
 title: ECHO DB Schema
 author: ECHO Framework
-version: 6.7.5.1
-description: Schéma déclaratif SQLite v2 et moteur de migration transactionnel (identity.db & session.db).
+version: 6.18.23.1
+description: Schéma déclaratif SQLite v3 et moteur de migration transactionnel (identity.db & session.db).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.23.1: Schéma déclaratif SQLite v3 idempotent (parent_id et idx_shadows_parent_id sur message_shadows, PRAGMA foreign_keys=ON, rétro-conversion intégrale user/assistant depuis webui.db et CLI migrate_all).
 # 6.7.5.1: Normalisation None/list de msg["content"] et filtrage de "None" devant functionCall dans backfill_session_shadows_from_webui.
 # 5.237.20.2: Conformité stricte Gemini 3/4 (priorité functionCall sur text dans _migrate et regroupement des appels parallèles dans backfill_session_shadows_from_webui).
 # 5.237.20.1: Schéma déclaratif SQLite v2 (6 tables session.db, model_id sur message_shadows, purge suture_index/cognitive_signatures/tool_journal et rétro-conversion webui.db).
 # 5.235.5.3: Schéma de production identity_vault (clé composite), 20 colonnes echo_resources et COALESCE défensif dans _migrate.
-# 5.235.5.2: Schéma déclaratif SQLite v1 (identity.db 4 tables vs session.db 9 tables), PRAGMAs SSOT, migrations atomiques et table rag_index_state.
 
 import argparse
 from dataclasses import dataclass
@@ -24,9 +24,9 @@ import sys
 import time
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
 
-from echo_constants import ECHO_USERS_ROOT
+from echo_constants import ECHO_BASE_DATA_DIR, ECHO_USERS_ROOT
 
-ECHO_DB_SCHEMA_VERSION = 2
+ECHO_DB_SCHEMA_VERSION = 3
 DB_KIND_SESSION = "session"
 DB_KIND_IDENTITY = "identity"
 
@@ -137,6 +137,7 @@ SESSION_TABLES: Dict[str, TableSpec] = {
         name="message_shadows",
         columns=(
             ColumnSpec("message_id", "TEXT", notnull=True),
+            ColumnSpec("parent_id", "TEXT"),
             ColumnSpec("role", "TEXT"),
             ColumnSpec("full_parts_json", "TEXT"),
             ColumnSpec("model_id", "TEXT"),
@@ -145,6 +146,7 @@ SESSION_TABLES: Dict[str, TableSpec] = {
         primary_key=("message_id",),
         indexes=(
             ("idx_shadows_updated_at", ("updated_at",)),
+            ("idx_shadows_parent_id", ("parent_id",)),
         ),
     ),
     "rag_index_state": TableSpec(
@@ -283,6 +285,52 @@ def extract_call_ids_from_json(raw_json: Optional[str]) -> Set[str]:
     return call_ids
 
 
+def _resolve_webui_db_path(
+    session_db_path: str = "",
+    explicit_webui_db: Optional[str] = None,
+) -> Optional[str]:
+    """Résout le chemin vers webui.db (explicite, relatif au dossier users, ou fallback ECHO_BASE_DATA_DIR/webui.db)."""
+    candidates: List[str] = []
+    if explicit_webui_db:
+        candidates.append(explicit_webui_db)
+    if session_db_path:
+        norm_p = os.path.normpath(session_db_path)
+        p_parts = norm_p.split(os.sep)
+        if "chats" in p_parts:
+            c_idx = p_parts.index("chats")
+            u_dir = os.sep.join(p_parts[:c_idx])
+            if u_dir:
+                candidates.append(os.path.join(os.path.dirname(os.path.dirname(u_dir)), "webui.db"))
+                candidates.append(os.path.join(os.path.dirname(u_dir), "webui.db"))
+    candidates.append(os.path.join(ECHO_BASE_DATA_DIR, "webui.db"))
+    for cand in candidates:
+        if cand and os.path.isfile(cand):
+            return cand
+    return None
+
+
+def _extract_user_parts_for_backfill(raw_content: Any) -> List[Dict[str, Any]]:
+    """Construit une liste de parts Gemini user normalisée (<REQUETE_UTILISATEUR>) depuis msg['content'] de webui.db."""
+    texts: List[str] = []
+    if isinstance(raw_content, list):
+        for item in raw_content:
+            if isinstance(item, dict) and (item.get("type") == "text" or "text" in item):
+                t = str(item.get("text") or "").strip()
+                if t:
+                    texts.append(t)
+    elif raw_content is not None:
+        t = str(raw_content).strip()
+        if t:
+            texts.append(t)
+
+    parts: List[Dict[str, Any]] = []
+    for t in texts:
+        if "<REQUETE_UTILISATEUR>" not in t and not t.startswith("<artifact"):
+            t = f"<REQUETE_UTILISATEUR>\n{t}\n</REQUETE_UTILISATEUR>"
+        parts.append({"text": t})
+    return parts
+
+
 def backfill_session_shadows_from_webui(
     conn: sqlite3.Connection,
     chat_id: str,
@@ -325,17 +373,46 @@ def backfill_session_shadows_from_webui(
 
     converted = 0
     for msg_id, msg in messages_map.items():
-        if not (isinstance(msg, dict) and msg.get("role") == "assistant"):
+        if not isinstance(msg, dict):
             continue
 
+        role = msg.get("role")
+        if role not in ("user", "assistant"):
+            continue
+
+        raw_parent_id = msg.get("parentId") or msg.get("parent_id")
+        parent_id: Optional[str] = str(raw_parent_id) if raw_parent_id else None
+
         s_row = conn.execute(
-            "SELECT full_parts_json, model_id, updated_at FROM message_shadows WHERE message_id = ?",
+            "SELECT full_parts_json, model_id, updated_at, parent_id FROM message_shadows WHERE message_id = ?",
             (msg_id,),
         ).fetchone()
+
+        if role == "user":
+            if s_row is None:
+                u_parts = _extract_user_parts_for_backfill(msg.get("content"))
+                if u_parts:
+                    u_ts = int(msg.get("updated_at") or msg.get("timestamp") or time.time())
+                    conn.execute(
+                        "INSERT OR REPLACE INTO message_shadows "
+                        "(message_id, parent_id, role, full_parts_json, model_id, updated_at) "
+                        "VALUES (?, ?, 'user', ?, NULL, ?)",
+                        (msg_id, parent_id, json.dumps(u_parts, ensure_ascii=False), u_ts),
+                    )
+                    converted += 1
+            elif parent_id is not None and s_row[3] != parent_id:
+                conn.execute(
+                    "UPDATE message_shadows SET parent_id = ? WHERE message_id = ?",
+                    (parent_id, msg_id),
+                )
+                converted += 1
+            continue
 
         raw_json = s_row[0] if s_row else None
         existing_model_id = s_row[1] if s_row else None
         existing_updated_at = s_row[2] if s_row else None
+        existing_parent_id = s_row[3] if s_row else None
+        target_parent_id = parent_id if parent_id is not None else existing_parent_id
 
         existing_data = None
         if raw_json:
@@ -506,9 +583,15 @@ def backfill_session_shadows_from_webui(
             )
             conn.execute(
                 "INSERT OR REPLACE INTO message_shadows "
-                "(message_id, role, full_parts_json, model_id, updated_at) "
-                "VALUES (?, 'assistant', ?, ?, ?)",
-                (msg_id, json.dumps(seq, ensure_ascii=False), target_model_id, target_updated_at),
+                "(message_id, parent_id, role, full_parts_json, model_id, updated_at) "
+                "VALUES (?, ?, 'assistant', ?, ?, ?)",
+                (
+                    msg_id,
+                    target_parent_id,
+                    json.dumps(seq, ensure_ascii=False),
+                    target_model_id,
+                    target_updated_at,
+                ),
             )
             converted += 1
 
@@ -520,8 +603,44 @@ def backfill_session_shadows_from_webui(
         ):
             wrapped = json.dumps([{"role": "model", "parts": existing_data}], ensure_ascii=False)
             conn.execute(
-                "UPDATE message_shadows SET role = 'assistant', full_parts_json = ? WHERE message_id = ?",
-                (wrapped, msg_id),
+                "UPDATE message_shadows SET role = 'assistant', full_parts_json = ?, parent_id = ? WHERE message_id = ?",
+                (wrapped, target_parent_id, msg_id),
+            )
+            converted += 1
+        elif s_row is None:
+            raw_c = msg.get("content")
+            if raw_c is None:
+                content_str = ""
+            elif isinstance(raw_c, list):
+                content_str = "".join(
+                    str(p.get("text") or "")
+                    for p in raw_c
+                    if isinstance(p, dict) and p.get("type") == "text"
+                )
+            else:
+                content_str = str(raw_c)
+            clean_text = re.sub(r"<think>.*?</think>", "", content_str, flags=re.DOTALL).strip()
+            if clean_text:
+                seq_text = [{"role": "model", "parts": [{"text": clean_text}]}]
+                target_model_id = msg.get("model")
+                target_updated_at = int(msg.get("updated_at") or msg.get("timestamp") or time.time())
+                conn.execute(
+                    "INSERT OR REPLACE INTO message_shadows "
+                    "(message_id, parent_id, role, full_parts_json, model_id, updated_at) "
+                    "VALUES (?, ?, 'assistant', ?, ?, ?)",
+                    (
+                        msg_id,
+                        target_parent_id,
+                        json.dumps(seq_text, ensure_ascii=False),
+                        target_model_id,
+                        target_updated_at,
+                    ),
+                )
+                converted += 1
+        elif s_row is not None and parent_id is not None and existing_parent_id != parent_id:
+            conn.execute(
+                "UPDATE message_shadows SET parent_id = ? WHERE message_id = ?",
+                (parent_id, msg_id),
             )
             converted += 1
 
@@ -572,6 +691,7 @@ def open_db(
         raise
 
     conn.execute(f"PRAGMA busy_timeout = {int(timeout * 1000)}")
+    conn.execute("PRAGMA foreign_keys = ON")
     if not readonly:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
@@ -911,13 +1031,10 @@ def _migrate(
             p_parts = norm_p.split(os.sep)
             if "chats" in p_parts:
                 c_idx = p_parts.index("chats")
-                u_dir = os.sep.join(p_parts[:c_idx])
                 chat_id = p_parts[c_idx + 1] if len(p_parts) > c_idx + 1 else ""
                 if chat_id:
-                    cand1 = os.path.join(os.path.dirname(os.path.dirname(u_dir)), "webui.db")
-                    cand2 = os.path.join(os.path.dirname(u_dir), "webui.db")
-                    webui_db_path = cand1 if os.path.exists(cand1) else cand2
-                    if os.path.exists(webui_db_path):
+                    webui_db_path = _resolve_webui_db_path(path)
+                    if webui_db_path:
                         try:
                             wuri = os.path.abspath(webui_db_path).replace("\\", "/")
                             with sqlite3.connect(f"file:{wuri}?mode=ro", uri=True, timeout=5.0) as wconn:
@@ -987,18 +1104,36 @@ def ensure_db(path: str, kind: str, *, dry_run: bool = False) -> Dict[str, Any]:
                 existing_tables = {row[0] for row in cur.fetchall()}
                 target_names = set(target_specs.keys())
                 if target_names.issubset(existing_tables) and not (obsolete_names & existing_tables):
-                    return {
-                        "path": path,
-                        "kind": kind,
-                        "status": "up_to_date",
-                        "actions": [],
-                        "rows_dropped": {},
+                    expected_indexes = {
+                        idx_name
+                        for spec in target_specs.values()
+                        for idx_name, _ in spec.indexes
                     }
+                    existing_indexes = {
+                        row[0]
+                        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+                        if row[0]
+                    }
+                    if expected_indexes.issubset(existing_indexes) and not any(
+                        _table_needs_rebuild(conn, spec) for spec in target_specs.values()
+                    ):
+                        return {
+                            "path": path,
+                            "kind": kind,
+                            "status": "up_to_date",
+                            "actions": [],
+                            "rows_dropped": {},
+                        }
         else:
             conn = open_db(path, readonly=False, create=True, require_version=False, timeout=10.0)
 
         # Migration transactionnelle requise
         mig_res = _migrate(conn, kind, dry_run=dry_run, is_new=not existed_before, path=path)
+        if not dry_run and (mig_res["actions"] or mig_res["rows_dropped"]):
+            try:
+                conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            except Exception:
+                pass
         status = "created" if not existed_before else ("migrated" if (mig_res["actions"] or mig_res["rows_dropped"]) else "up_to_date")
         return {
             "path": path,
@@ -1080,7 +1215,13 @@ def migrate_all(users_root: str = ECHO_USERS_ROOT, dry_run: bool = False) -> Dic
         "locked": 0,
         "error": 0,
     }
+    counts_by_kind: Dict[str, Dict[str, int]] = {
+        DB_KIND_SESSION: {"created": 0, "migrated": 0, "up_to_date": 0, "locked": 0, "error": 0},
+        DB_KIND_IDENTITY: {"created": 0, "migrated": 0, "up_to_date": 0, "locked": 0, "error": 0},
+    }
     rows_dropped_total = 0
+    shadows_backfilled_total = 0
+    tables_rebuilt_total = 0
 
     for path, kind in iter_echo_databases(users_root):
         res = ensure_db(path, kind, dry_run=dry_run)
@@ -1090,19 +1231,34 @@ def migrate_all(users_root: str = ECHO_USERS_ROOT, dry_run: bool = False) -> Dic
             counts[st] += 1
         else:
             counts["error"] += 1
+        if kind in counts_by_kind:
+            counts_by_kind[kind][st if st in counts_by_kind[kind] else "error"] += 1
+        for act in res.get("actions", []):
+            if isinstance(act, str):
+                if act.startswith("backfill_shadows:"):
+                    try:
+                        shadows_backfilled_total += int(act.split(":", 1)[1])
+                    except Exception:
+                        pass
+                elif act.startswith("rebuild:"):
+                    tables_rebuilt_total += 1
         for count in res.get("rows_dropped", {}).values():
             rows_dropped_total += count
 
     return {
         "dry_run": dry_run,
+        "schema_version": ECHO_DB_SCHEMA_VERSION,
         "users_root": users_root,
         "total": len(details),
         "counts": counts,
+        "counts_by_kind": counts_by_kind,
         "migrated": counts.get("migrated", 0),
         "created": counts.get("created", 0),
         "up_to_date": counts.get("up_to_date", 0),
         "error": counts.get("error", 0),
         "locked": counts.get("locked", 0),
+        "shadows_backfilled_total": shadows_backfilled_total,
+        "tables_rebuilt_total": tables_rebuilt_total,
         "rows_dropped_total": rows_dropped_total,
         "details": details,
     }

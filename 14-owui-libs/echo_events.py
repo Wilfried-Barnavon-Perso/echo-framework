@@ -4,16 +4,16 @@
 """
 title: ECHO Echo Events
 author: Wilfried BARNAVON
-version: 6.14.2.1
+version: 6.20.3.1
 description: Gestionnaire des événements WebSocket et UI. Intègre le protocole UCTP (Universal Chunked Transfer Protocol).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.20.3.1: Support optionnel de timeout_seconds (timeout_ms) sur EchoEvents.confirm.
 # 6.14.2.1: Suppression du fallback JS mort window.echoWrapUctpPayload dans _wrap_wm_js et _build_uctp_frames.
 # 6.10.0.1: Court-circuit immédiat de call() et call_execute() en contexte d'automatisation planifiée.
 # 6.6.9.1: Suppression de l'import et de l'appel obsolète register_echo_wm_routes() dans EchoEvents.__init__.
 # 6.6.2.1: Suppression du fast-path mort echo_codex_action dans trigger_action.
-# 5.231.48.1: Marquage data-echo-scope="global", correction de window._uctp_<id> et watchdog d'auto-nettoyage DOM sur #uctp-loader-<id> dans _build_uctp_frames.
 import asyncio
 from typing import Any, Optional
 import uuid
@@ -83,8 +83,16 @@ class EchoEvents:
     async def input(self, title: str, message: str, placeholder: str = "", type: str = "text") -> Optional[str]:
         return await self.call("input", {"title": title, "message": message, "placeholder": placeholder, "type": type})
 
-    async def confirm(self, title: str, message: str) -> bool:
-        res = await self.call("confirmation", {"title": title, "message": message})
+    async def confirm(
+        self,
+        title: str,
+        message: str,
+        timeout_seconds: Optional[int] = None,
+    ) -> bool:
+        payload: dict[str, Any] = {"title": title, "message": message}
+        if timeout_seconds is not None and int(timeout_seconds) > 0:
+            payload["timeout_ms"] = int(timeout_seconds) * 1000
+        res = await self.call("confirmation", payload)
         if isinstance(res, dict) and "error" in res:
             return False
         return res is True

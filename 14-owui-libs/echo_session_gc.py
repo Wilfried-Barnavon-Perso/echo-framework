@@ -3,11 +3,12 @@
 """
 title: ECHO Session GC
 author: ECHO Framework
-version: 5.237.20.2
+version: 6.18.23.1
 description: Purge des branches mortes, filtrage RAG par branche active et provenance des productions (stdlib-only).
 """
 # Règle : Conserver uniquement les 5 dernières versions dans l'historique.
 # Historique des versions :
+# 6.18.23.1: Ajout de load_owui_live_parent_map et sync_shadow_parent_ids dans gc_session_db pour resynchroniser les parent_id lors des re-parentages Open WebUI.
 # 5.237.20.2: Auto-migration ensure_db en amont de gc_session_db (hors dry_run) pour la maintenance nocturne admin-manager.
 # 5.237.20.1: Simplification de compute_dead_set et purge_dead_set sur le schéma v2 (message_shadows, call_bridge, rag_index_state).
 # 5.235.5.3: Normalisation timestamp dans is_point_in_branch et flexibilité CLI (alias --backfill-rag et défaut gc).
@@ -46,9 +47,11 @@ __all__ = [
     "extract_call_ids_from_json",
     "build_session_rag_point_id",
     "load_owui_live_message_ids",
+    "load_owui_live_parent_map",
     "DeadSet",
     "compute_dead_set",
     "purge_dead_set",
+    "sync_shadow_parent_ids",
     "gc_session_db",
     "gc_all",
     "build_branch_rag_filter",
@@ -145,6 +148,58 @@ def load_owui_live_message_ids(webui_conn: sqlite3.Connection, chat_id: str) -> 
         return None
 
     return live_ids
+
+
+def load_owui_live_parent_map(
+    webui_conn: sqlite3.Connection,
+    chat_id: str,
+) -> Dict[str, Optional[str]]:
+    """Extrait la carte {message_id: parent_id} des messages vivants d'un chat dans webui.db."""
+    row = webui_conn.execute("SELECT chat FROM chat WHERE id = ?", (chat_id,)).fetchone()
+    if not row or row[0] is None:
+        return {}
+
+    raw_chat = row[0]
+    parent_map: Dict[str, Optional[str]] = {}
+    try:
+        chat_obj = json.loads(raw_chat) if isinstance(raw_chat, str) else raw_chat
+        if isinstance(chat_obj, dict):
+            hist = chat_obj.get("history") or {}
+            msgs = hist.get("messages") or {}
+            if isinstance(msgs, dict):
+                for k, v in msgs.items():
+                    if k and isinstance(v, dict):
+                        raw_pid = v.get("parentId") or v.get("parent_id")
+                        parent_map[str(k)] = str(raw_pid) if raw_pid else None
+    except Exception:
+        pass
+
+    try:
+        has_chat_msg = webui_conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_message'"
+        ).fetchone() is not None
+        if has_chat_msg:
+            cols = {c[1] for c in webui_conn.execute("PRAGMA table_info(chat_message)").fetchall()}
+            if "parent_id" in cols:
+                prefix = f"{chat_id}-"
+                cur = webui_conn.execute(
+                    "SELECT id, parent_id FROM chat_message WHERE chat_id = ?",
+                    (chat_id,),
+                )
+                for mid, pid in cur.fetchall():
+                    if mid:
+                        s_mid = str(mid)
+                        if s_mid.startswith(prefix):
+                            s_mid = s_mid[len(prefix):]
+                        if s_mid not in parent_map:
+                            s_pid = str(pid) if pid else None
+                            if s_pid and s_pid.startswith(prefix):
+                                s_pid = s_pid[len(prefix):]
+                            parent_map[s_mid] = s_pid
+    except Exception:
+        pass
+
+    return parent_map
 
 
 # ==============================================================================
@@ -330,6 +385,55 @@ def purge_dead_set(
         raise
 
 
+def sync_shadow_parent_ids(
+    session_conn: sqlite3.Connection,
+    live_parent_map: Dict[str, Optional[str]],
+    dry_run: bool = False,
+) -> int:
+    """Synchronise les parent_id de message_shadows avec l'arbre vivant d'Open WebUI sous SAVEPOINT."""
+    if not live_parent_map:
+        return 0
+
+    cols = {c[1] for c in session_conn.execute("PRAGMA table_info(message_shadows)").fetchall()}
+    if "parent_id" not in cols:
+        return 0
+
+    to_update: List[tuple] = []
+    for mid, cur_pid in session_conn.execute("SELECT message_id, parent_id FROM message_shadows").fetchall():
+        if not mid:
+            continue
+        s_mid = str(mid)
+        if s_mid in live_parent_map:
+            target_pid = live_parent_map[s_mid]
+            cur_norm = str(cur_pid) if cur_pid else None
+            if cur_norm != target_pid:
+                to_update.append((target_pid, s_mid))
+
+    if not to_update:
+        return 0
+
+    if dry_run:
+        return len(to_update)
+
+    session_conn.execute("SAVEPOINT echo_sync_parents")
+    try:
+        session_conn.executemany(
+            "UPDATE message_shadows SET parent_id = ? WHERE message_id = ?",
+            to_update,
+        )
+        session_conn.execute("RELEASE SAVEPOINT echo_sync_parents")
+        if not session_conn.in_transaction:
+            session_conn.commit()
+        return len(to_update)
+    except Exception:
+        try:
+            session_conn.execute("ROLLBACK TO SAVEPOINT echo_sync_parents")
+            session_conn.execute("RELEASE SAVEPOINT echo_sync_parents")
+        except Exception:
+            pass
+        raise
+
+
 def gc_session_db(
     session_db_path: str,
     webui_conn: sqlite3.Connection,
@@ -376,6 +480,9 @@ def gc_session_db(
                 "rag_seeds": [],
             }
 
+        live_parent_map = load_owui_live_parent_map(webui_conn, chat_id)
+        parents_synced = sync_shadow_parent_ids(conn, live_parent_map, dry_run=dry_run)
+
         dead = compute_dead_set(conn, live_ids, grace_ts)
         if dead.is_empty:
             return {
@@ -383,6 +490,7 @@ def gc_session_db(
                 "status": "nothing",
                 "counts": {},
                 "rows_deleted": 0,
+                "parents_synced": parents_synced,
                 "rag_seeds": [],
             }
 
@@ -392,6 +500,7 @@ def gc_session_db(
             "status": "purged",
             "counts": counts,
             "rows_deleted": sum(counts.values()),
+            "parents_synced": parents_synced,
             "rag_seeds": sorted(dead.rag_seeds),
         }
     except sqlite3.OperationalError as e:

@@ -154,36 +154,9 @@ def extract_frontmatter(content):
     """
     Extract frontmatter as a dictionary from the provided content string.
     """
-    frontmatter = {}
-    frontmatter_started = False
-    frontmatter_ended = False
-    frontmatter_pattern = re.compile(r'^\s*([a-z_]+):\s*(.*)\s*$', re.IGNORECASE)
-
-    try:
-        lines = content.splitlines()
-        if len(lines) < 1 or lines[0].strip() != '"""':
-            # The content doesn't start with triple quotes
-            return {}
-
-        frontmatter_started = True
-
-        for line in lines[1:]:
-            if '"""' in line:
-                if frontmatter_started:
-                    frontmatter_ended = True
-                    break
-
-            if frontmatter_started and not frontmatter_ended:
-                match = frontmatter_pattern.match(line)
-                if match:
-                    key, value = match.groups()
-                    frontmatter[key.strip()] = value.strip()
-
-    except Exception as e:
-        log.exception(f'Failed to extract frontmatter: {e}')
-        return {}
-
-    return frontmatter
+    # [ECHO-V6-HOOK] Délégation factorisée supportant les en-têtes Copyright/SPDX avant """
+    from open_webui.echo.runtime import parse_echo_frontmatter
+    return parse_echo_frontmatter(content, lowercase_keys=False)
 
 
 def replace_imports(content):
