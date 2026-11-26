@@ -58,8 +58,8 @@ $VHDSize = 60GB
 $RAMStartup = 8192MB
 
 # --- CONFIGURATION BRANCHE ---
-#$BRANCHE = "dev"
-$BRANCHE = "main"
+$BRANCHE = "dev"
+#$BRANCHE = "main"
 
 function Pause-OnError {
   param([string]$Message)
